@@ -19,8 +19,8 @@
 //! aids) leave the INI of the player's home alone, neither read nor written; with
 //! `NVFOREVER_HOME` set they use that home's INI, so a test can check the round trip.
 //!
-//! A row whose note names a command-line switch (`--msaa`, `--no-lip`; not one it is "a
-//! part of") counts as set by the command line when that switch was given
+//! A row whose [`Setting::switches`] names a command-line switch (`--msaa`, `--no-lip`)
+//! counts as set by the command line when that switch was given
 //! ([`GivenSwitches`], filled by the program from its command line). When the INI holds
 //! another state for such a row, the log says so (#1382): in a test run (a timed or
 //! measured run, [`GivenSwitches::win`]) the command line's state is kept and the stored
@@ -52,6 +52,11 @@
 //! but the INI's text still loads it ([`apply_stored`]): a stored request survives a run in
 //! which it cannot be met.
 //!
+//! A row's note can give other words for a while ([`set_note_now`]): while its function says
+//! something (already in the language shown), the page shows that under the rows in place of
+//! the row's own note, e.g. the Generated frames row saying how few real frames a second the
+//! frame rate limit leaves (nvforever, #2731). It should keep to the note's budget too.
+//!
 //! A list that took over from an older row can read that row's INI key when its own is not in
 //! the file ([`set_older_key`]; its `load` takes the older row's text), and the test aids can
 //! still name the older row ([`set_list_alias`], [`pick_alias`]): nvforever's `fsr-upscaling`,
@@ -60,6 +65,14 @@
 //! ([`set_older_split`], [`with_older_split`]), so each row loads it, and a test run keeps
 //! ([`KeptRows`]) and later writes, a value of its own.
 //!
+//! A row's note says what it does in one or two short sentences, at most [`NOTE_BUDGET`]
+//! characters and no command-line switch (those are [`Setting::switches`]); the longer
+//! explanations are in docs/settings-reference.md [design: #2377]. Once every row is
+//! registered the notes are checked ([`check_notes`], `PostStartup`): each one over the
+//! budget logs `settings: note of `<key>` over the budget: <reason>`, then `settings: <n>
+//! notes checked, <bad> over the budget (200 characters)`; the pause menu checks they wrap to
+//! two lines at its width once its fonts are loaded (`crate::pause`).
+//!
 //! What is not here: choices fixed when the game starts (which NPCs live by their
 //! packages, FaceGen, the load order), most numbers (the volumes, the field of view and the
 //! draw distances are sliders) and the test aids.
@@ -67,6 +80,29 @@
 use bevy::prelude::*;
 use fnv_install::{guard_write, ini_get, ini_set, EngineHome, HOME_ENV};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+/// Optional renderer diagnostic around an edit, including nested row setters and INI
+/// persistence [design, #2248: nvforever/quality_probe.rs].
+#[derive(Resource)]
+pub struct EditProbe(pub fn(&mut World, &str, EditPhase));
+
+#[derive(Clone, Copy)]
+pub enum EditPhase {
+    Begin,
+    End { applied: bool },
+}
+
+/// Attempted INI writes, including failures; present only with the edit diagnostic
+/// [design, #2248: store_now]. Interior mutability keeps `store_now`'s read-only world API.
+#[derive(Resource, Default)]
+pub struct StoreAttempts(pub AtomicU64);
+
+fn probe(world: &mut World, key: &str, phase: EditPhase) {
+    if let Some(callback) = world.get_resource::<EditProbe>().map(|p| p.0) {
+        callback(world, key, phase);
+    }
+}
 
 /// The INI section the switches are kept in.
 pub const SECTION: &str = "Settings";
@@ -86,7 +122,7 @@ impl SettingsFile {
     }
 }
 
-/// The command-line switches given this run (`--msaa`, as named in the rows' notes) and
+/// The command-line switches given this run (`--msaa`, as named in the rows' `switches`) and
 /// whether they win over the INI's states (a test run); module notes. Absent: none given.
 #[derive(Resource, Clone, Debug, Default)]
 pub struct GivenSwitches {
@@ -95,20 +131,21 @@ pub struct GivenSwitches {
 }
 
 impl GivenSwitches {
-    /// The switches of `note` that were given, as `--a, --b`; `None`: none of them. Only
-    /// the switch's name is matched, not its value: `--graphics-only no-glow` given counts
-    /// for every row whose note names `--graphics-only`, whatever it turns off.
-    fn named_in(&self, note: &str) -> Option<String> {
-        let hits: Vec<&str> = note_switches(note).into_iter().filter(|n| self.given.iter().any(|g| g == n)).collect();
+    /// The switches of a row's `switches` ([`Setting::switches`]) that were given, as
+    /// `--a, --b`; `None`: none of them. Only the switch's name is matched, not its value:
+    /// `--graphics-only no-glow` given counts for every row that names `--graphics-only`,
+    /// whatever it turns off.
+    pub(crate) fn named_in(&self, switches: &str) -> Option<String> {
+        let hits: Vec<&str> = note_switches(switches).into_iter().filter(|n| self.given.iter().any(|g| g == n)).collect();
         (!hits.is_empty()).then(|| hits.join(", "))
     }
 
-    /// The switches of `note` that keep the command line's state over the INI's: those
-    /// given, in a test run ([`GivenSwitches::win`]); `None`: the stored state applies
-    /// ([`apply_stored`], [`switch_after_ini`]).
-    pub fn keeping(&self, note: &str) -> Option<String> {
+    /// The switches of a row's `switches` that keep the command line's state over the
+    /// INI's: those given, in a test run ([`GivenSwitches::win`]); `None`: the stored state
+    /// applies ([`apply_stored`], [`switch_after_ini`]).
+    pub fn keeping(&self, switches: &str) -> Option<String> {
         if self.win {
-            self.named_in(note)
+            self.named_in(switches)
         } else {
             None
         }
@@ -120,23 +157,26 @@ impl GivenSwitches {
 /// ([`GivenSwitches::keeping`]); the command line's state otherwise. For what has to be
 /// decided when the app is built, before `apply_stored` runs (nvforever's frame split
 /// takes its GPU timestamps from the start or not at all), so the two cannot disagree.
-pub fn switch_after_ini(command_line: bool, stored: Option<bool>, given: &GivenSwitches, note: &str) -> bool {
-    after_ini(command_line, stored, given, note)
+/// `switches` is the row's [`Setting::switches`].
+pub fn switch_after_ini(command_line: bool, stored: Option<bool>, given: &GivenSwitches, switches: &str) -> bool {
+    after_ini(command_line, stored, given, switches)
 }
 
 /// [`switch_after_ini`] for a row of any kind, a list's too: `stored` is the INI's text
 /// already read by the row's own `load` rule (`None`: no such key, or text the row would
 /// skip as not one of its states, so the command line's state stays, as [`apply_stored`]
 /// leaves it). nvforever's upscaler is chosen with it before the renderer starts.
-pub fn after_ini<T>(command_line: T, stored: Option<T>, given: &GivenSwitches, note: &str) -> T {
+pub fn after_ini<T>(command_line: T, stored: Option<T>, given: &GivenSwitches, switches: &str) -> T {
     match stored {
-        Some(v) if given.keeping(note).is_none() => v,
+        Some(v) if given.keeping(switches).is_none() => v,
         _ => command_line,
     }
 }
 
-/// The command-line switches a row's note names (`--no-lip`, `--msaa`), leaving out one
-/// the row is "a part of" (a slider scaling `--shadow-distance` does not replace it).
+/// The command-line switches a row's [`Setting::switches`] names (`--no-lip`, `--msaa`),
+/// leaving out one the row is "a part of" (a slider scaling `--shadow-distance` does not
+/// replace it). The parse is the one the rows' notes had while they named their switches,
+/// so a text written for a note still reads the same.
 pub fn note_switches(note: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut at = 0;
@@ -152,6 +192,60 @@ pub fn note_switches(note: &str) -> Vec<&str> {
     out
 }
 
+/// A note's most characters: one or two short sentences, two lines at the page's width in a
+/// 16:9 view [design: #2377].
+pub const NOTE_BUDGET: usize = 200;
+
+/// Why `note` is over the budget (longer than [`NOTE_BUDGET`] characters, or naming a
+/// command-line switch); `None`: within it.
+pub fn note_over_budget(note: &str) -> Option<String> {
+    let n = note.chars().count();
+    if n > NOTE_BUDGET {
+        return Some(format!("{n} characters, more than {NOTE_BUDGET}"));
+    }
+    if let Some(at) = note.find("--").filter(|at| note[at + 2..].starts_with(|c: char| c.is_ascii_alphanumeric())) {
+        let name: String = note[at..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+        return Some(format!("it names the command-line switch {name} (that is the row's switches)"));
+    }
+    None
+}
+
+/// The most values a row may have and still not be a slider: a row of this many or fewer is a
+/// list [design: owner 2026-11-15, the menu overhaul: "make anything with 7 or less options a
+/// dropdown instead of a slider"].
+pub const LIST_MOST: usize = 7;
+
+/// How many values slider `s` has (its positions from `min` to 1 in `step`s).
+pub fn slider_values(s: &Slider) -> usize {
+    (((1.0 - s.min) / s.step.max(1e-3)).round() as usize) + 1
+}
+
+/// Whether row `s` is a slider that should be a list ([`LIST_MOST`] or fewer values).
+pub fn few_step_slider(s: &Setting) -> bool {
+    s.slider.as_ref().is_some_and(|sl| slider_values(sl) <= LIST_MOST)
+}
+
+/// The registered rows' notes checked against the budget ([`note_over_budget`]) once every
+/// row is registered (module notes) [design: #2377], and the sliders against
+/// [`LIST_MOST`] [design: the menu overhaul].
+pub fn check_notes(settings: Option<Res<Settings>>) {
+    let Some(settings) = settings else { return };
+    let mut bad = 0;
+    for s in settings.list() {
+        if let Some(reason) = note_over_budget(s.note) {
+            bad += 1;
+            warn!("settings: note of `{}` over the budget: {reason}", s.key);
+        }
+    }
+    info!("settings: {} notes checked, {bad} over the budget ({NOTE_BUDGET} characters)", settings.list().len());
+    let sliders: Vec<&Setting> = settings.list().iter().filter(|s| s.slider.is_some()).collect();
+    let few: Vec<&str> = sliders.iter().filter(|s| few_step_slider(s)).map(|s| s.key).collect();
+    for k in &few {
+        warn!("settings: `{k}` is a slider of {LIST_MOST} or fewer values: make it a list (docs/design/settings-page.md)");
+    }
+    info!("settings: {} sliders checked, {} with {LIST_MOST} or fewer values", sliders.len(), few.len());
+}
+
 /// One on/off switch of the settings page.
 #[derive(Clone, Copy)]
 pub struct Setting {
@@ -160,8 +254,13 @@ pub struct Setting {
     /// The heading it is listed under; a new group goes after the ones before it.
     pub group: &'static str,
     pub label: &'static str,
-    /// What it does, in a line, and the command-line switch it starts from.
+    /// What it does, in a line or two: within [`NOTE_BUDGET`], no command-line switch in it
+    /// ([`Setting::switches`], [`note_over_budget`]).
     pub note: &'static str,
+    /// The command-line switches whose state the row replaces, as `--a, --b` ([`note_switches`]
+    /// reads them; [`GivenSwitches`]); empty: none. Not shown on the page (the search finds
+    /// them).
+    pub switches: &'static str,
     pub get: fn(&World) -> bool,
     pub set: fn(&mut World, bool),
     /// A slider instead of a switch (`get` and `set` then do nothing).
@@ -256,7 +355,12 @@ pub fn choice_index(v: f32, n: usize) -> usize {
 impl Setting {
     /// A slider row.
     pub fn slider(key: &'static str, group: &'static str, label: &'static str, note: &'static str, slider: Slider) -> Setting {
-        Setting { key, group, label, note, get: |_| false, set: |_, _| {}, slider: Some(slider) }
+        Setting { key, group, label, note, switches: "", get: |_| false, set: |_, _| {}, slider: Some(slider) }
+    }
+
+    /// The row with these command-line switches ([`Setting::switches`]).
+    pub const fn with_switches(self, switches: &'static str) -> Setting {
+        Setting { switches, ..self }
     }
 
     /// The row's state as a number: a slider's value, a switch's 1 or 0.
@@ -277,7 +381,7 @@ impl Setting {
 
     /// The state as kept in the INI: a slider's to the thousandth [`Slider::fit`] keeps
     /// (a step under a hundredth, a colour's 1 of 255, needs it), at least two places.
-    fn stored_text(&self, v: f32) -> String {
+    pub(crate) fn stored_text(&self, v: f32) -> String {
         match self.slider {
             Some(_) => {
                 let mut t = format!("{v:.3}");
@@ -307,6 +411,10 @@ pub type ChoiceLabel = fn(&World, &str) -> String;
 /// Why a list's choice cannot be taken now, by its name; `None`: it can
 /// ([`set_choice_unavailable`]).
 pub type ChoiceUnavailable = fn(&World, &str) -> Option<String>;
+
+/// Words a row's note gives now in place of its own, already in the language shown; `None`:
+/// its own note ([`set_note_now`]).
+pub type NoteNow = fn(&World) -> Option<String>;
 
 /// Whether a list's choice of this name is an action rather than a state to keep
 /// ([`set_choice_action`]).
@@ -339,7 +447,15 @@ pub struct Settings(
     /// How an older INI key's value splits into the rows' own ([`set_older_split`]): (the
     /// older key, the split).
     Vec<(&'static str, OlderSplit)>,
+    /// Rows shown only while their module says so ([`set_shown_when`]): (the row's key, the
+    /// key of the row that stands for it while hidden, the test).
+    Vec<(&'static str, &'static str, ShownWhen)>,
+    /// Rows whose note gives other words for a while ([`set_note_now`]).
+    Vec<(&'static str, NoteNow)>,
 );
+
+/// Whether a row is shown now ([`set_shown_when`]).
+pub type ShownWhen = fn(&World) -> bool;
 
 /// An older row's INI value read as the values of the rows that took over from it
 /// ([`set_older_split`]): (a row's key, its text) for each row the older value decides; none
@@ -389,7 +505,23 @@ impl Settings {
     /// value is kept intact and is still read/written by the settings file.
     pub fn disabled_status(&self, world: &World, i: usize) -> Option<&'static str> {
         let key = self.0.get(i)?.key;
-        (self.2.iter().find(|(k, _)| *k == key)?.1)(world)
+        if let Some(status) = self.2.iter().find(|(k, _)| *k == key).and_then(|(_, f)| f(world)) {
+            return Some(status);
+        }
+        // A row whose parent is off or not on a choice it needs (the shared tables
+        // `settings_layout::NEEDS` and `NEEDS_CHOICE`, which the launcher follows too).
+        crate::settings_layout::needs(key).into_iter().find_map(|r| {
+            let p = self.index(r.parent)?;
+            let holds = if r.choices.is_empty() { self.value(world, p) >= 0.5 } else { self.choices(p).is_some_and(|c| r.choices.contains(&(c.chosen)(world).as_str())) };
+            (!holds).then_some(r.why)
+        })
+    }
+
+    /// The words row `i`'s note gives now in place of its own ([`set_note_now`]); `None`: its
+    /// own.
+    pub fn note_now(&self, world: &World, i: usize) -> Option<String> {
+        let key = self.0.get(i)?.key;
+        (self.9.iter().find(|(k, _)| *k == key)?.1)(world)
     }
 
     /// List row `i`'s words and reasons for its choices, when it has any ([`ChoiceLooks`]).
@@ -432,6 +564,24 @@ impl Settings {
             Some((_, split)) => with_older_split(&t, key, older, *split),
             None => t,
         })
+    }
+
+    /// The rows hidden now: by another list row's choice (the shared table
+    /// `settings_layout::SHOWN_WITH`, which the launcher follows too) or by their module
+    /// ([`set_shown_when`]); each one's index and the index of the row that stands for it
+    /// (itself when that row is not registered).
+    pub fn hidden(&self, world: &World) -> Vec<(usize, usize)> {
+        let by_choice = crate::settings_layout::SHOWN_WITH.iter().filter_map(|(key, parent, choices)| {
+            let i = self.index(key)?;
+            let p = self.index(parent)?;
+            let list = self.choices(p)?;
+            (!choices.contains(&(list.chosen)(world).as_str())).then_some((i, p))
+        });
+        let by_module = self.8.iter().filter(|(_, _, shown)| !shown(world)).filter_map(|(key, parent, _)| {
+            let i = self.index(key)?;
+            Some((i, self.index(parent).unwrap_or(i)))
+        });
+        by_choice.chain(by_module).collect()
     }
 
     /// Every row's state as a number: [`Setting::value`], a list's chosen index (-1: not
@@ -484,6 +634,31 @@ pub fn set_disabled_status(app: &mut App, key: &'static str, status: fn(&World) 
     let mut settings = app.world_mut().resource_mut::<Settings>();
     settings.2.retain(|(k, _)| *k != key);
     settings.2.push((key, status));
+}
+
+/// Show row `key` only while `shown` says so [design: the menu overhaul, owner 2026-11-15:
+/// rows that cannot apply to the parent's choice are hidden, not greyed, where the owner
+/// said so (the upscaler's own rows, Generated Frames, the movement categories)]. A row
+/// hidden by another list row's choice goes in `settings_layout::SHOWN_WITH` instead, so the
+/// launcher hides it too; this is for a test the INI's values cannot say. While it
+/// is hidden the row `parent` stands for it: the search and the Changed list show that row,
+/// and a choice on the hidden row moves to it (`crate::settings_view::parent_of`). The INI
+/// and the test aids still set the hidden row.
+pub fn set_shown_when(app: &mut App, key: &'static str, parent: &'static str, shown: ShownWhen) {
+    app.init_resource::<Settings>();
+    let mut settings = app.world_mut().resource_mut::<Settings>();
+    settings.8.retain(|(k, _, _)| *k != key);
+    settings.8.push((key, parent, shown));
+}
+
+/// Give row `key`'s note `note`'s words, in place of its own, while it says something (module
+/// notes). The words are drawn as they come: `note` translates them itself
+/// (`fnv_util::words::trf`).
+pub fn set_note_now(app: &mut App, key: &'static str, note: NoteNow) {
+    app.init_resource::<Settings>();
+    let mut settings = app.world_mut().resource_mut::<Settings>();
+    settings.9.retain(|(k, _)| *k != key);
+    settings.9.push((key, note));
 }
 
 /// Show list `key`'s choices by `label`'s words instead of their names (module notes). The
@@ -591,7 +766,10 @@ pub fn pick_alias(world: &mut World, key: &str, name: &str) -> bool {
             Some((i, *k, (settings.choices(i)?.save)(world)))
         })
         .collect();
+    // The rows the older key sets write the INI once, below (StoreHold).
+    hold_store(world);
     if !(alias.pick)(world, name) {
+        release_store(world);
         warn!("settings: {key} has no such choice");
         return false;
     }
@@ -602,6 +780,7 @@ pub fn pick_alias(world: &mut World, key: &str, name: &str) -> bool {
     }
     info!("settings: {key} {}", (alias.chosen)(world));
     store(world);
+    release_store(world);
     true
 }
 
@@ -654,13 +833,42 @@ pub fn pick(world: &mut World, i: usize, name: &str) -> bool {
     take(world, i, |w| pick(w, name))
 }
 
+/// The choice of `names` that `text` stands for: a name (any case), or the number an older
+/// slider of the row kept, read by `from_number` [design: the menu overhaul, owner
+/// 2026-11-15: a row of 7 or fewer values is a list; the number an INI or a test aid gave
+/// before still loads, as the choice nearest it].
+pub fn choice_of(text: &str, names: &[String], from_number: fn(f32) -> usize) -> Option<usize> {
+    let t = text.trim();
+    names.iter().position(|n| n.eq_ignore_ascii_case(t)).or_else(|| t.parse::<f32>().ok().filter(|v| v.is_finite()).map(|v| from_number(v).min(names.len().saturating_sub(1))))
+}
+
+/// The index of the value of `values` nearest `v`.
+pub fn nearest(values: &[f32], v: f32) -> usize {
+    values.iter().enumerate().min_by(|a, b| (a.1 - v).abs().total_cmp(&(b.1 - v).abs())).map_or(0, |(i, _)| i)
+}
+
+/// Take `text` on list row `i` as the INI does (its `load`, so an older slider's number
+/// too), logged and kept as a pick is: for the test aids' numbers on rows that were sliders.
+pub fn load_text(world: &mut World, i: usize, text: &str) -> bool {
+    let Some(c) = world.get_resource::<Settings>().and_then(|s| s.choices(i)) else { return false };
+    let load = c.load;
+    let t = text.to_string();
+    take(world, i, |w| load(w, &t))
+}
+
 /// List row `i`'s state changed by `apply` (false: not taken), then kept in the INI; a
 /// list that asks to be kept waits for it.
 fn take(world: &mut World, i: usize, apply: impl FnOnce(&mut World) -> bool) -> bool {
     let Some(settings) = world.get_resource::<Settings>() else { return false };
     let (Some(s), Some(c)) = (settings.list().get(i).copied(), settings.choices(i)) else { return false };
     let before = (c.save)(world);
+    probe(world, s.key, EditPhase::Begin);
+    // Rows `apply` sets on its way (a preset's) write the INI once, below (StoreHold).
+    hold_store(world);
     if !apply(world) {
+        // What those rows changed before the refusal is still written.
+        release_store(world);
+        probe(world, s.key, EditPhase::End { applied: false });
         warn!("settings: {} has no such choice", s.key);
         return false;
     }
@@ -677,6 +885,8 @@ fn take(world: &mut World, i: usize, apply: impl FnOnce(&mut World) -> bool) -> 
         own(world, i);
     }
     store(world);
+    release_store(world);
+    probe(world, s.key, EditPhase::End { applied: true });
     true
 }
 
@@ -718,11 +928,13 @@ pub fn flip(world: &mut World, i: usize) -> Option<bool> {
         return None;
     }
     let on = !(s.get)(world);
+    probe(world, s.key, EditPhase::Begin);
     (s.set)(world, on);
     pipeline_change(world, s.key, (s.get)(world) == on);
     info!("settings: {} {}", s.key, if on { "on" } else { "off" });
     own(world, i);
     store(world);
+    probe(world, s.key, EditPhase::End { applied: true });
     Some(on)
 }
 
@@ -745,11 +957,13 @@ pub fn set_slider(world: &mut World, i: usize, v: f32) -> Option<f32> {
     let v = slider.fit(v);
     if (slider.get)(world) != v {
         let before = (slider.get)(world);
+        probe(world, s.key, EditPhase::Begin);
         (slider.set)(world, v);
         pipeline_change(world, s.key, (slider.get)(world) != before);
         info!("settings: {} {}", s.key, slider.text(v));
         own(world, i);
         store(world);
+        probe(world, s.key, EditPhase::End { applied: true });
     }
     Some(v)
 }
@@ -829,11 +1043,24 @@ pub(crate) fn setup(app: &mut App) {
     app.insert_resource(SettingsFile::for_run(crate::test_aid::Unattended::from_env().0));
     app.add_systems(PostStartup, (apply_stored, crate::bindings::apply_stored));
     app.add_systems(PostStartup, fix_ui_scale.after(apply_stored));
+    app.add_systems(PostStartup, fix_smooth_terrain.after(apply_stored));
+    app.add_systems(PostStartup, check_notes.after(apply_stored));
+    // The page for the launcher, once every row is registered (crate::settings_menu).
+    app.add_systems(PostStartup, crate::settings_menu::write_menu.after(check_notes));
     app.add_systems(Update, revert_unkept);
 }
 
+/// Whether the landscape is smoothed is fixed for the run once the INI is read
+/// (`crate::smooth_terrain`): before the first cell loads, for drawing and collision alike.
+pub fn fix_smooth_terrain() {
+    crate::smooth_terrain::fix();
+    info!("{}", crate::smooth_terrain::describe());
+}
+
 /// The UI scale is fixed for the run once the INI is read (`crate::interface::fix_ui_scale`).
-pub fn fix_ui_scale() {
+pub fn fix_ui_scale(menu: Option<Res<crate::menu_scale::MenuScale>>) {
+    let scale = menu.map_or_else(|| crate::interface::menu_scale_of(crate::interface::ui_scale_setting()), |menu| menu.scale());
+    crate::menu_scale::publish(scale);
     crate::interface::fix_ui_scale();
 }
 
@@ -933,8 +1160,8 @@ pub fn apply_stored(world: &mut World) {
             listed += 1;
             continue;
         }
-        let flags = given.named_in(list[i].note);
-        if let Some(f) = given.keeping(list[i].note) {
+        let flags = given.named_in(list[i].switches);
+        if let Some(f) = given.keeping(list[i].switches) {
             listed += 1;
             kept += 1;
             kept_rows.push((i, v.to_string()));
@@ -959,8 +1186,8 @@ pub fn apply_stored(world: &mut World) {
         if now == v {
             continue;
         }
-        let flags = given.named_in(s.note);
-        if let Some(f) = given.keeping(s.note) {
+        let flags = given.named_in(s.switches);
+        if let Some(f) = given.keeping(s.switches) {
             kept += 1;
             kept_rows.push((i, s.stored_text(v)));
             info!("settings: {} kept at {} as {f} on the command line set it; [{SECTION}] {}={} of {} is not applied in a test run", s.key, shown(&s, now), s.key, s.stored_text(v), path.display());
@@ -983,8 +1210,44 @@ pub fn apply_stored(world: &mut World) {
     info!("settings: {} of {} switch(es) read from {}, {} changed{what}{kept}", found.len() + listed, list.len(), path.display(), changed.len());
 }
 
-/// Write every switch's state to the INI, keeping its other lines.
-fn store(world: &World) {
+/// Rows set inside another row's change (a preset's rows, an older list's rows) ask for
+/// the INI to be written; it is written once, when the outermost change ends [design,
+/// #2248: each write cost ~27 ms on the main thread in the measured run, ten for one
+/// preset]. `depth` counts the changes under way, `pending` that one of them asked.
+#[derive(Resource, Default)]
+struct StoreHold {
+    depth: u32,
+    pending: bool,
+}
+
+/// Hold the INI write until the matching [`release_store`].
+fn hold_store(world: &mut World) {
+    world.get_resource_or_insert_with(StoreHold::default).depth += 1;
+}
+
+/// End a [`hold_store`]: the outermost one writes the INI if anything inside asked.
+fn release_store(world: &mut World) {
+    let write = {
+        let mut hold = world.get_resource_or_insert_with(StoreHold::default);
+        hold.depth = hold.depth.saturating_sub(1);
+        hold.depth == 0 && std::mem::take(&mut hold.pending)
+    };
+    if write {
+        store_now(world);
+    }
+}
+
+/// Write every switch's state to the INI, keeping its other lines; inside a held change,
+/// once at its end ([`StoreHold`]).
+fn store(world: &mut World) {
+    if let Some(mut hold) = world.get_resource_mut::<StoreHold>().filter(|h| h.depth > 0) {
+        hold.pending = true;
+        return;
+    }
+    store_now(world);
+}
+
+fn store_now(world: &World) {
     let Some(path) = world.get_resource::<SettingsFile>().and_then(|f| f.0.clone()) else { return };
     let Some(settings) = world.get_resource::<Settings>() else { return };
     // A choice waiting to be kept is kept as the one before; a row a test run kept at the
@@ -1002,6 +1265,9 @@ fn store(world: &World) {
             (None, _, _) => (s.key, s.stored_text(s.value(world))),
         })
         .collect();
+    if let Some(attempts) = world.get_resource::<StoreAttempts>() {
+        attempts.0.fetch_add(1, Relaxed);
+    }
     match write(&path, &states) {
         Ok(()) => debug!("settings: {} switch(es) written to {}", states.len(), path.display()),
         Err(e) => warn!("settings: not saved: {e}"),
@@ -1024,6 +1290,116 @@ fn write(path: &Path, states: &[(&str, String)]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Resource, Default)]
+    struct ProbeEvents(Vec<(String, bool, bool)>);
+
+    #[test]
+    fn edit_probe_covers_nested_setters_and_rejected_choices_but_skips_unchanged_sliders() {
+        let mut app = App::new();
+        app.init_resource::<Lamp>().insert_resource(Reach(0.5)).init_resource::<ProbeEvents>();
+        app.insert_resource(EditProbe(|world, key, phase| {
+            let (begin, applied) = match phase {
+                EditPhase::Begin => (true, false),
+                EditPhase::End { applied } => (false, applied),
+            };
+            world.resource_mut::<ProbeEvents>().0.push((key.into(), begin, applied));
+        }));
+        add_setting(&mut app, setting("lamp", "Test"));
+        add_setting(&mut app, slider("reach"));
+        add_choice_list(&mut app, setting("bundle", "Test"), ChoiceList {
+            names: |_| vec!["change".into()], chosen: |_| "before".into(), save: |_| "before".into(),
+            load: |_, _| false, ask_keep: false,
+            pick: |world, name| {
+                if name != "change" { return false; }
+                flip(world, 0);
+                set_slider(world, 1, 0.8);
+                true
+            },
+        });
+        let world = app.world_mut();
+        set_slider(world, 1, 0.5);
+        assert!(world.resource::<ProbeEvents>().0.is_empty());
+        assert!(pick(world, 2, "change"));
+        assert!(!pick(world, 2, "invalid"));
+        assert_eq!(world.resource::<ProbeEvents>().0, [
+            ("bundle".into(), true, false), ("lamp".into(), true, false), ("lamp".into(), false, true),
+            ("reach".into(), true, false), ("reach".into(), false, true), ("bundle".into(), false, true),
+            ("bundle".into(), true, false), ("bundle".into(), false, false),
+        ]);
+    }
+
+    /// #2248: a list whose choice sets other rows (as a quality preset does) writes the INI
+    /// once, with every row's new state; each row changed alone writes it once.
+    #[test]
+    fn a_choice_that_sets_other_rows_writes_the_ini_once() {
+        let dir = std::env::temp_dir().join(format!("nvf-settings-batch-{}", std::process::id()));
+        let path = dir.join("NVForever.ini");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = App::new();
+        app.init_resource::<Lamp>().insert_resource(Reach(0.5)).init_resource::<StoreAttempts>();
+        app.insert_resource(SettingsFile(Some(path.clone())));
+        add_setting(&mut app, setting("lamp", "Test"));
+        add_setting(&mut app, slider("reach"));
+        add_choice_list(&mut app, setting("bundle", "Test"), ChoiceList {
+            names: |_| vec!["change".into(), "half".into()], chosen: |_| "before".into(), save: |_| "before".into(),
+            load: |_, _| false, ask_keep: false,
+            pick: |world, name| {
+                match name {
+                    "change" => {
+                        flip(world, 0);
+                        set_slider(world, 1, 0.8);
+                        true
+                    }
+                    // Sets a row, then refuses: what it set is still written, once.
+                    "half" => {
+                        set_slider(world, 1, 0.3);
+                        false
+                    }
+                    _ => false,
+                }
+            },
+        });
+        // An older key whose choice sets two rows (pick_alias holds the write too).
+        set_list_alias(&mut app, "older", ListAlias {
+            rows: &["bundle"],
+            chosen: |_| "old".into(),
+            pick: |world, name| {
+                if name != "both" {
+                    return false;
+                }
+                flip(world, 0);
+                set_slider(world, 1, 0.6);
+                true
+            },
+            unavailable: |_, _| None,
+        });
+        let world = app.world_mut();
+        let writes = |w: &World| w.resource::<StoreAttempts>().0.load(Relaxed);
+        assert!(pick(world, 2, "change"));
+        assert_eq!(writes(world), 1, "one write for the choice and the two rows it set");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("lamp=1") && text.contains("reach=0.8"), "{text}");
+        flip(world, 0);
+        assert_eq!(writes(world), 2, "a row alone: one write");
+        set_slider(world, 1, 0.5);
+        assert_eq!(writes(world), 3);
+        assert!(!pick(world, 2, "half"));
+        assert_eq!(writes(world), 4, "the row set before the refusal is written once");
+        assert!(std::fs::read_to_string(&path).unwrap().contains("reach=0.3"));
+        assert!(!pick(world, 2, "invalid"));
+        assert_eq!(writes(world), 4, "nothing changed, nothing written");
+        assert!(pick_alias(world, "older", "both"));
+        assert_eq!(writes(world), 5, "an older key's choice and its two rows: one write");
+        assert!(std::fs::read_to_string(&path).unwrap().contains("reach=0.6"));
+        assert!(!pick_alias(world, "older", "neither"));
+        assert_eq!(writes(world), 5, "a refused older choice that set nothing writes nothing");
+        // The hold is released: a later row writes at once again.
+        flip(world, 0);
+        assert_eq!(writes(world), 6);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn pipeline_rows_latch_effective_pause_edits_including_defaults() {
@@ -1062,7 +1438,7 @@ mod tests {
     struct Lamp(bool);
 
     fn setting(key: &'static str, group: &'static str) -> Setting {
-        Setting { key, group, label: key, note: "", get: |w| w.resource::<Lamp>().0, set: |w, on| w.resource_mut::<Lamp>().0 = on, slider: None }
+        Setting { key, group, label: key, note: "", switches: "", get: |w| w.resource::<Lamp>().0, set: |w, on| w.resource_mut::<Lamp>().0 = on, slider: None }
     }
 
     #[derive(Resource)]
@@ -1159,6 +1535,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The menu overhaul: a slider of 7 or fewer values is to be a list.
+    #[test]
+    fn a_slider_of_seven_values_or_fewer_is_to_be_a_list() {
+        let s = |min: f32, step: f32| Setting::slider("x", "Test", "x", "", Slider { get: |_| 0.0, set: |_, _| {}, min, step, shown: None });
+        assert_eq!(slider_values(&s(0.0, 0.05).slider.unwrap()), 21);
+        assert!(!few_step_slider(&s(0.0, 0.05)), "a volume: 21 values");
+        assert!(few_step_slider(&s(0.0, 1.0 / 6.0)), "seven values");
+        assert!(!few_step_slider(&s(0.0, 1.0 / 7.0)), "eight values");
+        assert!(few_step_slider(&s(0.5, 0.25)), "three values");
+        let switch = Setting { slider: None, ..s(0.0, 0.5) };
+        assert!(!few_step_slider(&switch));
+    }
+
     /// #1631: the UI scale row is kept in the INI as its part and read back at the next
     /// start; a value out of range is brought to the nearest end, one that is not a
     /// number is skipped. (The only test that sets the UI scale setting.)
@@ -1171,36 +1560,121 @@ mod tests {
             crate::interface::set_ui_scale_setting(1.0);
             let mut app = App::new();
             app.insert_resource(SettingsFile(Some(path.to_path_buf())));
-            add_setting(&mut app, crate::interface::ui_scale_row("Display"));
+            let (row, list) = crate::interface::ui_scale_row("Display");
+            add_choice_list(&mut app, row, list);
+            crate::menu_scale::register(&mut app, "Display");
             app.add_systems(PostStartup, apply_stored);
             app.update();
             app
         };
         let mut app = start(&path);
         assert_eq!(crate::interface::ui_scale_setting(), 1.0, "no INI yet: 100%");
-        set_slider(app.world_mut(), 0, 0.25);
-        assert_eq!(crate::interface::ui_scale_setting(), 0.75);
-        assert!(std::fs::read_to_string(&path).unwrap().contains("[Settings]
-ui-scale=0.25
-"));
+        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 1.0, "no INI yet: menus 100%");
+        // A list since the menu overhaul: kept by its name.
+        assert!(pick(app.world_mut(), 0, "80%"));
+        assert_eq!(crate::interface::ui_scale_setting(), 0.8);
+        assert!(std::fs::read_to_string(&path).unwrap().contains("ui-scale=80%"));
         let _app = start(&path);
-        assert_eq!(crate::interface::ui_scale_setting(), 0.75, "the stored scale wins at the next start");
-        for (stored, scale) in [("7", 1.5), ("-2", 0.5), ("0.26", 0.75), ("big", 1.0)] {
+        assert_eq!(crate::interface::ui_scale_setting(), 0.8, "the stored scale wins at the next start");
+        // An older slider's part loads as the choice nearest it (past 100%: 100%); text that
+        // is neither is skipped.
+        for (stored, scale) in [("7", 1.0), ("-2", 0.5), ("0.3", 0.8), ("big", 1.0)] {
             std::fs::write(&path, format!("[Settings]
 ui-scale={stored}
 ")).unwrap();
             let _app = start(&path);
             assert_eq!(crate::interface::ui_scale_setting(), scale, "ui-scale={stored}");
         }
+        // A legacy-only value seeds both effective sizes. Changing only the HUD
+        // then saves the untouched menu value explicitly before the next restart.
+        std::fs::write(&path, "[Settings]
+ui-scale=0.3
+[Other]
+keep=yes
+").unwrap();
+        let mut app = start(&path);
+        assert_eq!(crate::interface::ui_scale_setting(), 0.8);
+        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 0.8);
+        assert!(pick(app.world_mut(), 0, "50%"));
+        assert_eq!(crate::interface::ui_scale_setting(), 0.5);
+        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 0.8);
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(ini_get(&saved, SECTION, "menu-scale").as_deref(), Some("80%"));
+        assert_eq!(ini_get(&saved, "Other", "keep").as_deref(), Some("yes"));
+        let mut app = start(&path);
+        assert_eq!(crate::interface::ui_scale_setting(), 0.5);
+        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 0.8);
+        let menu = app.world().resource::<Settings>().index(crate::menu_scale::KEY).unwrap();
+        assert!(pick(app.world_mut(), menu, "100%"));
+        let app = start(&path);
+        assert_eq!(crate::interface::ui_scale_setting(), 0.5);
+        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 1.0);
+        // The explicit new key wins even when the legacy HUD value is larger.
+        std::fs::write(&path, "[Settings]
+ui-scale=0.75
+menu-scale=0.6
+").unwrap();
+        let app = start(&path);
+        assert_eq!(crate::interface::ui_scale_setting(), 1.0);
+        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 0.8);
+        std::fs::write(&path, "[Settings]
+ui-scale=0.3
+menu-scale=bad
+").unwrap();
+        let app = start(&path);
+        assert_eq!(crate::interface::ui_scale_setting(), 0.8);
+        assert_eq!(app.world().resource::<crate::menu_scale::MenuScale>().scale(), 1.0, "invalid explicit menu text keeps its default, not the legacy HUD size");
         crate::interface::set_ui_scale_setting(1.0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// #2377: a row's switches are read as its note's were, the same parse: each `--name`
+    /// once, in order, a value after it ignored, one the text is "a part of" left out.
     #[test]
-    fn a_switch_given_on_the_command_line_wins_in_a_test_run_only() {
-        assert_eq!(note_switches("On: a lamp. (--lamp, --no-lamp)"), ["--lamp", "--no-lamp"]);
+    fn switches_are_read_as_the_notes_named_them() {
+        assert_eq!(note_switches("--lamp, --no-lamp"), ["--lamp", "--no-lamp"]);
+        assert_eq!(note_switches("On: a lamp. (--lamp, --no-lamp)"), ["--lamp", "--no-lamp"], "as a note named them");
         assert_eq!(note_switches("Off: --no-reverb."), ["--no-reverb"]);
         assert_eq!(note_switches("as a part of --shadow-distance. (--graphics-only no-glow)"), ["--graphics-only"]);
+        assert_eq!(note_switches("--sun-shadows, --sun-shadows=performance, --no-sun-shadows"), ["--sun-shadows", "--no-sun-shadows"]);
+        assert!(note_switches("").is_empty());
+        // The rows of nvf-play that name switches, as their notes did before #2377.
+        for (switches, want) in [
+            ("--no-reverb", &["--no-reverb"][..]),
+            ("--no-dialogue-look", &["--no-dialogue-look"]),
+            ("--dialogue-recentre", &["--dialogue-recentre"]),
+            ("--no-dialogue-zoom", &["--no-dialogue-zoom"]),
+            ("--no-music", &["--no-music"]),
+            ("--no-voice", &["--no-voice"]),
+            ("--menu-pause", &["--menu-pause"]),
+        ] {
+            assert_eq!(note_switches(switches), want);
+        }
+        // A row built as a slider takes its switches by `with_switches`.
+        let s = slider("reach").with_switches("--reach");
+        assert_eq!((s.switches, s.key, s.slider.is_some()), ("--reach", "reach", true));
+        assert_eq!(slider("reach").switches, "");
+    }
+
+    /// #2377: a note is within the budget up to 200 characters, counted as characters (not
+    /// bytes), and names no command-line switch.
+    #[test]
+    fn a_note_over_the_budget_says_why() {
+        let a = "a".repeat(NOTE_BUDGET);
+        assert_eq!(note_over_budget(&a), None);
+        assert_eq!(note_over_budget(&format!("{a}b")), Some("201 characters, more than 200".to_string()));
+        let umlauts = "ä".repeat(NOTE_BUDGET);
+        assert!(umlauts.len() > NOTE_BUDGET && note_over_budget(&umlauts).is_none(), "200 two-byte characters are within it");
+        assert!(note_over_budget(&format!("{umlauts}ö")).is_some());
+        let switch = note_over_budget("On: a lamp. (--lamp)").expect("a switch in the text");
+        assert!(switch.contains("--lamp"), "{switch}");
+        assert!(note_over_budget("Off: --no-reverb.").is_some());
+        assert_eq!(note_over_budget("A range -- of two."), None, "a dash between words is not a switch");
+        assert_eq!(note_over_budget(""), None);
+    }
+
+    #[test]
+    fn a_switch_given_on_the_command_line_wins_in_a_test_run_only() {
         let dir = std::env::temp_dir().join(format!("nvf-settings-given-{}", std::process::id()));
         let path = dir.join("NVForever.ini");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1211,7 +1685,7 @@ ui-scale={stored}
             app.insert_resource(Lamp(true));
             app.insert_resource(SettingsFile(Some(path.clone())));
             app.insert_resource(GivenSwitches { given: given.iter().map(|g| g.to_string()).collect(), win });
-            add_setting(&mut app, Setting { note: "On: a lamp. (--lamp)", ..setting("lamp", "Test") });
+            add_setting(&mut app, Setting { note: "On: a lamp.", switches: "--lamp", ..setting("lamp", "Test") });
             app.add_systems(PostStartup, apply_stored);
             app.update();
             app.world().resource::<Lamp>().0
@@ -1224,7 +1698,7 @@ ui-scale={stored}
 
     #[test]
     fn after_ini_is_the_same_precedence_for_any_kind_of_row() {
-        let note = "Which one. (--pick)";
+        let note = "--pick";
         let given = |win: bool| GivenSwitches { given: vec!["--pick".into()], win };
         assert_eq!(after_ini("cli", Some("ini"), &given(false), note), "ini", "normal play: the INI wins");
         assert_eq!(after_ini("cli", Some("ini"), &given(true), note), "cli", "a test run keeps a switch it was given");
@@ -1249,7 +1723,7 @@ reach=0.5
         app.insert_resource(Lamp(true)).insert_resource(Reach(1.0));
         app.insert_resource(SettingsFile(Some(path.clone())));
         app.insert_resource(GivenSwitches { given: vec!["--lamp".into()], win: true });
-        add_setting(&mut app, Setting { note: "On: a lamp. (--lamp)", ..setting("lamp", "Test") });
+        add_setting(&mut app, Setting { note: "On: a lamp.", switches: "--lamp", ..setting("lamp", "Test") });
         add_setting(&mut app, slider("reach"));
         app.add_systems(PostStartup, apply_stored);
         app.update();
@@ -1666,7 +2140,7 @@ size=1920x1080;kept
             ] {
                 add_choice_list(
                     &mut app,
-                    Setting { key, group: "Test", label: key, note: "(--pair)", get: |_| false, set: |_, _| {}, slider: None },
+                    Setting { key, group: "Test", label: key, note: "", switches: "--pair", get: |_| false, set: |_, _| {}, slider: None },
                     ChoiceList { names: |_| vec!["a".into(), "b".into(), "x".into(), "y".into()], chosen: get, pick: set, save: get, load: set, ask_keep: false },
                 );
             }

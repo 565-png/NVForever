@@ -57,6 +57,29 @@ impl Compiled {
         self.program.blocks.iter().any(|b| b.event == event)
     }
 
+    /// Whether a GameMode block of the script tests that a reference is not in the
+    /// player's cell: an If condition with `GetInSameCell … 0 ==` or `GetInSameCell … 1 !=`
+    /// (`Game::run_far_frame`'s rule). Such a branch can only do anything while the
+    /// actor is somewhere the player is not, so the script was written to run then.
+    pub fn tests_away_from_player(&self) -> bool {
+        use fnv_script::ir::{Op, Stmt, Token};
+        const GET_IN_SAME_CELL: u16 = 0x1020;
+        fn away(tokens: &[Token]) -> bool {
+            tokens.windows(3).any(|w| match w {
+                [Token::Call { call }, Token::Num { value, .. }, Token::Op { op }] if call.opcode == GET_IN_SAME_CELL => (*value == 0.0 && *op == Op::Eq) || (*value == 1.0 && *op == Op::Ne),
+                _ => false,
+            })
+        }
+        fn rec(body: &[Stmt]) -> bool {
+            body.iter().any(|st| match st {
+                Stmt::If { arms, otherwise } => arms.iter().any(|a| away(&a.cond.0) || rec(&a.body)) || otherwise.as_deref().is_some_and(rec),
+                Stmt::While { body, .. } | Stmt::ForEach { body, .. } => rec(body),
+                _ => false,
+            })
+        }
+        self.program.blocks.iter().filter(|b| b.event == crate::game::event::GAME_MODE).any(|b| rec(&b.body))
+    }
+
     /// Declared type of a local variable.
     pub fn var_type(&self, index: u16) -> Option<&VarType> {
         self.unit.var(index as u32).map(|v| &v.ty)
@@ -602,7 +625,14 @@ pub struct RegionDef {
     /// The map block (RDAT type 4, then RDMP), when the region has one: its name and the
     /// header's priority (schema `sky.json` REGN RDMP).
     pub map: Option<(String, u8)>,
+    /// The record's Border Region flag (header bit 6, 0x40) [documented: GECK wiki form
+    /// flags table, "Border Region" at 64]: the player is kept inside its areas
+    /// (`crate::borders`).
+    pub border: bool,
 }
+
+/// REGN record flag Border Region [documented: GECK wiki form flags table, 64].
+pub const BORDER_REGION: u32 = 0x40;
 
 /// A region's weather block [documented: xEdit wbRegionDataEntries type 3; schema
 /// `sky.json` REGN RDAT, RDWT]: its RDAT flags (bit 0 override,
@@ -1110,6 +1140,10 @@ pub struct GameData {
     pub class_services: HashMap<FormId, u32>,
     pub issues: Issues,
     pub read_issues: ReadIssues,
+    /// What the compile of mods' source text made of each unit it picked
+    /// (`crate::source_compile`): whether it compiled, and the names it calls that
+    /// nothing knows. For the engine's log and `fnvtool ext report`.
+    pub source_units: Vec<crate::source_compile::SourceUnit>,
 }
 
 /// An idle animation (IDLE) as far as playing it goes: the file it names and how often
@@ -1959,6 +1993,7 @@ impl GameData {
             class_services: HashMap::new(),
             issues: Issues::default(),
             read_issues: ReadIssues::default(),
+            source_units: Vec::new(),
         };
         // Decode every unit once.
         let mut all_units: Vec<ScriptUnit> = Vec::new();
@@ -1999,11 +2034,11 @@ impl GameData {
         // of a unit only what `source_compile::apply` leaves alone.
         let table = std::mem::take(&mut d.table);
         if long_way {
-            let recompiled = crate::source_compile::compile_picked(lo, &table, &units);
-            crate::source_compile::apply(&mut units, recompiled, &mut d.issues);
+            let recompiled = crate::source_compile::compile_picked(lo, schema, &table, &units);
+            d.source_units.extend(crate::source_compile::apply(&mut units, recompiled, &mut d.issues));
         }
         let recompiled = std::thread::scope(|scope| {
-            let compile = scope.spawn(|| if long_way { crate::source_compile::Recompiled::none() } else { crate::source_compile::compile_picked(lo, &table, &units) });
+            let compile = scope.spawn(|| if long_way { crate::source_compile::Recompiled::none() } else { crate::source_compile::compile_picked(lo, schema, &table, &units) });
             // In form order, as one list read all at once was.
             let mut unit_reads: HashMap<u32, Box<Read>> = unit_reads.into_iter().collect();
             // The reads run a slice at a time inside the loop below: their time is summed here,
@@ -2297,7 +2332,7 @@ impl GameData {
             recompiled
         });
         d.table = table;
-        crate::source_compile::apply(&mut units, recompiled, &mut d.issues);
+        d.source_units.extend(crate::source_compile::apply(&mut units, recompiled, &mut d.issues));
         d.units = units;
         clock.lap("source compile results put in");
         for stages in d.need_stages.values_mut() {
@@ -3471,7 +3506,7 @@ fn read_one(lo: &LoadOrder, schema: &Schema, types: &ParamTypes, g: u32, pi: usi
             });
         }
         b"REGN" => {
-            let mut rg = RegionDef::default();
+            let mut rg = RegionDef { border: r.header.flags & BORDER_REGION != 0, ..Default::default() };
             let num = |v: Option<&Json>| v.and_then(|x| x.as_f64().or_else(|| x.get("value")?.as_f64())).unwrap_or(0.0);
             let mut header: Option<&Json> = None;
             for (s, v) in &decoded {

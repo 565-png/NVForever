@@ -10,6 +10,8 @@
 use crate::game::{Game, RunCtx};
 use fnv_script::vm::{Value, XVal};
 use fnv_sim::FormId;
+use std::sync::Arc;
+use crate::jip_provenance::Registrar;
 
 /// XMarker: the "no filter" form some events take, since 0 is refused [documented:
 /// SetOnCriticalHitEventHandler].
@@ -21,10 +23,14 @@ pub struct JipEvents {
     pub handlers: Vec<JipHandler>,
     pub main_loop: Vec<MainLoop>,
     seq: u64,
+    /// Diagnostic metadata only, bounded by active registrations; no callable retention.
+    registrars: std::collections::HashMap<u64, Arc<Registrar>>,
     /// Each actor's hit in progress, or its last one (task J7, jip-hit-info.md §5).
     pub hits: std::collections::HashMap<FormId, JipHit>,
     /// The keys and mouse buttons held last frame, for the key-down and key-up events.
     pub keys_held: std::collections::BTreeSet<u16>,
+    /// Last 28-control event snapshot; shared by both control-event interfaces.
+    pub controls_held: u32,
     /// ScriptWait: the waiting block of each script instance (one at a time
     /// [documented: ScriptWait]); not saved [hypothesis, as the registrations].
     pub waits: std::collections::HashMap<crate::game::InstKey, Waiting>,
@@ -84,6 +90,51 @@ pub struct JipHandler {
     pub seq: u64,
 }
 
+/// Snapshot diagnostics with the handler before any callback can remove its registrar.
+struct JipAttempt {
+    handler: JipHandler,
+    registrar: Option<Arc<Registrar>>,
+}
+
+impl JipEvents {
+    fn attempt(&self, handler: &JipHandler) -> JipAttempt {
+        JipAttempt { handler: handler.clone(), registrar: self.registrars.get(&handler.seq).cloned() }
+    }
+}
+
+/// Bounded values for diagnostics: no array dereference or unbounded string copy.
+fn diagnostic_value(value: &XVal) -> String {
+    match value {
+        XVal::Num(n) => format!("number:{n:?}"),
+        XVal::Ref(id) => format!("ref:0x{id:08X}"),
+        XVal::Array(id) => format!("array:{id}"),
+        XVal::Str(text) => {
+            let mut out = String::from("string:\"");
+            let mut chars = text.chars();
+            for c in chars.by_ref().take(32) {
+                out.extend(c.escape_debug());
+            }
+            if chars.next().is_some() {
+                out.push_str("<truncated>");
+            }
+            out.push('"');
+            out
+        }
+    }
+}
+
+impl JipHandler {
+    fn failure_context(&self, on: Option<FormId>, args: usize) -> String {
+        let filters = self.filters.iter().take(4).map(diagnostic_value).collect::<Vec<_>>().join(", ");
+        let omitted = if self.filters.len() > 4 { ", <truncated>" } else { "" };
+        let receiver = on.map_or_else(|| "none".into(), |r| format!("0x{:08X}", r.0));
+        format!(
+            "registration={} callable={} receiver={} args={} filters(total={})=[{}{}]",
+            self.seq, diagnostic_value(&self.func), receiver, args, self.filters.len(), filters, omitted,
+        )
+    }
+}
+
 /// One SetGameMainLoopCallback registration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MainLoop {
@@ -95,6 +146,8 @@ pub struct MainLoop {
     /// 1 game mode, 2 menu mode, 8 removed on load [documented].
     pub flags: u32,
     pub due: u64,
+    /// Quantized game clock at registration or the last actual invocation.
+    pub(crate) last_clock: f64,
 }
 
 /// What a filter at each position tests: the calling reference or an argument
@@ -113,7 +166,8 @@ fn slots(event: &str) -> &'static [Slot] {
         "animaction" | "playgroup" => &[Slot::On, Slot::ExactArg(0)],
         "criticalhit" => &[Slot::On, Slot::Arg(0), Slot::Arg(1)],
         "queststage" => &[Slot::Arg(0), Slot::Arg(1)],
-        "useaiditem" | "dialogtopic" | "keydown" | "keyup" | "controldown" | "controlup" | "triggerdown" | "triggerup" | "menuopen" | "menuclose" | "mouseoverchange" => &[Slot::Arg(0)],
+        "controldown" | "controlup" => &[Slot::ExactArg(0)],
+        "useaiditem" | "dialogtopic" | "keydown" | "keyup" | "triggerdown" | "triggerup" | "menuopen" | "menuclose" | "mouseoverchange" => &[Slot::Arg(0)],
         _ => &[],
     }
 }
@@ -131,9 +185,16 @@ pub fn click_path_matches(filter: &str, menu: &str, path: &str, id: f64) -> bool
 
 impl Game<'_> {
     /// `SetOn<event>EventHandler func add filters…`; a second identical registration is
-    /// kept once [decision, jip-events.md §2]. Returns whether anything changed.
-    pub(crate) fn jip_set(&mut self, event: String, func: XVal, add: bool, filters: Vec<XVal>) -> bool {
+    /// kept once [decision, jip-events.md §2]. A removal takes the registrations whose
+    /// filters begin with the ones given: the same filters, or with fewer (none: every
+    /// registration of that handler for the event) [documented: the same filters remove
+    /// the registration, jip-events.md §1; hypothesis: fewer remove all that match them,
+    /// as Just Assorted Mods' sprint relies on: it registers its key handler per key and
+    /// removes it with no key before registering again or when the sprint is turned off,
+    /// observed in its script source; issue #2952]. Returns whether anything changed.
+    pub(crate) fn jip_set(&mut self, event: String, func: XVal, add: bool, filters: Vec<XVal>, registrar: Option<Arc<Registrar>>) -> bool {
         let same = |h: &JipHandler| h.event == event && h.func == func && h.filters == filters;
+        let removed = |h: &JipHandler| h.event == event && h.func == func && h.filters.starts_with(&filters);
         if add {
             if self.jip.handlers.iter().any(same) {
                 return true;
@@ -141,10 +202,14 @@ impl Game<'_> {
             self.jip.seq += 1;
             let seq = self.jip.seq;
             self.jip.handlers.push(JipHandler { event, func, filters, seq });
+            if let Some(registrar) = registrar { self.jip.registrars.insert(seq, registrar); }
             true
         } else {
             let before = self.jip.handlers.len();
-            self.jip.handlers.retain(|h| !same(h));
+            let registrars = &mut self.jip.registrars;
+            self.jip.handlers.retain(|h| {
+                if removed(h) { registrars.remove(&h.seq); false } else { true }
+            });
             self.jip.handlers.len() < before
         }
     }
@@ -154,7 +219,7 @@ impl Game<'_> {
         self.jip.main_loop.retain(|m| !(m.func == func && m.on == on));
         if add {
             let delay = delay.max(1);
-            self.jip.main_loop.push(MainLoop { func, on, delay, flags, due: self.frame + delay });
+            self.jip.main_loop.push(MainLoop { func, on, delay, flags, due: self.frame + delay, last_clock: crate::functions::clock_now(self.time) });
         }
     }
 
@@ -163,7 +228,7 @@ impl Game<'_> {
         if self.jip.handlers.is_empty() {
             return 0;
         }
-        let hs: Vec<JipHandler> = self.jip.handlers.iter().filter(|h| h.event == event && self.jip_matches(h, on, &args)).cloned().collect();
+        let hs = self.jip.handlers.iter().filter(|h| h.event == event && self.jip_matches(h, on, &args)).map(|h| self.jip.attempt(h)).collect();
         self.jip_run(event, hs, on, args)
     }
 
@@ -182,22 +247,24 @@ impl Game<'_> {
             XVal::Str(f) => click_path_matches(f, menu, path, id),
             _ => false,
         };
-        let hs: Vec<JipHandler> = self.jip.handlers.iter().filter(|h| h.event == "menuclick" && h.filters.first().is_some_and(matches)).cloned().collect();
+        let hs = self.jip.handlers.iter().filter(|h| h.event == "menuclick" && h.filters.first().is_some_and(matches)).map(|h| self.jip.attempt(h)).collect();
         self.jip_run("menuclick", hs, None, vec![XVal::Num(menu_id), XVal::Num(id), XVal::Str(name.to_ascii_lowercase())])
     }
 
-    fn jip_run(&mut self, event: &str, mut hs: Vec<JipHandler>, on: Option<FormId>, args: Vec<XVal>) -> usize {
-        hs.sort_by_key(|h| std::cmp::Reverse(h.seq));
+    fn jip_run(&mut self, event: &str, mut hs: Vec<JipAttempt>, on: Option<FormId>, args: Vec<XVal>) -> usize {
+        hs.sort_by_key(|h| std::cmp::Reverse(h.handler.seq));
         let ctx = RunCtx { self_ref: on, ..RunCtx::default() };
         let mut ran = 0;
-        for h in &hs {
+        for attempt in &hs {
+            let h = &attempt.handler;
             if self.function_arity(&h.func).is_some_and(|n| n < args.len()) {
                 tracing::info!("jip: a {event} handler takes fewer than the event's {} values and does not run", args.len());
                 continue;
             }
             match self.run_function(&h.func, on.map(|f| Value::Ref(f.0)), args.clone(), None, ctx) {
                 Ok(_) => ran += 1,
-                Err(error) => self.handler_failed(format!("JIP {event} handler"), error),
+                Err(error) => self.handler_failed_with_registrar(format!("JIP {event} handler"), error,
+                    || Some(h.failure_context(on, args.len())), attempt.registrar.as_deref()),
             }
         }
         ran
@@ -272,7 +339,36 @@ impl Game<'_> {
     /// handler gets the key]. The keys held are the player's whatever DisableKey says, as
     /// the events "still run even if the key has been disabled" [documented:
     /// SetOnKeyDownEventHandler].
+    /// Both control-event interfaces follow the same frame entry point, after key
+    /// callbacks, against a snapshot taken before callbacks (control-input-events.md).
     pub(crate) fn jip_keys(&mut self) {
+        let controls = self.input.controls_for_events();
+        self.jip_key_edges();
+        self.control_edges(controls);
+    }
+
+    fn control_edges(&mut self, now: u32) {
+        let before = std::mem::replace(&mut self.jip.controls_held, now);
+        let changed = now ^ before;
+        if changed == 0 { return; }
+        let jip = self.jip.handlers.iter().any(|h| h.event == "controldown" || h.event == "controlup");
+        let named = self.handlers.iter().any(|h| h.event.starts_with("oncontroldown:") || h.event.starts_with("oncontrolup:"));
+        if !jip && !named { return; }
+        // Snapshot all edges before callbacks can rebind or disable controls. The
+        // existing dispatchers own filters, callable admission and source context.
+        for c in 0..crate::script_input::CONTROLS {
+            if changed & (1 << c) == 0 { continue; }
+            let down = now & (1 << c) != 0;
+            if jip {
+                self.jip_event(if down { "controldown" } else { "controlup" }, None, vec![XVal::Num(c as f64)]);
+            }
+            if named {
+                self.dispatch_event(&format!("OnControl{}:{c}", if down { "Down" } else { "Up" }), vec![XVal::Num(c as f64)], None);
+            }
+        }
+    }
+
+    fn jip_key_edges(&mut self) {
         if self.jip.keys_held == self.input.held {
             return;
         }
@@ -308,12 +404,15 @@ impl Game<'_> {
         let frame = self.frame;
         let due: Vec<MainLoop> = self.jip.main_loop.iter().filter(|m| m.due <= frame && m.flags & want != 0).cloned().collect();
         for m in due {
+            let now = crate::functions::clock_now(self.time);
+            let seconds = (now - m.last_clock).max(0.0);
             for x in self.jip.main_loop.iter_mut().filter(|x| x.func == m.func && x.on == m.on) {
                 x.due = frame + x.delay;
+                x.last_clock = now;
             }
             let on = m.on.unwrap_or(FormId::PLAYER_REF);
             let ctx = RunCtx { self_ref: Some(on), ..RunCtx::default() };
-            if let Err(error) = self.run_function(&m.func, Some(Value::Ref(on.0)), Vec::new(), None, ctx) {
+            if let Err(error) = self.run_function_with_seconds(&m.func, Some(Value::Ref(on.0)), Vec::new(), None, (ctx, Some(seconds))) {
                 self.handler_failed("JIP main-loop callback".into(), error);
             }
         }

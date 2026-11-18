@@ -32,6 +32,10 @@
 //!
 //! Behaviour notes with confidence tags: docs/spec-notes/scripts.md §4 and later.
 
+// Shared test fixtures use the same crate name in library and integration tests.
+#[cfg(test)]
+extern crate self as fnv_game;
+
 pub mod abilities;
 pub mod activate_choices;
 pub mod actor_values;
@@ -45,6 +49,7 @@ pub mod anim_state;
 pub mod anims;
 pub mod awareness;
 pub mod blackjack;
+pub mod borders;
 pub mod breath;
 pub mod camera_paths;
 pub mod books;
@@ -56,14 +61,23 @@ pub mod combat;
 pub mod combat_group;
 pub mod combat_lines;
 pub mod combat_style;
+mod combat_style_session;
+#[cfg(test)]
+mod combat_style_session_tests;
+#[cfg(test)]
+#[path = "../tests/common/mod.rs"]
+mod common;
 pub mod companion_wheel;
 pub mod coop;
 pub mod cond;
 pub mod coverage;
+pub mod connections;
 pub mod crafting;
 pub mod crime;
 pub mod data;
 pub mod source_compile;
+pub mod softlock;
+pub mod plugin_questions;
 pub mod sweep;
 pub mod death_items;
 pub mod debugger;
@@ -81,9 +95,16 @@ pub mod holotapes;
 pub mod game;
 pub mod idles;
 pub mod intro;
+pub mod jip_ccc;
 pub mod jip_events;
+mod jip_provenance;
+#[cfg(test)]
+mod handler_diagnostics_tests;
 pub mod nvse;
 pub mod nvse_ttw;
+pub mod nvse_unlisted;
+pub mod nvse_unlisted2;
+pub mod nvse_json;
 pub mod delayed;
 pub mod nvse_refs;
 pub mod nvse_misc;
@@ -113,6 +134,7 @@ pub mod nvse_sup7;
 pub mod nvse_jg_nif;
 pub mod nvse_sup4;
 pub mod image_files;
+pub mod tweaks;
 pub mod xls;
 pub mod nvse_dialogue;
 pub mod nvse_vheyes;
@@ -184,6 +206,7 @@ pub mod pickpocket;
 pub mod poker;
 pub mod provocation;
 pub mod revision;
+mod retired_scene;
 pub mod quest;
 pub mod quest_targets;
 pub mod radiation;
@@ -212,9 +235,11 @@ pub mod ui_hudbar;
 pub mod ui_loading;
 pub mod ui_hud;
 pub mod ui_more;
+pub mod ui_projection;
 pub mod ui_input;
 pub mod unconscious;
 pub mod use_weapon;
+pub mod weapon_poison;
 pub mod vats;
 pub mod voice;
 pub mod weather;
