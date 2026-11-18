@@ -93,6 +93,9 @@ pub struct AmbientOcclusion {
     pub area: Vec4,
     /// x 1 for the old estimate, y 1 for the factor shown alone as grey ([`AoDebug`]).
     pub mode: Vec4,
+    /// The candidate remedy for the shimmer on plants ([`AoVariant::uniform`]); all 0 for
+    /// the estimate as shipped.
+    pub variant: Vec4,
 }
 
 impl Default for AmbientOcclusion {
@@ -109,6 +112,8 @@ impl AmbientOcclusion {
             render_scale: Vec4::ONE,
             area: Vec4::ZERO,
             mode: debug.mode(),
+            // The old estimate reads none of it (`nearest` would reach its depth reads too).
+            variant: if debug.old { Vec4::ZERO } else { debug.variant.uniform() },
         }
     }
 
@@ -140,6 +145,9 @@ pub(crate) static AO_BEFORE_FSR: std::sync::LazyLock<bool> =
 /// `NVF_PLAY_DEBUG_AO_STRENGTH=<number>` (read once too) replaces [`GTAO_STRENGTH`] for the
 /// ground-truth estimate, held to 0..1, so strengths can be compared by eye from a launcher;
 /// the old estimate keeps its own.
+///
+/// `NVF_PLAY_DEBUG_AO_VARIANT=<names>` (read once too) picks candidate remedies for the
+/// ground-truth estimate's shimmer on plants ([`AoVariant`]); the old estimate ignores it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct AoDebug {
     /// The old estimate instead of ground-truth ambient occlusion.
@@ -148,6 +156,104 @@ pub(crate) struct AoDebug {
     view: bool,
     /// The ground-truth estimate's strength from `NVF_PLAY_DEBUG_AO_STRENGTH`.
     gtao_strength: Option<f32>,
+    /// The candidate remedies from `NVF_PLAY_DEBUG_AO_VARIANT`.
+    variant: AoVariant,
+}
+
+/// Debug aid `NVF_PLAY_DEBUG_AO_VARIANT` (#2897): candidate remedies for the ground-truth
+/// estimate's shimmer on swaying alpha-tested plants, to be measured against each other in
+/// one build; the one kept becomes the estimate and the aid goes [engineering choice:
+/// experiments]. Names joined by `+`, any order, case ignored: `slices3` / `slices4` (3 or 4
+/// slice directions a texel instead of 2), `steps8` (8 depth samples a side instead of 4),
+/// `wide` / `wide6` (where few texels lie on the pixel's plane, the denoise widens from
+/// 4 x 4 texels to 8 x 8 / 6 x 6), `soft` (there, the result pulled towards the plain mean
+/// of the nearby texels), `thin` (a lower sample lets the horizon sink: thin occluders),
+/// `nearest` (under multisampling, every depth read takes the nearest of the pixel's
+/// samples instead of sample 0, whose share of a leaf's soft edge changes from pixel to
+/// pixel). Unset, empty, `0`, `off` or `none`: the estimate as shipped, bit for bit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AoVariant {
+    /// Slice directions per texel (3 or 4) instead of [`GTAO_SLICES`].
+    slices: Option<u32>,
+    /// Depth samples on each side of a slice (8) instead of [`GTAO_STEPS`].
+    steps: Option<u32>,
+    /// The widened denoise's footprint in texels a side (8 or 6).
+    wide: Option<u32>,
+    /// The pull towards the plain local mean where the plane is sparse.
+    soft: bool,
+    /// The thin-occluder horizon.
+    thin: bool,
+    /// The nearest of the depth's samples instead of sample 0.
+    nearest: bool,
+}
+
+/// ssao.wesl's `VARIANT_*` flags (`Ao.variant.z`; a test keeps them the same).
+const VARIANT_WIDE: u32 = 1;
+const VARIANT_WIDE6: u32 = 2;
+const VARIANT_SOFT: u32 = 4;
+const VARIANT_THIN: u32 = 8;
+const VARIANT_NEAREST: u32 = 16;
+
+impl AoVariant {
+    /// The names the aid takes, in the order [`AoVariant::name`] writes them.
+    const NAMES: [&'static str; 8] = ["slices3", "slices4", "steps8", "wide", "wide6", "soft", "thin", "nearest"];
+
+    /// The aid's value: `Err` with the value for a name it does not know, a name given twice
+    /// or two that exclude each other (`slices3` and `slices4`, `wide` and `wide6`).
+    fn parse(value: Option<&str>) -> Result<AoVariant, String> {
+        let v = value.map(str::trim).unwrap_or("");
+        let lower = v.to_ascii_lowercase();
+        if matches!(lower.as_str(), "" | "0" | "off" | "none") {
+            return Ok(AoVariant::default());
+        }
+        let mut out = AoVariant::default();
+        for name in lower.split('+').map(str::trim) {
+            let taken = match name {
+                "slices3" | "slices4" => out.slices.replace(if name == "slices3" { 3 } else { 4 }).is_some(),
+                "steps8" => out.steps.replace(8).is_some(),
+                "wide" | "wide6" => out.wide.replace(if name == "wide" { 8 } else { 6 }).is_some(),
+                "soft" => std::mem::replace(&mut out.soft, true),
+                "thin" => std::mem::replace(&mut out.thin, true),
+                "nearest" => std::mem::replace(&mut out.nearest, true),
+                _ => return Err(v.to_string()),
+            };
+            if taken {
+                return Err(v.to_string());
+            }
+        }
+        Ok(out)
+    }
+
+    fn is_set(self) -> bool {
+        self != AoVariant::default()
+    }
+
+    /// The uniform's `variant` (ssao.wesl `Ao.variant`): slices, steps (0 for the shader's
+    /// own), the flags.
+    fn uniform(self) -> Vec4 {
+        let mut flags = 0;
+        match self.wide {
+            Some(8) => flags |= VARIANT_WIDE,
+            Some(_) => flags |= VARIANT_WIDE6,
+            None => {}
+        }
+        if self.soft {
+            flags |= VARIANT_SOFT;
+        }
+        if self.thin {
+            flags |= VARIANT_THIN;
+        }
+        if self.nearest {
+            flags |= VARIANT_NEAREST;
+        }
+        Vec4::new(self.slices.unwrap_or(0) as f32, self.steps.unwrap_or(0) as f32, flags as f32, 0.0)
+    }
+
+    /// The names set, joined by `+` in the order of [`AoVariant::NAMES`].
+    fn name(self) -> String {
+        let set = [self.slices == Some(3), self.slices == Some(4), self.steps.is_some(), self.wide == Some(8), self.wide == Some(6), self.soft, self.thin, self.nearest];
+        AoVariant::NAMES.iter().zip(set).filter(|(_, on)| *on).map(|(n, _)| *n).collect::<Vec<_>>().join("+")
+    }
 }
 
 impl AoDebug {
@@ -188,13 +294,17 @@ impl AoDebug {
     /// The log line when the occlusion turns on on the main camera.
     fn describe(self) -> String {
         let estimate = if self.old {
-            "old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO)".to_string()
+            let variant = if self.variant.is_set() { format!(", variant {} ignored (NVF_PLAY_DEBUG_AO_VARIANT)", self.variant.name()) } else { String::new() };
+            format!("old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO){variant}")
         } else {
             let strength = match self.gtao_strength {
                 Some(s) => format!(", strength {s} (NVF_PLAY_DEBUG_AO_STRENGTH)"),
                 None => String::new(),
             };
-            format!("ground-truth estimate (GTAO), {GTAO_SLICES} slices x {GTAO_STEPS} steps a side at half resolution, depth-aware denoise{strength}")
+            let variant = if self.variant.is_set() { format!(", variant {} (NVF_PLAY_DEBUG_AO_VARIANT)", self.variant.name()) } else { String::new() };
+            let slices = self.variant.slices.unwrap_or(GTAO_SLICES);
+            let steps = self.variant.steps.unwrap_or(GTAO_STEPS);
+            format!("ground-truth estimate (GTAO), {slices} slices x {steps} steps a side at half resolution, depth-aware denoise{variant}{strength}")
         };
         let view = if self.view { ", factor shown alone as grey (NVF_PLAY_DEBUG_AO)" } else { "" };
         format!("ambient occlusion: {estimate}{view}")
@@ -214,6 +324,16 @@ static AO_DEBUG: std::sync::LazyLock<AoDebug> = std::sync::LazyLock::new(|| {
         Err(v) => {
             warn!("debug switch NVF_PLAY_DEBUG_AO_STRENGTH={v}: expected a number from 0 to 1; strength {GTAO_STRENGTH}");
             None
+        }
+    };
+    debug.variant = match AoVariant::parse(std::env::var("NVF_PLAY_DEBUG_AO_VARIANT").ok().as_deref()) {
+        Ok(variant) => variant,
+        Err(v) => {
+            warn!(
+                "debug aid NVF_PLAY_DEBUG_AO_VARIANT={v}: expected names from {} joined by + (each once; not slices3 with slices4 nor wide with wide6); the estimate as shipped runs",
+                AoVariant::NAMES.join(", ")
+            );
+            AoVariant::default()
         }
     };
     debug
@@ -646,10 +766,207 @@ mod tests {
         for line in [format!("const SLICES: i32 = {GTAO_SLICES};"), format!("const STEPS: i32 = {GTAO_STEPS};")] {
             assert!(source.contains(&line), "ssao.wesl must declare `{line}` (ssao.rs mirrors it)");
         }
-        // The uniform's five fields in the order of the Rust struct.
-        let fields = ["params: vec4<f32>,", "proj: vec4<f32>,", "render_scale: vec4<f32>,", "area: vec4<f32>,", "mode: vec4<f32>,"];
+        // The uniform's six fields in the order of the Rust struct.
+        let fields = ["params: vec4<f32>,", "proj: vec4<f32>,", "render_scale: vec4<f32>,", "area: vec4<f32>,", "mode: vec4<f32>,", "variant: vec4<f32>,"];
         let at: Vec<usize> = fields.iter().map(|f| source.find(f).unwrap_or_else(|| panic!("{f}"))).collect();
         assert!(at.windows(2).all(|w| w[0] < w[1]), "the uniform's fields in the Rust order");
+        assert_eq!(<AmbientOcclusion as ShaderType>::min_size().get(), 6 * 16, "six vec4 fields, nothing else");
+        // The variant flags.
+        for (name, value) in [("VARIANT_WIDE", VARIANT_WIDE), ("VARIANT_WIDE6", VARIANT_WIDE6), ("VARIANT_SOFT", VARIANT_SOFT), ("VARIANT_THIN", VARIANT_THIN), ("VARIANT_NEAREST", VARIANT_NEAREST)] {
+            let line = format!("const {name}: u32 = {value}u;");
+            assert!(source.contains(&line), "ssao.wesl must declare `{line}` (ssao.rs mirrors it)");
+        }
+    }
+
+    #[test]
+    fn the_variant_aid_takes_names_joined_by_plus() {
+        for off in [None, Some(""), Some("0"), Some("off"), Some(" None ")] {
+            assert_eq!(AoVariant::parse(off), Ok(AoVariant::default()), "{off:?}");
+        }
+        let one = |name: &str| AoVariant::parse(Some(name)).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(one("slices3"), AoVariant { slices: Some(3), ..AoVariant::default() });
+        assert_eq!(one("slices4"), AoVariant { slices: Some(4), ..AoVariant::default() });
+        assert_eq!(one("steps8"), AoVariant { steps: Some(8), ..AoVariant::default() });
+        assert_eq!(one("wide"), AoVariant { wide: Some(8), ..AoVariant::default() });
+        assert_eq!(one("wide6"), AoVariant { wide: Some(6), ..AoVariant::default() });
+        assert_eq!(one("soft"), AoVariant { soft: true, ..AoVariant::default() });
+        assert_eq!(one("thin"), AoVariant { thin: true, ..AoVariant::default() });
+        assert_eq!(one("nearest"), AoVariant { nearest: true, ..AoVariant::default() });
+        let all = AoVariant { slices: Some(4), steps: Some(8), wide: Some(8), soft: true, thin: true, nearest: true };
+        assert_eq!(one(" Thin + WIDE+soft+nearest+steps8+slices4 "), all);
+        // Each name written back as it is taken, in one order.
+        for name in AoVariant::NAMES {
+            assert_eq!(one(name).name(), name);
+        }
+        assert_eq!(all.name(), "slices4+steps8+wide+soft+thin+nearest");
+        assert_eq!(one("soft+slices3").name(), "slices3+soft");
+        for bad in ["slices5", "wide+wide", "slices3+slices4", "wide+wide6", "soft+", "+thin", "soft thin", "old", "nearest+nearest"] {
+            assert_eq!(AoVariant::parse(Some(bad)), Err(bad.to_string()), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_variant_reaches_the_uniform_and_the_log_line() {
+        // None set: the uniform's variant all 0 (the shader's own SLICES, STEPS, no flags)
+        // and the log line as before the aid.
+        let shipped = AmbientOcclusion::with_debug(AoDebug::default());
+        assert_eq!(shipped.variant, Vec4::ZERO);
+        let with = |variant: &str| AoDebug { variant: AoVariant::parse(Some(variant)).unwrap(), ..AoDebug::default() };
+        assert_eq!(AmbientOcclusion::with_debug(with("slices3")).variant, Vec4::new(3.0, 0.0, 0.0, 0.0));
+        assert_eq!(AmbientOcclusion::with_debug(with("slices4+steps8")).variant, Vec4::new(4.0, 8.0, 0.0, 0.0));
+        assert_eq!(AmbientOcclusion::with_debug(with("wide")).variant, Vec4::new(0.0, 0.0, VARIANT_WIDE as f32, 0.0));
+        assert_eq!(AmbientOcclusion::with_debug(with("wide6")).variant, Vec4::new(0.0, 0.0, VARIANT_WIDE6 as f32, 0.0));
+        assert_eq!(AmbientOcclusion::with_debug(with("wide+soft+thin")).variant.z, (VARIANT_WIDE | VARIANT_SOFT | VARIANT_THIN) as f32);
+        assert_eq!(AmbientOcclusion::with_debug(with("nearest+wide6")).variant.z, (VARIANT_NEAREST | VARIANT_WIDE6) as f32);
+        // The old estimate gets none of it.
+        assert_eq!(AmbientOcclusion::with_debug(AoDebug { old: true, ..with("nearest+slices4") }).variant, Vec4::ZERO);
+        // Nothing else moves with it.
+        let soft = AmbientOcclusion::with_debug(with("soft"));
+        assert_eq!((soft.params, soft.proj, soft.mode), (shipped.params, shipped.proj, shipped.mode));
+        assert_eq!(
+            with("slices4+wide").describe(),
+            "ambient occlusion: ground-truth estimate (GTAO), 4 slices x 4 steps a side at half resolution, depth-aware denoise, variant slices4+wide (NVF_PLAY_DEBUG_AO_VARIANT)"
+        );
+        assert!(with("steps8").describe().contains("2 slices x 8 steps a side"));
+        let strong = AoDebug { gtao_strength: Some(0.6), ..with("soft") };
+        assert!(strong.describe().ends_with("denoise, variant soft (NVF_PLAY_DEBUG_AO_VARIANT), strength 0.6 (NVF_PLAY_DEBUG_AO_STRENGTH)"));
+        assert_eq!(
+            AoDebug { old: true, ..with("thin") }.describe(),
+            "ambient occlusion: old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO), variant thin ignored (NVF_PLAY_DEBUG_AO_VARIANT)"
+        );
+    }
+
+    /// ssao.wesl `pattern`: the 4 x 4 ordered turns (0..1).
+    fn pattern_turns() -> [f32; 16] {
+        let b = [0.0f32, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0];
+        b.map(|v| (v + 0.5) / 16.0)
+    }
+
+    /// ssao.wesl's slice angle: slice k of n at (k + turn) pi / n.
+    fn slice_angle(k: u32, turn: f32, slices: u32) -> f32 {
+        (k as f32 + turn) * std::f32::consts::PI / slices as f32
+    }
+
+    #[test]
+    fn the_slices_stay_evenly_spread_for_every_count() {
+        let source = include_str!("ssao.wesl");
+        assert!(source.contains("var b = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);"));
+        assert!(source.contains("let phi = (f32(k) + turn) * PI / f32(slices);"));
+        use std::f32::consts::PI;
+        for slices in [2u32, 3, 4] {
+            // Over the 4 x 4 texels the denoise reads: 16 x n directions, evenly spread over
+            // the half turn (a slice is a line, both sides marched), one step apart.
+            let mut angles: Vec<f32> = pattern_turns().iter().flat_map(|&t| (0..slices).map(move |k| slice_angle(k, t, slices))).collect();
+            angles.sort_by(f32::total_cmp);
+            let step = PI / (16 * slices) as f32;
+            assert!((angles[0] - step * 0.5).abs() < 1e-5, "{slices} slices: first {}", angles[0]);
+            for w in angles.windows(2) {
+                assert!((w[1] - w[0] - step).abs() < 1e-5, "{slices} slices: gap {}", w[1] - w[0]);
+            }
+            assert!(*angles.last().unwrap() < PI);
+            // Within one texel the slices are a half turn / n apart.
+            for t in pattern_turns() {
+                for k in 1..slices {
+                    assert!((slice_angle(k, t, slices) - slice_angle(k - 1, t, slices) - PI / slices as f32).abs() < 1e-5);
+                }
+            }
+        }
+    }
+
+    /// ssao.wesl `gtao_visibility` for a pixel on an endless plane with normal `n`, seen
+    /// along `v` (from the pixel to the camera), with nothing else in the way: each slice's
+    /// horizons raised (or, `thin`, lowered) by samples of the plane itself on both sides at
+    /// the shader's step distances, then the ratio of the visible arcs to the open ones.
+    /// `wall` instead puts a horizon at the view vector on the side towards each slice's
+    /// direction, the depth closing half of every slice there.
+    fn gtao_on_plane(n: Vec3, v: Vec3, slices: u32, turn: f32, offset: f32, thin: bool, wall: bool) -> f32 {
+        use std::f32::consts::FRAC_PI_2;
+        const HORIZON_BIAS: f32 = 0.03;
+        const FALLOFF_START: f32 = 0.25;
+        const THIN_DECAY: f32 = 0.25;
+        let steps = 4;
+        let (mut visible, mut unblocked) = (0.0f32, 0.0f32);
+        for k in 0..slices {
+            let phi = slice_angle(k, turn, slices);
+            let along = Vec3::new(phi.cos(), -phi.sin(), 0.0);
+            let tangent = (along - v * along.dot(v)).normalize();
+            let (nt, nv) = (n.dot(tangent), n.dot(v));
+            let np_len = Vec2::new(nt, nv).length();
+            let gamma = if np_len > 1e-6 { nt.atan2(nv) } else { 0.0 };
+            let (sin_g, cos_g) = gamma.sin_cos();
+            // The plane's own points in the slice: the line where the slice's plane (through
+            // the pixel, spanned by v and the tangent) meets the surface.
+            // (None when the surface stands across the slice: np_len is 0, the slice counts nothing.)
+            let line = n.cross(v.cross(tangent)).normalize_or_zero();
+            let line = if line.dot(tangent) >= 0.0 { line } else { -line };
+            let (mut c_pos, mut c_neg) = (-sin_g, sin_g);
+            for j in 0..steps {
+                let f = (j as f32 + offset) / steps as f32;
+                // A share of the radius out along the plane, as the screen's step reaches.
+                let share = 0.05 + f * f * 0.9;
+                let weight = 1.0 - smooth(FALLOFF_START, 1.0, share * share);
+                // ssao.wesl `horizon_cosine`: mix(lowest, cosine - bias, weight).
+                let s_pos = -sin_g + weight * (line.dot(v) - HORIZON_BIAS + sin_g);
+                let s_neg = sin_g + weight * ((-line).dot(v) - HORIZON_BIAS - sin_g);
+                let rise = |h: f32, s: f32, lowest: f32| {
+                    if !thin {
+                        h.max(s)
+                    } else if s > h {
+                        s
+                    } else {
+                        h + (s.max(lowest) - h) * THIN_DECAY
+                    }
+                };
+                c_pos = rise(c_pos, s_pos, -sin_g);
+                c_neg = rise(c_neg, s_neg, sin_g);
+            }
+            if wall {
+                c_pos = 1.0;
+            }
+            let h_neg = (-c_neg.clamp(-1.0, 1.0).acos()).max(gamma - FRAC_PI_2);
+            let h_pos = c_pos.clamp(-1.0, 1.0).acos().min(gamma + FRAC_PI_2);
+            visible += np_len * (visible_arc(h_neg, gamma) + visible_arc(h_pos, gamma));
+            unblocked += np_len * (cos_g + gamma * sin_g);
+        }
+        if unblocked <= 1e-5 { 1.0 } else { (visible / unblocked).clamp(0.0, 1.0) }
+    }
+
+    /// WGSL's smoothstep.
+    fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
+        let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }
+
+    #[test]
+    fn flat_ground_stays_unshaded_for_every_slice_count() {
+        let source = include_str!("ssao.wesl");
+        for line in ["const HORIZON_BIAS: f32 = 0.03;", "const FALLOFF_START: f32 = 0.25;", "const THIN_DECAY: f32 = 0.25;"] {
+            assert!(source.contains(line), "the mirror's constant: {line}");
+        }
+        // Views from straight on to grazing, from the screen's centre and its corners
+        // (view space, y up, the camera looking down -z: v points back at the camera).
+        let views = [Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.4, 0.3, 1.0).normalize(), Vec3::new(-0.6, 0.35, 1.0).normalize()];
+        let normals = [Vec3::new(0.0, 1.0, 0.1), Vec3::new(0.0, 0.9, 0.3), Vec3::new(0.7, 0.2, 0.6), Vec3::new(-0.3, -0.5, 0.8), Vec3::new(0.0, 0.0, 1.0)];
+        for slices in [2u32, 3, 4] {
+            for thin in [false, true] {
+                for v in views {
+                    for n in normals {
+                        let n = n.normalize();
+                        // The normal faces the camera (ssao.wesl `normal_at` turns it so).
+                        let n = if n.dot(v) < 0.0 { -n } else { n };
+                        for (i, turn) in pattern_turns().into_iter().enumerate() {
+                            let offset = pattern_turns()[(i * 7 + 5) % 16];
+                            let open = gtao_on_plane(n, v, slices, turn, offset, thin, false);
+                            assert!((open - 1.0).abs() < 1e-4, "{slices} slices, thin {thin}, v {v}, n {n}, turn {turn}: {open}");
+                        }
+                    }
+                }
+            }
+            // Not open by construction: a surface facing the camera with half of every
+            // slice closed keeps half, for every slice count.
+            let half = gtao_on_plane(Vec3::Z, Vec3::Z, slices, 0.25, 0.5, false, true);
+            assert!((half - 0.5).abs() < 1e-4, "{slices} slices: {half}");
+        }
     }
 
     #[test]
