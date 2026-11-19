@@ -374,10 +374,22 @@ impl GlowModels {
         }
     }
 
-    /// Up to `n` models to read next, nearest asked first.
+    /// Up to `n` models to read next, nearest asked first (a model read meanwhile, by a
+    /// stopped job that finished its read, is skipped).
     pub fn next_batch(&mut self, n: usize) -> Vec<Arc<str>> {
-        let k = n.min(self.queue.len());
-        self.queue.drain(..k).collect()
+        let mut out = Vec::new();
+        while out.len() < n {
+            let Some(m) = self.queue.pop_front() else { break };
+            if !self.known.contains_key(&m) {
+                out.push(m);
+            }
+        }
+        out
+    }
+
+    /// Whether the model's glow is read.
+    pub fn is_read(&self, model: &str) -> bool {
+        self.known.contains_key(model)
     }
 
     /// Take in what a read found. Models a cancelled read did not reach go back in front of
@@ -445,24 +457,26 @@ impl Busy {
     }
 }
 
-/// What [`read_models`] returns: the glows read, then the models not reached.
-pub type ModelReads = (Vec<(Arc<str>, Option<ModelGlow>)>, Vec<Arc<str>>);
+/// Model glows read by a job, each put in as soon as it is read, so a stopped job's reads
+/// are kept ([`DistantLights::drain_models`]).
+pub type ModelSink = Arc<std::sync::Mutex<Vec<(Arc<str>, Option<ModelGlow>)>>>;
 
-/// Read the glows of `models` with `read`, stopping before a read once `epoch` moved on
-/// from `started`. Returns what was read and the models not reached.
-pub fn read_models(models: Vec<Arc<str>>, epoch: &Epoch, started: u64, mut read: impl FnMut(&str) -> Option<ModelGlow>) -> ModelReads {
-    let mut done = Vec::new();
+/// Read the glows of `models` with `read` into `sink`, each as it is read, stopping before a
+/// read once `epoch` moved on from `started`. Returns the models not reached.
+pub fn read_models(models: Vec<Arc<str>>, epoch: &Epoch, started: u64, mut read: impl FnMut(&str) -> Option<ModelGlow>, sink: &ModelSink) -> Vec<Arc<str>> {
     let mut rest = models.into_iter();
     for m in rest.by_ref() {
         if epoch.now() != started {
             let mut unread = vec![m];
             unread.extend(rest);
-            return (done, unread);
+            return unread;
         }
         let g = read(&m);
-        done.push((m, g));
+        if let Ok(mut s) = sink.lock() {
+            s.push((m, g));
+        }
     }
-    (done, Vec::new())
+    Vec::new()
 }
 
 /// List `cells` (cell, its references) with [`list_cell`], stopping before a cell once
@@ -733,8 +747,8 @@ struct Checking {
 enum Found {
     /// Cells listed, for this worldspace.
     Cells(u32, Vec<(Grid, CellList)>, Stats),
-    /// Models read, and those a stopped job did not reach.
-    Models(Vec<(Arc<str>, Option<ModelGlow>)>, Vec<Arc<str>>),
+    /// The models a stopped job did not reach (what it read is in the sink).
+    Models(Vec<Arc<str>>),
 }
 
 /// The lights listed for the cells in reach, and what is drawn.
@@ -757,8 +771,16 @@ pub struct DistantLights {
     job: Option<Task<Found>>,
     epoch: Epoch,
     busy: Busy,
-    /// The models the running job was given (back to the queue if it is stopped).
+    /// The models the running job was given (those not read go back to the queue if it is
+    /// stopped).
     in_flight: Vec<Arc<str>>,
+    /// The models' glows the jobs read, as they read them.
+    sink: ModelSink,
+    /// The cells whose statics show each model, to resolve only those when it is read.
+    model_cells: HashMap<Arc<str>, Vec<Grid>>,
+    /// Merges of cells with more lights than the frame budget, on a worker, with the key of
+    /// the lights they merge.
+    merging: HashMap<Grid, (u64, Task<Vec<Glow>>)>,
     /// Models read in this scan (since the camera's cell changed): at most
     /// [`MODELS_PER_SCAN`], the rest wait for the next scan.
     scan_models: usize,
@@ -791,16 +813,59 @@ impl DistantLights {
         self.want.clear();
         self.pass.clear();
         self.checking = None;
+        self.merging.clear();
         self.built = None;
     }
 
-    /// Stop the scan's job: its next check sees the epoch moved on; the handle is dropped,
-    /// and the models it was given go back in front of the queue.
+    /// Stop the scan's job: its next check sees the epoch moved on; the handle is dropped.
+    /// What it read is kept; the models it was given and did not read go back in front of
+    /// the queue (one it is still reading is skipped later if its read arrives first).
     fn stop_scan(&mut self) {
         self.epoch.bump();
         self.job = None;
-        let back = std::mem::take(&mut self.in_flight);
+        self.drain_models();
+        let back: Vec<Arc<str>> = std::mem::take(&mut self.in_flight).into_iter().filter(|m| !self.models.is_read(m)).collect();
         self.models.take(Vec::new(), back);
+    }
+
+    /// Take in the models' glows read so far, and resolve the cells that show them.
+    fn drain_models(&mut self) {
+        let read: Vec<(Arc<str>, Option<ModelGlow>)> = self.sink.lock().map(|mut s| std::mem::take(&mut *s)).unwrap_or_default();
+        if read.is_empty() {
+            return;
+        }
+        self.scan_models += read.len();
+        let mut cells: Vec<Grid> = read.iter().flat_map(|(m, _)| self.model_cells.get(m).into_iter().flatten().copied()).collect();
+        self.models.take(read, Vec::new());
+        cells.sort_unstable();
+        cells.dedup();
+        for g in cells {
+            self.resolve_cell(g);
+        }
+    }
+
+    /// Drop the index entries of cells no longer kept.
+    fn prune_model_cells(&mut self) {
+        let cells = &self.cells;
+        self.model_cells.retain(|_, v| {
+            v.retain(|g| cells.contains_key(g));
+            !v.is_empty()
+        });
+    }
+
+    /// Take in the merges done on the worker.
+    fn poll_merges(&mut self) {
+        let mut done = Vec::new();
+        self.merging.retain(|g, (key, task)| match check_ready(task) {
+            Some(glows) => {
+                done.push((*g, *key, glows));
+                false
+            }
+            None => true,
+        });
+        for (g, key, glows) in done {
+            self.glows.insert(g, CellGlows { glows, key });
+        }
     }
 
     /// Start over for worldspace `world`: every list, glow, pass and job of the last one
@@ -814,6 +879,8 @@ impl DistantLights {
         self.cells.clear();
         self.lists.clear();
         self.glows.clear();
+        self.model_cells.clear();
+        self.merging.clear();
         self.pass.clear();
         self.checking = None;
         self.built = None;
@@ -824,6 +891,10 @@ impl DistantLights {
     fn add_cell(&mut self, g: Grid, cell: CellList) {
         for s in &cell.statics {
             self.models.ask(&s.model);
+            let cells = self.model_cells.entry(s.model.clone()).or_default();
+            if !cells.contains(&g) {
+                cells.push(g);
+            }
         }
         self.cells.insert(g, cell);
         self.resolve_cell(g);
@@ -843,20 +914,23 @@ impl DistantLights {
         if self.lists.get(&g).is_none_or(|l| **l != list) {
             self.lists.insert(g, Arc::new(list));
             self.glows.remove(&g);
+            self.merging.remove(&g);
         }
     }
 
     /// Bring the cells' glows up to date with `shows`: the cells listed but not merged yet
     /// first, then the running pass. A hard bound: at most `budget` units a frame, a light
-    /// checked or merged one unit and starting a cell one, a check stopped inside a cell
-    /// resumed in the next frame; only a cell with more lights than the budget is merged
-    /// alone in a frame of its own. Returns the units used.
+    /// checked or merged one unit, starting a cell or handing a merge to the worker one; a
+    /// check stopped inside a cell resumes in the next frame, a merge that does not fit
+    /// waits for the next frame, and a cell with more present lights than the budget is
+    /// merged on a worker ([`Self::poll_merges`] swaps the result in). Returns the units used.
     fn check_present(&mut self, shows: &impl Fn(&SourceLight) -> bool, budget: usize) -> usize {
         let mut used = 0;
-        let mut fresh: std::collections::VecDeque<Grid> = self.want.iter().filter(|g| self.lists.contains_key(g) && !self.glows.contains_key(g)).copied().collect();
+        let mut fresh: std::collections::VecDeque<Grid> =
+            self.want.iter().filter(|g| self.lists.contains_key(g) && !self.glows.contains_key(g) && !self.merging.contains_key(g)).copied().collect();
         while used < budget {
             if self.checking.is_none() {
-                let next = std::iter::from_fn(|| fresh.pop_front()).find(|g| !self.glows.contains_key(g));
+                let next = std::iter::from_fn(|| fresh.pop_front()).find(|g| !self.glows.contains_key(g) && !self.merging.contains_key(g));
                 let Some(cell) = next.or_else(|| self.pass.pop()) else { break };
                 let Some(list) = self.lists.get(&cell).cloned() else { continue };
                 self.checking = Some(Checking { cell, list, at: 0, here: Vec::new(), key: std::collections::hash_map::DefaultHasher::new() });
@@ -880,16 +954,26 @@ impl DistantLights {
             if c.at < c.list.len() {
                 break;
             }
-            // Checked whole: merge, within the budget, or alone in a frame of its own.
-            if used > 0 && used + c.here.len() > budget {
+            // Checked whole: merged here within the budget (else in the next frame), or on a
+            // worker when it has more lights than the budget.
+            let large = c.here.len() > budget;
+            if !large && used + c.here.len() > budget {
                 break;
             }
             let c = self.checking.take().expect("set above");
-            used += c.here.len();
             let mut key = c.key;
             c.here.len().hash(&mut key);
             let key = key.finish();
-            if self.glows.get(&c.cell).is_none_or(|g| g.key != key) {
+            if self.glows.get(&c.cell).is_some_and(|g| g.key == key) {
+                continue;
+            }
+            if large {
+                used += 1;
+                let here = c.here;
+                let task = bevy::tasks::AsyncComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default).spawn(async move { merge(&here, MERGE_DISTANCE) });
+                self.merging.insert(c.cell, (key, task));
+            } else {
+                used += c.here.len();
                 self.glows.insert(c.cell, CellGlows { glows: merge(&c.here, MERGE_DISTANCE), key });
             }
         }
@@ -920,14 +1004,10 @@ impl DistantLights {
                     self.add_cell(g, cell);
                 }
             }
-            Found::Models(read, unread) => {
+            Found::Models(unread) => {
                 self.in_flight.clear();
-                self.scan_models += read.len();
-                self.models.take(read, unread);
-                let cells: Vec<Grid> = self.cells.keys().copied().collect();
-                for g in cells {
-                    self.resolve_cell(g);
-                }
+                self.drain_models();
+                self.models.take(Vec::new(), unread);
             }
         }
     }
@@ -1037,6 +1117,7 @@ fn update(
         let near = |g: &Grid| (g.0 - c.0).abs() <= r && (g.1 - c.1).abs() <= r;
         st.cells.retain(|g, _| near(g));
         st.lists.retain(|g, _| near(g));
+        st.prune_model_cells();
         st.glows.retain(|g, _| keep.contains(g));
         st.pass.retain(|g| keep.contains(g));
         st.built = None;
@@ -1050,6 +1131,7 @@ fn update(
             st.take_found(found);
         }
     }
+    st.drain_models();
     if st.job.is_none() && !st.busy.running() {
         let next = st.next_job(|g| cell_refs(&world, g));
         let (epoch, busy, started, at) = (st.epoch.clone(), st.busy.clone(), st.epoch.now(), world.world);
@@ -1067,12 +1149,12 @@ fn update(
             // Without the game's files (no archives) no model is read: none glows.
             Some(NextJob::Models(models)) => {
                 st.in_flight = models.clone();
-                let data = data.as_deref().cloned();
+                let (data, sink) = (data.as_deref().cloned(), st.sink.clone());
                 let guard = busy.start();
                 Some(nvf_assets::read_pool::read_pool().spawn(async move {
                     let _running = guard;
-                    let (read, unread) = read_models(models, &epoch, started, |m| data.as_ref().and_then(|d| nvf_assets::model_glow::model_glow(d, m)));
-                    Found::Models(read, unread)
+                    let unread = read_models(models, &epoch, started, |m| data.as_ref().and_then(|d| nvf_assets::model_glow::model_glow(d, m)), &sink);
+                    Found::Models(unread)
                 }))
             }
             None => None,
@@ -1086,6 +1168,7 @@ fn update(
         st.pass = st.want.iter().rev().copied().collect();
     }
     let shows = |l: &SourceLight| sim.as_deref().map_or(l.start_enabled, |s| s.present(l.form_id));
+    st.poll_merges();
     st.check_present(&shows, CHECKS_PER_FRAME);
     // The material: made once, its night share kept current.
     let material = match &st.material {
@@ -1337,14 +1420,19 @@ mod tests {
         let all = |_: &SourceLight| true;
         let mut frames = 0;
         while st.glows.len() < 3 {
+            st.poll_merges();
             let used = st.check_present(&all, 15);
-            assert!(used <= 15 || st.glows.contains_key(&(2, 0)), "frame {frames}: {used} over the budget before the big cell");
+            assert!(used <= 15, "frame {frames}: {used} over the budget");
             frames += 1;
-            assert!(frames < 20, "stuck");
+            assert!(frames < 10_000, "stuck");
+            if !st.merging.is_empty() {
+                std::thread::yield_now();
+            }
         }
         assert!(frames >= 5, "{frames} frames: 60 lights and their merges do not fit in fewer at 15 a frame");
+        // The big cell (40 present lights over a budget of 15) was merged on a worker.
         assert_eq!(st.glows[&(2, 0)].glows.len(), 40);
-        assert!(st.checking.is_none());
+        assert!(st.checking.is_none() && st.merging.is_empty());
     }
 
     /// A cell's sources replaced while it is being checked (a model read) are checked again
@@ -1463,26 +1551,60 @@ mod tests {
         let started = epoch.now();
         let models: Vec<Arc<str>> = ["a", "b", "c"].iter().map(|&m| m.into()).collect();
         let mut reads = 0;
-        let (read, unread) = read_models(models.clone(), &epoch, started, |_| {
+        let sink = ModelSink::default();
+        let unread = read_models(models.clone(), &epoch, started, |_| {
             reads += 1;
             epoch.bump();
             None
-        });
-        assert_eq!((reads, read.len(), unread.len()), (1, 1, 2), "stopped after the read under way");
+        }, &sink);
+        assert_eq!((reads, sink.lock().unwrap().len(), unread.len()), (1, 1, 2), "stopped after the read under way, which is kept");
         assert_eq!(unread, models[1..].to_vec());
+        // A job given a and b read a before it was stopped: a is kept, only b asked again.
         let mut st = DistantLights::default();
         for m in &models {
             st.models.ask(m);
         }
         st.in_flight = st.models.next_batch(2);
+        st.sink.lock().unwrap().push((models[0].clone(), None));
         st.stop_scan();
-        assert_eq!(st.models.waiting(), 3, "the stopped job's models are asked again");
-        assert_eq!(st.models.next_batch(1), vec![models[0].clone()], "in front, in order");
+        assert!(st.models.is_read(&models[0]), "what the stopped job read is kept");
+        assert_eq!(st.models.waiting(), 2, "b and c wait");
+        assert_eq!(st.models.next_batch(1), vec![models[1].clone()], "b in front");
+        // A read that arrives after the stop (the job finishing the read under way) is taken
+        // in, and the model it read is not read again.
+        st.models.ask(&models[1]);
+        st.sink.lock().unwrap().push((models[2].clone(), None));
+        st.drain_models();
+        assert_eq!(st.models.next_batch(8), vec![models[1].clone()], "c is read already");
         let busy = Busy::default();
         let guard = busy.start();
         assert!(busy.running());
         drop(guard);
         assert!(!busy.running(), "cleared when the job ends or is dropped");
+    }
+
+    /// A model read resolves only the cells that show it.
+    #[test]
+    fn a_model_read_resolves_only_its_cells() {
+        let mut st = DistantLights::default();
+        let lamp: Arc<str> = "meshes\\lamp.nif".into();
+        let other: Arc<str> = "meshes\\other.nif".into();
+        let placed = |id: u32, model: &Arc<str>| PlacedStatic { form_id: id, transform: bevy::math::Affine3A::IDENTITY, scale: 1.0, start_enabled: true, model: model.clone() };
+        st.add_cell((0, 0), CellList { lights: Vec::new(), statics: vec![placed(1, &lamp)] });
+        st.add_cell((1, 0), CellList { lights: Vec::new(), statics: vec![placed(2, &other)] });
+        assert_eq!(st.model_cells[&lamp], vec![(0, 0)]);
+        // The other model known behind the cells' back: a resolve of (1, 0) would now give it
+        // a glow static, so its list shows whether it was resolved.
+        let glow = ModelGlow { centre: [0.0; 3], radius: 10.0, colour: [1.0; 3], shapes: 1 };
+        st.models.take(vec![(other.clone(), Some(glow))], Vec::new());
+        st.sink.lock().unwrap().push((lamp.clone(), Some(glow)));
+        st.drain_models();
+        assert_eq!(st.lists[&(0, 0)].len(), 1, "the lamp's cell has its glow static");
+        assert!(st.lists[&(1, 0)].is_empty(), "the other cell was not resolved again");
+        // Cells no longer kept leave the index.
+        st.cells.remove(&(1, 0));
+        st.prune_model_cells();
+        assert!(!st.model_cells.contains_key(&other));
     }
 
     /// A scan reads at most MODELS_PER_SCAN models; the rest wait for the next one.
