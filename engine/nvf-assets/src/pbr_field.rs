@@ -243,13 +243,13 @@ fn make_scene(world: &mut World, data: &GameData, on: bool) -> Result<Scene, Str
             None
         };
         let mut prepared = Vec::with_capacity(PANELS);
-        for i in 0..PANELS {
+        for (i, name) in NAMES.iter().enumerate().take(PANELS) {
             let mut mesh = mesh();
             let mut props = Props::default();
             props.textures = panel_textures(i);
             let (material, missing) = shape_material(&props, &mut mesh, &mut cache, data, &mut images, Some(&support));
             if missing.is_some() || material.base.base_color_texture.is_none() || material.base.unlit {
-                return Err(format!("actual NIF material refused {}", NAMES[i]));
+                return Err(format!("actual NIF material refused {name}"));
             }
             prepared.push((mesh, material));
         }

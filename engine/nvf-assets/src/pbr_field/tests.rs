@@ -86,7 +86,7 @@ fn the_scene_builds_and_passes_its_material_checks_with_and_without_bc() {
     world.init_resource::<Assets<Image>>();
     let owned = Owned::new();
     let data = owned_data(&owned.0, Arc::new(fnv_nif::Schema::default())).unwrap();
-    assert!(make_scene(&mut world, &data, true).unwrap_err().contains("compressed format support"), "the actual support is required");
+    assert!(make_scene(&mut world, &data, true).err().is_some_and(|e| e.contains("compressed format support")), "the actual support is required");
 }
 
 /// A readback whose judged regions have these mean luminances (grey texels), alpha 255.
