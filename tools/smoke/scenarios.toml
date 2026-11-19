@@ -1149,7 +1149,7 @@ forbid = [
 
 [[scenario]]
 name = "ambient-occlusion-lighting-switch"
-source = "#2897 stage b, docs/design/graphics-enhanced.md §3.1.2: the row Off and on again in play (since 2026-11-19 a list: back at Performance, owner's Off/Performance/Quality): the bindings go and come back (each said once), the estimate is said again at its new level, and the pause menu waits for the material pipelines the change rebuilds"
+source = "#2897 stage b, docs/design/graphics-enhanced.md §3.1.2: the row Off and on again in play (since 2026-11-19 a list: back at Performance, Off/Performance/Quality, [design, #3075]): the bindings go and come back (each said once), the estimate is said again at its new level, and the pause menu waits for the material pipelines the change rebuilds"
 areas = ["renderer", "graphics", "settings"]
 paths = [
   "engine/nvforever/src/ssao*", "engine/nvforever/src/ssao_lighting/**", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/mesh*.rs",
@@ -1183,7 +1183,7 @@ forbid = [
 
 [[scenario]]
 name = "ambient-occlusion-novac"
-source = "[design] docs/design/graphics-enhanced.md §3.1.2, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): the enhanced look's ambient occlusion in the lighting with the multi-bounce fit, walking in Novac at 12:00, without a rendering or pipeline error. Pictures are checked by hand"
+source = "[design] docs/design/graphics-enhanced.md §3.1.2, [design, #3075] ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): the enhanced look's ambient occlusion in the lighting with the multi-bounce fit, walking in Novac at 12:00, without a rendering or pipeline error. Pictures are checked by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao_lighting.rs", "engine/nvforever/src/ssao_lighting.wesl", "engine/nvforever/src/ssao_lighting/hook.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0" }
@@ -1202,7 +1202,7 @@ forbid = [
 
 [[scenario]]
 name = "ambient-occlusion-novac-dlss"
-source = "[design] docs/design/graphics-enhanced.md §3.1.2, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): the enhanced look's ambient occlusion in the lighting with the multi-bounce fit, walking in Novac at 12:00 with DLSS Quality, without a rendering or pipeline error. Pictures are checked by hand"
+source = "[design] docs/design/graphics-enhanced.md §3.1.2, [design, #3075] ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): the enhanced look's ambient occlusion in the lighting with the multi-bounce fit, walking in Novac at 12:00 with DLSS Quality, without a rendering or pipeline error. Pictures are checked by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao_lighting.rs", "engine/nvforever/src/ssao_lighting.wesl", "engine/nvforever/src/ssao_lighting/hook.rs"]
 note = "needs NVF_DLSS_DIR (NVIDIA's files)."
@@ -1223,7 +1223,7 @@ forbid = [
 
 [[scenario]]
 name = "ambient-occlusion-interior-underpass"
-source = "[design] docs/design/graphics-enhanced.md §3.1.2, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): the enhanced look's ambient occlusion in the lighting with the multi-bounce fit, walking in UnderpassRanchInterior01, a random interior, without a rendering or pipeline error. Pictures are checked by hand"
+source = "[design] docs/design/graphics-enhanced.md §3.1.2, [design, #3075] ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): the enhanced look's ambient occlusion in the lighting with the multi-bounce fit, walking in UnderpassRanchInterior01, a random interior, without a rendering or pipeline error. Pictures are checked by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao_lighting.rs", "engine/nvforever/src/ssao_lighting.wesl", "engine/nvforever/src/ssao_lighting/hook.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0" }
@@ -1242,7 +1242,7 @@ forbid = [
 
 [[scenario]]
 name = "ambient-occlusion-interior-underpass-dlss"
-source = "[design] docs/design/graphics-enhanced.md §3.1.2, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): the enhanced look's ambient occlusion in the lighting with the multi-bounce fit, walking in UnderpassRanchInterior01, a random interior with DLSS Quality, without a rendering or pipeline error. Pictures are checked by hand"
+source = "[design] docs/design/graphics-enhanced.md §3.1.2, [design, #3075] ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): the enhanced look's ambient occlusion in the lighting with the multi-bounce fit, walking in UnderpassRanchInterior01, a random interior with DLSS Quality, without a rendering or pipeline error. Pictures are checked by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao_lighting.rs", "engine/nvforever/src/ssao_lighting.wesl", "engine/nvforever/src/ssao_lighting/hook.rs"]
 note = "needs NVF_DLSS_DIR (NVIDIA's files)."
@@ -1263,7 +1263,7 @@ forbid = [
 
 [[scenario]]
 name = "ambient-occlusion-novac-performance"
-source = "[design] docs/design/graphics-enhanced.md §3.1.2, owner 2026-11-19 (AO's row like Lamp shadows' Off/Performance/Quality): the enhanced look's ambient occlusion at Performance (one slice a pixel, ssao.rs PERFORMANCE_SLICES) in the lighting with the multi-bounce fit, walking in Novac at 12:00 under the default 4x multisampling (the depth resolved once for the passes), without a rendering or pipeline error. Pictures and its cost are checked by hand"
+source = "[design] docs/design/graphics-enhanced.md §3.1.2, [design, #3075] (AO's row like ALC shadows' Off/Performance/Quality): the enhanced look's ambient occlusion at Performance (one slice a pixel, ssao.rs PERFORMANCE_SLICES) in the lighting with the multi-bounce fit, walking in Novac at 12:00 under the default 4x multisampling (the depth resolved once for the passes), without a rendering or pipeline error. Pictures and its cost are checked by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao.wesl", "engine/nvforever/src/ssao_lighting.rs", "engine/nvforever/src/ssao_lighting.wesl", "engine/nvforever/src/ssao_lighting/hook.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0" }
@@ -1284,7 +1284,7 @@ forbid = [
 
 [[scenario]]
 name = "ambient-occlusion-novac-performance-dlss"
-source = "[design] docs/design/graphics-enhanced.md §3.1.2, owner 2026-11-19 (AO's row like Lamp shadows' Off/Performance/Quality): the enhanced look's ambient occlusion at Performance (one slice a pixel, ssao.rs PERFORMANCE_SLICES) in the lighting with the multi-bounce fit, walking in Novac at 12:00 with DLSS Quality, without a rendering or pipeline error. Pictures and its cost are checked by hand"
+source = "[design] docs/design/graphics-enhanced.md §3.1.2, [design, #3075] (AO's row like ALC shadows' Off/Performance/Quality): the enhanced look's ambient occlusion at Performance (one slice a pixel, ssao.rs PERFORMANCE_SLICES) in the lighting with the multi-bounce fit, walking in Novac at 12:00 with DLSS Quality, without a rendering or pipeline error. Pictures and its cost are checked by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao.wesl", "engine/nvforever/src/ssao_lighting.rs", "engine/nvforever/src/ssao_lighting.wesl", "engine/nvforever/src/ssao_lighting/hook.rs"]
 note = "needs NVF_DLSS_DIR (NVIDIA's files)."
@@ -1306,7 +1306,7 @@ forbid = [
 
 [[scenario]]
 name = "ambient-occlusion-interior-underpass-performance"
-source = "[design] docs/design/graphics-enhanced.md §3.1.2, owner 2026-11-19 (AO's row like Lamp shadows' Off/Performance/Quality): the enhanced look's ambient occlusion at Performance (one slice a pixel, ssao.rs PERFORMANCE_SLICES) in the lighting with the multi-bounce fit, walking in UnderpassRanchInterior01, a random interior under the default 4x multisampling (the depth resolved once for the passes), without a rendering or pipeline error. Pictures and its cost are checked by hand"
+source = "[design] docs/design/graphics-enhanced.md §3.1.2, [design, #3075] (AO's row like ALC shadows' Off/Performance/Quality): the enhanced look's ambient occlusion at Performance (one slice a pixel, ssao.rs PERFORMANCE_SLICES) in the lighting with the multi-bounce fit, walking in UnderpassRanchInterior01, a random interior under the default 4x multisampling (the depth resolved once for the passes), without a rendering or pipeline error. Pictures and its cost are checked by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao.wesl", "engine/nvforever/src/ssao_lighting.rs", "engine/nvforever/src/ssao_lighting.wesl", "engine/nvforever/src/ssao_lighting/hook.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0" }

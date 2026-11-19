@@ -324,7 +324,7 @@ at plant outlines].
 **Who reads it.** By bevy_pbr's rule, the pipelines that write depth (Bevy's own SSAO rule):
 NIF objects opaque and alpha-tested, the terrain, grass, trees, skinned actors. The
 first-person shapes (the arms, the weapon, the Pip-Boy: `FIRST_PERSON_DEPTH`) take a factor of
-1 on the ambient and the lamps, so only the world is occluded [owner 2026-11-19: "exclude them
+1 on the ambient and the lamps, so only the world is occluded [design, #3075: "exclude them
 from the calculation so only the environment would be affected"]; their glow in the lamps'
 colour with lamp shadows on was the shade light's relight (vendored bevy_pbr "no directional
 shadows", engine/vendor/README.md). Opted in: the landscape's blended texture layers (they lie on the prepass's surface;
@@ -429,7 +429,7 @@ Quality (the camera jittering), the lit picture 1.33 % and 0.84 %; by more than 
 occlusion's. Not measured yet: the view moving; the Freeside alley and the gas station
 exterior pictures #2897 asks for.
 
-**Off, Performance, Quality** (2026-11-19; the owner: AO's row to match Sun shadows' and
+**Off, Performance, Quality** (2026-11-19, [design, #3075]: AO's row to match Sun shadows' and
 Lamp shadows'). The row `ambient-occlusion` is a list: Off; Quality, the estimate above
 unchanged (2 slices x 4 steps a side, half resolution, the depth-aware denoise, `thin+soft`,
 strength 0.8, multi-bounce, first-person shapes excluded: the uniform is the same value for
@@ -441,8 +441,8 @@ quality]` turns it on at a level whatever the look; an INI written while the row
 as the list's (`catalog::list_value`). The start's line ends with the level (`, level
 Performance`), and is said again when the level changes.
 
-Reads a half-resolution texel in the lighting placement, without multisampling (the
-owner's DLSS) [engineering count from `ssao.wesl`, not a measurement]:
+Reads a half-resolution texel in the lighting placement, without multisampling (as with
+DLSS) [engineering count from `ssao.wesl`, not a measurement]:
 
 | | Quality | Performance |
 |---|---|---|

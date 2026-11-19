@@ -1105,8 +1105,8 @@ fn register_graphics(app: &mut App) {
         },
     );
     nvf_play::settings::set_disabled_status(app, "latency-reduction", |w| (!crate::anti_lag::available(w)).then_some("Not on this GPU"));
-    // Ambient occlusion: a list of its three choices like Sun shadows' [design: the owner,
-    // 2026-11-19: "AO's row to match Lamp shadows' Off/Performance/Quality"]; the INI's older
+    // Ambient occlusion: a list of its three choices like Sun shadows' [design, #3075:
+    // \"AO's row to match ALC shadows' Off/Performance/Quality"]; the INI's older
     // on/off (1/0, true/false, on/off, yes/no) still loads, as Quality and Off.
     add_choice_list(
         app,
