@@ -94,6 +94,26 @@ fn classification_peels_exactly_one_suffix() {
 }
 
 #[test]
+fn folders_whose_names_end_in_a_suffix_are_left_alone() {
+    // Only the final path component is peeled; a folder named like a member is a folder.
+    for (diffuse, stem) in [
+        (r"textures\walls_n\brick.dds", r"textures\pbr\walls_n\brick"),
+        (r"textures\walls_orm.dds\brick.dds", r"textures\pbr\walls_orm.dds\brick"),
+        (r"textures\a.toml\b_p\brick_n.tga", r"textures\pbr\a.toml\b_p\brick_n"),
+    ] {
+        assert_eq!(stem_for(diffuse).as_deref(), Some(stem), "{diffuse}");
+        for m in Member::ALL {
+            assert_eq!(classify(&member_path(stem, m)), Some((stem.to_string(), m)), "{stem} {m:?}");
+        }
+    }
+    let index = PbrIndex::build([p(r"walls_n\brick_orm.dds")]);
+    assert_eq!(index.lookup(r"textures\walls_n\brick.dds").map(|f| f.stem), Some(p(r"walls_n\brick")));
+    // A file directly under such a folder with no suffix of its own is unmatched.
+    assert_eq!(classify(&p(r"walls_n\brick.dds")), None);
+    assert_eq!(classify(&p(r"walls_orm.dds\")), None);
+}
+
+#[test]
 fn index_states_and_counts() {
     let index = PbrIndex::build([
         // Full set.

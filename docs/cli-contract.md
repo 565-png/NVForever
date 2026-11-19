@@ -237,12 +237,31 @@ Defined in docs/spec-notes/dds.md together with the texture notes.
 ## `fnvtool pbr list --data <Data> [plugins…] [--mods <folder> | --mo2 <instance> [--profile p]] [--archive-list l]` → `fnv.pbr.listing/1`
 
 The authored material sets under `textures\pbr\` that a load order supplies (#2981; the
-format: docs/spec-notes/pbr-materials.md). The VFS is mounted as the engine mounts it:
-the plugins' archives (default plugins: the base game and its add-on masters; with
-`--mo2`, the profile's), loose files of Data, then NVForever's mods folder (`--mods`) or
+format: docs/spec-notes/pbr-materials.md). The VFS is mounted with the steps of the
+engine's developer start (`--data`): folders given relative are made absolute from the
+current folder; the plugins (arguments; else with `--mo2` the profile's active plugins, or
+the masters when it has none; else the base game and the add-on masters in Data) are
+looked up through the mods folders, opened, and those that cannot be read or whose
+masters are missing or load later are left out with a warning
+(`fnv_esm::loadorder::drop_unloadable`, as engine `world::open_plugins`); then the
+remaining plugins' archives, Data's loose files and NVForever's mods folder (`--mods`) or
 the Mod Organizer 2 profile's mods (`--mo2`, with the profile's archive list unless
-`--archive-list` is given). Keys: `data`, `plugins`, `archives` (mounted, lowest
-precedence first), `loose_roots` (lowest first), `sets` (sorted by stem: `stem`,
+`--archive-list` is given). A plugin given as a full path (`--mo2-profile`) is opened
+there and given to the VFS by its file name. A damaged archive fails the command (exit
+1), as `fnvtool bsa check` does and as the engine refuses to start.
+
+`mount` names the exact inputs: `data`, `loose_roots` (lowest first, Data first),
+`plugins_from`, `plugins_asked`, `plugins` (used), `plugins_dropped` (`plugin`, `why`),
+`archive_list` (`names`, `from`; `null`: the shipped list), `archive_order_env` (the
+`NVF_ARCHIVE_ORDER` override when set, else `null`) and `archives` (mounted, lowest
+precedence first: `name`, `file`). Where the engine still differs: a player's start (no
+`--data`) takes the home `plugins.txt` or Mod Organizer 2's synced list, which this command
+does not read; the engine always uses the home `mods` folder, this command only `--mods`;
+the engine's `[Archive] SArchiveList` from NVForever.ini is not read (pass it as
+`--archive-list`); missing add-on masters are left out silently by the engine and listed
+in `plugins_dropped` here only when asked for by name or under `--mo2`.
+
+Other keys: `sets` (sorted by stem: `stem`,
 `diffuse` (the diffuse's path without extension), `state` (`authored`, `height-only`,
 `incomplete`), `members`: per member present (`orm`, `normal`, `height`, `scalars`,
 `albedo`) its `path` and `source`, the winning file: `{"kind": "archive", "archive",
