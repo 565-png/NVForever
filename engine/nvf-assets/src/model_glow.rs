@@ -255,14 +255,20 @@ pub fn texture_look(bytes: &[u8]) -> Option<TextureLook> {
             }
         }
         f => {
+            // The sampled texels' bytes gathered once and converted in one call.
             let bpp = f.level_size(1, 1);
             let step = stride(w * h, 1);
+            let mut picked = Vec::with_capacity(LOOK_TEXELS * bpp);
             for y in (0..h).step_by(step) {
                 for x in (0..w).step_by(step) {
                     let at = (y * w + x) * bpp;
-                    let Some(p) = level.get(at..at + bpp).and_then(|t| to_rgba8(f, t)) else { continue };
-                    add([p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0, p[3] as f32 / 255.0]);
+                    if let Some(t) = level.get(at..at + bpp) {
+                        picked.extend_from_slice(t);
+                    }
                 }
+            }
+            for p in to_rgba8(f, &picked)?.as_chunks::<4>().0 {
+                add([p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0, p[3] as f32 / 255.0]);
             }
         }
     }
