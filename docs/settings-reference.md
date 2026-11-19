@@ -1264,9 +1264,14 @@ stretches drift downstream. Vanilla leaves the switch off. Enhanced turns it on.
 
 ### `tree-distance`: Tree distance
 
-- On the page: How far from you trees beyond the loaded cells are drawn as flat pictures, as a
-  part of the farthest tree distance.
-- Command line: `--tree-distance` sets the farthest tree distance (40,000 units by default); the slider takes a part of it, as the grass distance does
+- On the page: How far from you trees beyond the loaded cells are drawn as flat pictures, at
+  most as far as distant land reaches. Farther runs slower.
+- In full: Shown as a distance in game units, in steps of 2,500 up to how far distant land
+  is drawn (125,000 units by default); billboards farther out would stand where no distant
+  land is drawn. It starts at 40,000 units, as before the row.
+- Command line: `--tree-distance` sets where the slider starts (40,000 units by default, at
+  most `--lod-distance`; 0 draws no distant trees whatever the slider); `--lod-distance` sets
+  the slider's end
 - Registered in `engine/nvforever/src/settings.rs`
 
 ## Graphics › World and Animation

@@ -1,5 +1,6 @@
 //! Distant trees: beyond the loaded cells, TREE references are drawn as their billboards
-//! out to [`LodSettings::trees`](crate::lod::LodSettings) (fTreeLoadDistance).
+//! out to the Tree distance reach, at the start [`LodSettings::trees`](crate::lod::LodSettings)
+//! (fTreeLoadDistance; below).
 //!
 //! The game ships no pre-built tree LOD [observed: no tree LOD meshes or lists in the
 //! archives; every `.spt` has a billboard texture, `textures\trees\billboards\<stem>.dds`,
@@ -15,11 +16,14 @@
 //! its own trees; its billboards crossfade with it (fade.rs, the complementary pattern,
 //! culled once the cell is fully drawn). Billboards cast and receive no shadows.
 //!
-//! The reach is `--tree-distance` times the settings page's Tree distance part
-//! ([`DrawDistances::trees`](crate::draw_distance::DrawDistances), #3016), read each frame:
-//! when it changes the wanted cells are chosen again at once, so billboards beyond a shortened
-//! reach go and those within a lengthened one are built over the next frames, not at the next
-//! cell crossing.
+//! The reach is the settings page's Tree distance part
+//! ([`DrawDistances::trees`](crate::draw_distance::DrawDistances), #3016) of the distant
+//! LOD's far limit ([`LodSettings::far`](crate::lod::LodSettings), `--lod-distance`), read
+//! each frame ([`reach`]); the part starts at `--tree-distance`'s share of that limit
+//! ([`start_part`]), so an untouched game reaches as the flag says, and `--tree-distance 0`
+//! draws none whatever the part. When the reach changes the wanted cells are chosen again at
+//! once, so billboards beyond a shortened reach go and those within a lengthened one are
+//! built over the next frames, not at the next cell crossing.
 
 use crate::draw_distance::DrawDistances;
 use crate::fade;
@@ -104,13 +108,31 @@ impl DistantTrees {
     }
 }
 
-/// The reach in game units: `--tree-distance` (`full`) times the slider's `part`; the full
-/// part is exactly the flag's value.
-pub fn reach(full: f32, part: f32) -> f32 {
-    if part >= 1.0 {
-        full
+/// The Tree distance slider's part of the distant LOD's far limit `far` in whole game
+/// units. The slider ends at `far`: billboards beyond it would stand where no distant
+/// terrain is drawn (lod.rs draws no chunk beyond `far`) [design, #3016].
+pub fn part_reach(far: f32, part: f32) -> f32 {
+    (far.max(0.0) * part.clamp(0.0, 1.0)).round()
+}
+
+/// The billboards' reach in game units: `part` of `far` ([`part_reach`]), none while
+/// `--tree-distance` (`flag`) is 0 whatever the part.
+pub fn reach(flag: f32, far: f32, part: f32) -> f32 {
+    if flag <= 0.0 {
+        0.0
     } else {
-        full * part.max(0.0)
+        part_reach(far, part)
+    }
+}
+
+/// The slider's part at the start: `--tree-distance`'s share of `far`, a flag beyond `far`
+/// taken as `far` (the part 1), so an untouched slider reaches as the flag says. 0 when
+/// either is 0 (no billboards, or no distant LOD to stand on).
+pub fn start_part(flag: f32, far: f32) -> f32 {
+    if far <= 0.0 {
+        0.0
+    } else {
+        flag.clamp(0.0, far) / far
     }
 }
 
@@ -215,7 +237,8 @@ pub fn update_distant_trees(
     mut materials: ResMut<Assets<BillboardMaterial>>,
     distances: Option<Res<DrawDistances>>,
 ) {
-    let dist = reach(lod.settings.trees, distances.map_or(1.0, |d| d.trees));
+    let (flag, far) = (lod.settings.trees, lod.settings.far);
+    let dist = reach(flag, far, distances.map_or_else(|| start_part(flag, far), |d| d.trees));
     let lod = &mut *lod;
     let trees = &mut lod.trees;
     if !lod.enabled || dist <= 0.0 || streamer.interior.is_some() {
@@ -315,11 +338,22 @@ mod tests {
     }
 
     #[test]
-    fn the_reach_is_the_flag_times_the_part_and_full_is_the_flag() {
-        assert_eq!(reach(40_000.0, 1.0), 40_000.0, "100%: exactly the flag's value");
-        assert_eq!(reach(40_000.0, 0.5), 20_000.0);
-        assert_eq!(reach(0.0, 0.5), 0.0, "--tree-distance 0 stays off");
-        assert_eq!(reach(40_000.0, 0.0), 0.0);
+    fn the_reach_is_the_part_of_the_far_limit_and_starts_at_the_flag() {
+        let (flag, far) = (40_000.0, 125_000.0);
+        assert_eq!(start_part(flag, far), 0.32, "the defaults: 40,000 of 125,000");
+        assert_eq!(reach(flag, far, start_part(flag, far)), 40_000.0, "untouched: exactly the flag's value");
+        assert_eq!(reach(flag, far, 1.0), 125_000.0, "the full part: the distant LOD's far limit");
+        assert_eq!(reach(flag, far, 0.08), 10_000.0);
+        assert_eq!(reach(flag, far, 0.34) - reach(flag, far, 0.32), 2_500.0, "a step of 0.02");
+        assert_eq!(reach(flag, far, 1.5), 125_000.0, "never beyond the far limit");
+        assert_eq!(reach(flag, far, 0.0), 0.0);
+        assert_eq!(reach(0.0, far, 0.5), 0.0, "--tree-distance 0 stays off whatever the part");
+        assert_eq!(reach(0.0, far, 1.0), 0.0);
+        assert_eq!(start_part(200_000.0, far), 1.0, "a flag beyond the far limit is taken as it");
+        assert_eq!(reach(200_000.0, far, start_part(200_000.0, far)), 125_000.0);
+        assert_eq!(start_part(0.0, far), 0.0);
+        assert_eq!(start_part(flag, 0.0), 0.0, "no distant LOD: no part");
+        assert_eq!(reach(flag, 0.0, 0.5), 0.0);
     }
 
     #[test]

@@ -320,7 +320,9 @@ struct Args {
     /// (fSplitDistanceMult).
     #[arg(long, default_value_t = 1.5)]
     lod_split: f32,
-    /// Distant trees drawn as billboards out to this distance (fTreeLoadDistance); 0: none.
+    /// Distant trees drawn as billboards out to this distance (fTreeLoadDistance), at most
+    /// --lod-distance: the Tree distance slider's start (a kept or moved slider wins); 0:
+    /// none, whatever the slider.
     #[arg(long, default_value_t = 40_000.0)]
     tree_distance: f32,
     /// Do not draw distant LOD.
