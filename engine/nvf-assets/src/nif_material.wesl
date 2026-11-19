@@ -98,6 +98,8 @@ import bevy_pbr::{
 import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, base_color_texel_level, base_color_size, normal_map_texel};
 @if(NVF_PBR_VIEW_OCCLUSION && !PREPASS_PIPELINE) import nvf_assets::nif_surface_bindings::occlusion_texel;
 @if(NVF_PBR_VIEW_OCCLUSION && !PREPASS_PIPELINE) import bevy_pbr::render::pbr_types::STANDARD_MATERIAL_FLAGS_OCCLUSION_TEXTURE_BIT;
+@if(NVF_PBR_VIEW_HEIGHT && !PREPASS_PIPELINE) import nvf_assets::nif_surface_bindings::height_texel;
+@if(NVF_PBR_VIEW_HEIGHT && !PREPASS_PIPELINE) import bevy_pbr::render::pbr_types::STANDARD_MATERIAL_FLAGS_DEPTH_MAP_BIT;
 @if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::{mesh_terrain_lookup, mesh_terrain_view, mesh_terrain_shading, mesh_terrain_unlit_view, mesh_terrain_diagnostic, mesh_terrain_blend_normal, mesh_terrain_target_colour, mesh_terrain_target_normal, mesh_terrain_face_up, MeshTerrainInputs, LOOKUP_SUCCESS, LAND_ROUGHNESS, LAND_REFLECTANCE};
 @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) import bevy_pbr::render::pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
 
@@ -557,6 +559,13 @@ fn nif_fragment(
         pbr_view = vec3(occlusion_texel(in.instance_index, occlusion_uv, view.mip_bias));
     }
     @if(NVF_PBR_VIEW_NORMAL && !PREPASS_PIPELINE) pbr_view = 0.5 + 0.5 * pbr_input.N;
+    // The height map as stored (the original height, not the inverted depth the march
+    // reads), at the unshifted coordinates; dark blue where the material has none.
+    @if(NVF_PBR_VIEW_HEIGHT && !PREPASS_PIPELINE) pbr_view = vec3(0.0, 0.0, 0.3);
+    @if(NVF_PBR_VIEW_HEIGHT && !PREPASS_PIPELINE && VERTEX_UVS_A) if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_DEPTH_MAP_BIT) != 0u {
+        let height_uv = (standard_material(in.instance_index).uv_transform * vec3(in.uv, 1.0)).xy;
+        pbr_view = vec3(height_texel(in.instance_index, height_uv, view.mip_bias));
+    }
     @if(NVF_PBR_VIEW_AUTHORED && !PREPASS_PIPELINE) {
         let view_brightness = 0.25 + 0.75 * dot(pbr_input.material.base_color.rgb, vec3(0.2126, 0.7152, 0.0722));
         pbr_view = select(vec3(0.5), vec3(1.0, 0.45, 0.05), surface.emissive_rule.w > 0.5) * view_brightness;

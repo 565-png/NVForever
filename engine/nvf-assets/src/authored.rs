@@ -380,7 +380,8 @@ pub const VIEW_ENV: &str = "NVF_PBR_VIEW";
 /// "NVF_PBR_VIEW"). Refracting shapes return before it; additive draws add it by their alpha
 /// and multiplied ones stay neutral, so effects fade out of the view. Picked once at
 /// the start by `NVF_PBR_VIEW` = `roughness` | `metallic` | `occlusion` | `normal` |
-/// `authored` [design]. Not a `NVF_PLAY_TEST_*` aid: it does not make a run unattended.
+/// `authored` | `height` [design]. Not a `NVF_PLAY_TEST_*` aid: it does not make a run
+/// unattended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PbrView {
     Off,
@@ -394,10 +395,14 @@ pub enum PbrView {
     Normal,
     /// Authored shapes tinted orange, every other shape grey, by its base colour's brightness.
     Authored,
+    /// The height map as stored (0 black = low, 1 white = high), read at the unshifted
+    /// texture coordinates: the original height, not the depth the march reads; dark blue on
+    /// a shape without a depth map (#2981 stage 4).
+    Height,
 }
 
 impl PbrView {
-    pub const ALL: [PbrView; 5] = [PbrView::Roughness, PbrView::Metallic, PbrView::Occlusion, PbrView::Normal, PbrView::Authored];
+    pub const ALL: [PbrView; 6] = [PbrView::Roughness, PbrView::Metallic, PbrView::Occlusion, PbrView::Normal, PbrView::Authored, PbrView::Height];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -407,6 +412,7 @@ impl PbrView {
             PbrView::Occlusion => "occlusion",
             PbrView::Normal => "normal",
             PbrView::Authored => "authored",
+            PbrView::Height => "height",
         }
     }
 
@@ -428,6 +434,7 @@ impl PbrView {
             PbrView::Occlusion => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_OCCLUSION"],
             PbrView::Normal => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_NORMAL"],
             PbrView::Authored => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_AUTHORED"],
+            PbrView::Height => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_HEIGHT"],
         }
     }
 }
@@ -446,7 +453,7 @@ pub fn view() -> PbrView {
                 v
             }
             None => {
-                warn!("authored materials: {VIEW_ENV}={text} is none of roughness, metallic, occlusion, normal, authored; no channel view");
+                warn!("authored materials: {VIEW_ENV}={text} is none of roughness, metallic, occlusion, normal, authored, height; no channel view");
                 PbrView::Off
             }
         }
