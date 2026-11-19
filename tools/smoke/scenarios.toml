@@ -920,7 +920,7 @@ paths = [
   "engine/nvforever/src/settings.rs", "engine/nvf-play/src/pause.rs",
   "engine/nvf-play/src/settings_layout.rs", "engine/vendor/naga/**",
 ]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16,19.5:20.5", NVF_PLAY_TEST_SETTINGS = "11:ambient-occlusion,12:bloom,13:fine-shadows,14:ambient-occlusion,15:anti-aliasing=1,15.5:light-shafts,20:anti-aliasing=0.333", NVF_PLAY_TEST_LOOK = "17:90:0,17.5:120:0,18:150:0", NVF_PLAY_TEST_MOVE = "17:1:0,19:0:0" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16,19.5:20.5", NVF_PLAY_TEST_SETTINGS = "11:ambient-occlusion=Off,12:bloom,13:fine-shadows,14:ambient-occlusion=Quality,15:anti-aliasing=1,15.5:light-shafts,20:anti-aliasing=0.333", NVF_PLAY_TEST_LOOK = "17:90:0,17.5:120:0,18:150:0", NVF_PLAY_TEST_MOVE = "17:1:0,19:0:0" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12", "--graphics", "enhanced"]
 run_seconds = 24
 order = [[
@@ -1149,27 +1149,29 @@ forbid = [
 
 [[scenario]]
 name = "ambient-occlusion-lighting-switch"
-source = "#2897 stage b, docs/design/graphics-enhanced.md §3.1.2: the switch off and on again in play: the bindings go and come back (each said once), and the pause menu waits for the material pipelines the change rebuilds"
+source = "#2897 stage b, docs/design/graphics-enhanced.md §3.1.2: the row Off and on again in play (since 2026-11-19 a list: back at Performance, owner's Off/Performance/Quality): the bindings go and come back (each said once), the estimate is said again at its new level, and the pause menu waits for the material pipelines the change rebuilds"
 areas = ["renderer", "graphics", "settings"]
 paths = [
   "engine/nvforever/src/ssao*", "engine/nvforever/src/ssao_lighting/**", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/mesh*.rs",
   "engine/nvforever/src/water.rs", "engine/nvforever/src/grass.rs", "engine/nvforever/src/tree.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-shader-tests/**",
 ]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:ambient-occlusion,12.5:ambient-occlusion" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:ambient-occlusion=Off,12.5:ambient-occlusion=Performance" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "ambient-occlusion"]
 run_seconds = 24
 order = [[
   "ambient occlusion: on the ambient light in the lighting (main camera)",
   "pause menu: open",
-  "settings: ambient-occlusion off",
-  { text = "ambient occlusion: off the lighting", label = "the bindings go with the switch" },
-  "settings: ambient-occlusion on",
+  "settings: ambient-occlusion Off",
+  { text = "ambient occlusion: off the lighting", label = "the bindings go with the row" },
+  "settings: ambient-occlusion Performance",
   { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "and come back with it" },
   { re = 'pause menu: resume after graphics change: pipelines waited [\d.]+ s, pending 0, capped false$' },
 ]]
 expect = [
-  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", count = 2, label = "on at the start and again after the switch" },
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", count = 2, label = "on at the start and again after the row" },
   { text = "ambient occlusion: off the lighting", count = 1, label = "off once" },
+  { re = 'ambient occlusion: ground-truth estimate \(GTAO\), 2 slices x 4 steps .*, level Quality$', count = 1, label = "the start at Quality" },
+  { re = 'ambient occlusion: ground-truth estimate \(GTAO\), 1 slice x 4 steps .*, level Performance$', count = 1, label = "back on at Performance: one slice" },
 ]
 forbid = [
   { text = "Caught rendering error", label = "a rendering (validation) error while the bindings come and go" },
@@ -1257,6 +1259,70 @@ forbid = [
   { text = "DeviceLost", label = "the GPU device was lost, ambient occlusion (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
   { text = "Caught rendering error", label = "a rendering (validation) error, ambient occlusion (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
   { text = "failed and will not be tried again", label = "a pipeline that failed for good, the hooked lighting (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-novac-performance"
+source = "[design] docs/design/graphics-enhanced.md §3.1.2, owner 2026-11-19 (AO's row like Lamp shadows' Off/Performance/Quality): the enhanced look's ambient occlusion at Performance (one slice a pixel, ssao.rs PERFORMANCE_SLICES) in the lighting with the multi-bounce fit, walking in Novac at 12:00 under the default 4x multisampling (the depth resolved once for the passes), without a rendering or pipeline error. Pictures and its cost are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao.wesl", "engine/nvforever/src/ssao_lighting.rs", "engine/nvforever/src/ssao_lighting.wesl", "engine/nvforever/src/ssao_lighting/hook.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0" }
+args = ["--cell", "Novac", "--play", "--hour", "12", "--no-voice", "--no-messages", "--graphics", "enhanced", "--ambient-occlusion=performance"]
+run_seconds = 28
+expect = [
+  { re = 'ambient occlusion: ground-truth estimate \(GTAO\), 1 slice x 4 steps a side at half resolution, depth-aware denoise, variant soft\+thin, strength 0\.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1, multi-bounce by surface colour, level Performance$', count = 1, label = "Performance: one slice, the rest as Quality (Novac at 12:00, Performance)" },
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera (Novac at 12:00, Performance)" },
+  { text = "ambient occlusion: the multisampled depth resolved once to one sample for the passes", label = "under 4x multisampling the passes read the resolved depth (Novac at 12:00, Performance)" },
+]
+forbid = [
+  { text = "level Quality", label = "the command line's Performance held (Novac at 12:00, Performance)" },
+  { text = "ambient occlusion: off the lighting", label = "the occlusion fell off the lighting (Novac at 12:00, Performance)" },
+  { text = "DeviceLost", label = "the GPU device was lost, ambient occlusion (Novac at 12:00, Performance)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error, ambient occlusion (Novac at 12:00, Performance)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good, the hooked lighting (Novac at 12:00, Performance)" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-novac-performance-dlss"
+source = "[design] docs/design/graphics-enhanced.md §3.1.2, owner 2026-11-19 (AO's row like Lamp shadows' Off/Performance/Quality): the enhanced look's ambient occlusion at Performance (one slice a pixel, ssao.rs PERFORMANCE_SLICES) in the lighting with the multi-bounce fit, walking in Novac at 12:00 with DLSS Quality, without a rendering or pipeline error. Pictures and its cost are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao.wesl", "engine/nvforever/src/ssao_lighting.rs", "engine/nvforever/src/ssao_lighting.wesl", "engine/nvforever/src/ssao_lighting/hook.rs"]
+note = "needs NVF_DLSS_DIR (NVIDIA's files)."
+requires = ["NVF_DLSS_DIR"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0", WGPU_BACKEND = "vulkan" }
+args = ["--cell", "Novac", "--play", "--hour", "12", "--no-voice", "--no-messages", "--graphics", "enhanced", "--ambient-occlusion=performance", "--upscaler", "dlss", "--upscaler-quality", "quality"]
+run_seconds = 28
+expect = [
+  { re = 'ambient occlusion: ground-truth estimate \(GTAO\), 1 slice x 4 steps a side at half resolution, depth-aware denoise, variant soft\+thin, strength 0\.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1, multi-bounce by surface colour, level Performance$', count = 1, label = "Performance: one slice, the rest as Quality (Novac at 12:00, Performance with DLSS Quality)" },
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera (Novac at 12:00, Performance with DLSS Quality)" },
+]
+forbid = [
+  { text = "level Quality", label = "the command line's Performance held (Novac at 12:00, Performance with DLSS Quality)" },
+  { text = "ambient occlusion: off the lighting", label = "the occlusion fell off the lighting (Novac at 12:00, Performance with DLSS Quality)" },
+  { text = "DeviceLost", label = "the GPU device was lost, ambient occlusion (Novac at 12:00, Performance with DLSS Quality)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error, ambient occlusion (Novac at 12:00, Performance with DLSS Quality)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good, the hooked lighting (Novac at 12:00, Performance with DLSS Quality)" },
+]
+
+[[scenario]]
+name = "ambient-occlusion-interior-underpass-performance"
+source = "[design] docs/design/graphics-enhanced.md §3.1.2, owner 2026-11-19 (AO's row like Lamp shadows' Off/Performance/Quality): the enhanced look's ambient occlusion at Performance (one slice a pixel, ssao.rs PERFORMANCE_SLICES) in the lighting with the multi-bounce fit, walking in UnderpassRanchInterior01, a random interior under the default 4x multisampling (the depth resolved once for the passes), without a rendering or pipeline error. Pictures and its cost are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/ssao.rs", "engine/nvforever/src/ssao.wesl", "engine/nvforever/src/ssao_lighting.rs", "engine/nvforever/src/ssao_lighting.wesl", "engine/nvforever/src/ssao_lighting/hook.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0" }
+args = ["--cell", "UnderpassRanchInterior01", "--play", "--hour", "12", "--no-voice", "--no-messages", "--graphics", "enhanced", "--ambient-occlusion=performance"]
+run_seconds = 28
+expect = [
+  { re = 'ambient occlusion: ground-truth estimate \(GTAO\), 1 slice x 4 steps a side at half resolution, depth-aware denoise, variant soft\+thin, strength 0\.8, in the lighting: on the ambient light and on lamps without a shadow by 1, exponent 1, multi-bounce by surface colour, level Performance$', count = 1, label = "Performance: one slice, the rest as Quality (UnderpassRanchInterior01, Performance)" },
+  { text = "ambient occlusion: on the ambient light in the lighting (main camera)", label = "the bindings on the main camera (UnderpassRanchInterior01, Performance)" },
+  { text = "ambient occlusion: the multisampled depth resolved once to one sample for the passes", label = "under 4x multisampling the passes read the resolved depth (UnderpassRanchInterior01, Performance)" },
+]
+forbid = [
+  { text = "level Quality", label = "the command line's Performance held (UnderpassRanchInterior01, Performance)" },
+  { text = "ambient occlusion: off the lighting", label = "the occlusion fell off the lighting (UnderpassRanchInterior01, Performance)" },
+  { text = "DeviceLost", label = "the GPU device was lost, ambient occlusion (UnderpassRanchInterior01, Performance)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error, ambient occlusion (UnderpassRanchInterior01, Performance)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good, the hooked lighting (UnderpassRanchInterior01, Performance)" },
 ]
 
 [[scenario]]
@@ -2572,13 +2638,13 @@ name = "settings-resume-pipelines"
 source = "[design] #1820 pipeline portion: graphics-enhanced.md section 3; resume 0.5 seconds after AA/AO edits, keeping the pause menu until fresh pipeline samples settle (loading-pipelines-start covers the start's gate)"
 areas = ["renderer", "graphics", "settings"]
 paths = ["engine/nvf-play/src/graphics_resume.rs", "engine/nvf-play/src/pause.rs", "engine/nvf-play/src/settings.rs", "engine/nvforever/src/settings.rs", "engine/nvforever/src/pipeline_gate.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:11.5", NVF_PLAY_TEST_SETTINGS = "11:anti-aliasing=1,11:ambient-occlusion" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:11.5", NVF_PLAY_TEST_SETTINGS = "11:anti-aliasing=1,11:ambient-occlusion=Quality" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics", "vanilla", "--msaa", "1", "--sun-shadows"]
 run_seconds = 32
 order = [[
   "pause menu: open",
   "settings: anti-aliasing TAA",
-  "settings: ambient-occlusion on",
+  "settings: ambient-occlusion Quality",
   "test aid NVF_PLAY_TEST_PAUSE: Esc (resume)",
   { re = 'pause menu: resume after graphics change: pipelines waited [\d.]+ s, pending 0, capped false$' },
   { re = 'pause menu: resume$' },

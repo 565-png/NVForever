@@ -28,6 +28,7 @@ use crate::nav::NavState;
 use crate::perf_overlay::{FpsCounter, Low};
 use crate::player_body::PlayerBody;
 use crate::sky::SkyState;
+use crate::ssao::{AoLevel, AO_CHOICES};
 use crate::upscaler::{DlssModel, UpscaleQuality, Upscaler, UpscalerChoice};
 use crate::window_mode;
 use crate::world::Streamer;
@@ -1104,15 +1105,15 @@ fn register_graphics(app: &mut App) {
         },
     );
     nvf_play::settings::set_disabled_status(app, "latency-reduction", |w| (!crate::anti_lag::available(w)).then_some("Not on this GPU"));
-    let switches: [Switch; 19] = [
-        (
-            "ambient-occlusion",
-            "Ambient occlusion",
-            "On: creases, corners and the ground under things are darkened by how enclosed they are (screen-space, from the depth). Not in the original.",
-            "--graphics",
-            |w| w.resource::<Graphics>().ambient_occlusion,
-            |w, on| w.resource_mut::<Graphics>().ambient_occlusion = on,
-        ),
+    // Ambient occlusion: a list of its three choices like Sun shadows' [design: the owner,
+    // 2026-11-19: "AO's row to match Lamp shadows' Off/Performance/Quality"]; the INI's older
+    // on/off (1/0, true/false, on/off, yes/no) still loads, as Quality and Off.
+    add_choice_list(
+        app,
+        Setting { key: AO_KEY, group: GROUP_GRAPHICS, label: "Ambient occlusion", note: AO_NOTE, switches: "--graphics, --ambient-occlusion", get: |_| false, set: |_, _| {}, slider: None },
+        ChoiceList { names: |_| AO_CHOICES.iter().map(|c| (*c).to_string()).collect(), chosen: ao_chosen, pick: take_ao, save: ao_chosen, load: take_ao, ask_keep: false },
+    );
+    let switches: [Switch; 18] = [
         (
             "fine-shadows",
             "Longer sun shadows",
@@ -1267,6 +1268,38 @@ fn register_graphics(app: &mut App) {
     for (key, label, note, switches, get, set) in switches {
         add_setting(app, Setting { key, group: GROUP_GRAPHICS, label, note, switches, get, set, slider: None });
     }
+}
+
+/// The Ambient occlusion row's key and note (ssao.rs `AoLevel`).
+const AO_KEY: &str = "ambient-occlusion";
+const AO_NOTE: &str = "Creases, corners and the ground under things darken by how enclosed they are: Off, Performance (cheaper, a little grainier) or Quality. Not in the original.";
+
+/// The Ambient occlusion row's choice now: Off, or the level it runs at.
+fn ao_chosen(world: &World) -> String {
+    let g = world.resource::<Graphics>();
+    if g.ambient_occlusion { g.ambient_occlusion_level.name() } else { AO_CHOICES[0] }.to_string()
+}
+
+/// The page's, the INI's and the test aids' Ambient occlusion: one of [`AO_CHOICES`] (any
+/// case), the row's older on/off as Quality and Off, or an older slider's number (0 Off, 1
+/// Quality); false otherwise.
+fn take_ao(world: &mut World, text: &str) -> bool {
+    let names: Vec<String> = AO_CHOICES.iter().map(|c| (*c).to_string()).collect();
+    let choice = nvf_play::settings::choice_of(text, &names, |v| choice_index(v, AO_CHOICES.len()))
+        .or_else(|| nvf_play::settings::parse_switch(text).map(|on| if on { AO_CHOICES.len() - 1 } else { 0 }));
+    let Some(choice) = choice else { return false };
+    let mut g = world.resource_mut::<Graphics>();
+    let level = if choice == 1 { AoLevel::Performance } else { AoLevel::Quality };
+    // Off keeps the level for the next On, as Sun shadows keeps its mode.
+    if choice == 0 {
+        if g.ambient_occlusion {
+            g.ambient_occlusion = false;
+        }
+    } else if !g.ambient_occlusion || g.ambient_occlusion_level != level {
+        g.ambient_occlusion = true;
+        g.ambient_occlusion_level = level;
+    }
+    true
 }
 
 /// The Cloud shadows row's note (#2670; docs/design/sun-visibility.md): the label says the
@@ -1900,7 +1933,7 @@ mod fsr_settings_tests {
         let world = app.world_mut();
         // Anti-Aliasing is a list since the menu overhaul.
         settings::pick(world, aa, "Off");
-        settings::restore(world, ao, 0.0);
+        settings::pick(world, ao, "Off");
         assert!(!settings::pick(world, fsr, "Off"));
         assert!(world.resource_mut::<GraphicsResume>().request(0.0));
         settings::pick(world, aa, "TAA");
@@ -1909,7 +1942,7 @@ mod fsr_settings_tests {
         settings::restore(world, aa, 0.0);
         assert!(!world.resource_mut::<GraphicsResume>().request(0.0));
         world.resource_mut::<GraphicsResume>().reset();
-        settings::flip(world, ao);
+        settings::pick(world, ao, "Performance");
         assert!(!world.resource_mut::<GraphicsResume>().request(0.0));
         world.resource_mut::<GraphicsResume>().reset();
         settings::pick(world, fsr, "FSR 3.1");
@@ -1917,6 +1950,52 @@ mod fsr_settings_tests {
         world.resource_mut::<GraphicsResume>().reset();
         settings::restore(world, fsr, 0.0);
         assert!(!world.resource_mut::<GraphicsResume>().request(0.0), "Defaults also restores named choices");
+    }
+
+    /// The Ambient occlusion row is a list of Off, Performance and Quality like Sun shadows:
+    /// the choice sets the switch and the level, Off keeps the level for the next On, and the
+    /// INI's older on/off (and a slider's 0 or 1) still loads as Quality or Off.
+    #[test]
+    fn ambient_occlusion_is_a_list_of_off_performance_and_quality() {
+        let _offer_probe = crate::dlss_download::TestOfferProbe::new(Some(false));
+        let mut app = App::new();
+        app.insert_resource(Graphics::preset(graphics::Preset::Vanilla)).insert_resource(graphics::MsaaSetting(Msaa::Off));
+        register_graphics(&mut app);
+        let row = app.world().resource::<nvf_play::settings::Settings>().index(AO_KEY).unwrap();
+        let chosen = |app: &App| (app.world().resource::<nvf_play::settings::Settings>().choices(row).unwrap().chosen)(app.world());
+        let state = |app: &App| {
+            let g = app.world().resource::<Graphics>();
+            (g.ambient_occlusion, g.ambient_occlusion_level)
+        };
+        let names = (app.world().resource::<nvf_play::settings::Settings>().choices(row).unwrap().names)(app.world());
+        assert_eq!(names, ["Off", "Performance", "Quality"]);
+        assert_eq!(chosen(&app), "Off", "vanilla starts without it");
+        assert!(nvf_play::settings::pick(app.world_mut(), row, "Performance"));
+        assert_eq!(state(&app), (true, AoLevel::Performance));
+        assert_eq!(chosen(&app), "Performance");
+        assert!(nvf_play::settings::pick(app.world_mut(), row, "Off"));
+        assert_eq!(state(&app), (false, AoLevel::Performance), "Off keeps the level");
+        assert!(nvf_play::settings::pick(app.world_mut(), row, "Quality"));
+        assert_eq!(state(&app), (true, AoLevel::Quality));
+        // The INI: the names in any case, the switch's older values, a slider's numbers.
+        for (text, want) in [
+            ("performance", (true, AoLevel::Performance)),
+            ("0", (false, AoLevel::Performance)),
+            ("1", (true, AoLevel::Quality)),
+            ("off", (false, AoLevel::Quality)),
+            ("true", (true, AoLevel::Quality)),
+            ("false", (false, AoLevel::Quality)),
+            ("on", (true, AoLevel::Quality)),
+            ("no", (false, AoLevel::Quality)),
+            ("yes", (true, AoLevel::Quality)),
+            ("0.5", (true, AoLevel::Performance)),
+        ] {
+            assert!(take_ao(app.world_mut(), text), "{text}");
+            assert_eq!(state(&app), want, "{text}");
+        }
+        assert!(!take_ao(app.world_mut(), "ultra"));
+        assert_eq!(state(&app), (true, AoLevel::Performance), "a value not taken changes nothing");
+        assert!(AO_NOTE.contains("Off, Performance") && AO_NOTE.ends_with("Not in the original."));
     }
 
     #[test]
@@ -2626,7 +2705,7 @@ dlss-model=Preset K
             (FRAME_GENERATION_KEY, &["--frame-generation"]),
             (FRAMES_KEY, &[]),
             ("latency-reduction", &["--latency-reduction"]),
-            ("ambient-occlusion", &["--graphics"]),
+            ("ambient-occlusion", &["--graphics", "--ambient-occlusion"]),
             ("fine-shadows", &["--shadow-distance", "--graphics"]),
             ("cloud-shadows", &["--graphics", "--graphics-only"]),
             ("terrain-shadows", &["--graphics", "--graphics-only"]),

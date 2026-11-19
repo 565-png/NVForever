@@ -429,6 +429,53 @@ Quality (the camera jittering), the lit picture 1.33 % and 0.84 %; by more than 
 occlusion's. Not measured yet: the view moving; the Freeside alley and the gas station
 exterior pictures #2897 asks for.
 
+**Off, Performance, Quality** (2026-11-19; the owner: AO's row to match Sun shadows' and
+Lamp shadows'). The row `ambient-occlusion` is a list: Off; Quality, the estimate above
+unchanged (2 slices x 4 steps a side, half resolution, the depth-aware denoise, `thin+soft`,
+strength 0.8, multi-bounce, first-person shapes excluded: the uniform is the same value for
+value); Performance, the same pass with one slice direction a pixel (`ssao.rs`
+`PERFORMANCE_SLICES`, through the uniform's slice count, the one the aid's `slices3` uses; the
+aid's own count still wins). The `enhanced` preset is Quality; `--ambient-occlusion[=performance|
+quality]` turns it on at a level whatever the look; an INI written while the row was a switch
+(`1`/`0`, true/false, on/off, yes/no) loads as Quality or Off, and the launcher shows that value
+as the list's (`catalog::list_value`). The start's line ends with the level (`, level
+Performance`), and is said again when the level changes.
+
+Reads a half-resolution texel in the lighting placement, without multisampling (the
+owner's DLSS) [engineering count from `ssao.wesl`, not a measurement]:
+
+| | Quality | Performance |
+|---|---|---|
+| `occlusion`: the pixel's depth, the normal's 4 neighbours | 5 | 5 |
+| `occlusion`: the horizon march, slices x steps x 2 sides (scattered, up to 80 px away) | 16 | 8 |
+| `denoise`: the pixel's depth, the gradient's 4 neighbours | 5 | 5 |
+| `denoise`: the 4 x 4 occlusion texels (`Rg16Float`) | 16 | 16 |
+| all | 42 | 34 |
+
+The march is the costly part (its reads miss the cache, and each slice adds two `acos`, an
+`atan2` and the arc integral), so Performance takes about half the occlusion pass and none of
+the denoise, whose 4 x 4 texels the one slice's sixteen turns need to cancel (a 2 x 2 denoise
+would show the pattern; the turns are fixed per pixel, not jittered, so DLSS would not average
+them). Steps stay at 4: the contact shadows come from the near steps. Not measured yet: the
+cost and the pictures (the main session's in-game run).
+
+**The depth resolved once under multisampling** (2026-11-19; frame-rate-audit §9 "What is
+left": 0.3 of the pass's 0.6 ms at 1440p 4x was reading the multisampled depth). With a
+multisampled prepass, `ssao.rs` `resolve_depth` first writes sample 0 (the sample every pass
+read; with the aid's `nearest`, the nearest sample) into a single-sampled `Depth32Float`
+texture at the prepass's size (`ssao.wesl` `resolve_depth`, a depth-writing fullscreen pass),
+and the occlusion, denoise and picture passes read that with their single-sampled pipelines:
+one coherent read a pixel instead of 26 reads a half-resolution texel from the multisampled
+texture. The values are the same bit for bit, so the picture is too. Inside the
+`nvf_ambient_occlusion` GPU span; `NVF_AO_RESOLVE_DEPTH=0` reads the multisampled depth as
+before, for the comparison. The start says `ambient occlusion: the multisampled depth resolved
+once to one sample for the passes`. Without multisampling (DLSS, FSR, TAA) nothing changes.
+Not done: replacing Bevy's 0.23 ms copy of the multisampled depth (frame-rate-audit §9) with
+this resolve. That copy is in `bevy_core_pipeline` (`prepass/node.rs`, not vendored), and the
+copy it makes is read per sample by the water's edge test (`water.wesl`, every sample against
+the fragment) and bound as a multisampled texture in every material's view bindings (bevy_pbr
+`mesh_view_bindings`), so it cannot become a single sample without changing those readers.
+
 **Not done:** a bent normal (the ambient is a flat colour with no direction), occlusion on
 decals and blended shapes (not in the prepass), on lamps that cast a shadow and on highlights
 (no environment reflections exist yet for a specular occlusion to act on, §3 gaps).
