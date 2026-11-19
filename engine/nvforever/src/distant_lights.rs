@@ -393,6 +393,7 @@ impl GlowModels {
     }
 
     /// Models waiting for a read.
+    #[cfg(test)]
     pub fn waiting(&self) -> usize {
         self.queue.len()
     }
@@ -478,6 +479,7 @@ pub fn list_cells(lo: &LoadOrder, schema: &EsmSchema, cells: Vec<(Grid, Vec<u32>
 
 /// The lights of `list` that show now (`shows`), and a key of which they are: two sets of
 /// the same size have different keys.
+#[cfg(test)]
 pub fn present_lights(list: &[SourceLight], shows: impl Fn(&SourceLight) -> bool) -> (Vec<SourceLight>, u64) {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     let here: Vec<SourceLight> = list.iter().filter(|l| shows(l)).copied().collect();
@@ -707,8 +709,8 @@ impl Material for GlowMaterial {
     }
 }
 
-/// One cell's glows from the lights present now, and the key of which those are
-/// ([`present_lights`]).
+/// One cell's glows from the lights present now, and the key of which those are (their
+/// FormIDs and count, `DistantLights::check_present`).
 struct CellGlows {
     glows: Vec<Glow>,
     key: u64,
