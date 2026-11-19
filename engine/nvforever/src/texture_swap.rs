@@ -159,6 +159,9 @@ impl Swapping<'_, '_> {
                             };
                             let Some(mut m) = models.materials.get(original).cloned() else { continue };
                             m.base.base_color_texture = Some(image);
+                            // The new diffuse's authored set, or the legacy look (#2981).
+                            let a = &mut *models;
+                            nvf_assets::authored::retexture(&mut m, texture, &mut a.textures, &a.data, &mut a.images, a.formats.as_deref());
                             let h = models.materials.add(m);
                             swapped.original.insert(h.id(), original);
                             swapped.made.insert(key, h.clone());

@@ -6,6 +6,9 @@
 //!   or reads a file under `textures\pbr\`.
 //! - [`find`]: a shape's set by its resolved diffuse key, the members loaded by the exact
 //!   paths the index names, the scalar file read once per set ([`Memo`]).
+//! - [`apply`] / [`restore`]: a set on a material and back, from the legacy look every
+//!   eligible shape's material keeps ([`LegacyLook`]); [`retexture`] is the one rule for a
+//!   lit copy whose diffuse is replaced later.
 //!
 //! [design] The rules are NVForever's own (the format is ours); none describes the original.
 
@@ -228,6 +231,64 @@ pub fn make_legacy(material: &mut crate::NifMaterial) -> bool {
         restore(material, &legacy);
     }
     true
+}
+
+/// Clear every authored map from an unlit copy (the Pip-Boy's glare and menus copies,
+/// nvforever `pipboy_arm.rs`): the ORM in both slots, the depth map (Bevy applies parallax
+/// before its unlit test), the mark and the legacy look, so nothing of a set reaches it
+/// whatever its source wore [design, a second guard beside the `textures\pipboy3000\`
+/// exclusion].
+pub fn clear_for_unlit_copy(material: &mut crate::NifMaterial) {
+    material.base.metallic_roughness_texture = None;
+    material.base.occlusion_texture = None;
+    material.base.depth_map = None;
+    material.extension.emissive_rule.w = 0.0;
+    material.extension.legacy = None;
+}
+
+/// What [`retexture`] did to a material.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Retextured {
+    /// The material takes no set (no legacy look kept: not eligible, or made legacy).
+    Untouched,
+    /// The new diffuse's set is on it.
+    Authored,
+    /// No set for the new diffuse: the legacy look is on it (as it was, or put back).
+    Legacy,
+}
+
+/// The one rule for a lit copy of a shape's material whose diffuse was just replaced by
+/// `texture` (a NIF texture path; script `SwapTexture`, the blackjack cards, the Vigor
+/// Tester's buttons and digits): from the material's legacy look ([`LegacyLook`], carried by
+/// the copy), the new diffuse's set is applied (its scalars' defaults, the game's normal map
+/// where it has no `_n` or the drawn mesh has no tangents), or, without one, the legacy
+/// look is put back if a set was on it. Always from the legacy look, never from what the
+/// copy wore: a copy of a material that wore another diffuse's set takes none of it. Only
+/// the set's fields change; tint, animation, fade and every other value stay.
+pub fn retexture(
+    material: &mut crate::NifMaterial,
+    texture: &str,
+    textures: &mut crate::TextureCache,
+    data: &GameData,
+    images: &mut Assets<Image>,
+    formats: Option<&bevy::image::CompressedImageFormatSupport>,
+) -> Retextured {
+    use crate::nif_spawn::TextureSource;
+    let Some(legacy) = material.extension.legacy.clone() else { return Retextured::Untouched };
+    let mut source = crate::nif_spawn::StoreTextures { textures, data, images, formats };
+    let key = source.resolve(texture);
+    match key_eligible(&key).then(|| source.authored(&key)).flatten() {
+        Some(set) => {
+            apply(material, &set, &legacy);
+            Retextured::Authored
+        }
+        None => {
+            if is_authored(material) {
+                restore(material, &legacy);
+            }
+            Retextured::Legacy
+        }
+    }
 }
 
 /// Log once per set that its `_n` was not applied to a shape without tangents.

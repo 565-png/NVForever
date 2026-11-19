@@ -159,3 +159,54 @@ fn a_height_only_set_is_no_authored_set_unless_a_plain_one_stands_behind_a_twin(
     assert!(authored_found(&index, r"textures\a\1stpersonrifle.dds").is_none(), "no plain set behind the twin");
     assert!(authored_found(&index, r"textures\a\gun.dds").is_some());
 }
+
+/// The swap rule (`retexture`): authored → another set → no set, always from the legacy look,
+/// for a shape whose drawn mesh has tangents and for one without (its later `_n` is not
+/// applied); a material that takes no set is left alone.
+#[test]
+fn retexturing_goes_from_set_to_set_to_legacy_from_the_legacy_look() {
+    use crate::nif_spawn::{shape_material, Props};
+    use crate::texture::bc5_tests::triangle;
+    let pack = Pack::new();
+    let mut cache = TextureCache::default();
+    let mut images = Assets::<Image>::default();
+    let props = |t: &str| {
+        let mut p = Props::default();
+        p.textures = vec![t.into()];
+        p
+    };
+    // Drawn with brick (its `_n` gives the mesh tangents), then with plain (no set, no tangents).
+    let (with_n, _) = shape_material(&props(r"walls\brick.dds"), &mut triangle(), &mut cache, &pack.data, &mut images, None);
+    let (bare, _) = shape_material(&props(r"walls\plain.dds"), &mut triangle(), &mut cache, &pack.data, &mut images, None);
+    assert!(is_authored(&with_n) && with_n.base.normal_map_texture.is_some());
+    assert!(!is_authored(&bare) && !bare.extension.legacy.as_ref().unwrap().tangents);
+    let brick_n = with_n.base.normal_map_texture.clone();
+    for (start, tangents) in [(with_n, true), (bare, false)] {
+        let legacy = start.extension.legacy.clone().unwrap();
+        let mut m = start.clone();
+        // Card A: brick's set.
+        assert_eq!(retexture(&mut m, r"walls\brick.dds", &mut cache, &pack.data, &mut images, None), Retextured::Authored);
+        assert_eq!(m.base.normal_map_texture.is_some(), tangents, "brick's _n only where the drawn mesh has tangents");
+        assert_eq!((m.base.reflectance, m.base.perceptual_roughness), (0.25, 0.5));
+        // Card B, from the copy card A wore: its own set, nothing of brick's.
+        let mut b = m.clone();
+        assert_eq!(retexture(&mut b, r"walls\nonormal.dds", &mut cache, &pack.data, &mut images, None), Retextured::Authored);
+        assert_eq!(b.base.normal_map_texture, legacy.normal, "no _n: the legacy normal state, never brick's");
+        assert_ne!(b.base.metallic_roughness_texture, m.base.metallic_roughness_texture);
+        assert_eq!((b.base.reflectance, b.base.perceptual_roughness), (0.5, 1.0), "the scalars' defaults");
+        // No set: the legacy look back, mark and maps gone.
+        assert_eq!(retexture(&mut b, r"walls\plain.dds", &mut cache, &pack.data, &mut images, None), Retextured::Legacy);
+        assert!(!is_authored(&b) && b.base.metallic_roughness_texture.is_none() && b.base.occlusion_texture.is_none());
+        assert_eq!((b.base.normal_map_texture.clone(), b.base.specular_texture.clone(), b.base.reflectance, b.base.perceptual_roughness, b.base.metallic), (legacy.normal.clone(), legacy.specular.clone(), legacy.reflectance, legacy.roughness, legacy.metallic));
+        assert_eq!(b.extension.legacy, Some(legacy), "the legacy look itself never changes");
+    }
+    assert!(brick_n.is_some());
+    // A material that takes no set (no legacy look): untouched.
+    let mut fx = crate::nif_material::nif_material(StandardMaterial { unlit: true, ..default() });
+    assert_eq!(retexture(&mut fx, r"walls\brick.dds", &mut cache, &pack.data, &mut images, None), Retextured::Untouched);
+    assert!(fx.base.metallic_roughness_texture.is_none());
+    // Made legacy for good (a FaceGen target, the hair model): no later set either.
+    let (mut skin, _) = shape_material(&props(r"walls\brick.dds"), &mut triangle(), &mut cache, &pack.data, &mut images, None);
+    assert!(make_legacy(&mut skin) && !is_authored(&skin));
+    assert_eq!(retexture(&mut skin, r"walls\brick.dds", &mut cache, &pack.data, &mut images, None), Retextured::Untouched);
+}
