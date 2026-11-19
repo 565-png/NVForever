@@ -2092,9 +2092,11 @@ text would have used no longer exists since the settings menu overhaul).
   - *In-scatter colour.* Instead of the one fog colour, the fog colour moved toward the sky
     colour in the view ray's direction by up to 0.8 (`DOME_MIX`): the drawn dome's colour at
     the horizon (0°, and below), moving to its colour at 20° up (`LOWER_SIN`), linearly
-    between (smoothstep in the ray's sine). Those two are what sky.rs `dome_color` makes of the
-    dome's own weights there, read from the dome mesh in use (its positions and `SkyDome`
-    weights, again only for a new dome mesh): the stock atmosphere.nif gives about 0.69
+    between (smoothstep in the ray's sine). Those two are the dome's colours there as the
+    renderer draws them: sky.rs `dome_color` of each vertex's own weights on the rings nearest
+    below and above, averaged per ring, then mixed between the rings in linear RGB as the
+    rasteriser mixes the vertex colours. The rings are read from the dome mesh in use (its
+    positions and `SkyDome` weights, again only for a new dome mesh): the stock atmosphere.nif gives about 0.69
     horizon + 0.35 sky-lower at 0° and 0.57 sky-lower + 0.53 sky-upper at 20°
     (docs/spec-notes/world.md "Sky meshes"); the fallback dome its own (all sky-lower at 0°).
     Before a dome mesh has been read, the horizon and sky-lower colours. Each is taken times the
@@ -2103,10 +2105,12 @@ text would have used no longer exists since the settings menu overhaul).
     it. Then toward the weather's sun colour by the normalised Henyey-Greenstein
     lobe ((1 - g)^2 / (1 + g^2 - 2 g cos))^1.5 with g = 0.6 (`HG_G`), at most 0.35 at the sun
     (`LOBE_MOST`), fading in as the sun rises through -2..3° as the sky's disc and glare do
-    (`SkyState::light`): nothing at night. The lobe only brightens: its weight is the sun
-    colour's luminance contrast over the air colour, (Y_sun - Y_air) / max(Y_sun, 1e-4) held to
-    0..1, so a weather with a black sun (or one no brighter than its sky) gets none, not a dark
-    patch toward the sun (tested). The lobe follows the real sun: below the horizon
+    (`SkyState::light`): nothing at night. The lobe only brightens: its contrast and its mix
+    are worked in linear light (decoded from the display values, encoded again for the fog's
+    blend), weighted by the sun colour's luminance contrast over the air colour,
+    (Y_sun - Y_air) / max(Y_sun, 1e-4) held to 0..1, so a weather with a black sun (or one no
+    brighter than its sky) gets none, and a sun brighter in linear light never darkens what the
+    fog shows once decoded, a saturated sky included (tested after the decode). The lobe follows the real sun: below the horizon
     sky.rs `aim_sun` turns the directional light to the moon's side while this fade still runs,
     so the CPU packs which side the light points to (the sign of the lobe's strength, from the
     light's own clock) and the shader turns the light's direction back toward the sun; the
@@ -2155,8 +2159,9 @@ text would have used no longer exists since the settings menu overhaul).
   as on main. What stays for every player: the fog uniform is 48 bytes larger, and the fog
   path has one more uniform branch in `nvf_aerial` and one in `GAME_FOG`; the edits are made
   at the start, with no log line. Both fail safe (one `warn!` line, the shader as it was, the
-  row does nothing). With the row on, the weather's fog numbers and four of its colours are
-  read each frame and the derivation is done again only when they change. The 3D scope's lens
+  row does nothing). With the row on, the weather's fog numbers, five of its colours, the sky
+  level and the sun's height are read each frame; the derivation (the dome's colours, the
+  weights, the encodings) is done again only when one of them or the dome mesh changes. The 3D scope's lens
   camera copies the main camera's fog after both writers of it after the sky (fog.rs
   `FogWriters`: the desert haze and this; the reflection camera copies in PostUpdate), so
   neither shows a frame with the sun's side not yet turned or the aerial fog without the haze
@@ -2178,7 +2183,8 @@ text would have used no longer exists since the settings menu overhaul).
   (1 as designed, 0 to 4; the sky share and the lobe are held to 1, the weights to their
   range), logged once; it does not turn the switch on. Smoke: `aerial-perspective`.
 - **Not done**: no height dependence (the weather's fog has none; the haze has its own); no
-  shadowing of the in-scattered light; the dome's own vertex weights not followed (above); the
+  shadowing of the in-scattered light; between the two reference elevations the sky colour is
+  a smoothstep between the dome's two colours, not the dome's own curve; the
   sun's direction is the view's first directional light turned back toward the sun where it is
   the moon's side, as above (the first-person arms' shade light points the same way); the cloud cover is not read (the base
   game's overcast is not told from clear, weather-facts). The cost is not measured yet, and

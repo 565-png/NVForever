@@ -151,12 +151,35 @@ pub fn lobe(cos: f32) -> f32 {
     q * q.sqrt()
 }
 
-/// The dome's own weights (horizon, sky-lower, sky-upper: its vertex colours' red, green and
-/// blue) at the elevation whose sine is `sin_elevation`, seen from the dome's centre, from its
-/// mesh positions (game axes, z up) and weights per vertex: the rings nearest below and above
-/// (vertices within [`RING_TOLERANCE`] of each, averaged), mixed linearly; the nearest ring
-/// beyond the dome's ends. `None` for no usable vertex.
-pub fn dome_weights_at(positions: &[[f32; 3]], weights: &[[f32; 3]], sin_elevation: f32) -> Option<[f32; 3]> {
+/// Where the dome is sampled at one elevation: the weights (horizon, sky-lower, sky-upper: the
+/// vertex colours' red, green and blue) of the vertices of the ring nearest below and of the
+/// one nearest above, and how far between the two the elevation lies.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DomeSample {
+    pub below: Vec<[f32; 3]>,
+    pub above: Vec<[f32; 3]>,
+    pub t: f32,
+}
+
+impl DomeSample {
+    /// The dome's colour there as the renderer draws it: `colour` (sky.rs `dome_color`) of each
+    /// vertex's weights, averaged over each ring, then mixed between the rings in linear RGB, as
+    /// the rasteriser interpolates the vertex colours.
+    pub fn colour(&self, colour: impl Fn([f32; 3]) -> [f32; 3]) -> [f32; 3] {
+        let ring = |ws: &[[f32; 3]]| {
+            let sum = ws.iter().map(|w| colour(*w)).fold([0.0f32; 3], |s, c| [s[0] + c[0], s[1] + c[1], s[2] + c[2]]);
+            sum.map(|v| v / ws.len().max(1) as f32)
+        };
+        let (lo, hi) = (ring(&self.below), ring(&self.above));
+        std::array::from_fn(|i| lo[i] + (hi[i] - lo[i]) * self.t)
+    }
+}
+
+/// The dome sampled at the elevation whose sine is `sin_elevation`, seen from its centre, from
+/// its mesh positions (game axes, z up) and weights per vertex: the rings nearest below and
+/// above (vertices within [`RING_TOLERANCE`] of each) and the fraction between them, linear in
+/// the sine; the nearest ring beyond the dome's ends. `None` for no usable vertex.
+pub fn dome_sample_at(positions: &[[f32; 3]], weights: &[[f32; 3]], sin_elevation: f32) -> Option<DomeSample> {
     let pts: Vec<(f32, [f32; 3])> = positions
         .iter()
         .zip(weights)
@@ -167,17 +190,10 @@ pub fn dome_weights_at(positions: &[[f32; 3]], weights: &[[f32; 3]], sin_elevati
         .collect();
     let below = pts.iter().map(|(e, _)| *e).filter(|e| *e <= sin_elevation).fold(None, |m: Option<f32>, e| Some(m.map_or(e, |m| m.max(e))));
     let above = pts.iter().map(|(e, _)| *e).filter(|e| *e >= sin_elevation).fold(None, |m: Option<f32>, e| Some(m.map_or(e, |m| m.min(e))));
-    let ring = |at: f32| {
-        let (sum, n) = pts.iter().filter(|(e, _)| (e - at).abs() <= RING_TOLERANCE).fold(([0.0f32; 3], 0u32), |(s, n), (_, w)| ([s[0] + w[0], s[1] + w[1], s[2] + w[2]], n + 1));
-        sum.map(|v| v / n.max(1) as f32)
-    };
+    let ring = |at: f32| -> Vec<[f32; 3]> { pts.iter().filter(|(e, _)| (e - at).abs() <= RING_TOLERANCE).map(|(_, w)| *w).collect() };
     match (below, above) {
-        (Some(b), Some(a)) if a - b > 1e-6 => {
-            let (lo, hi, t) = (ring(b), ring(a), (sin_elevation - b) / (a - b));
-            Some(std::array::from_fn(|i| lo[i] + (hi[i] - lo[i]) * t))
-        }
-        (Some(b), _) => Some(ring(b)),
-        (None, Some(a)) => Some(ring(a)),
+        (Some(b), Some(a)) if a - b > 1e-6 => Some(DomeSample { below: ring(b), above: ring(a), t: (sin_elevation - b) / (a - b) }),
+        (Some(e), _) | (None, Some(e)) => Some(DomeSample { below: ring(e), above: ring(e), t: 0.0 }),
         (None, None) => None,
     }
 }
@@ -277,17 +293,20 @@ pub fn resolve(p: &[Vec4; 3], ray_y: f32, toward_light: f32) -> Option<([f32; 3]
     let mut air: [f32; 3] = std::array::from_fn(|i| p[1][i] + (p[2][i] - p[1][i]) * t);
     if p[0].w != 0.0 {
         let toward_sun = if p[0].w > 0.0 { toward_light } else { -toward_light };
-        let sun = [p[0][0], p[0][1], p[0][2]];
-        let k = (p[0].w.abs() * lobe(toward_sun) * brightening(sun, air)).clamp(0.0, 1.0);
-        air = std::array::from_fn(|i| air[i] + (sun[i] - air[i]) * k);
+        let decode = |v: f32| v.max(0.0).powf(2.2);
+        let sun = [p[0][0], p[0][1], p[0][2]].map(decode);
+        let lin = air.map(decode);
+        let k = (p[0].w.abs() * lobe(toward_sun) * brightening(sun, lin)).clamp(0.0, 1.0);
+        air = std::array::from_fn(|i| (lin[i] + (sun[i] - lin[i]) * k).max(0.0).powf(1.0 / 2.2));
     }
     Some((air, [red, green, blue]))
 }
 
-/// How much of the sun lobe applies over the air colour `air` (display values): its luminance
-/// contrast, (Y_sun − Y_air) / max(Y_sun, 1e-4), held to 0..1, so the lobe only brightens: none
-/// for a sun no brighter than the air (a weather's black sun), continuous (what `nvf_aerial`
-/// computes).
+/// How much of the sun lobe applies over the air colour `air` (both in linear light, decoded
+/// from the display values the uniform holds): its luminance contrast, (Y_sun − Y_air) /
+/// max(Y_sun, 1e-4), held to 0..1. The mix toward the sun is done in linear light too, so the
+/// lobe only brightens what the fog shows once decoded: none for a sun no brighter than the
+/// air (a weather's black sun), continuous (what `nvf_aerial` computes).
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn brightening(sun: [f32; 3], air: [f32; 3]) -> f32 {
     let ys = luminance(sun);
@@ -343,8 +362,9 @@ const AERIAL_FUNCTION: &str = "// NVForever (nvforever aerial.rs AERIAL_FUNCTION
 // the colour toward the horizon and the red weight, [2] the colour toward the sky-lower height
 // and the blue weight. All zero: off, Bevy's call as it was. On, the game's fog (fog.rs GAME_FOG)
 // gets a copy of the uniform with [0] the colour resolved for this ray (alpha -2) and [1] the
-// three weights. The lobe only brightens: it is weighted by the sun's luminance contrast over
-// the air colour (none for a sun no brighter than it).
+// three weights. The lobe only brightens: its contrast and its mix are worked in linear light
+// (decoded, then encoded again for the game's fog), weighted by the sun's luminance contrast
+// over the air colour (none for a sun no brighter than it).
 @if(DISTANCE_FOG)
 fn nvf_aerial(
     fog_params: mesh_view_types::Fog,
@@ -366,11 +386,13 @@ fn nvf_aerial(
         let g: f32 = NVF_AERIAL_HG_G;
         let toward = sign(lobe_strength) * dot(ray, view_bindings::lights.directional_lights[0].direction_to_light);
         let q = (1.0 - g) * (1.0 - g) / max(1.0 + g * g - 2.0 * g * toward, 1e-6);
-        let sun_colour = fog_params.nvf_params[0].rgb;
+        let sun_linear = pow(max(fog_params.nvf_params[0].rgb, vec3<f32>(0.0)), vec3<f32>(2.2));
+        let air_linear = pow(max(air, vec3<f32>(0.0)), vec3<f32>(2.2));
         let luma = vec3<f32>(NVF_AERIAL_LUMA_R, NVF_AERIAL_LUMA_G, NVF_AERIAL_LUMA_B);
-        let sun_luma = dot(sun_colour, luma);
-        let brightening = clamp((sun_luma - dot(air, luma)) / max(sun_luma, 1e-4), 0.0, 1.0);
-        air = mix(air, sun_colour, clamp(abs(lobe_strength) * q * sqrt(q) * brightening, 0.0, 1.0));
+        let sun_luma = dot(sun_linear, luma);
+        let brightening = clamp((sun_luma - dot(air_linear, luma)) / max(sun_luma, 1e-4), 0.0, 1.0);
+        let lit = mix(air_linear, sun_linear, clamp(abs(lobe_strength) * q * sqrt(q) * brightening, 0.0, 1.0));
+        air = pow(max(lit, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2));
     }
     var resolved = fog_params;
     resolved.nvf_params[0] = vec4<f32>(air, -2.0);
@@ -500,12 +522,16 @@ struct AerialState {
     debug: Option<f32>,
     logged: Option<Logged>,
     said_not_installed: bool,
-    /// The last derivation's inputs (the weight times the debug multiplier, the sky) and its
-    /// result, used again while they stay the same.
-    derived: Option<(f32, SkyColours, Option<Aerial>)>,
-    /// The dome mesh read last and its weights at the two reference elevations.
-    dome: Option<(AssetId<Mesh>, [[f32; 3]; 2])>,
+    /// The last derivation's inputs (the weight times the debug multiplier, the weather's raw
+    /// colours and the rest, the dome read) and its result, used again while they stay the same.
+    derived: Option<(DeriveKey, Option<Aerial>)>,
+    /// The dome mesh read last and where it is sampled at the two reference elevations.
+    dome: Option<(AssetId<Mesh>, [DomeSample; 2])>,
 }
+
+/// What the derivation reads: the strength; the weather's fog, horizon, sky-lower, sky-upper
+/// and sun colours, the sky level, the sun's elevation and side; the dome mesh read.
+type DeriveKey = (f32, [[f32; 3]; 5], [f32; 2], bool, Option<AssetId<Mesh>>);
 
 /// The figures for the log.
 fn describe(weather: Option<&str>, weight: f32, multiplier: f32, a: Option<&Aerial>) -> String {
@@ -568,31 +594,28 @@ fn update_aerial(
     let weight = crate::haze::weight(near, far, sky.fog_power(), strength);
     // The drawn dome's own weights at the two reference elevations, read again only for a new
     // dome mesh (a worldspace change spawns one; the fallback dome has weights of its own).
-    if let Some((mesh, dome)) = domes.iter().next().filter(|(m, _)| state.dome.is_none_or(|(id, _)| id != m.0.id())) {
+    if let Some((mesh, dome)) = domes.iter().next().filter(|(m, _)| state.dome.as_ref().is_none_or(|(id, _)| *id != m.0.id())) {
         if let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) = meshes.get(&mesh.0).and_then(|m| m.attribute(Mesh::ATTRIBUTE_POSITION)) {
-            let at = |s: f32| dome_weights_at(positions, dome.weights(), s);
+            let at = |s: f32| dome_sample_at(positions, dome.weights(), s);
             if let (Some(low), Some(high)) = (at(0.0), at(LOWER_SIN)) {
                 state.dome = Some((mesh.0.id(), [low, high]));
             }
         }
     }
-    let [w_low, w_high] = state.dome.map_or(NO_DOME_WEIGHTS, |(_, w)| w);
-    let (sky_lower, sky_horizon, sky_upper) = (sky.color(ColorType::SkyLower), sky.color(ColorType::Horizon), sky.color(ColorType::SkyUpper));
-    let colours = SkyColours {
-        fog: sky.color(ColorType::Fog),
-        horizon: crate::sky::dome_color(w_low, sky_lower, sky_horizon, sky_upper),
-        lower: crate::sky::dome_color(w_high, sky_lower, sky_horizon, sky_upper),
-        sun: sky.color(ColorType::Sun),
-        sky_scale: sky.sky_scale(),
-        sun_elevation: sky.sun_elevation(),
-        light_is_sun: sky.sun_elevation_at(sky.sun_light_hour()) >= 0.0,
-    };
-    let strength = weight * multiplier;
-    let now = match state.derived {
-        Some((s, c, a)) if s == strength && c == colours => a,
+    let raw = [ColorType::Fog, ColorType::Horizon, ColorType::SkyLower, ColorType::SkyUpper, ColorType::Sun].map(|t| sky.color(t));
+    let key: DeriveKey = (weight * multiplier, raw, [sky.sky_scale(), sky.sun_elevation()], sky.sun_elevation_at(sky.sun_light_hour()) >= 0.0, state.dome.as_ref().map(|(id, _)| *id));
+    let now = match &state.derived {
+        Some((k, a)) if *k == key => *a,
         _ => {
-            let a = aerial(strength, &colours);
-            state.derived = Some((strength, colours, a));
+            let [fog, horizon, lower, upper, sun] = raw;
+            let dome = |w: [f32; 3]| crate::sky::dome_color(w, lower, horizon, upper);
+            let (low, high) = match &state.dome {
+                Some((_, [l, h])) => (l.colour(dome), h.colour(dome)),
+                None => (dome(NO_DOME_WEIGHTS[0]), dome(NO_DOME_WEIGHTS[1])),
+            };
+            let colours = SkyColours { fog, horizon: low, lower: high, sun, sky_scale: key.2[0], sun_elevation: key.2[1], light_is_sun: key.3 };
+            let a = aerial(key.0, &colours);
+            state.derived = Some((key, a));
             a
         }
     };
@@ -876,7 +899,25 @@ mod tests {
                 let mut without = p;
                 without[0].w = 0.0;
                 let (bare, _) = resolve(&without, 0.05, c).unwrap();
-                assert!(luminance(with) >= luminance(bare) - 1e-6, "{sun:?} {c}: {with:?} darker than {bare:?}");
+                let decoded = |c: [f32; 3]| luminance(c.map(|v| v.max(0.0).powf(2.2)));
+                assert!(decoded(with) >= decoded(bare) - 1e-6, "{sun:?} {c}: {with:?} darker than {bare:?}");
+            }
+        }
+        // Measured after the fog's decode: a saturated air (display (1, 0, 0)) under a neutral
+        // sun brighter in linear light (display 0.55 grey) gets brighter, not darker.
+        let saturated = [Vec4::new(0.55, 0.55, 0.55, 0.35), Vec4::new(1.0, 0.0, 0.0, 1.0), Vec4::new(1.0, 0.0, 0.0, 1.0)];
+        let decoded = |c: [f32; 3]| luminance(c.map(|v| v.max(0.0).powf(2.2)));
+        let (lit, _) = resolve(&saturated, 0.0, 1.0).unwrap();
+        let mut bare = saturated;
+        bare[0].w = 0.0;
+        let (plain, _) = resolve(&bare, 0.0, 1.0).unwrap();
+        assert!(decoded(lit) >= decoded(plain) - 1e-6, "{lit:?} decodes darker than {plain:?}");
+        assert!(lit != plain, "the lobe applies there");
+        for sun in [[0.0; 3], [0.2, 0.1, 0.05], [0.55; 3], [1.0, 0.9, 0.7], [0.9, 0.2, 0.1]] {
+            for air in [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.5, 0.55, 0.6], [0.9, 0.9, 0.2]] {
+                let p = [Vec4::new(sun[0], sun[1], sun[2], 0.35), Vec4::new(air[0], air[1], air[2], 1.0), Vec4::new(air[0], air[1], air[2], 1.0)];
+                let (with, _) = resolve(&p, 0.0, 1.0).unwrap();
+                assert!(decoded(with) >= decoded(air) - 1e-6, "{sun:?} over {air:?}: {with:?}");
             }
         }
         // Continuous in the sun's brightness through the air's.
@@ -902,21 +943,44 @@ mod tests {
             }
         }
         let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-4);
-        assert!(near(dome_weights_at(&pos, &w, 0.0).unwrap(), [0.69, 0.35, 0.0]));
-        assert!(near(dome_weights_at(&pos, &w, LOWER_SIN).unwrap(), [0.0, 0.57, 0.53]));
+        let weights_at = |s: f32| dome_sample_at(&pos, &w, s).unwrap().colour(|w| w);
+        assert!(near(weights_at(0.0), [0.69, 0.35, 0.0]));
+        assert!(near(weights_at(LOWER_SIN), [0.0, 0.57, 0.53]));
         // Between rings, linear in the sine; beyond the ends, the end ring.
-        let mid = dome_weights_at(&pos, &w, 5f32.to_radians().sin()).unwrap();
+        let mid = weights_at(5f32.to_radians().sin());
         assert!(mid[0] < 0.69 && mid[0] > 0.26, "{mid:?}");
-        assert!(near(dome_weights_at(&pos, &w, -1.0).unwrap(), [1.0, 0.0, 0.0]));
-        assert!(near(dome_weights_at(&pos, &w, 1.0).unwrap(), [0.0, 0.0, 0.51]));
-        assert_eq!(dome_weights_at(&[], &[], 0.0), None);
-        assert_eq!(dome_weights_at(&[[0.0; 3]], &[[1.0, 0.0, 0.0]], 0.0), None, "a vertex at the centre has no elevation");
+        assert!(near(weights_at(-1.0), [1.0, 0.0, 0.0]));
+        assert!(near(weights_at(1.0), [0.0, 0.0, 0.51]));
+        assert_eq!(dome_sample_at(&[], &[], 0.0), None);
+        assert_eq!(dome_sample_at(&[[0.0; 3]], &[[1.0, 0.0, 0.0]], 0.0), None, "a vertex at the centre has no elevation");
         // The target is what the dome draws there: dome_color of those weights.
         let (lower, horizon, upper) = ([0.3, 0.4, 0.9], [0.5, 0.6, 0.65], [0.1, 0.15, 0.8]);
         let want = crate::sky::dome_color([0.69, 0.35, 0.0], lower, horizon, upper);
-        let got = crate::sky::dome_color(dome_weights_at(&pos, &w, 0.0).unwrap(), lower, horizon, upper);
+        let got = dome_sample_at(&pos, &w, 0.0).unwrap().colour(|w| crate::sky::dome_color(w, lower, horizon, upper));
         assert!(near(got, want));
         assert!(!near(want, horizon), "not the horizon colour alone");
+    }
+
+    /// A reference elevation between two rings: the target is the rings' drawn colours mixed in
+    /// linear RGB, as the rasteriser mixes the vertex colours, not `dome_color` of mixed weights
+    /// (symmetric rings around the horizon, black and white: the dome shows 0.5 linear there).
+    #[test]
+    fn between_rings_the_target_mixes_the_drawn_colours() {
+        let (mut pos, mut w) = (Vec::new(), Vec::new());
+        for (deg, weights) in [(-5.0f32, [1.0, 0.0, 0.0]), (5.0, [0.0, 1.0, 0.0])] {
+            for k in 0..8 {
+                let (az, el) = ((k as f32 * 45.0).to_radians(), deg.to_radians());
+                pos.push([500.0 * el.cos() * az.cos(), 500.0 * el.cos() * az.sin(), 500.0 * el.sin()]);
+                w.push(weights);
+            }
+        }
+        let sample = dome_sample_at(&pos, &w, 0.0).unwrap();
+        assert!((sample.t - 0.5).abs() < 1e-4, "{}", sample.t);
+        // Horizon black, sky-lower white.
+        let drawn = sample.colour(|w| crate::sky::dome_color(w, [1.0; 3], [0.0; 3], [0.0; 3]));
+        assert!(drawn.iter().all(|v| (v - 0.5).abs() < 1e-3), "{drawn:?}");
+        let mixed_weights = crate::sky::dome_color(sample.colour(|w| w), [1.0; 3], [0.0; 3], [0.0; 3]);
+        assert!(mixed_weights[0] < 0.3, "the old way was darker: {mixed_weights:?}");
     }
 
     #[test]
