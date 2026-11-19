@@ -1416,17 +1416,17 @@ env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TE
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12", "--npc-packages", "all", "--graphics-only", "no-glow"]
 run_seconds = 26
 expect = [
-  { re = 'streaming summary: (?P<n>\d+) cells loaded', range = [0, 0], label = "the cells the game loaded", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
-  { re = 'process summary: (?P<n>\d+) residents in the loaded area \(high process\)', range = [0, 0], label = "the AI's residents in high process at the end", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
-  { re = 'zones: encounter zone \S+ \(\S+\) entered', count = 0, label = "the encounter zones entered", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
-  { re = 'script: .* entered trigger ', count = 0, label = "the triggers entered", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
-  { re = 'scripts: \d+ frames, .*; (?P<n>\d+) quests running;', range = [0, 0], label = "the quests running at the end", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
+  { re = 'streaming summary: (?P<n>\d+) cells loaded', range = [40, 40], label = "the cells the game loaded" },
+  { re = 'process summary: (?P<n>\d+) residents in the loaded area \(high process\)', range = [38, 38], label = "the AI's residents in high process at the end" },
+  { re = 'zones: encounter zone \S+ \(\S+\) entered', count = 0, label = "the encounter zones entered" },
+  { re = 'script: .* entered trigger ', count = 1, label = "the triggers entered" },
+  { re = 'scripts: \d+ frames, .*; (?P<n>\d+) quests running;', range = [360, 360], label = "the quests running at the end" },
 ]
 order = [[
-  { text = "game digest t=6: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 6 s (cells loaded, residents in high process, triggers, zones, OnLoad blocks so far)", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 6 s
-  { text = "game digest t=12: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 12 s (cells loaded, residents in high process, triggers, zones, OnLoad blocks so far)", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 12 s
-  { text = "game digest t=20: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 20 s (cells loaded, residents in high process, triggers, zones, OnLoad blocks so far)", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 20 s
-  { text = "game digest t=25: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 25 s (cells loaded, residents in high process, triggers, zones, OnLoad blocks so far)", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 25 s
+  { text = "game digest t=6: cells FILL residents-high FILL triggers FILL zone-levels FILL onload FILL end", label = "the game's state at 6 s (cells loaded, residents in high process, triggers, zone levels, OnLoad blocks so far)", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 6 s
+  { text = "game digest t=12: cells FILL residents-high FILL triggers FILL zone-levels FILL onload FILL end", label = "the game's state at 12 s (cells loaded, residents in high process, triggers, zone levels, OnLoad blocks so far)", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 12 s
+  { text = "game digest t=20: cells FILL residents-high FILL triggers FILL zone-levels FILL onload FILL end", label = "the game's state at 20 s (cells loaded, residents in high process, triggers, zone levels, OnLoad blocks so far)", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 20 s
+  { text = "game digest t=25: cells FILL residents-high FILL triggers FILL zone-levels FILL onload FILL end", label = "the game's state at 25 s (cells loaded, residents in high process, triggers, zone levels, OnLoad blocks so far)", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 25 s
 ]]
 forbid = [
   { re = 'full detail', label = "nothing of the ring with the row off" },
@@ -1445,17 +1445,17 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos
 run_seconds = 26
 expect = [
   { re = 'full detail summary: 9x9, (?P<n>\d+) cells', range = [1, 1000], label = "the ring drew cells on the way" },
-  { re = 'streaming summary: (?P<n>\d+) cells loaded', range = [0, 0], label = "the same cells loaded as with the ring off", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
-  { re = 'process summary: (?P<n>\d+) residents in the loaded area \(high process\)', range = [0, 0], label = "the same residents in high process at the end", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
-  { re = 'zones: encounter zone \S+ \(\S+\) entered', count = 0, label = "the same encounter zones entered", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
-  { re = 'script: .* entered trigger ', count = 0, label = "the same triggers entered", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
-  { re = 'scripts: \d+ frames, .*; (?P<n>\d+) quests running;', range = [0, 0], label = "the same quests running at the end", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
+  { re = 'streaming summary: (?P<n>\d+) cells loaded', range = [40, 40], label = "the same cells loaded as with the ring off" },
+  { re = 'process summary: (?P<n>\d+) residents in the loaded area \(high process\)', range = [38, 38], label = "the same residents in high process at the end" },
+  { re = 'zones: encounter zone \S+ \(\S+\) entered', count = 0, label = "the same encounter zones entered" },
+  { re = 'script: .* entered trigger ', count = 1, label = "the same triggers entered" },
+  { re = 'scripts: \d+ frames, .*; (?P<n>\d+) quests running;', range = [360, 360], label = "the same quests running at the end" },
 ]
 order = [[
-  { text = "game digest t=6: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 6 s, the same as with the ring off", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 6 s
-  { text = "game digest t=12: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 12 s, the same as with the ring off", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 12 s
-  { text = "game digest t=20: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 20 s, the same as with the ring off", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 20 s
-  { text = "game digest t=25: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 25 s, the same as with the ring off", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 25 s
+  { text = "game digest t=6: cells FILL residents-high FILL triggers FILL zone-levels FILL onload FILL end", label = "the game's state at 6 s, the same as with the ring off", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 6 s
+  { text = "game digest t=12: cells FILL residents-high FILL triggers FILL zone-levels FILL onload FILL end", label = "the game's state at 12 s, the same as with the ring off", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 12 s
+  { text = "game digest t=20: cells FILL residents-high FILL triggers FILL zone-levels FILL onload FILL end", label = "the game's state at 20 s, the same as with the ring off", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 20 s
+  { text = "game digest t=25: cells FILL residents-high FILL triggers FILL zone-levels FILL onload FILL end", label = "the game's state at 25 s, the same as with the ring off", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 25 s
 ]]
 forbid = [
   { text = "Caught rendering error", label = "a rendering (validation) error on the 9 x 9 walk" },

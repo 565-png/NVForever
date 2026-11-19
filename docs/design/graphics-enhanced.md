@@ -1950,10 +1950,11 @@ behaviour; the code is `engine/nvforever/src/full_detail.rs`.
   them out. No collider.
 - **Game-side checks**: the test aid `NVF_PLAY_TEST_GAME_DIGEST=<seconds>,...` (a
   measuring aid, it drives nothing; nvforever `game_digest.rs`) logs at each time `game
-  digest t=<s>: cells <hash> residents-high <hash> triggers <n> zones <n> onload <n>`: an
-  order-independent hash of `Game::loaded_cells` and of the residents in the high process,
-  and the triggers entered, encounter zones entered and reference OnLoad blocks run so
-  far. The smoke pair `full-detail-ring-off` / `full-detail-ring-9x9` takes the same digests
+  digest t=<s>: cells <hash> residents-high <hash> triggers <n> zone-levels <n> onload <n>
+  end`: an order-independent hash of `Game::loaded_cells` and of the residents in the high
+  process, and the triggers entered, encounter zones given their level (counted where the
+  level is set) and reference OnLoad blocks entered (counted where the script runs each
+  block) so far; `end` anchors the last number for the smoke checks, which match text. The smoke pair `full-detail-ring-off` / `full-detail-ring-9x9` takes the same digests
   on the same route; with the ring at 9 x 9 they must match the ring-off run's.
 - **Drawn**: STAT, SCOL and MSTT references (a moveable static with its idle sequence
   playing, nothing else of its rig, its pose never published to physics), SpeedTrees
@@ -2051,7 +2052,8 @@ behaviour; the code is `engine/nvforever/src/full_detail.rs`.
   (stream, fade, the ring's part of destroyed.rs), these included; the commands they queue
   are applied by Bevy later and are not measured. At rest (the same centre, reach and
   loaded cells, none fading or spawning, every ring cell in and at rest) the ring's systems
-  do nothing but compare that state. Ring copies still cost every frame once drawn: their
+  do nothing but compare that state; never while a loaded cell over or under a ring cell
+  fades (the state holds each fading cell's step). Ring copies still cost every frame once drawn: their
   meshes, the animated materials of their models and the leaf-order sorting of their
   trees; their moveable statics' idles stand still while the cell draws nothing and while
   a retired cell despawns, and a rig without shapes is not spawned.

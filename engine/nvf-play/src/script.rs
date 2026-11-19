@@ -322,9 +322,6 @@ pub struct Runtime {
     /// events, and the Script Runner's load files, wait for the end of those frames.
     loaded_pending: Option<std::path::PathBuf>,
     pub triggers: crate::script_trigger::Triggers,
-    /// Encounter zones entered so far (each `zones: encounter zone ... entered` line), for
-    /// the game digest test aid (nvforever game_digest.rs).
-    pub zones_entered: u64,
     /// Enable parent → references that follow it.
     children: HashMap<FormId, Vec<FormId>>,
     started: Instant,
@@ -695,7 +692,6 @@ impl Runtime {
             start_frames_before_load: false,
             loaded_pending: None,
             triggers: Default::default(),
-            zones_entered: 0,
             children,
             started: Instant::now(),
             ticked: false,
@@ -889,7 +885,6 @@ impl Runtime {
         for n in g.take_level_news() {
             match n {
                 fnv_game::zones::LevelNews::Zone { zone, level, min_level, player_level } => {
-                    self.zones_entered += 1;
                     info!("zones: encounter zone {} ({zone}) entered: level {level} (minimum {min_level}, player level {player_level})", edid(g, zone));
                 }
                 fnv_game::zones::LevelNews::Actor { actor, list, at, base, at_display, zone } => {
@@ -2812,7 +2807,6 @@ impl ScriptState {
             start_frames_before_load: false,
             loaded_pending: None,
             triggers: Default::default(),
-            zones_entered: 0,
             children: HashMap::new(),
             started: Instant::now(),
             ticked: false,

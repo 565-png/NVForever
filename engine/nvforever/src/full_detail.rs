@@ -349,14 +349,28 @@ pub struct FullDetailRing {
 }
 
 /// What the ring's work depends on while it rests: the loaded grid's centre, the ring's
-/// reach and the loaded cells (their squares hashed, whether any fades or spawns).
+/// reach and the loaded cells (their squares hashed, the fading ones with their fade steps
+/// hashed, whether any spawns), so a fade step's change is a change ([`quiet_key`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QuietKey {
     centre: Grid,
     outer: i32,
     loaded: u64,
-    fades: bool,
+    fades: u64,
     spawning: bool,
+}
+
+/// The [`QuietKey`] of a frame: `loaded` the loaded squares, `fades` the fading ones with
+/// their steps, `spawning` whether a loaded cell is being spawned.
+pub fn quiet_key<'a>(centre: Grid, outer: i32, loaded: impl Iterator<Item = &'a Grid>, fades: impl Iterator<Item = (Grid, u8)>, spawning: bool) -> QuietKey {
+    let fades = set_hash(fades.map(|((x, y), k)| mix(((x as u32 as u64) << 32) | y as u32 as u64) ^ u64::from(k)));
+    QuietKey { centre, outer, loaded: grid_hash(loaded), fades, spawning }
+}
+
+/// Whether no loaded cell over or under a ring cell is fading: the ring may rest only then
+/// (its complement follows that fade every frame).
+pub fn covers_at_rest<'a>(mut ring: impl Iterator<Item = &'a Grid>, fading: impl Fn(&Grid) -> bool) -> bool {
+    ring.all(|c| !fading(c))
 }
 
 /// An order-independent hash of grid squares (or IDs): each mixed, then XORed.
@@ -594,7 +608,7 @@ pub fn stream(
     let (loaded, outer) = (streamer.radius, ring.radius);
     // At rest with nothing changed since (the same centre, reach and loaded cells, none of
     // them fading or spawning): nothing to do.
-    let key = QuietKey { centre, outer, loaded: grid_hash(streamer.loaded.keys()), fades: streamer.fades.is_empty(), spawning: streamer.spawning.is_empty() };
+    let key = quiet_key(centre, outer, streamer.loaded.keys(), streamer.fades.iter().map(|(c, f)| (*c, f.step())), !streamer.spawning.is_empty());
     if ring.quiet == Some(key) && ring.dying.is_empty() {
         ring.stats.ms += ms(started);
         return;
@@ -705,6 +719,7 @@ pub fn stream(
     let rests = ring.spawning.is_empty()
         && !ring.ahead.busy()
         && ring_cells(centre, loaded, outer).iter().all(|c| ring.cells.contains_key(c))
+        && covers_at_rest(ring.cells.keys(), |c| streamer.fades.contains_key(c))
         && ring.cells.iter().all(|(c, s)| !s.leaving && (s.under || s.level >= 1.0) && !small_due(steps(*c, centre), outer, s.small.len()));
     ring.quiet = rests.then_some(key);
     ring.stats.ms += ms(started);
@@ -1428,6 +1443,31 @@ mod tests {
         assert!(ring.cells[&(3, 0)].keep_segment(), "the old generation's result does not reach the new cell");
         ring.drew(new, 7, true, true);
         assert!(!ring.cells[&(3, 0)].keep_segment(), "its own draw clears its reason");
+    }
+
+    /// Round 4: a loaded cell fading over a stand-by ring cell, frame by frame: the ring
+    /// never rests while it fades (its complement must follow), every frame's state differs
+    /// from the last one's, and the ring's range moves with the fade every frame.
+    #[test]
+    fn a_fading_cover_keeps_the_ring_awake_and_its_complement_moving() {
+        let ours = [(3, 0)];
+        let loaded = [(0, 0), (3, 0)];
+        let standby = state_under(1.0, false, false, true);
+        let (mut last_key, mut last_range) = (None, None);
+        for k in [2u8, 5, 8, 11, 14] {
+            let fades = [((3, 0), k)];
+            let key = quiet_key((0, 0), 4, loaded.iter(), fades.into_iter(), false);
+            assert_ne!(Some(key), last_key, "step {k}: a new state");
+            assert!(!covers_at_rest(ours.iter(), |c| fades.iter().any(|(f, _)| f == c)), "step {k}: never at rest");
+            let range = ring_range(standby.level, Some(k as f32 / fade::STEPS as f32));
+            assert_ne!(Some(range), last_range, "step {k}: the complement moved");
+            assert!(coverage(Some(&standby), Some(k as f32 / fade::STEPS as f32)).iter().all(|&n| n == 1));
+            (last_key, last_range) = (Some(key), Some(range));
+        }
+        // At rest again: the state stays the same from frame to frame, and it may rest.
+        let rest = quiet_key((0, 0), 4, loaded.iter(), std::iter::empty(), false);
+        assert_eq!(rest, quiet_key((0, 0), 4, loaded.iter(), std::iter::empty(), false));
+        assert!(covers_at_rest(ours.iter(), |_| false));
     }
 
     /// Round 3: the quiet check's hash of the loaded squares does not depend on their order.
