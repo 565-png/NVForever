@@ -696,8 +696,9 @@ fn acknowledge_materials(
     input.ages.retain(|id, _| ids.contains(id));
     input.steps.retain(|id, _| ids.contains(id));
     let hold = shared.hold.load(Ordering::Acquire);
-    let mut ready = shared.ready.lock().unwrap();
-    ready.clear();
+    // Built outside the lock and swapped in: the main world's conversion asks `usable`
+    // once per shape while this runs beside it (pipelined rendering).
+    let mut ready = HashSet::with_capacity(ids.len());
     for id in ids {
         let age = input.ages.entry(id).or_default();
         *age = age.saturating_add(1);
@@ -708,6 +709,7 @@ fn acknowledge_materials(
         let bound = allocators.get(&std::any::TypeId::of::<NifBlendMaterial>()).and_then(|a| a.get(material.binding.group)).is_some_and(|b| b.bind_group().is_some());
         if bound { ready.insert(id); }
     }
+    *shared.ready.lock().unwrap() = ready;
 }
 
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
