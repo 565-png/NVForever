@@ -13,14 +13,16 @@ pub fn run(cmd: DdsCmd) -> anyhow::Result<Value> {
 fn row(path: &str, data: &[u8]) -> Value {
     match DdsHeader::parse(data) {
         Ok(h) => {
+            // Sized whole (every array element, face, level and volume slice), or `null`
+            // for a DX10 layout the listing does not size (dds.md §5).
             let (format, expected) = match (h.format_name(), h.format()) {
-                (Ok(name), Ok(f)) => (name.to_string(), Some(h.expected_size(f))),
+                (Ok(name), Ok(f)) => (name.to_string(), h.layout_sized().then(|| h.expected_size(f))),
                 (Err(desc), _) | (_, Err(desc)) => (desc, None),
             };
-            let dxgi = h.dx10.map(|x| x.dxgi_format);
+            let (dxgi, array) = (h.dx10.map(|x| x.dxgi_format), h.dx10.map(|x| x.array_size));
             json!({"path": path, "width": h.width, "height": h.height, "mip_count": h.mip_count,
                    "levels": h.levels(), "format": format, "dxgi_format": dxgi, "cubemap": h.is_cubemap(), "faces": h.faces(),
-                   "expected_size": expected, "actual_size": data.len() - h.data_offset(), "error": null})
+                   "array_size": array, "expected_size": expected, "actual_size": data.len() - h.data_offset(), "error": null})
         }
         Err(e) => error_row(path, &e.to_string()),
     }
@@ -28,7 +30,7 @@ fn row(path: &str, data: &[u8]) -> Value {
 
 fn error_row(path: &str, e: &str) -> Value {
     json!({"path": path, "width": null, "height": null, "mip_count": null, "levels": null, "format": null,
-           "dxgi_format": null, "cubemap": null, "faces": null, "expected_size": null, "actual_size": null, "error": e})
+           "dxgi_format": null, "cubemap": null, "faces": null, "array_size": null, "expected_size": null, "actual_size": null, "error": e})
 }
 
 fn list(archive: &std::path::Path) -> anyhow::Result<Value> {
@@ -49,19 +51,46 @@ mod tests {
     /// A header generated here: `fourcc` with the FourCC flag, then for `DX10` the
     /// extension (DXGI code, 2D, no flags, an array of one), then `payload` bytes.
     fn file(fourcc: &[u8; 4], dxgi: u32, w: u32, h: u32, mips: u32, payload: usize) -> Vec<u8> {
+        layout(fourcc, [dxgi, 3, 0, 1, 0], w, h, 0, mips, payload)
+    }
+
+    /// [`file`] with the extension's five values and the header's depth given.
+    fn layout(fourcc: &[u8; 4], ext: [u32; 5], w: u32, h: u32, depth: u32, mips: u32, payload: usize) -> Vec<u8> {
         let mut d = vec![0u8; 128];
         d[..4].copy_from_slice(b"DDS ");
-        for (o, v) in [(4usize, 124u32), (8, 0x2_1007), (12, h), (16, w), (28, mips), (76, 32), (80, 4), (108, 0x1000)] {
+        for (o, v) in [(4usize, 124u32), (8, 0x2_1007), (12, h), (16, w), (24, depth), (28, mips), (76, 32), (80, 4), (108, 0x1000)] {
             d[o..o + 4].copy_from_slice(&v.to_le_bytes());
         }
         d[84..88].copy_from_slice(fourcc);
         if fourcc == b"DX10" {
-            for v in [dxgi, 3, 0, 1, 0] {
+            for v in ext {
                 d.extend_from_slice(&v.to_le_bytes());
             }
         }
         d.resize(d.len() + payload, 0);
         d
+    }
+
+    /// The listing sizes DX10 arrays, cube arrays and volumes whole, from the headers alone.
+    #[test]
+    fn dx10_arrays_cube_arrays_and_volumes_are_listed_whole() {
+        let pick = |r: &serde_json::Value| (r["faces"].clone(), r["array_size"].clone(), r["expected_size"].clone(), r["cubemap"].clone());
+        // Two 4×4 BC7 textures: two blocks.
+        let r = row("arr.dds", &layout(b"DX10", [98, 3, 0, 2, 0], 4, 4, 0, 1, 32));
+        assert_eq!(pick(&r), (json!(1), json!(2), json!(32), json!(false)));
+        assert_eq!(r["actual_size"], json!(32));
+        // Two cubes of 4×4 BC7, 2 levels: 6 faces × 2 cubes × (1 + 1) blocks.
+        let r = row("cubes.dds", &layout(b"DX10", [98, 3, 0x4, 2, 0], 4, 4, 0, 2, 0));
+        assert_eq!(pick(&r), (json!(6), json!(2), json!(6 * 2 * 2 * 16), json!(true)));
+        // A 4×4×4 BC7 volume, 3 levels: 4, 2 and 1 slices of one block.
+        let r = row("vol.dds", &layout(b"DX10", [98, 4, 0, 1, 0], 4, 4, 4, 3, 0));
+        assert_eq!(pick(&r), (json!(1), json!(1), json!(7 * 16), json!(false)));
+        // Layouts not sized: an array of none, an unknown dimension, a volume array.
+        for ext in [[98, 3, 0, 0, 0], [98, 0, 0, 1, 0], [98, 4, 0, 2, 0]] {
+            assert_eq!(row("x.dds", &layout(b"DX10", ext, 4, 4, 4, 1, 16))["expected_size"], json!(null), "{ext:?}");
+        }
+        // A legacy file has no array size.
+        assert_eq!(row("l.dds", &file(b"DXT1", 0, 4, 4, 1, 8))["array_size"], json!(null));
     }
 
     #[test]
