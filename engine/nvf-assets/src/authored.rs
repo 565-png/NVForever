@@ -133,8 +133,9 @@ pub const AUTHORED_MARK: f32 = 1.0;
 /// What a lit shape's material is without a set (its "legacy look"), kept on the material
 /// (`NifSurface::legacy`) for every shape that may take a set, so a later change of its
 /// diffuse (a script's texture swap, the blackjack cards, the Vigor Tester's digits) can put
-/// the new diffuse's set on it or go back to the game's values ([`retexture`]). Never
-/// changed after the material is made; copies carry it along.
+/// the new diffuse's set on it or go back to the game's values ([`retexture`]). Changed
+/// after the material is made only by a script's glossiness edit ([`set_legacy_roughness`]);
+/// copies carry it along.
 #[derive(Clone, Debug, PartialEq, Reflect)]
 pub struct LegacyLook {
     /// The game's normal map in use (after the tangent check).
@@ -309,6 +310,20 @@ pub fn restore(material: &mut crate::NifMaterial, legacy: &LegacyLook) {
     b.reflectance = legacy.reflectance;
     b.metallic = legacy.metallic;
     material.extension.emissive_rule.w = 0.0;
+}
+
+/// A script's change of a shape's glossiness (nvforever `nif_mirror.rs`, the material
+/// property mirror) as perceptual roughness: the legacy look takes it, so the game's value is
+/// the one restored later, and the drawn roughness takes it only while no set is on the
+/// material; a set's roughness (its scale on the ORM's green) stays in force meanwhile
+/// [design].
+pub fn set_legacy_roughness(material: &mut crate::NifMaterial, roughness: f32) {
+    if let Some(legacy) = material.extension.legacy.as_mut() {
+        legacy.roughness = roughness;
+    }
+    if !is_authored(material) {
+        material.base.perceptual_roughness = roughness;
+    }
 }
 
 /// Whether `material` is shaded from an authored set.

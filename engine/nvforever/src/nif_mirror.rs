@@ -207,11 +207,14 @@ fn material_table(data: &GameData, model: &str) -> HashMap<String, [f32; 9]> {
 
 /// A shape's material drawn with these values: the specular tint, the emitted light
 /// (colour times mult), the roughness of the glossiness, the alpha [hypothesis: the
-/// spawn's own display tuning of the emitted light is not redone here].
+/// spawn's own display tuning of the emitted light is not redone here]. On a material
+/// shaded from an authored set (#2981) the glossiness goes to its legacy look only, so an
+/// edit of any one value leaves the set's roughness (and reflectance) as they are, and the
+/// scripted glossiness applies if the set comes off (`nvf_assets::authored::set_legacy_roughness`).
 fn set_material(m: &mut NifMaterial, v: &[f32; 9]) {
     m.base.specular_tint = Color::linear_rgb(v[0], v[1], v[2]);
     m.base.emissive = LinearRgba::rgb(v[3] * v[8], v[4] * v[8], v[5] * v[8]);
-    m.base.perceptual_roughness = nvf_assets::nif_spawn::gloss_roughness(v[6]);
+    nvf_assets::authored::set_legacy_roughness(m, nvf_assets::nif_spawn::gloss_roughness(v[6]));
     m.base.base_color.set_alpha(v[7].clamp(0.0, 1.0));
 }
 
@@ -870,6 +873,36 @@ mod attachment_tests;
 mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
+
+    /// #2981: a script's alpha-only edit writes every value back, glossiness included; on an
+    /// authored material the set's roughness and reflectance stay, the glossiness goes to the
+    /// legacy look and applies when the look is restored. A legacy material takes it at once.
+    #[test]
+    fn a_material_edit_keeps_an_authored_roughness_and_restores_the_scripted_gloss() {
+        use nvf_assets::authored::{restore, LegacyLook, AUTHORED_MARK};
+        let look = LegacyLook { normal: None, specular: None, roughness: 0.6, reflectance: 2.0, metallic: 0.0, tangents: true };
+        let mut m = nvf_assets::nif_material(StandardMaterial { perceptual_roughness: 0.8, reflectance: 0.5, ..default() });
+        m.extension.emissive_rule.w = AUTHORED_MARK;
+        m.extension.legacy = Some(look.clone());
+        // Specular, emissive, glossiness 50, alpha 0.5 (the edit), emissive mult.
+        let v = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 50.0, 0.5, 1.0];
+        set_material(&mut m, &v);
+        assert_eq!((m.base.perceptual_roughness, m.base.reflectance, m.base.base_color.alpha()), (0.8, 0.5, 0.5));
+        let scripted = nvf_assets::nif_spawn::gloss_roughness(50.0);
+        let kept = m.extension.legacy.clone().unwrap();
+        assert_eq!(kept.roughness, scripted);
+        restore(&mut m, &kept);
+        assert_eq!((m.base.perceptual_roughness, m.base.reflectance), (scripted, 2.0));
+        // A legacy material: drawn and kept alike.
+        let mut l = nvf_assets::nif_material(StandardMaterial::default());
+        l.extension.legacy = Some(look);
+        set_material(&mut l, &v);
+        assert_eq!((l.base.perceptual_roughness, l.extension.legacy.unwrap().roughness), (scripted, scripted));
+        // No legacy look (no set possible): as before.
+        let mut plain = nvf_assets::nif_material(StandardMaterial::default());
+        set_material(&mut plain, &v);
+        assert_eq!(plain.base.perceptual_roughness, scripted);
+    }
 
     #[test]
     fn a_light_source_is_not_a_references_root() {
