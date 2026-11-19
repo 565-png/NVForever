@@ -103,7 +103,7 @@ pub struct ModelGlow {
 /// than [`MIN_VISIBLE`].
 pub fn combine(parts: &[GlowPart]) -> Option<ModelGlow> {
     let total: f32 = parts.iter().map(|p| p.visible.max(0.0)).sum();
-    if parts.is_empty() || !(total >= MIN_VISIBLE) {
+    if parts.is_empty() || total.is_nan() || total < MIN_VISIBLE {
         return None;
     }
     let weight = |p: &GlowPart| p.visible.max(0.0);

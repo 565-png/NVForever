@@ -239,7 +239,7 @@ pub fn source_light(form_id: u32, pos: [f32; 3], l: &LightData, xrds: Option<f32
     if radius <= 0.0 {
         return Err(Skip::NoRadius);
     }
-    if l.color == [0; 3] || !(l.fade > 0.0) {
+    if l.color == [0; 3] || l.fade.is_nan() || l.fade <= 0.0 {
         return Err(Skip::NoColour);
     }
     let motion = match crate::lights::LightMotion::of(l.flags) {
@@ -445,9 +445,12 @@ impl Busy {
     }
 }
 
+/// What [`read_models`] returns: the glows read, then the models not reached.
+pub type ModelReads = (Vec<(Arc<str>, Option<ModelGlow>)>, Vec<Arc<str>>);
+
 /// Read the glows of `models` with `read`, stopping before a read once `epoch` moved on
 /// from `started`. Returns what was read and the models not reached.
-pub fn read_models(models: Vec<Arc<str>>, epoch: &Epoch, started: u64, mut read: impl FnMut(&str) -> Option<ModelGlow>) -> (Vec<(Arc<str>, Option<ModelGlow>)>, Vec<Arc<str>>) {
+pub fn read_models(models: Vec<Arc<str>>, epoch: &Epoch, started: u64, mut read: impl FnMut(&str) -> Option<ModelGlow>) -> ModelReads {
     let mut done = Vec::new();
     let mut rest = models.into_iter();
     for m in rest.by_ref() {
