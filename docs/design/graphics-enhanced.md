@@ -1966,8 +1966,13 @@ behaviour; the code is `engine/nvforever/src/full_detail.rs`.
   rule (treelod.rs `distant_tree_ref`: a TREE with a SpeedTree, no imposter, no primitive,
   enabled at the start, at its authored place), and the billboards crossfade with ring
   cells' trees as with loaded cells' (treelod.rs reads `DrawnCells`). Sharing the rule
-  changed the billboards with the ring off too: imposter and primitive TREE references no
-  longer get one (an imposter is drawn by region, a primitive never). A cell where a tree
+  leaves the billboards with the ring off as they were in the game's data: no exterior
+  TREE reference there is an imposter or a primitive [observed 2026-11-19: 18,702 exterior
+  TREE references across FalloutNV.esm, the four story DLC and the five packs, in eleven
+  worldspaces (WastelandNV 18,050), 0 with the XSRF imposter bit, 0 with XPRM; 323
+  references of any type carry the imposter bit and 8,819 XPRM; a read-only count of the
+  plugins]. A mod's imposter or primitive tree would lose its billboard (an imposter is
+  drawn by region, a primitive never). A cell where a tree
   drew nothing keeps all its billboards, so its other trees show twice (full tree and
   card): the billboards are one mesh per cell and TREE base, so keeping one tree's card
   alone would mean rebuilding that mesh; the doubling is the accepted fallback. A tree base the loaded cells have not built is waited
