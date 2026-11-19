@@ -765,6 +765,14 @@ impl MaterialExtension for NifSurface {
         if !key.bind_group_data.first_person && !key.bind_group_data.refract {
             depth_equal(descriptor, key.mesh_key);
         }
+        // A channel view of the authored materials' inputs (crate::authored::PbrView; off
+        // unless NVF_PBR_VIEW is set at the start): the main pass's colour only.
+        let view_defs = crate::authored::view().shader_defs();
+        if !view_defs.is_empty() && !descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.extend(view_defs.iter().map(|d| ShaderDefVal::from(*d)));
+            }
+        }
         // StandardMaterial has set the rasteriser's bias from the material's depth bias.
         if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
             depth_stencil.bias.constant = raster_bias(depth_stencil.bias.constant);
@@ -1023,6 +1031,8 @@ impl Plugin for NifMaterialPlugin {
             .init_resource::<BlendedCutouts>()
             .add_systems(Startup, spawn_transmission_anchor)
             .add_systems(PostUpdate, (apply_blended_cutouts.in_set(BlendedCutoutSystems), see_through_casts_no_shadow.in_set(SeeThroughShadowSystems)));
+        // The authored materials' debug switches are read once, at the start.
+        crate::authored::view();
         crate::bc5_field::install(app);
         crate::pbr_field::install(app);
     }

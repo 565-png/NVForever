@@ -210,3 +210,21 @@ fn retexturing_goes_from_set_to_set_to_legacy_from_the_legacy_look() {
     assert!(make_legacy(&mut skin) && !is_authored(&skin));
     assert_eq!(retexture(&mut skin, r"walls\brick.dds", &mut cache, &pack.data, &mut images, None), Retextured::Untouched);
 }
+
+#[test]
+fn channel_views_parse_and_name_their_defs() {
+    assert_eq!(PbrView::parse(""), Some(PbrView::Off));
+    assert_eq!(PbrView::parse(" Roughness "), Some(PbrView::Roughness));
+    assert_eq!(PbrView::parse("bogus"), None);
+    for v in PbrView::ALL {
+        assert_eq!(PbrView::parse(v.name()), Some(v));
+        let defs = v.shader_defs();
+        assert_eq!(defs[0], "NVF_PBR_VIEW");
+        assert!(defs[1].ends_with(&v.name().to_ascii_uppercase()));
+    }
+    assert!(PbrView::Off.shader_defs().is_empty());
+    // The tests run without the variable: no view, metallic held at 0.
+    if std::env::var_os(VIEW_ENV).is_none() {
+        assert_eq!((view(), authored_metallic()), (PbrView::Off, 0.0));
+    }
+}

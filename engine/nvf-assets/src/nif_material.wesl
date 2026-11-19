@@ -96,6 +96,8 @@ import bevy_pbr::{
 @if(!PREPASS_PIPELINE && SHADE_LIGHT && NVF_SUN_VISIBILITY) import nvforever::sun_visibility::nvf_sun_visibility;
 
 import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, base_color_texel_level, base_color_size, normal_map_texel};
+@if(NVF_PBR_VIEW_OCCLUSION && !PREPASS_PIPELINE) import nvf_assets::nif_surface_bindings::occlusion_texel;
+@if(NVF_PBR_VIEW_OCCLUSION && !PREPASS_PIPELINE) import bevy_pbr::render::pbr_types::STANDARD_MATERIAL_FLAGS_OCCLUSION_TEXTURE_BIT;
 @if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::{mesh_terrain_lookup, mesh_terrain_view, mesh_terrain_shading, mesh_terrain_unlit_view, mesh_terrain_diagnostic, mesh_terrain_blend_normal, mesh_terrain_target_colour, mesh_terrain_target_normal, mesh_terrain_face_up, MeshTerrainInputs, LOOKUP_SUCCESS, LAND_ROUGHNESS, LAND_REFLECTANCE};
 @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) import bevy_pbr::render::pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
 
@@ -542,6 +544,23 @@ fn nif_fragment(
     }
     @if(!TERRAIN_ANTI_TILING) var pbr_input = pbr_input_from_standard_material(vin, is_front);
     @if(TERRAIN_ANTI_TILING) var pbr_input = terrain_pbr_standard(vin, is_front, terrain_fp);
+    // NVF_PBR_VIEW (nvf-assets authored.rs `PbrView`, a debug view, off unless NVF_PBR_VIEW is
+    // set at the start): one material input, taken here, right after the standard material's
+    // sampling and before the mesh terrain blend, and written over the colour at the end.
+    @if(NVF_PBR_VIEW && !PREPASS_PIPELINE) var pbr_view = vec3(0.0);
+    @if(NVF_PBR_VIEW_ROUGHNESS && !PREPASS_PIPELINE) pbr_view = vec3(pbr_input.material.perceptual_roughness);
+    @if(NVF_PBR_VIEW_METALLIC && !PREPASS_PIPELINE) pbr_view = vec3(pbr_input.material.metallic);
+    @if(NVF_PBR_VIEW_OCCLUSION && !PREPASS_PIPELINE) pbr_view = vec3(1.0);
+    @if(NVF_PBR_VIEW_OCCLUSION && !PREPASS_PIPELINE && VERTEX_UVS_A) if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_OCCLUSION_TEXTURE_BIT) != 0u {
+        // The ORM's red alone: pbr_input.diffuse_occlusion may hold the screen-space occlusion.
+        let occlusion_uv = (standard_material(in.instance_index).uv_transform * vec3(in.uv, 1.0)).xy;
+        pbr_view = vec3(occlusion_texel(in.instance_index, occlusion_uv, view.mip_bias));
+    }
+    @if(NVF_PBR_VIEW_NORMAL && !PREPASS_PIPELINE) pbr_view = 0.5 + 0.5 * pbr_input.N;
+    @if(NVF_PBR_VIEW_AUTHORED && !PREPASS_PIPELINE) {
+        let view_brightness = 0.25 + 0.75 * dot(pbr_input.material.base_color.rgb, vec3(0.2126, 0.7152, 0.0722));
+        pbr_view = select(vec3(0.5), vec3(1.0, 0.45, 0.05), surface.emissive_rule.w > 0.5) * view_brightness;
+    }
     @if(FACEGEN_TINT && VERTEX_UVS_A) if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u {
         // base_color is material colour × vertex colour × texel: the texel is read again
         // as pbr_input_from_standard_material reads it, and its tinted value takes its
@@ -756,5 +775,11 @@ fn nif_fragment(
     // (imagespace.wesl SCREEN_MARK).
     @if(PIPBOY_SCREEN) out.color.a = 0.25;
     @if(!PREPASS_PIPELINE && !BLEND_MULTIPLY && SOFT_EDGES) out.color.a = edge;
+    // NVF_PBR_VIEW: the input taken above in place of the colour; alpha, discards, coverage
+    // and depth as drawn. A premultiplied (additive) draw adds it by its alpha, a multiplied
+    // one by white: effects fade out of the view.
+    @if(NVF_PBR_VIEW && !PREPASS_PIPELINE && !BLEND_MULTIPLY && !BLEND_PREMULTIPLIED_ALPHA) out.color = vec4(pbr_view, out.color.a);
+    @if(NVF_PBR_VIEW && !PREPASS_PIPELINE && !BLEND_MULTIPLY && BLEND_PREMULTIPLIED_ALPHA) out.color = vec4(pbr_view * out.color.a, out.color.a);
+    @if(NVF_PBR_VIEW && !PREPASS_PIPELINE && BLEND_MULTIPLY) out.color = vec4(vec3(out.color.a), out.color.a);
     return out;
 }

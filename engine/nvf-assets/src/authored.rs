@@ -174,9 +174,91 @@ pub fn key_eligible(key: &str) -> bool {
 }
 
 /// The metallic value an authored material is built with: 0 (the ORM's blue channel then has
-/// no effect: no reflection source exists yet, docs/spec-notes/pbr-materials.md "Metallic").
+/// no effect: no reflection source exists yet, docs/spec-notes/pbr-materials.md "Metallic"),
+/// or 1 in the metallic channel view ([`PbrView::Metallic`]), so the material's sample of
+/// the blue channel is the per-texel value the view shows.
 pub fn authored_metallic() -> f32 {
-    0.0
+    if view() == PbrView::Metallic { 1.0 } else { 0.0 }
+}
+
+/// The environment variable that picks a channel view ([`PbrView`]).
+pub const VIEW_ENV: &str = "NVF_PBR_VIEW";
+
+/// A debug view of the material inputs of NIF surfaces (a calibration aid for authored sets,
+/// off by default): the lit colour of every NIF surface is replaced by one input, read just
+/// after the standard material's sampling (nif_material.wesl, "NVF_PBR_VIEW"). Picked once at
+/// the start by `NVF_PBR_VIEW` = `roughness` | `metallic` | `occlusion` | `normal` |
+/// `authored` [design]. Not a `NVF_PLAY_TEST_*` aid: it does not make a run unattended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PbrView {
+    Off,
+    /// Perceptual roughness after the scale (the material's value × the ORM's green).
+    Roughness,
+    /// The ORM's blue channel (authored materials are built with metallic 1 in this view).
+    Metallic,
+    /// The ORM's red channel, sampled on its own (no screen-space occlusion); 1 without one.
+    Occlusion,
+    /// The world-space normal as 0.5 + 0.5 N.
+    Normal,
+    /// Authored shapes tinted orange, every other shape grey, by its base colour's brightness.
+    Authored,
+}
+
+impl PbrView {
+    pub const ALL: [PbrView; 5] = [PbrView::Roughness, PbrView::Metallic, PbrView::Occlusion, PbrView::Normal, PbrView::Authored];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            PbrView::Off => "off",
+            PbrView::Roughness => "roughness",
+            PbrView::Metallic => "metallic",
+            PbrView::Occlusion => "occlusion",
+            PbrView::Normal => "normal",
+            PbrView::Authored => "authored",
+        }
+    }
+
+    /// The view named `text` (any case; empty or `off`: none); `None` for another word.
+    pub fn parse(text: &str) -> Option<PbrView> {
+        let t = text.trim().to_ascii_lowercase();
+        if t.is_empty() || t == "off" {
+            return Some(PbrView::Off);
+        }
+        PbrView::ALL.into_iter().find(|v| v.name() == t)
+    }
+
+    /// The fragment shader's defs for the view: `NVF_PBR_VIEW` and the mode's own.
+    pub fn shader_defs(self) -> &'static [&'static str] {
+        match self {
+            PbrView::Off => &[],
+            PbrView::Roughness => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_ROUGHNESS"],
+            PbrView::Metallic => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_METALLIC"],
+            PbrView::Occlusion => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_OCCLUSION"],
+            PbrView::Normal => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_NORMAL"],
+            PbrView::Authored => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_AUTHORED"],
+        }
+    }
+}
+
+/// The run's channel view, read from [`VIEW_ENV`] the first time (the NIF material plugin asks
+/// at the start) and fixed for the run.
+pub fn view() -> PbrView {
+    static VIEW: OnceLock<PbrView> = OnceLock::new();
+    *VIEW.get_or_init(|| {
+        let Some(text) = std::env::var_os(VIEW_ENV) else { return PbrView::Off };
+        let text = text.to_string_lossy();
+        match PbrView::parse(&text) {
+            Some(PbrView::Off) => PbrView::Off,
+            Some(v) => {
+                info!("authored materials: channel view {} ({VIEW_ENV}): NIF surfaces show that input instead of their lit colour", v.name());
+                v
+            }
+            None => {
+                warn!("authored materials: {VIEW_ENV}={text} is none of roughness, metallic, occlusion, normal, authored; no channel view");
+                PbrView::Off
+            }
+        }
+    })
 }
 
 /// Put `set` on `material` from its legacy look: the ORM as metallic-roughness and occlusion
