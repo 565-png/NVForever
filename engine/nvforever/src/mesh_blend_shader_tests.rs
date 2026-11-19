@@ -514,6 +514,68 @@ fn complete_nif_forward_and_prepass_compose_with_both_interfaces() {
     }}}
 }
 
+/// `nif_material.wesl` without the authored materials' debug code (#2981, nvf-assets
+/// authored.rs `PbrView`, `metallic_debug`): every line (or block) under a positive
+/// `@if(NVF_PBR_...)` condition removed, and the `@if(!NVF_PBR_METALLIC)` guard taken off
+/// the line it guards. That is the shader as it was before those switches.
+fn without_pbr_debug(source: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0i32;
+    let braces = |l: &str| l.matches('{').count() as i32 - l.matches('}').count() as i32;
+    for line in source.lines() {
+        let t = line.trim_start();
+        if depth > 0 {
+            depth += braces(line);
+            continue;
+        }
+        if t.starts_with("@if(NVF_PBR_") {
+            depth = braces(line).max(0);
+            continue;
+        }
+        match t.strip_prefix("@if(!NVF_PBR_METALLIC) ") {
+            Some(rest) => out.push_str(&format!("{}{rest}", &line[..line.len() - t.len()])),
+            None => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// #2981: the NIF forward shader composes and validates (naga) with each channel view's defs
+/// and with the metallic debug def, bindless or not, ordinary or blend type; and with none
+/// of them set it composes to exactly the shader without that debug code.
+#[test]
+fn nif_forward_composes_with_the_authored_debug_defs_and_is_unchanged_without_them() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut modules = vendored_modules();
+    let root = manifest.join("../nvf-assets/src");
+    sources(&root, "nvf_assets", &root, &mut modules);
+    modules.push(("embedded://nvforever/terrain_weights.wesl".into(), include_str!("terrain_weights.wesl").into()));
+    let entry = "embedded://nvf_assets/nif_material.wesl";
+    let original = modules.iter().find(|(p, _)| p == entry).map(|(_, s)| s.clone()).expect("nif_material.wesl");
+    let stripped = without_pbr_debug(&original);
+    assert_ne!(stripped, original, "the debug code is there to strip");
+    assert!(!stripped.lines().any(|l| l.trim_start().starts_with("@if(NVF_PBR_") || l.contains("@if(!NVF_PBR_")), "every debug line stripped");
+    let mut before = modules.clone();
+    before.iter_mut().find(|(p, _)| p == entry).unwrap().1 = stripped;
+    use nvf_assets::nif_surface_blend::HeightLayout;
+    for bindless in [false, true] {
+        for blend in [false, true] {
+            let base = nif_defs(bindless, blend, false, false, HeightLayout::STORED);
+            let off = compose(&modules, entry, &base);
+            assert_eq!(off, compose(&before, entry, &base), "bindless={bindless} blend={blend}: off is the shader without the debug code");
+            let mut sets: Vec<&[&str]> = nvf_assets::authored::PbrView::ALL.iter().map(|v| v.shader_defs()).collect();
+            sets.push(&["NVF_PBR_METALLIC"]);
+            sets.push(&["NVF_PBR_VIEW", "NVF_PBR_VIEW_OCCLUSION", "NVF_PBR_METALLIC"]);
+            for set in sets {
+                let mut defs = base.clone();
+                defs.extend(set.iter().map(|d| ShaderDefVal::from(*d)));
+                assert_ne!(compose(&modules, entry, &defs), off, "bindless={bindless} blend={blend} {set:?} changes the shader");
+            }
+        }
+    }
+}
+
 #[test]
 fn terrain_surface_bake_composes_for_the_folded_base() {
     // [design] terrain.wesl with the ordinary and folded-bake variants (terrain.rs
