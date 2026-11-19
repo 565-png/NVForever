@@ -294,3 +294,17 @@ fn the_summary_line_names_every_count() {
         "3 materials built with a set (2 distinct sets); skipped: 5 shapes not eligible, 1 on excluded textures, 2 whose _orm did not load, 4 sets applied without their _n (no tangents), 6 made legacy after their role was known; 15 swaps through retexture (7 to a set, 8 to the legacy look)"
     );
 }
+
+/// The role pass's gate: off, or a mount without authored sets, means no shape can take one.
+#[test]
+fn a_mount_has_sets_only_with_the_setting_on_and_an_authored_set() {
+    let pack = Pack::new();
+    assert!(!mount_has_sets_when(&pack.data, false));
+    assert!(!pack.data.pbr_index_built(), "off asks nothing of the index");
+    assert!(mount_has_sets_when(&pack.data, true));
+    let empty = std::env::temp_dir().join(format!("nvf-authored-empty-{}", std::process::id()));
+    std::fs::create_dir_all(empty.join("textures")).unwrap();
+    let data = GameData::new(Arc::new(fnv_vfs::Vfs::open(&empty, &[]).unwrap()), Arc::new(fnv_nif::Schema::default()));
+    assert!(!mount_has_sets_when(&data, true), "no authored set in the mount");
+    let _ = std::fs::remove_dir_all(&empty);
+}

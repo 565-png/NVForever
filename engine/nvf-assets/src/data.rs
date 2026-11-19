@@ -35,7 +35,9 @@ impl GameData {
     }
 
     /// Mount another VFS: the authored-material index starts afresh with it. Clones made
-    /// before keep the old VFS and its index together.
+    /// before keep the old VFS and its index together. Only tests call it: materials made
+    /// under the old mount (role exclusions skipped where it had no authored set,
+    /// `crate::authored::mount_has_sets`) would have to be made again for a new one.
     pub fn set_vfs(&mut self, vfs: Arc<Vfs>) {
         self.vfs = vfs;
         self.pbr = Arc::default();

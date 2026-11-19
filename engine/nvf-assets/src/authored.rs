@@ -352,6 +352,20 @@ pub fn set_legacy_specular_tint(material: &mut crate::NifMaterial, tint: Color, 
     }
 }
 
+/// Whether any shape of `data`'s mount can take an authored set: the run's setting on
+/// (`enabled`) and at least one authored set in the mount's index (built here if it was not).
+/// Callers that make shapes legacy for good once their role is known (nvforever `actors.rs`)
+/// skip that work when it is false: no set can reach such a shape in this mount, through a
+/// material build or a later swap alike. A new mount (`GameData::set_vfs`) would need those
+/// materials made again; no production path mounts again (only tests call `set_vfs`).
+pub fn mount_has_sets(data: &GameData) -> bool {
+    mount_has_sets_when(data, enabled())
+}
+
+fn mount_has_sets_when(data: &GameData, on: bool) -> bool {
+    on && data.pbr_index().counts().authored > 0
+}
+
 /// Whether `material` is shaded from an authored set.
 pub fn is_authored(material: &crate::NifMaterial) -> bool {
     material.extension.emissive_rule.w == AUTHORED_MARK
