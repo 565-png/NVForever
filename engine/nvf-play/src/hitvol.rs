@@ -104,8 +104,9 @@ pub struct ActorBoundsCandidate;
 /// volumes and spends nothing on marks. One that gets it late is marked by
 /// [`reclassify_candidates`] at the next `First`: if it arrives after `First`, that frame's
 /// walk does not find the meshes that were there before it.
+/// A draw-only copy (`crate::DrawOnly`, nvforever's full-detail ring) is never one.
 fn wants_candidate(world: &World, entity: Entity) -> bool {
-    world.get_resource::<SimState>().is_some_and(|sim| world.get::<RefVisual>(entity).is_some_and(|r| sim.may_be_actor(r.0)))
+    !world.entity(entity).contains::<crate::DrawOnly>() && world.get_resource::<SimState>().is_some_and(|sim| world.get::<RefVisual>(entity).is_some_and(|r| sim.may_be_actor(r.0)))
 }
 
 /// Set the mark from the entity's reference as it is when this runs (not as it was when
@@ -354,12 +355,17 @@ fn gather<'a>(parts: impl Iterator<Item = (&'a RefVisual, &'a Aabb, &'a GlobalTr
     (bounds, scan)
 }
 
+/// The marked meshes whose bounds make actors' hit volumes and blocking: never a
+/// draw-only copy (`crate::DrawOnly`), even one marked before its `DrawOnly` came (the
+/// hooks settle a mark before the next command, which may be the one adding it).
+type CandidateParts<'w, 's> = Query<'w, 's, BoundsPart, (With<ActorBoundsCandidate>, Without<crate::DrawOnly>)>;
+
 #[allow(clippy::too_many_arguments)]
 fn sync_volumes(
     sim: Res<SimState>,
     script: Option<Res<crate::script::ScriptState>>,
     posed: Res<ActorParts>,
-    parts: Query<BoundsPart, With<ActorBoundsCandidate>>,
+    parts: CandidateParts,
     mut compare: Option<ResMut<ScanCompare>>,
     mut phys: ResMut<PhysState>,
     mut vols: ResMut<HitVolumes>,
@@ -670,6 +676,29 @@ fn report(mut exit: MessageReader<AppExit>, vols: Res<HitVolumes>, blocks: Res<A
 
 #[cfg(test)]
 mod tests {
+    /// #2701 round 3: an actor's draw-only copy (a full-detail ring copy drawn by a model
+    /// swap) never feeds hit volumes or blocking, even when it carries the mark.
+    #[test]
+    fn draw_only_parts_make_no_hit_volume() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        // A dynamic reference (a placed actor's): a candidate by `SimState::may_be_actor`.
+        world.insert_resource(crate::sim::SimState::over_placed(std::iter::empty()));
+        let part = || (super::RefVisual(0xFF00_0009), super::Aabb::default(), GlobalTransform::IDENTITY, InheritedVisibility::VISIBLE);
+        let actor = world.spawn(part()).id();
+        // Marked before its DrawOnly came (another command): the consumer leaves it out.
+        let late = world.spawn(part()).id();
+        world.flush();
+        world.entity_mut(late).insert(crate::DrawOnly);
+        // Spawned with DrawOnly: never marked.
+        let copy = world.spawn((part(), crate::DrawOnly)).id();
+        world.flush();
+        assert!(world.entity(actor).contains::<super::ActorBoundsCandidate>() && world.entity(late).contains::<super::ActorBoundsCandidate>());
+        assert!(!world.entity(copy).contains::<super::ActorBoundsCandidate>());
+        let n = world.run_system_once(|q: super::CandidateParts| q.iter().count()).unwrap();
+        assert_eq!(n, 1, "only the actor's own mesh");
+    }
+
     use super::*;
 
     #[test]
