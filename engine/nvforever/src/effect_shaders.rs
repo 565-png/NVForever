@@ -282,6 +282,21 @@ pub(crate) struct Faded {
     made_from: AssetId<NifMaterial>,
 }
 
+impl Faded {
+    /// Make `material` the one the fade gives back when the actor's alpha is released (a
+    /// texture swap's copy, texture_swap.rs), so the release cannot bring back the material
+    /// worn before the swap (#2981: its authored set, mark, metallic or gloss); the faded copy
+    /// is made again from it at the next sync (`made_from` no longer matches). Whether it
+    /// changed.
+    pub(crate) fn retarget(&mut self, material: &Handle<NifMaterial>) -> bool {
+        if self.original.id() == material.id() {
+            return false;
+        }
+        self.original = material.clone();
+        true
+    }
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct Shaders {
     records: HashMap<u32, Option<Box<EffectShader>>>,
@@ -963,6 +978,18 @@ fn report(mut exit: MessageReader<AppExit>, st: Res<Shaders>) {
 
 #[cfg(test)]
 mod tests {
+    /// #2981: a swap retargets the alpha fade's stored original, so its release gives back the
+    /// swapped material, and the next sync makes the faded copy again from it.
+    #[test]
+    fn a_swap_retargets_the_alpha_fades_original() {
+        let mut materials = bevy::prelude::Assets::<nvf_assets::NifMaterial>::default();
+        let (old, new) = (materials.add(nvf_assets::nif_material(Default::default())), materials.add(nvf_assets::nif_material(Default::default())));
+        let mut f = super::Faded { made_from: old.id(), original: old.clone(), alpha: 0.5 };
+        assert!(f.retarget(&new));
+        assert_eq!(f.original, new);
+        assert_ne!(f.made_from, f.original.id(), "the faded copy is made again from the swapped material");
+        assert!(!f.retarget(&new));
+    }
     use super::*;
     use crate::sky::{BODY_LAYER, SHADOW_LAYER};
     use bevy::asset::{AssetApp, AssetPlugin};

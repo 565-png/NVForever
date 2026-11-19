@@ -170,15 +170,23 @@ impl Swapping<'_, '_> {
                         }
                     };
                     match (faded.as_mut(), fading) {
-                        (_, Some(f)) if f.original().id() != copy.id() => {
+                        (also_faded, Some(f)) if f.original().id() != copy.id() => {
+                            // With the actor's alpha fade on too, its stored original takes the
+                            // swap as well, or releasing it would bring back the material worn
+                            // before (#2981: an old authored set, mark or gloss).
+                            if let Some(fd) = also_faded {
+                                fd.retarget(&copy);
+                            }
                             models.materials.remove(f.copy());
                             commands.entity(e).insert(MeshMaterial3d(copy)).remove::<Fading>();
                         }
-                        (_, Some(_)) => {}
-                        (Some(f), None) => {
-                            if f.original.id() != copy.id() {
-                                f.original = copy;
+                        (also_faded, Some(_)) => {
+                            if let Some(fd) = also_faded {
+                                fd.retarget(&copy);
                             }
+                        }
+                        (Some(f), None) => {
+                            f.retarget(&copy);
                         }
                         (None, None) if copy.id() != mat.id() => {
                             commands.entity(e).insert(MeshMaterial3d(copy));

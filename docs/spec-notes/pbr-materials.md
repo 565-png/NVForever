@@ -245,6 +245,25 @@ beyond the field test below):
   the distinct sets used, the shapes skipped and why, and the swaps through `retexture`
   [documented: `authored.rs` `summary`].
 
+### Known limits (stage 3)
+
+From the source review of 2026-11-19, not yet fixed [documented: the files named]:
+
+- **A script's material edit during a fade.** The property mirror
+  (`engine/nvforever/src/nif_mirror.rs`) makes the shape's private material from the
+  material it wears, which during a fade is the fade's copy, while the fade
+  (`engine/nvf-play/src/fade.rs` `Fading`, `engine/nvforever/src/effect_shaders.rs` `Faded`)
+  keeps the older original and puts it back when it ends. The edit is then lost: on an
+  authored shape the set's roughness first looks right, and a later swap to a diffuse
+  without a set brings back the gloss stored before the edit. Fixing it means the fades
+  rebuilding their copies from a per-shape material, a change to the fade system itself.
+- **A texture swap during a fade** gives the swapped material to both fades' stored
+  originals (`texture_swap.rs`, `Faded::retarget`), so ending either fade keeps the swap.
+- **A placed shape the mirror gave a private material, then swapped.** The swap matches
+  shapes by their original material, and a placed shape without a shape name no longer
+  matches once the mirror replaced it, so its old diffuse stays drawn with its authored
+  fields (set, mark, metallic). This predates stage 3 (`texture_swap.rs`, `nif_mirror.rs`).
+
 ## Load order: per file, so ship complete sets
 
 [design] Each file resolves on its own through the virtual file system, like every other
