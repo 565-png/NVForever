@@ -9,20 +9,27 @@
 //! the camera's cell are drawn as small additive glows: sprites only, no light entity, no
 //! shadow, no game state.
 //!
-//! - **Source.** When the camera's cell changes, the cells not read yet are listed on a
-//!   worker thread (the read pool, as world.rs reads cells ahead), from the same references
+//! - **Source.** The cells in reach not read yet are listed on a worker thread (the read
+//!   pool, as world.rs reads cells ahead), [`CELLS_PER_JOB`] at a time, from the same references
 //!   world.rs spawns a loaded cell from ([`cell_refs`]: the cell's own and the persistent
 //!   ones standing in it): those whose base is a LIGH, not deleted, neither negative nor off
 //!   by default, with a radius and a colour (the record's DATA, `fnv_world::lighting`; the
 //!   flags as the GECK wiki "GetLightFlag" lists them [documented]). Lights disabled at the
 //!   start are kept with that state. Kept per cell. Whether a light shows is the
 //!   simulation's present state (`SimState::present`; without a simulation, the state at
-//!   the start), checked in slices of [`CHECKS_PER_FRAME`] lights a frame, a pass every
-//!   [`RECHECK_SECS`]; a cell whose set of present lights changed is merged again.
+//!   the start), checked within [`CHECKS_PER_FRAME`] units a frame (a hard bound, resumed
+//!   inside a cell), a pass every [`RECHECK_SECS`]; a cell whose set of present lights
+//!   changed is merged again.
+//! - **The scan.** One job at a time on the worker (cells, then the models they ask for,
+//!   [`MODELS_PER_JOB`] at a time, at most [`MODELS_PER_SCAN`] per camera cell), checking a
+//!   shared epoch between cells and between models: switching off, another worldspace,
+//!   going indoors or daylight move it on, so a running job stops at its next check and its
+//!   unread models go back to the queue; no job starts while a stopped one still runs.
+//!   Models are asked for on the main thread only, each once ([`GlowModels`]).
 //! - **Glow statics.** Statics and moveable statics (STAT, MSTT; not the parts of static
 //!   collections) whose model glows by its shapes' properties (`nvf_assets::model_glow`:
 //!   added glow cards and beams, unlit shapes emitting over white, lit shapes self-lit at
-//!   full emission; read on the worker once per model and kept, [`cached_glow`]) are sources too
+//!   full emission; read once per model and kept, [`GlowModels`]) are sources too
 //!   ([`static_source`]): at the glowing shapes' centre (a lamp post's bulb), of their
 //!   colour, their radius × [`GLOW_RADIUS_SCALE`] standing in for a light's radius. They go
 //!   through the same present state, merge, cap, night share, fog and hand-over.
@@ -67,7 +74,7 @@ use fnv_world::{cell_of, CELL_SIZE};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 type Grid = (i32, i32);
 
@@ -114,6 +121,15 @@ pub const RECHECK_SECS: f32 = 2.0;
 /// the budget rules a LIGH light's radius feeds: a glow card 40 units across reads like a
 /// light of radius 80 [design].
 pub const GLOW_RADIUS_SCALE: f32 = 4.0;
+/// Cells a listing job reads at most (one job at a time; the scan stops between cells)
+/// [design].
+pub const CELLS_PER_JOB: usize = 32;
+/// Models a model job reads at most (the scan stops between models) [design].
+pub const MODELS_PER_JOB: usize = 32;
+/// Models one scan (from one camera cell) reads at most; the rest wait for the next scan
+/// [design: above the 895 static models read within reach six cells west of Novac,
+/// observed 2026-11-19].
+pub const MODELS_PER_SCAN: usize = 1024;
 /// Source lights checked against the simulation per frame at most (new cells first, then
 /// the running pass) [design: a few hundred microseconds at worst].
 pub const CHECKS_PER_FRAME: usize = 2048;
@@ -197,7 +213,6 @@ impl Stats {
         self.refs += o.refs;
         self.lights += o.lights;
         self.disabled += o.disabled;
-        self.glow_statics += o.glow_statics;
         self.deleted += o.deleted;
         self.no_colour += o.no_colour;
         self.negative_off += o.negative_off;
@@ -264,76 +279,201 @@ fn base_kind(lo: &LoadOrder, schema: &EsmSchema, base: u32) -> BaseKind {
     }
 }
 
-/// The glow source of a static placed by `p` whose model glows as `g`: at the glowing
-/// shapes' centre taken by the reference's transform, its radius scaled by the reference's
-/// scale and [`GLOW_RADIUS_SCALE`], the model's colour, steady, strength 1.
-pub fn static_source(p: &fnv_world::placed::Placement, g: &ModelGlow, start_enabled: bool) -> SourceLight {
-    let at = crate::world::ref_affine(p).transform_point3(Vec3::from_array(g.centre));
-    SourceLight { form_id: p.form_id, pos: at.to_array(), color: g.colour, radius: (g.radius * p.scale * GLOW_RADIUS_SCALE).max(1.0), strength: 1.0, motion: 0, start_enabled }
+/// A static placed in a cell whose model may glow: what [`resolve`] needs once the model's
+/// glow is known.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlacedStatic {
+    pub form_id: u32,
+    pub transform: bevy::math::Affine3A,
+    pub scale: f32,
+    pub start_enabled: bool,
+    /// The model (an archive path).
+    pub model: Arc<str>,
 }
 
-/// The glow sources of `refs` (a cell's references, [`cell_refs`]): LIGH lights and the
-/// statics whose model glows (`glow`, by model path), with what was left out counted in
-/// `stats`. Deleted references are left out; disabled ones are kept with their start
-/// state. Runs on a worker thread.
-pub fn list_lights(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], bases: &mut HashMap<u32, BaseKind>, glow: &mut impl FnMut(&str) -> Option<ModelGlow>, stats: &mut Stats) -> Vec<SourceLight> {
-    let mut out = Vec::new();
+/// One cell as listed from the records: its lights, and its statics with a model.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CellList {
+    pub lights: Vec<SourceLight>,
+    pub statics: Vec<PlacedStatic>,
+}
+
+/// The glow source of a static placed by `transform` (scale `scale`) whose model glows as
+/// `g`: at the glowing shapes' centre taken by the reference's transform, its radius
+/// scaled by the reference's scale and [`GLOW_RADIUS_SCALE`], the model's colour, steady,
+/// strength 1.
+pub fn static_source(s: &PlacedStatic, g: &ModelGlow) -> SourceLight {
+    let at = s.transform.transform_point3(Vec3::from_array(g.centre));
+    SourceLight { form_id: s.form_id, pos: at.to_array(), color: g.colour, radius: (g.radius * s.scale * GLOW_RADIUS_SCALE).max(1.0), strength: 1.0, motion: 0, start_enabled: s.start_enabled }
+}
+
+/// A cell's light references and its statics with a model (`refs`: [`cell_refs`]), with
+/// what was left out counted in `stats`. Deleted references are left out; disabled ones are
+/// kept with their start state. No model is read here. Runs on a worker thread.
+pub fn list_cell(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], bases: &mut HashMap<u32, BaseKind>, stats: &mut Stats) -> CellList {
+    let mut out = CellList::default();
     stats.refs += refs.len();
     for &r in refs {
         let Some(p) = placement(lo, schema, r) else { continue };
         let Some(base) = p.base else { continue };
         let kind = bases.entry(base).or_insert_with(|| base_kind(lo, schema, base)).clone();
-        let source = match kind {
-            BaseKind::Light(l) => Some(Ok(l)),
-            BaseKind::Static(path) => glow(&path).map(Err),
-            BaseKind::Other => None,
-        };
-        let Some(source) = source else { continue };
+        if matches!(kind, BaseKind::Other) {
+            continue;
+        }
         if p.deleted() {
-            stats.deleted += 1;
+            stats.deleted += usize::from(matches!(kind, BaseKind::Light(_)));
             continue;
         }
         let start = crate::world::enabled(lo, schema, &p, 0);
-        match source {
-            Ok(l) => match source_light(p.form_id, p.position, &l, ref_xrds(lo, schema, r), start) {
+        match kind {
+            BaseKind::Light(l) => match source_light(p.form_id, p.position, &l, ref_xrds(lo, schema, r), start) {
                 Ok(s) => {
                     stats.lights += 1;
                     stats.disabled += usize::from(!start);
-                    out.push(s);
+                    out.lights.push(s);
                 }
                 Err(Skip::NegativeOff) => stats.negative_off += 1,
                 Err(Skip::NoRadius) => stats.no_radius += 1,
                 Err(Skip::NoColour) => stats.no_colour += 1,
             },
-            Err(g) => {
-                stats.glow_statics += 1;
-                stats.disabled += usize::from(!start);
-                out.push(static_source(&p, &g, start));
-            }
+            BaseKind::Static(model) => out.statics.push(PlacedStatic { form_id: p.form_id, transform: crate::world::ref_affine(&p), scale: p.scale, start_enabled: start, model: model.into() }),
+            BaseKind::Other => {}
         }
     }
     out
 }
 
-/// The glows of static models by model path, read once on a worker and kept for the run
-/// (`None`: the model has no glowing shape or could not be read).
-pub type GlowModels = Arc<Mutex<HashMap<String, Option<ModelGlow>>>>;
-
-/// The glow of model `path` from `cache`, worked out by `read` on the first ask.
-pub fn cached_glow(cache: &Mutex<HashMap<String, Option<ModelGlow>>>, path: &str, read: impl FnOnce(&str) -> Option<ModelGlow>) -> Option<ModelGlow> {
-    if let Some(g) = cache.lock().ok().and_then(|c| c.get(path).copied()) {
-        return g;
-    }
-    let g = read(path);
-    if let Ok(mut c) = cache.lock() {
-        c.insert(path.to_string(), g);
-    }
-    g
+/// A cell's glow sources: its lights and the statics whose model's glow is known to be
+/// there (`glow`: `Some(Some(_))` glows, `Some(None)` does not, `None` not read yet).
+pub fn resolve(cell: &CellList, glow: impl Fn(&str) -> Option<Option<ModelGlow>>) -> Vec<SourceLight> {
+    let mut out = cell.lights.clone();
+    out.extend(cell.statics.iter().filter_map(|s| glow(&s.model).flatten().map(|g| static_source(s, &g))));
+    out
 }
 
-/// Models read and models that glow, from the cache.
-fn model_counts(cache: &Mutex<HashMap<String, Option<ModelGlow>>>) -> (usize, usize) {
-    cache.lock().map_or((0, 0), |c| (c.len(), c.values().filter(|g| g.is_some()).count()))
+/// The static models' glows by model path, read once each on a worker and kept for the run
+/// (`None`: no glowing shape, or the file could not be read), and the reads still to make.
+/// Only the main thread asks for a read, each model once, so no model is read twice.
+#[derive(Default)]
+pub struct GlowModels {
+    known: HashMap<Arc<str>, Option<ModelGlow>>,
+    asked: HashSet<Arc<str>>,
+    queue: std::collections::VecDeque<Arc<str>>,
+}
+
+impl GlowModels {
+    /// The model's glow if read (see [`resolve`]).
+    pub fn get(&self, model: &str) -> Option<Option<ModelGlow>> {
+        self.known.get(model).copied()
+    }
+
+    /// Queue model `model` for a read unless it was read or asked for already.
+    pub fn ask(&mut self, model: &Arc<str>) {
+        if !self.known.contains_key(model) && self.asked.insert(model.clone()) {
+            self.queue.push_back(model.clone());
+        }
+    }
+
+    /// Up to `n` models to read next, nearest asked first.
+    pub fn next_batch(&mut self, n: usize) -> Vec<Arc<str>> {
+        let k = n.min(self.queue.len());
+        self.queue.drain(..k).collect()
+    }
+
+    /// Take in what a read found. Models a cancelled read did not reach go back in front of
+    /// the queue.
+    pub fn take(&mut self, read: Vec<(Arc<str>, Option<ModelGlow>)>, unread: Vec<Arc<str>>) {
+        for (m, g) in read {
+            self.asked.remove(&m);
+            self.known.insert(m, g);
+        }
+        for m in unread.into_iter().rev() {
+            self.queue.push_front(m);
+        }
+    }
+
+    /// Models waiting for a read.
+    pub fn waiting(&self) -> usize {
+        self.queue.len()
+    }
+
+    /// Models read, and how many of them glow.
+    pub fn counts(&self) -> (usize, usize) {
+        (self.known.len(), self.known.values().filter(|g| g.is_some()).count())
+    }
+}
+
+/// A shared epoch: work started under one stops at its next check once it moves on
+/// (switched off, another worldspace, indoors, daylight).
+#[derive(Default, Clone)]
+pub struct Epoch(Arc<std::sync::atomic::AtomicU64>);
+
+impl Epoch {
+    pub fn now(&self) -> u64 {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Stop every piece of work started before.
+    pub fn bump(&self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+/// Set while a scan's job runs on the worker, cleared when it ends (finished, stopped or
+/// dropped): no second job starts before (never two scans at once).
+#[derive(Default, Clone)]
+pub struct Busy(Arc<std::sync::atomic::AtomicBool>);
+
+struct BusyGuard(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+impl Busy {
+    pub fn running(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Mark a job as running until the guard goes.
+    fn start(&self) -> BusyGuard {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+        BusyGuard(self.0.clone())
+    }
+}
+
+/// Read the glows of `models` with `read`, stopping before a read once `epoch` moved on
+/// from `started`. Returns what was read and the models not reached.
+pub fn read_models(models: Vec<Arc<str>>, epoch: &Epoch, started: u64, mut read: impl FnMut(&str) -> Option<ModelGlow>) -> (Vec<(Arc<str>, Option<ModelGlow>)>, Vec<Arc<str>>) {
+    let mut done = Vec::new();
+    let mut rest = models.into_iter();
+    for m in rest.by_ref() {
+        if epoch.now() != started {
+            let mut unread = vec![m];
+            unread.extend(rest);
+            return (done, unread);
+        }
+        let g = read(&m);
+        done.push((m, g));
+    }
+    (done, Vec::new())
+}
+
+/// List `cells` (cell, its references) with [`list_cell`], stopping before a cell once
+/// `epoch` moved on from `started`. Returns the cells listed.
+pub fn list_cells(lo: &LoadOrder, schema: &EsmSchema, cells: Vec<(Grid, Vec<u32>)>, epoch: &Epoch, started: u64, stats: &mut Stats) -> Vec<(Grid, CellList)> {
+    let mut bases = HashMap::new();
+    let mut out = Vec::new();
+    for (g, refs) in cells {
+        if epoch.now() != started {
+            break;
+        }
+        stats.cells += 1;
+        out.push((g, list_cell(lo, schema, &refs, &mut bases, stats)));
+    }
+    out
 }
 
 /// The lights of `list` that show now (`shows`), and a key of which they are: two sets of
@@ -537,6 +677,9 @@ pub struct GlowMaterial {
 
 const SHADER: &str = "embedded://nvforever/distant_lights.wesl";
 
+/// The fragment definition that marks the glows' pipeline (pipeline_gate.rs).
+pub const DISTANT_LIGHTS_DEF: &str = "NVF_DISTANT_LIGHTS";
+
 impl Material for GlowMaterial {
     fn vertex_shader() -> ShaderRef {
         SHADER.into()
@@ -555,6 +698,11 @@ impl Material for GlowMaterial {
     }
     fn specialize(_: &MaterialPipeline, descriptor: &mut RenderPipelineDescriptor, _: &MeshVertexBufferLayoutRef, _: MaterialPipelineKey<Self>) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = None;
+        // A mark for the pipeline log (pipeline_gate.rs `distant lights pipeline <n> ready`);
+        // the shader does not read it.
+        if let Some(f) = descriptor.fragment.as_mut() {
+            f.shader_defs.push(DISTANT_LIGHTS_DEF.into());
+        }
         Ok(())
     }
 }
@@ -566,8 +714,23 @@ struct CellGlows {
     key: u64,
 }
 
-/// What a listing task gives back.
-type Listed = (Vec<(Grid, Vec<SourceLight>)>, Stats);
+/// A cell's present-state check under way, resumed in the next frame when the budget runs
+/// out inside it.
+struct Checking {
+    cell: Grid,
+    list: Arc<Vec<SourceLight>>,
+    at: usize,
+    here: Vec<SourceLight>,
+    key: std::collections::hash_map::DefaultHasher,
+}
+
+/// What a scan's job gives back.
+enum Found {
+    /// Cells listed, for this worldspace.
+    Cells(u32, Vec<(Grid, CellList)>, Stats),
+    /// Models read, and those a stopped job did not reach.
+    Models(Vec<(Arc<str>, Option<ModelGlow>)>, Vec<Arc<str>>),
+}
 
 /// The lights listed for the cells in reach, and what is drawn.
 #[derive(Resource, Default)]
@@ -579,13 +742,24 @@ pub struct DistantLights {
     centre: Option<Grid>,
     /// Cells in reach, nearest first.
     want: Vec<Grid>,
-    /// Lights per cell (deleted ones left out).
+    /// Cells as listed from the records.
+    cells: HashMap<Grid, CellList>,
+    /// Glow sources per cell: its lights and the statics whose model glows, as far as the
+    /// models are read ([`resolve`]).
     lists: HashMap<Grid, Arc<Vec<SourceLight>>>,
     glows: HashMap<Grid, CellGlows>,
-    /// The worker's listing of cells not read yet (dropping it cancels it).
-    listing: Option<Task<Listed>>,
+    /// The scan's one job on the worker (dropping it cancels it once it is not running).
+    job: Option<Task<Found>>,
+    epoch: Epoch,
+    busy: Busy,
+    /// The models the running job was given (back to the queue if it is stopped).
+    in_flight: Vec<Arc<str>>,
+    /// Models read in this scan (since the camera's cell changed): at most
+    /// [`MODELS_PER_SCAN`], the rest wait for the next scan.
+    scan_models: usize,
     /// The running pass over the present states: the cells left to check.
     pass: Vec<Grid>,
+    checking: Option<Checking>,
     /// What the drawn mesh was built for: the centre and a digest of the cells' shares and
     /// keys.
     built: Option<(Grid, u64)>,
@@ -596,8 +770,10 @@ pub struct DistantLights {
     material: Option<Handle<GlowMaterial>>,
     night: f32,
     stats: Stats,
-    /// The static models' glows, shared with the listing tasks.
+    /// The static models' glows (main thread only).
     models: GlowModels,
+    /// Statics found glowing (for the summary), and those of them disabled at the start.
+    glowing: HashSet<u32>,
 }
 
 impl DistantLights {
@@ -609,50 +785,110 @@ impl DistantLights {
         self.centre = None;
         self.want.clear();
         self.pass.clear();
+        self.checking = None;
         self.built = None;
     }
 
-    /// Start over for worldspace `world`: every list, glow, pass and listing of the last one
-    /// goes. Returns the glows' entity to despawn.
+    /// Stop the scan's job: its next check sees the epoch moved on; the handle is dropped,
+    /// and the models it was given go back in front of the queue.
+    fn stop_scan(&mut self) {
+        self.epoch.bump();
+        self.job = None;
+        let back = std::mem::take(&mut self.in_flight);
+        self.models.take(Vec::new(), back);
+    }
+
+    /// Start over for worldspace `world`: every list, glow, pass and job of the last one
+    /// goes (the models' glows stay: models are the same everywhere). Returns the glows'
+    /// entity to despawn.
     fn reset_for_world(&mut self, world: u32) -> Option<Entity> {
+        self.stop_scan();
         self.world = Some(world);
         self.centre = None;
         self.want.clear();
+        self.cells.clear();
         self.lists.clear();
         self.glows.clear();
         self.pass.clear();
-        self.listing = None;
+        self.checking = None;
         self.built = None;
         self.entity.take()
     }
 
-    /// Bring the cells' glows up to date with `shows`: the cells listed but not merged yet
-    /// first, then the running pass, within `budget` source lights. Returns the lights
-    /// checked.
-    fn check_present(&mut self, shows: &impl Fn(&SourceLight) -> bool, budget: usize) -> usize {
-        let mut used = 0;
-        let fresh: Vec<Grid> = self.want.iter().filter(|g| self.lists.contains_key(g) && !self.glows.contains_key(g)).copied().collect();
-        for g in fresh {
-            if used >= budget {
-                return used;
-            }
-            used += self.check_cell(g, shows);
+    /// Take in a listed cell: queue its unread models, resolve its sources.
+    fn add_cell(&mut self, g: Grid, cell: CellList) {
+        for s in &cell.statics {
+            self.models.ask(&s.model);
         }
-        while used < budget {
-            let Some(g) = self.pass.pop() else { break };
-            used += self.check_cell(g, shows);
-        }
-        used
+        self.cells.insert(g, cell);
+        self.resolve_cell(g);
     }
 
-    /// Merge cell `g`'s present lights again if their set changed. Returns the lights read.
-    fn check_cell(&mut self, g: Grid, shows: &impl Fn(&SourceLight) -> bool) -> usize {
-        let Some(list) = self.lists.get(&g) else { return 0 };
-        let (here, key) = present_lights(list, shows);
-        if self.glows.get(&g).is_none_or(|c| c.key != key) {
-            self.glows.insert(g, CellGlows { glows: merge(&here, MERGE_DISTANCE), key });
+    /// The cell's sources from what is read; its glows are made again if they changed.
+    fn resolve_cell(&mut self, g: Grid) {
+        let Some(cell) = self.cells.get(&g) else { return };
+        let models = &self.models;
+        let list = resolve(cell, |m| models.get(m));
+        for s in list.iter().skip(cell.lights.len()) {
+            if self.glowing.insert(s.form_id) {
+                self.stats.glow_statics += 1;
+                self.stats.disabled += usize::from(!s.start_enabled);
+            }
         }
-        list.len().max(1)
+        if self.lists.get(&g).is_none_or(|l| **l != list) {
+            self.lists.insert(g, Arc::new(list));
+            self.glows.remove(&g);
+        }
+    }
+
+    /// Bring the cells' glows up to date with `shows`: the cells listed but not merged yet
+    /// first, then the running pass. A hard bound: at most `budget` units a frame, a light
+    /// checked or merged one unit and starting a cell one, a check stopped inside a cell
+    /// resumed in the next frame; only a cell with more lights than the budget is merged
+    /// alone in a frame of its own. Returns the units used.
+    fn check_present(&mut self, shows: &impl Fn(&SourceLight) -> bool, budget: usize) -> usize {
+        let mut used = 0;
+        let mut fresh: std::collections::VecDeque<Grid> = self.want.iter().filter(|g| self.lists.contains_key(g) && !self.glows.contains_key(g)).copied().collect();
+        while used < budget {
+            if self.checking.is_none() {
+                let next = std::iter::from_fn(|| fresh.pop_front()).find(|g| !self.glows.contains_key(g));
+                let Some(cell) = next.or_else(|| self.pass.pop()) else { break };
+                let Some(list) = self.lists.get(&cell).cloned() else { continue };
+                self.checking = Some(Checking { cell, list, at: 0, here: Vec::new(), key: std::collections::hash_map::DefaultHasher::new() });
+                used += 1;
+            }
+            let c = self.checking.as_mut().expect("set above");
+            // The cell's sources changed meanwhile (a model read): start it again.
+            if self.lists.get(&c.cell).is_none_or(|l| !Arc::ptr_eq(l, &c.list)) {
+                self.checking = None;
+                continue;
+            }
+            let take = (budget - used).min(c.list.len() - c.at);
+            for l in &c.list[c.at..c.at + take] {
+                if shows(l) {
+                    c.here.push(*l);
+                    l.form_id.hash(&mut c.key);
+                }
+            }
+            c.at += take;
+            used += take;
+            if c.at < c.list.len() {
+                break;
+            }
+            // Checked whole: merge, within the budget, or alone in a frame of its own.
+            if used > 0 && used + c.here.len() > budget {
+                break;
+            }
+            let c = self.checking.take().expect("set above");
+            used += c.here.len();
+            let mut key = c.key;
+            c.here.len().hash(&mut key);
+            let key = key.finish();
+            if self.glows.get(&c.cell).is_none_or(|g| g.key != key) {
+                self.glows.insert(c.cell, CellGlows { glows: merge(&c.here, MERGE_DISTANCE), key });
+            }
+        }
+        used
     }
 
     /// The digest of what the glows depend on besides the centre: each wanted cell's share
@@ -666,6 +902,49 @@ impl DistantLights {
         }
         h.finish()
     }
+
+    /// Take in a finished job's result.
+    fn take_found(&mut self, found: Found) {
+        match found {
+            Found::Cells(world, cells, stats) => {
+                if Some(world) != self.world {
+                    return;
+                }
+                self.stats.add(&stats);
+                for (g, cell) in cells {
+                    self.add_cell(g, cell);
+                }
+            }
+            Found::Models(read, unread) => {
+                self.in_flight.clear();
+                self.scan_models += read.len();
+                self.models.take(read, unread);
+                let cells: Vec<Grid> = self.cells.keys().copied().collect();
+                for g in cells {
+                    self.resolve_cell(g);
+                }
+            }
+        }
+    }
+
+    /// The next job of the scan, if any: the nearest cells not listed yet, a few at a time,
+    /// then the models they asked for, a few at a time, at most [`MODELS_PER_SCAN`] in this
+    /// scan. `cell_refs` gives a cell's references (copied on this thread).
+    fn next_job(&mut self, cell_refs: impl Fn(Grid) -> Vec<u32>) -> Option<NextJob> {
+        let missing: Vec<Grid> = self.want.iter().filter(|g| !self.cells.contains_key(g)).take(CELLS_PER_JOB).copied().collect();
+        if !missing.is_empty() {
+            return Some(NextJob::Cells(missing.into_iter().map(|g| (g, cell_refs(g))).collect()));
+        }
+        let room = MODELS_PER_SCAN.saturating_sub(self.scan_models).min(MODELS_PER_JOB);
+        let models = self.models.next_batch(room);
+        (!models.is_empty()).then_some(NextJob::Models(models))
+    }
+}
+
+/// A job to start ([`DistantLights::next_job`]).
+enum NextJob {
+    Cells(Vec<(Grid, Vec<u32>)>),
+    Models(Vec<Arc<str>>),
 }
 
 pub struct DistantLightsPlugin;
@@ -705,8 +984,7 @@ fn update(
             info!("distant lights: on (reach {REACH_CELLS} cells, cap {CAP})");
         } else {
             st.clear(&mut commands);
-            // An outstanding listing is cancelled (dropping the task).
-            st.listing = None;
+            st.stop_scan();
             info!("distant lights: off");
         }
     }
@@ -715,8 +993,9 @@ fn update(
     }
     let (Some(world), Some(streamer)) = (world, streamer) else { return };
     if streamer.interior.is_some() {
-        if st.entity.is_some() || st.centre.is_some() {
+        if st.entity.is_some() || st.centre.is_some() || st.job.is_some() {
             st.clear(&mut commands);
+            st.stop_scan();
         }
         return;
     }
@@ -725,7 +1004,7 @@ fn update(
             commands.entity(e).despawn();
         }
     }
-    // By day nothing is listed, checked or built; the mesh is hidden.
+    // By day nothing is listed, checked or built; the mesh is hidden and a scan stopped.
     let elevation = sky.as_deref().map_or(90.0, |s| s.sun_elevation());
     let night = night_share(elevation);
     let hide = night <= 0.0;
@@ -736,6 +1015,9 @@ fn update(
         }
     }
     if hide {
+        if st.job.is_some() {
+            st.stop_scan();
+        }
         return;
     }
     let (Ok(root), Ok(cam)) = (root.single(), camera.single()) else { return };
@@ -747,45 +1029,52 @@ fn update(
         let keep: HashSet<Grid> = st.want.iter().copied().collect();
         // Keep the lists of cells a little beyond the reach.
         let r = REACH_CELLS + 3;
-        st.lists.retain(|g, _| (g.0 - c.0).abs() <= r && (g.1 - c.1).abs() <= r);
+        let near = |g: &Grid| (g.0 - c.0).abs() <= r && (g.1 - c.1).abs() <= r;
+        st.cells.retain(|g, _| near(g));
+        st.lists.retain(|g, _| near(g));
         st.glows.retain(|g, _| keep.contains(g));
         st.pass.retain(|g| keep.contains(g));
         st.built = None;
+        st.scan_models = 0;
     }
-    // Take in the worker's listing; ask for the cells still missing.
-    if let Some(task) = st.listing.as_mut() {
-        if let Some((done, stats)) = check_ready(task) {
-            st.stats.add(&stats);
-            for (g, lights) in done {
-                st.lists.insert(g, Arc::new(lights));
+    // The scan: take in its job's result, then start its next job (one at a time, never
+    // while a stopped one still runs).
+    if let Some(task) = st.job.as_mut() {
+        if let Some(found) = check_ready(task) {
+            st.job = None;
+            st.take_found(found);
+        }
+    }
+    if st.job.is_none() && !st.busy.running() {
+        let next = st.next_job(|g| cell_refs(&world, g));
+        let (epoch, busy, started, at) = (st.epoch.clone(), st.busy.clone(), st.epoch.now(), world.world);
+        st.job = match next {
+            Some(NextJob::Cells(cells)) => {
+                let (lo, schema): (&'static LoadOrder<'static>, &'static EsmSchema) = (world.lo, world.schema);
+                let guard = busy.start();
+                Some(nvf_assets::read_pool::read_pool().spawn(async move {
+                    let _running = guard;
+                    let mut stats = Stats::default();
+                    let cells = list_cells(lo, schema, cells, &epoch, started, &mut stats);
+                    Found::Cells(at, cells, stats)
+                }))
             }
-            st.listing = None;
-        }
-    }
-    if st.listing.is_none() {
-        let missing: Vec<Grid> = st.want.iter().filter(|g| !st.lists.contains_key(g)).copied().collect();
-        if !missing.is_empty() {
-            let jobs: Vec<(Grid, Vec<u32>)> = missing.iter().map(|&g| (g, cell_refs(&world, g))).collect();
-            let (lo, schema): (&'static LoadOrder<'static>, &'static EsmSchema) = (world.lo, world.schema);
-            let (data, models) = (data.as_deref().cloned(), st.models.clone());
-            let task = nvf_assets::read_pool::read_pool().spawn(async move {
-                let (mut bases, mut stats) = (HashMap::new(), Stats::default());
-                // Without the game's files (no archives) no static is read for its glow.
-                let mut glow = |path: &str| data.as_ref().and_then(|d| cached_glow(&models, path, |p| nvf_assets::model_glow::model_glow(d, p)));
-                let lists = jobs
-                    .into_iter()
-                    .map(|(g, refs)| {
-                        stats.cells += 1;
-                        (g, list_lights(lo, schema, &refs, &mut bases, &mut glow, &mut stats))
-                    })
-                    .collect::<Vec<(Grid, Vec<SourceLight>)>>();
-                (lists, stats)
-            });
-            st.listing = Some(task);
-        }
+            // Without the game's files (no archives) no model is read: none glows.
+            Some(NextJob::Models(models)) => {
+                st.in_flight = models.clone();
+                let data = data.as_deref().cloned();
+                let guard = busy.start();
+                Some(nvf_assets::read_pool::read_pool().spawn(async move {
+                    let _running = guard;
+                    let (read, unread) = read_models(models, &epoch, started, |m| data.as_ref().and_then(|d| nvf_assets::model_glow::model_glow(d, m)));
+                    Found::Models(read, unread)
+                }))
+            }
+            None => None,
+        };
     }
     // The lights present now: new cells at once, a pass over every cell every RECHECK_SECS,
-    // both within CHECKS_PER_FRAME lights a frame.
+    // both within CHECKS_PER_FRAME units a frame.
     st.since_check += time.delta_secs();
     if st.since_check >= RECHECK_SECS && st.pass.is_empty() {
         st.since_check = 0.0;
@@ -854,7 +1143,7 @@ fn update(
 fn report(mut exit: MessageReader<AppExit>, state: Res<DistantLights>) {
     if exit.read().last().is_some() && state.ever_on {
         let mut s = state.stats;
-        (s.models_read, s.glow_models) = model_counts(&state.models);
+        (s.models_read, s.glow_models) = state.models.counts();
         info!("{}", s.summary());
     }
 }
@@ -1031,18 +1320,40 @@ mod tests {
         assert_eq!(st.glows[&(0, 0)].glows.len(), 1, "a script enabled it");
     }
 
-    /// The present-state checks stop at the budget and carry on in the next frame.
+    /// The present-state checks are a hard bound: never more than the budget in a frame, a
+    /// cell resumed inside where the budget ran out; a cell with more lights than the
+    /// budget is checked over frames and merged alone.
     #[test]
     fn checks_are_sliced() {
         let mut st = DistantLights { want: vec![(0, 0), (1, 0), (2, 0)], ..default() };
-        for g in [(0, 0), (1, 0), (2, 0)] {
-            st.lists.insert(g, Arc::new((0..10).map(|i| light(i, [g.0 as f32 * 4096.0, 0.0, 0.0], 1.0)).collect()));
+        for (g, n) in [((0, 0), 10), ((1, 0), 10), ((2, 0), 40)] {
+            st.lists.insert(g, Arc::new((0..n).map(|i| light(i, [g.0 as f32 * 4096.0 + i as f32 * 300.0, 0.0, 0.0], 1.0)).collect()));
         }
         let all = |_: &SourceLight| true;
-        assert_eq!(st.check_present(&all, 15), 20, "a cell is checked whole once started");
-        assert_eq!(st.glows.len(), 2);
-        st.check_present(&all, 15);
-        assert_eq!(st.glows.len(), 3);
+        let mut frames = 0;
+        while st.glows.len() < 3 {
+            let used = st.check_present(&all, 15);
+            assert!(used <= 15 || st.glows.contains_key(&(2, 0)), "frame {frames}: {used} over the budget before the big cell");
+            frames += 1;
+            assert!(frames < 20, "stuck");
+        }
+        assert!(frames >= 5, "{frames} frames: 60 lights and their merges do not fit in fewer at 15 a frame");
+        assert_eq!(st.glows[&(2, 0)].glows.len(), 40);
+        assert!(st.checking.is_none());
+    }
+
+    /// A cell's sources replaced while it is being checked (a model read) are checked again
+    /// from the start.
+    #[test]
+    fn a_check_restarts_when_its_cell_changes() {
+        let mut st = DistantLights { want: vec![(0, 0)], ..default() };
+        st.lists.insert((0, 0), Arc::new((0..10).map(|i| light(i, [i as f32 * 300.0, 0.0, 0.0], 1.0)).collect()));
+        let all = |_: &SourceLight| true;
+        st.check_present(&all, 5);
+        assert!(st.checking.is_some());
+        st.lists.insert((0, 0), Arc::new((0..3).map(|i| light(100 + i, [i as f32 * 300.0, 0.0, 0.0], 1.0)).collect()));
+        st.check_present(&all, 100);
+        assert_eq!(st.glows[&(0, 0)].glows.len(), 3);
     }
 
     /// A worldspace change drops everything listed for the last one.
@@ -1053,8 +1364,8 @@ mod tests {
         st.check_present(&|_: &SourceLight| true, usize::MAX);
         assert!(st.reset_for_world(2).is_none());
         assert_eq!(st.world, Some(2));
-        assert!(st.lists.is_empty() && st.glows.is_empty() && st.want.is_empty() && st.pass.is_empty());
-        assert!(st.centre.is_none() && st.built.is_none() && st.listing.is_none());
+        assert!(st.lists.is_empty() && st.glows.is_empty() && st.want.is_empty() && st.pass.is_empty() && st.cells.is_empty());
+        assert!(st.centre.is_none() && st.built.is_none() && st.job.is_none() && st.checking.is_none());
     }
 
     #[test]
@@ -1106,28 +1417,86 @@ mod tests {
     #[test]
     fn the_summary_names_what_was_left_out() {
         let mut s = Stats { cells: 3, refs: 40, lights: 5, glow_statics: 12, disabled: 2, deleted: 1, no_colour: 4, negative_off: 6, no_radius: 7, most_drawn: 5, ..Stats::default() };
-        let models: GlowModels = Arc::default();
-        cached_glow(&models, "meshes\\a.nif", |_| Some(ModelGlow { centre: [0.0; 3], radius: 10.0, colour: [1.0; 3], shapes: 1 }));
-        cached_glow(&models, "meshes\\b.nif", |_| None);
-        (s.models_read, s.glow_models) = model_counts(&models);
+        let mut models = GlowModels::default();
+        models.take(vec![("meshes\\a.nif".into(), Some(ModelGlow { centre: [0.0; 3], radius: 10.0, colour: [1.0; 3], shapes: 1 })), ("meshes\\b.nif".into(), None)], Vec::new());
+        (s.models_read, s.glow_models) = models.counts();
         assert_eq!(
             s.summary(),
             "distant lights summary: 3 cells listed (40 references), 5 lights, 12 glow statics (1 glowing models of 2 read), 2 disabled at the start, 5 drawn at most, skipped: 1 deleted, 4 no colour, 6 negative/off, 7 no radius"
         );
     }
 
-    /// A model's glow is read once, whatever it gave, and kept.
+    /// A model is asked for once while waiting or read, whatever it gave, and kept.
     #[test]
     fn model_glows_are_read_once() {
-        let models: GlowModels = Arc::default();
-        let reads = std::cell::Cell::new(0);
-        let glow = ModelGlow { centre: [0.0, 0.0, 300.0], radius: 10.0, colour: [1.0, 0.8, 0.5], shapes: 1 };
+        let mut models = GlowModels::default();
+        let (lamp, rock): (Arc<str>, Arc<str>) = ("meshes\\lamp.nif".into(), "meshes\\rock.nif".into());
         for _ in 0..3 {
-            assert_eq!(cached_glow(&models, "meshes\\lamp.nif", |_| { reads.set(reads.get() + 1); Some(glow) }), Some(glow));
-            assert_eq!(cached_glow(&models, "meshes\\rock.nif", |_| { reads.set(reads.get() + 1); None }), None);
+            models.ask(&lamp);
+            models.ask(&rock);
         }
-        assert_eq!(reads.get(), 2);
-        assert_eq!(model_counts(&models), (2, 1));
+        assert_eq!(models.waiting(), 2);
+        let batch = models.next_batch(8);
+        assert_eq!(batch, vec![lamp.clone(), rock.clone()]);
+        // Asked again while being read: not queued twice.
+        models.ask(&lamp);
+        assert_eq!(models.waiting(), 0);
+        let glow = ModelGlow { centre: [0.0, 0.0, 300.0], radius: 10.0, colour: [1.0, 0.8, 0.5], shapes: 1 };
+        models.take(vec![(lamp.clone(), Some(glow)), (rock.clone(), None)], Vec::new());
+        models.ask(&lamp);
+        models.ask(&rock);
+        assert_eq!(models.waiting(), 0, "read already");
+        assert_eq!((models.get(&lamp), models.get(&rock), models.get("meshes\\other.nif")), (Some(Some(glow)), Some(None), None));
+        assert_eq!(models.counts(), (2, 1));
+    }
+
+    /// A scan stopped mid-read: the read stops before its next model, the models not reached
+    /// and those of a dropped job go back to the queue, and no job starts while one runs.
+    #[test]
+    fn a_scan_stops_between_reads() {
+        let epoch = Epoch::default();
+        let started = epoch.now();
+        let models: Vec<Arc<str>> = ["a", "b", "c"].iter().map(|&m| m.into()).collect();
+        let mut reads = 0;
+        let (read, unread) = read_models(models.clone(), &epoch, started, |_| {
+            reads += 1;
+            epoch.bump();
+            None
+        });
+        assert_eq!((reads, read.len(), unread.len()), (1, 1, 2), "stopped after the read under way");
+        assert_eq!(unread, models[1..].to_vec());
+        let mut st = DistantLights::default();
+        for m in &models {
+            st.models.ask(m);
+        }
+        st.in_flight = st.models.next_batch(2);
+        st.stop_scan();
+        assert_eq!(st.models.waiting(), 3, "the stopped job's models are asked again");
+        assert_eq!(st.models.next_batch(1), vec![models[0].clone()], "in front, in order");
+        let busy = Busy::default();
+        let guard = busy.start();
+        assert!(busy.running());
+        drop(guard);
+        assert!(!busy.running(), "cleared when the job ends or is dropped");
+    }
+
+    /// A scan reads at most MODELS_PER_SCAN models; the rest wait for the next one.
+    #[test]
+    fn a_scan_reads_a_bounded_number_of_models() {
+        let mut st = DistantLights::default();
+        for i in 0..MODELS_PER_SCAN + 20 {
+            st.models.ask(&Arc::from(format!("m{i}").as_str()));
+        }
+        st.scan_models = MODELS_PER_SCAN - 3;
+        let Some(NextJob::Models(m)) = st.next_job(|_| Vec::new()) else { panic!("a model job") };
+        assert_eq!(m.len(), 3);
+        st.scan_models = MODELS_PER_SCAN;
+        assert!(st.next_job(|_| Vec::new()).is_none(), "the rest wait for the next scan");
+        // Cells come first, a few at a time.
+        st.want = (0..40).map(|i| (i, 0)).collect();
+        let Some(NextJob::Cells(c)) = st.next_job(|g| vec![g.0 as u32]) else { panic!("a cell job") };
+        assert_eq!(c.len(), CELLS_PER_JOB);
+        assert_eq!(c[1], ((1, 0), vec![1]));
     }
 
     #[test]
@@ -1248,16 +1617,18 @@ mod tests {
         fn temporary_and_persistent_lights_of_their_cells_are_listed() {
             let w = world_data();
             assert!(w.index.errors.is_empty(), "{:?}", w.index.errors);
-            let (mut bases, mut stats) = (HashMap::new(), Stats::default());
+            let mut stats = Stats::default();
+            let epoch = Epoch::default();
+            let cells = list_cells(w.lo, w.schema, vec![((0, 0), cell_refs(&w, (0, 0))), ((1, 0), cell_refs(&w, (1, 0)))], &epoch, epoch.now(), &mut stats);
+            assert_eq!(cells.len(), 2);
             // The lamp post's model glows at its bulb, 300 up; the boulder's does not.
             let bulb = ModelGlow { centre: [0.0, 0.0, 300.0], radius: 10.0, colour: [1.0, 0.8, 0.5], shapes: 1 };
-            let mut asked = Vec::new();
-            let mut glow = |path: &str| {
-                asked.push(path.to_string());
-                (path == "meshes\\lamp.nif").then_some(bulb)
-            };
-            let a = list_lights(w.lo, w.schema, &cell_refs(&w, (0, 0)), &mut bases, &mut glow, &mut stats);
-            let b = list_lights(w.lo, w.schema, &cell_refs(&w, (1, 0)), &mut bases, &mut glow, &mut stats);
+            let mut asked: Vec<String> = cells[0].1.statics.iter().map(|s| s.model.to_string()).collect();
+            let glow = |path: &str| Some((path == "meshes\\lamp.nif").then_some(bulb));
+            let a = resolve(&cells[0].1, glow);
+            let b = resolve(&cells[1].1, glow);
+            // Before the models are read only the lights are sources.
+            assert_eq!(resolve(&cells[0].1, |_| None).len(), 2);
             let ids = |v: &[SourceLight]| v.iter().map(|l| (l.form_id, l.start_enabled)).collect::<Vec<_>>();
             // Cell (0, 0): its temporary light and the one disabled at the start (kept, with
             // that state), the lamp post as a glow static; not the deleted light, the one off
@@ -1271,7 +1642,10 @@ mod tests {
             assert_eq!(asked, vec!["meshes\\boulder.nif".to_string(), "meshes\\lamp.nif".to_string()], "only statics with a model are asked");
             // Cell (1, 0): the persistent light standing in it.
             assert_eq!(ids(&b), vec![(PERSISTENT_REF, true)]);
-            assert_eq!(stats, Stats { refs: 8, lights: 3, glow_statics: 1, disabled: 1, deleted: 1, negative_off: 1, ..Stats::default() });
+            assert_eq!(stats, Stats { cells: 2, refs: 8, lights: 3, disabled: 1, deleted: 1, negative_off: 1, ..Stats::default() });
+            // A stopped listing lists no more cells.
+            epoch.bump();
+            assert!(list_cells(w.lo, w.schema, vec![((0, 0), cell_refs(&w, (0, 0)))], &epoch, 0, &mut stats).is_empty());
         }
     }
 }
