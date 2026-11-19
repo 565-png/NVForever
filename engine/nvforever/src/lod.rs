@@ -355,6 +355,12 @@ impl BlockContents {
         self.squares.get(&sq).map(|m| m & bit != 0)
     }
 
+    /// Square `sq` holds the cells of `mask`, for other modules' tests.
+    #[cfg(test)]
+    pub(crate) fn set_for_test(&mut self, sq: Grid, mask: u16) {
+        self.set(sq, mask);
+    }
+
     /// Counts the changes of the masks.
     pub fn rev(&self) -> u64 {
         self.rev

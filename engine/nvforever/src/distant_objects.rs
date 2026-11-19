@@ -511,13 +511,15 @@ pub fn edge_steps(d: f32, reach: i32) -> u8 {
 }
 
 /// A fading distant mesh at distance `d`: drawn at the smaller of its cell's step `k` and
-/// the reach's fade there ([`edge_steps`]), on the range's near side, and cut beyond the
-/// reach on its far side. One range cannot multiply the two dithers, so the smaller level
+/// the reach's fade there ([`edge_steps`]), on the range's near side; the far side is the
+/// empty margin `w..w` at the reach, so from the reach on the mesh is culled outright
+/// (`VisibilityRange::is_visible_at_all` is false from `end_margin.end`) and no far-side
+/// dither ever draws it. One range cannot multiply the two dithers, so the smaller level
 /// stands for their product: inside the band the step alone, at rest the reach's fade
 /// alone, never anything beyond the reach.
 pub fn band_range(k: u8, d: f32, reach: i32) -> VisibilityRange {
     let (_, w) = edge_band(reach);
-    VisibilityRange { start_margin: fade::drawn(k.min(edge_steps(d, reach))).start_margin, end_margin: w..w + 1.0, use_aabb: false }
+    VisibilityRange { start_margin: fade::drawn(k.min(edge_steps(d, reach))).start_margin, end_margin: w..w, use_aabb: false }
 }
 
 /// Whether a rebuilt cell `c` may crossfade with the one it replaces: the whole cell lies
@@ -537,6 +539,8 @@ pub fn crossfade_ok(c: Grid, centre: Grid, reach: i32) -> bool {
 struct Old {
     entity: Entity,
     full_of: HashMap<u32, u64>,
+    /// The references it draws, from their LOD or full models.
+    drawn: HashSet<u32>,
 }
 
 impl Old {
@@ -688,13 +692,15 @@ pub struct DistantState {
     tris_of: HashMap<String, u64>,
     /// The one rebuilt cell allowed to count without its predecessor's share ([`admits`]).
     credit: Option<Grid>,
-    /// The budget's total last frame (capacity coming back re-judges refused cells).
-    last_total: u64,
     /// The cells in a stable order and where the re-judge scan goes on from
     /// ([`queue_rebuilds`]); `cells_rev` counts the changes of the cell set.
     scan: Vec<Grid>,
     scan_rev: u64,
     scan_at: usize,
+    /// What the scan inspects for (block revision, stamp, reach, cell set) and how many
+    /// cells it has inspected for it: a lap is complete once every cell has been.
+    scan_for: Option<ScanKey>,
+    scan_seen: usize,
     cells_rev: u64,
     /// The cached cells wanted, for this centre, inner radius and reach.
     want: Vec<Grid>,
@@ -780,6 +786,16 @@ impl DistantState {
             }
         }
     }
+}
+
+/// What a re-judge scan's lap is for: the blocks' revision, the stamp judged now, the
+/// reach and the cell set. A lap counts as complete only while all four stay the same.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct ScanKey {
+    blocks: u64,
+    now: Stamp,
+    reach: i32,
+    cells: u64,
 }
 
 /// What a cell's plan was judged for: the loaded grid's centre and the revision of the
@@ -1060,18 +1076,19 @@ pub fn stream(
     // The size rule's ratios, fitted to the budget on a worker when the centre moved or
     // lists came in; a finished fit is taken in only while it is for the centre and reach
     // judged now (a stale one is dropped and fitted again).
+    // The centre this frame judges for first, then the fit compared with it.
+    if st.judged.is_none_or(|j| steps(j, centre) >= REJUDGE_STEPS) {
+        st.judged = Some(centre);
+        st.fit_wanted = true;
+    }
     let fitted = st.fitting.as_mut().and_then(|(task, at, r)| check_ready(task).map(|res| (res, *at, *r)));
     if let Some(((ratios, raised), at, r)) = fitted {
         st.fitting = None;
-        if Some(at) == st.judged && r == st.reach {
+        if fit_current(at, r, st.judged, st.reach) {
             take_fit(st, ratios, raised, at);
         } else {
             st.fit_wanted = true;
         }
-    }
-    if st.judged.is_none_or(|j| steps(j, centre) >= REJUDGE_STEPS) {
-        st.judged = Some(centre);
-        st.fit_wanted = true;
     }
     if st.lists_changed {
         st.lists_changed = false;
@@ -1082,12 +1099,9 @@ pub fn stream(
         let at = st.judged.unwrap_or(centre);
         start_fit(st, &want, at, &blocks);
     }
-    // Capacity came back (a cell or a predecessor went): cells whose smallest refused
-    // model fits now are judged again.
+    // Room for a refused model (a cell or a predecessor went): judged again.
+    retry_refused(st);
     let mut budget = st.budget();
-    if budget.total() < st.last_total {
-        mark_refused(st, FULL_TRIANGLE_BUDGET.saturating_sub(budget.total()));
-    }
     let judged = st.judged.unwrap_or(centre);
     let now = Stamp { centre: judged, ratios: st.ratio_rev };
     // Cells judged for another centre or table, or whose block answers otherwise now; the
@@ -1174,10 +1188,17 @@ pub fn stream(
         }
     }
     st.release_credit();
-    st.last_total = st.budget().total();
-    // Quiet: nothing under way, every wanted cell drawn at rest and judged for now, so the
-    // next frames with the same inputs need do nothing.
+    // Replacements finished this frame may have freed room after the check above.
+    retry_refused(st);
+    // Quiet: nothing under way, every cover at rest (a loaded or ring cell still fading
+    // changes the ranges every frame), the re-judge scan through a whole lap for the
+    // blocks, stamp, reach and cells now, every wanted cell drawn at rest and judged for
+    // now, so the next frames with the same inputs need do nothing.
+    let scan_key = ScanKey { blocks: blocks.rev(), now, reach: st.reach, cells: st.cells_rev };
     st.quiet = !stopped
+        && !settle.ring_moving
+        && !settle.loaded_fading
+        && scan_complete(st, scan_key)
         && waiting == 0
         && st.spawning.is_empty()
         && st.rebuild.is_empty()
@@ -1271,6 +1292,12 @@ fn start_fit(st: &mut DistantState, want: &[Grid], centre: Grid, blocks: &BlockC
     st.fitting = Some((task, centre, reach));
 }
 
+/// Whether a finished fit for centre `at` and reach `r` is for the centre this frame
+/// judges for (`judged`, already advanced) and the reach now.
+fn fit_current(at: Grid, r: i32, judged: Option<Grid>, reach: i32) -> bool {
+    Some(at) == judged && r == reach
+}
+
 /// Take a finished fit (for `centre`) in: new ratios make every cell's stamp stale; log
 /// once per centre when the budget bites.
 fn take_fit(st: &mut DistantState, ratios: Vec<f32>, raised: bool, centre: Grid) {
@@ -1300,6 +1327,11 @@ fn queue_rebuilds(st: &mut DistantState, now: Stamp, blocks: &BlockContents, cov
         st.scan_rev = st.cells_rev;
         st.scan_at = 0;
     }
+    let key = ScanKey { blocks: blocks.rev(), now, reach: st.reach, cells: st.cells_rev };
+    if st.scan_for != Some(key) {
+        st.scan_for = Some(key);
+        st.scan_seen = 0;
+    }
     let (n, start) = (st.scan.len(), st.scan_at);
     let mut queue = Vec::new();
     let mut looked = 0;
@@ -1315,7 +1347,14 @@ fn queue_rebuilds(st: &mut DistantState, now: Stamp, blocks: &BlockContents, cov
         }
     }
     st.scan_at = scan_next(start, looked, n);
+    st.scan_seen += looked;
     st.rebuild.extend(queue);
+}
+
+/// Whether the re-judge scan has inspected every cell for `key` (a full lap since the
+/// blocks, the stamp, the reach or the cell set last changed).
+fn scan_complete(st: &DistantState, key: ScanKey) -> bool {
+    st.scan_for == Some(key) && st.scan_seen >= st.cells.len()
 }
 
 /// The scan position after looking at `looked` of `n` cells from `at` ([`queue_rebuilds`]).
@@ -1338,6 +1377,14 @@ fn rejudge_due(s: &CellState, now: Stamp, segment: Option<bool>, covered: bool, 
         return false;
     }
     s.stamp != now || (s.flagged && s.segment != segment)
+}
+
+/// Mark the cells whose smallest refused model fits in the room the budget leaves now
+/// ([`mark_refused`]): called before spawning and again after the frame's replacements,
+/// so room freed late in a frame is seen at once, with no baseline to go stale.
+fn retry_refused(st: &mut DistantState) {
+    let room = FULL_TRIANGLE_BUDGET.saturating_sub(st.budget().total());
+    mark_refused(st, room);
 }
 
 /// Mark the drawn cells with a model refused for the budget that would fit in `room`
@@ -1382,13 +1429,14 @@ fn hide_overridden(commands: &mut Commands, st: &mut DistantState, came: &HashSe
         }
     };
     for s in st.cells.values_mut() {
-        if !came.iter().any(|r| s.plan.get(r).is_some_and(|c| c.drawn())) && !s.old.as_ref().is_some_and(|o| came.iter().any(|r| o.full_of.contains_key(r))) {
+        if !overridden_here(s, came) {
             continue;
         }
         take(s.entity);
         if let Some(o) = s.old.as_mut() {
             take(o.entity);
             o.full_of.retain(|r, _| !came.contains(r));
+            o.drawn.retain(|r| !came.contains(r));
         }
         for r in came {
             if let Some(c) = s.plan.get_mut(r).filter(|c| c.drawn()) {
@@ -1409,6 +1457,12 @@ fn hide_overridden(commands: &mut Commands, st: &mut DistantState, came: &HashSe
             sp.full_of.remove(r);
         }
     }
+}
+
+/// Whether a drawn cell or the cell it replaces draws one of `came` (from its LOD or its
+/// full model).
+fn overridden_here(s: &CellState, came: &HashSet<u32>) -> bool {
+    came.iter().any(|r| s.plan.get(r).is_some_and(|c| c.drawn()) || s.old.as_ref().is_some_and(|o| o.drawn.contains(r)))
 }
 
 /// What a distant reference's spawn reads.
@@ -1507,7 +1561,8 @@ fn finish(commands: &mut Commands, st: &mut DistantState, c: Grid, sp: CellSpawn
             st.retire(commands, o.entity);
         }
         if fading && crossfade {
-            old = Some(Old { entity: prev.entity, full_of: prev.full_of });
+            let drawn = prev.plan.iter().filter(|(_, c)| c.drawn()).map(|(r, _)| *r).collect();
+            old = Some(Old { entity: prev.entity, full_of: prev.full_of, drawn });
         } else {
             st.retire(commands, prev.entity);
             level = 1.0;
@@ -1776,6 +1831,10 @@ mod tests {
     /// CPU mirror of Bevy's visibility-range dither (as full_detail.rs's tests): whether a
     /// pixel with dither `threshold` is drawn by a mesh with range `r` at distance `d`.
     fn kept(r: &VisibilityRange, d: f32, threshold: i32) -> bool {
+        // Culled on the CPU outside the range (`VisibilityRange::is_visible_at_all`).
+        if !r.is_visible_at_all(d) {
+            return false;
+        }
         let (x, y, z, w) = (r.start_margin.start, r.start_margin.end, r.end_margin.start, r.end_margin.end);
         let (offset, a, b) = if d >= z { (0, z, w) } else { (-16, x, y) };
         let level = offset + (((d - a) / (b - a) * 16.0).round() as i32).clamp(0, 16);
@@ -1995,6 +2054,99 @@ mod tests {
         assert_ne!(a, Settle { overrides: 1, ..a });
     }
 
+    /// Round 3: at and beyond the reach a fading mesh draws nothing at any step, also in
+    /// the interval the earlier test skipped (the reach itself and just past it), and the
+    /// last stretch of the band draws nothing either; the resting range likewise.
+    #[test]
+    fn nothing_at_or_beyond_the_reach() {
+        for reach in [REACH_NEAR, REACH_FAR] {
+            let (z, w) = edge_band(reach);
+            for d in [w - 100.0, w - 1.0, w - 0.01, w, w + 0.01, w + 0.5, w + 1.0, w + 1000.0] {
+                for k in 0..=fade::STEPS {
+                    let r = band_range(k, d, reach);
+                    assert!((0..16).all(|t| !kept(&r, d, t)), "reach {reach}, step {k}, {d}: drawn at the reach");
+                }
+                assert!((0..16).all(|t| !kept(&edge_range(reach), d, t)), "reach {reach}, {d}: the resting range");
+            }
+            assert!(band_range(fade::STEPS, z - 1.0, reach).is_visible_at_all(z - 1.0) && !band_range(0, w, reach).is_visible_at_all(w));
+        }
+    }
+
+    /// Round 3: the quiet state needs a whole scan lap for the blocks, stamp, reach and
+    /// cells now; a block arriving while a lap is mid-way starts the lap again, so the
+    /// flagged cell it concerns is still looked at before the state can go quiet.
+    #[test]
+    fn a_late_block_mid_scan_is_still_acted_on() {
+        let mut st = DistantState::default();
+        for x in 0..200 {
+            let mut s = drawn_cell(0, None);
+            s.flagged = x == 150;
+            st.cells.insert((x, 0), s);
+        }
+        st.cells_rev = 1;
+        let mut blocks = BlockContents::default();
+        let now = Stamp::default();
+        // A lap cut short by the deadline: incomplete.
+        queue_rebuilds(&mut st, now, &blocks, &|_| None, Instant::now());
+        let key = |b: &BlockContents, st: &DistantState| ScanKey { blocks: b.rev(), now, reach: st.reach, cells: st.cells_rev };
+        assert!(st.scan_seen < 200 && !scan_complete(&st, key(&blocks, &st)), "cut short at the deadline: not complete");
+        assert!(st.rebuild.is_empty(), "nothing stale yet");
+        // The block of cell (150, 0) arrives empty mid-lap: the lap starts again.
+        blocks.set_for_test((150, 0), 0);
+        let far = Instant::now() + Duration::from_secs(5);
+        queue_rebuilds(&mut st, now, &blocks, &|_| None, far);
+        assert!(scan_complete(&st, key(&blocks, &st)), "a whole lap for the new block revision");
+        assert!(st.rebuild.contains(&(150, 0)), "the flagged cell the block concerns is queued");
+        // Another block: the lap for the old revision no longer counts.
+        blocks.set_for_test((-64, -64), 1);
+        assert!(!scan_complete(&st, key(&blocks, &st)));
+    }
+
+    /// Round 3: room freed late in a frame is seen at once (no baseline from the frame's
+    /// start): after a predecessor goes, a refused model that fits now is retried.
+    #[test]
+    fn room_freed_by_a_replacement_retries_refused_models() {
+        let mut st = DistantState::default();
+        let mut refused = drawn_cell(1_000_000, None);
+        refused.refused_min = Some(500_000);
+        st.cells.insert((9, 0), refused);
+        st.cells.insert((10, 0), drawn_cell(2_600_000, Some(400_000)));
+        retry_refused(&mut st);
+        assert!(!st.cells[&(9, 0)].dirty, "4,000,000 of 4,000,000: no room");
+        // The replacement at (10, 0) rests: its predecessor's 400,000 go.
+        st.cells.get_mut(&(10, 0)).unwrap().old = None;
+        retry_refused(&mut st);
+        assert!(!st.cells[&(9, 0)].dirty, "400,000 free: still too little for 500,000");
+        st.cells.get_mut(&(10, 0)).unwrap().full_of = HashMap::from([(1, 2_400_000)]);
+        retry_refused(&mut st);
+        assert!(st.cells[&(9, 0)].dirty, "600,000 free: retried in the same frame");
+    }
+
+    /// Round 3: a predecessor that drew a reference from its LOD model (its successor no
+    /// longer draws it) still counts as drawing it when the reference's override comes.
+    #[test]
+    fn a_predecessor_drawing_a_lod_model_is_overridden_too() {
+        let mut s = drawn_cell(0, None);
+        s.plan.insert(7, Choice::Small);
+        s.old = Some(Old { entity: Entity::PLACEHOLDER, full_of: HashMap::new(), drawn: HashSet::from([7]) });
+        assert!(overridden_here(&s, &HashSet::from([7])), "the predecessor's LOD model");
+        assert!(!overridden_here(&s, &HashSet::from([8])));
+        s.old = None;
+        assert!(!overridden_here(&s, &HashSet::from([7])), "the successor alone draws nothing of it");
+        s.plan.insert(7, Choice::Lod);
+        assert!(overridden_here(&s, &HashSet::from([7])));
+    }
+
+    /// Round 3: a finished fit is compared with the centre this frame judges for, after it
+    /// has advanced: a fit for the centre before the move is dropped.
+    #[test]
+    fn a_fit_for_the_old_centre_is_dropped() {
+        assert!(fit_current((0, 0), 12, Some((0, 0)), 12));
+        assert!(!fit_current((0, 0), 12, Some((2, 0)), 12), "the centre moved two cells this frame");
+        assert!(!fit_current((0, 0), 12, Some((0, 0)), 8), "another reach");
+        assert!(!fit_current((0, 0), 12, None, 12));
+    }
+
     fn ring_state(level: f32) -> full_detail::RingCellState {
         full_detail::RingCellState::for_test(level)
     }
@@ -2047,7 +2199,7 @@ mod tests {
             dirty: false,
             full_of: HashMap::from([(1, full_tris)]),
             refused_min: None,
-            old: old.map(|t| Old { entity: Entity::PLACEHOLDER, full_of: HashMap::from([(1, t)]) }),
+            old: old.map(|t| Old { entity: Entity::PLACEHOLDER, full_of: HashMap::from([(1, t)]), drawn: HashSet::from([1]) }),
             applied: None,
             old_applied: None,
         }
@@ -2154,7 +2306,7 @@ mod tests {
         s.level = 1.0;
         assert!(!rejudge_due(&s, now, None, true, false), "covered: later");
         assert!(!rejudge_due(&s, now, None, false, true), "being replaced: later");
-        s.old = Some(Old { entity: Entity::PLACEHOLDER, full_of: HashMap::new() });
+        s.old = Some(Old { entity: Entity::PLACEHOLDER, full_of: HashMap::new(), drawn: HashSet::new() });
         assert!(!rejudge_due(&s, now, None, false, false), "replacing: later");
         s.old = None;
         assert!(rejudge_due(&s, now, None, false, false), "caught up once at rest and alone, with no further move");
