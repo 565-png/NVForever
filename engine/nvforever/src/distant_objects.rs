@@ -568,7 +568,9 @@ pub fn cell_zone(extent: Option<(Vec3, Vec3)>, eye: Vec3, reach: i32) -> u8 {
 /// How far the eye moves before the distance-dependent ranges of a cell across the reach's
 /// fade band are given again: a quarter of one dither step of the band (a cell width over
 /// [`fade::STEPS`], 256 units) [engineering choice]. Meanwhile a mesh's level is at most
-/// one step behind; within 128 units of either edge of the band the rounding gives the
+/// one step (1/16) behind, and stays so while the eye rests within that distance (an eye
+/// stopping just past a rounding threshold keeps the step it was given until it moves on:
+/// accepted, no re-walk at rest); within 128 units of either edge of the band the rounding gives the
 /// same level, and a mesh under a cover keeps a complementary pattern at any level
 /// ([`under_range`]), so nothing is ever drawn twice or past the reach.
 pub const EYE_STEP: f32 = 64.0;
@@ -1133,13 +1135,15 @@ pub fn stream(
     }
     // Room for a refused model (a cell or a predecessor went): judged again.
     retry_refused(st);
-    let mut budget = st.budget();
     let judged = st.judged.unwrap_or(centre);
     let now = Stamp { centre: judged, ratios: st.ratio_rev };
     // Cells judged for another centre or table, or whose block answers otherwise now; the
     // size rule waits for the fit of a new centre, so a cell is not judged twice.
     let scan = st.fitting.is_none();
     rejudge(&mut commands, st, now, &blocks, &cover, &want, fading, scan, deadline);
+    // The budget read after the re-judge step: a cell it retired at once (fades off) has
+    // given its share back before a spawn checks capacity.
+    let mut budget = st.budget();
 
     let ctx = SpawnCtx { world: &world, streamer: &streamer, simulated: sim.is_some() };
     let mut under_way: Vec<Grid> = st.spawning.keys().copied().collect();
@@ -1342,9 +1346,13 @@ fn rejudge(commands: &mut Commands, st: &mut DistantState, now: Stamp, blocks: &
         queue_rebuilds(st, now, blocks, cover, deadline);
     }
     let unlisted: Vec<Grid> = st.rebuild.iter().filter(|c| !st.listed.contains_key(c) && !st.spawning.contains_key(c)).copied().collect();
+    if unlisted.is_empty() {
+        return;
+    }
+    let wanted: HashSet<Grid> = want.iter().copied().collect();
     for c in unlisted {
         st.rebuild.remove(&c);
-        if !want.contains(&c) {
+        if !wanted.contains(&c) {
             drop_unlisted(commands, st, c, fading);
         }
     }
@@ -1811,9 +1819,20 @@ pub fn fade_distant(
     meshes: Query<(), Fading>,
     casters: Query<Has<NotShadowCaster>, With<Mesh3d>>,
     camera: Query<&GlobalTransform, crate::fly::WorldCamera>,
+    moved: Query<&ChildOf, (Changed<Transform>, With<nvf_play::RefVisual>)>,
 ) {
     if state.cells.is_empty() {
         return;
+    }
+    // A reference moved (by a script, physics or the console: `nvf_play::moved`) under a
+    // still eye changes no input of [`regive`]: its cell's ranges and box are given again.
+    let moved_in: HashSet<Entity> = moved.iter().map(ChildOf::parent).collect();
+    if !moved_in.is_empty() {
+        let st = &mut *state;
+        for s in st.cells.values_mut().filter(|s| moved_in.contains(&s.entity)) {
+            s.applied = None;
+            st.fade_dirty = true;
+        }
     }
     let eye = camera.single().map(|g| crate::world::bevy_to_game(g.translation())).ok();
     if !state.fade_dirty && !(state.watch && state.eye_at != eye) {
@@ -2410,13 +2429,12 @@ mod tests {
     /// 7.078 steps, rounded 7, still 9 drawn).
     #[test]
     fn an_offset_mesh_follows_the_eye_and_a_still_eye_costs_nothing() {
-        use bevy::ecs::system::RunSystemOnce;
         let mut app = App::new();
         let w = app.world_mut();
         w.insert_resource(test_streamer());
         w.init_resource::<FullDetailRing>();
         let cell = w.spawn(Transform::default()).id();
-        let reference = w.spawn((Transform::from_translation(Vec3::new(2048.0, 2048.0, 0.0)), ChildOf(cell))).id();
+        let reference = w.spawn((Transform::from_translation(Vec3::new(2048.0, 2048.0, 0.0)), nvf_play::RefVisual(7), ChildOf(cell))).id();
         let mesh = w.spawn((Transform::from_translation(Vec3::new(14_000.0, 0.0, 0.0)), MeshMaterial3d::<nvf_assets::NifMaterial>(Handle::default()), ChildOf(reference))).id();
         // Game (x, y, z) is Bevy (x, z, -y).
         let at = |x: f32| GlobalTransform::from_translation(Vec3::new(x, 0.0, -2048.0));
@@ -2427,34 +2445,48 @@ mod tests {
         let mut st = DistantState { reach: REACH_NEAR, fade_dirty: true, quiet: true, ..default() };
         st.cells.insert((3, 0), s);
         w.insert_resource(st);
+        // One system kept across the runs, so `Changed<Transform>` counts from its last run.
+        let fade = w.register_system(fade_distant);
         let drawn = |app: &App, d: f32| -> Option<usize> { app.world().get::<VisibilityRange>(mesh).map(|r| (0..16).filter(|&t| kept(r, d, t)).count()) };
         let range = |app: &App| app.world().get::<VisibilityRange>(mesh).cloned();
 
-        app.world_mut().run_system_once(fade_distant).unwrap();
+        app.world_mut().run_system(fade).unwrap();
         assert!(range(&app) == Some(band_range(15, 26_288.0, REACH_NEAR)));
         assert_eq!(drawn(&app, 26_288.0), Some(15), "short of the band: its own step");
         assert_eq!(app.world().resource::<DistantState>().cells[&(3, 0)].extent, Some((Vec3::new(28_336.0, 2048.0, 0.0), Vec3::new(28_336.0, 2048.0, 0.0))), "the box of the mesh's position");
 
         app.world_mut().entity_mut(cam).insert(at(-2048.0));
-        app.world_mut().run_system_once(fade_distant).unwrap();
+        app.world_mut().run_system(fade).unwrap();
         assert!(range(&app) == Some(band_range(15, 30_384.0, REACH_NEAR)));
         assert_eq!(drawn(&app, 30_384.0), Some(9), "in the band: the reach's 9 steps");
 
         // A still eye: nothing given again (the range taken off stays off), the flag clears.
         app.world_mut().entity_mut(mesh).remove::<VisibilityRange>();
-        app.world_mut().run_system_once(fade_distant).unwrap();
+        app.world_mut().run_system(fade).unwrap();
         assert!(range(&app).is_none(), "a still eye walks no mesh");
         assert!(!app.world().resource::<DistantState>().fade_dirty, "nothing given, the stream quiet: not dirty");
-        app.world_mut().run_system_once(fade_distant).unwrap();
+        app.world_mut().run_system(fade).unwrap();
         assert!(range(&app).is_none());
 
         app.world_mut().entity_mut(cam).insert(at(-2098.0));
-        app.world_mut().run_system_once(fade_distant).unwrap();
+        app.world_mut().run_system(fade).unwrap();
         assert!(range(&app).is_none(), "50 units: within EYE_STEP");
         app.world_mut().entity_mut(cam).insert(at(-2148.0));
-        app.world_mut().run_system_once(fade_distant).unwrap();
+        app.world_mut().run_system(fade).unwrap();
         assert!(range(&app) == Some(band_range(15, 30_484.0, REACH_NEAR)), "100 units from where it was given: given again");
         assert_eq!(drawn(&app, 30_484.0), Some(9));
+
+        // A script moves the reference 4,000 units east under the still eye: the mesh at
+        // game x 32,336 is 34,484 units away, past the reach (32,768): given again, culled.
+        app.world_mut().entity_mut(mesh).remove::<VisibilityRange>();
+        app.world_mut().run_system(fade).unwrap();
+        assert!(range(&app).is_none(), "still nothing to give");
+        app.world_mut().entity_mut(reference).insert(Transform::from_translation(Vec3::new(6048.0, 2048.0, 0.0)));
+        app.world_mut().run_system(fade).unwrap();
+        assert!(range(&app) == Some(band_range(15, 34_484.0, REACH_NEAR)), "the moved reference's cell given again");
+        assert_eq!(drawn(&app, 34_484.0), Some(0), "past the reach: nothing");
+        let p = Vec3::new(32_336.0, 2048.0, 0.0);
+        assert_eq!(app.world().resource::<DistantState>().cells[&(3, 0)].extent, Some((p, p)), "the box follows the move");
     }
 
     /// Review of the closing fixes, round 2, driven through the frame's own steps: a
