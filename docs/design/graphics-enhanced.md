@@ -2052,6 +2052,15 @@ longer exists (the settings menu overhaul); the haze is a row of its own, "Deser
   at 06:30 east, under the overcast and the hazy weather, and the street, in the PR. The
   cost is not measured on a slower GPU or at 1920x1080.
 
+### 3.17 Authored materials (`authored-materials`; on in both looks)
+
+A texture pack's authored PBR sets under `textures\pbr\` (#2981,
+docs/spec-notes/pbr-materials.md): lit NIF shapes whose diffuse has a set take their
+occlusion, roughness, highlight strength and normal from it. On in `vanilla` and `enhanced`,
+like a diffuse replacer: without a pack nothing changes. Read once at the start (a change
+applies at the next start); `--graphics-only no-authored-materials` or the settings switch
+turns it off, and then no file under `textures\pbr\` is read. [design]
+
 ## 4. Tried and dropped
 
 - **Bevy `ContactShadows`** on the sun (16 steps, 40 units, thickness 12): the right effect on

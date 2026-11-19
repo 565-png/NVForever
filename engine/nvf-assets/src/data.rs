@@ -45,8 +45,8 @@ impl GameData {
         })
     }
 
-    /// Whether [`GameData::pbr_index`] has been built (tests: the setting off never asks).
-    #[cfg(test)]
+    /// Whether [`GameData::pbr_index`] has been built (the setting off never asks: tests and
+    /// the field, `pbr_field.rs`).
     pub(crate) fn pbr_index_built(&self) -> bool {
         self.pbr.get().is_some()
     }

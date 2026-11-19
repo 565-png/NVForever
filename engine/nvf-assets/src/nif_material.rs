@@ -1024,6 +1024,7 @@ impl Plugin for NifMaterialPlugin {
             .add_systems(Startup, spawn_transmission_anchor)
             .add_systems(PostUpdate, (apply_blended_cutouts.in_set(BlendedCutoutSystems), see_through_casts_no_shadow.in_set(SeeThroughShadowSystems)));
         crate::bc5_field::install(app);
+        crate::pbr_field::install(app);
     }
 }
 

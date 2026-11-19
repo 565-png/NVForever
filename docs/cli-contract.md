@@ -279,7 +279,8 @@ against engine `main.rs`, `setup.rs` and `world.rs`):
   install that lacks required game files (`setup.rs`, `validate`); this command takes any
   folder as Data.
 - **`--mo2-profile`** (the general fnvtool option) supplies the profile's plugin paths only,
-  made absolute; the mods' loose files and archives are mounted only with `--mo2`.
+  made absolute; the mods' loose files and archives are mounted only with `--mo2`, or, for
+  one mod root, with `--mods` naming it.
 
 Other keys: `sets` (sorted by stem: `stem`,
 `diffuse` (the diffuse's path without extension), `state` (`authored`, `height-only`,

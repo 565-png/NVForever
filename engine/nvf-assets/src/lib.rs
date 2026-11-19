@@ -15,6 +15,7 @@ pub mod model;
 pub mod model_light;
 pub mod morph;
 pub mod particles;
+mod pbr_field;
 pub mod read_pool;
 pub mod release;
 pub mod nif_material;

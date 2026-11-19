@@ -33379,3 +33379,53 @@ expect = [
   { re = 'combat: swing reaches 1 actors .*1 of them out of the fan of rays at eye height', label = "the level knife swing reaches the low creature through the ground fallback" },
   { re = 'combat: .*, 1 swings \(0 chained, 0 power, 1 hits\)', label = "the short weapon hits once at the widened blocking stop" },
 ]
+
+# ------------------------------------------------------------------ authored PBR materials (#2981)
+
+[[scenario]]
+name = "pbr-authored-field"
+source = "[design, #2981] docs/spec-notes/pbr-materials.md: generated authored set on the real material path; engineering comparator policy, not original-game pixels"
+areas = ["renderer", "textures", "nif"]
+paths = ["crates/fnv-dds/src/lib.rs", "crates/fnv-pbr/", "engine/nvf-assets/src/texture.rs", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/nif_spawn/", "engine/nvf-assets/src/authored.rs", "engine/nvf-assets/src/authored/", "engine/nvf-assets/src/pbr_field.rs", "engine/nvf-assets/src/pbr_field/", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/model.rs", "engine/nvf-assets/src/data.rs", "engine/vendor/bevy_pbr/src/render/pbr_functions.wesl", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/main.rs"]
+env = { NVF_PLAY_TEST_PBR_FIELD = "1", NVFOREVER_HOME = "pbr-field-home", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 20
+timeout = 180
+expect = [
+  "authored materials: on",
+  { text = "pbr field: authored set found (orm in both slots", count = 1 },
+  { text = "pbr field: actual NIF material source, 4 panels (plain, authored, reference, flat), setting on", count = 1 },
+  { text = "pbr field: first rendered readback PASS", count = 1 },
+  { text = "pbr field: second rendered readback PASS", count = 1 },
+  { text = "pbr field: authored panel differs from the plain one and matches the three-channel reference PASS", count = 1 },
+]
+order = [["pbr field: first rendered readback PASS", "pbr field: second rendered readback PASS", "pbr field: authored panel differs from the plain one and matches the three-channel reference PASS"]]
+forbid = [
+  { re = '(?i)pbr field:.*(FAIL|timeout|missing|wrong byte count)' },
+  { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
+]
+note = "Panels plain, authored (_orm + two-channel BC5 _n decoded on a worker), reference (the same normal as a three-channel game normal map) and flat (_orm, no normal), identical diffuse bytes; each run reserves a new run-* child under pbr-field-home/pbr-field-output with both readbacks (.rgba, .ppm) and the comparator reports."
+manual = "Open readback-1.ppm and readback-2.ppm in the evidence directory: the second panel is darker than the first (occlusion), the second and third look the same, the fourth differs from the third (the normal's tilt)."
+
+[[scenario]]
+name = "pbr-authored-field-off"
+source = "[design, #2981] docs/spec-notes/pbr-materials.md: the Authored materials setting off reads no textures\\pbr\\ file and leaves every material the game's own"
+areas = ["renderer", "textures", "nif"]
+paths = ["engine/nvf-assets/src/authored.rs", "engine/nvf-assets/src/pbr_field.rs", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvforever/src/main.rs"]
+env = { NVF_PLAY_TEST_PBR_FIELD = "1", NVFOREVER_HOME = "pbr-field-home", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--graphics-only", "no-authored-materials"]
+run_seconds = 20
+timeout = 180
+expect = [
+  "authored materials: off",
+  { text = "pbr field: setting off, no textures\\pbr\\ file read", count = 1 },
+  { re = "pbr field: first rendered readback PASS", count = 1, label = "first readback with the setting off" },
+  { re = "pbr field: second rendered readback PASS", count = 1, label = "second readback with the setting off" },
+  { text = "pbr field: setting off, panels identical PASS", count = 1 },
+]
+forbid = [
+  { re = '(?i)pbr field:.*(FAIL|timeout|missing|wrong byte count)' },
+  { re = 'authored materials: \d+ sets under' },
+  { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
+]
+note = "The same field with the setting off: the index is never built (no 'authored materials: N sets' line), no pbr file is loaded, and the plain, authored and flat panels draw the same."

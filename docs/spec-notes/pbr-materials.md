@@ -15,19 +15,19 @@ below; a later version adds to them without changing their meaning.
 
 | Part | State |
 |---|---|
-| Path rules, member names, the index of sets a load order supplies | **implemented** (`crates/fnv-pbr`; `GameData::pbr_index` in `engine/nvf-assets/src/data.rs` builds it on first use and logs one line of counts; nothing in the engine asks for it yet) |
+| Path rules, member names, the index of sets a load order supplies | **implemented** (`crates/fnv-pbr`; `GameData::pbr_index` in `engine/nvf-assets/src/data.rs` builds it on first use and logs one line of counts; materials ask for it only while the Authored materials setting is on) |
 | `fnvtool pbr list` (which sets a load order has, and which archive or folder supplies each file) | **implemented** (`crates/fnvtool/src/pbr_cmd.rs`, docs/cli-contract.md) |
-| Scalar file reading (`<stem>.toml`) | **implemented** as a parser; no material reads it yet |
-| Reading members' pixels | **planned**: `_orm` and `_n` in stage 3, `_p` in stage 4; `_albedo` stays reserved. This stage finds files by name only |
+| Scalar file reading (`<stem>.toml`) | **implemented**; authored materials read it once per file (stage 3, `engine/nvf-assets/src/authored.rs`) |
+| Reading members' pixels | `_orm` (linear) and `_n` (two-channel normal role, `TextureUsage::NormalTwoChannel`) **implemented** (stage 3); `_p` **planned** (stage 4); `_albedo` stays reserved |
 | Reading BC7 and BC4 files (DDS with the DX10 header, or legacy `BC4U` / `BC4S`) | stage 1 of #2981 (`crates/fnv-dds`) |
-| Drawing a surface with its set (ORM, normal) | **planned** (stage 3): no material uses a set yet, so installing a pack changes no picture today |
+| Drawing a surface with its set (ORM, normal) | **implemented** (stage 3): `nif_spawn::shape_material`, texture swaps (`authored::retexture`); the setting Authored materials (`authored-materials`, on by default, read at the start; `--graphics-only no-authored-materials`); field test `pbr-authored-field` |
 | Height maps (`_p`, parallax) | **planned** (stage 4, with #2979) |
-| Metallic | **planned**: read with the ORM but **held at 0** (stage 3) until the engine has a reflection source (stage 5) |
+| Metallic | read with the ORM but **held at 0** (stage 3, implemented) until the engine has a reflection source (stage 5) |
 | A pack validator (`fnvtool pbr check`) | **planned** |
 
-Sections marked "planned" describe how the engine will use a set once those stages land;
-until then a set is only found by its files' names, counted and listed. Wherever this note
-says a member "will be read" or "will be accepted", that is the planned material path.
+Sections marked "planned" describe how the engine will use a set once those stages land.
+Wherever this note says a member "will be read" or "will be accepted", stage 3 does so for
+`_orm` and `_n`; `_p` waits for stage 4.
 
 ## Layout
 
@@ -150,7 +150,7 @@ number outside its range is clamped into it with a warning; a file that is not U
 not TOML is ignored whole with a warning. A UTF-8 byte order mark is accepted.
 `normal_strength` is not a key: bake the strength into the normal map.
 
-## What a set changes on a surface (planned, stage 3)
+## What a set changes on a surface (stage 3)
 
 [design] When the engine draws a surface whose diffuse has an authored set:
 
@@ -166,10 +166,9 @@ not TOML is ignored whole with a warning. A UTF-8 byte order mark is accepted.
 - **Not covered in version 1**: actor skin, hair and FaceGen heads; terrain layers; distant
   LOD; effects (unlit, additive, refraction, particles); the Pip-Boy and interface textures.
 
-## How the engine lights a set (planned use, today's lighting)
+## How the engine lights a set
 
-Maps tuned for other renderers need these notes; the lighting itself is the engine's today,
-the use of the maps is planned:
+Maps tuned for other renderers need these notes:
 
 - The diffuse light follows the engine's model of the original's: lights are summed in
   display values and the diffuse is multiplied by that sum raised to 2.2, not by a linear
@@ -180,14 +179,35 @@ the use of the maps is planned:
   lamps (`display_shader.rs`, `diffuse_occlusion`).
 - The highlight is GGX with the Fresnel factor held at F0 in world views (no brightening at
   grazing angles; `FRESNEL_EDIT`, `engine/nvforever/src/lights.rs`).
-- Roughness is perceptual: the ORM's green is multiplied by `roughness_scale`, and that
-  product is clamped to 0.089..1 and then squared (Bevy's `perceptualRoughnessToRoughness`,
-  `engine/vendor/bevy_pbr/src/render/pbr_lighting.wesl`). A product below 0.089 draws as
-  0.089; a raw green below 0.089 can still end above the floor with a scale above 1.
+- Roughness is perceptual: the ORM's green is multiplied by `roughness_scale`. For the
+  highlight's shape that product is clamped to 0.089..1 and then squared (Bevy's
+  `perceptualRoughnessToRoughness`, `engine/vendor/bevy_pbr/src/render/pbr_lighting.wesl`),
+  so a product below 0.089 draws a highlight as narrow as 0.089's; the environment
+  term's lookup (`F_AB`, `pbr_functions.wesl`) takes the product unclamped. A raw green
+  below 0.089 can still end above the floor with a scale above 1.
 - **Metallic** will be read but **held at 0** in version 1: with no reflection source in the
   engine, a metal would draw black except for lamp highlights. Until a later version adds
   one, a metal surface draws as a dielectric of its diffuse colour with the authored
   roughness. Author the blue channel correctly anyway; it will be used.
+
+## Where a set does not apply, and checking one (stage 3)
+
+- [design] A set applies to lit NIF shapes. It never applies to: unlit, additive,
+  multiplied or refracting shapes, particles, hair (the hair shader and the hair model's
+  shapes) and skin (FaceGen heads and the skin a race's textures tint), landscape LOD
+  (`meshes\landscape\lod\`), shapes without texture coordinates, and diffuses under
+  `textures\pipboy3000\` or `textures\interface\`.
+- [design] A set's `_n` on a shape the game gives no normal map needs tangents: they are
+  made for the shape when its material is made; where a later change of diffuse (a script's
+  texture swap) would bring the first normal map to a mesh without them, the `_n` is not
+  applied (logged once) and the rest of the set is.
+- [design] A swapped diffuse takes its own set, or none, from the shape's legacy look; it
+  never keeps the previous diffuse's maps.
+- The setting Authored materials (Graphics > Detail and Distance) is read once at the start.
+  Off, no file under `textures\pbr\` is read and every material is the game's own.
+- The smoke scenarios `pbr-authored-field` and `pbr-authored-field-off`
+  (`NVF_PLAY_TEST_PBR_FIELD=1`, `engine/nvf-assets/src/pbr_field.rs`) draw generated sets
+  through the real material path and compare two GPU readbacks [engineering policy].
 
 ## Load order: per file, so ship complete sets
 
