@@ -295,15 +295,18 @@ the engine logs). Only presence is reported; the files are not read. Not used by
 A validator for one authored material pack on disk (#2981; the format:
 docs/spec-notes/pbr-materials.md). No game data and no VFS: `<folder>` is a mod folder
 holding `textures\pbr\`, its `textures` folder (one holding `pbr\`) or the `pbr` folder
-itself (named `pbr`), tried in that order, folder names matched without regard to ASCII
-case. Each file under the `pbr` folder is judged from its DDS headers (the first 148
+itself (named `pbr`), folder names matched without regard to ASCII case. A folder that
+names itself is taken first: a `pbr` folder inside a `textures` folder, then a `textures`
+folder holding `pbr\`, so a pack's own subfolder named `pbr` or `textures` is read as part
+of the pack, never as its root; then a folder holding `textures\pbr\`, one holding
+`pbr\`, and last any folder named `pbr`. Each file under the `pbr` folder is judged from its DDS headers (the first 148
 bytes: the header and the DX10 extension) and its length; a scalar file is read whole.
 No pixel is decoded and the maps' content is not judged. The command prints the document
 and exits 1 when any finding is an error (warnings do not fail it). `selftest` runs the
 same checks (`crates/fnvtool/src/pbr_check.rs`, one function for files on disk and bytes
 in memory) on a pack built in code: a clean set (DX10 BC7 `_orm` 8x8, BC5_UNORM `_n`
-16x16, BC4_UNORM `_p` 4x4, a scalar file) and six broken files. It prints the document,
-then the line `pbr selftest: PASS (3 formats, 6 expected findings)` (or `FAIL (...)`
+16x16, BC4_UNORM `_p` 4x4, a scalar file) and seven broken files. It prints the document,
+then the line `pbr selftest: PASS (3 formats, 7 expected findings)` (or `FAIL (...)`
 naming what was missed or raised besides, and exit 1). Smoke scenario `pbr-selftest`.
 
 Keys:
@@ -332,15 +335,20 @@ Keys:
 - `selftest` (self-test only): `formats` (the clean set's), `expected`, `missing`,
   `unexpected` (each a list of `path`, `code`), `pass`, `verdict` (the last line).
 
-Codes, errors (the engine will refuse the file, or the file is broken):
+Codes, errors: the file is malformed, or it breaks the **pack format's** rules, what
+docs/spec-notes/pbr-materials.md allows per member. These are not a list of what the
+engine's loader refuses: the loader may accept more (an uncompressed RGBA `_orm`, for
+example), and a pack should not rely on that.
 
 | Code | When |
 |---|---|
 | `dds-unreadable` | a `_orm`, `_n` or `_p` whose header does not parse (not DDS, cut inside its headers), or that counts more than 32 mip levels |
+| `bad-header-size` | a header whose own size field is not 124, or whose pixel format's size field is not 32 (docs/spec-notes/dds.md) |
 | `format-not-allowed` | a format not in the member's list: `_orm` BC7, BC1, BC3; `_n` BC5 (unsigned or signed), BC7, BC1, BC3; `_p` BC4 (unsigned or signed), BC1, BC3 (an `_SRGB` DX10 code counts as its format) |
 | `not-single-2d` | a cube map, a volume, a DX10 array of more than one texture or a 1D texture |
 | `bad-size` | a side of 0 or above 16384 |
 | `not-block-aligned` | a top level whose width or height is not a multiple of 4 |
+| `extra-mips` | more mip levels than a full chain down to 1x1 has (the renderer refuses such a texture) |
 | `truncated` | less pixel data than the header's size, format and levels need |
 | `toml-invalid` | a scalar file that is not UTF-8 or not TOML |
 
@@ -349,7 +357,6 @@ Warnings (allowed, ignored in this version, or probably not meant):
 | Code | When |
 |---|---|
 | `incomplete-mips` | fewer mip levels than a full chain down to 1x1 (including none) |
-| `extra-mips` | more mip levels than a full chain has |
 | `not-power-of-two` | a side that is not a power of two (allowed; tools differ on the small levels) |
 | `srgb-linear-member` | a DX10 `_SRGB` code on a member, which is read as linear anyway |
 | `trailing-bytes` | bytes after the pixel data the header describes (never read) |
