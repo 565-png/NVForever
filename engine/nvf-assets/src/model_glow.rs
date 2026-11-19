@@ -196,16 +196,21 @@ fn dxt5_alpha(b: &[u8]) -> [f32; 16] {
 }
 
 /// What a DDS texture shows ([`TextureLook`]), from the first mip level of at most
-/// [`LOOK_TEXELS`] texels (the smallest there is if none is), every texel of it, blocks
-/// decoded with their selectors. `None` when the file does not parse or its format is not
+/// [`LOOK_TEXELS`] texels, every texel of it (without such a level, a grid of the smallest
+/// level's blocks or texels of about that many), blocks decoded with their selectors and
+/// an edge block's texels past the image left out. `None` when the file does not parse or its format is not
 /// read here (BC5): unreadable, which is not the same as dark.
 pub fn texture_look(bytes: &[u8]) -> Option<TextureLook> {
     let dds = Dds::parse(bytes).ok()?;
     let mips = dds.levels.first()?;
     let (w0, h0) = (dds.header.width as usize, dds.header.height as usize);
     let side = |m: usize| ((w0 >> m).max(1), (h0 >> m).max(1));
-    let m = (0..mips.len()).find(|&m| side(m).0 * side(m).1 <= LOOK_TEXELS).unwrap_or(mips.len().checked_sub(1)?);
+    // The first level small enough is read whole; without one, a grid of the smallest
+    // level's blocks or texels, at most about LOOK_TEXELS texels.
+    let small = (0..mips.len()).find(|&m| side(m).0 * side(m).1 <= LOOK_TEXELS);
+    let m = small.unwrap_or(mips.len().checked_sub(1)?);
     let (level, (w, h)) = (mips[m], side(m));
+    let stride = |units: usize, per: usize| if small.is_some() { 1 } else { ((units as f64 / (LOOK_TEXELS / per).max(1) as f64).sqrt().ceil() as usize).max(1) };
     let (mut n, mut lum, mut lum_a, mut sum, mut sum_a) = (0usize, 0.0f32, 0.0f32, Vec3::ZERO, Vec3::ZERO);
     let mut add = |c: [f32; 4]| {
         let rgb = Vec3::new(c[0], c[1], c[2]);
@@ -219,26 +224,45 @@ pub fn texture_look(bytes: &[u8]) -> Option<TextureLook> {
     match dds.format {
         Format::Dxt1 | Format::Dxt3 | Format::Dxt5 => {
             let size = dds.format.block_bytes()?;
-            let blocks = (w.div_ceil(4) * h.div_ceil(4)).min(level.len() / size);
-            for b in level.chunks_exact(size).take(blocks) {
-                let (colours, alpha) = match dds.format {
-                    Format::Dxt1 => (dxt_colours(b, true), None),
-                    Format::Dxt3 => (dxt_colours(&b[8..16], false), Some(dxt3_alpha(b))),
-                    _ => (dxt_colours(&b[8..16], false), Some(dxt5_alpha(b))),
-                };
-                for (i, mut c) in colours.into_iter().enumerate() {
-                    if let Some(a) = alpha {
-                        c[3] = a[i];
+            let (across, down) = (w.div_ceil(4), h.div_ceil(4));
+            let step = stride(across * down, 16);
+            for by in (0..down).step_by(step) {
+                for bx in (0..across).step_by(step) {
+                    let Some(b) = level.get((by * across + bx) * size..(by * across + bx + 1) * size) else { continue };
+                    let (colours, alpha) = match dds.format {
+                        Format::Dxt1 => (dxt_colours(b, true), None),
+                        Format::Dxt3 => (dxt_colours(&b[8..16], false), Some(dxt3_alpha(b))),
+                        _ => (dxt_colours(&b[8..16], false), Some(dxt5_alpha(b))),
+                    };
+                    for (i, mut c) in colours.into_iter().enumerate() {
+                        // An edge block's texels past the image are padding.
+                        if bx * 4 + i % 4 >= w || by * 4 + i / 4 >= h {
+                            continue;
+                        }
+                        if let Some(a) = alpha {
+                            c[3] = a[i];
+                        }
+                        add(c);
                     }
-                    add(c);
                 }
             }
         }
         Format::Bc5U | Format::Bc5S => return None,
-        f => {
+        f if small.is_some() => {
             let rgba = to_rgba8(f, level)?;
             for p in rgba.as_chunks::<4>().0 {
                 add([p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0, p[3] as f32 / 255.0]);
+            }
+        }
+        f => {
+            let bpp = f.level_size(1, 1);
+            let step = stride(w * h, 1);
+            for y in (0..h).step_by(step) {
+                for x in (0..w).step_by(step) {
+                    let at = (y * w + x) * bpp;
+                    let Some(p) = level.get(at..at + bpp).and_then(|t| to_rgba8(f, t)) else { continue };
+                    add([p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0, p[3] as f32 / 255.0]);
+                }
             }
         }
     }
@@ -428,6 +452,30 @@ mod tests {
         let c = texture_look(&clear).expect("read");
         assert!(c.lum < DARK && c.lum_alpha < DARK);
         assert!(texture_look(b"not a dds").is_none(), "unreadable");
+    }
+
+    /// A 2 x 2 texture's one block: its 12 padding texels do not count.
+    #[test]
+    fn edge_block_padding_is_left_out() {
+        let orange = (31u16 << 11) | (32 << 5);
+        // Texels 0, 1, 4, 5 (inside 2 x 2) select orange, the rest black.
+        let sel: u32 = (0..16).filter(|i| !matches!(i, 0 | 1 | 4 | 5)).fold(0, |s, i| s | (1 << (2 * i)));
+        let bytes = crate::texture::bc5_tests::dds(b"DXT1", 2, 2, 1, &dxt1(orange, 0, sel));
+        let l = texture_look(&bytes).expect("read");
+        let full = 0.2126 + 0.7152 * 32.0 / 63.0;
+        assert!((l.lum - full).abs() < 1e-4, "{} against {full}: padding counted", l.lum);
+    }
+
+    /// A large texture without small mips is sampled on a grid, not decoded whole.
+    #[test]
+    fn a_large_texture_without_mips_is_sampled() {
+        let orange = (31u16 << 11) | (32 << 5);
+        let block = dxt1(orange, 0, 0);
+        let payload: Vec<u8> = std::iter::repeat_n(block.as_slice(), 256 * 256).flatten().copied().collect();
+        let bytes = crate::texture::bc5_tests::dds(b"DXT1", 1024, 1024, 1, &payload);
+        let l = texture_look(&bytes).expect("read");
+        assert!((l.lum - (0.2126 + 0.7152 * 32.0 / 63.0)).abs() < 1e-4);
+        assert_eq!(l.hue[0], 1.0);
     }
 
     #[test]
