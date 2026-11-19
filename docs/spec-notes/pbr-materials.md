@@ -2,8 +2,9 @@
 
 NVForever's own file format for texture packs that give a surface physically based material
 maps: occlusion, roughness and metallic, a normal map and a height map, beside the game's
-diffuse texture (#2981). It is **NVForever's format, not the original game's**: the original
-reads no such files, and nothing here describes its behaviour. Every rule below is our
+diffuse texture (#2981). It is **NVForever's own format**: it describes no behaviour of the
+original game, and no file the base game or its add-ons ship is known to lie under
+`textures\pbr\` [hypothesis: not checked against the archives]. Every rule below is our
 choice, marked **[design]**; facts about the texture formats cite their source
 **[documented]**; what the engine does today cites its code.
 
@@ -17,14 +18,16 @@ below; a later version adds to them without changing their meaning.
 | Path rules, member names, the index of sets a load order supplies | **implemented** (`crates/fnv-pbr`; `GameData::pbr_index` in `engine/nvf-assets/src/data.rs` builds it on first use and logs one line of counts; nothing in the engine asks for it yet) |
 | `fnvtool pbr list` (which sets a load order has, and which archive or folder supplies each file) | **implemented** (`crates/fnvtool/src/pbr_cmd.rs`, docs/cli-contract.md) |
 | Scalar file reading (`<stem>.toml`) | **implemented** as a parser; no material reads it yet |
-| Reading BC7 and BC4 files (DDS with the DX10 header) | stage 1 of #2981 (`crates/fnv-dds`) |
+| Reading any member's pixels | **planned** (stage 3): this stage finds files by name only |
+| Reading BC7 and BC4 files (DDS with the DX10 header, or legacy `BC4U` / `BC4S`) | stage 1 of #2981 (`crates/fnv-dds`) |
 | Drawing a surface with its set (ORM, normal) | **planned** (stage 3): no material uses a set yet, so installing a pack changes no picture today |
 | Height maps (`_p`, parallax) | **planned** (stage 4, with #2979) |
 | Metallic | **planned**: read with the ORM but **held at 0** (stage 3) until the engine has a reflection source (stage 5) |
 | A pack validator (`fnvtool pbr check`) | **planned** |
 
 Sections marked "planned" describe how the engine will use a set once those stages land;
-until then a set is only found, counted and listed.
+until then a set is only found by its files' names, counted and listed. Wherever this note
+says a member "will be read" or "will be accepted", that is the planned material path.
 
 ## Layout
 
@@ -45,7 +48,7 @@ A set's members are the stem plus one suffix:
 | `<stem>_n.dds` | tangent-space normal, two channels (X in red, Y in green), green pointing down like the game's normal maps | optional |
 | `<stem>_p.dds` | height, brighter is higher | optional; alone it makes a **height-only** set |
 | `<stem>.toml` | scalars (below) | optional |
-| `<stem>_albedo.dds` | **reserved** for a later version: found and counted, never read, never activates a set | — |
+| `<stem>_albedo.dds` | **reserved** for a later version: found and counted, never activates a set, will not be read in version 1 | — |
 
 - [design] A set with `_orm` is authored. A set with `_p` and no `_orm` is valid: the game's
   own material with height only (when height maps land). A set with only `_n`, `.toml` or
@@ -53,8 +56,9 @@ A set's members are the stem plus one suffix:
 - [design] There is **no plain-name file**: `<stem>.dds` is not a member. In version 1 the
   base colour is always the game's own diffuse (or whatever diffuse replacer wins in the
   load order).
-- [design] Paths are matched without regard to case or slash direction, as every game path
-  is (`fnv_vfs::normalize`). A diffuse path a mesh writes with a leading `data\` or an
+- [design] Paths are matched without regard to slash direction or ASCII case, as every
+  game path is (`fnv_vfs::normalize`): only `A`-`Z` fold to `a`-`z`; other letters (accented
+  or non-Latin) must match exactly. A diffuse path a mesh writes with a leading `data\` or an
   absolute folder is cut at `textures\` first, as for the diffuse itself
   (`fnv_vfs::texture_path`).
 - [design] The extension is not part of the stem, so `foo.dds` and `foo.tga` in one folder
@@ -71,8 +75,9 @@ A set's members are the stem plus one suffix:
 ### Reading a file name back: one suffix, once
 
 [design] A file under `textures\pbr\` is assigned to a set by removing **exactly one**
-suffix from the end of its file name: `_orm.dds`, `_n.dds`, `_p.dds`, `_albedo.dds` or
-`.toml`. What is left must be a non-empty name; it is the stem. The suffix is never
+suffix from the end of its file name (the last path component; folder names are never
+peeled): `_orm.dds`, `_n.dds`, `_p.dds`, `_albedo.dds` or `.toml`, compared after ASCII case
+folding. What is left must be a non-empty name; it is the stem. The suffix is never
 removed twice:
 
 | File under `textures\pbr\walls\` | Set (diffuse) | Member |
@@ -88,31 +93,34 @@ Unmatched files are ignored and counted (`fnvtool pbr list` names them).
 ## Channels and colour spaces
 
 [design] The colour space follows the member's **role**, not the DDS header: every member
-of version 1 (`_orm`, `_n`, `_p`) is read as linear data, even when a DX10 header names an
-`_SRGB` format. Authors should still export them as linear (non-sRGB) so other tools show
+of version 1 (`_orm`, `_n`, `_p`) will be read as linear data, even when a DX10 header names
+an `_SRGB` format. Authors should still export them as linear (non-sRGB) so other tools show
 them correctly.
 
 - `_orm`: red occlusion (1 = unoccluded), green perceptual roughness (0 smooth, 1 rough),
-  blue metallic (0 dielectric, 1 metal). The alpha channel is not read.
+  blue metallic (0 dielectric, 1 metal). The alpha channel will not be read.
 - `_n`: X in red, Y in green, each 0..1 standing for -1..1; Z is rebuilt from them. Green
   follows the game's convention (the engine flips Y for every NIF normal map, `flip_normal_map_y`
   in `engine/nvf-assets/src/nif_spawn.rs`), so a pack can start from the game's normal maps.
-  A three-channel normal map (BC7, BC1, BC3) is accepted and read as X, Y, Z (planned,
-  stage 3); its alpha is not read.
+  A three-channel normal map (BC7, BC1, BC3) will be accepted and read as X, Y, Z
+  (stage 3); its alpha will not be read.
 - `_p`: one channel, red; brighter is higher.
 
 ## Compression and sizes
 
 - Recommended formats: `_orm` **BC7** (or BC1 when its quality is enough), `_n` **BC5**
-  (unsigned), `_p` **BC4** (unsigned). BC1 and BC3 are accepted for any member.
+  (unsigned), `_p` **BC4** (unsigned). BC1 and BC3 will be accepted for any member.
   [documented: Microsoft, "Texture Block Compression in Direct3D 11": BC4 stores one channel
   and BC5 two in 4x4-texel blocks of 8 and 16 bytes; BC7 stores RGB or RGBA in 16-byte
   blocks]
   https://learn.microsoft.com/en-us/windows/win32/direct3d11/texture-block-compression-in-direct3d-11
-- BC4, BC5 and BC7 files carry the DDS DX10 extension header [documented: Microsoft,
-  "DDS_HEADER_DXT10"]; the engine reads it from stage 1 of #2981 on.
+- BC7 files carry the DDS DX10 extension header [documented: Microsoft,
+  "DDS_HEADER_DXT10"]. BC4 and BC5 files may carry it too, or a legacy header with the
+  FourCC `BC4U` / `BC4S` (BC4) or `ATI2` / `BC5S` (BC5) [documented: Microsoft,
+  "Programming Guide for DDS"; docs/spec-notes/dds.md, docs/spec-notes/dds-bc5.md]. The
+  engine reads the DX10 header and the BC4 FourCCs from stage 1 of #2981 on.
 - [design] The **top level's width and height must be multiples of 4**. The engine has no CPU
-  decoder for BC7, so a file it cannot upload whole is refused rather than decoded.
+  decoder for BC7, so a file it cannot upload whole will be refused rather than decoded.
 - [design] Ship **full mip chains**, down to 1x1. Smaller mip levels need not be multiples of 4.
 - [design] Each member's size is its own: an ORM at 2048 beside a 1024 diffuse and a 4096
   normal map is fine. Nothing ties the sizes together.
@@ -160,16 +168,20 @@ not TOML is ignored whole with a warning. A UTF-8 byte order mark is accepted.
 Maps tuned for other renderers need these notes; the lighting itself is the engine's today,
 the use of the maps is planned:
 
-- The diffuse light is the game's own: lights are summed in display values and the diffuse
-  is multiplied by that sum raised to 2.2, not by a linear light sum
-  (`engine/nvforever/src/lights/display_shader.rs`, docs/spec-notes/world.md §8).
+- The diffuse light follows the engine's model of the original's: lights are summed in
+  display values and the diffuse is multiplied by that sum raised to 2.2, not by a linear
+  light sum (`engine/nvforever/src/lights/display_shader.rs`). That the original lights
+  surfaces this way is itself a [hypothesis, fitted to the original's frames]
+  (docs/spec-notes/world.md, "Light on surfaces in display values").
 - Ambient occlusion (ORM red) darkens only the ambient part of that sum, not the sun or
   lamps (`display_shader.rs`, `diffuse_occlusion`).
 - The highlight is GGX with the Fresnel factor held at F0 in world views (no brightening at
   grazing angles; `FRESNEL_EDIT`, `engine/nvforever/src/lights.rs`).
-- Roughness is perceptual: it is squared before use and clamped to at least 0.089
-  (Bevy's `perceptualRoughnessToRoughness`, `engine/vendor/bevy_pbr`).
-- **Metallic** is read but **held at 0** in version 1: with no reflection source in the
+- Roughness is perceptual: the perceptual value is clamped to 0.089..1 and then squared
+  (Bevy's `perceptualRoughnessToRoughness`,
+  `engine/vendor/bevy_pbr/src/render/pbr_lighting.wesl`), so ORM green below 0.089 draws as
+  0.089.
+- **Metallic** will be read but **held at 0** in version 1: with no reflection source in the
   engine, a metal would draw black except for lamp highlights. Until a later version adds
   one, a metal surface draws as a dielectric of its diffuse colour with the authored
   roughness. Author the blue channel correctly anyway; it will be used.
@@ -186,12 +198,14 @@ What is true of archives today (`Vfs::archive_order_in`, `Vfs::archive_files_lay
 `crates/fnv-vfs/src/lib.rs`):
 
 - Loose files always load, from `Data`, the mods folder or a Mod Organizer 2 mod.
-- A pack in a `.bsa` loads only when the archive belongs to an **active plugin** by name
-  (`<plugin>.bsa`, `<plugin> - <anything>.bsa`, or its numbered pieces), lying in `Data`,
-  in NVForever's mods folder or in a Mod Organizer 2 mod; or when the archive list names
-  it (`[Archive] SArchiveList` in NVForever.ini, for an archive in `Data`; or a Mod
-  Organizer 2 profile's ticked archives, in any of its layers). A lone `.bsa` that no active
-  plugin owns and no list names is not read.
+- A pack in a `.bsa` is mounted only when the archive belongs to an **active plugin** by
+  name (`<plugin>.bsa`, `<plugin> - <anything>.bsa`, or its numbered pieces), lying in
+  `Data`, in NVForever's mods folder or in a Mod Organizer 2 mod; when the archive list
+  names it (`[Archive] SArchiveList` in NVForever.ini, for an archive in `Data`; or a Mod
+  Organizer 2 profile's ticked archives, in any of its layers); or when it is `Update.bsa`,
+  which is always mounted after the base list (from `Data`, or under Mod Organizer 2 from
+  the highest layer that has it). A plugin that cannot be read or lacks a master is left
+  out, and its archives with it. A lone `.bsa` that none of these covers is not mounted.
 
 ## Log line and listing
 
