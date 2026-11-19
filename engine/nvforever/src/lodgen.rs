@@ -360,13 +360,14 @@ pub fn cache_key(params: &GenParams, world: &str, data_dir: &Path, plugins: &[St
 }
 
 /// Whether a cached chunk texture can stand in for a bake: it is in the format
-/// [`encode_dds_bc1`] emits (a flat legacy DXT1: no DX10 header, no cube) and has no
-/// more levels than its size allows, which the upload checks (`checked_image`).
+/// [`encode_dds_bc1`] emits (a legacy DXT1: no DX10 header, no cube, no volume) and has
+/// no more levels than its size allows, which the upload checks (`checked_image`).
 /// Anything else is baked again rather than failing at upload.
 fn cached_dds_usable(bytes: &[u8]) -> bool {
     Dds::parse(bytes).is_ok_and(|t| {
         let most = 32 - t.header.width.max(t.header.height).leading_zeros();
-        t.format == Format::Dxt1 && t.header.dx10.is_none() && !t.header.is_cubemap() && t.header.levels() <= most
+        t.format == Format::Dxt1 && t.header.dx10.is_none() && !t.header.is_cubemap() && !t.header.is_volume()
+            && t.header.levels() <= most
     })
 }
 
@@ -762,6 +763,13 @@ mod tests {
         cube.extend_from_slice(&own[128..].repeat(5));
         assert!(Dds::parse(&cube).is_ok());
         assert!(!cached_dds_usable(&cube));
+        // A legacy volume (capability bit 0x200000, depth 4): fnv-dds still parses it as
+        // one chain, but it is not what the writer emits.
+        let mut volume = own.clone();
+        set(&mut volume, 24, 4);
+        set(&mut volume, 112, 0x20_0000);
+        assert!(Dds::parse(&volume).is_ok());
+        assert!(!cached_dds_usable(&volume));
         // Five levels for an 8×8 texture (at most four), with the data a parse needs.
         let mut deep = own.clone();
         set(&mut deep, 28, 5);
