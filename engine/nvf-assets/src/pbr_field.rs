@@ -21,8 +21,12 @@
 //! `reference` (the normal shows at all). Off: `plain`, `lit`, `dark` and `flat` equal, and
 //! `reference` (its game normal map is drawn without a set too) different from them, so a
 //! frame of identical panels fails. Each readback logs every panel's mean and the
-//! differences. The thresholds are a first, generous engineering policy, to be set from real
-//! readbacks; nothing here is a fact about the game.
+//! differences. The thresholds are an engineering policy set from real readbacks (below);
+//! nothing here is a fact about the game. `flat` draws as `plain` (to a byte): their
+//! roughness and reflectance differ, but in this view and light only the faint direct
+//! highlight shows them. `reference` is brighter with the setting on than off: on it takes
+//! the set's reflectance (0.5, F0 4 %) where the game's shape, without the Specular flag,
+//! has none, and its tilted normal catches that highlight.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -85,16 +89,20 @@ const PBR_FILES: [&str; 6] = [
 /// The direction the light comes from (normalised in use).
 const LIGHT_FROM: Vec3 = Vec3::new(0.5, 0.5, 0.7);
 
-/// The comparator [engineering policy, first and generous: to be tightened from real
-/// readbacks, which the log line `pbr field: readback N means` gives]. Mean luminance of a
-/// judged region, in bytes. On: `lit - dark >= MIN_OCCLUSION`, `|lit - reference| <= SAME`,
-/// `|reference - flat| >= MIN_NORMAL`. Off: `plain`, `lit`, `dark` and `flat` within
-/// `SAME_OFF` of each other and `|reference - plain| >= MIN_NORMAL`. A judged region's mean
-/// must lie inside `LIT` and no texel in it may be clipped at `CLIP`.
-const MIN_OCCLUSION: f64 = 10.0;
-const SAME: f64 = 6.0;
-const MIN_NORMAL: f64 = 4.0;
-const SAME_OFF: f64 = 3.0;
+/// The comparator [engineering policy]. Mean luminance of a judged region, in bytes. On:
+/// `lit - dark >= MIN_OCCLUSION`, `|lit - reference| <= SAME`, `|reference - flat| >=
+/// MIN_NORMAL`. Off: `plain`, `lit`, `dark` and `flat` within `SAME_OFF` of each other and
+/// `|reference - plain| >= MIN_NORMAL`. A judged region's mean must lie inside `LIT` and no
+/// texel in it may be clipped at `CLIP`. Set from the main session's readbacks of
+/// 2026-11-19 (two each, identical), with margins for other GPUs and drivers [observed: on,
+/// plain 103, lit 67, dark 38, reference 67, flat 103; off, 103 everywhere but the reference,
+/// 60]: occlusion 29 against 15, |lit - reference| 0 against 3, normal 36 (on) and 43 (off)
+/// against 15, off differences 0 against 2. The readbacks' own log line is `pbr field:
+/// readback N means`.
+const MIN_OCCLUSION: f64 = 15.0;
+const SAME: f64 = 3.0;
+const MIN_NORMAL: f64 = 15.0;
+const SAME_OFF: f64 = 2.0;
 const LIT: std::ops::Range<f64> = 8.0..247.0;
 const CLIP: u8 = 254;
 

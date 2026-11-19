@@ -33418,13 +33418,14 @@ expect = [
   { text = "pbr field: first rendered readback PASS", count = 1 },
   { text = "pbr field: second rendered readback PASS", count = 1 },
   { text = "pbr field: occlusion alone darkens, the two-channel normal matches the three-channel reference, the normal shows PASS", count = 1 },
+  { re = 'authored materials summary: [1-9]\d* materials built with a set \([1-9]\d* distinct sets\)', count = 1, label = "the exit summary counts the field's authored materials" },
 ]
 order = [["pbr field: first rendered readback PASS", "pbr field: second rendered readback PASS", "pbr field: occlusion alone darkens, the two-channel normal matches the three-channel reference, the normal shows PASS"]]
 forbid = [
   { re = '(?i)pbr field:.*(FAIL|timeout|missing|wrong byte count)' },
   { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
 ]
-note = "Panels plain (no set), lit (_orm occlusion 1 + two-channel BC5 _n decoded on a worker), dark (as lit but for the ORM's red), reference (lit's _orm and the same normal as a three-channel game normal map) and flat (_orm, no normal), identical diffuse bytes, one light with a Y component. The thresholds are first, generous values (pbr_field.rs), to be set from these readbacks. Each run reserves a new run-* child under pbr-field-home/pbr-field-output with both readbacks (.rgba, .ppm) and the comparator reports."
+note = "Panels plain (no set), lit (_orm occlusion 1 + two-channel BC5 _n decoded on a worker), dark (as lit but for the ORM's red), reference (lit's _orm and the same normal as a three-channel game normal map) and flat (_orm, no normal), identical diffuse bytes, one light with a Y component. The thresholds (pbr_field.rs) are set from the first real readbacks with margins. Each run reserves a new run-* child under pbr-field-home/pbr-field-output with both readbacks (.rgba, .ppm) and the comparator reports."
 manual = "Open readback-1.ppm and readback-2.ppm in the evidence directory: the third panel is darker than the second (occlusion alone), the second and fourth look the same, the fifth differs from the fourth (the normal's tilt)."
 
 [[scenario]]
@@ -33443,6 +33444,7 @@ expect = [
   { re = "pbr field: first rendered readback PASS", count = 1, label = "first readback with the setting off" },
   { re = "pbr field: second rendered readback PASS", count = 1, label = "second readback with the setting off" },
   { text = "pbr field: setting off, plain-material panels identical and the reference distinct PASS", count = 1 },
+  { text = "authored materials summary: off (setting)", count = 1 },
 ]
 forbid = [
   { re = '(?i)pbr field:.*(FAIL|timeout|missing|wrong byte count)' },
