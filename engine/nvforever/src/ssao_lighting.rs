@@ -562,7 +562,7 @@ mod tests {
         for c in ["2.0404 * a - 0.3324", "-4.7951 * a + 0.6417", "2.7552 * a + 0.6903", "max(vec3(x), ((x * k2 + k1) * x + k0) * x)"] {
             assert!(wesl.contains(c), "{c}");
         }
-        assert!(MULTIBOUNCE);
+        const { assert!(MULTIBOUNCE) };
         for x in [0.0f32, 0.3, 0.6, 0.9, 1.0] {
             assert_eq!(multibounce(x, 0.7, false), x);
             for a in [0.0f32, 0.2, 0.5, 0.8, 1.0] {
