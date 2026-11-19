@@ -151,6 +151,10 @@ uGridsToLoad=5).
     other workers and the main thread (`texture::WorkerTextures`), so each is decoded
     once and keeps one handle; a texture the cache already holds is found in a copy of
     the cache's list sent with the work.
+    What a cell was read ahead for is dropped on a worker thread once the cell is more
+    than two steps beyond the loaded square (#3082): the outer ring's cells the player
+    passes beside, a row a crossing, were freed on the main thread for 9-16 ms of the
+    frame [observed 2026-11-19, `profile hitch` spans, #3082].
   - *Spawning over frames.* A cell is started once its models are all prepared (or after
     1.5 s, preparing what is missing on the main thread). Its references are spawned
     within 3 ms of main-thread time a frame, nearest cell first; the cell's entity is
