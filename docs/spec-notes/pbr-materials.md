@@ -23,7 +23,7 @@ below; a later version adds to them without changing their meaning.
 | Drawing a surface with its set (ORM, normal) | **planned** (stage 3): no material uses a set yet, so installing a pack changes no picture today |
 | Height maps (`_p`, parallax) | **planned** (stage 4, with #2979) |
 | Metallic | **planned**: read with the ORM but **held at 0** (stage 3) until the engine has a reflection source (stage 5) |
-| A pack validator (`fnvtool pbr check`) | **planned** |
+| A pack validator (`fnvtool pbr check`, `fnvtool pbr selftest`) | **implemented** (`crates/fnvtool/src/pbr_check.rs`, docs/cli-contract.md `fnv.pbr.check/1`) |
 
 Sections marked "planned" describe how the engine will use a set once those stages land;
 until then a set is only found by its files' names, counted and listed. Wherever this note
@@ -127,6 +127,12 @@ them correctly.
 - [design] Ship **full mip chains**, down to 1x1. Smaller mip levels need not be multiples of 4.
 - [design] Each member's size is its own: an ORM at 2048 beside a 1024 diffuse and a 4096
   normal map is fine. Nothing ties the sizes together.
+- Before shipping, run `fnvtool pbr check <folder>` on the pack (the mod folder, its
+  `textures` folder or the `pbr` folder). It reads each file's DDS headers and size and the
+  scalar files: formats per member, sides that are multiples of 4, mip chains, cut-off or
+  padded files, `_SRGB` codes, incomplete sets and unmatched files, and it estimates the
+  pack's GPU memory; it exits non-zero on an error. It does not decode or judge the maps'
+  content (whether the roughness or normals look right): view them in the engine.
 
 ## Scalars: `<stem>.toml`
 

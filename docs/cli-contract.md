@@ -290,6 +290,76 @@ Other keys: `sets` (sorted by stem: `stem`,
 `height_only`, `incomplete`, `unmatched`, `members` per member) and `summary` (the line
 the engine logs). Only presence is reported; the files are not read. Not used by the lab.
 
+## `fnvtool pbr check <folder>`, `fnvtool pbr selftest` → `fnv.pbr.check/1`
+
+A validator for one authored material pack on disk (#2981; the format:
+docs/spec-notes/pbr-materials.md). No game data and no VFS: `<folder>` is a mod folder
+holding `textures\pbr\`, its `textures` folder (one holding `pbr\`) or the `pbr` folder
+itself (named `pbr`), tried in that order, folder names matched without regard to ASCII
+case. Each file under the `pbr` folder is judged from its DDS headers (the first 148
+bytes: the header and the DX10 extension) and its length; a scalar file is read whole.
+No pixel is decoded and the maps' content is not judged. The command prints the document
+and exits 1 when any finding is an error (warnings do not fail it). `selftest` runs the
+same checks (`crates/fnvtool/src/pbr_check.rs`, one function for files on disk and bytes
+in memory) on a pack built in code: a clean set (DX10 BC7 `_orm` 8x8, BC5_UNORM `_n`
+16x16, BC4_UNORM `_p` 4x4, a scalar file) and six broken files. It prints the document,
+then the line `pbr selftest: PASS (3 formats, 6 expected findings)` (or `FAIL (...)`
+naming what was missed or raised besides, and exit 1). Smoke scenario `pbr-selftest`.
+
+Keys:
+
+- `schema`: `fnv.pbr.check/1`.
+- `root`: `folder` (as given), `form` (`mod`, `textures`, `pbr`; `selftest` for the
+  self-test), `pbr_folder` (the folder read; `null` for the self-test).
+- `ok`: no error found.
+- `files` (sorted by path, ASCII case folded): `path`, `member` (`orm`, `normal`,
+  `height`, `scalars`, `albedo`, `null` when unmatched), `bytes` (the file's length),
+  `format` (as the file states it: the DXGI name for a DX10 header, e.g. `BC7_UNORM_SRGB`,
+  else the legacy name, e.g. `DXT1`; a description for an unknown one; `null` when the
+  file is not a DDS member or its header does not parse), `width`, `height`, `levels`,
+  `payload_bytes` (the pixel data the header's layout needs; `null` when it cannot be
+  sized), `accepted` (no error in the file).
+- `findings` (sorted by path, then errors first, then code): `level` (`error`,
+  `warning`), `code`, `path` (the file's game path, `textures\pbr\...` spelled as the
+  pack's folders and files are; for `incomplete-set` the set's stem), `message` (one
+  sentence).
+- `totals`: `files`, `bytes`, `sets` (`total`, `authored`, `height_only`, `incomplete`,
+  as `fnv_pbr::PbrIndex` classifies them), `unmatched`, `members` (per member: `files`;
+  for `orm`, `normal` and `height` also `formats`, a count per format name, and
+  `largest_side`, the largest width or height, `null` with none), `formats` (every format
+  name read, sorted), `gpu_bytes_estimate` (the `payload_bytes` of every `_orm`, `_n` and
+  `_p` without an error in a set that is authored or height only), `errors`, `warnings`.
+- `selftest` (self-test only): `formats` (the clean set's), `expected`, `missing`,
+  `unexpected` (each a list of `path`, `code`), `pass`, `verdict` (the last line).
+
+Codes, errors (the engine will refuse the file, or the file is broken):
+
+| Code | When |
+|---|---|
+| `dds-unreadable` | a `_orm`, `_n` or `_p` whose header does not parse (not DDS, cut inside its headers), or that counts more than 32 mip levels |
+| `format-not-allowed` | a format not in the member's list: `_orm` BC7, BC1, BC3; `_n` BC5 (unsigned or signed), BC7, BC1, BC3; `_p` BC4 (unsigned or signed), BC1, BC3 (an `_SRGB` DX10 code counts as its format) |
+| `not-single-2d` | a cube map, a volume, a DX10 array of more than one texture or a 1D texture |
+| `bad-size` | a side of 0 or above 16384 |
+| `not-block-aligned` | a top level whose width or height is not a multiple of 4 |
+| `truncated` | less pixel data than the header's size, format and levels need |
+| `toml-invalid` | a scalar file that is not UTF-8 or not TOML |
+
+Warnings (allowed, ignored in this version, or probably not meant):
+
+| Code | When |
+|---|---|
+| `incomplete-mips` | fewer mip levels than a full chain down to 1x1 (including none) |
+| `extra-mips` | more mip levels than a full chain has |
+| `not-power-of-two` | a side that is not a power of two (allowed; tools differ on the small levels) |
+| `srgb-linear-member` | a DX10 `_SRGB` code on a member, which is read as linear anyway |
+| `trailing-bytes` | bytes after the pixel data the header describes (never read) |
+| `scalar-ignored-or-clamped` | one per warning of `fnv_pbr::parse_scalars`: an unknown key or a table, a value that is not a finite number, a number clamped into its range |
+| `albedo-reserved` | a `_albedo` file (reserved, counted, not read; not checked further) |
+| `incomplete-set` | a set with neither `_orm` nor `_p` (only `_n`, `.toml` or `_albedo`), which changes nothing |
+| `unmatched-file` | a file under `textures\pbr\` that is no member of any set |
+
+Not used by the lab.
+
 ## `fnvtool spt list <archive>` → `fnv.spt.listing/1`, `fnvtool spt dump <source> [--path p]` → `fnv.spt.dump/1`
 
 SpeedTree parameter files (docs/spec-notes/speedtree.md). `list`: one row per `.spt` in
