@@ -111,6 +111,14 @@ pub fn distant_tree_enabled(enabled_at_start: bool) -> bool {
     enabled_at_start
 }
 
+/// Whether placed reference `p` of base `b` is a tree the distant billboards draw, and so
+/// the one the full-detail ring draws in full (full_detail.rs): a [`distant_tree`] that is
+/// no imposter (drawn by region, imposters.rs) and no primitive (editor-only), enabled at
+/// the start. The one rule both use, so they cannot drift apart.
+pub fn distant_tree_ref(p: &fnv_world::placed::Placement, b: &fnv_world::placed::BaseObject, enabled_at_start: bool) -> bool {
+    !p.imposter && p.draws_base_model() && distant_tree(b, enabled_at_start)
+}
+
 /// The TREE references of an exterior cell (its own and the persistent ones standing
 /// in it) that are enabled at the start.
 fn cell_trees(world: &WorldData, g: Grid) -> Vec<Placed> {
@@ -119,12 +127,12 @@ fn cell_trees(world: &WorldData, g: Grid) -> Vec<Placed> {
         refs.extend(p);
     }
     let mut out = Vec::new();
-    let mut is_tree: HashMap<u32, bool> = HashMap::new();
+    let mut bases: HashMap<u32, Option<fnv_world::placed::BaseObject>> = HashMap::new();
     for r in refs {
         let Some(p) = placement(world.lo, world.schema, r) else { continue };
         let Some(base) = p.base else { continue };
-        let tree = *is_tree.entry(base).or_insert_with(|| base_object(world.lo, world.schema, base).is_some_and(|b| distant_tree(&b, true)));
-        if tree && distant_tree_enabled(world.enabled(&p, 0)) {
+        let b = bases.entry(base).or_insert_with(|| base_object(world.lo, world.schema, base).filter(|b| distant_tree(b, true)));
+        if b.as_ref().is_some_and(|b| distant_tree_ref(&p, b, world.enabled(&p, 0))) {
             out.push(Placed { base, pos: p.position, scale: p.scale });
         }
     }

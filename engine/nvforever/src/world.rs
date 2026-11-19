@@ -1550,7 +1550,7 @@ pub fn spawn_model(
     let wreck = model.loose && p.base.and_then(|b| base_object(world.lo, world.schema, b)).and_then(|b| b.world_model_path()).is_some_and(|m| m != path);
     // Drawn only (the full-detail ring): a moveable static's idle alone, nothing else rigged.
     let rigged = |rig: &&nvf_assets::model::Rig| match scenery {
-        true => &base.sig == b"MSTT" && rig.idle.is_some() && idle.is_some(),
+        true => &base.sig == b"MSTT" && rig.idle.is_some() && idle.is_some() && !rig.shapes.is_empty(),
         false => (rig.idle.is_some() && idle.is_some()) || door.is_some() || activator.is_some() || scripted || jointed || wreck,
     };
     if let Some(rig) = model.rig.as_ref().filter(rigged) {
@@ -1705,8 +1705,9 @@ pub fn spawn_model(
     if !scenery {
         spawn_emitters(commands, parent, r, &model, &path, rt);
     }
-    stats.refs_drawn += 1;
-    // A model without shapes draws nothing.
+    // A model without shapes draws nothing (counted as drawn by the loaded cells, as
+    // before; not by the full-detail ring).
+    stats.refs_drawn += usize::from(!scenery || !model.shapes.is_empty());
     !model.shapes.is_empty()
 }
 
