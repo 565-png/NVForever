@@ -104,8 +104,8 @@ fn the_synchronous_source_loads_a_set_by_its_exact_member_paths() {
     assert!(source.authored(&source.resolve("walls/stone.dds")).is_none(), "height only is no authored set");
     assert!(source.authored(&source.resolve("walls/plain.dds")).is_none());
     assert!(source.authored(&source.resolve("walls/bad.dds")).is_none(), "an _orm that does not load leaves the shape legacy");
-    let twin = source.authored(&source.resolve("weapons/1stpersongun.dds")).expect("the plain set behind a height-only twin");
-    assert_eq!(twin.stem, r"textures\pbr\weapons\gun");
+    assert!(source.authored(&source.resolve("weapons/1stpersongun.dds")).is_none(), "a height-only twin wins the lookup: no authored set, not the plain one's");
+    assert_eq!(source.authored(&source.resolve("weapons/gun.dds")).map(|s| s.stem).as_deref(), Some(r"textures\pbr\weapons\gun"));
     // The console folder: the member the index names, not the PC file `get` would choose.
     let xbox_key = source.resolve(r"walls\xbox\tile.dds");
     assert_eq!(xbox_key, r"textures\walls\xbox\tile.dds", "no PC diffuse: the key stays");
@@ -151,13 +151,14 @@ fn a_scalar_file_is_parsed_once_per_file() {
 }
 
 #[test]
-fn a_height_only_set_is_no_authored_set_unless_a_plain_one_stands_behind_a_twin() {
-    let index = PbrIndex::build([r"textures\pbr\a\stone_p.dds", r"textures\pbr\a\1stpersongun_p.dds", r"textures\pbr\a\gun_orm.dds", r"textures\pbr\a\1stpersonrifle_p.dds"]);
+fn a_height_only_set_is_no_authored_set_even_as_a_first_person_twin() {
+    let index = PbrIndex::build([r"textures\pbr\a\stone_p.dds", r"textures\pbr\a\1stpersongun_p.dds", r"textures\pbr\a\gun_orm.dds", r"textures\pbr\a\knife_orm.dds", r"textures\pbr\a\1stpersonknife_n.dds"]);
     assert!(authored_found(&index, r"textures\a\stone.dds").is_none());
-    let twin = authored_found(&index, r"textures\a\1stpersongun.dds").unwrap();
-    assert_eq!((twin.stem.as_str(), twin.first_person_fallback), (r"textures\pbr\a\gun", true));
-    assert!(authored_found(&index, r"textures\a\1stpersonrifle.dds").is_none(), "no plain set behind the twin");
+    assert!(authored_found(&index, r"textures\a\1stpersongun.dds").is_none(), "the height-only twin wins; the plain set is not used behind it");
     assert!(authored_found(&index, r"textures\a\gun.dds").is_some());
+    // An incomplete twin is no active set, so the plain set serves first person.
+    let knife = authored_found(&index, r"textures\a\1stpersonknife.dds").unwrap();
+    assert_eq!((knife.stem.as_str(), knife.first_person_fallback), (r"textures\pbr\a\knife", true));
 }
 
 /// The swap rule (`retexture`): authored → another set → no set, always from the legacy look,

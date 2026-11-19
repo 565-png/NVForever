@@ -205,23 +205,24 @@ fn masks_and_cut_outs_stay_the_game_diffuses() {
     assert_eq!(m.base.metallic_roughness_texture.as_ref(), Some(&s.orm));
 }
 
-/// Through the real synchronous source and a generated pack: the set of a height-only twin's
-/// plain texture applies, a height-only set and an `_orm` that does not load leave the shape
-/// legacy, a set without `_n` keeps the game's normal map.
+/// Through the real synchronous source and a generated pack: the plain texture's set applies;
+/// a height-only set (a first-person twin's own included, which wins over the plain set) and
+/// an `_orm` that does not load leave the shape legacy.
 #[test]
 fn the_real_source_applies_sets_and_falls_back_to_legacy() {
     let pack = crate::authored::tests::Pack::new();
     let mut cache = TextureCache::default();
     let mut images = Assets::default();
     let mut build = |diffuse: &str| shape_material(&Props { textures: vec![diffuse.into()], ..Default::default() }, &mut triangle(), &mut cache, &pack.data, &mut images, None).0;
+    let gun = build(r"weapons\gun.dds");
     let twin = build(r"weapons\1stpersongun.dds");
     let brick = build(r"walls\brick.dds");
     let stone = build(r"walls\stone.dds");
     let bad = build(r"walls\bad.dds");
     let plain = build(r"walls\plain.dds");
-    assert!(twin.base.metallic_roughness_texture.is_some() && twin.extension.emissive_rule.w == AUTHORED_MARK);
+    assert!(gun.base.metallic_roughness_texture.is_some() && gun.extension.emissive_rule.w == AUTHORED_MARK);
     assert!(brick.base.normal_map_texture.is_some() && brick.base.reflectance == 0.25 && brick.base.perceptual_roughness == 0.5);
-    for (name, m) in [("height only", &stone), ("invalid _orm", &bad), ("no set", &plain)] {
+    for (name, m) in [("height only", &stone), ("height-only twin", &twin), ("invalid _orm", &bad), ("no set", &plain)] {
         assert!(m.base.metallic_roughness_texture.is_none() && m.extension.emissive_rule.w == 0.0, "{name}");
         assert_eq!(m.base.reflectance, 0.3, "{name}: the legacy value");
     }

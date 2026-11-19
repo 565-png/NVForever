@@ -88,24 +88,14 @@ impl Memo {
     }
 }
 
-/// The authored set (state [`SetState::Authored`]) for the resolved diffuse `key`. A
-/// height-only set changes no material in this stage: one for the key itself is no set, and
-/// one for a first-person twin gives way to the plain texture's set, as the twin's absence
-/// would [design: stage 3 of #2981 draws no height maps].
+/// The authored set (state [`SetState::Authored`]) for the resolved diffuse `key`: the one
+/// active set the index finds (`PbrIndex::lookup`, with its first-person rule), if it is
+/// authored. A height-only set changes no material in this stage, so it means "no authored
+/// set" for the shape, also when it is a first-person twin's own set: the twin's set wins the
+/// lookup and the plain texture's set is not used behind it [design: the first-person rule of
+/// docs/spec-notes/pbr-materials.md "Layout"; stage 3 of #2981 draws no height maps].
 pub fn authored_found(index: &PbrIndex, key: &str) -> Option<Found> {
-    let found = index.lookup(key)?;
-    if found.state() == SetState::Authored {
-        return Some(found);
-    }
-    if found.first_person_fallback || !crate::texture::is_first_person_texture(key) {
-        return None;
-    }
-    // The twin's own set is height only: try the plain name.
-    let path = fnv_vfs::texture_path(key);
-    let file = path.rfind('\\').map_or(0, |i| i + 1);
-    let plain = format!("{}{}", &path[..file], path[file..].strip_prefix("1stperson")?);
-    let plain_found = index.lookup(&plain).filter(|f| f.state() == SetState::Authored)?;
-    Some(Found { first_person_fallback: true, ..plain_found })
+    index.lookup(key).filter(|f| f.state() == SetState::Authored)
 }
 
 /// The authored set for the resolved diffuse `key` with its maps loaded by `load` (path as the
