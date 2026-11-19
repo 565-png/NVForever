@@ -302,9 +302,17 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   draws two more panels tilted 50 degrees about Y: `height` (a height-only set whose `_p` is
   high above and low below, depth 0.1) and its control without one; it measures a narrow
   stripe's centre in both bands of both panels and wants the low band's stripe moved towards
-  decreasing mesh U by at least 3 pixels (the prediction from the shader's geometry is about
-  9.8) and the high band's within 2.5. Those thresholds are a first, generous guess [not yet
-  run on a GPU]; the readback lines `pbr field: readback N height ...` log the shifts.
+  decreasing mesh U by the prediction from the shader's geometry (−depth × sin tilt × 128 =
+  −9.81 pixels) within 2.5 pixels, and the high band's and the control's within 1.5 of their
+  place; with the setting off (`pbr-authored-field-off`) neither panel has a depth map and
+  neither stripe moves more than 1.5. The height panels report on their own lines
+  (`pbr field height: ...`: the shifts, the brightest value and the ground level per
+  readback, a verdict per readback, a final PASS), so they never fail the five panels'
+  verdict. [observed, field only, on `b4660af00`, the main session's first GPU run with the
+  setting on: high +0.00 px, low −9.76 px against −9.81; stripe centres 64.00/54.24 (height)
+  and 64.00/64.00 (control); the sRGB 230 stripe then read 255 and failed the clip check, so
+  the stripe and ground were darkened to sRGB 180 on 90, not yet run again.] The thresholds
+  are an engineering policy set from that readback with margins.
 
 ### Known limits (stage 4)
 

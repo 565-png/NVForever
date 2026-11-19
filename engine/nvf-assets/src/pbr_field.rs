@@ -33,11 +33,17 @@
 //! [`HEIGHT_DEPTH`]; the control has none. The camera is orthographic, so the control is the
 //! identical tilted frame without `_p`. Per band the stripe's centre is measured in both
 //! panels, away from the band boundary: with the setting on, the low band's stripe must move
-//! by at least [`MIN_SHIFT`] pixels the way the tangent-space view predicts
+//! to within [`SHIFT_TOLERANCE`] pixels of what the tangent-space view predicts
 //! ([`predicted_low_shift`]: towards decreasing mesh U here) and the high band's must stay
-//! within [`STILL`]; with it off, neither moves. A wrong sign fails. The shifts are logged
-//! in pixels on every readback (`pbr field: readback N height ...`). The thresholds are a
-//! first, generous engineering policy, to be set again from real readbacks.
+//! within [`STILL`]; with it off, neither moves more than [`STILL`]. A wrong sign or no
+//! movement fails. The height panels report on their own lines (`pbr field height: ...`,
+//! the shifts in pixels, the brightest value and the ground level on every readback, a PASS
+//! or FAIL per readback and a final PASS), so a height problem never fails the five panels'
+//! verdict or their scenarios. [observed, field only, on `b4660af00`, the main session's
+//! first GPU run (setting on): high +0.00 px, low −9.76 px against the predicted −9.81;
+//! stripe centres height 64.00/54.24, control 64.00/64.00 px (high/low band); the then sRGB
+//! 230 stripe clipped at 255, so the stripe and its ground were darkened (sRGB 180 on 90).]
+//! The thresholds are an engineering policy set from that readback with margins.
 //!
 //! [observed, on `7e2de4be1`, the main session's runs: on, plain 103, lit 67, dark 38,
 //! reference 67, flat 103; off, plain, lit, dark and flat 103, reference 60.] Two of these
@@ -101,10 +107,13 @@ const TILT_DEGREES: f32 = 50.0;
 /// band's stripe travels several pixels ([`predicted_low_shift`], about 9.8).
 const HEIGHT_DEPTH: f32 = 0.1;
 /// The stripe diffuse (64 x 64): ground and stripe colours (sRGB) and the stripe's columns,
-/// centred on U 0.5.
+/// centred on U 0.5. Mid values: an sRGB 230 stripe read 255 on the tilted panel (module
+/// notes, observed); the five panels' grey 160 reads 103 flat on, and the tilted panels take
+/// more of the light, so 180 should read about 150-200 and the ground (90) about 35-45
+/// [estimate from those two readings, to be confirmed by the next run's logged values].
 const STRIPE_SIDE: u32 = 64;
-const STRIPE_GROUND: [u8; 4] = [70, 70, 70, 255];
-const STRIPE: [u8; 4] = [230, 230, 230, 255];
+const STRIPE_GROUND: [u8; 4] = [90, 90, 90, 255];
+const STRIPE: [u8; 4] = [180, 180, 180, 255];
 const STRIPE_TEXELS: std::ops::Range<u32> = 30..34;
 /// The `_p` (BC4 unsigned, 16 x 16): 255 (high) in the upper half, 0 (low) in the lower.
 const HEIGHT_SIDE: u32 = 16;
@@ -115,16 +124,15 @@ const HIGH_ROWS: std::ops::Range<usize> = 16..48;
 const LOW_ROWS: std::ops::Range<usize> = 80..112;
 const STRIPE_COLUMNS: std::ops::Range<usize> = 28..100;
 
-/// The height comparator [engineering policy, first and generous: no real readback yet]: the
-/// low band's shift (height panel minus control, pixels) at least `MIN_SHIFT` in the predicted
-/// direction and at most `MAX_SHIFT`; the high band's within `STILL` (off: both within
-/// `STILL`); each control stripe within `CONTROL_OFF_CENTRE` of the panel's middle and the
-/// two control bands within `STILL` of each other; a row's stripe at least `MIN_CONTRAST`
-/// above its ground.
-const MIN_SHIFT: f64 = 3.0;
-const MAX_SHIFT: f64 = 20.0;
-const STILL: f64 = 2.5;
-const CONTROL_OFF_CENTRE: f64 = 6.0;
+/// The height comparator [engineering policy, set from the readback of `b4660af00` (module
+/// notes: low −9.76 against −9.81, high +0.00, control 64.00/64.00) with margins]: the low
+/// band's shift (height panel minus control, pixels) within `SHIFT_TOLERANCE` of the
+/// prediction, and of its sign (more than `STILL` that way); the high band's within `STILL`
+/// (off: both within `STILL`); each control stripe within `STILL` of the panel's middle and
+/// of the other band's; a row's stripe at least `MIN_CONTRAST` above its ground; no channel
+/// of the judged rows at `CLIP`.
+const SHIFT_TOLERANCE: f64 = 2.5;
+const STILL: f64 = 1.5;
 const MIN_CONTRAST: f64 = 20.0;
 
 /// The low band's predicted stripe shift in pixels (height panel minus control): the march
@@ -198,11 +206,16 @@ struct Field {
     completed: u8,
     after_frame: u64,
     done: bool,
+    /// Readbacks whose height panels passed their own comparator ([`judge_height`]).
+    height_passes: u8,
 }
 
 struct Scene {
     entities: Vec<Entity>,
     target: Handle<Image>,
+    /// The height panels' materials passed their check ([`check_height_panels`]); a failure
+    /// is reported on a height line and leaves the five panels' verdict alone.
+    height_ok: bool,
 }
 
 pub(crate) fn install(app: &mut App) {
@@ -219,7 +232,7 @@ pub(crate) fn install(app: &mut App) {
     render.insert_resource(frames.clone()).add_systems(Render, count_rendered.in_set(RenderSystems::Cleanup));
     app.add_plugins(ExtractComponentPlugin::<FieldCamera>::default())
         .insert_resource(frames)
-        .insert_resource(Field { started: None, output: None, scene: None, on: false, pending: None, completed: 0, after_frame: 0, done: false })
+        .insert_resource(Field { started: None, output: None, scene: None, on: false, pending: None, completed: 0, after_frame: 0, done: false, height_passes: 0 })
         .add_systems(Update, tick);
 }
 
@@ -328,7 +341,7 @@ fn make_scene(world: &mut World, data: &GameData, on: bool) -> Result<Scene, Str
     let support = CompressedImageFormatSupport(formats);
     let bc = formats.contains(CompressedImageFormats::BC);
     let mut cache = TextureCache::default();
-    let prepared = world.resource_scope(|_, mut images: Mut<Assets<Image>>| -> Result<Vec<(Mesh, NifMaterial)>, String> {
+    let prepared = world.resource_scope(|_, mut images: Mut<Assets<Image>>| -> Result<(Vec<(Mesh, NifMaterial)>, bool), String> {
         // The authored `_n` maps decoded on a worker thread under reserved handles, as a model
         // prepared there would have them, then adopted by the main thread's build (off: the
         // material path reads no file under textures\pbr\).
@@ -413,10 +426,20 @@ fn make_scene(world: &mut World, data: &GameData, on: bool) -> Result<Scene, Str
             }
             info!("pbr field: setting off, no index built and no textures\\pbr\\ file loaded by the material path (the fixture's own check reads the generated files first)");
         }
-        let height_note = check_height_panels(m[HEIGHT_PANEL], m[CONTROL_PANEL], on, size)?;
-        info!("pbr field: height panels (height, height-control) tilted {TILT_DEGREES} degrees about Y: {height_note}");
-        Ok(prepared)
+        // The height panels report on their own lines, never failing the five's checks.
+        let height_ok = match check_height_panels(m[HEIGHT_PANEL], m[CONTROL_PANEL], on, size) {
+            Ok(note) => {
+                info!("pbr field height: panels (height, height-control) tilted {TILT_DEGREES} degrees about Y: {note}");
+                true
+            }
+            Err(why) => {
+                error!("pbr field height: FAIL materials: {why}");
+                false
+            }
+        };
+        Ok((prepared, height_ok))
     })?;
+    let (prepared, height_ok) = prepared;
     info!("pbr field: actual NIF material source, {PANELS} panels ({}), setting {}, BC {}", NAMES.join(", "), if on { "on" } else { "off" }, if bc { "yes" } else { "no" });
     let mut image = Image::new_target_texture(WIDTH as u32, HEIGHT as u32, TextureFormat::Rgba8Unorm, None);
     image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
@@ -447,7 +470,7 @@ fn make_scene(world: &mut World, data: &GameData, on: bool) -> Result<Scene, Str
         Transform::from_xyz(0.0, 0.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
         Exposure { ev100: 0.0 }, AmbientLight { color: Color::WHITE, brightness: 1.0, ..default() },
         Tonemapping::None, DebandDither::Disabled, Msaa::Off, RenderLayers::layer(LAYER))).id());
-    Ok(Scene { entities, target })
+    Ok(Scene { entities, target, height_ok })
 }
 
 /// The height panel's and its control's materials: on, the height panel carries the
@@ -502,17 +525,31 @@ fn received(
     let ordinal = field.completed + 1;
     let frame = frames.0.load(Ordering::Acquire);
     let measured = measure(&event.data);
+    // The height panels' verdict, on their own lines (module notes): it never decides the
+    // five panels' verdict below.
+    let mut height_verdict = "not measured".to_string();
     if let Ok(r) = &measured {
         info!("pbr field: readback {ordinal} means {}", r.describe());
-        info!("pbr field: readback {ordinal} height {}", r.height.describe());
+        info!("pbr field height: readback {ordinal} {}", r.height.describe());
+        match judge_height(&r.height, field.on) {
+            Ok(()) => {
+                info!("pbr field height: readback {ordinal} PASS");
+                field.height_passes += 1;
+                height_verdict = "PASS".into();
+            }
+            Err(why) => {
+                error!("pbr field height: FAIL readback {ordinal}: {why}");
+                height_verdict = format!("FAIL {why}");
+            }
+        }
     }
     let result = if layers.iter().any(|(layers, anchor)| foreign_layer(layers, anchor)) {
         Err("foreign recipient in isolated render layer at completion".into())
     } else {
-        measured.and_then(|r| judge(r, field.on))
+        measured.and_then(|r| judge_panels(r, field.on))
     };
     let saved = field.output.as_ref().ok_or_else(|| "missing output directory".to_string())
-        .and_then(|out| save_readback(out, ordinal, frame, &event.data, &result).map_err(|e| format!("save readback: {e}")));
+        .and_then(|out| save_readback(out, ordinal, frame, &event.data, &result, &height_verdict).map_err(|e| format!("save readback: {e}")));
     if let Err(reason) = saved.and(result.map(|_| ())) {
         error!("pbr field: FAIL readback {ordinal}: {reason}");
         field.done = true;
@@ -526,10 +563,14 @@ fn received(
         info!("pbr field: second rendered readback PASS");
         if field.on {
             info!("pbr field: occlusion alone darkens, the two-channel normal matches the three-channel reference, the normal shows PASS");
-            info!("pbr field: the height map moves the low band's stripe the predicted way and leaves the high band's in place PASS");
         } else {
             info!("pbr field: setting off, plain-material panels identical and the reference distinct PASS");
-            info!("pbr field: setting off, the height panel draws as its control PASS");
+        }
+        let height_ok = field.scene.as_ref().is_some_and(|s| s.height_ok) && field.height_passes == 2;
+        match (height_ok, field.on) {
+            (true, true) => info!("pbr field height: the height map moves the low band's stripe the predicted way and leaves the high band's in place PASS"),
+            (true, false) => info!("pbr field height: setting off, no depth map on either panel, both stripes straight PASS"),
+            (false, _) => error!("pbr field height: FAIL {} of 2 readbacks passed (materials {})", field.height_passes, if field.scene.as_ref().is_some_and(|s| s.height_ok) { "as expected" } else { "refused" }),
         }
         field.done = true;
     }
@@ -546,13 +587,15 @@ struct Report {
 
 /// What a readback measured of the height panels: the stripe's centre (pixels from the
 /// panel's left edge, mean over the band's rows) in the high and the low band of the height
-/// panel and of its control (`None`: some row showed no stripe), and the brightest channel
-/// value in the two panels' judged rows.
+/// panel and of its control (`None`: some row showed no stripe), the brightest channel value
+/// in the two panels' judged rows and their ground level (the mean of each judged row's
+/// darkest luminance).
 #[derive(Debug, PartialEq)]
 struct HeightReport {
     height: [Option<f64>; 2],
     control: [Option<f64>; 2],
     brightest: u8,
+    ground: f64,
 }
 
 impl HeightReport {
@@ -566,13 +609,14 @@ impl HeightReport {
         let c = |v: Option<f64>| v.map_or("none".to_string(), |v| format!("{v:.2}"));
         let shifts = self.shifts().map_or("no stripe found".to_string(), |[high, low]| format!("high={high:+.2} px low={low:+.2} px"));
         format!(
-            "{shifts} (predicted low {:+.2} px, high 0); centres height {}/{} control {}/{} px (high/low band); brightest {}",
+            "{shifts} (predicted low {:+.2} px, high 0); centres height {}/{} control {}/{} px (high/low band); brightest {}, ground {:.1}",
             predicted_low_shift(),
             c(self.height[0]),
             c(self.height[1]),
             c(self.control[0]),
             c(self.control[1]),
-            self.brightest
+            self.brightest,
+            self.ground
         )
     }
 }
@@ -582,14 +626,10 @@ impl HeightReport {
 /// [`STRIPE_COLUMNS`], averaged over the rows; `None` when a row's stripe stands less than
 /// [`MIN_CONTRAST`] above its ground.
 fn stripe_centre(bytes: &[u8], panel: usize, rows: std::ops::Range<usize>) -> Option<f64> {
-    let luminance = |x: usize, y: usize| {
-        let i = (y * WIDTH + panel * PANEL + x) * 4;
-        0.2126 * f64::from(bytes[i]) + 0.7152 * f64::from(bytes[i + 1]) + 0.0722 * f64::from(bytes[i + 2])
-    };
     let mut sum = 0.0;
     let count = rows.len();
     for y in rows {
-        let row: Vec<(usize, f64)> = STRIPE_COLUMNS.map(|x| (x, luminance(x, y))).collect();
+        let row: Vec<(usize, f64)> = STRIPE_COLUMNS.map(|x| (x, luminance(bytes, panel, x, y))).collect();
         let (lo, hi) = row.iter().fold((f64::MAX, f64::MIN), |(lo, hi), &(_, v)| (lo.min(v), hi.max(v)));
         if hi - lo < MIN_CONTRAST {
             return None;
@@ -601,20 +641,31 @@ fn stripe_centre(bytes: &[u8], panel: usize, rows: std::ops::Range<usize>) -> Op
     Some(sum / count as f64)
 }
 
+/// The luminance of the texel at (`x`, `y`) of `panel`.
+fn luminance(bytes: &[u8], panel: usize, x: usize, y: usize) -> f64 {
+    let i = (y * WIDTH + panel * PANEL + x) * 4;
+    0.2126 * f64::from(bytes[i]) + 0.7152 * f64::from(bytes[i + 1]) + 0.0722 * f64::from(bytes[i + 2])
+}
+
 fn measure_height(bytes: &[u8]) -> HeightReport {
-    let mut brightest = 0u8;
+    let (mut brightest, mut ground, mut rows) = (0u8, 0.0, 0usize);
     for panel in [HEIGHT_PANEL, CONTROL_PANEL] {
         for y in HIGH_ROWS.chain(LOW_ROWS) {
+            let mut darkest = f64::MAX;
             for x in STRIPE_COLUMNS {
                 let i = (y * WIDTH + panel * PANEL + x) * 4;
                 brightest = brightest.max(bytes[i]).max(bytes[i + 1]).max(bytes[i + 2]);
+                darkest = darkest.min(luminance(bytes, panel, x, y));
             }
+            ground += darkest;
+            rows += 1;
         }
     }
     HeightReport {
         height: [stripe_centre(bytes, HEIGHT_PANEL, HIGH_ROWS), stripe_centre(bytes, HEIGHT_PANEL, LOW_ROWS)],
         control: [stripe_centre(bytes, CONTROL_PANEL, HIGH_ROWS), stripe_centre(bytes, CONTROL_PANEL, LOW_ROWS)],
         brightest,
+        ground: ground / rows as f64,
     }
 }
 
@@ -627,7 +678,7 @@ fn judge_height(h: &HeightReport, on: bool) -> Result<(), String> {
     }
     let middle = PANEL as f64 / 2.0;
     let (c_high, c_low) = (h.control[0].unwrap_or(0.0), h.control[1].unwrap_or(0.0));
-    if (c_high - middle).abs() > CONTROL_OFF_CENTRE || (c_low - middle).abs() > CONTROL_OFF_CENTRE || (c_high - c_low).abs() > STILL {
+    if (c_high - middle).abs() > STILL || (c_low - middle).abs() > STILL || (c_high - c_low).abs() > STILL {
         return fail("the control's stripe is not straight down the middle");
     }
     if high.abs() > STILL {
@@ -635,11 +686,15 @@ fn judge_height(h: &HeightReport, on: bool) -> Result<(), String> {
     }
     if on {
         let predicted = predicted_low_shift();
-        if low * predicted.signum() < MIN_SHIFT {
-            return fail(if low * predicted.signum() < -MIN_SHIFT { "the low band's stripe moved the wrong way" } else { "the low band's stripe did not move" });
+        let along = low * predicted.signum();
+        if along < -STILL {
+            return fail("the low band's stripe moved the wrong way");
         }
-        if low.abs() > MAX_SHIFT {
-            return fail("the low band's stripe moved too far");
+        if along <= STILL {
+            return fail("the low band's stripe did not move");
+        }
+        if (low - predicted).abs() > SHIFT_TOLERANCE {
+            return fail("the low band's stripe moved, but not by the predicted amount");
         }
     } else if low.abs() > STILL {
         return fail("setting off, the low band's stripe moved");
@@ -694,14 +749,6 @@ fn measure(bytes: &[u8]) -> Result<Report, String> {
     Ok(report)
 }
 
-/// Both comparators (module notes) on a measured frame: the five panels', then the height
-/// panels'.
-fn judge(report: Report, on: bool) -> Result<Report, String> {
-    let report = judge_panels(report, on)?;
-    judge_height(&report.height, on)?;
-    Ok(report)
-}
-
 /// The five panels' comparator (module notes).
 fn judge_panels(report: Report, on: bool) -> Result<Report, String> {
     let m = &report.mean;
@@ -749,10 +796,10 @@ fn new_output(home: &Path, stamp: u128, process: u32) -> std::io::Result<PathBuf
     Err(std::io::Error::other("output reservation collision limit"))
 }
 
-fn save_readback(out: &Path, ordinal: u8, frame: u64, bytes: &[u8], report: &Result<Report, String>) -> std::io::Result<()> {
+fn save_readback(out: &Path, ordinal: u8, frame: u64, bytes: &[u8], report: &Result<Report, String>, height_verdict: &str) -> std::io::Result<()> {
     create_file(&out.join(format!("readback-{ordinal}.rgba")), bytes)?;
     let described = match report {
-        Ok(r) => format!("{}\nheight: {}", r.describe(), r.height.describe()),
+        Ok(r) => format!("{}\nheight: {}\nheight verdict: {height_verdict}", r.describe(), r.height.describe()),
         Err(e) => e.clone(),
     };
     create_file(&out.join(format!("readback-{ordinal}.txt")), format!("submitted render frames at receipt: {frame}\npanels: {ALL_NAMES:?}\n{described}\n").as_bytes())?;

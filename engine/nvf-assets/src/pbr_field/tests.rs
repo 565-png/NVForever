@@ -124,16 +124,17 @@ fn frame(means: [u8; PANELS]) -> Vec<u8> {
     b
 }
 
-/// A frame whose height panels show a 5-pixel stripe (200 on a ground of 50): the control's
-/// down the middle, the height panel's moved by `shift` pixels in its high and low band.
-fn stripes(shift: [i64; 2]) -> Vec<u8> {
+/// A frame whose height panels show a 5-pixel stripe of `value` on a ground of 50: the
+/// control's down the middle, the height panel's moved by `shift` pixels in its high and low
+/// band.
+fn stripes(shift: [i64; 2], value: u8) -> Vec<u8> {
     let mut b = frame([150, 151, 149, 130, 150]);
     for (panel, offsets) in [(HEIGHT_PANEL, shift), (CONTROL_PANEL, [0, 0])] {
         for y in 0..HEIGHT {
             let offset = if y < HEIGHT / 2 { offsets[0] } else { offsets[1] };
             let centre = PANEL as i64 / 2 + offset;
             for x in 0..PANEL {
-                let v = if ((centre - 2)..=(centre + 2)).contains(&(x as i64)) { 200 } else { 50 };
+                let v = if ((centre - 2)..=(centre + 2)).contains(&(x as i64)) { value } else { 50 };
                 let i = (y * WIDTH + panel * PANEL + x) * 4;
                 b[i..i + 4].copy_from_slice(&[v, v, v, 255]);
             }
@@ -142,31 +143,42 @@ fn stripes(shift: [i64; 2]) -> Vec<u8> {
     b
 }
 
-/// The height comparator: on, the low band's stripe must move by several pixels the way the
-/// prediction says and the high band's stay; off, neither moves; a wrong sign, too little or
-/// too much travel, a moved high band, a missing stripe or a crooked control fail.
+/// The height comparator: on, the low band's stripe must move by the predicted amount (within
+/// the tolerance) and the high band's stay; off, neither moves; a wrong sign, no movement, a
+/// wrong amount, a moved high band, a clipped frame, a missing stripe or a crooked control
+/// fail. The observed readback of `b4660af00` passes.
 #[test]
 fn the_height_comparator_wants_the_predicted_shift_in_the_low_band_only() {
     let predicted = predicted_low_shift();
-    assert!(predicted < -MIN_SHIFT * 2.0 && predicted > -MAX_SHIFT, "the test's depth gives several pixels of travel: {predicted}");
+    assert!((predicted + 9.81).abs() < 0.01, "the prediction the field was run with: {predicted}");
     let way = predicted.signum() as i64;
-    let judged = |shift: [i64; 2], on: bool| judge_height(&measure(&stripes(shift)).unwrap().height, on);
-    let r = measure(&stripes([0, 9 * way])).unwrap().height;
+    let judged = |shift: [i64; 2], on: bool| judge_height(&measure(&stripes(shift, 180)).unwrap().height, on);
+    let r = measure(&stripes([0, 10 * way], 180)).unwrap().height;
     let [high, low] = r.shifts().unwrap();
-    assert!(high.abs() < 0.01 && (low - 9.0 * way as f64).abs() < 0.01, "{}", r.describe());
+    assert!(high.abs() < 0.01 && (low - 10.0 * way as f64).abs() < 0.01, "{}", r.describe());
     assert!((r.control[0].unwrap() - 64.5).abs() < 0.01, "pixel centres: {}", r.describe());
-    assert!(r.describe().contains("high=+0.00 px") && r.describe().contains("predicted low"), "{}", r.describe());
-    assert!(judged([0, 9 * way], true).is_ok());
-    assert!(judged([1, 5 * way], true).is_ok());
-    assert!(judged([0, -9 * way], true).err().is_some_and(|e| e.contains("wrong way")));
+    assert!(r.brightest == 180 && (r.ground - 50.0).abs() < 1e-9, "{}", r.describe());
+    assert!(r.describe().contains("high=+0.00 px") && r.describe().contains("predicted low") && r.describe().contains("brightest 180, ground 50.0"), "{}", r.describe());
+    assert!(judged([0, 10 * way], true).is_ok());
+    assert!(judged([1, 8 * way], true).is_ok());
+    assert!(judged([0, -10 * way], true).err().is_some_and(|e| e.contains("wrong way")), "a wrong sign fails");
+    assert!(judged([0, 0], true).err().is_some_and(|e| e.contains("did not move")), "on: no movement fails");
     assert!(judged([0, way], true).err().is_some_and(|e| e.contains("did not move")));
-    assert!(judged([0, 30 * way], true).is_err(), "too far");
-    assert!(judged([5, 9 * way], true).err().is_some_and(|e| e.contains("high band")));
-    assert!(judged([0, 0], false).is_ok());
-    assert!(judged([0, 9 * way], false).is_err(), "off: the low band must not move");
-    assert!(judged([0, 0], true).is_err(), "on: no movement fails");
+    assert!(judged([0, 6 * way], true).err().is_some_and(|e| e.contains("predicted amount")), "too little");
+    assert!(judged([0, 13 * way], true).err().is_some_and(|e| e.contains("predicted amount")), "too far");
+    assert!(judged([2, 10 * way], true).err().is_some_and(|e| e.contains("high band")));
+    assert!(judged([0, 0], false).is_ok(), "off: both stripes straight");
+    assert!(judged([0, 10 * way], false).err().is_some_and(|e| e.contains("setting off")), "off: the low band must not move");
+    // A clipped frame fails, whatever the shifts.
+    assert!(judge_height(&measure(&stripes([0, 10 * way], 255)).unwrap().height, true).err().is_some_and(|e| e.contains("clipped")));
     // No stripe at all (uniform height panels).
     assert!(judge_height(&measure(&frame([150, 151, 149, 130, 150])).unwrap().height, false).err().is_some_and(|e| e.contains("no stripe")));
+    // The observed readback (b4660af00, setting on): passes now that it is not clipped; the
+    // same centres judged off fail.
+    let observed = HeightReport { height: [Some(64.0), Some(54.24)], control: [Some(64.0), Some(64.0)], brightest: 190, ground: 40.0 };
+    assert!(judge_height(&observed, true).is_ok(), "{}", observed.describe());
+    assert!(judge_height(&observed, false).is_err());
+    assert!(judge_height(&HeightReport { brightest: 255, ..observed }, true).err().is_some_and(|e| e.contains("clipped")), "as it was observed: clipped");
 }
 
 #[test]
