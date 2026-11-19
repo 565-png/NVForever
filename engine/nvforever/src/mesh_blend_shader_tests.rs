@@ -541,13 +541,40 @@ fn without_pbr_debug(source: &str) -> String {
     out
 }
 
-/// A composed module's module-scope declarations (the composer separates them by a blank
-/// line), each trimmed, sorted: equal for two modules that declare the same things whatever
-/// their order.
-fn declarations(source: &str) -> Vec<&str> {
-    let mut d: Vec<&str> = source.split("\n\n").map(str::trim).filter(|d| !d.is_empty()).collect();
-    d.sort_unstable();
-    d
+/// A composed module's module-scope declarations, each kept whole and verbatim (its
+/// attribute lines, its body with every statement in place), then sorted: equal for two
+/// modules that declare the same things in any order. A declaration runs from its first line
+/// at brace depth 0 (attribute lines included) to the line that brings the depth back to 0
+/// ending in `}` or `;`; blank lines at depth 0 separate nothing and are dropped, blank lines
+/// inside a body stay in it. The composed WGSL has no comments or strings.
+fn declarations(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    let mut depth = 0i32;
+    for line in source.lines() {
+        let t = line.trim();
+        if depth == 0 && current.is_empty() && t.is_empty() {
+            continue;
+        }
+        current.push(line);
+        depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
+        assert!(depth >= 0, "unbalanced braces at {line:?}");
+        if depth == 0 && (t.ends_with('}') || t.ends_with(';')) {
+            out.push(current.join("\n"));
+            current.clear();
+        }
+    }
+    assert!(current.iter().all(|l| l.trim().is_empty()), "an unterminated declaration: {current:?}");
+    out.sort_unstable();
+    out
+}
+
+/// The first of two sorted declaration lists' differences, as a message (`None`: equal).
+fn declaration_difference(ours: &[String], theirs: &[String]) -> Option<String> {
+    let i = (0..ours.len().max(theirs.len())).find(|&i| ours.get(i) != theirs.get(i))?;
+    let (a, b) = (ours.get(i).map_or("", String::as_str), theirs.get(i).map_or("", String::as_str));
+    let at = first_difference(a, b).unwrap_or(0);
+    Some(format!("sorted declaration {i} of {}/{} differs at byte {at}:\nours:   {:?}\ntheirs: {:?}", ours.len(), theirs.len(), window(a, at), window(b, at)))
 }
 
 /// The byte where two texts first differ (`None`: equal).
@@ -571,9 +598,20 @@ fn window(s: &str, at: usize) -> &str {
     &s[start..end]
 }
 
-/// #2981: the NIF forward shader composes and validates (naga) with each channel view's defs
-/// and with the metallic debug def, bindless or not, ordinary or blend type; and with none
-/// of them set it composes to exactly the shader without that debug code.
+/// #2981: the NIF forward shader with the authored materials' debug defs.
+///
+/// What it proves: with each `NVF_PBR_VIEW` mode's defs, with `NVF_PBR_METALLIC`, and with a
+/// view and metallic together, the shader composes and naga validates it, bindless or not,
+/// ordinary or blend type, with and without UVs (`VERTEX_UVS`) and a normal map
+/// (`STANDARD_MATERIAL_NORMAL_MAP`); each such variant declares something the off variant
+/// does not. With none of those defs, the composed shader declares exactly what the same
+/// source declares with its debug lines stripped (`without_pbr_debug`), declaration by
+/// declaration, each verbatim, in any order.
+///
+/// What it does not prove: that the off shader equals the shader before stage 3. The stripped
+/// reference is made from the same file, so an unconditional edit to nif_material.wesl (or to
+/// a module it imports, such as the vendored two-channel clamp) is in both and passes. It
+/// executes no fragment.
 #[test]
 fn nif_forward_composes_with_the_authored_debug_defs_and_is_unchanged_without_them() {
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -591,33 +629,44 @@ fn nif_forward_composes_with_the_authored_debug_defs_and_is_unchanged_without_th
     use nvf_assets::nif_surface_blend::HeightLayout;
     for bindless in [false, true] {
         for blend in [false, true] {
-            let base = nif_defs(bindless, blend, false, false, HeightLayout::STORED);
-            let off = compose(&modules, entry, &base);
-            // The same declarations, each word for word; the composer may emit module-scope
-            // declarations in another order (it does: WGSL does not depend on that order).
-            let reference = compose(&before, entry, &base);
-            let (ours, theirs) = (declarations(&off), declarations(&reference));
-            if let Some(i) = (0..ours.len().max(theirs.len())).find(|&i| ours.get(i) != theirs.get(i)) {
-                let (a, b) = (ours.get(i).copied().unwrap_or(""), theirs.get(i).copied().unwrap_or(""));
-                let at = first_difference(a, b).unwrap_or(0);
-                panic!(
-                    "bindless={bindless} blend={blend}: off is not the shader without the debug code; sorted declaration {i} of {}/{} differs at byte {at}:\noff:       {:?}\nreference: {:?}",
-                    ours.len(),
-                    theirs.len(),
-                    window(a, at),
-                    window(b, at)
-                );
-            }
-            let mut sets: Vec<&[&str]> = nvf_assets::authored::PbrView::ALL.iter().map(|v| v.shader_defs()).collect();
-            sets.push(&["NVF_PBR_METALLIC"]);
-            sets.push(&["NVF_PBR_VIEW", "NVF_PBR_VIEW_OCCLUSION", "NVF_PBR_METALLIC"]);
-            for set in sets {
-                let mut defs = base.clone();
-                defs.extend(set.iter().map(|d| ShaderDefVal::from(*d)));
-                assert_ne!(compose(&modules, entry, &defs), off, "bindless={bindless} blend={blend} {set:?} changes the shader");
+            for mapped in [false, true] {
+                let mut base = nif_defs(bindless, blend, false, false, HeightLayout::STORED);
+                if mapped {
+                    base.extend(["VERTEX_UVS".into(), "STANDARD_MATERIAL_NORMAL_MAP".into()]);
+                }
+                let key = format!("bindless={bindless} blend={blend} uvs+normal map={mapped}");
+                let off = declarations(&compose(&modules, entry, &base));
+                if let Some(d) = declaration_difference(&off, &declarations(&compose(&before, entry, &base))) {
+                    panic!("{key}: off is not the shader without the debug code; {d}");
+                }
+                let mut sets: Vec<&[&str]> = nvf_assets::authored::PbrView::ALL.iter().map(|v| v.shader_defs()).collect();
+                sets.push(&["NVF_PBR_METALLIC"]);
+                sets.push(&["NVF_PBR_VIEW", "NVF_PBR_VIEW_OCCLUSION", "NVF_PBR_METALLIC"]);
+                for set in sets {
+                    let mut defs = base.clone();
+                    defs.extend(set.iter().map(|d| ShaderDefVal::from(*d)));
+                    assert!(declaration_difference(&declarations(&compose(&modules, entry, &defs)), &off).is_some(), "{key} {set:?}: the defs change no declaration");
+                }
             }
         }
     }
+}
+
+/// The splitter keeps a function body whole (its blank lines and statement order included)
+/// and attribute lines with what they qualify.
+#[test]
+fn declarations_are_split_whole_and_compared_in_any_order() {
+    let a = "@group(0) @binding(0)\nvar<uniform> v: f32;\n\nfn f() -> f32 {\n    let x = 1.0;\n\n    let y = 2.0;\n    return x + y;\n}\n\nstruct S {\n    a: f32,\n}\n";
+    let b = "struct S {\n    a: f32,\n}\n\nfn f() -> f32 {\n    let x = 1.0;\n\n    let y = 2.0;\n    return x + y;\n}\n@group(0) @binding(0)\nvar<uniform> v: f32;\n";
+    let (da, db) = (declarations(a), declarations(b));
+    assert_eq!(da.len(), 3);
+    assert!(declaration_difference(&da, &db).is_none(), "the same declarations in another order");
+    assert!(da.iter().any(|d| d.starts_with("@group(0) @binding(0)") && d.ends_with("v: f32;")));
+    // Two statements of one body swapped: a different declaration.
+    let swapped = a.replace("    let x = 1.0;\n\n    let y = 2.0;", "    let y = 2.0;\n\n    let x = 1.0;");
+    assert!(declaration_difference(&declarations(&swapped), &da).is_some());
+    // Another binding: different.
+    assert!(declaration_difference(&declarations(&a.replace("@binding(0)", "@binding(1)")), &da).is_some());
 }
 
 #[test]
