@@ -15,7 +15,8 @@
 //!   ones standing in it): those whose base is a LIGH, not deleted, neither negative nor off
 //!   by default, with a radius and a colour (the record's DATA, `fnv_world::lighting`; the
 //!   flags as the GECK wiki "GetLightFlag" lists them [documented]). Lights disabled at the
-//!   start are kept with that state. Kept per cell. Whether a light shows is the
+//!   start are kept with that state. Kept per cell, and listed again when a script's
+//!   SetInternalMarker changes the markers ([`DistantLights::relist_for_markers`]). Whether a light shows is the
 //!   simulation's present state (`SimState::present`; without a simulation, the state at
 //!   the start), checked within [`CHECKS_PER_FRAME`] units a frame (a hard bound, resumed
 //!   inside a cell), a pass every [`RECHECK_SECS`]; a cell whose set of present lights
@@ -738,26 +739,69 @@ pub const CARD_SHAFT: f32 = 1.0;
 pub const CARD_SHAFT_DIRECTED: f32 = 2.0;
 pub const CARD_HALO: f32 = 3.0;
 
-/// The integral of a card's profile ([`card_profile`]) over a round card of half size 1.
+/// The integral of a round card's profile ([`card_profile`], `exp(-4 r²) (1 - r²)`) over a
+/// card of half size 1, in closed form: 2π ∫₀¹ r p(r) dr = π ∫₀¹ e^(-4u) (1 - u) du
+/// (u = r²) = π (3 + e^(-4)) / 16, about 0.5927.
 fn round_integral() -> f32 {
-    // In polar terms: 2 pi times the integral of r profile(r) dr over 0..1.
-    let n = 256;
-    (0..n).map(|i| (i as f32 + 0.5) / n as f32).map(|r| r * card_profile([r, 0.0], CARD_ROUND)).sum::<f32>() * std::f32::consts::TAU / n as f32
+    std::f32::consts::PI * (3.0 + (-4.0f32).exp()) / 16.0
+}
+
+/// A shaft profile's integrals, the same for every shaft of a kind: the profile is the
+/// product of one function across and one along ([`card_profile`]), so a shaft's integral
+/// is a few multiplies of these ([`shaft_integral`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ShaftMoments {
+    /// ∫ across(x) dx over -1..1.
+    across: f32,
+    /// ∫ along(v) dv and ∫ v along(v) dv over 0..1: for [`CARD_SHAFT`], then
+    /// [`CARD_SHAFT_DIRECTED`].
+    along: [[f32; 2]; 2],
+}
+
+/// [`ShaftMoments`], computed once (midpoint sums of [`card_profile`] itself, so they follow
+/// any change to it).
+fn shaft_moments() -> &'static ShaftMoments {
+    static MOMENTS: std::sync::OnceLock<ShaftMoments> = std::sync::OnceLock::new();
+    MOMENTS.get_or_init(|| {
+        let n = 4096;
+        let mid = |i: usize| (i as f32 + 0.5) / n as f32;
+        // card_profile at v = 0.5 is across(x) × 1 for a plain shaft.
+        let across = (0..n).map(|i| card_profile([-1.0 + 2.0 * mid(i), 0.5], CARD_SHAFT)).sum::<f32>() * 2.0 / n as f32;
+        // card_profile at x = 0 is 1 × along(v).
+        let along = [CARD_SHAFT, CARD_SHAFT_DIRECTED].map(|kind| {
+            let (mut p0, mut p1) = (0.0, 0.0);
+            for i in 0..n {
+                let v = mid(i);
+                let p = card_profile([0.0, v], kind);
+                p0 += p;
+                p1 += v * p;
+            }
+            [p0 / n as f32, p1 / n as f32]
+        });
+        ShaftMoments { across, along }
+    })
 }
 
 /// The integral of a shaft's profile over its card in world units: across (x from -1 to 1
-/// spanning each end's half width, which changes linearly along it) and along its length.
+/// spanning the half width at that point, which changes linearly from `a` to `b`; the
+/// shader maps each fragment so, distant_lights.wesl `shaft_x`, CPU copy [`shaft_x`]) and
+/// along its length. With half width h(v) = (w_a + (w_b - w_a) v) / 2 it is
+/// length × ∫across × ∫ along(v) h(v) dv = length × ∫across × (w_a (P0 - P1) + w_b P1) / 2.
 fn shaft_integral(seg: &Segment) -> f32 {
-    let n = 128;
-    let kind = if seg.directed { CARD_SHAFT_DIRECTED } else { CARD_SHAFT };
-    let mut total = 0.0;
-    for j in 0..n {
-        let v = (j as f32 + 0.5) / n as f32;
-        let half_w = 0.5 * (seg.width_a + (seg.width_b - seg.width_a) * v);
-        let across: f32 = (0..n).map(|i| -1.0 + 2.0 * (i as f32 + 0.5) / n as f32).map(|x| card_profile([x, v], kind)).sum::<f32>() * 2.0 / n as f32;
-        total += across * half_w;
-    }
-    total * seg.length() / n as f32
+    let m = shaft_moments();
+    let [p0, p1] = m.along[usize::from(seg.directed)];
+    seg.length() * m.across * 0.5 * (seg.width_a * (p0 - p1) + seg.width_b * p1)
+}
+
+/// A shaft fragment's across coordinate (-1..1, the profile's x) from what the shader
+/// interpolates over the card's triangles: `s` the offset across in world units (∓ the
+/// drawn half width at each corner), `v` along (0 at `a`, 1 at `b`), and the drawn half
+/// widths at `a` and `b` (the shader's own copy, `shaft_x`). Both `s` and `v` are linear
+/// in each triangle, so `s` divided by the half width at `v` puts the profile's centre on
+/// the axis at every cross-section, as [`shaft_integral`] assumes.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn shaft_x(s: f32, v: f32, half_a: f32, half_b: f32) -> f32 {
+    s / (half_a + (half_b - half_a) * v.clamp(0.0, 1.0)).max(1e-6)
 }
 
 /// The light per pixel of a shaft: [`SHAFT_BRIGHTNESS`] × its round glow's integrated light
@@ -998,6 +1042,9 @@ pub struct DistantLights {
     models: GlowModels,
     /// Statics found glowing (for the summary), and those of them disabled at the start.
     glowing: HashSet<u32>,
+    /// The scripts' marker generation the cells were listed under
+    /// (`world::script_markers_generation`).
+    markers: u64,
 }
 
 impl DistantLights {
@@ -1086,6 +1133,21 @@ impl DistantLights {
         self.checking = None;
         self.built = None;
         self.entity.take()
+    }
+
+    /// A script's SetInternalMarker changed which bases are markers (`markers`: the new
+    /// generation): the cells were listed under the old markers, so they are listed again.
+    /// A running job is stopped (it may read the old ones); the lists and glows of the
+    /// cells in reach stay drawn until the new listing replaces them ([`Self::resolve_cell`]
+    /// drops a cell's glows when its sources differ), those beyond it go.
+    fn relist_for_markers(&mut self, markers: u64) {
+        self.markers = markers;
+        self.stop_scan();
+        self.cells.clear();
+        self.model_cells.clear();
+        let want = &self.want;
+        self.lists.retain(|g, _| want.contains(g));
+        self.scan_models = 0;
     }
 
     /// Take in a listed cell: queue its unread models, resolve its sources.
@@ -1295,6 +1357,12 @@ fn update(
         if let Some(e) = st.reset_for_world(world.world) {
             commands.entity(e).despawn();
         }
+    }
+    // Checked before any job starts this frame, so a job that read the old markers is
+    // stopped at the latest in the frame after the change.
+    let markers = crate::world::script_markers_generation();
+    if markers != st.markers {
+        st.relist_for_markers(markers);
     }
     // By day nothing is listed, checked or built; the mesh is hidden and a scan stopped.
     let elevation = sky.as_deref().map_or(90.0, |s| s.sun_elevation());
@@ -1835,9 +1903,123 @@ mod tests {
         let dot = round_integral() * half_size(4000.0).powi(2);
         let light = f * shaft_integral(&beam());
         assert!(f < MAX_SHAFT_GAIN && (light - SHAFT_BRIGHTNESS * dot).abs() < 1e-3 * dot, "{light} against {}", SHAFT_BRIGHTNESS * dot);
+        // By hand (round_integral 0.59264, half size 320: dot 60,687; the beam's integral
+        // 28,907, shaft_moments_by_hand): 1.5 × 60,687 / 28,907 = 3.149.
+        assert!((f - 3.149).abs() < 0.005, "{f}");
+        // The light the card's two triangles draw, integrated over them as the shader maps
+        // them (independent of shaft_integral's closed form): the same.
+        let drawn = f * drawn_shaft_light(&beam(), Vec3::new(5000.0, 1000.0, 1000.0), true);
+        assert!((drawn - SHAFT_BRIGHTNESS * dot).abs() < 0.01 * SHAFT_BRIGHTNESS * dot, "{drawn} against {}", SHAFT_BRIGHTNESS * dot);
         // A hair-thin shaft is held to the cap, not a white bar.
         let thin = Segment { width_a: 0.1, width_b: 0.1, ..beam() };
         assert_eq!(shaft_factor(4000.0, &thin), MAX_SHAFT_GAIN);
+    }
+
+    /// A shaft's profile integrated over its card's two triangles (glow_mesh's indices 0 1 2
+    /// and 0 2 3, corners from [`axial_corners`] seen from `eye`, no pixel floor): each
+    /// triangle cut into n² small ones, the profile taken at their centroids from the
+    /// attributes interpolated there, times their world area. `mapped`: the shader's mapping
+    /// across ([`shaft_x`] of the offset `s`, ∓ the half width at each corner); else the
+    /// across coordinate itself interpolated (∓1 at each corner), the mapping before it.
+    fn drawn_shaft_light(seg: &Segment, eye: Vec3, mapped: bool) -> f32 {
+        let (ha, hb) = (seg.width_a * 0.5, seg.width_b * 0.5);
+        let p = axial_corners(Vec3::from_array(seg.a), Vec3::from_array(seg.b), ha, hb, eye).expect("seen from the side");
+        let kind = if seg.directed { CARD_SHAFT_DIRECTED } else { CARD_SHAFT };
+        // Per corner (glow_mesh's order): the across attribute and v.
+        let across = if mapped { [-ha, ha, hb, -hb] } else { [-1.0, 1.0, 1.0, -1.0] };
+        let attr = [(across[0], 0.0), (across[1], 0.0), (across[2], 1.0), (across[3], 1.0)];
+        let n = 300;
+        let mut total = 0.0f64;
+        for [i0, i1, i2] in [[0, 1, 2], [0, 2, 3]] {
+            let area = 0.5 * (p[i1] - p[i0]).cross(p[i2] - p[i0]).length();
+            let at = |b1: f32, b2: f32| {
+                let b0 = 1.0 - b1 - b2;
+                let s = b0 * attr[i0].0 + b1 * attr[i1].0 + b2 * attr[i2].0;
+                let v = b0 * attr[i0].1 + b1 * attr[i1].1 + b2 * attr[i2].1;
+                let x = if mapped { shaft_x(s, v, ha, hb) } else { s };
+                card_profile([x, v], kind) as f64
+            };
+            let mut sum = 0.0f64;
+            for i in 0..n {
+                for j in 0..n - i {
+                    sum += at((i as f32 + 1.0 / 3.0) / n as f32, (j as f32 + 1.0 / 3.0) / n as f32);
+                    if j + 1 < n - i {
+                        sum += at((i as f32 + 2.0 / 3.0) / n as f32, (j as f32 + 2.0 / 3.0) / n as f32);
+                    }
+                }
+            }
+            total += sum * area as f64 / (n * n) as f64;
+        }
+        total as f32
+    }
+
+    /// The shaft integrals: the moments against their values by hand, the beam's integral
+    /// against the triangles drawn, and the mapping across.
+    #[test]
+    fn shaft_moments_by_hand() {
+        let m = shaft_moments();
+        // ∫ e^(-4x²)(1 - x²) dx over -1..1 = 0.77640 (a fine midpoint sum, worked apart).
+        assert!((m.across - 0.7764).abs() < 1e-3, "{}", m.across);
+        // A plain shaft: along = 4v(1 - v): ∫ = 2/3, ∫ v × it = 4/3 - 1 = 1/3.
+        assert!((m.along[0][0] - 2.0 / 3.0).abs() < 1e-4 && (m.along[0][1] - 1.0 / 3.0).abs() < 1e-4, "{:?}", m.along[0]);
+        // A directed one: (1 - v)² gives 1/3 and 1/12; the ramp over 0..0.08 takes off
+        // between 0.04 × 0.8464 and 0.04 (smoothstep's mean is a half; (1 - v)² is 1 to
+        // 0.8464 there), and less than 0.08 × 0.04 from the second.
+        let [p0, p1] = m.along[1];
+        assert!(p0 > 1.0 / 3.0 - 0.0401 && p0 < 1.0 / 3.0 - 0.0338, "{p0}");
+        assert!(p1 > 1.0 / 12.0 - 0.0033 && p1 < 1.0 / 12.0, "{p1}");
+        // The beam (length 2000, widths 20 and 400, directed): 2000 × 0.7764 × (20 (P0 - P1)
+        // + 400 P1) / 2 with P0 0.29522, P1 0.08244 = 28,907.
+        let beam_integral = shaft_integral(&beam());
+        assert!((beam_integral - 28_907.0).abs() < 30.0, "{beam_integral}");
+        // Seen from the side, the triangles as the shader maps them draw that light; the
+        // across coordinate interpolated as it was drew about 20,231, 30 % short.
+        let eye = Vec3::new(5000.0, 1000.0, 1000.0);
+        let mapped = drawn_shaft_light(&beam(), eye, true);
+        assert!((mapped - beam_integral).abs() < 0.005 * beam_integral, "{mapped} against {beam_integral}");
+        let plain = drawn_shaft_light(&beam(), eye, false);
+        assert!((plain - 20_231.0).abs() < 100.0, "{plain}");
+        // An even shaft (both widths 100): both mappings agree; 2000 × 0.7764 × 50 × 2/3.
+        let even = Segment { width_a: 100.0, width_b: 100.0, directed: false, ..beam() };
+        let want = 2000.0 * m.across * 50.0 * (2.0 / 3.0);
+        assert!((shaft_integral(&even) - want).abs() < 1.0);
+        for mapped in [true, false] {
+            let d = drawn_shaft_light(&even, eye, mapped);
+            assert!((d - want).abs() < 0.005 * want, "{d} against {want}");
+        }
+        // The mapping: the edges at ±1 at every v, the axis at 0.
+        assert_eq!(shaft_x(-10.0, 0.0, 10.0, 200.0), -1.0);
+        assert_eq!(shaft_x(200.0, 1.0, 10.0, 200.0), 1.0);
+        assert!((shaft_x(105.0, 0.5, 10.0, 200.0) - 1.0).abs() < 1e-6);
+        assert_eq!(shaft_x(0.0, 0.3, 10.0, 200.0), 0.0);
+        let shader = include_str!("distant_lights.wesl");
+        assert!(
+            shader.contains("corner.x = shaft_x(corner.x, corner.y, in.widths)") && shader.contains("corner = vec2<f32>(vertex.corner.x * half_w,") && shader.contains("s / max(mix(widths.x, widths.y, clamp(v, 0.0, 1.0)), 1e-6)"),
+            "the shader maps a shaft's fragments as shaft_x"
+        );
+    }
+
+    /// A script's marker change lists the cells again: the listing is dropped (the glows in
+    /// reach stay until the new one replaces them) and the next job lists the cells.
+    #[test]
+    fn a_marker_change_lists_the_cells_again() {
+        let mut st = DistantLights { want: vec![(0, 0)], centre: Some((0, 0)), ..default() };
+        st.cells.insert((0, 0), CellList::default());
+        st.cells.insert((14, 0), CellList::default());
+        st.lists.insert((0, 0), Arc::new(vec![light(1, [0.0; 3], 1.0)]));
+        st.lists.insert((14, 0), Arc::new(vec![light(2, [0.0; 3], 1.0)]));
+        st.check_present(&|_: &SourceLight| true, usize::MAX);
+        assert!(st.glows.contains_key(&(0, 0)));
+        assert!(st.next_job(|_| Vec::new()).is_none(), "all listed");
+        st.relist_for_markers(1);
+        assert_eq!(st.markers, 1);
+        assert!(st.cells.is_empty() && st.job.is_none());
+        assert!(st.lists.contains_key(&(0, 0)) && !st.lists.contains_key(&(14, 0)), "only the lists in reach stay");
+        assert!(st.glows.contains_key(&(0, 0)), "drawn until listed again");
+        assert!(matches!(st.next_job(|_| Vec::new()), Some(NextJob::Cells(c)) if c.len() == 1 && c[0].0 == (0, 0)));
+        // Listed again with a different source: the old glows go.
+        st.add_cell((0, 0), CellList { lights: vec![light(3, [0.0; 3], 1.0)], statics: Vec::new() });
+        assert!(!st.glows.contains_key(&(0, 0)));
     }
 
     /// The cards' profiles: 1 at the brightest point, a halo wider than the core, a directed

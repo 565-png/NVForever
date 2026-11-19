@@ -116,6 +116,30 @@ pub const END_RATIO: f32 = 1.25;
 /// The narrowest part (game units across) that can be a shaft [design].
 pub const MIN_SHAFT_WIDTH: f32 = 0.5;
 pub const CONE_RATIO: f32 = 1.5;
+/// The least share of a shaft's card (its length × the mean of its end widths) its own
+/// triangles must cover: the widths measure the whole vertex cloud, so two parallel rows
+/// whose triangles each stay in one row would give a wide shaft over nothing drawn
+/// [design: a flat beam card covers 1, a cone or crossed cards more, a diamond about 1].
+pub const MIN_SHAFT_COVER: f32 = 0.25;
+
+/// The area the triangles `tris` (vertex indices into `verts`, model space) cover; an index
+/// out of range counts nothing.
+pub fn triangles_area(verts: &[Vec3], tris: &[[u32; 3]]) -> f32 {
+    tris.iter()
+        .filter_map(|t| {
+            let [a, b, c] = t.map(|i| verts.get(i as usize).copied());
+            Some(0.5 * (b? - a?).cross(c? - a?).length())
+        })
+        .filter(|a| a.is_finite())
+        .sum()
+}
+
+/// Whether shaft `sh` of a part is drawn over its card: its triangles (`area`,
+/// [`triangles_area`]) cover at least [`MIN_SHAFT_COVER`] of its length × mean width.
+pub fn shaft_covered(sh: &Shaft, area: f32) -> bool {
+    let length = Vec3::from_array(sh.a).distance(Vec3::from_array(sh.b));
+    area >= MIN_SHAFT_COVER * length * 0.5 * (sh.width_a + sh.width_b)
+}
 
 /// A model's glow: where its round glowing shapes sit (their centre weighted by the light
 /// they show, in the model's space below the root: a placed reference's transform takes it
@@ -498,7 +522,9 @@ fn read_glow(data: &GameData, path: &str) -> Option<ModelGlow> {
             .and_then(|d| d.floats("vertex_colors"))
             .map(|f| f.as_chunks::<4>().0.iter().map(|c| clean_vertex_color(*c, props.vertex_alpha_part())).collect())
             .filter(|c: &Vec<[f32; 4]>| c.len() == verts.len());
-        let shape_of = part_shape(&verts, colours.as_deref());
+        // A shaft only where its triangles cover its card (not two rows of slivers).
+        let tris = data.map(fnv_nif::scene::triangle_indices).unwrap_or_default();
+        let shape_of = part_shape(&verts, colours.as_deref()).filter(|sh| shaft_covered(sh, triangles_area(&verts, &tris)));
         parts.push(GlowPart { centre: t.transform_point3(Vec3::from_array(centre)), radius, colour, visible: bright * radius * radius, shape: shape_of });
     }
     combine(&parts)
@@ -586,6 +612,27 @@ mod tests {
         assert_eq!(part_shape(&v, None), None);
         v[3] = Vec3::new(f32::INFINITY, 0.0, 0.0);
         assert_eq!(part_shape(&v, None), None);
+    }
+
+    /// Two parallel rows whose triangles each stay in one row draw nothing across the
+    /// measured width: no shaft. The strip's own quads cover its card.
+    #[test]
+    fn a_shaft_needs_triangles_across_its_width() {
+        let (v, _) = strip(1.0, 1.0);
+        let sh = part_shape(&v, None).expect("long");
+        // Quads between the rows (vertex 2i at x -10, 2i + 1 at x +10, row i): 8 quads of
+        // 20 × 50, two triangles of 500 each: 8000, the card's 400 × 20.
+        let quads: Vec<[u32; 3]> = (0..8u32).flat_map(|i| [[2 * i, 2 * i + 1, 2 * i + 2], [2 * i + 1, 2 * i + 3, 2 * i + 2]]).collect();
+        assert!((triangles_area(&v, &quads) - 8000.0).abs() < 1e-2);
+        assert!(shaft_covered(&sh, triangles_area(&v, &quads)));
+        // Slivers along each row: collinear, no area.
+        let slivers: Vec<[u32; 3]> = (0..7u32).flat_map(|i| [[2 * i, 2 * i + 2, 2 * i + 4], [2 * i + 1, 2 * i + 3, 2 * i + 5]]).collect();
+        assert_eq!(triangles_area(&v, &slivers), 0.0);
+        assert!(!shaft_covered(&sh, triangles_area(&v, &slivers)));
+        // A quarter of the card (2000) is enough, a little less is not.
+        assert!(shaft_covered(&sh, 2001.0) && !shaft_covered(&sh, 1990.0));
+        // An index out of range counts nothing.
+        assert_eq!(triangles_area(&v, &[[0, 1, 99]]), 0.0);
     }
 
     #[test]

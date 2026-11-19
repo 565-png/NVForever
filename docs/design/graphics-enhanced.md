@@ -2087,6 +2087,10 @@ what the feature mostly shows.
   colour comes only from its model is left out. Lights disabled at the start (their own flag
   or the enable parent chain, `world::enabled`) are kept with that state, so a script that
   enables one later shows it. The lists are kept per cell and dropped with the worldspace.
+  A script's SetInternalMarker change (`world::script_markers_generation` moves on) lists
+  the cells again, since the marker filter above classified them: a running scan is
+  stopped, and the glows of the cells in reach stay drawn until their new listing replaces
+  them.
 - **Glow statics.** Beside LIGH references, statics and moveable statics (STAT, MSTT),
   activators (ACTI) and static collections (SCOL) whose model glows, judged from the model's shapes and never from its file name
   (`nvf_assets::model_glow`), by the properties the renderer already reads
@@ -2194,7 +2198,9 @@ what the feature mostly shows.
   - *Shaft* (a long glowing part: a light beam, a neon tube): `model_glow` gives each
     glowing part its shape, the principal axis of its vertices (in the model's space), its
     length along it and its width across at each end; a part under 1.5 times as long as
-    wide stays round, and a model keeps its 4 brightest long parts as shafts, the rest in
+    wide stays round, and so does a part whose own triangles cover less than a quarter of
+    its length x mean width (the widths measure all its vertices, so two rows of slivers
+    would make a wide shaft over nothing drawn; `MIN_SHAFT_COVER`), and a model keeps its 4 brightest long parts as shafts, the rest in
     its round glow. The bright end is told by the vertex colours (alpha x luminance, the end
     thirds' means 1.25 times apart), else by the cone (the narrow end, the other 1.5 times
     wider, is the source), else the shaft is symmetric. The card spans the segment between
@@ -2207,6 +2213,13 @@ what the feature mostly shows.
     integrated light (the profile's integral over its card) is `SHAFT_BRIGHTNESS` (1.5, the
     first pictures read too dim at 1 against the real beam models) times its round glow's,
     held to 4 times (`MAX_SHAFT_GAIN`), so a hair-thin shaft does not become a white bar.
+    The shader maps each fragment across as its offset from the axis over the half width
+    at that point along (both linear over each of the card's two triangles, `shaft_x`), so
+    the profile is centred on the axis at every cross-section and the triangles draw the
+    integral computed (interpolating the -1..1 corner coordinate itself, a tapered beam drew
+    about 30 % less: 20,231 against 28,907 for the test beam). The profile is one function
+    across times one along, so its integrals are computed once per kind (`shaft_moments`)
+    and a shaft's costs a few multiplies when the mesh is built.
     Whether a shaft shows as one is decided once for its whole card from both ends (never
     half shaft, half dot): both ends between the near and far planes, neither seen end-on,
     and its length on screen at least two floors in output and in render pixels; otherwise

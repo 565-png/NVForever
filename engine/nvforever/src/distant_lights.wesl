@@ -20,8 +20,10 @@
 // floor gives less light per pixel (its own area over the area drawn, held to
 // `glow.extra.x`). Shaft: the card spans the segment between its ends, widened across by
 // each end's half width (held to the same floors) and facing the camera around its axis
-// (an axial billboard; CPU copy `axial_corners`); a shaft shorter on screen than two floors,
-// seen end-on, or with an end behind the camera is drawn as its round card (`shaft_shows`).
+// (an axial billboard; CPU copy `axial_corners`), its fragments mapped across by their
+// offset from the axis over the half width at that point (`shaft_x`); a shaft shorter on
+// screen than two floors, seen end-on, or with an end behind the camera is drawn as its
+// round card (`shaft_shows`).
 // Faded out over the reach's last cells (`glow.shape.yz`), by the night (`glow.shape.x`,
 // with the peak), and a slow shimmer for flickering and pulsing lights.
 //
@@ -71,11 +73,14 @@ struct GlowVertex {
 struct GlowOut {
     @builtin(position) position: vec4<f32>,
     @location(0) world_position: vec3<f32>,
-    // Round: the corner (-1..1); shaft: x across (-1..1), y along from `a` (0) to `b` (1).
+    // Round: the corner (-1..1); shaft: x the offset across in world units (minus and plus
+    // the drawn half width at each end), y along from `a` (0) to `b` (1).
     @location(1) corner: vec2<f32>,
     @location(2) color: vec4<f32>,
     // The kind drawn (a shaft drawn round is 0).
     @location(3) @interpolate(flat) kind: f32,
+    // A shaft's drawn half widths at `a` and `b` (the same at all four corners).
+    @location(4) @interpolate(flat) widths: vec2<f32>,
 }
 
 // One output pixel's and one render pixel's size (world units) at distance `d` (the main
@@ -113,6 +118,7 @@ fn vertex(vertex: GlowVertex) -> GlowOut {
     let up = view.world_from_view[1].xyz;
     var world = centre + (right * vertex.corner.x + up * vertex.corner.y) * half;
     var corner = vertex.corner;
+    var widths = vec2<f32>(1.0, 1.0);
     var kind = select(0.0, 3.0, vertex.shape.w > 2.5);
     if vertex.shape.w > 0.5 && vertex.shape.w < 2.5 {
         // A shaft, when it shows as one: both ends in front of the camera, its length on
@@ -137,11 +143,15 @@ fn vertex(vertex: GlowVertex) -> GlowOut {
                 let at_b = vertex.corner.y > 0.0;
                 let end = select(a, b, at_b);
                 let side = select(side_a, side_b, at_b);
-                let own_w = max(select(vertex.shape.x, vertex.shape.y, at_b), 1e-3);
-                let half_w = max(own_w, floor_half(distance(end, view.world_position.xyz)));
+                // Both ends' drawn half widths at every corner, for the fragment's mapping
+                // across (`shaft_x`).
+                let own = max(vertex.shape.xy, vec2<f32>(1e-3));
+                widths = max(own, vec2<f32>(floor_half(distance(a, view.world_position.xyz)), floor_half(distance(b, view.world_position.xyz))));
+                let own_w = select(own.x, own.y, at_b);
+                let half_w = select(widths.x, widths.y, at_b);
                 share = clamp(own_w / half_w, glow.extra.x, 1.0) * vertex.shape.z;
                 world = end + normalize(side) * (vertex.corner.x * half_w);
-                corner = vec2<f32>(vertex.corner.x, select(0.0, 1.0, at_b));
+                corner = vec2<f32>(vertex.corner.x * half_w, select(0.0, 1.0, at_b));
                 kind = vertex.shape.w;
             }
         }
@@ -150,8 +160,17 @@ fn vertex(vertex: GlowVertex) -> GlowOut {
     out.world_position = world;
     out.corner = corner;
     out.kind = kind;
+    out.widths = widths;
     out.color = vec4<f32>(vertex.color.rgb * (glow.shape.x * share * reach * shimmer), 1.0);
     return out;
+}
+
+// A shaft fragment's across coordinate (-1..1): the interpolated offset across `s` (world
+// units) over the drawn half width at `v`, both linear in each of the card's triangles, so
+// the profile is centred on the axis at every cross-section, as the CPU's energy integral
+// assumes (CPU copy: `shaft_x`).
+fn shaft_x(s: f32, v: f32, widths: vec2<f32>) -> f32 {
+    return s / max(mix(widths.x, widths.y, clamp(v, 0.0, 1.0)), 1e-6);
 }
 
 // How bright a card is at `corner` for its `kind` (1 at its brightest; 0 outside): see the
@@ -214,7 +233,11 @@ fn add_display(colour: vec3<f32>, under: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fragment(in: GlowOut) -> @location(0) vec4<f32> {
-    let shape = profile(in.corner, in.kind);
+    var corner = in.corner;
+    if in.kind > 0.5 && in.kind < 2.5 {
+        corner.x = shaft_x(corner.x, corner.y, in.widths);
+    }
+    let shape = profile(corner, in.kind);
     if shape <= 0.0 {
         discard;
     }

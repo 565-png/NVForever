@@ -1842,6 +1842,15 @@ fn base_type_name(b: Option<&BaseObject>) -> String {
 /// [`script_markers`], because every drawing path reads [`spawn_model`]'s marker test.
 static SCRIPT_MARKERS: std::sync::RwLock<std::collections::BTreeMap<u32, bool>> = std::sync::RwLock::new(std::collections::BTreeMap::new());
 
+/// Moved on each time [`SCRIPT_MARKERS`] changes, for what keeps lists classified by
+/// [`marker_model`] (distant_lights.rs) to list them again.
+static SCRIPT_MARKERS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many times the scripts' marker changes changed (0 at the start).
+pub fn script_markers_generation() -> u64 {
+    SCRIPT_MARKERS_GENERATION.load(std::sync::atomic::Ordering::Acquire)
+}
+
 fn script_marker(base: u32) -> Option<bool> {
     SCRIPT_MARKERS.read().ok()?.get(&base).copied()
 }
@@ -1854,6 +1863,9 @@ pub fn script_markers(script: Option<Res<nvf_play::script::ScriptState>>) {
     if !same {
         if let Ok(mut m) = SCRIPT_MARKERS.write() {
             *m = changes.iter().map(|(k, v)| (k.0, *v)).collect();
+            // Moved on while the write lock is held: a reader that sees the new generation
+            // reads the new markers.
+            SCRIPT_MARKERS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             info!("render: {} base form(s) made markers or drawn by a script (SetInternalMarker)", m.len());
         }
     }
