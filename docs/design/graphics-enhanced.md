@@ -2063,7 +2063,11 @@ turns it off, and then the material path reads no file under `textures\pbr\`. Li
 with texture coordinates take a set; unlit, additive, multiplied and refracting shapes,
 particles, hair, skin and FaceGen heads, landscape LOD and the Pip-Boy's and interface
 textures never do; without an `_n` (or tangents on the drawn mesh) the game's own normal map
-stays, its alpha no longer a highlight mask (docs/spec-notes/pbr-materials.md). [design]
+stays, its alpha no longer a highlight mask (docs/spec-notes/pbr-materials.md). On the
+experimental height branch (stage 4) a set's `_p` (or a height-only set) is drawn as Bevy's
+occlusion parallax, depth 0.03 unless the set's scalars say otherwise, at most 8 layers, on
+opaque, single-sided, non-decal shapes with tangents; its cost (a march of up to 8 depth reads
+per fragment, every read at the top mip level) is not yet measured. [design]
 
 ## 4. Tried and dropped
 

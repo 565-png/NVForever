@@ -18,16 +18,16 @@ below; a later version adds to them without changing their meaning.
 | Path rules, member names, the index of sets a load order supplies | **implemented** (`crates/fnv-pbr`; `GameData::pbr_index` in `engine/nvf-assets/src/data.rs` builds it on first use and logs one line of counts; materials ask for it only while the Authored materials setting is on) |
 | `fnvtool pbr list` (which sets a load order has, and which archive or folder supplies each file) | **implemented** (`crates/fnvtool/src/pbr_cmd.rs`, docs/cli-contract.md) |
 | Scalar file reading (`<stem>.toml`) | **implemented**; read once per mount, by the first shape that asks (stage 3) [documented: `engine/nvf-assets/src/data.rs` `GameData::pbr_scalars`] |
-| Reading members' pixels | `_orm` (linear) and `_n` (two-channel normal role, `TextureUsage::NormalTwoChannel`) **implemented** (stage 3); `_p` **planned** (stage 4); `_albedo` stays reserved |
+| Reading members' pixels | `_orm` (linear) and `_n` (two-channel normal role, `TextureUsage::NormalTwoChannel`) **implemented** (stage 3); `_p` (linear, unsigned only) **implemented on the experimental branch `pbr-height-2981`** (stage 4); `_albedo` stays reserved |
 | Reading BC7 and BC4 files (DDS with the DX10 header, or legacy `BC4U` / `BC4S`) | stage 1 of #2981 (`crates/fnv-dds`) |
 | Drawing a surface with its set (ORM, normal) | **implemented** in source (stage 3) [documented: `engine/nvf-assets/src/nif_spawn.rs` `shape_material`, `authored.rs` `retexture`]; the setting Authored materials (`authored-materials`, on by default, read at the start; `--graphics-only no-authored-materials`). Its check is the field test `pbr-authored-field` (below); a pack's look in the game is not yet compared |
-| Height maps (`_p`, parallax) | **planned** (stage 4, with #2979) |
+| Height maps (`_p`, parallax) | **implemented on the experimental branch `pbr-height-2981`** (stage 4, below: "Height maps"); not on main. The game's own height slot (#2979) is not read |
 | Metallic | read with the ORM but **held at 0** (stage 3, implemented) until the engine has a reflection source (stage 5) |
 | A pack validator (`fnvtool pbr check`, `fnvtool pbr selftest`) | **implemented** (`crates/fnvtool/src/pbr_check.rs`, docs/cli-contract.md `fnv.pbr.check/1`) |
 
 Sections marked "planned" describe how the engine will use a set once those stages land.
 Wherever this note says a member "will be read" or "will be accepted", stage 3 does so for
-`_orm` and `_n`; `_p` waits for stage 4.
+`_orm` and `_n`; `_p` is read on the stage 4 branch only.
 
 ## Layout
 
@@ -144,7 +144,7 @@ A TOML file of plain keys, all optional:
 
 | Key | Meaning | Range | Default |
 |---|---|---|---|
-| `parallax_depth` | depth of the height map's darkest point below the surface, in UV units (planned, stage 4) | 0 to 0.25 | the engine's own depth |
+| `parallax_depth` | depth of the height map's darkest point below the surface, in UV units (stage 4 branch); 0 draws no height map | 0 to 0.25 | 0.03 (`fnv_pbr::DEFAULT_PARALLAX_DEPTH`) |
 | `roughness_scale` | multiplies the ORM's roughness; the product is then clamped to 0.089..1 when drawn (below) | 0 to 2 | 1.0 |
 | `reflectance` | the highlight strength of non-metals; F0 = 0.16 x reflectance² (0 to 16 %) | 0 to 1 | 0.5 (F0 4 %) |
 
@@ -244,8 +244,8 @@ beyond the field test below):
   been run again yet.
 - Calibration aids, off by default, read at the start [documented: `authored.rs` `PbrView`,
   `metallic_debug`; `engine/nvf-assets/src/nif_material.wesl`]: `NVF_PBR_VIEW` =
-  `roughness`, `metallic`, `occlusion`, `normal` or `authored` draws that input in place of
-  the lit colour of forward-drawn lit NIF surfaces. Refracting shapes return before the
+  `roughness`, `metallic`, `occlusion`, `normal`, `authored` or (stage 4 branch) `height`
+  draws that input in place of the lit colour of forward-drawn lit NIF surfaces. Refracting shapes return before the
   view; additive draws add the view's colour by their alpha and multiplied draws stay
   neutral, so effects fade out of it; depth and coverage are unchanged.
   `NVF_PBR_METALLIC=1` builds authored materials metallic by the ORM's blue channel and keeps
@@ -255,6 +255,83 @@ beyond the field test below):
   shapes: material builds that applied a set, the distinct set stems seen at those builds,
   builds that skipped a set and why, role copies made legacy, and calls of `retexture`
   [documented: `authored.rs` `Stats`, `report`]. Rebuilt or discarded materials count again.
+
+## Height maps (stage 4, experimental branch `pbr-height-2981`)
+
+What the branch's source does with a set's `_p`, as written; not compared with any running
+game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs`
+`find`, `height_gate`, `apply_height`, `take_off`, `retexture`, `recheck_height`;
+`engine/nvf-assets/src/nif_spawn.rs` `shape_material_inner`].
+
+- [design] **Which sets.** An authored set's `_p` and a **height-only** set (`_p` without
+  `_orm`) both give a height map. A height-only set changes nothing else on the material:
+  the game's roughness, highlight, normal map and specular mask stay, the authored mark stays
+  clear (so a script's glossiness and specular colour still apply), and its `_n` and its other
+  scalars are ignored. The first-person rule of "Layout" holds: a `1stperson` texture's own
+  height-only set wins, and the plain texture's set is not used behind it.
+- [design] **Which shapes.** Those that may take a set at all (above), and of them only
+  shapes that are **opaque** (no alpha test, no blend, no blended cut-out, no hair),
+  **single-sided**, **not decals**, with texture coordinates and **tangents on the drawn
+  mesh**. Tangents are made for a shape whose first need for them is its `_p`; a copy of a
+  drawn mesh (an actor part's kept mesh) and a swap onto a drawn mesh use the tangents it has
+  (recorded in the legacy look), and draw no height map without them. Copies that stop
+  qualifying drop it: an effect shader's holes (which make an opaque copy `Mask(0)`) and the
+  fades' blended copies (nvforever `effect_shaders.rs`, nvf-play `fade.rs`); unlit copies
+  (Pip-Boy, terminal) and shapes made the game's own for a role found later (skin, face,
+  hair model) drop it with the rest of the set. A mount with only height-only sets still runs
+  the actors' role exclusions (`mount_has_sets` counts every active set).
+- [design] **How it is drawn.** As Bevy's parallax: `StandardMaterial::depth_map` = the
+  `_p`, `parallax_depth_scale` = `parallax_depth` (default 0.03), the occlusion method (a march
+  through layers, then one interpolation), at most **8 layers** (`MAX_PARALLAX_LAYERS`;
+  Bevy's default is 16). A depth of 0 means no height map: the `_p` is not even loaded. The
+  base colour, alpha, glow, ORM and the forward-sampled normal are read at the shifted
+  coordinates; the geometry, its depth and its shadow do not move.
+- [design] **Height, not depth.** The file stores height (white high); Bevy's march reads
+  depth (white deepest). The engine inverts once, in the vendored
+  `engine/vendor/bevy_pbr/src/render/parallax_mapping.wesl` `sample_depth_map` (both its
+  bindless and its ordinary sample, `1 - r`; engine/vendor/README.md). No other material in
+  the engine sets a depth map.
+- [design] **Signed `_p` is refused** (one warning per file; an authored set keeps its other
+  maps), as `fnvtool pbr check` refuses it ("Compression and sizes").
+- Checking it: `NVF_PBR_VIEW=height` draws the height as stored (white high, the original
+  height, not the inverted depth), read at the unshifted coordinates, and dark blue on shapes
+  without a depth map. The exit summary line adds the builds that applied a height map (and
+  how many from height-only sets), the height maps not put on at a build or swap by reason,
+  `_p` files that did not load or were refused as signed, and later copies that dropped one.
+  The smoke scenario `pbr-authored-field-height` (the same field, `NVF_PLAY_TEST_PBR_FIELD=1`)
+  draws two more panels tilted 50 degrees about Y: `height` (a height-only set whose `_p` is
+  high above and low below, depth 0.1) and its control without one; it measures a narrow
+  stripe's centre in both bands of both panels and wants the low band's stripe moved towards
+  decreasing mesh U by at least 3 pixels (the prediction from the shader's geometry is about
+  9.8) and the high band's within 2.5. Those thresholds are a first, generous guess [not yet
+  run on a GPU]; the readback lines `pbr field: readback N height ...` log the shifts.
+
+### Known limits (stage 4)
+
+[documented: the files named; none measured]
+
+- **The normal prepass.** Bevy's normal prepass samples the normal map at the unshifted
+  coordinates, and a single-sampled view with `NORMAL_PREPASS` may reuse that normal in the
+  main pass (`LOAD_PREPASS_NORMALS`, vendored `pbr_fragment.wesl`, `pbr_prepass_functions.wesl`).
+  NVForever's views never ask for a normal or deferred prepass: the cameras carry only
+  `DepthPrepass` and, with an upscaler, `MotionVectorPrepass` (`engine/nvforever/src/main.rs`,
+  `graphics.rs`, `scope_view.rs`, `fsr.rs`, `upscaler.rs`), so a NIF surface's main pass
+  always samples its normal itself, at the shifted coordinates. A view that ever adds
+  `NormalPrepass` (Bevy's SSAO requires it) would light a height-mapped surface with the
+  unshifted normal; nothing guards against it.
+- **Top mip level on every read.** The march reads the depth map with
+  `textureSampleLevel(..., 0.0)` on every step (Bevy's choice, for the DX12 compiler), so
+  distant height-mapped surfaces read the full-size map: a cost and a source of shimmer that
+  mip filtering does not remove. The frame-time cost of up to 8 layers on close, grazing,
+  screen-filling surfaces is not measured.
+- **Double-sided shapes** are left out: the march takes the incoming tangent frame without
+  turning it for back faces and divides by `|Vt.z|`.
+- **Cut-outs and blends** are left out: the depth prepass, the shadow passes and the holes
+  test read alpha at the unshifted coordinates, so a cut-out's edge would not follow the
+  shifted texels. A fading or holed copy therefore loses its relief while it fades.
+- The occlusion debug view rereads the ORM at the unshifted coordinates; the FaceGen tint,
+  the Pip-Boy screen and the holes test also read at unshifted coordinates (none of them
+  takes a height map today).
 
 ### Known limits (stage 3)
 
