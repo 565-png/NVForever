@@ -541,6 +541,36 @@ fn without_pbr_debug(source: &str) -> String {
     out
 }
 
+/// A composed module's module-scope declarations (the composer separates them by a blank
+/// line), each trimmed, sorted: equal for two modules that declare the same things whatever
+/// their order.
+fn declarations(source: &str) -> Vec<&str> {
+    let mut d: Vec<&str> = source.split("\n\n").map(str::trim).filter(|d| !d.is_empty()).collect();
+    d.sort_unstable();
+    d
+}
+
+/// The byte where two texts first differ (`None`: equal).
+fn first_difference(a: &str, b: &str) -> Option<usize> {
+    if a == b {
+        return None;
+    }
+    Some(a.bytes().zip(b.bytes()).position(|(x, y)| x != y).unwrap_or(a.len().min(b.len())))
+}
+
+/// About 200 bytes of `s` around byte `at`, on character boundaries.
+fn window(s: &str, at: usize) -> &str {
+    let mut start = at.saturating_sub(120).min(s.len());
+    while !s.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut end = (at + 120).min(s.len());
+    while !s.is_char_boundary(end) {
+        end += 1;
+    }
+    &s[start..end]
+}
+
 /// #2981: the NIF forward shader composes and validates (naga) with each channel view's defs
 /// and with the metallic debug def, bindless or not, ordinary or blend type; and with none
 /// of them set it composes to exactly the shader without that debug code.
@@ -563,7 +593,21 @@ fn nif_forward_composes_with_the_authored_debug_defs_and_is_unchanged_without_th
         for blend in [false, true] {
             let base = nif_defs(bindless, blend, false, false, HeightLayout::STORED);
             let off = compose(&modules, entry, &base);
-            assert_eq!(off, compose(&before, entry, &base), "bindless={bindless} blend={blend}: off is the shader without the debug code");
+            // The same declarations, each word for word; the composer may emit module-scope
+            // declarations in another order (it does: WGSL does not depend on that order).
+            let reference = compose(&before, entry, &base);
+            let (ours, theirs) = (declarations(&off), declarations(&reference));
+            if let Some(i) = (0..ours.len().max(theirs.len())).find(|&i| ours.get(i) != theirs.get(i)) {
+                let (a, b) = (ours.get(i).copied().unwrap_or(""), theirs.get(i).copied().unwrap_or(""));
+                let at = first_difference(a, b).unwrap_or(0);
+                panic!(
+                    "bindless={bindless} blend={blend}: off is not the shader without the debug code; sorted declaration {i} of {}/{} differs at byte {at}:\noff:       {:?}\nreference: {:?}",
+                    ours.len(),
+                    theirs.len(),
+                    window(a, at),
+                    window(b, at)
+                );
+            }
             let mut sets: Vec<&[&str]> = nvf_assets::authored::PbrView::ALL.iter().map(|v| v.shader_defs()).collect();
             sets.push(&["NVF_PBR_METALLIC"]);
             sets.push(&["NVF_PBR_VIEW", "NVF_PBR_VIEW_OCCLUSION", "NVF_PBR_METALLIC"]);
