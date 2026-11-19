@@ -1944,8 +1944,17 @@ behaviour; the code is `engine/nvforever/src/full_detail.rs`.
   cell, so nothing of nvf-play draws into it. Its models keep their reference's
   `RefVisual` (the simulation hides and shows them, deletions and texture swaps reach
   them) and carry `nvf_play::DrawOnly`: the console's and the editor's picks, the
-  crosshair, the loaded counts, the scripts' NIF functions and scripted effect shaders
-  (with their add-on models and particles) leave them out. No collider.
+  crosshair, the loaded counts, the scripts' NIF functions, scripted effect shaders (with
+  their add-on models and particles) and the actors' hit volumes and blocking
+  (nvf-play hitvol.rs, both where meshes are marked and where their bounds are read) leave
+  them out. No collider.
+- **Game-side checks**: the test aid `NVF_PLAY_TEST_GAME_DIGEST=<seconds>,...` (a
+  measuring aid, it drives nothing; nvforever `game_digest.rs`) logs at each time `game
+  digest t=<s>: cells <hash> residents-high <hash> triggers <n> zones <n> onload <n>`: an
+  order-independent hash of `Game::loaded_cells` and of the residents in the high process,
+  and the triggers entered, encounter zones entered and reference OnLoad blocks run so
+  far. The smoke pair `full-detail-ring-off` / `full-detail-ring-9x9` takes the same digests
+  on the same route; with the ring at 9 x 9 they must match the ring-off run's.
 - **Drawn**: STAT, SCOL and MSTT references (a moveable static with its idle sequence
   playing, nothing else of its rig, its pose never published to physics), SpeedTrees
   (their generated geometry, else their billboard), and every other reference with a
@@ -1953,11 +1962,15 @@ behaviour; the code is `engine/nvforever/src/full_detail.rs`.
   "Reference", GetReferenceFlag]), as plain static scenery: the model's shapes as stored,
   no rig, light source, emitter, stored pose or collision. A moveable static's idle stands
   still while its ring cell draws nothing (spawning, standing by fully under a loaded
-  cell). Trees: the ring draws exactly the trees the distant billboards draw (treelod.rs
-  `distant_tree`: a TREE with a SpeedTree, enabled at the start, at its authored place, as
-  the billboards and the loaded cells draw them), and the billboards crossfade with ring
-  cells' trees as with loaded cells' (treelod.rs reads `DrawnCells`); a cell where a tree
-  drew nothing keeps its billboards. A tree base the loaded cells have not built is waited
+  cell). Trees: the ring draws exactly the trees the distant billboards draw, by one shared
+  rule (treelod.rs `distant_tree_ref`: a TREE with a SpeedTree, no imposter, no primitive,
+  enabled at the start, at its authored place), and the billboards crossfade with ring
+  cells' trees as with loaded cells' (treelod.rs reads `DrawnCells`). Sharing the rule
+  changed the billboards with the ring off too: imposter and primitive TREE references no
+  longer get one (an imposter is drawn by region, a primitive never). A cell where a tree
+  drew nothing keeps all its billboards, so its other trees show twice (full tree and
+  card): the billboards are one mesh per cell and TREE base, so keeping one tree's card
+  alone would mean rebuilding that mesh; the doubling is the accepted fallback. A tree base the loaded cells have not built is waited
   for 3 seconds (`TREE_WAIT_SECS`), then built on the main thread, one per frame (tree.rs
   has no worker-thread path; one build is not bounded in time). A cell's object LOD
   segment holds the
@@ -1980,9 +1993,13 @@ behaviour; the code is `engine/nvforever/src/full_detail.rs`.
   covering ring cells), grass, and non-flagged activators, doors, containers, furniture,
   terminals and items.
 - **Kept segments**: a cell keeps its LOD segment while a flagged reference in it is not
-  drawn here: an actor, placed water, or one whose model spawned no shape (missing,
-  hidden, empty). The reasons are kept per reference: a later draw of that reference (a
-  destruction model that draws) clears its reason. There the segment shows beside the full
+  drawn here: an actor, placed water (types the ring never draws, kept for good and never
+  drawn by a model swap), or one whose model spawned no shape (missing, hidden, empty).
+  Those are kept per reference against the cell's own entity, from its spawn through its
+  publication to its retirement (`KeptRefs`); unflagged ones too, as retries without a
+  segment. A later model swap may draw such a reference in that cell (destroyed.rs), and
+  a draw clears its reason; a swap's result never reaches another cell, or a later cell at
+  the same square, or a retiring one. There the segment shows beside the full
   models of the cell's other references, and since a segment holds the LOD of all the
   cell's flagged references, those show twice (full model and LOD) for as long as the
   cell keeps it: a doubling rather than a hole. Everywhere else nothing is doubled at rest.
@@ -2027,9 +2044,12 @@ behaviour; the code is `engine/nvforever/src/full_detail.rs`.
   frame, as the loaded cells); a destroyed reference's ring copies drawn again. The
   summary's milliseconds are the whole time of the ring's own systems on the main thread
   (stream, fade, the ring's part of destroyed.rs), these included; the commands they queue
-  are applied by Bevy later and are not measured. Ring copies still cost every frame once
-  drawn: their meshes, the animated materials of their models and the leaf-order sorting of
-  their trees; their moveable statics' idles stand still while the cell draws nothing.
+  are applied by Bevy later and are not measured. At rest (the same centre, reach and
+  loaded cells, none fading or spawning, every ring cell in and at rest) the ring's systems
+  do nothing but compare that state. Ring copies still cost every frame once drawn: their
+  meshes, the animated materials of their models and the leaf-order sorting of their
+  trees; their moveable statics' idles stand still while the cell draws nothing and while
+  a retired cell despawns, and a rig without shapes is not spawned.
 - **Size cut**: in the ring's outermost cells a reference not flagged visible when distant
   is left out when its model's bounding radius is under 0.004 of its distance from the
   loaded grid's centre (`SIZE_CUT`; about 57 units at 4 cells). The cell keeps the list,
