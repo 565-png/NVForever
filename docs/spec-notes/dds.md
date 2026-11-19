@@ -104,17 +104,24 @@ explicitly, so rendering does not rely on the naming convention.
 with `expected_size` `null`. For a file with a DX10 header (§6), `format` is the DXGI
 name of its code (`BC7_UNORM_SRGB`), or `unknown(dxgi=N)` for a code not read, and
 `dxgi_format` is the code itself; `dxgi_format` is `null` for every other file.
-`cubemap` = capabilities-2 bit 0x200 (or the DX10 cube flag); `faces` = number of the
-six face bits set (1 when not a cube map). Sizes count the bytes after the headers: 128
-bytes, or 148 with a DX10 header. The listing reads the headers only; it does not apply
-the refusals of §6.3. `error` is set when the file is not a valid DDS (bad magic, short
-header, a DX10 file shorter than 148 bytes); then the other fields are `null`. Lab
-comparator: **keyed** on `path`, all fields.
+`cubemap` = capabilities-2 bit 0x200 (or the DX10 cube flag); `faces` = faces per array
+element: for a legacy file the number of the six face bits set (1 when not a cube map),
+for a DX10 cube map always 6, one cube per array element (§6.1). `array_size` is a DX10
+header's array size (`null` for every other file). `expected_size` covers every array
+element, face and level, and for a DX10 volume (3D) each level's slices; it is `null`
+for a DX10 layout the listing does not size (a resource dimension other than 1D, 2D or
+3D, an array size of 0, a volume that is an array or a cube, a 1D cube). Sizes count the
+bytes after the headers: 128 bytes, or 148 with a DX10 header. The listing reads the
+headers only; it does not apply the refusals of §6.3. `error` is set when the file is
+not a valid DDS (bad magic, short header, a DX10 file shorter than 148 bytes); then the
+other fields are `null`. Lab comparator: **keyed** on `path`, all fields.
 
 ## 6. DX10 header (files from other tools, #2981)
 
 No file of the base game has one (§1). Texture tools write it for formats the legacy
-pixel format cannot name (BC7, sRGB variants) and for arrays.
+pixel format cannot name (BC7, sRGB variants) and for arrays, and may write it for
+formats a legacy FourCC also names (BC1-BC5, §6.2): the format read is the same either
+way.
 
 ### 6.1 Layout
 
@@ -134,7 +141,9 @@ pixel format cannot name (BC7, sRGB variants) and for arrays.
      opaque), 4 custom (the alpha is a fourth data channel); the other bits are
      reserved.
 - The levels are laid out as in §3, each array element a full chain [documented: MS
-  "Programming Guide for DDS", texture arrays]. Block formats keep whole 4×4 blocks
+  "Programming Guide for DDS", texture arrays]; a cube map's element is its six faces.
+  A volume's level holds its slices together, half as many each level, at least one
+  [documented: MS "DDS Volume Texture Example"]. Block formats keep whole 4×4 blocks
   per level; BC1 and BC4 blocks are 8 bytes, the other BC formats 16 [documented: MS
   "Programming Guide for DDS", pitch of block-compressed formats].
 
@@ -148,16 +157,19 @@ pixel format cannot name (BC7, sRGB variants) and for arrays.
 | 71, 72 | BC1_UNORM, _SRGB | DXT1 |
 | 74, 75 | BC2_UNORM, _SRGB | DXT3 |
 | 77, 78 | BC3_UNORM, _SRGB | DXT5 |
-| 80, 81 | BC4_UNORM, BC4_SNORM | BC4: one channel, 8-byte blocks |
-| 83, 84 | BC5_UNORM, BC5_SNORM | BC5 (dds-bc5.md) |
+| 80, 81 | BC4_UNORM, BC4_SNORM | BC4: one channel, 8-byte blocks (legacy `BC4U`, `BC4S`) |
+| 83, 84 | BC5_UNORM, BC5_SNORM | BC5 (dds-bc5.md; legacy `ATI2`, `BC5S`) |
 | 87, 91 | B8G8R8A8_UNORM, _SRGB | A8R8G8B8 (§2): bytes B, G, R, A |
 | 98, 99 | BC7_UNORM, _SRGB | BC7: four channels, 16-byte blocks |
 
 The byte orders of 28 and 87 are those of the legacy masks Microsoft gives for the
 same formats [documented: MS "Programming Guide for DDS", common formats table].
-Microsoft's guide also lists legacy FourCCs `BC4U` and `BC4S` for BC4_UNORM and
-BC4_SNORM, read here too; `ATI1` is not in that table and is not read [documented: MS
-"Programming Guide for DDS", common formats table].
+BC4 and BC5 also come with legacy headers: Microsoft's guide lists the FourCCs `BC4U`
+and `BC4S` for BC4_UNORM and BC4_SNORM, and `ATI2` and `BC5S` for BC5_UNORM and
+BC5_SNORM; all four are read, with data at byte 128 and no sRGB hint or alpha mode.
+`ATI1` and `BC5U` are not in that table and are not read [documented: MS "Programming
+Guide for DDS", common formats table]. BC7 has no legacy FourCC in that table, so BC7
+is read from a DX10 header only.
 
 ### 6.3 What NVForever does with it [design: #2981]
 
@@ -170,10 +182,12 @@ BC4_SNORM, read here too; `ATI1` is not in that table and is not read [documente
 - An OPAQUE alpha mode (`DdsHeader::alpha_opaque`) marks the texture as holding no
   alpha mask, so a normal map with that mode gets the no-mask specular of nif.md §6.
   Without it a BC7 or BC3 normal map's alpha is read as its specular mask, as for a
-  legacy DXT5 one.
-- BC7 has no CPU decoder in the engine: it goes to the GPU as blocks when the top
-  level's sides are multiples of 4 and the GPU samples BC formats, and is refused
-  otherwise. BC4 is linear data only (a height or a mask): native when aligned and
+  legacy DXT5 one. A DX10 BC1 holds no mask on every path, also when decoded to RGBA8
+  for sides off the block grid; a legacy DXT1 decoded so keeps the engine's earlier
+  reading (its alpha taken as a mask), unchanged by this work.
+- The BC4 and BC5 rules hold whichever header the file has. BC7 has no CPU decoder in
+  the engine: it goes to the GPU as blocks when the top level's sides are multiples of
+  4 and the GPU samples BC formats, and is refused otherwise. BC4 is linear data only (a height or a mask): native when aligned and
   supported, else decoded on the CPU to one byte a texel; a colour or normal-map use
   is refused. The CPU readers of alpha (cut-out detection, alpha maps) report no alpha
   for BC4 and BC7, and the generated terrain LOD bake reads no BC4 or BC7 texture.

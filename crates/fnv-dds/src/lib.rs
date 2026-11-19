@@ -128,8 +128,11 @@ const PF_ALPHA_PIXELS: u32 = 0x1;
 const PF_LUMINANCE: u32 = 0x20000;
 const CAPS2_CUBEMAP: u32 = 0x200;
 const CAPS2_ALL_FACES: u32 = 0xFC00;
-/// `DDS_DIMENSION_TEXTURE2D` [documented: MS "DDS_HEADER_DXT10", resourceDimension].
+/// `DDS_DIMENSION_TEXTURE1D`, `_TEXTURE2D`, `_TEXTURE3D` [documented: MS
+/// "DDS_HEADER_DXT10", resourceDimension].
+const DX10_DIMENSION_TEXTURE1D: u32 = 2;
 const DX10_DIMENSION_TEXTURE2D: u32 = 3;
+const DX10_DIMENSION_TEXTURE3D: u32 = 4;
 /// `DDS_RESOURCE_MISC_TEXTURECUBE` [documented: MS "DDS_HEADER_DXT10", miscFlag].
 const DX10_MISC_TEXTURECUBE: u32 = 0x4;
 /// `DDS_ALPHA_MODE_OPAQUE`, in the low three bits of miscFlags2 [documented: MS
@@ -385,11 +388,12 @@ impl DdsHeader {
         self.caps[1] & CAPS2_CUBEMAP != 0 || self.dx10.is_some_and(|x| x.is_cubemap())
     }
 
-    /// Faces stored. A DX10 cube map holds six per cube in its array [documented: MS
-    /// "DDS_HEADER_DXT10", arraySize]; [`Dds::parse`] refuses DX10 cube maps anyway.
+    /// Faces stored per array element: six for a DX10 cube map, each element of its array
+    /// being one cube [documented: MS "DDS_HEADER_DXT10", arraySize]; the legacy face
+    /// bits otherwise. [`Dds::parse`] refuses DX10 cube maps anyway.
     pub fn faces(&self) -> u32 {
-        if let Some(x) = self.dx10.filter(|x| x.is_cubemap()) {
-            6u32.saturating_mul(x.array_size.max(1))
+        if self.dx10.is_some_and(|x| x.is_cubemap()) {
+            6
         } else if self.is_cubemap() {
             (self.caps[1] & CAPS2_ALL_FACES).count_ones().max(1)
         } else {
@@ -402,13 +406,46 @@ impl DdsHeader {
         (self.width.checked_shr(i).unwrap_or(0).max(1), self.height.checked_shr(i).unwrap_or(0).max(1))
     }
 
-    /// Payload bytes the layout needs (all faces, all levels), saturating on absurd headers.
+    /// Array elements stored: a DX10 header's array size (cubes, for a cube map), else 1.
+    pub fn array_elements(&self) -> u32 {
+        self.dx10.map_or(1, |x| x.array_size)
+    }
+
+    /// Whether a DX10 volume texture: each level then holds `depth` slices, halving like
+    /// the sides with a minimum of 1, all slices of a level together [documented: MS
+    /// "DDS_HEADER_DXT10", resourceDimension; MS "DDS Volume Texture Example"]. Legacy
+    /// volume bits are not read (no game file is a volume, dds.md §3).
+    fn is_dx10_volume(&self) -> bool {
+        self.dx10.is_some_and(|x| x.resource_dimension == DX10_DIMENSION_TEXTURE3D)
+    }
+
+    /// Whether [`Self::expected_size`] sizes this layout: every legacy file, and a DX10
+    /// one of 1D or 2D textures (an array of at least one; cubes 2D only) or a single
+    /// volume. Anything else (an unknown dimension, an array of 0, a volume array or
+    /// cube) is not sized: the listing prints `null`.
+    pub fn layout_sized(&self) -> bool {
+        match self.dx10 {
+            None => true,
+            Some(x) => match x.resource_dimension {
+                DX10_DIMENSION_TEXTURE1D => x.array_size >= 1 && !x.is_cubemap(),
+                DX10_DIMENSION_TEXTURE2D => x.array_size >= 1,
+                DX10_DIMENSION_TEXTURE3D => x.array_size == 1 && !x.is_cubemap(),
+                _ => false,
+            },
+        }
+    }
+
+    /// Payload bytes the layout needs (all array elements, faces, levels and, for a DX10
+    /// volume, slices), saturating on absurd headers. Meaningful when
+    /// [`Self::layout_sized`].
     pub fn expected_size(&self, f: Format) -> usize {
+        let volume = self.is_dx10_volume();
         let per_face = (0..self.levels().min(32)).fold(0usize, |acc, i| {
             let (w, h) = self.level_dims(i);
-            acc.saturating_add(f.level_size(w, h))
+            let slices = if volume { self.depth.checked_shr(i).unwrap_or(0).max(1) as usize } else { 1 };
+            acc.saturating_add(f.level_size(w, h).saturating_mul(slices))
         });
-        per_face.saturating_mul(self.faces() as usize)
+        per_face.saturating_mul(self.faces() as usize).saturating_mul(self.array_elements() as usize)
     }
 }
 
@@ -675,15 +712,19 @@ pub fn decode_bc5(format: Format, w: u32, h: u32, src: &[u8]) -> Option<Vec<[f32
 }
 
 /// Decode one level of DXT1/3/5 data of `w`×`h` texels to RGBA8 (row-major); `None` for
-/// other formats or data too short.
+/// other formats, data too short, or a side of 0 or above [`MAX_SIDE`] (every caller's
+/// size comes from a parsed header, which is within those bounds), checked before
+/// anything is allocated.
 pub fn decode_blocks(format: Format, w: u32, h: u32, src: &[u8]) -> Option<Vec<u8>> {
     let block = format.block_bytes().filter(|_| matches!(format, Format::Dxt1 | Format::Dxt3 | Format::Dxt5))?;
-    let (bw, bh) = (w.div_ceil(4) as usize, h.div_ceil(4) as usize);
-    if src.len() < bw * bh * block {
+    if !(1..=MAX_SIDE).contains(&w) || !(1..=MAX_SIDE).contains(&h) || src.len() < format.level_size(w, h) {
         return None;
     }
+    let (bw, bh) = (w.div_ceil(4) as usize, h.div_ceil(4) as usize);
     let (w, h) = (w as usize, h as usize);
-    let mut out = vec![0u8; w * h * 4];
+    let mut out = Vec::new();
+    out.try_reserve_exact(w.checked_mul(h)?.checked_mul(4)?).ok()?;
+    out.resize(w * h * 4, 0u8);
     for by in 0..bh {
         for bx in 0..bw {
             let b = &src[(by * bw + bx) * block..][..block];
@@ -1130,6 +1171,44 @@ mod dx10_tests {
         }
         // The other misc bits and a mip count of 0 are not refusals.
         assert!(Dds::parse(&dx10(Ext { misc: 0x1, ..ext(98) }, 4, 4, 0, 0, 16)).is_ok());
+    }
+
+    /// What the header-only listing sizes: arrays count every element, a cube six faces
+    /// per element, a volume each level's slices; layouts it cannot size say so.
+    #[test]
+    fn arrays_cube_arrays_and_volumes_are_sized_whole() {
+        let header = |e: Ext, mips: u32, depth: u32| {
+            let mut d = dx10(e, 4, 4, mips, 0, 0);
+            d[24..28].copy_from_slice(&depth.to_le_bytes());
+            DdsHeader::parse(&d).unwrap()
+        };
+        let array = header(Ext { array: 2, ..ext(98) }, 1, 0);
+        assert!(array.layout_sized());
+        assert_eq!((array.faces(), array.array_elements(), array.expected_size(Format::Bc7)), (1, 2, 32));
+        let cubes = header(Ext { misc: 0x4, array: 2, ..ext(98) }, 1, 0);
+        assert_eq!((cubes.faces(), cubes.expected_size(Format::Bc7)), (6, 6 * 2 * 16));
+        // 4×4×4 BC7, 3 levels: 4 slices, then 2, then 1, one block each.
+        let volume = header(Ext { dimension: 4, ..ext(98) }, 3, 4);
+        assert!(volume.layout_sized());
+        assert_eq!(volume.expected_size(Format::Bc7), (4 + 2 + 1) * 16);
+        // 1D arrays are sized like 2D ones.
+        assert_eq!(header(Ext { dimension: 2, array: 3, ..ext(98) }, 1, 0).expected_size(Format::Bc7), 48);
+        for e in [Ext { array: 0, ..ext(98) }, Ext { dimension: 0, ..ext(98) }, Ext { dimension: 4, array: 2, ..ext(98) }, Ext { dimension: 4, misc: 0x4, ..ext(98) }, Ext { dimension: 2, misc: 0x4, ..ext(98) }] {
+            assert!(!header(e, 1, 4).layout_sized());
+        }
+        // Legacy files and a flat DX10 2D texture are sized as before.
+        assert!(header(ext(98), 1, 0).layout_sized());
+        assert_eq!(header(ext(98), 1, 9).expected_size(Format::Bc7), 16, "depth counts for volumes only");
+    }
+
+    #[test]
+    fn decode_blocks_refuses_sides_out_of_range_before_allocating() {
+        let block = [0u8; 16];
+        for (w, h) in [(0, 4), (4, 0), (MAX_SIDE + 1, 4), (4, u32::MAX), (u32::MAX, u32::MAX)] {
+            assert!(decode_blocks(Format::Dxt5, w, h, &block).is_none(), "{w}x{h}");
+        }
+        assert_eq!(decode_blocks(Format::Dxt5, 3, 2, &block).unwrap().len(), 3 * 2 * 4);
+        assert!(decode_blocks(Format::Dxt5, 5, 4, &block).is_none(), "two blocks needed");
     }
 
     #[test]
