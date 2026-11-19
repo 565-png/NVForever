@@ -195,8 +195,11 @@ pub struct Stats {
     /// start (kept).
     pub lights: usize,
     pub disabled: usize,
-    /// References of statics whose model glows (`nvf_assets::model_glow`), listed.
+    /// References whose model glows (`nvf_assets::model_glow`), listed: statics and
+    /// moveable statics, activators, static collections.
     pub glow_statics: usize,
+    pub glow_activators: usize,
+    pub glow_collections: usize,
     /// Static models read for their glow, and how many of them glow (from the cache).
     pub models_read: usize,
     pub glow_models: usize,
@@ -222,8 +225,8 @@ impl Stats {
     /// The exit line.
     pub fn summary(&self) -> String {
         format!(
-            "distant lights summary: {} cells listed ({} references), {} lights, {} glow statics ({} glowing models of {} read), {} disabled at the start, {} drawn at most, skipped: {} deleted, {} no colour, {} negative/off, {} no radius",
-            self.cells, self.refs, self.lights, self.glow_statics, self.glow_models, self.models_read, self.disabled, self.most_drawn, self.deleted, self.no_colour, self.negative_off, self.no_radius
+            "distant lights summary: {} cells listed ({} references), {} lights, {} glow statics, {} glow activators, {} glow collections ({} glowing models of {} read), {} disabled at the start, {} drawn at most, skipped: {} deleted, {} no colour, {} negative/off, {} no radius",
+            self.cells, self.refs, self.lights, self.glow_statics, self.glow_activators, self.glow_collections, self.glow_models, self.models_read, self.disabled, self.most_drawn, self.deleted, self.no_colour, self.negative_off, self.no_radius
         )
     }
 }
@@ -258,13 +261,26 @@ pub fn cell_refs(world: &WorldData, g: Grid) -> Vec<u32> {
     refs
 }
 
+/// What kind of reference with a model may glow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlowKind {
+    /// A static or moveable static (STAT, MSTT).
+    Static,
+    /// An activator (ACTI), shown in its model's stored look: whether a script switched it
+    /// is not known beyond the loaded cells (activators.rs follows only radio receivers'
+    /// on state, and only while drawn); it glows while enabled.
+    Activator,
+    /// A static collection (SCOL), drawn by its own combined model as world.rs draws it, so
+    /// its glowing parts are found in that model.
+    Collection,
+}
+
 /// What a reference's base is to the listing, read once per base.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BaseKind {
     Light(LightData),
-    /// A static or moveable static with this model (an archive path): a glow static if
-    /// the model glows.
-    Static(String),
+    /// A base with this model (an archive path) that glows if the model does.
+    Static(String, GlowKind),
     Other,
 }
 
@@ -274,7 +290,15 @@ fn base_kind(lo: &LoadOrder, schema: &EsmSchema, base: u32) -> BaseKind {
         return BaseKind::Light(l);
     }
     match base_object(lo, schema, base) {
-        Some(b) if matches!(&b.sig, b"STAT" | b"MSTT") => b.world_model_path().map_or(BaseKind::Other, BaseKind::Static),
+        Some(b) => {
+            let kind = match &b.sig {
+                b"STAT" | b"MSTT" => GlowKind::Static,
+                b"ACTI" => GlowKind::Activator,
+                b"SCOL" => GlowKind::Collection,
+                _ => return BaseKind::Other,
+            };
+            b.world_model_path().map_or(BaseKind::Other, |m| BaseKind::Static(m, kind))
+        }
         _ => BaseKind::Other,
     }
 }
@@ -289,6 +313,7 @@ pub struct PlacedStatic {
     pub start_enabled: bool,
     /// The model (an archive path).
     pub model: Arc<str>,
+    pub kind: GlowKind,
 }
 
 /// One cell as listed from the records: its lights, and its statics with a model.
@@ -336,7 +361,7 @@ pub fn list_cell(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], bases: &mut H
                 Err(Skip::NoRadius) => stats.no_radius += 1,
                 Err(Skip::NoColour) => stats.no_colour += 1,
             },
-            BaseKind::Static(model) => out.statics.push(PlacedStatic { form_id: p.form_id, transform: crate::world::ref_affine(&p), scale: p.scale, start_enabled: start, model: model.into() }),
+            BaseKind::Static(model, kind) => out.statics.push(PlacedStatic { form_id: p.form_id, transform: crate::world::ref_affine(&p), scale: p.scale, start_enabled: start, model: model.into(), kind }),
             BaseKind::Other => {}
         }
     }
@@ -909,9 +934,13 @@ impl DistantLights {
         let Some(cell) = self.cells.get(&g) else { return };
         let models = &self.models;
         let list = resolve(cell, |m| models.get(m));
-        for s in list.iter().skip(cell.lights.len()) {
+        for s in cell.statics.iter().filter(|s| matches!(models.get(&s.model), Some(Some(_)))) {
             if self.glowing.insert(s.form_id) {
-                self.stats.glow_statics += 1;
+                match s.kind {
+                    GlowKind::Static => self.stats.glow_statics += 1,
+                    GlowKind::Activator => self.stats.glow_activators += 1,
+                    GlowKind::Collection => self.stats.glow_collections += 1,
+                }
                 self.stats.disabled += usize::from(!s.start_enabled);
             }
         }
@@ -1564,13 +1593,13 @@ mod tests {
 
     #[test]
     fn the_summary_names_what_was_left_out() {
-        let mut s = Stats { cells: 3, refs: 40, lights: 5, glow_statics: 12, disabled: 2, deleted: 1, no_colour: 4, negative_off: 6, no_radius: 7, most_drawn: 5, ..Stats::default() };
+        let mut s = Stats { cells: 3, refs: 40, lights: 5, glow_statics: 12, glow_activators: 3, glow_collections: 2, disabled: 2, deleted: 1, no_colour: 4, negative_off: 6, no_radius: 7, most_drawn: 5, ..Stats::default() };
         let mut models = GlowModels::default();
         models.take(vec![("meshes\\a.nif".into(), Some(ModelGlow { centre: [0.0; 3], radius: 10.0, colour: [1.0; 3], shapes: 1 })), ("meshes\\b.nif".into(), None)], Vec::new());
         (s.models_read, s.glow_models) = models.counts();
         assert_eq!(
             s.summary(),
-            "distant lights summary: 3 cells listed (40 references), 5 lights, 12 glow statics (1 glowing models of 2 read), 2 disabled at the start, 5 drawn at most, skipped: 1 deleted, 4 no colour, 6 negative/off, 7 no radius"
+            "distant lights summary: 3 cells listed (40 references), 5 lights, 12 glow statics, 3 glow activators, 2 glow collections (1 glowing models of 2 read), 2 disabled at the start, 5 drawn at most, skipped: 1 deleted, 4 no colour, 6 negative/off, 7 no radius"
         );
     }
 
@@ -1642,7 +1671,7 @@ mod tests {
         let mut st = DistantLights::default();
         let lamp: Arc<str> = "meshes\\lamp.nif".into();
         let other: Arc<str> = "meshes\\other.nif".into();
-        let placed = |id: u32, model: &Arc<str>| PlacedStatic { form_id: id, transform: bevy::math::Affine3A::IDENTITY, scale: 1.0, start_enabled: true, model: model.clone() };
+        let placed = |id: u32, model: &Arc<str>| PlacedStatic { form_id: id, transform: bevy::math::Affine3A::IDENTITY, scale: 1.0, start_enabled: true, model: model.clone(), kind: GlowKind::Static };
         st.add_cell((0, 0), CellList { lights: Vec::new(), statics: vec![placed(1, &lamp)] });
         st.add_cell((1, 0), CellList { lights: Vec::new(), statics: vec![placed(2, &other)] });
         assert_eq!(st.model_cells[&lamp], vec![(0, 0)]);
@@ -1719,6 +1748,12 @@ mod tests {
         const BOULDER: u32 = 0x104;
         const POST_REF: u32 = 0x307;
         const BOULDER_REF: u32 = 0x308;
+        const NEON: u32 = 0x105;
+        const PLAIN: u32 = 0x106;
+        const BLOCK: u32 = 0x107;
+        const NEON_REF: u32 = 0x309;
+        const PLAIN_REF: u32 = 0x30A;
+        const BLOCK_REF: u32 = 0x30B;
 
         fn sub(sig: &[u8; 4], data: Vec<u8>) -> Subrecord {
             Subrecord { sig: *sig, data, extended: false }
@@ -1762,6 +1797,18 @@ mod tests {
                 record(b"STAT", 0, BOULDER, &[sub(b"EDID", b"Boulder\0".to_vec()), sub(b"MODL", b"Boulder.nif\0".to_vec())]),
             ];
             let stat = group(*b"STAT", 0, &stats.concat());
+            // Two activators (a neon sign whose model glows, a plain one) and a static
+            // collection drawn by its combined model.
+            let acti = group(
+                *b"ACTI",
+                0,
+                &[
+                    record(b"ACTI", 0, NEON, &[sub(b"EDID", b"Neon\0".to_vec()), sub(b"MODL", b"Neon.nif\0".to_vec())]),
+                    record(b"ACTI", 0, PLAIN, &[sub(b"EDID", b"Plain\0".to_vec()), sub(b"MODL", b"Plain.nif\0".to_vec())]),
+                ]
+                .concat(),
+            );
+            let scol = group(*b"SCOL", 0, &record(b"SCOL", 0, BLOCK, &[sub(b"EDID", b"Block\0".to_vec()), sub(b"MODL", b"SCOL\\Block.nif\0".to_vec())]));
             let wrld = record(b"WRLD", 0, WRLD, &[sub(b"EDID", b"TestWorld\0".to_vec())]);
             // The persistent cell (directly in the world children), its persistent light
             // standing in grid square (1, 0).
@@ -1780,10 +1827,19 @@ mod tests {
                 cell(CELL_A, Some((0, 0))),
                 group(CELL_A.to_le_bytes(), 6, &group(CELL_A.to_le_bytes(), 9, &temps)),
                 cell(CELL_B, Some((1, 0))),
+                group(
+                    CELL_B.to_le_bytes(),
+                    6,
+                    &group(
+                        CELL_B.to_le_bytes(),
+                        9,
+                        &[refr(NEON_REF, 0, NEON, [4500.0, 800.0, 30.0]), refr(PLAIN_REF, 0, PLAIN, [4600.0, 800.0, 30.0]), refr(BLOCK_REF, 0, BLOCK, [6000.0, 900.0, 0.0])].concat(),
+                    ),
+                ),
             ]
             .concat();
             let children = group(WRLD.to_le_bytes(), 1, &[persistent, group([0; 4], 4, &group([0; 4], 5, &exterior))].concat());
-            let bytes = [tes4, lights, stat, group(*b"WRLD", 0, &[wrld, children].concat())].concat();
+            let bytes = [tes4, lights, stat, acti, scol, group(*b"WRLD", 0, &[wrld, children].concat())].concat();
             let plugins: &'static [Plugin] = Box::leak(vec![Plugin::parse(&bytes, "Lights.esm".into()).unwrap()].into_boxed_slice());
             let lo: &'static LoadOrder<'static> = Box::leak(Box::new(LoadOrder::new(plugins).unwrap()));
             let schema: &'static Schema = Box::leak(Box::new(Schema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap()));
@@ -1804,7 +1860,18 @@ mod tests {
             // The lamp post's model glows at its bulb, 300 up; the boulder's does not.
             let bulb = ModelGlow { centre: [0.0, 0.0, 300.0], radius: 10.0, colour: [1.0, 0.8, 0.5], shapes: 1 };
             let mut asked: Vec<String> = cells[0].1.statics.iter().map(|s| s.model.to_string()).collect();
-            let glow = |path: &str| Some((path == "meshes\\lamp.nif").then_some(bulb));
+            // The neon sign's model glows 100 up, the collection's combined model at a part
+            // 50 along and 10 up; the plain activator's does not.
+            let neon = ModelGlow { centre: [0.0, 0.0, 100.0], radius: 20.0, colour: [1.0, 0.2, 0.6], shapes: 2 };
+            let part = ModelGlow { centre: [50.0, 0.0, 10.0], radius: 8.0, colour: [1.0, 0.9, 0.7], shapes: 1 };
+            let glow = |path: &str| {
+                Some(match path {
+                    "meshes\\lamp.nif" => Some(bulb),
+                    "meshes\\neon.nif" => Some(neon),
+                    "meshes\\scol\\block.nif" => Some(part),
+                    _ => None,
+                })
+            };
             let a = resolve(&cells[0].1, glow);
             let b = resolve(&cells[1].1, glow);
             // Before the models are read only the lights are sources.
@@ -1820,9 +1887,22 @@ mod tests {
             assert_eq!((post.color, post.radius, post.strength, post.motion), ([1.0, 0.8, 0.5], 10.0 * GLOW_RADIUS_SCALE, 1.0, 0));
             asked.sort();
             assert_eq!(asked, vec!["meshes\\boulder.nif".to_string(), "meshes\\lamp.nif".to_string()], "only statics with a model are asked");
-            // Cell (1, 0): the persistent light standing in it.
-            assert_eq!(ids(&b), vec![(PERSISTENT_REF, true)]);
-            assert_eq!(stats, Stats { cells: 2, refs: 8, lights: 3, disabled: 1, deleted: 1, negative_off: 1, ..Stats::default() });
+            // Cell (1, 0): the persistent light standing in it, the glowing activator and the
+            // collection's glowing part, each at its glow; not the plain activator.
+            let kinds: Vec<GlowKind> = cells[1].1.statics.iter().map(|s| s.kind).collect();
+            assert_eq!(kinds, vec![GlowKind::Activator, GlowKind::Activator, GlowKind::Collection]);
+            assert_eq!(ids(&b), vec![(PERSISTENT_REF, true), (NEON_REF, true), (BLOCK_REF, true)]);
+            assert_eq!((b[1].pos, b[1].color), ([4500.0, 800.0, 130.0], [1.0, 0.2, 0.6]));
+            assert_eq!(b[2].pos, [6050.0, 900.0, 10.0]);
+            assert_eq!(stats, Stats { cells: 2, refs: 11, lights: 3, disabled: 1, deleted: 1, negative_off: 1, ..Stats::default() });
+            // Counted apart once their models are read.
+            let mut st = DistantLights::default();
+            st.add_cell((1, 0), cells[1].1.clone());
+            for (m, g) in [("meshes\\neon.nif", Some(neon)), ("meshes\\plain.nif", None), ("meshes\\scol\\block.nif", Some(part))] {
+                st.sink.lock().unwrap().push((m.into(), g));
+            }
+            st.drain_models();
+            assert_eq!((st.stats.glow_statics, st.stats.glow_activators, st.stats.glow_collections), (0, 1, 1));
             // A stopped listing lists no more cells.
             epoch.bump();
             assert!(list_cells(w.lo, w.schema, vec![((0, 0), cell_refs(&w, (0, 0)))], &epoch, 0, &mut stats).is_empty());
