@@ -135,6 +135,24 @@ expect = [
 ]
 
 [[scenario]]
+name = "pbr-selftest"
+kind = "tool"
+source = "[design] docs/spec-notes/pbr-materials.md (NVForever's own pack format, #2981); DDS headers [documented] MS DDS_HEADER / DDS_HEADER_DXT10. Files built in memory by fnvtool, no game data."
+note = "fnvtool pbr selftest builds a clean set (DX10 BC7 _orm, BC5_UNORM _n of another size, BC4_UNORM _p, a scalar file) and six broken files in memory, runs the pbr check validator on them and passes only when exactly the six expected findings are raised and the clean set reads as its three formats."
+areas = ["graphics"]
+paths = ["crates/fnv-pbr/", "crates/fnv-dds/", "crates/fnvtool/src/pbr_cmd.rs", "crates/fnvtool/src/pbr_check.rs"]
+commands = [["pbr", "selftest"]]
+expect = [
+  { json = "selftest.verdict", schema = "fnv.pbr.check/1", equals = "pbr selftest: PASS (3 formats, 6 expected findings)", count = 1 },
+  { json = "selftest.formats.*", schema = "fnv.pbr.check/1", equals = "BC7_UNORM", count = 1 },
+  { json = "selftest.formats.*", schema = "fnv.pbr.check/1", equals = "BC5_UNORM", count = 1 },
+  { json = "selftest.formats.*", schema = "fnv.pbr.check/1", equals = "BC4_UNORM", count = 1 },
+  { json = "selftest.pass", schema = "fnv.pbr.check/1", equals = true, count = 1 },
+  { json = "selftest.missing.#", schema = "fnv.pbr.check/1", equals = 0, count = 1 },
+  { json = "selftest.unexpected.#", schema = "fnv.pbr.check/1", equals = 0, count = 1 },
+]
+
+[[scenario]]
 name = "ui-bit-test-operator"
 kind = "tool"
 source = "[documented] GECK UIO Extra XML Operators; docs/spec-notes/ui-bit-test-operator.md. Authored portable XML expressions without game data."

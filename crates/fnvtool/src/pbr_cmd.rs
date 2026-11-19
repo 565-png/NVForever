@@ -1,7 +1,10 @@
 //! `fnvtool pbr ...`: authored PBR material maps under `textures\pbr\` (#2981,
 //! docs/spec-notes/pbr-materials.md). `list` mounts the VFS as the engine does and names
 //! every set it finds and, per member, the archive or loose folder that supplies it.
+//! `check` validates a pack folder on disk and `selftest` runs the same checks on files
+//! built in memory (`pbr_check`).
 
+use crate::pbr_check;
 use anyhow::Context;
 use clap::Subcommand;
 use fnv_pbr::{member_path, PbrIndex, PBR_DIR};
@@ -18,6 +21,18 @@ pub enum PbrCmd {
         #[command(flatten)]
         mount: MountArgs,
     },
+    /// Validate a pack folder on disk (a mod folder holding `textures\pbr\`, its
+    /// `textures` folder or the `pbr` folder itself): DDS headers and sizes, formats per
+    /// member, mip chains, scalar files, incomplete sets (fnv.pbr.check/1). Exits 1 when
+    /// any error is found; warnings do not fail it.
+    Check {
+        /// The pack folder.
+        folder: PathBuf,
+    },
+    /// Run the checks of `check` on a small pack built in memory (a clean set and one
+    /// broken file per finding it must raise) and print fnv.pbr.check/1, then a last line
+    /// `pbr selftest: PASS (...)`; exits 1 when a finding was missed or another raised.
+    Selftest,
 }
 
 /// The VFS as the engine mounts it: `--data` with the plugins' archives, and either
@@ -48,10 +63,140 @@ pub struct MountArgs {
     archive_list: Option<String>,
 }
 
-pub fn run(cmd: PbrCmd) -> anyhow::Result<Value> {
-    match cmd {
-        PbrCmd::List { mount } => list(&mount, &std::env::current_dir().context("the current folder")?),
+/// A command's output: the JSON document, lines printed after it, and why the command
+/// still fails (a pack with errors, a self-test that missed), if it does.
+pub struct Outcome {
+    pub json: Value,
+    pub lines: Vec<String>,
+    pub failure: Option<String>,
+}
+
+impl From<Value> for Outcome {
+    fn from(json: Value) -> Outcome {
+        Outcome { json, lines: Vec::new(), failure: None }
     }
+}
+
+pub fn run(cmd: PbrCmd) -> anyhow::Result<Outcome> {
+    match cmd {
+        PbrCmd::List { mount } => list(&mount, &std::env::current_dir().context("the current folder")?).map(Outcome::from),
+        PbrCmd::Check { folder } => check(&folder),
+        PbrCmd::Selftest => {
+            let t = pbr_check::selftest();
+            let failure = (!t.pass()).then(|| "the self-test's findings or formats differ from those expected".to_string());
+            Ok(Outcome { json: t.json(), lines: vec![t.line()], failure })
+        }
+    }
+}
+
+/// `fnvtool pbr ...` from `main`: the document on stdout, then the extra lines; exit 1 on
+/// an error or a failing outcome (the document is still printed).
+pub fn main(cmd: PbrCmd) -> std::process::ExitCode {
+    match run(cmd) {
+        Ok(o) => {
+            crate::emit(&o.json);
+            for l in &o.lines {
+                println!("{l}");
+            }
+            match o.failure {
+                None => std::process::ExitCode::SUCCESS,
+                Some(why) => {
+                    eprintln!("error: {why}");
+                    std::process::ExitCode::from(1)
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("error: {e:#}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
+/// Which folder `check` read, and how it was taken.
+struct PackRoot {
+    /// `mod` (holds `textures\pbr\`), `textures` (holds `pbr\`) or `pbr`.
+    form: &'static str,
+    /// The `pbr` folder itself.
+    pbr: PathBuf,
+    /// The game path of the `pbr` folder, spelled as the pack's folders are where the pack
+    /// has them (`textures\pbr\`, `Textures\PBR\`).
+    prefix: String,
+}
+
+/// The child folder of `dir` named `name`, ASCII case ignored (paths match that way in
+/// the game, so `Textures\PBR` on a case-sensitive disk counts).
+fn child_dir(dir: &Path, name: &str) -> Option<(PathBuf, String)> {
+    // Listed rather than joined, so the name is spelled as on disk also where the disk
+    // ignores case.
+    std::fs::read_dir(dir).ok()?.flatten().find_map(|e| {
+        let n = e.file_name().to_string_lossy().into_owned();
+        (n.eq_ignore_ascii_case(name) && e.path().is_dir()).then(|| (e.path(), n))
+    })
+}
+
+/// The pack root a folder stands for: a mod folder with `textures\pbr\` in it, else a
+/// folder with `pbr\` in it (the `textures` folder), else a folder named `pbr`.
+fn pack_root(folder: &Path) -> anyhow::Result<PackRoot> {
+    anyhow::ensure!(folder.is_dir(), "{}: not a folder", folder.display());
+    if let Some((tex, tex_name)) = child_dir(folder, "textures") {
+        if let Some((pbr, pbr_name)) = child_dir(&tex, "pbr") {
+            return Ok(PackRoot { form: "mod", pbr, prefix: format!("{tex_name}\\{pbr_name}\\") });
+        }
+    }
+    if let Some((pbr, pbr_name)) = child_dir(folder, "pbr") {
+        return Ok(PackRoot { form: "textures", pbr, prefix: format!("textures\\{pbr_name}\\") });
+    }
+    let name = folder.canonicalize().ok().and_then(|c| c.file_name().map(|n| n.to_string_lossy().into_owned()));
+    match name {
+        Some(n) if n.eq_ignore_ascii_case("pbr") => Ok(PackRoot { form: "pbr", pbr: folder.to_path_buf(), prefix: format!("textures\\{n}\\") }),
+        _ => anyhow::bail!("{}: has no textures\\pbr\\ or pbr\\ folder in it and is not itself a folder named pbr", folder.display()),
+    }
+}
+
+/// Every file under `dir`, with its path below `dir` joined by backslashes.
+fn walk(dir: &Path, rel: &str, out: &mut Vec<(PathBuf, String)>) -> anyhow::Result<()> {
+    for e in std::fs::read_dir(dir).with_context(|| dir.display().to_string())? {
+        let e = e.with_context(|| dir.display().to_string())?;
+        let name = e.file_name().to_string_lossy().into_owned();
+        let r = if rel.is_empty() { name } else { format!("{rel}\\{name}") };
+        let t = e.file_type().with_context(|| e.path().display().to_string())?;
+        if t.is_dir() {
+            walk(&e.path(), &r, out)?;
+        } else if e.path().is_file() {
+            out.push((e.path(), r));
+        }
+    }
+    Ok(())
+}
+
+/// `pbr check`: each file's head (`pbr_check::head_len`) and length read, the pack judged.
+fn check(folder: &Path) -> anyhow::Result<Outcome> {
+    use std::io::Read;
+    let root = pack_root(folder)?;
+    let mut found = Vec::new();
+    walk(&root.pbr, "", &mut found)?;
+    let mut inputs = Vec::with_capacity(found.len());
+    for (file, rel) in found {
+        let path = format!("{}{rel}", root.prefix);
+        let at = || file.display().to_string();
+        let len = std::fs::metadata(&file).with_context(at)?.len();
+        let head = match pbr_check::head_len(&path) {
+            None => std::fs::read(&file).with_context(at)?,
+            Some(0) => Vec::new(),
+            Some(n) => {
+                let mut buf = Vec::with_capacity(n);
+                std::fs::File::open(&file).with_context(at)?.take(n as u64).read_to_end(&mut buf).with_context(at)?;
+                buf
+            }
+        };
+        inputs.push((path, head, len));
+    }
+    let pack = pbr_check::check_pack(inputs);
+    let json = pack.json(json!({"folder": folder.display().to_string(), "form": root.form, "pbr_folder": root.pbr.display().to_string()}));
+    let errors = pack.errors();
+    let failure = (errors > 0).then(|| format!("{errors} error(s) in the pack (see `findings`)"));
+    Ok(Outcome { json, lines: Vec::new(), failure })
 }
 
 /// `pbr list`, relative folders taken from `cwd`. The engine refuses to start with a
@@ -414,5 +559,177 @@ mod tests {
         // The mods folder indexed the same file under `pbr\…`, outside textures\pbr\.
         assert!(mods.join("pbr").is_dir());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    use crate::pbr_check::dx10_dds;
+
+    fn put(dir: &Path, rel: &str, bytes: &[u8]) {
+        let p = dir.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, bytes).unwrap();
+    }
+
+    /// `dx10_dds` with one of the DX10 extension's words (at `ext_word`) set to `v`.
+    fn dx10_with(dxgi: u32, w: u32, h: u32, mips: u32, ext_word: usize, v: u32) -> Vec<u8> {
+        let mut d = dx10_dds(dxgi, w, h, mips, 0);
+        let o = 128 + 4 * ext_word;
+        d[o..o + 4].copy_from_slice(&v.to_le_bytes());
+        d
+    }
+
+    /// A legacy DXT1 file (no DX10 extension), built here, with the payload its layout needs.
+    fn legacy_dxt1(w: u32, h: u32, mips: u32) -> Vec<u8> {
+        let mut d = dx10_dds(71, w, h, mips, 0);
+        d.truncate(128);
+        d[84..88].copy_from_slice(b"DXT1");
+        let need: usize = (0..mips).map(|i| fnv_dds::Format::Dxt1.level_size((w >> i).max(1), (h >> i).max(1))).sum();
+        d.resize(128 + need, 0);
+        d
+    }
+
+    fn clean_set(pbr: &Path) {
+        put(pbr, "walls/brick_orm.dds", &dx10_dds(98, 8, 8, 4, 0));
+        put(pbr, "walls/brick_n.dds", &dx10_dds(83, 16, 16, 5, 0));
+        put(pbr, "walls/brick_p.dds", &dx10_dds(80, 4, 4, 3, 0));
+        put(pbr, "walls/brick.toml", b"roughness_scale = 0.9\nreflectance = 0.35\n");
+    }
+
+    fn found(v: &Value) -> Vec<(String, String, String)> {
+        v["findings"].as_array().unwrap().iter().map(|f| (f["level"].as_str().unwrap().to_string(), f["code"].as_str().unwrap().to_string(), f["path"].as_str().unwrap().to_string())).collect()
+    }
+
+    /// A clean set passes with no finding; every error and warning is raised by the one
+    /// file made to raise it, and nothing else is.
+    #[test]
+    fn check_raises_each_finding_on_its_file_only() {
+        let root = fresh("check");
+        let pbr = root.join("mod").join("textures").join("pbr");
+        clean_set(&pbr);
+        let clean = check(&root.join("mod")).unwrap();
+        assert!(clean.failure.is_none());
+        assert_eq!(clean.json["ok"], true);
+        assert_eq!(found(&clean.json), Vec::<(String, String, String)>::new());
+
+        put(&pbr, "legacy/old_orm.dds", &legacy_dxt1(4, 4, 3));
+        // Errors.
+        put(&pbr, "e/unreadable_orm.dds", b"not a texture");
+        put(&pbr, "e/format_orm.dds", &dx10_dds(83, 4, 4, 3, 0));
+        put(&pbr, "e/unaligned_orm.dds", &dx10_dds(98, 8, 2, 4, 0));
+        put(&pbr, "e/cube_orm.dds", &dx10_with(98, 4, 4, 3, 2, 0x4));
+        put(&pbr, "e/array_orm.dds", &dx10_with(98, 4, 4, 3, 3, 2));
+        put(&pbr, "e/volume_orm.dds", &dx10_with(98, 4, 4, 3, 1, 4));
+        put(&pbr, "e/zero_orm.dds", &{
+            let mut d = dx10_dds(98, 4, 4, 1, 0);
+            d[16..20].copy_from_slice(&0u32.to_le_bytes());
+            d
+        });
+        put(&pbr, "e/truncated_orm.dds", &dx10_dds(98, 8, 8, 4, -1));
+        put(&pbr, "e/broken.toml", b"reflectance = = 1\n");
+        put(&pbr, "e/broken_p.dds", &dx10_dds(80, 4, 4, 3, 0));
+        // Warnings.
+        put(&pbr, "w/nomips_orm.dds", &dx10_dds(98, 8, 8, 1, 0));
+        put(&pbr, "w/srgb_orm.dds", &dx10_dds(99, 4, 4, 3, 0));
+        put(&pbr, "w/lonely_n.dds", &dx10_dds(83, 4, 4, 3, 0));
+        put(&pbr, "w/readme.txt", b"notes");
+        put(&pbr, "w/odd.toml", b"normal_strength = 2\nreflectance = 3\n");
+        put(&pbr, "w/odd_p.dds", &dx10_dds(80, 4, 4, 3, 0));
+        put(&pbr, "w/future_albedo.dds", b"reserved");
+        put(&pbr, "w/future_orm.dds", &dx10_dds(98, 4, 4, 3, 0));
+        put(&pbr, "w/trailing_orm.dds", &dx10_dds(98, 4, 4, 3, 5));
+        put(&pbr, "w/npot_orm.dds", &dx10_dds(98, 12, 12, 4, 0));
+        put(&pbr, "w/extra_orm.dds", &dx10_dds(98, 4, 4, 4, 0));
+
+        let o = check(&root.join("mod")).unwrap();
+        let v = &o.json;
+        assert_eq!(v["schema"], "fnv.pbr.check/1");
+        let p = |rel: &str| format!("textures\\pbr\\{rel}");
+        let (e, w) = ("error", "warning");
+        let mut want: Vec<(String, String, String)> = [
+            (e, "toml-invalid", p("e\\broken.toml")),
+            (e, "not-single-2d", p("e\\array_orm.dds")),
+            (e, "not-single-2d", p("e\\cube_orm.dds")),
+            (e, "format-not-allowed", p("e\\format_orm.dds")),
+            (e, "truncated", p("e\\truncated_orm.dds")),
+            (e, "not-block-aligned", p("e\\unaligned_orm.dds")),
+            (e, "dds-unreadable", p("e\\unreadable_orm.dds")),
+            (e, "not-single-2d", p("e\\volume_orm.dds")),
+            (e, "bad-size", p("e\\zero_orm.dds")),
+            (w, "extra-mips", p("w\\extra_orm.dds")),
+            (w, "albedo-reserved", p("w\\future_albedo.dds")),
+            (w, "incomplete-set", p("w\\lonely")),
+            (w, "incomplete-mips", p("w\\nomips_orm.dds")),
+            (w, "not-power-of-two", p("w\\npot_orm.dds")),
+            (w, "scalar-ignored-or-clamped", p("w\\odd.toml")),
+            (w, "scalar-ignored-or-clamped", p("w\\odd.toml")),
+            (w, "unmatched-file", p("w\\readme.txt")),
+            (w, "srgb-linear-member", p("w\\srgb_orm.dds")),
+            (w, "trailing-bytes", p("w\\trailing_orm.dds")),
+        ]
+        .into_iter()
+        .map(|(l, c, p)| (l.to_string(), c.to_string(), p))
+        .collect();
+        let mut got = found(v);
+        got.sort();
+        want.sort();
+        assert_eq!(got, want);
+        assert_eq!(v["ok"], false);
+        assert_eq!(o.failure.as_deref(), Some("9 error(s) in the pack (see `findings`)"));
+        let t = &v["totals"];
+        assert_eq!((t["errors"].as_u64(), t["warnings"].as_u64()), (Some(9), Some(10)));
+        assert_eq!(t["sets"], json!({"total": 19, "authored": 16, "height_only": 2, "incomplete": 1}));
+        assert_eq!(t["unmatched"], 1);
+        assert_eq!(t["members"]["normal"], json!({"files": 2, "formats": {"BC5_UNORM": 2}, "largest_side": 16}));
+        assert_eq!(t["members"]["height"], json!({"files": 3, "formats": {"BC4_UNORM": 3}, "largest_side": 4}));
+        assert_eq!(t["members"]["orm"]["formats"]["DXT1"], 1);
+        assert_eq!(t["members"]["orm"]["formats"]["BC7_UNORM_SRGB"], 1);
+        assert_eq!(t["members"]["orm"]["largest_side"], 12);
+        assert_eq!((t["members"]["scalars"]["files"].as_u64(), t["members"]["albedo"]["files"].as_u64()), (Some(3), Some(1)));
+        // Payloads of the accepted members of active sets: brick 112 + 368 + 24, old 24,
+        // broken_p 24, nomips 64, srgb 48, odd_p 24, future 48, trailing 48, npot 240,
+        // extra 64. Not lonely_n (its set is incomplete) nor any file with an error.
+        assert_eq!(t["gpu_bytes_estimate"], 1088);
+        let row = |path: &str| v["files"].as_array().unwrap().iter().find(|f| f["path"] == path).unwrap().clone();
+        let brick = row(&p("walls\\brick_n.dds"));
+        assert_eq!((brick["format"].clone(), brick["width"].clone(), brick["levels"].clone(), brick["payload_bytes"].clone(), brick["accepted"].clone()), (json!("BC5_UNORM"), json!(16), json!(5), json!(368), json!(true)));
+        assert_eq!(row(&p("w\\readme.txt"))["member"], json!(null));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The mod folder, its `textures` folder and the `pbr` folder give the same report,
+    /// paths spelled as the pack's folders are; another folder is refused.
+    #[test]
+    fn check_takes_three_root_forms() {
+        let root = fresh("roots");
+        let pbr = root.join("mod").join("Textures").join("PBR");
+        clean_set(&pbr);
+        let forms = [(root.join("mod"), "mod"), (root.join("mod").join("Textures"), "textures"), (pbr.clone(), "pbr")];
+        for (folder, form) in forms {
+            let o = check(&folder).unwrap();
+            assert!(o.failure.is_none(), "{form}");
+            assert_eq!(o.json["root"]["form"], form);
+            assert_eq!(o.json["root"]["pbr_folder"].as_str().map(PathBuf::from), Some(pbr.clone()), "{form}");
+            let paths: Vec<&str> = o.json["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+            let first = if form == "mod" { "Textures" } else { "textures" };
+            assert_eq!(paths, ["brick.toml", "brick_n.dds", "brick_orm.dds", "brick_p.dds"].map(|n| format!("{first}\\PBR\\walls\\{n}")), "{form}");
+            assert_eq!(o.json["totals"]["sets"]["authored"], 1);
+        }
+        let Err(e) = check(&root) else { panic!("a folder with no pack was taken") };
+        let e = e.to_string();
+        assert!(e.contains("is not itself a folder named pbr"), "{e}");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The self-test raises exactly its expected findings and reads the clean set's three
+    /// formats.
+    #[test]
+    fn selftest_passes() {
+        let t = pbr_check::selftest();
+        assert!(t.pass(), "{}", t.line());
+        assert_eq!(t.line(), "pbr selftest: PASS (3 formats, 6 expected findings)");
+        let v = t.json();
+        assert_eq!(v["selftest"]["formats"], json!(["BC4_UNORM", "BC5_UNORM", "BC7_UNORM"]));
+        assert_eq!(v["root"]["form"], "selftest");
+        assert_eq!(v["selftest"]["verdict"], t.line());
+        assert!(!v.to_string().contains("FAIL"));
     }
 }

@@ -46,6 +46,9 @@ impl Scalars {
 pub struct ScalarFile {
     pub scalars: Scalars,
     pub warnings: Vec<String>,
+    /// The file is not UTF-8 or not TOML, so nothing in it was read (one warning says
+    /// why). A pack validator (`fnvtool pbr check`) reports this as an error.
+    pub unreadable: bool,
 }
 
 /// Read a scalar file's bytes. Not UTF-8 or not TOML: every value unset, one warning.
@@ -58,6 +61,7 @@ pub fn parse_scalars(bytes: &[u8]) -> ScalarFile {
     let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
     let Ok(text) = std::str::from_utf8(bytes) else {
         out.warnings.push("not UTF-8 text: ignored".to_string());
+        out.unreadable = true;
         return out;
     };
     let table: toml::Table = match toml::from_str(text) {
@@ -66,6 +70,7 @@ pub fn parse_scalars(bytes: &[u8]) -> ScalarFile {
             let text = e.to_string();
             let first = text.lines().next().unwrap_or("").trim().to_string();
             out.warnings.push(format!("not TOML ({first}): ignored"));
+            out.unreadable = true;
             return out;
         }
     };

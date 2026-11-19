@@ -42,6 +42,7 @@ mod nav_cmd;
 mod nav_path;
 mod observer;
 mod nif_cmd;
+mod pbr_check;
 mod pbr_cmd;
 mod phys_cmd;
 mod quest_sweep;
@@ -1176,7 +1177,7 @@ pub(crate) fn parse_formid(s: &str) -> Result<u32, String> {
     u32::from_str_radix(hex, 16).map_err(|_| format!("not a hex FormID: {s}"))
 }
 
-fn emit(v: &Value) {
+pub(crate) fn emit(v: &Value) {
     use std::io::Write;
     let mut lock = std::io::stdout().lock();
     let _ = lock.write_all(v.to_string().as_bytes());
@@ -1229,7 +1230,8 @@ fn main() -> ExitCode {
         Cmd::Esm(c) => esm_cmd::run(c),
         Cmd::Nif(c) => nif_cmd::run(c),
         Cmd::Dds(c) => dds_cmd::run(c),
-        Cmd::Pbr(c) => pbr_cmd::run(c),
+        // `pbr check` and `pbr selftest` print their report and may still fail.
+        Cmd::Pbr(c) => return pbr_cmd::main(c),
         Cmd::Spt(c) => spt_cmd::run(c),
         Cmd::World(c) => world_cmd::run(c),
         Cmd::Phys(c) => phys_cmd::run(c),

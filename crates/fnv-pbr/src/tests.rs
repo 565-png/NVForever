@@ -260,7 +260,12 @@ fn scalars_not_toml_are_ignored() {
         assert_eq!(f.warnings.len(), 1);
         assert!(f.warnings[0].starts_with("not TOML ("), "{:?}", f.warnings);
         assert!(f.warnings[0].ends_with("): ignored"), "{:?}", f.warnings);
+        assert!(f.unreadable);
     }
+    // Read files are not unreadable, warnings or not.
+    assert!(!parse_scalars(b"normal_strength = 2.0\n").unreadable);
+    assert!(!parse_scalars(b"").unreadable);
     let f = parse_scalars(b"reflectance = 0.5\xff\n");
+    assert!(f.unreadable);
     assert_eq!((f.scalars, f.warnings), (Scalars::default(), vec!["not UTF-8 text: ignored".to_string()]));
 }
