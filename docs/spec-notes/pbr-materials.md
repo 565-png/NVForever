@@ -228,11 +228,16 @@ beyond the field test below):
   `engine/nvf-assets/src/data.rs` `GameData::pbr_scalars`].
 - The smoke scenarios `pbr-authored-field` and `pbr-authored-field-off`
   (`NVF_PLAY_TEST_PBR_FIELD=1`, `engine/nvf-assets/src/pbr_field.rs`) are the check of the
-  drawn result: generated sets through the real material path, two GPU readbacks compared
-  against control panels (occlusion alone, a three-channel normal reference, a flat
-  normal) [engineering policy; the thresholds are first values, to be set from real
-  readbacks]. [observed: the main session's runs of an earlier four-panel version passed,
-  on and off, 2026-11-19.]
+  drawn result: generated sets through the real material path on five panels (plain; lit,
+  with `_orm` and a two-channel `_n` decoded on a worker; dark, as lit but for the ORM's
+  red; reference, lit's `_orm` with the same normal as a three-channel game map; flat,
+  `_orm` without a normal map), two GPU readbacks judged by mean luminance. [observed: on
+  `7e2de4be1`, the main session's runs, two readbacks each, identical: on, plain 103, lit 67,
+  dark 38, reference 67, flat 103; off, plain, lit, dark and flat 103, reference 60.] The
+  comparator's thresholds were set from those readbacks with margins [engineering policy:
+  occlusion at least 15, lit and reference within 3, reference at least 15 darker than flat
+  (on) or plain (off), the off panels within 2]; the scenarios with those thresholds have not
+  been run again yet.
 - Calibration aids, off by default, read at the start [documented: `authored.rs` `PbrView`,
   `metallic_debug`; `engine/nvf-assets/src/nif_material.wesl`]: `NVF_PBR_VIEW` =
   `roughness`, `metallic`, `occlusion`, `normal` or `authored` draws that input in place of
@@ -241,9 +246,11 @@ beyond the field test below):
   neutral, so effects fade out of it; depth and coverage are unchanged.
   `NVF_PBR_METALLIC=1` builds authored materials metallic by the ORM's blue channel and keeps
   a metal's ambient highlight, a preview of a later metallic stage [design].
-- The log's exit summary line `authored materials:` counts the materials built with a set,
-  the distinct sets used, the shapes skipped and why, and the swaps through `retexture`
-  [documented: `authored.rs` `summary`].
+- On the app's exit the log has one line `authored materials summary: ...` (or
+  `authored materials summary: off (setting)`): counts of build events, not of visible
+  shapes: material builds that applied a set, the distinct set stems seen at those builds,
+  builds that skipped a set and why, role copies made legacy, and calls of `retexture`
+  [documented: `authored.rs` `Stats`, `report`]. Rebuilt or discarded materials count again.
 
 ### Known limits (stage 3)
 
