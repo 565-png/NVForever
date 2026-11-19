@@ -85,32 +85,157 @@ pub struct GlowPart {
     pub radius: f32,
     pub colour: [f32; 3],
     pub visible: f32,
+    /// Its shape when it is long ([`part_shape`]); round otherwise.
+    pub shape: Option<Shaft>,
 }
 
-/// A model's glow: where its glowing shapes sit (their centre weighted by the light they
-/// show, in the model's space below the root: a placed reference's transform takes it to the
-/// world), how far they reach from it, their colour (display values, brightest channel 1),
-/// and how many shapes glow.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// A long glowing part (a light beam, a neon tube) in the model's space below the root: its
+/// ends, its width at each, and whether it fades from `a` (the bright end, a beam's source)
+/// to `b` or is bright along its middle.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Shaft {
+    pub a: [f32; 3],
+    pub b: [f32; 3],
+    pub width_a: f32,
+    pub width_b: f32,
+    pub directed: bool,
+    pub colour: [f32; 3],
+}
+
+/// The long parts a model keeps as shafts at most; the rest count as round [design].
+pub const MAX_SHAFTS: usize = 4;
+
+/// A part is long when its length along its principal axis is at least this many times its
+/// width [design: the review's 1.5].
+pub const LONG: f32 = 1.5;
+
+/// One end of a part is the bright one when its vertices' mean brightness (alpha × luminance
+/// of the vertex colours) is at least this many times the other end's, or, without that, a
+/// cone's narrow end when the other end is at least this many times wider [design].
+pub const END_RATIO: f32 = 1.25;
+pub const CONE_RATIO: f32 = 1.5;
+
+/// A model's glow: where its round glowing shapes sit (their centre weighted by the light
+/// they show, in the model's space below the root: a placed reference's transform takes it
+/// to the world), how far they reach from it, their colour (display values, brightest
+/// channel 1), how many shapes glow, and its long parts as shafts. `shafts_only`: every
+/// glowing part is a shaft, so there is no round glow.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ModelGlow {
     pub centre: [f32; 3],
     pub radius: f32,
     pub colour: [f32; 3],
     pub shapes: usize,
+    pub shafts: [Option<Shaft>; MAX_SHAFTS],
+    pub shafts_only: bool,
 }
 
 /// The glow of a model's glowing parts; `None` without any, or when together they show less
-/// than [`MIN_VISIBLE`].
+/// than [`MIN_VISIBLE`]. The [`MAX_SHAFTS`] brightest long parts are kept as shafts, the
+/// others make the round glow.
 pub fn combine(parts: &[GlowPart]) -> Option<ModelGlow> {
     let total: f32 = parts.iter().map(|p| p.visible.max(0.0)).sum();
     if parts.is_empty() || total.is_nan() || total < MIN_VISIBLE {
         return None;
     }
+    let mut long: Vec<&GlowPart> = parts.iter().filter(|p| p.shape.is_some()).collect();
+    long.sort_by(|x, y| y.visible.total_cmp(&x.visible));
+    long.truncate(MAX_SHAFTS);
+    let mut shafts = [None; MAX_SHAFTS];
+    for (slot, p) in shafts.iter_mut().zip(&long) {
+        *slot = p.shape.map(|sh| Shaft { colour: p.colour, ..sh });
+    }
+    let round: Vec<&GlowPart> = parts.iter().filter(|p| !long.iter().any(|l| std::ptr::eq(*l, *p))).collect();
     let weight = |p: &GlowPart| p.visible.max(0.0);
-    let centre = parts.iter().fold(Vec3::ZERO, |a, p| a + p.centre * weight(p)) / total;
-    let radius = parts.iter().map(|p| p.centre.distance(centre) + p.radius).fold(0.0f32, f32::max);
-    let colour = hue(parts.iter().fold(Vec3::ZERO, |a, p| a + Vec3::from_array(p.colour) * weight(p)) / total);
-    Some(ModelGlow { centre: centre.to_array(), radius, colour, shapes: parts.len() })
+    let round_total: f32 = round.iter().map(|p| p.visible.max(0.0)).sum();
+    if round.is_empty() || round_total <= 0.0 {
+        let s = long.first().and_then(|p| p.shape).unwrap_or_default();
+        let mid = (Vec3::from_array(s.a) + Vec3::from_array(s.b)) * 0.5;
+        return Some(ModelGlow { centre: mid.to_array(), radius: 0.0, colour: long.first().map_or([1.0; 3], |p| p.colour), shapes: parts.len(), shafts, shafts_only: true });
+    }
+    let centre = round.iter().fold(Vec3::ZERO, |a, p| a + p.centre * weight(p)) / round_total;
+    let radius = round.iter().map(|p| p.centre.distance(centre) + p.radius).fold(0.0f32, f32::max);
+    let colour = hue(round.iter().fold(Vec3::ZERO, |a, p| a + Vec3::from_array(p.colour) * weight(p)) / round_total);
+    Some(ModelGlow { centre: centre.to_array(), radius, colour, shapes: parts.len(), shafts, shafts_only: false })
+}
+
+/// The shape of a glowing part from its vertices (model space) and, when it has them, its
+/// vertex colours (rgba, 0..1): `None` when it is roughly round (its length along its
+/// principal axis under [`LONG`] times its width), else a [`Shaft`] (colour white; the
+/// caller sets it) with its ends, the width at each (twice the largest distance from the
+/// axis of the vertices in the end quarter of its length) and its bright end first when one
+/// can be told: by the vertex colours (alpha × luminance, the end thirds' means at least
+/// [`END_RATIO`] apart), else a cone's narrow end (the other end [`CONE_RATIO`] times wider);
+/// otherwise it is symmetric.
+pub fn part_shape(verts: &[Vec3], colours: Option<&[[f32; 4]]>) -> Option<Shaft> {
+    if verts.len() < 3 {
+        return None;
+    }
+    let n = verts.len() as f32;
+    let c = verts.iter().copied().sum::<Vec3>() / n;
+    // Covariance, and its main axis by power iteration.
+    let mut m = [Vec3::ZERO; 3];
+    for v in verts {
+        let d = *v - c;
+        m[0] += d * d.x;
+        m[1] += d * d.y;
+        m[2] += d * d.z;
+    }
+    let mul = |v: Vec3| Vec3::new(m[0].dot(v), m[1].dot(v), m[2].dot(v));
+    let mut axis = [Vec3::X, Vec3::Y, Vec3::Z].into_iter().max_by(|a, b| mul(*a).length().total_cmp(&mul(*b).length())).unwrap_or(Vec3::X);
+    for _ in 0..32 {
+        let next = mul(axis);
+        if next.length_squared() < 1e-12 {
+            return None;
+        }
+        axis = next.normalize();
+    }
+    let proj: Vec<f32> = verts.iter().map(|v| (*v - c).dot(axis)).collect();
+    let (lo, hi) = proj.iter().fold((f32::MAX, f32::MIN), |(l, h), &t| (l.min(t), h.max(t)));
+    let length = hi - lo;
+    let off = |i: usize| (verts[i] - c - axis * proj[i]).length();
+    let width = 2.0 * (0..verts.len()).map(off).fold(0.0f32, f32::max);
+    if !(length >= LONG * width.max(1e-3)) {
+        return None;
+    }
+    let end_width = |from: f32, to: f32| 2.0 * (0..verts.len()).filter(|&i| proj[i] >= from && proj[i] <= to).map(off).fold(0.0f32, f32::max);
+    let q = length * 0.25;
+    let (wa, wb) = (end_width(lo, lo + q), end_width(hi - q, hi));
+    let (pa, pb) = (c + axis * lo, c + axis * hi);
+    // Which end is bright: the vertex colours, else a cone's narrow end.
+    let third = length / 3.0;
+    let mean = |from: f32, to: f32, cs: &[[f32; 4]]| {
+        let (sum, k) = (0..verts.len().min(cs.len())).filter(|&i| proj[i] >= from && proj[i] <= to).fold((0.0f32, 0usize), |(s, k), i| {
+            let col = cs[i];
+            (s + col[3] * (0.2126 * col[0] + 0.7152 * col[1] + 0.0722 * col[2]), k + 1)
+        });
+        if k > 0 { sum / k as f32 } else { 0.0 }
+    };
+    let by_colour = colours.and_then(|cs| {
+        let (ea, eb) = (mean(lo, lo + third, cs), mean(hi - third, hi, cs));
+        if ea >= END_RATIO * eb && ea > 0.0 {
+            Some(true)
+        } else if eb >= END_RATIO * ea && eb > 0.0 {
+            Some(false)
+        } else {
+            None
+        }
+    });
+    let by_cone = if wb >= CONE_RATIO * wa.max(1e-3) {
+        Some(true)
+    } else if wa >= CONE_RATIO * wb.max(1e-3) {
+        Some(false)
+    } else {
+        None
+    };
+    let shaft = |a_first: bool, directed: bool| {
+        let (a, b, wa, wb) = if a_first { (pa, pb, wa, wb) } else { (pb, pa, wb, wa) };
+        Shaft { a: a.to_array(), b: b.to_array(), width_a: wa, width_b: wb, directed, colour: [1.0; 3] }
+    };
+    Some(match by_colour.or(by_cone) {
+        Some(a_bright) => shaft(a_bright, true),
+        None => shaft(true, false),
+    })
 }
 
 /// A colour scaled so its brightest channel is 1 (white for black).
@@ -359,7 +484,12 @@ fn read_glow(data: &GameData, path: &str) -> Option<ModelGlow> {
         let Some((bright, tex_hue)) = shape_light(look, blended, traits.unlit, light) else { continue };
         let e = if emissive.iter().any(|&c| c > 0.0) { Vec3::from_array(hue(Vec3::from_array(emissive))) } else { Vec3::ONE };
         let colour = hue(e * Vec3::from_array(tex_hue));
-        parts.push(GlowPart { centre: t.transform_point3(Vec3::from_array(centre)), radius, colour, visible: bright * radius * radius });
+        // Its shape from its vertices (taken to the model's space) and vertex colours.
+        let data = shape.block_ref("data").and_then(|r| dec.get(r));
+        let verts: Vec<Vec3> = data.and_then(|d| d.floats("vertices")).map(|f| f.as_chunks::<3>().0.iter().map(|v| t.transform_point3(Vec3::from_array(*v))).collect()).unwrap_or_default();
+        let colours: Option<Vec<[f32; 4]>> = data.and_then(|d| d.floats("vertex_colors")).map(|f| f.as_chunks::<4>().0.to_vec()).filter(|c: &Vec<[f32; 4]>| c.len() == verts.len());
+        let shape_of = part_shape(&verts, colours.as_deref());
+        parts.push(GlowPart { centre: t.transform_point3(Vec3::from_array(centre)), radius, colour, visible: bright * radius * radius, shape: shape_of });
     }
     combine(&parts)
 }
@@ -395,7 +525,70 @@ mod tests {
     }
 
     fn part(centre: Vec3, radius: f32, colour: [f32; 3], bright: f32) -> GlowPart {
-        GlowPart { centre, radius, colour, visible: bright * radius * radius }
+        GlowPart { centre, radius, colour, visible: bright * radius * radius, shape: None }
+    }
+
+    /// A strip 400 long and 20 wide along y, its alpha falling from one end to the other.
+    fn strip(alpha_at_low_end: f32, alpha_at_high_end: f32) -> (Vec<Vec3>, Vec<[f32; 4]>) {
+        let mut v = Vec::new();
+        let mut c = Vec::new();
+        for i in 0..=8 {
+            let y = 100.0 + i as f32 * 50.0;
+            let a = alpha_at_low_end + (alpha_at_high_end - alpha_at_low_end) * i as f32 / 8.0;
+            for x in [-10.0, 10.0] {
+                v.push(Vec3::new(x, y, 5.0));
+                c.push([1.0, 1.0, 1.0, a]);
+            }
+        }
+        (v, c)
+    }
+
+    #[test]
+    fn a_long_strip_is_a_shaft_bright_where_its_alpha_is() {
+        let (v, c) = strip(1.0, 0.1);
+        let s = part_shape(&v, Some(&c)).expect("long");
+        assert!(s.directed);
+        assert!((Vec3::from_array(s.a) - Vec3::new(0.0, 100.0, 5.0)).length() < 1e-2, "{:?}", s.a);
+        assert!((Vec3::from_array(s.b) - Vec3::new(0.0, 500.0, 5.0)).length() < 1e-2, "{:?}", s.b);
+        assert!((s.width_a - 20.0).abs() < 1e-3 && (s.width_b - 20.0).abs() < 1e-3);
+        // Reversed alpha: the other end is the bright one.
+        let (v, c) = strip(0.1, 1.0);
+        let s = part_shape(&v, Some(&c)).unwrap();
+        assert!((Vec3::from_array(s.a) - Vec3::new(0.0, 500.0, 5.0)).length() < 1e-2);
+        // Even alpha and no taper: symmetric.
+        let (v, c) = strip(1.0, 1.0);
+        assert!(!part_shape(&v, Some(&c)).unwrap().directed);
+        assert!(!part_shape(&v, None).unwrap().directed);
+    }
+
+    #[test]
+    fn a_cone_is_bright_at_its_narrow_end_and_a_square_card_is_round() {
+        // A cone along x: 4 wide at x = 0, 100 wide at x = 600; no vertex colours.
+        let mut v = Vec::new();
+        for i in 0..=6 {
+            let x = i as f32 * 100.0;
+            let w = 2.0 + 48.0 * i as f32 / 6.0;
+            v.extend([Vec3::new(x, -w, 0.0), Vec3::new(x, w, 0.0), Vec3::new(x, 0.0, w), Vec3::new(x, 0.0, -w)]);
+        }
+        let s = part_shape(&v, None).expect("long");
+        assert!(s.directed && s.a[0] < 1.0 && s.b[0] > 599.0, "{s:?}");
+        assert!(s.width_a < s.width_b);
+        let card = [Vec3::new(-50.0, -50.0, 0.0), Vec3::new(50.0, -50.0, 0.0), Vec3::new(50.0, 50.0, 0.0), Vec3::new(-50.0, 50.0, 0.0)];
+        assert_eq!(part_shape(&card, None), None);
+    }
+
+    #[test]
+    fn long_parts_become_shafts_the_rest_the_round_glow() {
+        let beam = GlowPart { shape: Some(Shaft { a: [0.0; 3], b: [0.0, 0.0, 1000.0], width_a: 10.0, width_b: 200.0, directed: true, colour: [1.0; 3] }), ..part(Vec3::new(0.0, 0.0, 500.0), 500.0, [0.9, 0.9, 1.0], 1.0) };
+        let lamp = part(Vec3::new(0.0, 0.0, -20.0), 10.0, [1.0, 0.8, 0.5], 1.0);
+        let g = combine(&[beam, lamp]).unwrap();
+        assert!(!g.shafts_only);
+        assert_eq!(g.centre, [0.0, 0.0, -20.0], "the round glow is the lamp alone");
+        let s = g.shafts[0].expect("a shaft");
+        assert_eq!((s.b, s.colour), ([0.0, 0.0, 1000.0], [0.9, 0.9, 1.0]));
+        let only = combine(&[beam]).unwrap();
+        assert!(only.shafts_only && only.shafts[0].is_some());
+        assert_eq!(only.centre, [0.0, 0.0, 500.0]);
     }
 
     #[test]
