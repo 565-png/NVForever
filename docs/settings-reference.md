@@ -1141,9 +1141,8 @@ below cover them all.
 
 ### `full-detail`: Full-detail scenery
 
-- On the page: Draws the full models of buildings, rocks and cliffs in the cells beyond the
-  loaded ones, out to 7 x 7 or 9 x 9 cells, instead of their distant forms. Costs GPU time.
-  Not in the original.
+- On the page: Draws buildings, rocks and cliffs out to 7 x 7 or 9 x 9 cells as full models,
+  not distant forms. Costs GPU time. Not in the original.
 - In full: [design, #2701] A list: Off, 7 x 7, 9 x 9; Off by default and in both presets.
   Outdoors, the full models of statics, static collections, moveable statics and trees,
   and of every other reference flagged visible when distant, are drawn in the cells 3

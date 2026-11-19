@@ -92,6 +92,7 @@ mod handoff;
 mod distant_objects;
 mod full_detail;
 mod furniture;
+mod game_digest;
 mod graphics;
 mod grass;
 mod grass_fire_fx;
@@ -1851,6 +1852,8 @@ fn main() -> AppExit {
     // Distant objects (#3014), off unless the settings or --graphics-only turn it on:
     // draw-only scenery beyond the ring the LOD blocks do not hold (distant_objects.rs).
     .add_plugins(distant_objects::DistantObjectsPlugin)
+    // Test aid NVF_PLAY_TEST_GAME_DIGEST: the game's state at given times (game_digest.rs).
+    .add_plugins(game_digest::GameDigestPlugin)
     .add_systems(Update, (doors::script_drawn, doors::register, doors::open_all.run_if(move || open_doors), doors::pose).chain().after(nvf_play::doors::DoorSystems).after(advance_animations))
     .init_resource::<locomotion::ActorAnimCost>()
     .add_systems(PreUpdate, actors::take_background_work)

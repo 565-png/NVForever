@@ -1049,7 +1049,7 @@ fn register_graphics(app: &mut App) {
             key: FULL_DETAIL_KEY,
             group: GROUP_GRAPHICS,
             label: "Full-detail scenery",
-            note: "Draws the full models of buildings, rocks and cliffs in the cells beyond the loaded ones, out to 7 x 7 or 9 x 9 cells, instead of their distant forms. Costs GPU time. Not in the original.",
+            note: "Draws buildings, rocks and cliffs out to 7 x 7 or 9 x 9 cells as full models, not distant forms. Costs GPU time. Not in the original.",
             switches: "--graphics-only",
             get: |_| false,
             set: |_, _| {},

@@ -80,7 +80,7 @@ use fnv_esm::LoadOrder;
 use fnv_world::placed::{base_object, placement, placement_visible_when_distant, BaseObject, Placement};
 use fnv_world::CELL_SIZE;
 use nvf_assets::model::ModelCtx;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 pub type Grid = (i32, i32);
@@ -216,7 +216,7 @@ pub struct RingCellState {
     pub leaving: bool,
     /// The flagged references here that are not drawn (module notes): while any is, the
     /// cell's LOD segment stays.
-    kept: BTreeSet<u32>,
+    kept: KeptRefs,
     /// A tree here drew nothing: the cell's distant tree billboards stay (treelod.rs).
     trees_kept: bool,
     /// A loaded cell was under it last frame ([`hand_off`]).
@@ -230,30 +230,60 @@ pub struct RingCellState {
 
 impl RingCellState {
     /// A cell just spawned at `level` ([`finish`] puts it through [`hand_off`] first).
-    fn new(entity: Entity, level: f32, kept: BTreeSet<u32>, trees_kept: bool, small: Vec<u32>) -> RingCellState {
+    fn new(entity: Entity, level: f32, kept: KeptRefs, trees_kept: bool, small: Vec<u32>) -> RingCellState {
         RingCellState { entity, level, leaving: false, kept, trees_kept, under: false, small, applied: None, shadow: None }
     }
 
-    /// The cell keeps its LOD segment ([`Self::kept`]).
+    /// The cell keeps its LOD segment ([`KeptRefs::keeps_segment`]).
     pub fn keep_segment(&self) -> bool {
-        !self.kept.is_empty()
+        self.kept.keeps_segment()
     }
 
     /// A resting ring cell at `level` for other modules' tests (distant_objects.rs).
     #[cfg(test)]
     pub(crate) fn for_test(level: f32) -> RingCellState {
-        RingCellState::new(Entity::PLACEHOLDER, level, BTreeSet::new(), false, Vec::new())
+        RingCellState::new(Entity::PLACEHOLDER, level, KeptRefs::default(), false, Vec::new())
     }
 
     /// The same with its trees fallen back to the billboards (`trees_kept`).
     #[cfg(test)]
     pub(crate) fn for_test_trees_kept(level: f32) -> RingCellState {
-        RingCellState::new(Entity::PLACEHOLDER, level, BTreeSet::new(), true, Vec::new())
+        RingCellState::new(Entity::PLACEHOLDER, level, KeptRefs::default(), true, Vec::new())
     }
 
     /// Fully drawn and staying.
     pub fn full(&self) -> bool {
         !self.leaving && fade::step(self.level) == fade::STEPS
+    }
+}
+
+/// What a ring cell keeps for the references it does not draw (module notes), owned by the
+/// cell's entity from its spawn through its publication to its retirement.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeptRefs {
+    /// Flagged references of types the ring never draws (actors, placed water): their LOD
+    /// segment stays for as long as the cell does. A model swap never draws them here.
+    pub never: BTreeSet<u32>,
+    /// References the ring draws whose model spawned no shape (missing, failed, empty),
+    /// with whether each is flagged: a model swap may draw them later (destroyed.rs), and
+    /// the flagged ones keep the segment meanwhile.
+    pub missing: BTreeMap<u32, bool>,
+}
+
+impl KeptRefs {
+    /// The cell keeps its LOD segment.
+    pub fn keeps_segment(&self) -> bool {
+        !self.never.is_empty() || self.missing.values().any(|&flagged| flagged)
+    }
+
+    /// Reference `r` (`flagged` visible when distant) was drawn here: a shape spawned
+    /// (`drawn`), or none, so a later model may draw it.
+    pub fn record(&mut self, r: u32, flagged: bool, drawn: bool) {
+        if drawn {
+            self.missing.remove(&r);
+        } else {
+            self.missing.insert(r, flagged);
+        }
     }
 }
 
@@ -265,7 +295,7 @@ struct RingSpawn {
     /// References whose model was not prepared yet: tried again once `refs` are done.
     later: Vec<u32>,
     origin: Vec3,
-    kept: BTreeSet<u32>,
+    kept: KeptRefs,
     trees_kept: bool,
     /// In the ring's outermost step ([`SIZE_CUT`]), and what the cut left out.
     outer: bool,
@@ -309,6 +339,42 @@ pub struct FullDetailRing {
     pub(crate) pending_swaps: BTreeSet<u32>,
     /// When each TREE base not built yet was first wanted (seconds, [`TREE_WAIT_SECS`]).
     tree_waits: HashMap<u32, f64>,
+    /// Cells retired this frame: [`fade_ring`] stills their idle rigs while they despawn.
+    retired_now: Vec<Entity>,
+    /// Nothing to do while this is the frame's state ([`QuietKey`]), and the state
+    /// [`fade_ring`] last made a full pass in, with the shadow rule then.
+    quiet: Option<QuietKey>,
+    faded_quiet: Option<QuietKey>,
+    last_casts: Option<bool>,
+}
+
+/// What the ring's work depends on while it rests: the loaded grid's centre, the ring's
+/// reach and the loaded cells (their squares hashed, whether any fades or spawns).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuietKey {
+    centre: Grid,
+    outer: i32,
+    loaded: u64,
+    fades: bool,
+    spawning: bool,
+}
+
+/// An order-independent hash of grid squares (or IDs): each mixed, then XORed.
+pub fn set_hash(items: impl Iterator<Item = u64>) -> u64 {
+    items.map(mix).fold(0, |a, h| a ^ h)
+}
+
+/// SplitMix64's finaliser [design: a well-spread mix for order-independent XOR hashes].
+fn mix(x: u64) -> u64 {
+    let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// [`set_hash`] of grid squares.
+fn grid_hash<'a>(cells: impl Iterator<Item = &'a Grid>) -> u64 {
+    set_hash(cells.map(|&(x, y)| ((x as u32 as u64) << 32) | y as u32 as u64))
 }
 
 impl FullDetailRing {
@@ -321,24 +387,38 @@ impl FullDetailRing {
         self.ahead = ReadAhead::default();
         self.pending_swaps.clear();
         self.tree_waits.clear();
+        self.retired_now.clear();
+        self.quiet = None;
+        self.faded_quiet = None;
     }
 
-    /// The ring cells holding reference `r` among their kept references (a flagged one
-    /// that drew nothing): a model swap may draw it there now (destroyed.rs).
-    pub(crate) fn cells_keeping(&self, r: u32) -> Vec<(Grid, Entity)> {
-        self.cells.iter().filter(|(_, s)| s.kept.contains(&r)).map(|(c, s)| (*c, s.entity)).collect()
+    /// The kept references of the cell whose entity is `e`, drawn or still spawning;
+    /// `None` for a retiring cell or another entity.
+    fn kept_of(&mut self, e: Entity) -> Option<&mut KeptRefs> {
+        match self.cells.values_mut().find(|s| s.entity == e) {
+            Some(s) => Some(&mut s.kept),
+            None => self.spawning.values_mut().find(|s| s.entity == e).map(|s| &mut s.kept),
+        }
     }
 
-    /// Reference `r` (flagged visible when distant or not) was drawn anew in ring cell
-    /// `grid` (destroyed.rs): a flagged one that drew something no longer keeps the cell's
-    /// segment, one that drew nothing does.
-    pub(crate) fn drew(&mut self, grid: Grid, r: u32, flagged: bool, drawn: bool) {
-        if let Some(s) = self.cells.get_mut(&grid) {
-            if flagged && drawn {
-                s.kept.remove(&r);
-            } else if flagged {
-                s.kept.insert(r);
-            }
+    /// Whether `e` is the entity of a ring cell drawn or still spawning (not retiring).
+    pub(crate) fn owns(&self, e: Entity) -> bool {
+        self.cells.values().any(|s| s.entity == e) || self.spawning.values().any(|s| s.entity == e)
+    }
+
+    /// The cells (drawn or still spawning) where reference `r`'s model spawned no shape:
+    /// a model swap may draw it there now (destroyed.rs). Never a reference of a type the
+    /// ring does not draw ([`KeptRefs::never`]).
+    pub(crate) fn retry_holders(&self, r: u32) -> Vec<Entity> {
+        let drawn = self.cells.values().filter(|s| s.kept.missing.contains_key(&r)).map(|s| s.entity);
+        drawn.chain(self.spawning.values().filter(|s| s.kept.missing.contains_key(&r)).map(|s| s.entity)).collect()
+    }
+
+    /// Reference `r` was drawn anew in the cell whose entity is `e` (destroyed.rs), a shape
+    /// spawned or not: only that cell's record changes, never another generation's.
+    pub(crate) fn drew(&mut self, e: Entity, r: u32, flagged: bool, drawn: bool) {
+        if let Some(k) = self.kept_of(e) {
+            k.record(r, flagged, drawn);
         }
     }
 
@@ -347,12 +427,14 @@ impl FullDetailRing {
         &mut self.models
     }
 
-    /// Ring cell `grid` got new meshes (destroyed.rs): [`fade_ring`] gives them their range
-    /// and shadow rule.
-    pub(crate) fn redrawn(&mut self, grid: Grid) {
-        if let Some(s) = self.cells.get_mut(&grid) {
+    /// The cell whose entity is `e` got new meshes (destroyed.rs): [`fade_ring`] gives
+    /// them their range and shadow rule (a cell still spawning gets them when it is
+    /// published).
+    pub(crate) fn redrawn(&mut self, e: Entity) {
+        if let Some(s) = self.cells.values_mut().find(|s| s.entity == e) {
             s.applied = None;
             s.shadow = None;
+            self.faded_quiet = None;
         }
     }
 
@@ -363,10 +445,12 @@ impl FullDetailRing {
         self.radius == 0 || (self.spawning.is_empty() && !self.ahead.busy() && ring_cells(centre, loaded, self.radius).iter().all(|c| self.cells.contains_key(c)))
     }
 
-    /// Hide a ring cell and despawn it over the next frames.
+    /// Hide a ring cell and despawn it over the next frames; its idle rigs are stilled
+    /// ([`fade_ring`]).
     fn retire(&mut self, commands: &mut Commands, e: Entity) {
         commands.entity(e).insert(Visibility::Hidden);
         self.dying.push(e);
+        self.retired_now.push(e);
     }
 }
 
@@ -508,6 +592,14 @@ pub fn stream(
         return;
     };
     let (loaded, outer) = (streamer.radius, ring.radius);
+    // At rest with nothing changed since (the same centre, reach and loaded cells, none of
+    // them fading or spawning): nothing to do.
+    let key = QuietKey { centre, outer, loaded: grid_hash(streamer.loaded.keys()), fades: streamer.fades.is_empty(), spawning: streamer.spawning.is_empty() };
+    if ring.quiet == Some(key) && ring.dying.is_empty() {
+        ring.stats.ms += ms(started);
+        return;
+    }
+    ring.quiet = None;
     let fading = streamer.fade_secs > 0.0;
     let loaded_at = |c: Grid| streamer.loaded.contains_key(&c).then(|| (streamer.cell_level(c), !streamer.fades.contains_key(&c)));
     let want = if outer > 0 { ring_cells(centre, loaded, outer) } else { Vec::new() };
@@ -601,7 +693,7 @@ pub fn stream(
             refs = cell.refs.clone();
         }
         refs.extend(world.persistent_by_grid.get(&c).into_iter().flatten());
-        let mut sp = RingSpawn { entity, refs, next: 0, later: Vec::new(), origin, kept: BTreeSet::new(), trees_kept: false, outer: steps(c, centre) == outer, small: Vec::new() };
+        let mut sp = RingSpawn { entity, refs, next: 0, later: Vec::new(), origin, kept: KeptRefs::default(), trees_kept: false, outer: steps(c, centre) == outer, small: Vec::new() };
         spawn_refs(&mut commands, &ctx, &mut sp, deadline, &mut models, &mut emittance, &mut trees, ring);
         if sp.done() {
             finish(&mut commands, ring, c, sp, fading, loaded_at(c));
@@ -609,6 +701,12 @@ pub fn stream(
             ring.spawning.insert(c, sp);
         }
     }
+    // All in and at rest: quiet until something it depends on changes.
+    let rests = ring.spawning.is_empty()
+        && !ring.ahead.busy()
+        && ring_cells(centre, loaded, outer).iter().all(|c| ring.cells.contains_key(c))
+        && ring.cells.iter().all(|(c, s)| !s.leaving && (s.under || s.level >= 1.0) && !small_due(steps(*c, centre), outer, s.small.len()));
+    ring.quiet = rests.then_some(key);
     ring.stats.ms += ms(started);
 }
 
@@ -708,10 +806,10 @@ fn spawn_refs(commands: &mut Commands, ctx: &RefCtx, sp: &mut RingSpawn, deadlin
     }
 }
 
-/// What a cell keeps for the references not drawn here: the flagged ones (its LOD
-/// segment) and whether a tree drew nothing (its distant tree billboards).
+/// What a cell keeps for the references not drawn here ([`KeptRefs`]) and whether a tree
+/// drew nothing (its distant tree billboards).
 struct Kept<'a> {
-    refs: &'a mut BTreeSet<u32>,
+    refs: &'a mut KeptRefs,
     trees: &'a mut bool,
 }
 
@@ -757,7 +855,7 @@ fn spawn_ring_ref(commands: &mut Commands, ctx: &RefCtx, sp: Target, kept: &mut 
         }
         RingRef::Skip => return Spawned::Done,
         RingRef::KeepSegment => {
-            kept.refs.insert(r);
+            kept.refs.never.insert(r);
             return Spawned::Done;
         }
     }
@@ -766,7 +864,7 @@ fn spawn_ring_ref(commands: &mut Commands, ctx: &RefCtx, sp: Target, kept: &mut 
     if base.is_speedtree() {
         // Exactly the trees the distant billboards draw (treelod.rs: a TREE enabled at
         // the start), so the two crossfade one for one.
-        if !crate::treelod::distant_tree(&base, enabled) {
+        if !crate::treelod::distant_tree_ref(&p, &base, enabled) {
             return Spawned::Done;
         }
         return match spawn_ring_tree(commands, ctx, sp, r, &p, &base, rt, models, trees, ring) {
@@ -803,19 +901,10 @@ fn spawn_ring_ref(commands: &mut Commands, ctx: &RefCtx, sp: Target, kept: &mut 
         }
     }
     let drawn = world::spawn_model(commands, sp.entity, world, &p, r, &base, rt, models, emittance, &ctx.streamer.hide, &mut ring.models, SpawnMode::Scenery);
-    // A flagged reference keeps its cell's LOD segment for as long as it draws nothing.
-    keep_for(kept.refs, r, flag, drawn);
+    // One whose model spawned no shape may be drawn by a later model (a swap); a flagged
+    // one keeps its cell's LOD segment meanwhile.
+    kept.refs.record(r, flag, drawn);
     Spawned::Done
-}
-
-/// Track the kept references of a cell after reference `r` was drawn (`drawn`: a shape
-/// spawned): a flagged one that drew nothing is kept, one that drew is not.
-pub fn keep_for(kept: &mut BTreeSet<u32>, r: u32, flagged: bool, drawn: bool) {
-    if flagged && !drawn {
-        kept.insert(r);
-    } else {
-        kept.remove(&r);
-    }
 }
 
 /// Whether a reference is drawn in the ring for its enable state: enabled at the start, or
@@ -858,7 +947,7 @@ fn spawn_ring_tree(commands: &mut Commands, ctx: &RefCtx, sp: Target, r: u32, p:
 /// A ring cell just spawned: at level 0 (cell fades on) or 1, then put through the
 /// hand-off with the loaded cell in its square, if any, before anything reads it.
 #[allow(clippy::too_many_arguments)]
-pub fn finished_state(entity: Entity, fading: bool, loaded_at: Option<(f32, bool)>, kept: BTreeSet<u32>, trees_kept: bool, small: Vec<u32>) -> RingCellState {
+pub fn finished_state(entity: Entity, fading: bool, loaded_at: Option<(f32, bool)>, kept: KeptRefs, trees_kept: bool, small: Vec<u32>) -> RingCellState {
     let mut s = RingCellState::new(entity, if fading { 0.0 } else { 1.0 }, kept, trees_kept, small);
     if let Some(level) = hand_off(s.level, false, loaded_at.map(|(_, rest)| rest), false) {
         s.level = level;
@@ -895,13 +984,24 @@ pub fn fade_ring(
     casters: Query<(Has<NotShadowCaster>, Has<RingNoShadow>), With<Mesh3d>>,
     rigs: Query<(), (With<nvf_assets::anim_play::Playing>, With<nvf_play::DrawOnly>)>,
 ) {
-    if ring.cells.is_empty() {
+    if ring.cells.is_empty() && ring.retired_now.is_empty() {
         return;
     }
     let started = Instant::now();
-    let casts = ring_casts_shadows(sky.shadows, sky.shadow_distance * sky.shadow_reach, streamer.radius);
-    let fading = streamer.fade_secs > 0.0;
     let ring = &mut *ring;
+    // Cells retired this frame: their idle rigs stand still while they despawn.
+    for e in std::mem::take(&mut ring.retired_now) {
+        for r in children.iter_descendants(e).filter(|&r| rigs.contains(r)) {
+            commands.entity(r).try_insert(RingDormant);
+        }
+    }
+    let casts = ring_casts_shadows(sky.shadows, sky.shadow_distance * sky.shadow_reach, streamer.radius);
+    // At rest and walked once since: nothing changes.
+    if ring.quiet.is_some() && ring.faded_quiet == ring.quiet && ring.last_casts == Some(casts) {
+        ring.stats.ms += started.elapsed().as_secs_f64() * 1000.0;
+        return;
+    }
+    let fading = streamer.fade_secs > 0.0;
     for (c, s) in &mut ring.cells {
         let want = ring_range(s.level, streamer.loaded.contains_key(c).then(|| streamer.cell_level(*c)));
         if s.applied != Some(want) {
@@ -939,6 +1039,8 @@ pub fn fade_ring(
             }
         }
     }
+    ring.faded_quiet = ring.quiet;
+    ring.last_casts = Some(casts);
     ring.stats.ms += started.elapsed().as_secs_f64() * 1000.0;
 }
 
@@ -1052,7 +1154,7 @@ mod tests {
     use super::*;
 
     fn state(level: f32, leaving: bool, keep: bool) -> RingCellState {
-        let kept = if keep { BTreeSet::from([1]) } else { BTreeSet::new() };
+        let kept = KeptRefs { never: if keep { BTreeSet::from([1]) } else { BTreeSet::new() }, ..Default::default() };
         RingCellState { entity: Entity::PLACEHOLDER, level, leaving, kept, trees_kept: false, under: false, small: Vec::new(), applied: None, shadow: None }
     }
 
@@ -1188,10 +1290,10 @@ mod tests {
     /// nothing there.
     #[test]
     fn a_cell_finishing_under_a_fading_loaded_cell_takes_its_complement() {
-        let s = finished_state(Entity::PLACEHOLDER, true, Some((0.5, false)), BTreeSet::new(), false, Vec::new());
+        let s = finished_state(Entity::PLACEHOLDER, true, Some((0.5, false)), KeptRefs::default(), false, Vec::new());
         assert_eq!((s.level, s.under), (1.0, true));
         assert!(coverage(Some(&s), Some(0.5)).iter().all(|&n| n == 1));
-        let alone = finished_state(Entity::PLACEHOLDER, true, None, BTreeSet::new(), false, Vec::new());
+        let alone = finished_state(Entity::PLACEHOLDER, true, None, KeptRefs::default(), false, Vec::new());
         assert_eq!((alone.level, alone.under), (0.0, false));
         assert!(coverage(Some(&alone), None).iter().all(|&n| n == 1));
     }
@@ -1254,13 +1356,16 @@ mod tests {
         assert_eq!(swap_outcome(false, None), SwapOutcome::Wait, "cold");
         assert_eq!(swap_outcome(true, Some(true)), SwapOutcome::Replaced);
         assert_eq!(swap_outcome(true, Some(false)), SwapOutcome::KeptOld, "failed or empty");
-        let mut kept = BTreeSet::new();
-        keep_for(&mut kept, 7, true, false);
-        assert!(kept.contains(&7), "a flagged reference that drew nothing keeps the segment");
-        keep_for(&mut kept, 7, true, true);
-        assert!(kept.is_empty(), "a later draw clears its reason");
-        keep_for(&mut kept, 8, false, false);
-        assert!(kept.is_empty(), "an unflagged one has no LOD to keep");
+        let mut kept = KeptRefs::default();
+        kept.record(7, true, false);
+        assert!(kept.keeps_segment(), "a flagged reference that drew nothing keeps the segment");
+        kept.record(7, true, true);
+        assert!(!kept.keeps_segment() && kept.missing.is_empty(), "a later draw clears its reason");
+        kept.record(8, false, false);
+        assert!(!kept.keeps_segment(), "an unflagged one has no LOD to keep");
+        assert!(kept.missing.contains_key(&8), "but a later model may still draw it");
+        kept.never.insert(9);
+        assert!(kept.keeps_segment(), "a flagged actor keeps it for good");
     }
 
     /// Trees: the ring draws exactly the trees the distant billboards draw (a TREE with a
@@ -1272,9 +1377,67 @@ mod tests {
         assert!(crate::treelod::distant_tree(&base(*b"TREE", "trees\\joshua01.spt"), true));
         assert!(!crate::treelod::distant_tree(&base(*b"TREE", "trees\\joshua01.spt"), false), "disabled at the start: no billboard, no ring tree");
         assert!(!crate::treelod::distant_tree(&base(*b"STAT", "trees\\joshua01.spt"), true), "not a TREE");
+        let p = |imposter: bool, primitive: bool| Placement {
+            form_id: 0x100, sig: *b"REFR", flags: 0, base: Some(0x200), position: [0.0; 3], rotation: [0.0; 3], scale: 1.0,
+            enable_parent: None, open_by_default: false, teleport: false, emittance: None, imposter, primitive,
+        };
+        let tree = base(*b"TREE", "trees\\joshua01.spt");
+        assert!(crate::treelod::distant_tree_ref(&p(false, false), &tree, true), "the one rule both use");
+        assert!(!crate::treelod::distant_tree_ref(&p(true, false), &tree, true), "an imposter: drawn by region");
+        assert!(!crate::treelod::distant_tree_ref(&p(false, true), &tree, true), "a primitive: editor-only");
+        assert!(!crate::treelod::distant_tree_ref(&p(false, false), &tree, false));
         let mut ring = HashMap::new();
         ring.insert((3, 0), RingCellState { trees_kept: true, ..state(1.0, false, false) });
         assert_eq!(tree_level(0.0, Some(&ring), (3, 0)), 0.0, "billboards stay where a tree drew nothing");
+    }
+
+    fn spawn_with(entity: Entity, kept: KeptRefs) -> RingSpawn {
+        RingSpawn { entity, refs: Vec::new(), next: 0, later: Vec::new(), origin: Vec3::ZERO, kept, trees_kept: false, outer: false, small: Vec::new() }
+    }
+
+    /// Round 3: a reference whose model spawned no shape is tracked against the cell entity
+    /// that owns it, while the cell spawns, once it is drawn and not after it retires; a
+    /// swap's result changes only that entity's record (not a new cell at the same square);
+    /// a reference of a type the ring never draws (a flagged actor) is never a retry.
+    #[test]
+    fn retries_follow_the_owning_cell_through_spawn_publication_and_retirement() {
+        let mut world = World::new();
+        let (old, new) = (world.spawn_empty().id(), world.spawn_empty().id());
+        let mut kept = KeptRefs::default();
+        kept.record(7, true, false);
+        kept.record(8, false, false);
+        kept.never.insert(9);
+        let mut ring = FullDetailRing::default();
+        ring.spawning.insert((3, 0), spawn_with(old, kept));
+        assert_eq!(ring.retry_holders(7), vec![old], "while the cell still spawns");
+        assert_eq!(ring.retry_holders(8), vec![old], "an unflagged missing model too");
+        assert!(ring.retry_holders(9).is_empty(), "a flagged actor is never drawn by a swap");
+        assert!(ring.owns(old));
+        // Published: the record moves with the cell.
+        let sp = ring.spawning.remove(&(3, 0)).unwrap();
+        ring.cells.insert((3, 0), finished_state(sp.entity, true, None, sp.kept, false, Vec::new()));
+        assert_eq!(ring.retry_holders(7), vec![old]);
+        assert!(ring.cells[&(3, 0)].keep_segment());
+        // Retired, then a new generation at the same square.
+        let gone = ring.cells.remove(&(3, 0)).unwrap();
+        assert!(!ring.owns(gone.entity) && ring.retry_holders(7).is_empty(), "a retiring cell takes no swap");
+        let mut fresh = KeptRefs::default();
+        fresh.record(7, true, false);
+        ring.cells.insert((3, 0), finished_state(new, true, None, fresh, false, Vec::new()));
+        ring.drew(old, 7, true, true);
+        assert!(ring.cells[&(3, 0)].keep_segment(), "the old generation's result does not reach the new cell");
+        ring.drew(new, 7, true, true);
+        assert!(!ring.cells[&(3, 0)].keep_segment(), "its own draw clears its reason");
+    }
+
+    /// Round 3: the quiet check's hash of the loaded squares does not depend on their order.
+    #[test]
+    fn the_loaded_set_hash_is_order_independent() {
+        let a = [(0, 0), (1, 0), (-1, 2)];
+        let b = [(-1, 2), (0, 0), (1, 0)];
+        assert_eq!(grid_hash(a.iter()), grid_hash(b.iter()));
+        assert_ne!(grid_hash(a.iter()), grid_hash(a[..2].iter()));
+        assert_eq!(set_hash(std::iter::empty()), 0);
     }
 
     /// The type filter (module notes).

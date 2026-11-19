@@ -1856,6 +1856,9 @@ pub struct Game<'a> {
     /// next one [observed: OnLoad after Enable had not run on the line after Enable and
     /// had run by the next frame, layer5-captures.md §8.3 d].
     pub pending_onload: Vec<FormId>,
+    /// OnLoad blocks of reference scripts run so far ([`Game::ref_event`]); not saved. A
+    /// count for the engine's game digest test aid (nvforever game_digest.rs).
+    pub onload_runs: u64,
     /// References whose GameMode and MenuMode blocks wait: the engine has not placed
     /// them yet. A trigger whose model is not read has no volumes, so an actor standing
     /// in it at the start gets no OnTriggerEnter before the script's first GameMode run;
@@ -2668,6 +2671,7 @@ impl<'a> Game<'a> {
             frame: 0,
             time: 0.0,
             pending_onload: Vec::new(),
+            onload_runs: 0,
             scripts_held: BTreeSet::new(),
             door_gates: Default::default(),
             door_heard: Default::default(),
@@ -3967,6 +3971,9 @@ impl<'a> Game<'a> {
         let has = self.data.script(script).is_some_and(|u| u.has_block(event));
         if !has {
             return false;
+        }
+        if event == event::ON_LOAD {
+            self.onload_runs += 1;
         }
         let ran = self.run_event(
             InstKey::Ref { reference: r },

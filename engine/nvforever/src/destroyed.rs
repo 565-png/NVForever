@@ -146,12 +146,14 @@ fn swap_models(
             Some(m) => base_object_with_model(base, m),
             None => base,
         };
-        // Its copies by ring cell, and the ring cells where it drew nothing before.
+        // Its copies by ring cell (drawn or still spawning, never a retiring one), and the
+        // ring cells where its model spawned no shape before. A reference of a type the
+        // ring never draws (an actor) has neither: a swap never draws it there.
         let mut targets: HashMap<Entity, Vec<Entity>> = HashMap::new();
-        for (e, _, c) in drawn.iter().filter(|(_, v, c)| v.0 == r && ring_cells.contains(c.parent())) {
+        for (e, _, c) in drawn.iter().filter(|(_, v, c)| v.0 == r && ring_cells.contains(c.parent()) && ring.owns(c.parent())) {
             targets.entry(c.parent()).or_default().push(e);
         }
-        for (_, e) in ring.cells_keeping(r) {
+        for e in ring.retry_holders(r) {
             targets.entry(e).or_default();
         }
         if targets.is_empty() {
@@ -165,7 +167,7 @@ fn swap_models(
         }
         let flagged = crate::full_detail::flagged(world.lo, &p);
         for (cell_e, old) in targets {
-            let Ok((cell, rc)) = ring_cells.get(cell_e) else { continue };
+            let Ok((cell, _)) = ring_cells.get(cell_e) else { continue };
             let rt = Affine3A::from_translation(-cell.translation) * ref_affine(&p);
             let drew = spawn_model(&mut commands, cell_e, &world, &p, r, &base, rt, &mut models, &mut emittance, &streamer.hide, ring.redraw_stats(), crate::world::SpawnMode::Scenery);
             if crate::full_detail::swap_outcome(true, Some(drew)) == crate::full_detail::SwapOutcome::Replaced {
@@ -173,11 +175,11 @@ fn swap_models(
                     commands.entity(*e).try_despawn();
                 }
             }
-            // The cell keeps its LOD segment for it only while nothing of it is drawn.
+            // The cell's record for it changes only when it now draws, or had nothing drawn.
             if drew || old.is_empty() {
-                ring.drew(rc.grid, r, flagged, drew);
+                ring.drew(cell_e, r, flagged, drew);
             }
-            ring.redrawn(rc.grid);
+            ring.redrawn(cell_e);
         }
     }
     ring.stats.ms += started.elapsed().as_secs_f64() * 1000.0;
