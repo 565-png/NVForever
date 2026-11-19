@@ -217,6 +217,9 @@ fn scalars_valid() {
     assert_eq!((empty.scalars, empty.warnings.len()), (Scalars::default(), 0));
     assert_eq!(empty.scalars.roughness_scale_or_default(), DEFAULT_ROUGHNESS_SCALE);
     assert_eq!(empty.scalars.reflectance_or_default(), DEFAULT_REFLECTANCE);
+    assert_eq!(empty.scalars.parallax_depth_or_default(), DEFAULT_PARALLAX_DEPTH);
+    assert_eq!(f.scalars.parallax_depth_or_default(), 0.05);
+    assert!(PARALLAX_DEPTH_RANGE.contains(&DEFAULT_PARALLAX_DEPTH));
     let bom = parse_scalars(b"\xEF\xBB\xBF# metal sheet\nreflectance = 0.25\n");
     assert_eq!((bom.scalars.reflectance, bom.warnings.len()), (Some(0.25), 0));
 }

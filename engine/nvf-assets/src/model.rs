@@ -1074,8 +1074,8 @@ impl TextureSource for Stores<'_> {
     fn resolve(&self, raw_path: &str) -> String {
         self.textures.resolve(raw_path)
     }
-    fn authored(&mut self, resolved_diffuse: &str) -> Option<crate::authored::AuthoredSet> {
-        self.textures.authored(resolved_diffuse)
+    fn pbr_set(&mut self, resolved_diffuse: &str) -> Option<crate::authored::PbrSet> {
+        self.textures.pbr_set(resolved_diffuse)
     }
     fn authored_on(&self) -> bool {
         self.textures.authored_on()
@@ -1156,12 +1156,12 @@ impl TextureSource for Deferred {
     fn authored_on(&self) -> bool {
         crate::authored::enabled()
     }
-    fn authored(&mut self, resolved_diffuse: &str) -> Option<crate::authored::AuthoredSet> {
+    fn pbr_set(&mut self, resolved_diffuse: &str) -> Option<crate::authored::PbrSet> {
         let (data, cached, workers, images, bc, unmasked) = (&self.data, &self.cached, &self.workers, &self.providers.images, self.bc_supported, &mut self.unmasked);
         crate::authored::find(data, crate::authored::enabled(), resolved_diffuse, &workers.authored, |path, usage| {
-            let (h, _, no_alpha) = worker_texture_exact(path, usage, data, cached, workers, images, bc)?;
+            let (h, format, no_alpha) = worker_texture_exact(path, usage, data, cached, workers, images, bc)?;
             unmasked.insert(h.id(), no_alpha);
-            Some(h)
+            Some((h, Some(format)))
         })
     }
 }
@@ -2154,20 +2154,29 @@ mod bc5_model_tests {
             cached: Arc::new(TextureSnapshot::new()), workers: cache.workers.clone(), bc_supported: true,
             unmasked: HashMap::new(), out: DeferredAssets::default(),
         };
+        use crate::authored::PbrSet;
         let key = deferred.resolve("walls/brick.dds");
-        let set = deferred.authored(&key).expect("authored set on the worker");
+        let found = deferred.pbr_set(&key).expect("authored set on the worker");
+        let set = found.authored().cloned().expect("authored");
         let normal = set.normal.clone().expect("_n");
         assert!(deferred.lacks_alpha(&normal), "two channels hold no mask");
         assert_eq!(set.scalars.roughness_scale, Some(0.5));
-        assert!(deferred.authored(&deferred.resolve("walls/stone.dds")).is_none());
-        assert_eq!(cache.take_workers(&mut images, 1.0), 2, "_orm and _n, once each");
+        // A height-only set: its `_p` by its exact path, in the linear role, on the worker.
+        let stone_key = deferred.resolve("walls/stone.dds");
+        let stone = deferred.pbr_set(&stone_key).expect("height-only set on the worker");
+        assert!(matches!(stone, PbrSet::HeightOnly(_)));
+        let depth_map = stone.height().and_then(|h| h.depth_map.clone()).expect("_p");
+        assert_eq!(cache.take_workers(&mut images, 1.0), 3, "_orm, _n and _p, once each");
         assert_eq!(images.get(&set.orm).unwrap().texture_descriptor.format, TextureFormat::Bc7RgbaUnorm);
         assert_eq!(images.get(&normal).unwrap().texture_descriptor.format, TextureFormat::Bc5RgUnorm);
-        let main = StoreTextures { textures: &mut cache, data: &pack.data, images: &mut images, formats: None }.authored(&key);
-        assert_eq!(main.as_ref(), Some(&set), "the main thread adopts the worker's handles");
+        assert_eq!(images.get(&depth_map).unwrap().texture_descriptor.format, TextureFormat::Bc4RUnorm);
+        let mut main = StoreTextures { textures: &mut cache, data: &pack.data, images: &mut images, formats: None };
+        assert_eq!(main.pbr_set(&key).as_ref(), Some(&found), "the main thread adopts the worker's handles");
+        assert_eq!(main.pbr_set(&stone_key).as_ref(), Some(&stone), "the worker's _p too");
         deferred.cached = Arc::new(cache.snapshot(&images));
         deferred.workers = Arc::new(WorkerTextures::default());
-        assert_eq!(deferred.authored(&key), Some(set));
+        assert_eq!(deferred.pbr_set(&key), Some(found));
+        assert_eq!(deferred.pbr_set(&stone_key), Some(stone));
         assert!(deferred.workers.entries_len() == 0, "a snapshot hit decodes nothing");
     }
 }

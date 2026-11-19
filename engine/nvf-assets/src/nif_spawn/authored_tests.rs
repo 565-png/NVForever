@@ -2,7 +2,7 @@
 //! what it leaves, the shapes it never touches, and the legacy look kept for swaps.
 
 use super::*;
-use crate::authored::{AuthoredSet, LegacyLook, AUTHORED_MARK};
+use crate::authored::{AuthoredSet, LegacyLook, Parallax, PbrSet, AUTHORED_MARK};
 use crate::texture::bc5_tests::triangle;
 use fnv_pbr::Scalars;
 
@@ -11,7 +11,7 @@ struct SetTextures {
     images: Assets<Image>,
     by_path: HashMap<String, Handle<Image>>,
     /// The set and the resolved key it belongs to.
-    set: Option<(String, AuthoredSet)>,
+    set: Option<(String, PbrSet)>,
     /// The game's normal maps carry a specular mask.
     masked: bool,
     asked: Vec<String>,
@@ -21,6 +21,10 @@ struct SetTextures {
 
 impl SetTextures {
     fn new(set: Option<(&str, AuthoredSet)>) -> SetTextures {
+        SetTextures::with(set.map(|(k, s)| (k, PbrSet::Authored(s))))
+    }
+
+    fn with(set: Option<(&str, PbrSet)>) -> SetTextures {
         SetTextures { images: Assets::default(), by_path: HashMap::new(), set: set.map(|(k, s)| (k.to_string(), s)), masked: true, asked: Vec::new(), on: true }
     }
 
@@ -54,7 +58,7 @@ impl TextureSource for SetTextures {
     fn authored_on(&self) -> bool {
         self.on
     }
-    fn authored(&mut self, key: &str) -> Option<AuthoredSet> {
+    fn pbr_set(&mut self, key: &str) -> Option<PbrSet> {
         self.asked.push(key.to_string());
         self.set.as_ref().filter(|(k, _)| k == key).map(|(_, s)| s.clone())
     }
@@ -63,7 +67,7 @@ impl TextureSource for SetTextures {
 const KEY: &str = r"textures\walls\brick.dds";
 
 fn set(images: &mut Assets<Image>, normal: bool, scalars: Scalars) -> AuthoredSet {
-    AuthoredSet { stem: r"textures\pbr\walls\brick".into(), orm: images.add(Image::default()), normal: normal.then(|| images.add(Image::default())), scalars }
+    AuthoredSet { stem: r"textures\pbr\walls\brick".into(), orm: images.add(Image::default()), normal: normal.then(|| images.add(Image::default())), height: None, scalars }
 }
 
 /// A lit, masked, glossy shape with the game's diffuse and normal map.
@@ -100,7 +104,7 @@ fn an_authored_set_fills_its_fields_over_the_legacy_ones() {
     assert_eq!(m.extension.soft, Vec4::ZERO, "soft stays zero: terrain blending still takes the material");
     assert_eq!(
         m.extension.legacy,
-        Some(LegacyLook { normal: Some(game_normal.clone()), specular: Some(game_normal), roughness: gloss_roughness(50.0), reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE })
+        Some(LegacyLook { normal: Some(game_normal.clone()), specular: Some(game_normal), roughness: gloss_roughness(50.0), reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, parallax: Parallax::default() })
     );
 }
 

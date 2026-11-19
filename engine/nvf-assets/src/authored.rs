@@ -4,9 +4,9 @@
 //!   start ([`set_enabled`], nvforever `main.rs`) and fixed for the run, so cached models
 //!   never mix the two states. Off, nothing here asks for the index (`GameData::pbr_index`)
 //!   or reads a file under `textures\pbr\`.
-//! - [`find`]: a shape's set by its resolved diffuse key, the members loaded by the exact
-//!   paths the index names, the scalar file read once per mount ([`scalars_cached`],
-//!   `GameData::pbr_scalars`).
+//! - [`find`]: a shape's set by its resolved diffuse key ([`PbrSet`]: authored, or height
+//!   only), the members loaded by the exact paths the index names, the scalar file read once
+//!   per mount ([`scalars_cached`], `GameData::pbr_scalars`).
 //! - [`apply`] / [`restore`]: a set on a material and back, from the legacy look every
 //!   eligible shape's material keeps ([`LegacyLook`]); [`retexture`] is the one rule for a
 //!   lit copy whose diffuse is replaced later.
@@ -15,7 +15,9 @@
 
 use crate::data::GameData;
 use crate::texture::TextureUsage;
+use bevy::pbr::ParallaxMappingMethod;
 use bevy::prelude::*;
+use bevy::render::render_resource::TextureFormat;
 use fnv_pbr::{Found, Member, PbrIndex, Scalars, SetState};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicU64;
@@ -47,8 +49,116 @@ pub struct AuthoredSet {
     pub orm: Handle<Image>,
     /// `_n` in the two-channel role, when the set has one and it loaded.
     pub normal: Option<Handle<Image>>,
+    /// `_p` as a depth map with its settings ([`Parallax::height`]), when the set has one, it
+    /// loaded and its depth is above 0.
+    pub height: Option<Parallax>,
     /// The scalar file's values (all `None` without one).
     pub scalars: Scalars,
+}
+
+/// A height-only set (`_p` without `_orm`) found for a shape's diffuse, its `_p` loaded: the
+/// game's own material with the height map, nothing else changed [design,
+/// docs/spec-notes/pbr-materials.md "Layout"].
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeightSet {
+    /// The set's stem (`textures\pbr\...`, without suffix).
+    pub stem: String,
+    /// `_p` as a depth map with its settings ([`Parallax::height`]).
+    pub height: Parallax,
+}
+
+/// What [`find`] found for a shape's diffuse: the one active set the index's lookup names
+/// (`PbrIndex::lookup`, with its first-person rule), by its state.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PbrSet {
+    /// A set with `_orm` (and its `_n`, `_p` and scalars where it has them).
+    Authored(AuthoredSet),
+    /// A set with `_p` and no `_orm`.
+    HeightOnly(HeightSet),
+}
+
+impl PbrSet {
+    pub fn stem(&self) -> &str {
+        match self {
+            PbrSet::Authored(s) => &s.stem,
+            PbrSet::HeightOnly(s) => &s.stem,
+        }
+    }
+
+    /// The authored part (`None` for a height-only set).
+    pub fn authored(&self) -> Option<&AuthoredSet> {
+        match self {
+            PbrSet::Authored(s) => Some(s),
+            PbrSet::HeightOnly(_) => None,
+        }
+    }
+
+    /// The height map, from either kind of set.
+    pub fn height(&self) -> Option<&Parallax> {
+        match self {
+            PbrSet::Authored(s) => s.height.as_ref(),
+            PbrSet::HeightOnly(s) => Some(&s.height),
+        }
+    }
+}
+
+impl From<AuthoredSet> for PbrSet {
+    fn from(set: AuthoredSet) -> PbrSet {
+        PbrSet::Authored(set)
+    }
+}
+
+/// The parallax method a set's height map is drawn with: Bevy's occlusion method (a march
+/// through layers, then one interpolation) [design, the stage 4 review's starting point;
+/// relief costs a binary search on top].
+pub const PARALLAX_METHOD: ParallaxMappingMethod = ParallaxMappingMethod::Occlusion;
+
+/// The most layers the march takes (Bevy's default is 16; at a head-on view it takes one)
+/// [design, the review's starting point; no frame-time budget is measured for it].
+pub const MAX_PARALLAX_LAYERS: f32 = 8.0;
+
+/// The parallax fields of a material, as Bevy's standard material has them: the depth map,
+/// its depth, the method and the most layers. What a set's `_p` puts on a material
+/// ([`Parallax::height`]) and what the legacy look keeps to put back ([`LegacyLook::parallax`]).
+#[derive(Clone, Debug, PartialEq, Reflect)]
+pub struct Parallax {
+    pub depth_map: Option<Handle<Image>>,
+    pub depth_scale: f32,
+    pub method: ParallaxMappingMethod,
+    pub max_layers: f32,
+}
+
+impl Default for Parallax {
+    /// The fields of a material without a depth map (Bevy's defaults).
+    fn default() -> Parallax {
+        Parallax::of(&StandardMaterial::default())
+    }
+}
+
+impl Parallax {
+    /// A set's height map: `image` (the `_p`, linear) as the depth map at `depth_scale` UV
+    /// units, [`PARALLAX_METHOD`], [`MAX_PARALLAX_LAYERS`].
+    pub fn height(image: Handle<Image>, depth_scale: f32) -> Parallax {
+        Parallax { depth_map: Some(image), depth_scale, method: PARALLAX_METHOD, max_layers: MAX_PARALLAX_LAYERS }
+    }
+
+    /// The fields as `material` has them.
+    pub fn of(material: &StandardMaterial) -> Parallax {
+        Parallax {
+            depth_map: material.depth_map.clone(),
+            depth_scale: material.parallax_depth_scale,
+            method: material.parallax_mapping_method,
+            max_layers: material.max_parallax_layer_count,
+        }
+    }
+
+    /// Put the fields on `material`.
+    pub fn put(&self, material: &mut StandardMaterial) {
+        material.depth_map = self.depth_map.clone();
+        material.parallax_depth_scale = self.depth_scale;
+        material.parallax_mapping_method = self.method;
+        material.max_parallax_layer_count = self.max_layers;
+    }
 }
 
 /// The files [`find`] and the decoders already warned about (one warning per file).
@@ -92,39 +202,74 @@ impl Memo {
 
 /// The authored set (state [`SetState::Authored`]) for the resolved diffuse `key`: the one
 /// active set the index finds (`PbrIndex::lookup`, with its first-person rule), if it is
-/// authored. A height-only set changes no material in this stage, so it means "no authored
-/// set" for the shape, also when it is a first-person twin's own set: the twin's set wins the
-/// lookup and the plain texture's set is not used behind it [design: the first-person rule of
-/// docs/spec-notes/pbr-materials.md "Layout"; stage 3 of #2981 draws no height maps].
+/// authored. A height-only set means "no authored set" for the shape's ORM part, also when
+/// it is a first-person twin's own set: the twin's set wins the lookup and the plain
+/// texture's set is not used behind it ([`find`] gives the twin's height only) [design: the
+/// first-person rule of docs/spec-notes/pbr-materials.md "Layout"].
 pub fn authored_found(index: &PbrIndex, key: &str) -> Option<Found> {
     index.lookup(key).filter(|f| f.state() == SetState::Authored)
 }
 
-/// The authored set for the resolved diffuse `key` with its maps loaded by `load` (path as the
-/// index names it, exactly: never resolved again, so a `\xbox\` member stays the one listed;
-/// role), or `None`: the setting off (`enabled`; nothing is asked of the index then), no
-/// authored set, or an `_orm` that does not load (one warning per file; the shape keeps the
-/// game's material). An `_n` that does not load leaves the game's normal map in use.
-pub(crate) fn find(data: &GameData, enabled: bool, key: &str, memo: &Memo, mut load: impl FnMut(&str, TextureUsage) -> Option<Handle<Image>>) -> Option<AuthoredSet> {
+/// A member loaded by [`find`]'s caller: its handle and, where the caller knows it, the
+/// format it went up in.
+pub(crate) type Loaded = (Handle<Image>, Option<TextureFormat>);
+
+/// The set for the resolved diffuse `key` with its maps loaded by `load` (path as the index
+/// names it, exactly: never resolved again, so a `\xbox\` member stays the one listed; role),
+/// or `None`: the setting off (`enabled`; nothing is asked of the index then), no active
+/// set, an authored set whose `_orm` does not load (one warning per file; the shape keeps the
+/// game's material), or a height-only set without a height map to draw ([`height_map`]). An
+/// `_n` that does not load leaves the game's normal map in use; an authored set's `_p` that
+/// gives no height map leaves the rest of the set in use.
+pub(crate) fn find(data: &GameData, enabled: bool, key: &str, memo: &Memo, mut load: impl FnMut(&str, TextureUsage) -> Option<Loaded>) -> Option<PbrSet> {
     if !enabled {
         return None;
     }
-    let found = authored_found(data.pbr_index(), key)?;
-    let orm_path = found.path(Member::Orm)?;
-    let Some(orm) = load(&orm_path, TextureUsage::Linear) else {
-        Stats::add(&stats().orm_failed);
-        memo.warn_once(&orm_path, || format!("authored materials: {orm_path} could not be loaded; surfaces drawn with {key} keep the game's material"));
+    let found = data.pbr_index().lookup(key)?;
+    let scalars = |found: &Found| found.path(Member::Scalars).map(|path| data.pbr_scalars(&path)).unwrap_or_default();
+    match found.state() {
+        SetState::Authored => {
+            let orm_path = found.path(Member::Orm)?;
+            let Some((orm, _)) = load(&orm_path, TextureUsage::Linear) else {
+                Stats::add(&stats().orm_failed);
+                memo.warn_once(&orm_path, || format!("authored materials: {orm_path} could not be loaded; surfaces drawn with {key} keep the game's material"));
+                return None;
+            };
+            let normal = found.path(Member::Normal).and_then(|path| {
+                let h = load(&path, TextureUsage::NormalTwoChannel).map(|(h, _)| h);
+                if h.is_none() {
+                    memo.warn_once(&path, || format!("authored materials: {path} could not be loaded; the game's normal map is used"));
+                }
+                h
+            });
+            let scalars = scalars(&found);
+            let height = height_map(&found, &scalars, memo, &mut load);
+            Some(PbrSet::Authored(AuthoredSet { stem: found.stem, orm, normal, height, scalars }))
+        }
+        SetState::HeightOnly => {
+            // Of the scalars only the depth applies to a height-only set.
+            let height = height_map(&found, &scalars(&found), memo, &mut load)?;
+            Some(PbrSet::HeightOnly(HeightSet { stem: found.stem, height }))
+        }
+        SetState::Incomplete => None,
+    }
+}
+
+/// The set's `_p` as a height map at the scalars' depth ([`Scalars::parallax_depth_or_default`]),
+/// or `None`: no `_p`, a depth of 0 (the file is then not loaded), or a `_p` that does not
+/// load (one warning per file).
+fn height_map(found: &Found, scalars: &Scalars, memo: &Memo, load: &mut impl FnMut(&str, TextureUsage) -> Option<Loaded>) -> Option<Parallax> {
+    let path = found.path(Member::Height)?;
+    let depth = scalars.parallax_depth_or_default();
+    if depth <= 0.0 {
+        return None;
+    }
+    let Some((image, _format)) = load(&path, TextureUsage::Linear) else {
+        Stats::add(&stats().height_failed);
+        memo.warn_once(&path, || format!("authored materials: {path} could not be loaded; no height map is drawn from it"));
         return None;
     };
-    let normal = found.path(Member::Normal).and_then(|path| {
-        let h = load(&path, TextureUsage::NormalTwoChannel);
-        if h.is_none() {
-            memo.warn_once(&path, || format!("authored materials: {path} could not be loaded; the game's normal map is used"));
-        }
-        h
-    });
-    let scalars = found.path(Member::Scalars).map(|path| data.pbr_scalars(&path)).unwrap_or_default();
-    Some(AuthoredSet { stem: found.stem, orm, normal, scalars })
+    Some(Parallax::height(image, depth))
 }
 
 /// The value of `NifSurface::emissive_rule.w` that marks a material shaded from an authored
@@ -153,6 +298,18 @@ pub struct LegacyLook {
     /// The specular tint (Bevy multiplies the reflectance by it): white as built, a script's
     /// specular colour once one is set ([`set_legacy_specular_tint`]).
     pub specular_tint: Color,
+    /// The parallax fields as built (no depth map on any game material today; the game's
+    /// own height slot would set them, upstream issue #2979: [`game_height_map`]).
+    pub parallax: Parallax,
+}
+
+/// Where the game's own height map would give a material its baseline parallax (the
+/// texture set's slot 3 with shader flag bit 11, upstream issue #2979, which wants an
+/// observation of the original first): this branch reads neither and returns `None` always,
+/// so [`LegacyLook::parallax`] stays Bevy's no-depth-map defaults. The one place that source
+/// would plug in, beside the authored `_p` [design]. Unused.
+pub fn game_height_map(_height_slot: Option<&str>, _parallax_flag: bool) -> Option<Parallax> {
+    None
 }
 
 /// Whether a shape may take an authored set, by what is known when its material is made:
@@ -428,13 +585,13 @@ pub fn retexture(
     let Some(legacy) = material.extension.legacy.clone() else { return Retextured::Untouched };
     let mut source = crate::nif_spawn::StoreTextures { textures, data, images, formats };
     let key = source.resolve(texture);
-    match key_eligible(&key).then(|| source.authored(&key)).flatten() {
-        Some(set) => {
+    match key_eligible(&key).then(|| source.pbr_set(&key)).flatten() {
+        Some(PbrSet::Authored(set)) => {
             apply(material, &set, &legacy);
             Stats::add(&stats().swaps_authored);
             Retextured::Authored
         }
-        None => {
+        Some(PbrSet::HeightOnly(_)) | None => {
             if is_authored(material) {
                 restore(material, &legacy);
             }
@@ -467,6 +624,8 @@ pub struct Stats {
     /// put back the legacy look (cached swaps do not call it again).
     pub swaps_authored: AtomicU64,
     pub swaps_legacy: AtomicU64,
+    /// Sets whose `_p` did not load (the rest of an authored set still applies).
+    pub height_failed: AtomicU64,
     stems: Mutex<HashSet<String>>,
 }
 

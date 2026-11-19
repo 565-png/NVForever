@@ -22,6 +22,10 @@ pub const DEFAULT_ROUGHNESS_SCALE: f32 = 1.0;
 /// `reflectance` when the file does not set it (F0 = 4 %).
 pub const DEFAULT_REFLECTANCE: f32 = 0.5;
 
+/// [design] `parallax_depth` when the file does not set it: the engine's own depth, in UV
+/// units (a set's height map drawn as parallax, #2981 stage 4).
+pub const DEFAULT_PARALLAX_DEPTH: f32 = 0.03;
+
 /// The values a scalar file sets; `None` for a key it leaves out (or gave a value that was
 /// ignored). An unset `parallax_depth` keeps the engine's own depth.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -38,6 +42,12 @@ impl Scalars {
 
     pub fn reflectance_or_default(&self) -> f32 {
         self.reflectance.unwrap_or(DEFAULT_REFLECTANCE)
+    }
+
+    /// The height map's depth: the file's `parallax_depth`, else [`DEFAULT_PARALLAX_DEPTH`].
+    /// 0 means the set draws no height map.
+    pub fn parallax_depth_or_default(&self) -> f32 {
+        self.parallax_depth.unwrap_or(DEFAULT_PARALLAX_DEPTH)
     }
 }
 

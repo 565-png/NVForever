@@ -54,6 +54,18 @@ impl Pack {
             // Height only: no authored set.
             ("textures/walls/stone.dds", dxt1.clone()),
             ("textures/pbr/walls/stone_p.dds", legacy(b"BC4U", 4, 4, &[0; 8])),
+            // An authored set with `_p` and a depth; a height-only set of depth 0; an
+            // authored set whose `_p` is no DDS file.
+            ("textures/walls/relief.dds", dxt1.clone()),
+            ("textures/pbr/walls/relief_orm.dds", dx10(98, 4, 4, &[0; 16])),
+            ("textures/pbr/walls/relief_p.dds", dx10(80, 4, 4, &[255, 0, 0, 0, 0, 0, 0, 0])),
+            ("textures/pbr/walls/relief.toml", b"parallax_depth = 0.05\n".to_vec()),
+            ("textures/walls/flat.dds", dxt1.clone()),
+            ("textures/pbr/walls/flat_p.dds", legacy(b"BC4U", 4, 4, &[0; 8])),
+            ("textures/pbr/walls/flat.toml", b"parallax_depth = 0\n".to_vec()),
+            ("textures/walls/brokenheight.dds", dxt1.clone()),
+            ("textures/pbr/walls/brokenheight_orm.dds", dx10(98, 4, 4, &[0; 16])),
+            ("textures/pbr/walls/brokenheight_p.dds", b"not a dds".to_vec()),
             // A first-person twin whose own set is height only, and the plain texture's set.
             ("textures/weapons/gun.dds", dxt1.clone()),
             ("textures/weapons/1stpersongun.dds", dxt1.clone()),
@@ -94,22 +106,44 @@ fn the_synchronous_source_loads_a_set_by_its_exact_member_paths() {
     let mut source = StoreTextures { textures: &mut cache, data: &pack.data, images: &mut images, formats: None };
     let key = source.resolve("Walls/Brick.dds");
     assert_eq!(key, r"textures\walls\brick.dds");
-    let set = source.authored(&key).expect("authored set");
+    let authored = |s: Option<PbrSet>| match s {
+        Some(PbrSet::Authored(a)) => Some(a),
+        _ => None,
+    };
+    let set = authored(source.pbr_set(&key)).expect("authored set");
     assert_eq!(set.stem, r"textures\pbr\walls\brick");
     assert_eq!(set.scalars, Scalars { parallax_depth: None, roughness_scale: Some(0.5), reflectance: Some(0.25) });
+    assert!(set.height.is_none(), "brick has no _p");
     let normal = set.normal.clone().expect("_n");
-    let none = source.authored(&source.resolve("walls/nonormal.dds")).expect("set without _n");
+    let none = authored(source.pbr_set(&source.resolve("walls/nonormal.dds"))).expect("set without _n");
     assert!(none.normal.is_none());
     assert_eq!(none.scalars, Scalars::default());
-    assert!(source.authored(&source.resolve("walls/stone.dds")).is_none(), "height only is no authored set");
-    assert!(source.authored(&source.resolve("walls/plain.dds")).is_none());
-    assert!(source.authored(&source.resolve("walls/bad.dds")).is_none(), "an _orm that does not load leaves the shape legacy");
-    assert!(source.authored(&source.resolve("weapons/1stpersongun.dds")).is_none(), "a height-only twin wins the lookup: no authored set, not the plain one's");
-    assert_eq!(source.authored(&source.resolve("weapons/gun.dds")).map(|s| s.stem).as_deref(), Some(r"textures\pbr\weapons\gun"));
+    // Height only: the `_p` alone, at the default depth.
+    let stone = source.pbr_set(&source.resolve("walls/stone.dds")).expect("height-only set");
+    assert!(stone.authored().is_none(), "height only is no authored set");
+    let stone_height = stone.height().cloned().expect("its height map");
+    assert_eq!(
+        (stone.stem(), stone_height.depth_scale, stone_height.method, stone_height.max_layers),
+        (r"textures\pbr\walls\stone", fnv_pbr::DEFAULT_PARALLAX_DEPTH, PARALLAX_METHOD, MAX_PARALLAX_LAYERS)
+    );
+    // An authored set with `_p` and a depth in its scalar file.
+    let relief = authored(source.pbr_set(&source.resolve("walls/relief.dds"))).expect("authored set with _p");
+    let relief_height = relief.height.clone().expect("_p");
+    assert_eq!(relief_height.depth_scale, 0.05);
+    // A depth of 0: no height map, so a height-only set is no set at all and its `_p` is not read.
+    assert!(source.pbr_set(&source.resolve("walls/flat.dds")).is_none(), "depth 0: nothing to draw");
+    // A `_p` that does not load: an authored set keeps the rest.
+    let broken = authored(source.pbr_set(&source.resolve("walls/brokenheight.dds"))).expect("the _orm still applies");
+    assert!(broken.height.is_none());
+    assert!(source.pbr_set(&source.resolve("walls/plain.dds")).is_none());
+    assert!(source.pbr_set(&source.resolve("walls/bad.dds")).is_none(), "an _orm that does not load leaves the shape legacy");
+    let twin = source.pbr_set(&source.resolve("weapons/1stpersongun.dds")).expect("the twin's own height-only set");
+    assert_eq!((twin.stem(), twin.authored().is_none()), (r"textures\pbr\weapons\1stpersongun", true), "a height-only twin wins the lookup: no authored set, not the plain one's");
+    assert_eq!(source.pbr_set(&source.resolve("weapons/gun.dds")).map(|s| s.stem().to_string()).as_deref(), Some(r"textures\pbr\weapons\gun"));
     // The console folder: the member the index names, not the PC file `get` would choose.
     let xbox_key = source.resolve(r"walls\xbox\tile.dds");
     assert_eq!(xbox_key, r"textures\walls\xbox\tile.dds", "no PC diffuse: the key stays");
-    let xbox = source.authored(&xbox_key).expect("xbox set");
+    let xbox = authored(source.pbr_set(&xbox_key)).expect("xbox set");
     let resolved = source.texture(r"textures\pbr\walls\xbox\tile_orm.dds", false).unwrap();
     // Every member is in place and in its role.
     let (orm, xbox_orm) = (set.orm.clone(), xbox.orm.clone());
@@ -123,6 +157,12 @@ fn the_synchronous_source_loads_a_set_by_its_exact_member_paths() {
     assert!(warned.contains(r"textures\pbr\walls\brick_orm.dds"), "the _SRGB code is warned about: {warned:?}");
     assert!(warned.contains(r"textures\pbr\walls\bad_orm.dds"), "{warned:?}");
     assert!(!warned.contains(r"textures\pbr\walls\nonormal_orm.dds"));
+    assert!(warned.contains(r"textures\pbr\walls\brokenheight_p.dds"), "{warned:?}");
+    assert!(!cache.has_or_ahead(r"textures\pbr\walls\flat_p.dds"), "a depth of 0 loads no _p");
+    // `_p` in the linear role, as unsigned BC4.
+    for h in [stone_height, relief_height] {
+        assert_eq!(images.get(h.depth_map.as_ref().unwrap()).unwrap().texture_descriptor.format, TextureFormat::Bc4RUnorm);
+    }
 }
 
 #[test]
