@@ -52,6 +52,8 @@
     {"op": "end_talk"},
     {"op": "get_quest", "quest": "DLC03BS1", "fields": ["stage", "objective.30.displayed"], "label": "milestone: DLC03BS1 30, into the relay station"},
     {"op": "note", "text": "Travel stand-in: through the relay station to its terminal: Request New Telemetry Data (DLC03TerminalUpdate 1), then Download Telemetry Data to User Device [observed] (stage 40)."},
+    {"op": "note", "text": "The relay station's door (0x0D0091C0, locked at level 255, no key) is unlocked only by the trigger whose script is SCPT 0x0D00D550 (OnTriggerEnter player: Unlock the door, Disable itself) [observed: decompiled]; the travel stand-in went straight to the terminal and never crossed it, so the door stayed shut [observed: pilot rerun]. The player walks into that trigger first."},
+    {"op": "trigger_enter", "trigger": "scripted:0x0D00D550"},
     {"op": "move_player", "to": "DLC03RelayTerminalRef1"},
     {"op": "terminal", "target": "DLC03RelayTerminalRef1", "item": 1, "label": "request telemetry"},
     {"op": "terminal", "target": "DLC03RelayTerminalRef1", "item": 2, "label": "download telemetry (stage 40)"},
