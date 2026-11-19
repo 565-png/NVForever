@@ -2100,14 +2100,20 @@ impl Core {
             let who: Vec<String> = again.iter().map(|a| format!("{:08X}", a.0)).collect();
             info!("nav: door locks changed; {} actors choose their package again [{}]", again.len(), who.join(", "));
         }
-        // Load doors enabled or disabled since open or close their ways
-        // (`fnv_ai::Ai::apply_door_presence`, issue #2566).
+        // Doors enabled or disabled since open or close their ways: load doors (issue
+        // #2566) and doors that open in place (#2405) (`fnv_ai::Ai::apply_door_presence`).
         let span = info_span!("ai::door_presence").entered();
         let doors = self.ai.apply_door_presence(game, &mut nav.graph);
         drop(span);
         if let Some(again) = doors {
             let who: Vec<String> = again.iter().map(|a| format!("{:08X}", a.0)).collect();
-            info!("nav: load doors enabled or disabled; {} not in the world now; {} actors choose their package again [{}]", nav.graph.disabled_doors.len(), again.len(), who.join(", "));
+            info!("nav: doors enabled or disabled; {} not in the world now; {} actors choose their package again [{}]", nav.graph.disabled_doors.len(), again.len(), who.join(", "));
+        }
+        // A door that opens in place that closed someone's way has opened (#2405,
+        // `fnv_ai::Ai::apply_doors_opened`): the packages set aside come back.
+        if let Some(again) = self.ai.apply_doors_opened(game) {
+            let who: Vec<String> = again.iter().map(|a| format!("{:08X}", a.0)).collect();
+            info!("nav: a door that closed a way is open; {} actors choose their package again [{}]", again.len(), who.join(", "));
         }
         // Obstacles enabled or disabled since cut or free the navmesh under them
         // (`fnv_ai::Ai::apply_obstacles`, docs/spec-notes/navmesh.md §7).
@@ -2532,7 +2538,12 @@ impl Core {
             let active = game.active_weapon_use(r.actor);
             let use_target = use_aim(active.map(|w| w.target), active.is_some_and(|w| w.taken));
             let Some(target) = aim_target(use_target, aw.combat_target().map(|(t, _)| t)) else { continue };
-            if let Some(p) = fnv_ai::goal::place_of_ref(game, target).filter(|p| p.space == a.walker.space) {
+            let at = if use_target.is_some() {
+                fnv_ai::goal::weapon_target_place(game, target, a.walker.space)
+            } else {
+                fnv_ai::goal::place_of_ref(game, target).filter(|p| p.space == a.walker.space)
+            };
+            if let Some(p) = at {
                 self.aims.insert(r.actor, p.pos);
                 if let Some(t) = use_target {
                     self.use_aims.insert(r.actor, t);

@@ -4,6 +4,27 @@ Crates copied from crates.io with a small change, used through `[patch.crates-io
 `engine/Cargo.toml`. Each keeps its own licence files. When the crate is upgraded, copy
 the new version here and apply the change again (or drop the patch if upstream fixed it).
 
+## bevy_winit 0.20.1 (MIT OR Apache-2.0, Bevy)
+
+Adds an explicit cursor request/receipt consumer before ordinary Window
+synchronization. Only acknowledged requests update both Window and its private
+cache; ordinary setters retain their existing path. The cache remains private.
+The `cursor-test-support` feature exposes an offscreen fixture for that same
+consumer with an injected native result, without creating an OS window.
+See `docs/spec-notes/windows-cursor-ack.md` for ownership, bounds and validation
+limits. Both upstream license files are retained.
+
+In `bevy_winit/src/lib.rs`, the crate-level `unsafe_code` lint changes from
+`forbid` to `deny` so Windows-only `native_cursor_owner` in
+`bevy_winit/src/cursor_position.rs` can opt in locally. It uses the live winit-owned
+window handle and a stack `POINT` to check foreground ownership and whether the
+cursor is inside the client area before a warp, even without a motion event. The
+query itself changes neither focus nor cursor position. Every pre-existing
+module retains `forbid`; the rest of the new cursor consumer inherits `deny`.
+
+Source: crates.io `bevy_winit` 0.20.1, archive SHA-256
+`397c685e6ab6d4d87b89fb4ce11993c223d0e3c7b34c415cb4b9f69f213d85b6`.
+
 ## gpu-allocator 0.28.0 (MIT OR Apache-2.0, Traverse-Research/gpu-allocator)
 
 Used by wgpu for Vulkan memory. Change, in `src/vulkan/mod.rs` `MemoryType::free`: an
@@ -62,7 +83,7 @@ Without the override both do what upstream does. This is a new patch for Bevy 0.
 the dropped 0.19.1 one below.
 
 The same for the contact shadows' depth march (ALC shadows, once Lamp shadows, on Quality, light_shadow_detail.rs;
-docs/design/graphics-enhanced.md §3.15), each part marked `NVForever (main pass viewport)`:
+docs/design/graphics-enhanced.md §3.17), each part marked `NVForever (main pass viewport)`:
 
 - `src/ssr/raymarch.wesl`: `DepthRayMarch` and its distance function carry
   `depth_uv_scale` and `depth_uv_offset` (default (1, 1) and (0, 0)): the depth texture is
@@ -173,7 +194,7 @@ them, as the game does.
 Upstream has no way to draw a light's shadow map less often than every frame.
 
 The same for point and spot lights (held light shadow maps, 2026-11-18; the game's Lamp
-shadows, nvforever light_shadows.rs, docs/design/graphics-enhanced.md §3.15), marked
+shadows, nvforever light_shadows.rs, docs/design/graphics-enhanced.md §3.17), marked
 `NVForever held light shadow maps`:
 
 - `src/render/light.rs`: the render-world resource `HoldLightShadowMaps` (extracted from
@@ -237,7 +258,7 @@ the Prospector Saloon): every shadowed point light cost about 1 ms of frame time
 Core3d schedule runs a frame.
 
 Two more for the ALC shadows' (once Lamp shadows) performance pass (2026-11-18, docs/design/graphics-enhanced.md
-§3.15 "Performance pass"):
+§3.17 "Performance pass"):
 
 - **Hidden light views** (`NVForever hidden light views`, `src/render/light.rs`
   `extract_lights`): a point or spot light that is hidden (its `ViewVisibility` false)
@@ -286,7 +307,7 @@ Two more for the ALC shadows' (once Lamp shadows) performance pass (2026-11-18, 
   yet.]
 
 One more for the ALC shadows (static shadow cache, 2026-11-18; docs/design/graphics-enhanced.md
-§3.15 "Static shadow cache"), marked `NVForever static shadow cache`, all in
+§3.17 "Static shadow cache"), marked `NVForever static shadow cache`, all in
 `src/render/light.rs`:
 
 - `HoldLightShadowMaps` gains `static_cache` (keep the cache), `to_static` and `on_static`
@@ -321,7 +342,7 @@ One more for the ALC shadows (static shadow cache, 2026-11-18; docs/design/graph
   attachments always clear. Not measured in game yet.
 
 One more for the ALC shadows (kept shadow phases, 2026-11-19; docs/design/graphics-enhanced.md
-§3.15 "Kept shadow phases"), marked `NVForever kept shadow phases` and `NVForever kept shadow
+§3.17 "Kept shadow phases"), marked `NVForever kept shadow phases` and `NVForever kept shadow
 views`, in `src/render/light.rs` and `src/material.rs`:
 
 - **Kept shadow phases.** The render-world resource `NvfParkedShadowViews` (registered in
@@ -390,9 +411,15 @@ marked `NVForever sun visibility`, for nvforever's `sun_visibility.rs`:
   whose render entity has it, so a shader can tell the outdoor sun from other directional
   lights without assuming an index.
 - `src/render/mesh_view_bindings.rs`: the render-world view component
-  `NvfSunVisibilityBindings` (a uniform buffer, two filterable float 2D textures and a
+  `NvfSunVisibilityBindings` (a uniform buffer, a filterable float 2D texture for the
+  clouds, an unfilterable float 2D texture for the terrain shadow-height map and a
   filtering sampler), the layout key bit `MeshPipelineViewLayoutKey::NVF_SUN_VISIBILITY`
   and bindings 39-42 of the mesh view bind group, present only for a view with it.
+  Binding 41 is declared `Float { filterable: false }` (2026-11-17, #2671 stage T2): the
+  terrain map is `Rgba32Float`, which is filterable only with the optional
+  `FLOAT32_FILTERABLE` feature, so nvforever reads it with `textureLoad` and never with
+  the sampler; its stand-in while no map is uploaded is nvforever's own one-texel
+  `Rgba32Float` texture, not Bevy's fallback image.
 - `src/render/mesh.rs`: `MeshPipelineKey::NVF_SUN_VISIBILITY`, `NVF_CLOUD_VISIBILITY` and
   `NVF_TERRAIN_VISIBILITY` (bits 25-27; the key's bit fields above them move up by three,
   well below the base mesh key's bits from 58), set by `check_views_need_specialization`
@@ -409,11 +436,34 @@ packed fields above the new bits moved up by three). The meshlet path (feature o
 view key without the bits, so a meshlet view must not get the component. Upstream has no
 way for an application to add bindings to the mesh view bind group.
 
+Another change (ambient occlusion on the ambient light, #2897 stage two,
+docs/design/graphics-enhanced.md §3.1), each part marked `NVForever ambient occlusion`, for
+nvforever's `ssao_lighting.rs`, built the same way as the sun visibility's:
+
+- `src/render/mesh_view_bindings.rs`: the render-world view component
+  `NvfAmbientOcclusionBindings` (a uniform buffer and an unfilterable float 2D texture, the
+  half-resolution occlusion read with `textureLoad`), the layout key bit
+  `MeshPipelineViewLayoutKey::NVF_AMBIENT_OCCLUSION` and bindings 43-44 of the mesh view
+  bind group, present only for a view with it.
+- `src/render/mesh.rs`: `MeshPipelineKey::NVF_AMBIENT_OCCLUSION` (bit 28; the key's bit
+  fields above it move up by one more, their top, the colour target format, ending at bit
+  49, still below the base mesh key's bits from 58, which the file's `const_assert_eq!`
+  checks), set by `check_views_need_specialization` from the same component, and the shader
+  def of the same name, pushed only for a pipeline that writes depth (opaque, alpha mask,
+  alpha to coverage), the rule Bevy's own `SCREEN_SPACE_AMBIENT_OCCLUSION` def follows: a
+  blended draw is not in the depth prepass the occlusion is worked out from. A blended
+  pipeline of such a view keeps the bindings in its layout and leaves them unread.
+
+The shader that reads the bindings is nvforever's (`ssao_lighting.wesl`, patched into
+`apply_pbr_lighting` at run time after the sun visibility's hook). Bevy inserts no such
+component; without it the layouts and shader defs are upstream's, and the pipeline keys are
+the same keys numbered differently (the packed fields above the new bit moved up by one).
+As for the sun visibility, a meshlet view must not get the component.
 ## bevy_light 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
 Vendored 2026-11-18, unchanged but for two patches. The first (shadow caster candidates, for
 the ALC shadows' (once Lamp shadows) performance pass: nvforever light_shadow_casters.rs, docs/design/graphics-enhanced.md
-§3.15 "Performance pass"), marked `NVForever shadow caster candidates`, in `src/lib.rs`:
+§3.17 "Performance pass"), marked `NVForever shadow caster candidates`, in `src/lib.rs`:
 
 - The resource `NvfShadowCasterCandidates` (`lights`: a list of entities per light).
   `check_point_light_mesh_visibility` tests, for a shadowed point or spot light listed there,
@@ -437,7 +487,7 @@ caster for each.] Upstream has no way to hand a light its candidates; drop this 
 spatial index for light culling.
 
 The second (shown shadow lights, 2026-11-19, the ALC shadows' pre-draw under a loading
-screen: nvforever light_shadows.rs `shown_unseen`, docs/design/graphics-enhanced.md §3.15
+screen: nvforever light_shadows.rs `shown_unseen`, docs/design/graphics-enhanced.md §3.17
 "Out of view too"), marked `NVForever shown shadow lights`, in `src/lib.rs`:
 
 - The resource `NvfShadowLightsShown` (`lights`: a set of point and spot lights).

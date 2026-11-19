@@ -503,7 +503,7 @@ mod tests {
         all.dedup();
         assert_eq!((n, all.len()), (41, 41));
         let effects = enhanced_keys();
-        assert_eq!(effects, ["ambient-occlusion", "fine-shadows", "bloom", "sharpen", "anisotropic", "light-shafts", "water-reflections"]);
+        assert_eq!(effects, ["ambient-occlusion", "fine-shadows", "bloom", "sharpen", "anisotropic", "light-shafts", "water-reflections", "water-effects"]);
         for m in MAPPED {
             assert!(!effects.contains(&m.row), "{} is an enhanced effect", m.row);
             let (mut a, mut b) = (Graphics::preset(Look::Enhanced), Graphics::preset(Look::Vanilla));
@@ -703,6 +703,29 @@ mod tests {
         assert_eq!(w.resource::<Rows>().parts, [1.0; 5]);
         assert_eq!(quality_reading(w), "Very High");
         assert!(!settings::pick(w, row, "Medium"), "a preset without its file is not offered");
+    }
+
+    /// #2248: a preset sets its nine rows and writes `NVForever.ini` once, not once per row
+    /// (each write cost ~27 ms on the main thread in the measured run).
+    #[test]
+    fn a_preset_writes_the_ini_once() {
+        let dir = std::env::temp_dir().join(format!("nvf-quality-writes-{}", std::process::id()));
+        let path = dir.join("NVForever.ini");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = app(&[("Low", LOW), ("Very High", HIGH)]);
+        app.insert_resource(settings::SettingsFile(Some(path.clone()))).init_resource::<settings::StoreAttempts>();
+        let w = app.world_mut();
+        let writes = |w: &World| w.resource::<settings::StoreAttempts>().0.load(std::sync::atomic::Ordering::Relaxed);
+        let row = w.resource::<Settings>().index(QUALITY_KEY).unwrap();
+        assert!(settings::pick(w, row, "Low"));
+        assert_eq!(writes(w), 1, "one write for the preset and every row it set");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("quality=Low") && text.contains("sun-shadows=0") && text.contains("object-distance=0.25"), "{text}");
+        let obj = w.resource::<Settings>().index("object-distance").unwrap();
+        settings::set_slider(w, obj, 0.5);
+        assert_eq!(writes(w), 2, "a row alone: one write");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// #2864: the presets set Smooth terrain, a row of NVForever's own that no preset file

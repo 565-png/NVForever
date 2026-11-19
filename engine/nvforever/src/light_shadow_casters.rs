@@ -1,5 +1,5 @@
 //! The lamp shadows' grid of shadow casters (light_shadows.rs; docs/design/graphics-enhanced.md
-//! §3.15 "Performance pass"). Bevy finds a shadowed point or spot light's casters by testing
+//! §3.17 "Performance pass"). Bevy finds a shadowed point or spot light's casters by testing
 //! every shadow caster in the world against it, in parallel, for each light that draws
 //! (bevy_light `check_point_light_mesh_visibility`: in Primm 0.4 ms a frame at the median
 //! and 7.6 ms in the worst frames of the main session's profile, 2026-11-18). This keeps

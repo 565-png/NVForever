@@ -42,6 +42,17 @@
 //!   the weather's cloud layers darken the sun's direct light where their shadow falls
 //!   (cloud_shadows.rs, sun_visibility.rs, docs/design/sun-visibility.md). Switching it
 //!   rebuilds the world views' material pipelines.
+//! - **Terrain shadows** (`terrain-shadows`, off in both presets: #2671 asked for it "in
+//!   `enhanced`", likewise, and its softness and bias are not tuned yet): at a low sun the
+//!   landscape shades itself beyond the sun shadows' range (sun_heightfield.rs,
+//!   terrain_shadows.rs, sun_visibility.rs, docs/design/terrain-shadows.md). Switching it
+//!   rebuilds the world views' material pipelines.
+//! - **Heat haze** (`heat-haze`, a prototype, off in both presets): the far ground near the
+//!   horizon shimmers slightly on hot clear days, by the sun and the live weather
+//!   (`heat_haze.rs`).
+//! - **Desert haze** (`desert-haze`, off in every preset): a thin dust haze added to the
+//!   weather's own distance fog, thicker with distance and toward the ground, warmer toward
+//!   the sun, as far as the weather's fog leaves room for it (haze.rs, #2675).
 //!
 //! Another switch is off in both looks and not part of `enhanced`: **Blend meshes into
 //! ground** (`mesh-terrain-blend`, `mesh_terrain_blend.rs`), outdoor roads, rocks and
@@ -171,6 +182,7 @@ pub struct Graphics {
     pub dlss_model: DlssModel,
     pub light_shafts: bool,
     pub water_reflections: bool,
+    pub water_effects: bool,
     /// Water mirrors the world through the reflection camera (`reflection.rs`; on in
     /// vanilla, as the original's water reflects the world). Off, water reflects the sky,
     /// and what is on the screen where `water_reflections` is on.
@@ -190,11 +202,18 @@ pub struct Graphics {
     /// The weather's clouds shade the sun (cloud_shadows.rs; off in both presets)
     /// [design, #2670].
     pub cloud_shadows: bool,
+    /// The landscape shades the sun beyond the cascades (terrain_shadows.rs; off in both
+    /// presets) [design, #2671].
+    pub terrain_shadows: bool,
+    /// Heat haze at distance (heat_haze.rs; a prototype, off in both presets) [design].
+    pub heat_haze: bool,
+    /// A dust haze in the weather's fog (haze.rs; off in every preset) [design, #2675].
+    pub desert_haze: bool,
 }
 
 /// The keys of `--graphics-only`: the settings page's switches and the anti-aliasing and
 /// shadow-filter choices that are not vanilla's, in the order of [`Graphics::describe`].
-pub const KEYS: [&str; 16] = [
+pub const KEYS: [&str; 20] = [
     "ambient-occlusion",
     "fine-shadows",
     "bloom",
@@ -205,12 +224,16 @@ pub const KEYS: [&str; 16] = [
     "taa",
     "light-shafts",
     "water-reflections",
+    "water-effects",
     "mesh-terrain-blend",
     "shadow-filter-hardware",
     "shadow-filter-temporal",
     "terrain-height-blend",
     "terrain-anti-tiling",
     "cloud-shadows",
+    "terrain-shadows",
+    "heat-haze",
+    "desert-haze",
 ];
 
 impl Graphics {
@@ -247,6 +270,7 @@ impl Graphics {
             dlss_model: DlssModel::Default,
             light_shafts: on,
             water_reflections: on,
+            water_effects: on,
             water_mirror: true,
             shadow_filter: ShadowFilteringMethod::Gaussian,
             // Off in both looks, so `enhanced` (quality.rs `enhanced_keys`) leaves it out.
@@ -259,6 +283,13 @@ impl Graphics {
             // The same for cloud shadows, whose strength is still to calibrate [design,
             // #2670; the issue's "in enhanced" names a row the overhaul removed].
             cloud_shadows: false,
+            // The same for terrain shadows, whose softness and bias are still to tune
+            // [design, #2671; the issue's "in enhanced" names a row the overhaul removed].
+            terrain_shadows: false,
+            // Off in both looks: a prototype of our own [design].
+            heat_haze: false,
+            // Off in every preset: an addition of our own [design, #2675].
+            desert_haze: false,
         }
     }
 
@@ -276,10 +307,14 @@ impl Graphics {
             "anisotropic" => &mut self.anisotropic,
             "light-shafts" => &mut self.light_shafts,
             "water-reflections" => &mut self.water_reflections,
+            "water-effects" => &mut self.water_effects,
             "mesh-terrain-blend" => &mut self.mesh_terrain_blend,
             "terrain-height-blend" => &mut self.terrain_height_blend,
             "terrain-anti-tiling" => &mut self.terrain_anti_tiling,
             "cloud-shadows" => &mut self.cloud_shadows,
+            "terrain-shadows" => &mut self.terrain_shadows,
+            "heat-haze" => &mut self.heat_haze,
+            "desert-haze" => &mut self.desert_haze,
             _ => return None,
         })
     }
@@ -324,6 +359,7 @@ impl Graphics {
             (self.screen_aa == ScreenAa::Taa, "temporal anti-aliasing"),
             (self.light_shafts, "sun shafts"),
             (self.water_reflections, "screen-space water reflections"),
+            (self.water_effects, "water caustics and river flow"),
             (!self.water_mirror, "no mirrored water"),
             (self.mesh_terrain_blend, "meshes blended into the ground"),
             (self.shadow_filter == ShadowFilteringMethod::Hardware2x2, "hardware 2x2 shadow filtering"),
@@ -331,6 +367,9 @@ impl Graphics {
             (self.terrain_height_blend, "terrain height blending"),
             (self.terrain_anti_tiling, "terrain anti-tiling"),
             (self.cloud_shadows, "cloud shadows"),
+            (self.terrain_shadows, "terrain shadows"),
+            (self.heat_haze, "heat haze"),
+            (self.desert_haze, "desert haze"),
         ];
         let mut on: Vec<&str> = names.iter().filter(|(on, _)| *on).map(|(_, n)| *n).collect();
         if self.fsr().is_some() {
@@ -559,7 +598,7 @@ impl Plugin for GraphicsPlugin {
         app.insert_resource(g)
             .insert_resource(MsaaSetting(self.1))
             .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
-            .add_plugins((crate::ssao::SsaoPlugin, crate::post::PostPlugin, crate::taa::TaaPlugin, crate::shafts::ShaftsPlugin, crate::upscaler::prep::PrepPlugin, crate::fsr::FsrPlugin, crate::dlss::DlssPassPlugin))
+            .add_plugins((crate::ssao::SsaoPlugin, crate::post::PostPlugin, crate::taa::TaaPlugin, crate::shafts::ShaftsPlugin, crate::heat_haze::HeatHazePlugin, crate::upscaler::prep::PrepPlugin, crate::fsr::FsrPlugin, crate::dlss::DlssPassPlugin))
             .add_systems(Startup, |g: Res<Graphics>| info!("graphics: {}", g.describe()))
             .add_systems(Update, (crate::upscaler::follow_request, apply, sun_shadow_key.pipe(sun_shadow_quality).after(crate::sky::update_sky)).chain())
             .add_systems(PostUpdate, log_shadow_map.before(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades));
@@ -843,6 +882,7 @@ fn apply(
     cutouts: Option<ResMut<nvf_assets::nif_material::BlendedCutouts>>,
     map: Option<Res<DirectionalLightShadowMap>>,
     mut done: Local<Option<(Graphics, Msaa, bool, UpscalerChoice, Vec<Entity>)>>,
+    work: Option<ResMut<crate::quality_probe::Work>>,
 ) {
     let cam_count = cams.iter().count();
     if cam_count == 0 {
@@ -876,6 +916,9 @@ fn apply(
     let fsr_changed = done.as_ref().is_none_or(|(_, _, _, effective, _)| effective.fsr() != fsr);
     let dlss_changed = done.as_ref().is_none_or(|(_, _, _, effective, _)| effective.dlss() != dlss);
     *done = Some((*g, msaa.0, fsr_support.0, upscaler, entities));
+    if let Some(mut work) = work {
+        work.graphics += 1;
+    }
     for (cam, cam_msaa, ..) in &cams {
         let mut e = commands.entity(cam);
         if g.ambient_occlusion {
@@ -968,6 +1011,11 @@ fn apply(
             e.insert(LightShafts::default());
         } else {
             e.remove::<LightShafts>();
+        }
+        if g.heat_haze {
+            e.insert(crate::heat_haze::HeatHaze::default());
+        } else {
+            e.remove::<crate::heat_haze::HeatHaze>();
         }
     }
     let reach = if g.fine_shadows { FINE_SHADOW_REACH } else { 1.0 };
@@ -1416,7 +1464,7 @@ mod tests {
         assert_eq!(all.describe().split(", ").count(), KEYS.len() + 1 - 3);
         assert_eq!((all.screen_aa, all.shadow_filter), (ScreenAa::Taa, ShadowFilteringMethod::Temporal));
         let enhanced = Graphics::preset(Preset::Enhanced);
-        assert!(enhanced.screen_aa == ScreenAa::Off && enhanced.light_shafts && enhanced.water_reflections);
+        assert!(enhanced.screen_aa == ScreenAa::Off && enhanced.light_shafts && enhanced.water_reflections && enhanced.water_effects);
         assert_eq!(enhanced.shadow_filter, ShadowFilteringMethod::Gaussian);
         assert!(Graphics::only(&["nonsense".into()]).is_err());
         let cycle = FrameTimes::parse_cycle("vanilla; taa,light-shafts ;enhanced;vanilla,no-sun-shadows;shadow-distance=8000,cascades=3").expect("cycle");
@@ -1491,6 +1539,19 @@ mod tests {
     }
 
     #[test]
+    fn terrain_shadows_are_off_in_both_looks_and_have_their_own_key() {
+        assert!(!Graphics::preset(Preset::Vanilla).terrain_shadows && !Graphics::preset(Preset::Enhanced).terrain_shadows);
+        let on = Graphics::only(&["terrain-shadows".into()]).expect("terrain-shadows");
+        assert!(on.terrain_shadows && !on.cloud_shadows);
+        assert_eq!(on.describe(), "light glow, terrain shadows");
+        let mut g = Graphics::preset(Preset::Vanilla);
+        *g.switch("terrain-shadows").expect("settings key") = true;
+        assert_eq!(g, on);
+        let cycle = FrameTimes::parse_cycle("vanilla;terrain-shadows").expect("cycle");
+        assert!(!cycle[0].graphics.terrain_shadows && cycle[1].graphics.terrain_shadows);
+    }
+
+    #[test]
     fn terrain_anti_tiling_is_off_in_both_looks_and_has_its_own_key() {
         assert!(!Graphics::preset(Preset::Vanilla).terrain_anti_tiling && !Graphics::preset(Preset::Enhanced).terrain_anti_tiling);
         let on = Graphics::only(&["terrain-anti-tiling".into()]).expect("terrain-anti-tiling");
@@ -1501,6 +1562,30 @@ mod tests {
         let mut g = Graphics::preset(Preset::Vanilla);
         *g.switch("terrain-anti-tiling").expect("settings key") = true;
         assert_eq!(g, on);
+    }
+
+    #[test]
+    fn heat_haze_is_off_in_both_looks_and_has_its_own_key() {
+        assert!(!Graphics::preset(Preset::Vanilla).heat_haze && !Graphics::preset(Preset::Enhanced).heat_haze);
+        let on = Graphics::only(&["heat-haze".into()]).expect("heat-haze");
+        assert!(on.heat_haze);
+        assert_eq!(on.describe(), "light glow, heat haze");
+        let mut g = Graphics::preset(Preset::Vanilla);
+        *g.switch("heat-haze").expect("settings key") = true;
+        assert_eq!(g, on);
+        assert!(!Graphics::preset(Preset::Enhanced).describe().contains("heat haze"));
+    }
+
+    #[test]
+    fn desert_haze_is_off_in_both_looks_and_has_its_own_key() {
+        assert!(!Graphics::preset(Preset::Vanilla).desert_haze && !Graphics::preset(Preset::Enhanced).desert_haze);
+        let on = Graphics::only(&["desert-haze".into()]).expect("desert-haze");
+        assert!(on.desert_haze);
+        assert_eq!(on.describe(), "light glow, desert haze");
+        let mut g = Graphics::preset(Preset::Vanilla);
+        *g.switch("desert-haze").expect("settings key") = true;
+        assert_eq!(g, on);
+        assert!(!Graphics::preset(Preset::Enhanced).describe().contains("haze"));
     }
 
     // The guard alone: repeated requests and an earlier registration. Both callers

@@ -1,7 +1,7 @@
 //! Shadows of placed lights, the settings row ALC shadows (ALC: All Lights Cast; called Lamp
 //! shadows until 2026-11-19: the INI key `light-shadows`, the switch `--light-shadows` and
 //! the log lines `light shadows: …` keep that name, for saved settings and the smoke
-//! scenarios; docs/design/graphics-enhanced.md §3.15). An addition of NVForever's own, not a fact
+//! scenarios; docs/design/graphics-enhanced.md §3.17). An addition of NVForever's own, not a fact
 //! about the original game: there placed lights cast none, and no LIGH record of the
 //! masters sets the Spot Shadow flag [observed: docs/handoff/esm-data-audit-2026-10-25.md,
 //! item 6]. Off by default. Built as the sun's shadows are (shadow_rate.rs), owner
@@ -86,7 +86,7 @@
 //! - Test aid `NVF_PLAY_TEST_LIGHT_SHADOW_HOLD=0`: every casting light draws every face
 //!   every frame, for comparing the picture and the cost.
 //! - **Performance pass** (2026-11-18, owner: "the quality of the shadow can be reduced
-//!   with distance"; graphics-enhanced.md §3.15 "Performance pass"; none measured in game
+//!   with distance"; graphics-enhanced.md §3.17 "Performance pass"; none measured in game
 //!   yet), each with an aid that turns it off:
 //!   - Steps of detail by the camera's distance to a light's edge ([`STEPS`], hysteresis
 //!     [`STEP_HYSTERESIS`]) and the small-caster cut-off ([`cut_off`],
@@ -106,7 +106,7 @@
 //!     times, [`renderer_summary`], [`systems_summary`]) and `light shadows: performance
 //!     pass over …` ([`pass_summary`]).
 //! - **Static shadow cache** (2026-11-18, owner: "Since most of the lights in New Vegas are
-//!   static, could we not bake the shadows at least partially?"; graphics-enhanced.md §3.15
+//!   static, could we not bake the shadows at least partially?"; graphics-enhanced.md §3.17
 //!   "Static shadow cache"; not measured in game yet). Shadow casters are static (the
 //!   placed world) or dynamic ([`ShadowDynamic`], [`classify_casters`]: skinned shapes,
 //!   actors' and creatures' shapes, the player's body, and any shape once it moves after it
@@ -191,7 +191,7 @@ impl LightShadows {
 }
 
 /// How a mode spends its frame time [engineering choices, measured in
-/// graphics-enhanced.md §3.15].
+/// graphics-enhanced.md §3.17].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Tuning {
     /// At most this many lights cast at once, nearest first.

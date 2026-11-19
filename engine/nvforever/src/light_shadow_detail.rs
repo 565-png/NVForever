@@ -1,5 +1,5 @@
 //! Soft edges and contact shadows for the lamp shadows (`light_shadows.rs`; the settings
-//! row Lamp shadows; docs/design/graphics-enhanced.md §3.15 "Soft edges and contact
+//! row Lamp shadows; docs/design/graphics-enhanced.md §3.17 "Soft edges and contact
 //! shadows"). Both only on Quality [engineering choice: each costs per pixel and per
 //! light; Performance keeps the hard edges of the camera's shadow filter].
 //!
