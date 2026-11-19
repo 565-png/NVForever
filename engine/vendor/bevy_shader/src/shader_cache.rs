@@ -74,6 +74,9 @@ struct ShaderData<ShaderModule> {
     processed_shaders: HashMap<Box<[ShaderDefVal]>, Arc<ShaderModule>>,
     resolved_imports: HashMap<ShaderImport, AssetId<Shader>>,
     dependents: HashSet<AssetId<Shader>>,
+    /// NVForever modules off the lock: bumped when the modules are cleared, so a module
+    /// built from the source before is not kept (`ShaderCache::finish`).
+    generation: u64,
 }
 
 impl<T> Default for ShaderData<T> {
@@ -83,8 +86,120 @@ impl<T> Default for ShaderData<T> {
             processed_shaders: Default::default(),
             resolved_imports: Default::default(),
             dependents: Default::default(),
+            generation: 0,
         }
     }
+}
+
+/// NVForever modules off the lock: what [`ShaderCache::prepare`] leaves to its caller.
+///
+/// Making a module (naga's parse, validation and output, then the driver's module) took
+/// 751 ms of a Novac start's pipelines in all, and Bevy made each under the shader cache's
+/// one lock, so the compile threads took turns [observed 2026-11-19, `pipeline timing:`
+/// lines: lock waits 3.9 s in all]. Now the cache composes under the lock and hands the
+/// source out; the caller makes the module without the lock and gives it back with
+/// [`ShaderCache::finish`]. A module asked for by two pipelines at once is made once: the
+/// second waits on the first's [`ModuleSlot`].
+pub enum ModuleStep<ShaderModule> {
+    /// Made before.
+    Ready(Arc<ShaderModule>),
+    /// The caller makes it: [`ModuleBuild::source`], then [`ShaderCache::finish`].
+    Build(ModuleBuild<ShaderModule>),
+    /// Another thread makes it; [`ModuleSlot::wait`] without holding the cache's lock.
+    Wait(Arc<ModuleSlot<ShaderModule>>),
+}
+
+/// NVForever modules off the lock: a module one thread makes and others wait for.
+pub struct ModuleSlot<ShaderModule> {
+    made: std::sync::Mutex<Option<Result<Arc<ShaderModule>, ShaderCacheError>>>,
+    ready: std::sync::Condvar,
+}
+
+impl<ShaderModule> ModuleSlot<ShaderModule> {
+    fn new() -> Self {
+        Self {
+            made: std::sync::Mutex::new(None),
+            ready: std::sync::Condvar::new(),
+        }
+    }
+
+    fn fill(&self, made: Result<Arc<ShaderModule>, ShaderCacheError>) {
+        let mut slot = self
+            .made
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.is_none() {
+            *slot = Some(made);
+        }
+        self.ready.notify_all();
+    }
+
+    fn failed(&self) -> bool {
+        self.made
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(Result::is_err)
+    }
+
+    /// The module once its maker has finished. Never call it holding the cache's lock: the
+    /// maker needs that lock to finish.
+    pub fn wait(&self) -> Result<Arc<ShaderModule>, ShaderCacheError> {
+        let mut slot = self
+            .made
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        loop {
+            if let Some(made) = slot.as_ref() {
+                return made.clone();
+            }
+            slot = self
+                .ready
+                .wait(slot)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+}
+
+/// NVForever modules off the lock: one module to make, from composed source.
+pub struct ModuleBuild<ShaderModule> {
+    id: AssetId<Shader>,
+    defs: Box<[ShaderDefVal]>,
+    generation: u64,
+    source: OwnedShaderSource,
+    validate: ValidateShader,
+    slot: Option<Arc<ModuleSlot<ShaderModule>>>,
+}
+
+impl<ShaderModule> ModuleBuild<ShaderModule> {
+    /// The composed source to make the module from.
+    pub fn source(&self) -> ShaderCacheSource<'_> {
+        match &self.source {
+            OwnedShaderSource::SpirV(bytes) => ShaderCacheSource::SpirV(bytes),
+            OwnedShaderSource::Wgsl(text) => ShaderCacheSource::Wgsl(text.clone()),
+        }
+    }
+
+    /// Whether to validate it (`Shader::validate_shader`).
+    pub fn validate(&self) -> &ValidateShader {
+        &self.validate
+    }
+}
+
+impl<ShaderModule> Drop for ModuleBuild<ShaderModule> {
+    /// A build dropped unfinished (its maker panicked) still wakes the threads waiting.
+    fn drop(&mut self) {
+        if let Some(slot) = self.slot.take() {
+            slot.fill(Err(ShaderCacheError::CreateShaderModule(
+                "the thread making this module stopped".into(),
+            )));
+        }
+    }
+}
+
+enum OwnedShaderSource {
+    SpirV(Vec<u8>),
+    Wgsl(String),
 }
 
 /// A cache for shaders and shader imports, with asset state-tracking for
@@ -112,6 +227,13 @@ pub struct ShaderCache<ShaderModule, RenderDevice> {
     composed: Option<Arc<ComposedStore>>,
     source_hashes: HashMap<AssetId<Shader>, u64>,
     path_ids: HashMap<String, AssetId<Shader>>,
+    /// NVForever modules off the lock: modules being made, by shader and definitions.
+    pending: HashMap<(AssetId<Shader>, Box<[ShaderDefVal]>), Arc<ModuleSlot<ShaderModule>>>,
+    /// NVForever pipeline list: each shader's id by its `Shader::path`, the paths two shaders
+    /// share (no pipeline of theirs is listed), and a count bumped whenever a shader is set.
+    by_path: HashMap<String, AssetId<Shader>>,
+    shared_paths: HashSet<String>,
+    shaders_set: u64,
 }
 
 /// A compile time shader value definition to be inlined into the shader source.
@@ -171,7 +293,31 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
             composed: None,
             source_hashes: Default::default(),
             path_ids: Default::default(),
+            pending: Default::default(),
+            by_path: Default::default(),
+            shared_paths: Default::default(),
+            shaders_set: 0,
         }
+    }
+
+    /// NVForever pipeline list: the path a shader is known by across runs, when it has one no
+    /// other shader has.
+    pub fn shader_path(&self, id: AssetId<Shader>) -> Option<&str> {
+        let path = self.shaders.get(&id)?.path.as_str();
+        (!path.is_empty() && !self.shared_paths.contains(path)).then_some(path)
+    }
+
+    /// NVForever pipeline list: the shader known by this path now ([`Self::shader_path`]).
+    pub fn shader_by_path(&self, path: &str) -> Option<AssetId<Shader>> {
+        if self.shared_paths.contains(path) {
+            return None;
+        }
+        self.by_path.get(path).copied()
+    }
+
+    /// NVForever pipeline list: changes whenever a shader is set or removed.
+    pub fn shaders_set(&self) -> u64 {
+        self.shaders_set
     }
 
     /// NVForever composed shaders: compose Wesl shaders through this store from now on,
@@ -196,6 +342,63 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
         id: AssetId<Shader>,
         shader_defs: &[ShaderDefVal],
     ) -> Result<Arc<ShaderModule>, ShaderCacheError> {
+        match self.step(Some(pipeline), id, shader_defs, false)? {
+            ModuleStep::Ready(module) => Ok(module),
+            ModuleStep::Build(build) => {
+                let made = (self.load_module)(&self.device, build.source(), &build.validate);
+                self.finish(build, made)
+            }
+            ModuleStep::Wait(slot) => slot.wait(),
+        }
+    }
+
+    /// NVForever modules off the lock ([`ModuleStep`]): the module if it was made, else
+    /// what to make it from (composed now, under the lock) or the slot of the thread making it.
+    /// `pipeline`: the pipeline to compile again when the shader changes (`None`: a pipeline
+    /// of nvforever's pipeline list, which is not).
+    pub fn prepare(
+        &mut self,
+        pipeline: Option<CachedPipelineId>,
+        id: AssetId<Shader>,
+        shader_defs: &[ShaderDefVal],
+    ) -> Result<ModuleStep<ShaderModule>, ShaderCacheError> {
+        self.step(pipeline, id, shader_defs, true)
+    }
+
+    /// NVForever modules off the lock: keep the module made from `build` (unless its shader
+    /// changed meanwhile) and hand it to the threads waiting for it.
+    pub fn finish(
+        &mut self,
+        mut build: ModuleBuild<ShaderModule>,
+        made: Result<ShaderModule, ShaderCacheError>,
+    ) -> Result<Arc<ShaderModule>, ShaderCacheError> {
+        let made = made.map(Arc::new);
+        let data = self.data.entry(build.id).or_default();
+        if data.generation == build.generation
+            && let Ok(module) = &made
+        {
+            data.processed_shaders
+                .insert(build.defs.clone(), module.clone());
+        }
+        if let Some(slot) = build.slot.take() {
+            let key = (build.id, core::mem::take(&mut build.defs));
+            if self.pending.get(&key).is_some_and(|s| Arc::ptr_eq(s, &slot)) {
+                self.pending.remove(&key);
+            }
+            slot.fill(made.clone());
+        }
+        made
+    }
+
+    /// The module made before, or what to make it from. `shared`: another thread may make it
+    /// meanwhile (a slot is left for it); `get` makes it holding the lock and leaves none.
+    fn step(
+        &mut self,
+        pipeline: Option<CachedPipelineId>,
+        id: AssetId<Shader>,
+        shader_defs: &[ShaderDefVal],
+        shared: bool,
+    ) -> Result<ModuleStep<ShaderModule>, ShaderCacheError> {
         let shader = self
             .shaders
             .get(&id)
@@ -220,19 +423,29 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
             }
         }
 
-        data.pipelines.insert(pipeline);
+        if let Some(pipeline) = pipeline {
+            data.pipelines.insert(pipeline);
+        }
 
         let mut wesl_dependencies: Vec<AssetId<Shader>> = Vec::new();
 
-        let module = match data.processed_shaders.entry_ref(shader_defs) {
-            EntryRef::Occupied(entry) => entry.into_mut(),
-            EntryRef::Vacant(entry) => {
+        let generation = data.generation;
+        let pending = shared
+            .then(|| self.pending.get(&(id, Box::from(shader_defs))).cloned())
+            .flatten()
+            // A maker that stopped early (its pipeline's other shader failed first) leaves
+            // its slot failed: make the module again.
+            .filter(|slot| !slot.failed());
+        let step = match data.processed_shaders.entry_ref(shader_defs) {
+            EntryRef::Occupied(entry) => ModuleStep::Ready(entry.get().clone()),
+            EntryRef::Vacant(_) if pending.is_some() => ModuleStep::Wait(pending.unwrap()),
+            EntryRef::Vacant(_) => {
                 debug!(
                     "processing shader {}, with shader defs {:?}",
                     id, shader_defs
                 );
                 let shader_source = match &shader.source {
-                    Source::SpirV(data) => ShaderCacheSource::SpirV(data.as_ref()),
+                    Source::SpirV(data) => OwnedShaderSource::SpirV(data.to_vec()),
                     Source::Wesl(_) => {
                         if let Some(module_path) = wesl_module_path(&shader.import_path) {
                             let mut compiler_options = wesl::CompileOptions {
@@ -318,7 +531,7 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
                                         wesl_dependencies.push(*dep_id);
                                     }
                                 }
-                                ShaderCacheSource::Wgsl(wgsl)
+                                OwnedShaderSource::Wgsl(wgsl)
                             } else {
                                 let shader_resolver = ShaderResolver::new(
                                     &self.module_path_to_asset_id,
@@ -385,7 +598,7 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
                                         .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                                     store.put(key, wgsl.clone(), composed_deps);
                                 }
-                                ShaderCacheSource::Wgsl(wgsl)
+                                OwnedShaderSource::Wgsl(wgsl)
                             }
                         } else {
                             return Err(ShaderCacheError::ProcessShaderError(format!(
@@ -394,22 +607,33 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
                             )));
                         }
                     }
-                    Source::Wgsl(wgsl_source) => ShaderCacheSource::Wgsl(wgsl_source.to_string()),
+                    Source::Wgsl(wgsl_source) => {
+                        OwnedShaderSource::Wgsl(wgsl_source.to_string())
+                    }
                 };
-
-                let shader_module =
-                    (self.load_module)(&self.device, shader_source, &shader.validate_shader)?;
-
-                entry.insert(Arc::new(shader_module))
+                let validate = shader.validate_shader.clone();
+                let defs: Box<[ShaderDefVal]> = shader_defs.into();
+                let slot = shared.then(|| {
+                    let slot = Arc::new(ModuleSlot::new());
+                    self.pending.insert((id, defs.clone()), slot.clone());
+                    slot
+                });
+                ModuleStep::Build(ModuleBuild {
+                    id,
+                    defs,
+                    generation,
+                    source: shader_source,
+                    validate,
+                    slot,
+                })
             }
         };
-        let module = module.clone();
 
         for dep_id in wesl_dependencies {
             self.data.entry(dep_id).or_default().dependents.insert(id);
         }
 
-        Ok(module)
+        Ok(step)
     }
 
     fn clear(&mut self, id: AssetId<Shader>) -> Vec<CachedPipelineId> {
@@ -420,7 +644,11 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
             if !visited.insert(handle) {
                 continue;
             }
+            // NVForever modules off the lock: a module being made from the old source is not
+            // kept, and the next ask makes it again.
+            self.pending.retain(|(pending_id, _), _| *pending_id != handle);
             if let Some(data) = self.data.get_mut(&handle) {
+                data.generation += 1;
                 data.processed_shaders.clear();
                 pipelines_to_queue.extend(data.pipelines.iter().copied());
                 shaders_to_clear.extend(data.dependents.iter().copied());
@@ -487,6 +715,14 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
             }
         }
         self.source_hashes.insert(id, shader_source_hash(&shader));
+        // NVForever pipeline list: the shader by its path.
+        self.shaders_set += 1;
+        if let Some(other) = self.by_path.insert(shader.path.clone(), id)
+            && other != id
+            && self.shaders.contains_key(&other)
+        {
+            self.shared_paths.insert(shader.path.clone());
+        }
         self.shaders.insert(id, shader);
         pipelines_to_queue
     }
@@ -498,7 +734,11 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
     pub fn remove(&mut self, id: AssetId<Shader>) -> Vec<CachedPipelineId> {
         let pipelines_to_queue = self.clear(id);
         self.source_hashes.remove(&id);
+        self.shaders_set += 1;
         if let Some(shader) = self.shaders.remove(&id) {
+            if self.by_path.get(&shader.path) == Some(&id) {
+                self.by_path.remove(&shader.path);
+            }
             if self.import_path_shaders.get(&shader.import_path) == Some(&id) {
                 self.import_path_shaders.remove(&shader.import_path);
             }
@@ -614,7 +854,7 @@ impl<'a> wesl::Resolver for ShaderResolver<'a> {
 
 /// Type of error returned by a `PipelineCache` when the creation of a GPU pipeline object failed.
 #[expect(missing_docs, reason = "Enum variants are self-explanatory")]
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum ShaderCacheError {
     #[error(
         "Pipeline could not be compiled because the following shader could not be loaded: {0:?}"
@@ -752,6 +992,70 @@ fn fragment() -> @location(0) vec4<f32> {
             "shaders/root.wesl",
         );
         (maths, lighting, root)
+    }
+
+    // NVForever modules off the lock: two asks of one module make it once, the second
+    // waiting on the first's slot; a module made from a source replaced meanwhile is not kept.
+    #[test]
+    fn a_module_asked_twice_at_once_is_made_once_and_a_stale_one_is_not_kept() {
+        let mut cache = test_cache();
+        let (_, lighting_id, root_id) = set_test_shaders(&mut cache);
+        let bright = [ShaderDefVal::Bool("BRIGHT".into(), true)];
+        let ModuleStep::Build(build) = cache.prepare(Some(0), root_id, &bright).unwrap() else {
+            panic!("first ask: made by the caller");
+        };
+        let ModuleStep::Wait(slot) = cache.prepare(Some(1), root_id, &bright).unwrap() else {
+            panic!("second ask while the first makes it: waits");
+        };
+        let ShaderCacheSource::Wgsl(source) = build.source() else { panic!("wgsl") };
+        let made = cache.finish(build, Ok(source)).unwrap();
+        assert_eq!(slot.wait().unwrap(), made, "the waiter gets the same module");
+        assert!(
+            matches!(cache.prepare(Some(2), root_id, &bright).unwrap(), ModuleStep::Ready(m) if Arc::ptr_eq(&m, &made)),
+            "kept once made"
+        );
+
+        let ModuleStep::Build(build) = cache.prepare(Some(3), root_id, &[]).unwrap() else {
+            panic!("other definitions: made");
+        };
+        let (_, lighting, _) = test_shaders();
+        cache.set_shader(lighting_id, lighting);
+        let ShaderCacheSource::Wgsl(source) = build.source() else { panic!("wgsl") };
+        cache.finish(build, Ok(source)).unwrap();
+        assert!(
+            matches!(cache.prepare(Some(4), root_id, &[]).unwrap(), ModuleStep::Build(_)),
+            "an import was replaced while it was made: made again, not kept"
+        );
+    }
+
+    #[test]
+    fn a_build_dropped_unfinished_wakes_its_waiters() {
+        let mut cache = test_cache();
+        let (_, _, root_id) = set_test_shaders(&mut cache);
+        let ModuleStep::Build(build) = cache.prepare(Some(0), root_id, &[]).unwrap() else { panic!() };
+        let ModuleStep::Wait(slot) = cache.prepare(Some(1), root_id, &[]).unwrap() else { panic!() };
+        drop(build);
+        assert!(slot.wait().is_err());
+        assert!(
+            matches!(cache.prepare(Some(2), root_id, &[]).unwrap(), ModuleStep::Build(_)),
+            "the next ask makes it again"
+        );
+    }
+
+    #[test]
+    fn shaders_are_found_by_a_path_only_they_have() {
+        let mut cache = test_cache();
+        let (maths_id, _, root_id) = set_test_shaders(&mut cache);
+        assert_eq!(cache.shader_path(root_id), Some("shaders/root.wesl"));
+        assert_eq!(cache.shader_by_path("shaders/root.wesl"), Some(root_id));
+        let before = cache.shaders_set();
+        let other = AssetId::Uuid { uuid: bevy_asset::uuid::Uuid::from_u128(9) };
+        let (_, _, root) = test_shaders();
+        cache.set_shader(other, root);
+        assert!(cache.shaders_set() > before);
+        assert_eq!(cache.shader_path(root_id), None, "two shaders share the path: neither");
+        assert_eq!(cache.shader_by_path("shaders/root.wesl"), None);
+        assert!(cache.shader_path(maths_id).is_some());
     }
 
     fn test_ids() -> (AssetId<Shader>, AssetId<Shader>, AssetId<Shader>) {

@@ -19,9 +19,10 @@ use bevy_ecs::{
 use bevy_log::error;
 use bevy_platform::collections::{hash_map::RawEntryMut, HashMap, HashSet};
 use bevy_shader::{
-    CachedPipelineId, Shader, ShaderCache, ShaderCacheError, ShaderCacheSource, ShaderDefVal,
-    ValidateShader,
+    CachedPipelineId, ModuleStep, Shader, ShaderCache, ShaderCacheError, ShaderCacheSource,
+    ShaderDefVal, ValidateShader,
 };
+use super::nvf_manifest::{self, Asked, Claim, PipelineManifest, Recipe};
 use bevy_tasks::Task;
 use bevy_utils::default;
 use core::{future::Future, mem};
@@ -303,6 +304,82 @@ fn load_module_inner(
     Ok(shader_module)
 }
 
+type NvfShaderCache = ShaderCache<WgpuShaderModule, RenderDevice>;
+
+/// NVForever modules off the lock (bevy_shader `ModuleStep`): make the modules `prepare`
+/// left to this thread without the shader cache's lock (naga runs on every compile thread at
+/// once; wgpu's error scopes are per thread with its `std` feature, this crate's Cargo.toml),
+/// then wait for those another thread is making. All of this thread's are made before any
+/// wait, so two threads never wait on each other.
+fn nvf_modules(
+    shader_cache: &Mutex<NvfShaderCache>,
+    device: &RenderDevice,
+    steps: Vec<Option<ModuleStep<WgpuShaderModule>>>,
+) -> Result<Vec<Option<Arc<WgpuShaderModule>>>, ShaderCacheError> {
+    let mut out: Vec<Option<Arc<WgpuShaderModule>>> = steps.iter().map(|_| None).collect();
+    let mut failed = None;
+    let mut waits = Vec::new();
+    for (i, step) in steps.into_iter().enumerate() {
+        match step {
+            None => {}
+            Some(ModuleStep::Ready(module)) => out[i] = Some(module),
+            Some(ModuleStep::Build(build)) => {
+                let made = load_module(device, build.source(), build.validate());
+                let kept = shader_cache
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .finish(build, made);
+                match kept {
+                    Ok(module) => out[i] = Some(module),
+                    Err(e) => failed = failed.or(Some(e)),
+                }
+            }
+            Some(ModuleStep::Wait(slot)) => waits.push((i, slot)),
+        }
+    }
+    for (i, slot) in waits {
+        match slot.wait() {
+            Ok(module) => out[i] = Some(module),
+            Err(e) => failed = failed.or(Some(e)),
+        }
+    }
+    failed.map_or(Ok(out), Err)
+}
+
+/// NVForever pipeline list: the modules a pipeline is built from, as the list compares them.
+fn nvf_module_list<'a>(
+    modules: impl IntoIterator<Item = &'a Arc<WgpuShaderModule>>,
+) -> Vec<nvf_manifest::Module> {
+    modules
+        .into_iter()
+        .map(|m| m.clone() as nvf_manifest::Module)
+        .collect()
+}
+
+/// NVForever pipeline list: what a game pipeline's ask gives (`PipelineManifest::ask`).
+enum NvfAsk {
+    Ready(Pipeline),
+    Build(Option<Claim>),
+}
+
+fn nvf_ask(
+    manifest: Option<&PipelineManifest>,
+    recipe: Option<Recipe>,
+    modules: &[nvf_manifest::Module],
+) -> NvfAsk {
+    let Some(manifest) = manifest else {
+        return NvfAsk::Build(None);
+    };
+    match recipe.and_then(|r| manifest.ask(r, modules)) {
+        Some(Asked::Ready(pipeline)) => NvfAsk::Ready(pipeline),
+        Some(Asked::Build(claim)) => NvfAsk::Build(Some(claim)),
+        None => {
+            manifest.note_unlisted();
+            NvfAsk::Build(None)
+        }
+    }
+}
+
 #[derive(Default)]
 struct BindGroupLayoutCache {
     bgls: HashMap<BindGroupLayoutDescriptor, BindGroupLayout>,
@@ -357,6 +434,8 @@ pub struct PipelineCache {
     /// created with, which nvforever's `pipeline_disk_cache.rs` loads from the disk and saves.
     /// `None` (the default) creates them without one, as upstream does.
     wgpu_pipeline_cache: Option<wgpu::PipelineCache>,
+    /// NVForever pipeline list (`nvf_manifest.rs`): `None` (the default) keeps none.
+    nvf_manifest: Option<Arc<PipelineManifest>>,
 }
 
 impl PipelineCache {
@@ -412,7 +491,14 @@ impl PipelineCache {
             synchronous_pipeline_compilation,
             needs_shader_reload: true,
             wgpu_pipeline_cache: None,
+            nvf_manifest: None,
         }
+    }
+
+    /// NVForever pipeline list: record the pipelines asked for from now on in this list and
+    /// build its pipelines in the background (`nvf_manifest.rs`; `None`: neither).
+    pub fn set_pipeline_manifest(&mut self, manifest: Option<Arc<PipelineManifest>>) {
+        self.nvf_manifest = manifest;
     }
 
     /// NVForever persistent pipeline cache: create the pipelines asked for from now on with
@@ -703,31 +789,29 @@ impl PipelineCache {
             .collect::<SmallVec<[_; BIND_GROUP_LAYOUTS_INLINE_CAPACITY]>>();
 
         let mut spans = nvf_timing::Spans::new();
+        let manifest = self.nvf_manifest.clone();
         create_pipeline_task(
             async move {
                 spans.start();
-                let mut shader_cache = shader_cache.lock().unwrap();
+                let mut cache = shader_cache.lock().unwrap();
                 let mut layout_cache = layout_cache.lock().unwrap();
                 spans.locked();
 
-                let vertex_module = match shader_cache.get(
-                    id,
+                // NVForever modules off the lock: composed here, made below without the lock.
+                let vertex_step = cache.prepare(
+                    Some(id),
                     descriptor.vertex.shader.id(),
                     &descriptor.vertex.shader_defs,
-                ) {
-                    Ok(module) => module,
-                    Err(err) => return Err(err),
-                };
-
-                let fragment_module = match &descriptor.fragment {
+                )?;
+                let fragment_step = match &descriptor.fragment {
                     Some(fragment) => {
-                        match shader_cache.get(id, fragment.shader.id(), &fragment.shader_defs) {
-                            Ok(module) => Some(module),
-                            Err(err) => return Err(err),
-                        }
+                        Some(cache.prepare(Some(id), fragment.shader.id(), &fragment.shader_defs)?)
                     }
                     None => None,
                 };
+                let recipe = manifest.as_ref().and_then(|_| {
+                    Recipe::render(&descriptor, |s| cache.shader_path(s).map(str::to_owned))
+                });
 
                 let layout = if descriptor.layout.is_empty() && descriptor.immediate_size == 0 {
                     None
@@ -735,8 +819,24 @@ impl PipelineCache {
                     Some(layout_cache.get(&device, &bind_group_layout, descriptor.immediate_size))
                 };
 
-                drop((shader_cache, layout_cache));
+                drop((cache, layout_cache));
+                let mut modules =
+                    nvf_modules(&shader_cache, &device, vec![Some(vertex_step), fragment_step])?
+                        .into_iter();
+                let vertex_module = modules.next().flatten().unwrap();
+                let fragment_module = modules.next().flatten();
                 spans.shaders_done();
+
+                // NVForever pipeline list: built from the list already, or record it.
+                let module_list =
+                    nvf_module_list(core::iter::once(&vertex_module).chain(&fragment_module));
+                let claim = match nvf_ask(manifest.as_deref(), recipe, &module_list) {
+                    NvfAsk::Ready(pipeline) => {
+                        spans.log(descriptor.label.as_deref());
+                        return Ok(pipeline);
+                    }
+                    NvfAsk::Build(claim) => claim,
+                };
 
                 let vertex_buffer_layouts = descriptor
                     .vertex
@@ -803,9 +903,12 @@ impl PipelineCache {
                     cache: wgpu_pipeline_cache.as_ref(),
                 };
 
-                let made = device.create_render_pipeline(&descriptor);
+                let made = Pipeline::RenderPipeline(device.create_render_pipeline(&descriptor));
                 spans.log(descriptor.label);
-                Ok(Pipeline::RenderPipeline(made))
+                if let Some(claim) = claim {
+                    claim.built(&made, module_list);
+                }
+                Ok(made)
             },
             self.synchronous_pipeline_compilation,
         )
@@ -830,18 +933,19 @@ impl PipelineCache {
             .collect::<SmallVec<[_; BIND_GROUP_LAYOUTS_INLINE_CAPACITY]>>();
 
         let mut spans = nvf_timing::Spans::new();
+        let manifest = self.nvf_manifest.clone();
         create_pipeline_task(
             async move {
                 spans.start();
-                let mut shader_cache = shader_cache.lock().unwrap();
+                let mut cache = shader_cache.lock().unwrap();
                 let mut layout_cache = layout_cache.lock().unwrap();
                 spans.locked();
 
-                let compute_module =
-                    match shader_cache.get(id, descriptor.shader.id(), &descriptor.shader_defs) {
-                        Ok(module) => module,
-                        Err(err) => return Err(err),
-                    };
+                // NVForever modules off the lock: composed here, made below without the lock.
+                let step = cache.prepare(Some(id), descriptor.shader.id(), &descriptor.shader_defs)?;
+                let recipe = manifest.as_ref().and_then(|_| {
+                    Recipe::compute(&descriptor, |s| cache.shader_path(s).map(str::to_owned))
+                });
 
                 let layout = if descriptor.layout.is_empty() && descriptor.immediate_size == 0 {
                     None
@@ -849,8 +953,22 @@ impl PipelineCache {
                     Some(layout_cache.get(&device, &bind_group_layout, descriptor.immediate_size))
                 };
 
-                drop((shader_cache, layout_cache));
+                drop((cache, layout_cache));
+                let compute_module = nvf_modules(&shader_cache, &device, vec![Some(step)])?
+                    .pop()
+                    .flatten()
+                    .unwrap();
                 spans.shaders_done();
+
+                // NVForever pipeline list: built from the list already, or record it.
+                let module_list = nvf_module_list([&compute_module]);
+                let claim = match nvf_ask(manifest.as_deref(), recipe, &module_list) {
+                    NvfAsk::Ready(pipeline) => {
+                        spans.log(descriptor.label.as_deref());
+                        return Ok(pipeline);
+                    }
+                    NvfAsk::Build(claim) => claim,
+                };
 
                 let constants: Vec<(&str, f64)> = descriptor
                     .constants
@@ -870,9 +988,12 @@ impl PipelineCache {
                     cache: wgpu_pipeline_cache.as_ref(),
                 };
 
-                let made = device.create_compute_pipeline(&descriptor);
+                let made = Pipeline::ComputePipeline(device.create_compute_pipeline(&descriptor));
                 spans.log(descriptor.label);
-                Ok(Pipeline::ComputePipeline(made))
+                if let Some(claim) = claim {
+                    claim.built(&made, module_list);
+                }
+                Ok(made)
             },
             self.synchronous_pipeline_compilation,
         )
@@ -900,34 +1021,24 @@ impl PipelineCache {
         create_pipeline_task(
             async move {
                 spans.start();
-                let mut shader_cache = shader_cache.lock().unwrap();
+                let mut cache = shader_cache.lock().unwrap();
                 let mut layout_cache = layout_cache.lock().unwrap();
                 spans.locked();
 
-                let mesh_module = match shader_cache.get(
-                    id,
+                // NVForever modules off the lock: composed here, made below without the lock.
+                let mesh_step = cache.prepare(
+                    Some(id),
                     descriptor.mesh.shader.id(),
                     &descriptor.mesh.shader_defs,
-                ) {
-                    Ok(module) => module,
-                    Err(err) => return Err(err),
-                };
-
-                let fragment_module = match &descriptor.fragment {
+                )?;
+                let fragment_step = match &descriptor.fragment {
                     Some(fragment) => {
-                        match shader_cache.get(id, fragment.shader.id(), &fragment.shader_defs) {
-                            Ok(module) => Some(module),
-                            Err(err) => return Err(err),
-                        }
+                        Some(cache.prepare(Some(id), fragment.shader.id(), &fragment.shader_defs)?)
                     }
                     None => None,
                 };
-
-                let task_module = match &descriptor.task {
-                    Some(task) => match shader_cache.get(id, task.shader.id(), &task.shader_defs) {
-                        Ok(module) => Some(module),
-                        Err(err) => return Err(err),
-                    },
+                let task_step = match &descriptor.task {
+                    Some(task) => Some(cache.prepare(Some(id), task.shader.id(), &task.shader_defs)?),
                     None => None,
                 };
 
@@ -937,7 +1048,16 @@ impl PipelineCache {
                     Some(layout_cache.get(&device, &bind_group_layout, descriptor.immediate_size))
                 };
 
-                drop((shader_cache, layout_cache));
+                drop((cache, layout_cache));
+                let mut modules = nvf_modules(
+                    &shader_cache,
+                    &device,
+                    vec![Some(mesh_step), fragment_step, task_step],
+                )?
+                .into_iter();
+                let mesh_module = modules.next().flatten().unwrap();
+                let fragment_module = modules.next().flatten();
+                let task_module = modules.next().flatten();
                 spans.shaders_done();
 
                 let fragment_data = descriptor.fragment.as_ref().map(|fragment| {
@@ -1027,6 +1147,7 @@ impl PipelineCache {
     ///
     /// [`RenderSystems::Render`]: crate::RenderSystems::Render
     pub fn process_queue(&mut self) {
+        self.nvf_feed_manifest();
         let mut waiting_pipelines = mem::take(&mut self.waiting_pipelines);
         let mut pipelines = mem::take(&mut self.pipelines);
 
@@ -1108,6 +1229,54 @@ impl PipelineCache {
         self.waiting_pipelines.insert(id);
     }
 
+    /// NVForever pipeline list: hand the list's next pipelines whose shaders have loaded to
+    /// its pool, keeping at most two a thread in flight (`nvf_manifest.rs`).
+    fn nvf_feed_manifest(&mut self) {
+        let Some(manifest) = self.nvf_manifest.clone() else {
+            return;
+        };
+        if self.synchronous_pipeline_compilation || !manifest.loaded() {
+            return;
+        }
+        let Some(pool) = nvf_list_pool() else { return };
+        let cap = pool.thread_num() * 2;
+        let in_flight = manifest.in_flight.load(core::sync::atomic::Ordering::Relaxed) as usize;
+        if in_flight >= cap || manifest.queued() == 0 {
+            return;
+        }
+        // Not while a compile thread composes under the lock: the render thread does not wait.
+        let Ok(cache) = self.shader_cache.try_lock() else {
+            return;
+        };
+        let next = manifest.next(cap - in_flight, cache.shaders_set(), |path| {
+            cache.shader_by_path(path).is_some()
+        });
+        drop(cache);
+        for entry in next {
+            manifest
+                .in_flight
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            let job = NvfListJob {
+                device: self.device.clone(),
+                shader_cache: self.shader_cache.clone(),
+                layout_cache: self.layout_cache.clone(),
+                bindgroup_layout_cache: self.bindgroup_layout_cache.clone(),
+                wgpu_pipeline_cache: self.wgpu_pipeline_cache.clone(),
+                manifest: manifest.clone(),
+            };
+            pool.spawn(async move {
+                let _gate = RENDER_DEVICE_API_GATE
+                    .read()
+                    .unwrap_or_else(PoisonError::into_inner);
+                job.build(entry);
+                job.manifest
+                    .in_flight
+                    .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+            })
+            .detach();
+        }
+    }
+
     pub(crate) fn process_pipeline_queue_system(mut cache: ResMut<Self>) {
         cache.process_queue();
     }
@@ -1156,6 +1325,196 @@ impl PipelineCache {
             }
         }
     }
+}
+
+/// NVForever pipeline list: one of the list's pipelines, built on the list's pool.
+struct NvfListJob {
+    device: RenderDevice,
+    shader_cache: Arc<Mutex<NvfShaderCache>>,
+    layout_cache: Arc<Mutex<LayoutCache>>,
+    bindgroup_layout_cache: Arc<Mutex<BindGroupLayoutCache>>,
+    wgpu_pipeline_cache: Option<wgpu::PipelineCache>,
+    manifest: Arc<PipelineManifest>,
+}
+
+impl NvfListJob {
+    /// Build it unless the game has; a shader not loaded yet sends it back to wait, and one
+    /// that fails (to compose, or to create: it runs inside an error scope, so a stale entry
+    /// is no render error) drops it from the list.
+    fn build(&self, entry: Arc<nvf_manifest::Entry>) {
+        let recipe = &entry.recipe;
+        let steps = {
+            let mut cache = self.shader_cache.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut steps = Vec::new();
+            for stage in recipe.stages() {
+                let Some(id) = cache.shader_by_path(&stage.shader) else {
+                    drop(cache);
+                    self.manifest.retry(entry);
+                    return;
+                };
+                match cache.prepare(None, id, &stage.defs) {
+                    Ok(step) => steps.push(Some(step)),
+                    Err(
+                        ShaderCacheError::ShaderNotLoaded(_)
+                        | ShaderCacheError::ShaderImportNotYetAvailable,
+                    ) => {
+                        drop(cache);
+                        self.manifest.retry(entry);
+                        return;
+                    }
+                    Err(_) => {
+                        drop(cache);
+                        self.fail(&entry);
+                        return;
+                    }
+                }
+            }
+            steps
+        };
+        let Ok(modules) = nvf_modules(&self.shader_cache, &self.device, steps) else {
+            self.fail(&entry);
+            return;
+        };
+        let modules: Vec<Arc<WgpuShaderModule>> = modules.into_iter().flatten().collect();
+        // The game's own task may have taken it meanwhile.
+        let Some(claim) = entry.try_claim() else {
+            return;
+        };
+        let (Recipe::Render { immediate_size, .. } | Recipe::Compute { immediate_size, .. }) =
+            recipe;
+        let bind_group_layouts = {
+            let mut cache = self
+                .bindgroup_layout_cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            recipe
+                .layout_descriptors()
+                .iter()
+                .map(|d| cache.get(&self.device, d))
+                .collect::<SmallVec<[_; BIND_GROUP_LAYOUTS_INLINE_CAPACITY]>>()
+        };
+        let layout = (!bind_group_layouts.is_empty() || *immediate_size != 0).then(|| {
+            self.layout_cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(&self.device, &bind_group_layouts, *immediate_size)
+        });
+        let layout = layout.as_ref().map(|layout| -> &PipelineLayout { layout });
+        let cache = self.wgpu_pipeline_cache.as_ref();
+
+        let scope = self
+            .device
+            .wgpu_device()
+            .push_error_scope(wgpu::ErrorFilter::Validation);
+        let made = match recipe {
+            Recipe::Render {
+                label,
+                vertex,
+                buffers,
+                primitive,
+                depth_stencil,
+                multisample,
+                fragment,
+                zero_init,
+                ..
+            } => {
+                let buffers = buffers
+                    .iter()
+                    .map(|b| {
+                        Some(RawVertexBufferLayout {
+                            array_stride: b.stride,
+                            attributes: &b.attributes,
+                            step_mode: b.step,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                fn constants(stage: &nvf_manifest::Stage) -> Vec<(&str, f64)> {
+                    stage
+                        .constants
+                        .iter()
+                        .map(|(k, v)| (k.as_str(), *v))
+                        .collect()
+                }
+                let vertex_constants = constants(vertex);
+                let fragment_constants = fragment.as_ref().map(|(f, _)| constants(f));
+                let descriptor = RawRenderPipelineDescriptor {
+                    multiview_mask: None,
+                    depth_stencil: depth_stencil.clone(),
+                    label: label.as_deref(),
+                    layout,
+                    multisample: *multisample,
+                    primitive: *primitive,
+                    vertex: RawVertexState {
+                        buffers: &buffers,
+                        entry_point: vertex.entry.as_deref(),
+                        module: &modules[0],
+                        compilation_options: PipelineCompilationOptions {
+                            constants: &vertex_constants,
+                            zero_initialize_workgroup_memory: *zero_init,
+                        },
+                    },
+                    fragment: fragment.as_ref().zip(fragment_constants.as_ref()).map(
+                        |((stage, targets), constants)| RawFragmentState {
+                            entry_point: stage.entry.as_deref(),
+                            module: &modules[1],
+                            targets,
+                            compilation_options: PipelineCompilationOptions {
+                                constants,
+                                zero_initialize_workgroup_memory: *zero_init,
+                            },
+                        },
+                    ),
+                    cache,
+                };
+                Pipeline::RenderPipeline(self.device.create_render_pipeline(&descriptor))
+            }
+            Recipe::Compute {
+                label,
+                stage,
+                zero_init,
+                ..
+            } => {
+                let constants = stage
+                    .constants
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), *v))
+                    .collect::<Vec<_>>();
+                let descriptor = RawComputePipelineDescriptor {
+                    label: label.as_deref(),
+                    layout,
+                    module: &modules[0],
+                    entry_point: stage.entry.as_deref(),
+                    compilation_options: PipelineCompilationOptions {
+                        constants: &constants,
+                        zero_initialize_workgroup_memory: *zero_init,
+                    },
+                    cache,
+                };
+                Pipeline::ComputePipeline(self.device.create_compute_pipeline(&descriptor))
+            }
+        };
+        let error = bevy_tasks::futures::now_or_never(scope.pop()).flatten();
+        if let Some(error) = error {
+            bevy_log::debug!("pipeline list: {:?} not built: {error}", recipe_label(recipe));
+            claim.failed();
+            self.manifest.note_replayed(false);
+        } else {
+            claim.built(&made, nvf_module_list(&modules));
+            self.manifest.note_replayed(true);
+        }
+    }
+
+    fn fail(&self, entry: &Arc<nvf_manifest::Entry>) {
+        if let Some(claim) = entry.try_claim() {
+            claim.failed();
+            self.manifest.note_replayed(false);
+        }
+    }
+}
+
+fn recipe_label(recipe: &Recipe) -> Option<&str> {
+    let (Recipe::Render { label, .. } | Recipe::Compute { label, .. }) = recipe;
+    label.as_deref()
 }
 
 fn pipeline_error_context(cached_pipeline: &CachedPipeline) -> String {
@@ -1292,6 +1651,36 @@ fn nvf_compile_threads(setting: Option<&str>, cores: usize) -> usize {
         Some(n) => n.min(64),
         None => (cores / 4).clamp(2, 8),
     }
+}
+
+/// NVForever pipeline list: the pool that builds the list's pipelines, half the compile
+/// pool's default threads (at least one), apart from it so the game's own pipelines never
+/// queue behind the list's (`nvf_manifest.rs`).
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "macos"),
+    feature = "multi_threaded"
+))]
+fn nvf_list_pool() -> Option<&'static bevy_tasks::TaskPool> {
+    static POOL: std::sync::OnceLock<bevy_tasks::TaskPool> = std::sync::OnceLock::new();
+    Some(POOL.get_or_init(|| {
+        let cores = std::thread::available_parallelism().map_or(4, usize::from);
+        let threads = (nvf_compile_threads(None, cores) / 2).max(1);
+        bevy_log::info!("pipeline list pool: {threads} threads");
+        bevy_tasks::TaskPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name("Pipeline List Pool".into())
+            .build()
+    }))
+}
+
+#[cfg(not(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "macos"),
+    feature = "multi_threaded"
+)))]
+fn nvf_list_pool() -> Option<&'static bevy_tasks::TaskPool> {
+    None
 }
 
 #[cfg(any(

@@ -42,10 +42,30 @@
 //! adds little to the driver's own disk cache, which already answers; it is for drivers and
 //! settings without one (NVIDIA's shader cache can be switched off or fill up).
 //!
+//! **The pipeline list** (`<cache>\pipelines\pipeline-list.bin`): every render and compute
+//! pipeline earlier runs asked for, as its descriptor with its shaders named by path; the
+//! vendored bevy_render builds them on a pool of its own from the start of the run, and hands
+//! one to the game when it asks for the same descriptor (`bevy::render::render_resource::
+//! PipelineManifest`, vendored `nvf_manifest.rs`). A pipeline no run asked for in 30 runs is
+//! dropped; the file is cut at 512 MB. It is read on the I/O pool, so the start does not wait
+//! for it.
+//!
+//! **Making shader modules** (naga) no longer holds the shader cache's lock (vendored
+//! bevy_shader `ModuleStep`, bevy_render `nvf_modules`): a Novac start's 245 modules took
+//! 751 ms one at a time while the compile threads waited 3.9 s in all for the lock
+//! [observed 2026-11-19, `pipeline timing:` lines]. This needs wgpu's error scopes per
+//! thread (its `std` feature, vendored bevy_render's Cargo.toml).
+//!
 //! **Which home:** the cache folder of the home this run uses (`EngineHome::cache`). An
-//! unattended run without its own `NVFOREVER_HOME` reads and writes neither, as it reads no
-//! INI (`nvf_play::settings::SettingsFile::for_run`). `NVF_PIPELINE_CACHE=0` turns both off
-//! for comparing; `NVF_PIPELINE_CACHE=composed` and `=driver` keep only that one.
+//! unattended run without its own `NVFOREVER_HOME` reads and writes none, as it reads no
+//! INI (`nvf_play::settings::SettingsFile::for_run`). `NVF_PIPELINE_CACHE=0` turns all three
+//! off for comparing; `NVF_PIPELINE_CACHE=composed` and `=driver` keep only that one (and the
+//! list); `NVF_PIPELINE_MANIFEST=0` turns the list alone off.
+//!
+//! **Log lines** (each loading screen's end, then each save): `pipeline list: N listed; by
+//! the screen's end R built from it, S of the A pipelines asked taken from it ...`, and
+//! `pipeline list: saved N (B bytes) ...; P pipelines asked after the screen came down, Q of
+//! them taken from the list`.
 //!
 //! **When they are saved:** once every pipeline asked for has been ready for
 //! [`QUIET_SECS`], at most every [`MIN_GAP_SECS`], when more were asked for since the last
@@ -57,7 +77,7 @@
 
 use crate::pipeline_gate::PipelineGate;
 use bevy::prelude::*;
-use bevy::render::render_resource::PipelineCache;
+use bevy::render::render_resource::{PipelineCache, PipelineManifest};
 use bevy::render::renderer::{RenderAdapterInfo, RenderDevice};
 use bevy::render::RenderApp;
 use bevy::shader::nvf_composed::ComposedStore;
@@ -77,12 +97,18 @@ pub const MIN_GAP_SECS: f64 = 10.0;
 const MAX_DRIVER_BYTES: usize = 128 << 20;
 /// The composed shaders' file in the cache folder.
 const COMPOSED_FILE: &str = "composed-shaders.bin";
+/// The pipeline list's file in the cache folder.
+const LIST_FILE: &str = "pipeline-list.bin";
 
 /// What this run keeps, and what was saved of it.
 #[derive(Resource)]
 struct DiskCache {
     driver: Option<(wgpu::PipelineCache, PathBuf)>,
     composed: Option<(Arc<ComposedStore>, PathBuf)>,
+    list: Option<(Arc<PipelineManifest>, PathBuf)>,
+    /// The list's counts when the last loading screen came down (`None`: none yet, or one up).
+    at_screen_end: Option<bevy::render::render_resource::ManifestStats>,
+    screen_up: bool,
     saved_asked: u32,
     last_save: Option<Instant>,
     quiet_since: Option<Instant>,
@@ -91,21 +117,27 @@ struct DiskCache {
     driver_saved: Arc<AtomicU64>,
 }
 
-/// Which of the two this run keeps (`NVF_PIPELINE_CACHE`, module notes).
+/// What this run keeps (`NVF_PIPELINE_CACHE`, `NVF_PIPELINE_MANIFEST`, module notes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Kept {
     composed: bool,
     driver: bool,
+    list: bool,
 }
 
 impl Kept {
-    fn parse(value: Option<&str>) -> Kept {
-        match value {
-            Some("0") => Kept { composed: false, driver: false },
-            Some("composed") => Kept { composed: true, driver: false },
-            Some("driver") => Kept { composed: false, driver: true },
-            _ => Kept { composed: true, driver: true },
+    fn parse(cache: Option<&str>, manifest: Option<&str>) -> Kept {
+        let list = cache != Some("0") && manifest != Some("0");
+        match cache {
+            Some("0") => Kept { composed: false, driver: false, list },
+            Some("composed") => Kept { composed: true, driver: false, list },
+            Some("driver") => Kept { composed: false, driver: true, list },
+            _ => Kept { composed: true, driver: true, list },
         }
+    }
+
+    fn none(self) -> bool {
+        !(self.composed || self.driver || self.list)
     }
 }
 
@@ -117,8 +149,14 @@ impl Plugin for PipelineDiskCachePlugin {
     /// After `RenderPlugin::finish`, which puts the device and Bevy's pipeline cache into the
     /// render world, and before its first frame queues a pipeline.
     fn finish(&self, app: &mut App) {
-        let kept = Kept::parse(std::env::var("NVF_PIPELINE_CACHE").ok().as_deref());
-        if kept == Kept::parse(Some("0")) {
+        let kept = Kept::parse(
+            std::env::var("NVF_PIPELINE_CACHE").ok().as_deref(),
+            std::env::var("NVF_PIPELINE_MANIFEST").ok().as_deref(),
+        );
+        if !kept.list {
+            info!("pipeline list: off (NVF_PIPELINE_CACHE=0 or NVF_PIPELINE_MANIFEST=0)");
+        }
+        if kept.none() {
             info!("pipeline cache: off (NVF_PIPELINE_CACHE=0)");
             return;
         }
@@ -132,21 +170,74 @@ impl Plugin for PipelineDiskCachePlugin {
             (store, file)
         });
         let driver = kept.driver.then(|| driver_cache(world, &dir)).flatten();
+        let list = kept.list.then(|| {
+            let file = dir.join(LIST_FILE);
+            let list = Arc::new(PipelineManifest::new());
+            let (reading, path) = (list.clone(), file.clone());
+            IoTaskPool::get()
+                .spawn(async move {
+                    let began = Instant::now();
+                    match std::fs::read(&path) {
+                        Ok(bytes) => {
+                            let n = reading.load(&bytes);
+                            info!(
+                                "pipeline list: {n} pipelines from earlier runs ({} bytes) read in {:.0} ms from {}",
+                                bytes.len(),
+                                began.elapsed().as_secs_f64() * 1000.0,
+                                path.display()
+                            );
+                        }
+                        Err(_) => {
+                            reading.load(&[]);
+                            info!("pipeline list: none yet at {}", path.display());
+                        }
+                    }
+                })
+                .detach();
+            (list, file)
+        });
         if let Some(mut pipelines) = world.get_resource_mut::<PipelineCache>() {
             pipelines.set_composed_store(composed.as_ref().map(|(s, _)| s.clone()));
             pipelines.set_wgpu_pipeline_cache(driver.as_ref().map(|(c, _)| c.clone()));
+            pipelines.set_pipeline_manifest(list.as_ref().map(|(l, _)| l.clone()));
         }
         app.insert_resource(DiskCache {
             driver,
             composed,
+            list,
+            at_screen_end: None,
+            screen_up: false,
             saved_asked: 0,
             last_save: None,
             quiet_since: None,
             writing: Arc::default(),
             driver_saved: Arc::default(),
         })
-        .add_systems(Last, save_when_quiet);
+        .add_systems(Last, (note_screen_end, save_when_quiet).chain());
     }
+}
+
+/// When a start's or a travel's loading screen comes down: how much of the list was ready.
+fn note_screen_end(loading: Option<Res<nvf_play::loading::Loading>>, mut disk: ResMut<DiskCache>) {
+    let up = loading.is_some_and(|l| l.starting() || l.travelling());
+    let was_up = std::mem::replace(&mut disk.screen_up, up);
+    let Some((list, _)) = &disk.list else { return };
+    if up || !was_up {
+        return;
+    }
+    let s = list.stats();
+    info!(
+        "pipeline list: {} listed; by the screen's end {} built from it, {} of the {} pipelines asked taken from it ({} built by their own task, {} not in it), {} failed, {} left to build",
+        s.listed,
+        s.replayed,
+        s.served,
+        s.asked,
+        s.claimed,
+        s.fresh,
+        s.failed,
+        list.queued()
+    );
+    disk.at_screen_end = Some(s);
 }
 
 /// The driver's pipeline cache, from what an earlier run saved (module notes).
@@ -224,7 +315,9 @@ fn save_when_quiet(gate: Option<Res<PipelineGate>>, mut disk: ResMut<DiskCache>)
     disk.last_save = Some(now);
     let driver = disk.driver.as_ref().and_then(|(cache, file)| cache.get_data().map(|d| (d, file.clone())));
     let composed = disk.composed.clone().filter(|(store, _)| store.changed());
-    if driver.is_none() && composed.is_none() {
+    let list = disk.list.clone().filter(|(list, _)| list.changed());
+    let at_screen_end = disk.at_screen_end;
+    if driver.is_none() && composed.is_none() && list.is_none() {
         return;
     }
     let (writing, driver_saved) = (disk.writing.clone(), disk.driver_saved.clone());
@@ -249,6 +342,9 @@ fn save_when_quiet(gate: Option<Res<PipelineGate>>, mut disk: ResMut<DiskCache>)
                     ),
                     Err(e) => warn!("composed shaders: not saved to {}: {e}", file.display()),
                 }
+            }
+            if let Some((list, file)) = list {
+                save_list(&list, &file, at_screen_end);
             }
             writing.store(false, Relaxed);
         })
@@ -275,6 +371,34 @@ fn save_driver(data: &[u8], file: &Path, saved: &AtomicU64, asked: u32) {
     }
 }
 
+/// Write the pipeline list, with what was asked since the last loading screen came down.
+fn save_list(
+    list: &PipelineManifest,
+    file: &Path,
+    at_screen_end: Option<bevy::render::render_resource::ManifestStats>,
+) {
+    let began = Instant::now();
+    let bytes = list.to_bytes();
+    let pipelines = bytes.iter().filter(|b| **b == b'\n').count().saturating_sub(3);
+    let now = list.stats();
+    let after = at_screen_end.map_or(String::new(), |s| {
+        format!(
+            "; {} pipelines asked after the screen came down, {} of them taken from the list",
+            now.asked.saturating_sub(s.asked),
+            now.served.saturating_sub(s.served)
+        )
+    });
+    match write_replacing(file, &bytes) {
+        Ok(()) => info!(
+            "pipeline list: saved {pipelines} ({} bytes) in {:.0} ms to {}{after}",
+            bytes.len(),
+            began.elapsed().as_secs_f64() * 1000.0,
+            file.display()
+        ),
+        Err(e) => warn!("pipeline list: not saved to {}: {e}", file.display()),
+    }
+}
+
 /// Write `data` to a temporary file beside `file`, then rename it over `file`.
 fn write_replacing(file: &Path, data: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = file.parent() {
@@ -298,11 +422,28 @@ mod tests {
     }
 
     #[test]
-    fn the_switch_keeps_both_one_or_neither() {
-        assert_eq!(Kept::parse(None), Kept { composed: true, driver: true });
-        assert_eq!(Kept::parse(Some("0")), Kept { composed: false, driver: false });
-        assert_eq!(Kept::parse(Some("composed")), Kept { composed: true, driver: false });
-        assert_eq!(Kept::parse(Some("driver")), Kept { composed: false, driver: true });
+    fn the_switches_keep_all_some_or_none() {
+        let k = |composed, driver, list| Kept { composed, driver, list };
+        assert_eq!(Kept::parse(None, None), k(true, true, true));
+        assert_eq!(Kept::parse(Some("0"), None), k(false, false, false));
+        assert!(Kept::parse(Some("0"), None).none(), "NVF_PIPELINE_CACHE=0: all off");
+        assert_eq!(Kept::parse(Some("composed"), None), k(true, false, true));
+        assert_eq!(Kept::parse(Some("driver"), None), k(false, true, true));
+        assert_eq!(Kept::parse(None, Some("0")), k(true, true, false), "the list alone off");
+        assert_eq!(Kept::parse(Some("driver"), Some("0")), k(false, true, false));
+    }
+
+    #[test]
+    fn a_saved_list_is_read_back_by_the_next_run() {
+        let dir = std::env::temp_dir().join(format!("nvf-pipeline-list-test-{}", std::process::id()));
+        let file = dir.join(LIST_FILE);
+        let list = PipelineManifest::new();
+        list.load(&[]);
+        save_list(&list, &file, None);
+        let next = PipelineManifest::new();
+        assert_eq!(next.load(&std::fs::read(&file).unwrap()), 0, "nothing asked: an empty list");
+        assert!(next.loaded());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

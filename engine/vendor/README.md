@@ -464,8 +464,28 @@ each part marked by a comment starting `NVForever`:
   not on the async compute pool (at most 4 threads, shared with the game's loading). On a
   driver cache that has none of the pipelines (each 0.6-0.8 s), a Novac start's screen waited
   6.1 s for them on the async compute pool and 5.3 s on this pool.
+- `NVForever modules off the lock`: the pipeline tasks take their shader modules from
+  bevy_shader's `ShaderCache::prepare` (below) under the lock, then make the ones left to them
+  without it (`nvf_modules`: naga's parse, validation and SPIR-V, and `vkCreateShaderModule`)
+  and hand them back with `finish`; a module another thread is making is waited for, after
+  this thread's own are made. Upstream made every module under the one lock: a Novac start's
+  245 modules took 751 ms one at a time while the compile threads waited 3.9 s in all for
+  the lock [observed 2026-11-19]. This needs wgpu's error scopes per thread, so the
+  dependency on `wgpu` adds its `std` feature (without it the scopes are one stack for all
+  threads, and two threads making modules at once panic with a mismatched
+  `pop_error_scope`).
+- `NVForever pipeline list`: a new module `src/render_resource/nvf_manifest.rs`
+  (`PipelineManifest`, its module notes say how it works) and `PipelineCache::
+  set_pipeline_manifest`. The render and compute tasks turn their descriptor into a recipe
+  (shaders by `Shader::path`) and ask the list: a pipeline the list built from the same
+  modules is handed over, else the task builds it and the list keeps the recipe.
+  `process_queue` feeds the list's recipes whose shaders have loaded to a pool of its own
+  (`nvf_list_pool`, half the compile pool's default threads), which builds each inside a
+  validation error scope. For the JSON of the recipes the crate depends on `serde` and
+  `serde_json` and on `wgpu-types` with `serde` (all already in the build).
 
-Without the two setters and with `NVF_PIPELINE_THREADS=0`, upstream's path runs.
+Without the setters and with `NVF_PIPELINE_THREADS=0`, upstream's path runs, except that the
+modules are made outside the lock.
 
 ## bevy_shader 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
@@ -491,6 +511,18 @@ seconds after it from 6.3 s to 1.2 s (asked to ready, all together) [observed, n
 (wesl 0.6's identifiers share reference counts). The test `composed_store_skips_compositions_of_unchanged_sources`
 checks a second cache composes nothing the first kept and composes again after a change.
 Drop it when Bevy caches compositions itself.
+
+`NVForever modules off the lock` (`src/shader_cache.rs`): `get` is split into `prepare`
+(compose under the lock; returns `ModuleStep::Ready`, `Build` with the composed source, or
+`Wait` on the `ModuleSlot` of the thread making the same module) and `finish` (keep the
+module made, unless the shader was replaced meanwhile: each shader's data has a
+`generation` that `clear` bumps, and `clear` drops the slots being made). `get` is
+`prepare`, the module made holding the lock, and `finish`, as before. `ShaderCacheError` is
+`Clone` for the waiters. For the pipeline list (bevy_render above): `shader_path`,
+`shader_by_path` (a path two shaders share is neither) and `shaders_set`, and `prepare`
+takes the pipeline as an `Option` (`None` for the list's builds, which are not compiled
+again when a shader changes). Tests: `a_module_asked_twice_at_once_is_made_once_and_a_stale_one_is_not_kept`,
+`a_build_dropped_unfinished_wakes_its_waiters`, `shaders_are_found_by_a_path_only_they_have`.
 
 ## wgpu-hal 30.0.1 (MIT OR Apache-2.0, the gfx-rs developers)
 
