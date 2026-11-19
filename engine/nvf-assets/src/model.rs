@@ -1077,6 +1077,9 @@ impl TextureSource for Stores<'_> {
     fn authored(&mut self, resolved_diffuse: &str) -> Option<crate::authored::AuthoredSet> {
         self.textures.authored(resolved_diffuse)
     }
+    fn authored_on(&self) -> bool {
+        self.textures.authored_on()
+    }
 }
 
 impl ModelSink for Stores<'_> {
@@ -1149,6 +1152,9 @@ impl TextureSource for Deferred {
     }
     fn resolve(&self, raw_path: &str) -> String {
         crate::texture::resolved_path(raw_path, |p| self.data.vfs.exists(p))
+    }
+    fn authored_on(&self) -> bool {
+        crate::authored::enabled()
     }
     fn authored(&mut self, resolved_diffuse: &str) -> Option<crate::authored::AuthoredSet> {
         let (data, cached, workers, images, bc, unmasked) = (&self.data, &self.cached, &self.workers, &self.providers.images, self.bc_supported, &mut self.unmasked);

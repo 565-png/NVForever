@@ -811,6 +811,10 @@ pub(crate) trait TextureSource {
     /// production source implements it (no default, so none can leave the feature off by
     /// omission); test doubles answer for themselves.
     fn authored(&mut self, resolved_diffuse: &str) -> Option<crate::authored::AuthoredSet>;
+    /// Whether authored sets are in use at all (the run's setting, `crate::authored::enabled`,
+    /// for every production source): off, no shape is looked up and no legacy look is kept,
+    /// so an off run's materials carry nothing new. No default, as for [`Self::authored`].
+    fn authored_on(&self) -> bool;
 }
 
 /// The main thread's textures: the cache and the image store.
@@ -840,6 +844,10 @@ impl TextureSource for StoreTextures<'_> {
 
     fn resolve(&self, raw_path: &str) -> String {
         crate::texture::resolved_path(raw_path, |p| self.data.vfs.exists(p))
+    }
+
+    fn authored_on(&self) -> bool {
+        crate::authored::enabled()
     }
 
     fn authored(&mut self, resolved_diffuse: &str) -> Option<crate::authored::AuthoredSet> {
@@ -931,7 +939,7 @@ fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl Text
     let alpha_mode = if cut.is_some() { AlphaMode::Blend } else { shape_alpha_mode(props) };
     // An authored set (#2981, crate::authored): looked up by the resolved diffuse when the
     // shape may take one; `None` whenever the run's setting is off.
-    let eligible = crate::authored::shape_eligible(props.unlit, props.refraction.is_some(), props.hair, props.skin, alpha_mode, has_uv, props.no_authored);
+    let eligible = textures.authored_on() && crate::authored::shape_eligible(props.unlit, props.refraction.is_some(), props.hair, props.skin, alpha_mode, has_uv, props.no_authored);
     let authored = diffuse.filter(|_| eligible).map(|t| textures.resolve(t)).filter(|k| crate::authored::key_eligible(k)).and_then(|k| textures.authored(&k));
     // The final normal is chosen before the tangents are settled: a set's `_n` on a shape
     // without a normal map needs tangents on the drawn mesh, made here; a copy of a drawn
@@ -1375,6 +1383,9 @@ mod tests {
         fn authored(&mut self, _: &str) -> Option<crate::authored::AuthoredSet> {
             None
         }
+        fn authored_on(&self) -> bool {
+            false
+        }
     }
 
     /// Textures whose alpha is a cut-out mask when their path says "mask".
@@ -1394,6 +1405,9 @@ mod tests {
         }
         fn authored(&mut self, _: &str) -> Option<crate::authored::AuthoredSet> {
             None
+        }
+        fn authored_on(&self) -> bool {
+            false
         }
     }
 

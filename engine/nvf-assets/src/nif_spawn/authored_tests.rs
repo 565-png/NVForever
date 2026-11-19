@@ -15,11 +15,13 @@ struct SetTextures {
     /// The game's normal maps carry a specular mask.
     masked: bool,
     asked: Vec<String>,
+    /// The run's setting.
+    on: bool,
 }
 
 impl SetTextures {
     fn new(set: Option<(&str, AuthoredSet)>) -> SetTextures {
-        SetTextures { images: Assets::default(), by_path: HashMap::new(), set: set.map(|(k, s)| (k.to_string(), s)), masked: true, asked: Vec::new() }
+        SetTextures { images: Assets::default(), by_path: HashMap::new(), set: set.map(|(k, s)| (k.to_string(), s)), masked: true, asked: Vec::new(), on: true }
     }
 
     fn handle(&mut self, path: &str) -> Handle<Image> {
@@ -48,6 +50,9 @@ impl TextureSource for SetTextures {
     }
     fn resolve(&self, raw_path: &str) -> String {
         fnv_vfs::texture_path(raw_path)
+    }
+    fn authored_on(&self) -> bool {
+        self.on
     }
     fn authored(&mut self, key: &str) -> Option<AuthoredSet> {
         self.asked.push(key.to_string());
@@ -170,24 +175,36 @@ fn shapes_a_set_never_touches_keep_the_game_material_and_ask_nothing() {
     assert!(shape_material_with(&wall(), &mut no_uv, &mut source).0.base.metallic_roughness_texture.is_none());
 }
 
-/// Off (the source answers no set, as every production source does when the run's setting is
-/// off): the material is today's, field by field; an authored one put back by its legacy
-/// look is the same.
+/// The drawn fields (everything but the CPU-only legacy look) of a material with the run's
+/// setting off, with it on and no set, and of an authored material put back by its legacy
+/// look are the same. Off, the material carries nothing new: no legacy look, no lookup.
+/// The legacy looks of the no-set and the authored builds agree but for `tangents` where the
+/// set's `_n` gave a shape without a normal map tangents on its drawn mesh.
 #[test]
-fn off_or_restored_the_material_is_the_legacy_one_field_by_field() {
+fn off_no_set_and_restored_materials_draw_the_same() {
     let mut scratch = Assets::<Image>::default();
     let s = set(&mut scratch, true, Scalars { parallax_depth: None, roughness_scale: Some(0.2), reflectance: Some(0.9) });
-    for (props, mask) in [(wall(), true), (Props { textures: vec![r"walls\brick.dds".into()], ..wall() }, false), (wall(), false)] {
-        let mut source = SetTextures::new(None);
+    let bare = Props { textures: vec![wall().textures[0].clone()], ..wall() };
+    for (props, mask, gains_tangents) in [(wall(), true, false), (bare, false, true), (wall(), false, false)] {
+        let mut source = SetTextures::new(Some((KEY, s.clone())));
         source.masked = mask;
-        let (legacy, _) = shape_material_with(&props, &mut triangle(), &mut source);
-        source.set = Some((KEY.to_string(), s.clone()));
+        source.on = false;
+        let (off, _) = shape_material_with(&props, &mut triangle(), &mut source);
+        assert!(source.asked.is_empty() && off.extension.legacy.is_none(), "off: no lookup, no legacy look");
+        source.on = true;
+        let set = source.set.take();
+        let (no_set, _) = shape_material_with(&props, &mut triangle(), &mut source);
+        source.set = set;
         let (mut authored, _) = shape_material_with(&props, &mut triangle(), &mut source);
-        assert_ne!(drawn(&legacy), drawn(&authored));
+        assert_eq!(drawn(&off), drawn(&no_set), "{props:?}");
+        assert_ne!(drawn(&off), drawn(&authored));
         let look = authored.extension.legacy.clone().unwrap();
         crate::authored::restore(&mut authored, &look);
-        assert_eq!(drawn(&legacy), drawn(&authored), "{props:?}");
-        assert_eq!(legacy.extension.legacy, Some(look));
+        assert_eq!(drawn(&off), drawn(&authored), "{props:?}");
+        let mut no_set_look = no_set.extension.legacy.clone().unwrap();
+        assert_eq!(look.tangents, no_set_look.tangents || gains_tangents, "{props:?}");
+        no_set_look.tangents = look.tangents;
+        assert_eq!(no_set_look, look, "{props:?}");
     }
 }
 
