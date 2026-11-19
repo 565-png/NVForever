@@ -2106,8 +2106,10 @@ what the feature mostly shows.
   the root, weighted by the light they show (the reference's transform takes it to the
   world, so a lamp post's glow sits at its bulb), their reach (feeding the size and budget
   rules as a light's radius would, times 4) and their colour (the emissive hue times the
-  mean hue of the glowing texture: every texel of its first mip level of at most 256 x 256,
-  compressed blocks decoded with their selectors, DXT1's transparent selector honoured,
+  mean hue of the glowing texture: every texel of its first mip level of at most 256 x 256
+  (without one, a grid of about as many from the smallest level), compressed blocks decoded
+  with their selectors and an edge block's padding left out, DXT1's transparent selector
+  honoured,
   weighted by brightness, and by alpha where the shape blends). A glow-mapped lit shape
   takes the glow map's hue without the diffuse texture the real material multiplies it by. Glow statics take the
   same present state, merge, cap, night share, fog and hand-over as lights, strength 1, no
@@ -2125,16 +2127,20 @@ what the feature mostly shows.
   2026-11-19]). Models are asked for on the main thread only, each once, so two jobs never
   read the same model. Every job checks a shared epoch between cells and between models;
   switching off, another worldspace, going indoors or daylight move it on, so a running job
-  stops after the read under way, its unread models go back to the front of the queue, and
-  no job starts while a stopped one still runs (never two scans at once). A cell's sources
-  are its lights and the statics whose model is read and glows; they are completed as the
-  models come in, so a town fills in over the scan.
+  stops after the read under way. Each model's glow is handed back as soon as it is read,
+  so a stopped job's reads are kept and only its unread models go back to the front of the
+  queue; no job starts while a stopped one still runs (never two scans at once). A cell's
+  sources are its lights and the statics whose model is read and glows; they are completed
+  as the models come in (only the cells that show a model just read are resolved again,
+  from a model-to-cells index), so a town fills in over the scan.
 - **Present state.** Whether a listed light shows is the simulation's present state
   (`SimState::present`: not deleted, enabled now), or without a simulation its state at the
   start. Cells listed but not merged yet are checked at once, and every 2 s a pass over all
   cells starts; both within 2,048 units a frame, a hard bound (a light checked or merged one
-  unit, starting a cell one; a check stopped inside a cell resumes there in the next frame;
-  a cell with more lights than the budget is merged alone in a frame of its own). A cell is
+  unit, starting a cell or handing a merge on one; a check stopped inside a cell resumes
+  there in the next frame, a merge that does not fit waits for the next frame, and a cell
+  with more present lights than the budget is merged on a worker and its glows swapped in
+  when done). A cell is
   merged again when the set of its present lights changed (a key of their FormIDs, so
   disabling one lamp and enabling another in the same cell between two checks is seen).
 - **Hand-over.** No glow for a cell inside the loaded grid (the square of `Streamer::radius`
