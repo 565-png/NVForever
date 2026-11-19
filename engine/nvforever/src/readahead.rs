@@ -304,7 +304,7 @@ impl ReadAhead {
     /// Refresh every dependency of the appearance wanted now, not just the models
     /// listed when the actor first entered the ring [design]. Also used by ring jobs.
     fn request_plan(&mut self, world: &ActorWorld, ctx: &mut ActorCtx, plan: &mut Plan, creature: bool) -> bool {
-        let read = ctx.parts_ready(plan.parts.iter().chain([&plan.skeleton]).map(String::as_str));
+        let read = ctx.parts_ready(plan.parts.iter().map(String::as_str), &plan.skeleton);
         if self.off {
             return read;
         }
