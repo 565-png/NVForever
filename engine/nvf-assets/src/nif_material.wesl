@@ -704,7 +704,14 @@ fn nif_fragment(
             // took the ambient colour as linear light (`nvf_ambient_ratio`).
             ambient_spec *= pow(max(lights.ambient_color.rgb * view.exposure, vec3(1e-6)), vec3(1.2));
         }
-        out.color = vec4(max(out.color.rgb - view.exposure * ambient_spec, vec3(0.0)), out.color.a);
+        @if(!NVF_PBR_METALLIC) out.color = vec4(max(out.color.rgb - view.exposure * ambient_spec, vec3(0.0)), out.color.a);
+        // NVF_PBR_METALLIC (nvf-assets authored.rs `metallic_debug`, a debug switch): on a
+        // material shaded from an authored set (emissive_rule.w), only the dielectric share
+        // (1 - m) of the highlight is removed, m the sampled metallic after the terrain mix,
+        // so a metal keeps its ambient highlight; m = 0 removes it all, as above. Other
+        // materials remove it all.
+        @if(NVF_PBR_METALLIC) let removed = select(1.0, 1.0 - saturate(m.metallic), surface.emissive_rule.w > 0.5);
+        @if(NVF_PBR_METALLIC) out.color = vec4(max(out.color.rgb - view.exposure * ambient_spec * removed, vec3(0.0)), out.color.a);
         @if(!PREPASS_PIPELINE && !TONEMAP_IN_SHADER && !BLEND_MULTIPLY) out.color = vec4(hot_light(out.color.rgb, hot_e), out.color.a);
     } else {
         out.color = pbr_input.material.base_color;

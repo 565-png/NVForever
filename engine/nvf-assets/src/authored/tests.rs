@@ -223,8 +223,9 @@ fn channel_views_parse_and_name_their_defs() {
         assert!(defs[1].ends_with(&v.name().to_ascii_uppercase()));
     }
     assert!(PbrView::Off.shader_defs().is_empty());
-    // The tests run without the variable: no view, metallic held at 0.
-    if std::env::var_os(VIEW_ENV).is_none() {
+    // The tests run without the variables: no view, no metallic switch, metallic held at 0.
+    if std::env::var_os(VIEW_ENV).is_none() && std::env::var_os(METALLIC_ENV).is_none() {
+        assert!(!metallic_debug());
         assert_eq!((view(), authored_metallic()), (PbrView::Off, 0.0));
     }
 }

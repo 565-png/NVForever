@@ -176,9 +176,31 @@ pub fn key_eligible(key: &str) -> bool {
 /// The metallic value an authored material is built with: 0 (the ORM's blue channel then has
 /// no effect: no reflection source exists yet, docs/spec-notes/pbr-materials.md "Metallic"),
 /// or 1 in the metallic channel view ([`PbrView::Metallic`]), so the material's sample of
-/// the blue channel is the per-texel value the view shows.
+/// the blue channel is the per-texel value the view shows, and under the metallic debug
+/// switch ([`metallic_debug`]), so the blue channel takes effect.
 pub fn authored_metallic() -> f32 {
-    if view() == PbrView::Metallic { 1.0 } else { 0.0 }
+    if view() == PbrView::Metallic || metallic_debug() { 1.0 } else { 0.0 }
+}
+
+/// The environment variable of the metallic debug switch ([`metallic_debug`]).
+pub const METALLIC_ENV: &str = "NVF_PBR_METALLIC";
+
+/// The metallic debug switch (a calibration aid, off by default; `NVF_PBR_METALLIC=1`, read
+/// once at the start): authored materials are built with metallic 1, so the ORM's blue
+/// channel takes effect, and nif_material.wesl's removal of Bevy's ambient highlight keeps
+/// the metal's share of it on authored materials ((1 - m) of it is removed, m the sampled
+/// metallic), so a metal shows the ambient light in its colour instead of drawing black where
+/// no lamp's highlight falls (`NVF_PBR_METALLIC` shader def) [design, DESIGN option (b)].
+/// Every other material is drawn as without it.
+pub fn metallic_debug() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        let on = std::env::var(METALLIC_ENV).is_ok_and(|v| v.trim() == "1");
+        if on {
+            info!("authored materials: metallic debug switch ({METALLIC_ENV}=1): authored materials are metallic by their ORM's blue channel and keep a metal's ambient highlight");
+        }
+        on
+    })
 }
 
 /// The environment variable that picks a channel view ([`PbrView`]).

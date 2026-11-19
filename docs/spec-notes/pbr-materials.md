@@ -208,6 +208,11 @@ Maps tuned for other renderers need these notes:
 - The smoke scenarios `pbr-authored-field` and `pbr-authored-field-off`
   (`NVF_PLAY_TEST_PBR_FIELD=1`, `engine/nvf-assets/src/pbr_field.rs`) draw generated sets
   through the real material path and compare two GPU readbacks [engineering policy].
+- Calibration aids, off by default, read at the start: `NVF_PBR_VIEW` = `roughness`,
+  `metallic`, `occlusion`, `normal` or `authored` draws that input in place of every NIF
+  surface's lit colour; `NVF_PBR_METALLIC=1` builds authored materials metallic by the ORM's
+  blue channel and keeps a metal's ambient highlight, a preview of a later metallic stage
+  (`engine/nvf-assets/src/authored.rs`) [design].
 
 ## Load order: per file, so ship complete sets
 
