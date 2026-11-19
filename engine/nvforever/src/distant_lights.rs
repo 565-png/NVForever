@@ -853,7 +853,9 @@ impl DistantLights {
         });
     }
 
-    /// Take in the merges done on the worker.
+    /// Take in the merges done on the worker. `merging` holds a cell's latest requested merge
+    /// only (a newer check's outcome drops an older task, and dropped cells drop theirs), and a
+    /// result is published only for a cell still wanted.
     fn poll_merges(&mut self) {
         let mut done = Vec::new();
         self.merging.retain(|g, (key, task)| match check_ready(task) {
@@ -864,7 +866,9 @@ impl DistantLights {
             None => true,
         });
         for (g, key, glows) in done {
-            self.glows.insert(g, CellGlows { glows, key });
+            if self.want.contains(&g) {
+                self.glows.insert(g, CellGlows { glows, key });
+            }
         }
     }
 
@@ -957,13 +961,15 @@ impl DistantLights {
             // Checked whole: merged here within the budget (else in the next frame), or on a
             // worker when it has more lights than the budget.
             let large = c.here.len() > budget;
-            if !large && used + c.here.len() > budget {
+            if (!large && used + c.here.len() > budget) || (large && used >= budget) {
                 break;
             }
             let c = self.checking.take().expect("set above");
             let mut key = c.key;
             c.here.len().hash(&mut key);
             let key = key.finish();
+            // This outcome supersedes a merge of the cell still on the worker.
+            self.merging.remove(&c.cell);
             if self.glows.get(&c.cell).is_some_and(|g| g.key == key) {
                 continue;
             }
@@ -1120,6 +1126,7 @@ fn update(
         st.prune_model_cells();
         st.glows.retain(|g, _| keep.contains(g));
         st.pass.retain(|g| keep.contains(g));
+        st.merging.retain(|g, _| keep.contains(g));
         st.built = None;
         st.scan_models = 0;
     }
@@ -1133,6 +1140,8 @@ fn update(
     }
     st.drain_models();
     if st.job.is_none() && !st.busy.running() {
+        // A stopped job may have put its last read in and ended since the drain above.
+        st.drain_models();
         let next = st.next_job(|g| cell_refs(&world, g));
         let (epoch, busy, started, at) = (st.epoch.clone(), st.busy.clone(), st.epoch.now(), world.world);
         st.job = match next {
@@ -1433,6 +1442,52 @@ mod tests {
         // The big cell (40 present lights over a budget of 15) was merged on a worker.
         assert_eq!(st.glows[&(2, 0)].glows.len(), 40);
         assert!(st.checking.is_none() && st.merging.is_empty());
+    }
+
+    /// The bound holds when a large cell's check ends on the frame's last unit: its merge is
+    /// handed on in the next frame (15 units: 1 to start, 14 + 15 checks, then the hand-on).
+    #[test]
+    fn a_large_merge_waits_when_the_budget_is_spent() {
+        let mut st = DistantLights { want: vec![(0, 0)], ..default() };
+        st.lists.insert((0, 0), Arc::new((0..29).map(|i| light(i, [i as f32 * 300.0, 0.0, 0.0], 1.0)).collect()));
+        let all = |_: &SourceLight| true;
+        assert_eq!(st.check_present(&all, 15), 15);
+        assert_eq!(st.check_present(&all, 15), 15, "checked whole on the last unit: no hand-on in this frame");
+        assert!(st.merging.is_empty());
+        assert_eq!(st.check_present(&all, 15), 1);
+        assert!(st.merging.contains_key(&(0, 0)));
+    }
+
+    fn pending(glows: Vec<Glow>) -> Task<Vec<Glow>> {
+        bevy::tasks::AsyncComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default).spawn(async move { glows })
+    }
+
+    fn settle(st: &mut DistantLights) {
+        for _ in 0..100_000 {
+            st.poll_merges();
+            if st.merging.is_empty() {
+                return;
+            }
+            std::thread::yield_now();
+        }
+        panic!("merges never finished");
+    }
+
+    /// A merge superseded by a newer check of its cell never lands, and one for a cell no
+    /// longer wanted is not published.
+    #[test]
+    fn superseded_and_dropped_merges_are_not_published() {
+        let mut st = DistantLights { want: vec![(0, 0)], ..default() };
+        st.lists.insert((0, 0), Arc::new((0..3).map(|i| light(i, [i as f32 * 300.0, 0.0, 0.0], 1.0)).collect()));
+        st.merging.insert((0, 0), (1, pending(vec![glow(9.0, 1.0)])));
+        st.pass = vec![(0, 0)];
+        st.check_present(&|_: &SourceLight| true, 100);
+        assert!(st.merging.is_empty(), "the newer check dropped the old merge");
+        settle(&mut st);
+        assert_eq!(st.glows[&(0, 0)].glows.len(), 3, "the newer result stays");
+        st.merging.insert((5, 5), (2, pending(vec![glow(9.0, 1.0)])));
+        settle(&mut st);
+        assert!(!st.glows.contains_key(&(5, 5)), "a cell no longer wanted gets no glows");
     }
 
     /// A cell's sources replaced while it is being checked (a model read) are checked again
