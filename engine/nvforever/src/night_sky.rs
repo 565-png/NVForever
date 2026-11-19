@@ -390,17 +390,19 @@ fn update_detail(
             Detail::default()
         }
         Some(sky) => {
-            // The tests' runs keep the multiplier at 1 whatever the environment holds.
-            let text = if cfg!(test) { None } else { std::env::var(DEBUG_VAR).ok() };
-            let m = *state.debug.get_or_insert_with(|| match debug_multiplier(text.as_deref()) {
-                Ok(Some(m)) => {
-                    info!("debug switch {DEBUG_VAR}: the night sky detail x{m}");
-                    m
-                }
-                Ok(None) => 1.0,
-                Err(e) => {
-                    warn!("{e}; the night sky detail as designed");
-                    1.0
+            // Read once; the tests' runs keep the multiplier at 1 whatever the environment holds.
+            let m = *state.debug.get_or_insert_with(|| {
+                let text = if cfg!(test) { None } else { std::env::var(DEBUG_VAR).ok() };
+                match debug_multiplier(text.as_deref()) {
+                    Ok(Some(m)) => {
+                        info!("debug switch {DEBUG_VAR}: the night sky detail x{m}");
+                        m
+                    }
+                    Ok(None) => 1.0,
+                    Err(e) => {
+                        warn!("{e}; the night sky detail as designed");
+                        1.0
+                    }
                 }
             });
             let key: Key = (sky.climate.form_id, sky.weather.form_id, sky.prev.as_ref().map(|p| p.form_id), sky.fade, sky.hour, sky.days_passed, sky.fog_override);
@@ -462,7 +464,9 @@ fn update_detail(
     // read back from the materials after the writes (a smoke test's proof that the values
     // reached the parts, not only the log). The cloud count is of materials, hidden layers
     // included.
-    if state.active && !state.applied {
+    // Only while it is still owed and this frame's values can give it (not by day, at a new
+    // moon, without a moon or at the multiplier 0).
+    if state.active && !state.applied && d.stars.x > 0.0 && d.dome_night.w > 0.0 {
         let (mut twinkling, mut moonlit, mut amplitude, mut glow) = (0, 0, 0.0f32, 0.0f32);
         for (m, star, dome) in &parts {
             let Some(night) = materials.get(&m.0).map(|mat| mat.extension.light.night) else { continue };
