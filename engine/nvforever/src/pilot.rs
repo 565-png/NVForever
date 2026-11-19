@@ -707,6 +707,11 @@ struct Pilot {
     /// A `say_info` with no known way to its line: the step and the topics already tried
     /// in that conversation, as a player tries what is on offer.
     explored: (usize, Vec<FormId>),
+    /// A talk target whose own spot no walk reaches: the step's points round it tried so
+    /// far (`across_point`), as a player talks to someone across a counter.
+    across: Option<(FormId, usize)>,
+    /// How often this step's walk into a trigger ended outside it and went on.
+    trigger_rewalks: u8,
     /// Since when the player was put on a long way (the fast-travel stand-in): its
     /// teammates follow a moment later, as fast travel brings them.
     followers_due: Option<f64>,
@@ -803,6 +808,8 @@ impl Pilot {
             stuck_talk: None,
             talk_picks: 0,
             explored: (usize::MAX, Vec::new()),
+            across: None,
+            trigger_rewalks: 0,
             followers_due: None,
             chain_plugins: Vec::new(),
             chain_raw: Json::Null,
@@ -917,6 +924,8 @@ impl Pilot {
         self.i += 1;
         (self.phase, self.part, self.step_from) = (Phase::Begin, 0, self.now);
         (self.waited, self.waiting, self.woke) = (0, None, 0);
+        self.across = None;
+        self.trigger_rewalks = 0;
     }
 
     /// A step, or a fallback, done as the headless run does it: counted.
@@ -1344,6 +1353,21 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                     Ok(path)
                 }
                 Err(_) => Err(e),
+            },
+            found => found,
+        };
+        // No navmesh under the goal (a trigger's middle over a table, a control box on a
+        // wall: Velvet Curtain's escape trigger, Anchorage's gun boxes [observed]): the goal
+        // is moved to the navmesh's nearest point within GOAL_SNAP, as the start is, and
+        // planned again.
+        let found = match found {
+            Err(fnv_nav::PathError::NoTriangle { which, .. }) if which == "goal" => match nav.graph.nearest(w.goal.space, w.goal.pos, GOAL_SNAP) {
+                Some((_, on)) => {
+                    info!("pilot: step {}: no navmesh under the goal ({:.0}, {:.0}, {:.0}): it moves {:.0} units to the nearest point on it", p.i, w.goal.pos[0], w.goal.pos[1], w.goal.pos[2], hdist(on, w.goal.pos).hypot(on[2] - w.goal.pos[2]));
+                    w.goal.pos = on;
+                    nav.graph.find_path(here, w.goal, &params)
+                }
+                None => found,
             },
             found => found,
         };
@@ -2647,8 +2671,18 @@ fn approach(p: &mut Pilot, h: &mut Hands, name: &str, what: &str) -> Result<Opti
         Phase::Walk(w) => match walk(p, w, h) {
             Walked::Going => Ok(None),
             Walked::No(why) => {
-                let target = w.target.expect("an approach walks to a reference");
+                let target = w.target.or(p.across.map(|a| a.0)).expect("an approach walks to a reference");
                 let tries = w.awaited;
+                // Its own spot out of reach (behind a counter, a locked door to a work
+                // spot): a point round it in reach of the crosshair, as a player talks
+                // across a bar (Francine at the Atomic Wrangler, Garrett at the Talent Pool).
+                if let Some(next) = across_point(p, h, target) {
+                    p.take_back_unreachable();
+                    info!("pilot: step {}: {name} cannot be walked up to ({why}): the player tries ({:.0}, {:.0}, {:.0}) beside it, {} of {ACROSS_TRIES}", p.i, next.pos[0], next.pos[1], next.pos[2], p.across.map_or(0, |a| a.1));
+                    phase = Phase::Walk(walk_to(next, None, 24.0, p.now, h.feet()));
+                    p.phase = phase;
+                    return Ok(None);
+                }
                 if tries < AWAIT_TRIES {
                     info!("pilot: step {}: {name} cannot be walked to now: the player waits for it to come ({why})", p.i);
                     phase = Phase::Await { target, until: p.now + AWAIT_SECS, why, tries: tries + 1 };
@@ -2658,7 +2692,7 @@ fn approach(p: &mut Pilot, h: &mut Hands, name: &str, what: &str) -> Result<Opti
                 }
             }
             Walked::There | Walked::Put => {
-                let target = w.target.expect("an approach walks to a reference");
+                let target = w.target.or(p.across.map(|a| a.0)).expect("an approach walks to a reference");
                 phase = Phase::Aim(Aim { target, height: 0, since: p.now, had: None });
                 Ok(None)
             }
@@ -2709,6 +2743,45 @@ fn approach(p: &mut Pilot, h: &mut Hands, name: &str, what: &str) -> Result<Opti
     };
     p.phase = phase;
     out
+}
+
+/// How far a goal with no navmesh under it moves to the nearest point on it, game units
+/// [design].
+const GOAL_SNAP: f32 = 512.0;
+/// How often a walk into a trigger that ended outside it goes on [design].
+const TRIGGER_REWALKS: u8 = 3;
+/// How many points round a talk target out of reach the player tries [design].
+const ACROSS_TRIES: usize = 16;
+/// How far from the target those points are, game units: within the crosshair's reach
+/// of a talk [design].
+const ACROSS_RADII: [f32; 2] = [100.0, 140.0];
+
+/// The next point round `target` on the navmesh of its space, not tried yet this step:
+/// eight ways at each of [`ACROSS_RADII`], each snapped to the navmesh within 48 units and
+/// near the target's floor. `None` when every one has been tried.
+fn across_point(p: &mut Pilot, h: &mut Hands, target: FormId) -> Option<Place> {
+    let world = h.world;
+    let (space, at) = h.game(|g| where_is(g, target).and_then(|(cell, pos)| Some((crate::nav::space_of_cell(world, cell?.0)?, pos)))).flatten()?;
+    let nav = h.nav?;
+    let mut i = match p.across {
+        Some((t, i)) if t == target => i,
+        _ => 0,
+    };
+    while i < ACROSS_TRIES {
+        let (ring, way) = (i / 8, i % 8);
+        i += 1;
+        let r = ACROSS_RADII[ring.min(ACROSS_RADII.len() - 1)];
+        let a = way as f32 * std::f32::consts::FRAC_PI_4;
+        let want = [at[0] + a.cos() * r, at[1] + a.sin() * r, at[2]];
+        if let Some((_, on)) = nav.graph.nearest(space, want, 48.0) {
+            if (on[2] - at[2]).abs() < 90.0 && hdist(on, at) > 48.0 {
+                p.across = Some((target, i));
+                return Some(Place { space, pos: on });
+            }
+        }
+    }
+    p.across = Some((target, i));
+    None
 }
 
 /// One frame of the current step. `Some(error)` when the step is over.
@@ -2808,6 +2881,16 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
             }
             // A second inside it, for its script to see the player.
             match walk_phase(p, h) {
+                // Over, but not inside: a conversation on the way ended the walk (Old Ben
+                // greeted the player short of the Strip's VMS23 trigger, and King's Gambit
+                // never began [observed]). Walked on, a few times.
+                Some(None) if p.part != 1 && !inside && r.is_some_and(|r| h.script.rt.as_ref().is_some_and(|rt| rt.triggers.shapes_of(r).is_some())) && p.trigger_rewalks < TRIGGER_REWALKS => {
+                    p.trigger_rewalks += 1;
+                    info!("pilot: step {}: the walk ended outside {trigger}: walks on ({} of {TRIGGER_REWALKS})", p.i, p.trigger_rewalks);
+                    p.part = 0;
+                    p.phase = Phase::Begin;
+                    None
+                }
                 Some(None) if p.part != 1 => {
                     (p.part, p.phase) = (1, Phase::Wait { until: p.now + 1.0 });
                     None
@@ -4327,7 +4410,10 @@ fn drive(
     // Nor one the chain itself is about to close.
     let coming = |m: u16| {
         p.actions.iter().skip(p.i).take(24).any(|a| matches!(a, Action::WaitMenu { menu, .. } if *menu == m) || matches!(a, Action::GetMenus { menus, .. } if menus.contains(&m)))
-            || p.actions.iter().skip(p.i).take(6).any(|a| matches!(a, Action::CloseMenus { .. }))
+            // A coming close_menus holds off any menu but the level-up menu: the walk before it
+            // cannot go on with that one up (Wasteland Survival Guide levelled up in the
+            // Super-Duper Mart two steps before a close_menus, and stalled there for good).
+            || (m != fnv_game::game::menus::LEVEL_UP && p.actions.iter().skip(p.i).take(6).any(|a| matches!(a, Action::CloseMenus { .. })))
     };
     // (A terminal's pages are the `terminal` steps' and the rule above's.)
     let menu = h.game(|g| g.menu).flatten().filter(|m| *m != fnv_game::game::menus::MESSAGE && *m != nvf_play::script::MENU_SLEEP_WAIT && *m != nvf_play::terminal::MENU_HACKING && *m != nvf_play::terminal::MENU_TERMINAL && !waited_for && !coming(*m));
