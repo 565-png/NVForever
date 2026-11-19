@@ -33,7 +33,7 @@
 //! ([`texture_look`]).
 
 use crate::data::GameData;
-use crate::nif_spawn::{affine, is_editor_marker, shaded_model, shape_alpha_mode, shape_emissive_mult, shape_props};
+use crate::nif_spawn::{affine, clean_vertex_color, is_editor_marker, shaded_model, shape_alpha_mode, shape_emissive_mult, shape_props};
 use bevy::math::{Affine3A, Vec3};
 use bevy::prelude::AlphaMode;
 use fnv_dds::{to_rgba8, Dds, Format};
@@ -113,6 +113,8 @@ pub const LONG: f32 = 1.5;
 /// of the vertex colours) is at least this many times the other end's, or, without that, a
 /// cone's narrow end when the other end is at least this many times wider [design].
 pub const END_RATIO: f32 = 1.25;
+/// The narrowest part (game units across) that can be a shaft [design].
+pub const MIN_SHAFT_WIDTH: f32 = 0.5;
 pub const CONE_RATIO: f32 = 1.5;
 
 /// A model's glow: where its round glowing shapes sit (their centre weighted by the light
@@ -168,7 +170,7 @@ pub fn combine(parts: &[GlowPart]) -> Option<ModelGlow> {
 /// [`END_RATIO`] apart), else a cone's narrow end (the other end [`CONE_RATIO`] times wider);
 /// otherwise it is symmetric.
 pub fn part_shape(verts: &[Vec3], colours: Option<&[[f32; 4]]>) -> Option<Shaft> {
-    if verts.len() < 3 {
+    if verts.len() < 3 || verts.iter().any(|v| !v.is_finite()) {
         return None;
     }
     let n = verts.len() as f32;
@@ -195,13 +197,17 @@ pub fn part_shape(verts: &[Vec3], colours: Option<&[[f32; 4]]>) -> Option<Shaft>
     let length = hi - lo;
     let off = |i: usize| (verts[i] - c - axis * proj[i]).length();
     let width = 2.0 * (0..verts.len()).map(off).fold(0.0f32, f32::max);
-    if !(length >= LONG * width.max(1e-3)) {
+    // A strip with no width (collinear vertices) would show only through the pixel floor.
+    if width.is_nan() || width < MIN_SHAFT_WIDTH || length.is_nan() || length < LONG * width {
         return None;
     }
     let end_width = |from: f32, to: f32| 2.0 * (0..verts.len()).filter(|&i| proj[i] >= from && proj[i] <= to).map(off).fold(0.0f32, f32::max);
     let q = length * 0.25;
     let (wa, wb) = (end_width(lo, lo + q), end_width(hi - q, hi));
     let (pa, pb) = (c + axis * lo, c + axis * hi);
+    if !pa.is_finite() || !pb.is_finite() {
+        return None;
+    }
     // Which end is bright: the vertex colours, else a cone's narrow end.
     let third = length / 3.0;
     let mean = |from: f32, to: f32, cs: &[[f32; 4]]| {
@@ -487,7 +493,11 @@ fn read_glow(data: &GameData, path: &str) -> Option<ModelGlow> {
         // Its shape from its vertices (taken to the model's space) and vertex colours.
         let data = shape.block_ref("data").and_then(|r| dec.get(r));
         let verts: Vec<Vec3> = data.and_then(|d| d.floats("vertices")).map(|f| f.as_chunks::<3>().0.iter().map(|v| t.transform_point3(Vec3::from_array(*v))).collect()).unwrap_or_default();
-        let colours: Option<Vec<[f32; 4]>> = data.and_then(|d| d.floats("vertex_colors")).map(|f| f.as_chunks::<4>().0.to_vec()).filter(|c: &Vec<[f32; 4]>| c.len() == verts.len());
+        // The vertex colours as the renderer uses them (cleaned, alpha only with the flag).
+        let colours: Option<Vec<[f32; 4]>> = data
+            .and_then(|d| d.floats("vertex_colors"))
+            .map(|f| f.as_chunks::<4>().0.iter().map(|c| clean_vertex_color(*c, props.vertex_alpha_part())).collect())
+            .filter(|c: &Vec<[f32; 4]>| c.len() == verts.len());
         let shape_of = part_shape(&verts, colours.as_deref());
         parts.push(GlowPart { centre: t.transform_point3(Vec3::from_array(centre)), radius, colour, visible: bright * radius * radius, shape: shape_of });
     }
@@ -559,6 +569,23 @@ mod tests {
         let (v, c) = strip(1.0, 1.0);
         assert!(!part_shape(&v, Some(&c)).unwrap().directed);
         assert!(!part_shape(&v, None).unwrap().directed);
+        // Colours cleaned as the renderer cleans them: without the vertex-alpha flag the
+        // alpha gradient does not count, so the strip is symmetric.
+        let (v, c) = strip(1.0, 0.1);
+        let cleaned: Vec<[f32; 4]> = c.iter().map(|x| clean_vertex_color(*x, false)).collect();
+        assert!(!part_shape(&v, Some(&cleaned)).unwrap().directed);
+    }
+
+    /// A collinear strip (no width) and non-finite vertices give no shaft.
+    #[test]
+    fn degenerate_parts_are_no_shafts() {
+        let line: Vec<Vec3> = (0..10).map(|i| Vec3::new(0.0, i as f32 * 50.0, 0.0)).collect();
+        assert_eq!(part_shape(&line, None), None);
+        let (mut v, _) = strip(1.0, 1.0);
+        v[3] = Vec3::new(f32::NAN, 0.0, 0.0);
+        assert_eq!(part_shape(&v, None), None);
+        v[3] = Vec3::new(f32::INFINITY, 0.0, 0.0);
+        assert_eq!(part_shape(&v, None), None);
     }
 
     #[test]
