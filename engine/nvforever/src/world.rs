@@ -657,7 +657,7 @@ fn cell_models(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], hide: &[String]
     let mut out = Vec::new();
     for &r in refs {
         let Some(p) = placement(lo, schema, r) else { continue };
-        if p.imposter || !p.draws_base_model() || !enabled(lo, schema, &p, 0) {
+        if !drawn_with_cell(&p) || !enabled(lo, schema, &p, 0) {
             continue;
         }
         let Some(base) = p.base.and_then(|b| base_object(lo, schema, b)) else { continue };
@@ -665,7 +665,7 @@ fn cell_models(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], hide: &[String]
             continue;
         }
         let Some(path) = base.world_model_path() else { continue };
-        if script_marker(base.form_id).unwrap_or_else(|| is_marker(&path)) || hide.iter().any(|h| path.contains(h.as_str())) {
+        if marker_model(base.form_id, &path) || hide.iter().any(|h| path.contains(h.as_str())) {
             continue;
         }
         if seen.insert((path.clone(), base.world_alt_textures.clone())) {
@@ -1171,17 +1171,13 @@ fn spawn_ref(
         return;
     }
     let Some(p) = placement(world.lo, world.schema, r) else { return };
-    // Imposters are drawn by the regions the camera is in, not by their cell
-    // (imposters.rs).
-    if p.imposter {
-        stats.refs_imposters += 1;
-        return;
-    }
-    // A primitive (a trigger volume, room bounds, a portal) is seen only in the editor,
-    // even where its activator was copied from one with a model (level-design.md §4.1).
-    if !p.draws_base_model() {
-        stats.refs_skipped_type += 1;
-        *stats.skipped_types.entry("primitive".into()).or_default() += 1;
+    if !drawn_with_cell(&p) {
+        if p.imposter {
+            stats.refs_imposters += 1;
+        } else {
+            stats.refs_skipped_type += 1;
+            *stats.skipped_types.entry("primitive".into()).or_default() += 1;
+        }
         return;
     }
     if manage_actors && p.base.and_then(|b| base_object(world.lo, world.schema, b)).is_some_and(|b| matches!(&b.sig, b"NPC_" | b"CREA")) {
@@ -1331,7 +1327,7 @@ pub fn spawn_model(
     if hide.iter().any(|h| path.contains(h.as_str())) {
         return;
     }
-    if script_marker(base.form_id).unwrap_or_else(|| is_marker(&path)) {
+    if marker_model(base.form_id, &path) {
         stats.refs_skipped_type += 1;
         *stats.skipped_types.entry("marker".into()).or_default() += 1;
         return;
@@ -1861,6 +1857,20 @@ pub fn script_markers(script: Option<Res<nvf_play::script::ScriptState>>) {
             info!("render: {} base form(s) made markers or drawn by a script (SetInternalMarker)", m.len());
         }
     }
+}
+
+/// Whether a placed reference is drawn with its cell: not an imposter (drawn by the regions
+/// the camera is in, imposters.rs) and not a primitive (a trigger volume, room bounds, a
+/// portal: seen only in the editor, even where its activator was copied from one with a
+/// model, level-design.md §4.1). Every drawing path asks this.
+pub fn drawn_with_cell(p: &Placement) -> bool {
+    !p.imposter && p.draws_base_model()
+}
+
+/// Whether base `base`'s model at `path` is an editor marker the renderer leaves out (a
+/// script's SetInternalMarker first, else the model's name, [`is_marker`]).
+pub fn marker_model(base: u32, path: &str) -> bool {
+    script_marker(base).unwrap_or_else(|| is_marker(path))
 }
 
 /// Editor-only marker meshes [hypothesis: the game hides them; models named marker*].

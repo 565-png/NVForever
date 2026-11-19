@@ -27,7 +27,8 @@
 //
 // Fragment: a soft round spot (a placed light: a small bright core and a fainter halo, the
 // halo's share `glow.extra.w`), or along a shaft a soft profile across and a falloff along
-// (from `a` to nothing at `b` when it fades from `a`, else bright in its middle), unlit, as the NIF materials' additive shapes are drawn
+// (from a short soft start at `a` to nothing at `b` when it fades from `a`, the lamp at `a`
+// being a round card of its own; else bright in its middle), unlit, as the NIF materials' additive shapes are drawn
 // (nvf_assets nif_material.wesl, nif.md §6 "Additive blend", "Fog on added light"): the
 // colour, a display value, is made linear (raised to 2.2, `display_emissive`), taken through
 // the view's fog and, in a view without HDR (Light glow off), its tonemapping, less black
@@ -118,15 +119,24 @@ fn vertex(vertex: GlowVertex) -> GlowOut {
         // screen at least two pixel floors, not seen end-on.
         let a = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position + vertex.offset, 1.0)).xyz;
         let b = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position - vertex.offset, 1.0)).xyz;
+        // Decided once for the whole card, from both ends (the same for all four corners):
+        // both ends between the near and far planes (clip depth within 0..w), neither seen
+        // end-on, and the length on screen at least two floors in output and in render pixels
+        // (CPU copies: `axial_corners`, `shaft_shows`).
         let ca = position_world_to_clip(a);
         let cb = position_world_to_clip(b);
-        let at_b = vertex.corner.y > 0.0;
-        let end = select(a, b, at_b);
         let axis = normalize(b - a);
-        let side = cross(axis, normalize(view.world_position.xyz - end));
-        if ca.w > 0.0 && cb.w > 0.0 && dot(side, side) > 1e-8 {
-            let length_px = length((ca.xy / ca.w - cb.xy / cb.w) * 0.5 * view.viewport.zw);
-            if length_px >= 2.0 * glow.shape.w {
+        let side_a = cross(axis, normalize(view.world_position.xyz - a));
+        let side_b = cross(axis, normalize(view.world_position.xyz - b));
+        let in_view = ca.w > 0.0 && cb.w > 0.0 && ca.z >= 0.0 && ca.z <= ca.w && cb.z >= 0.0 && cb.z <= cb.w;
+        if in_view && dot(side_a, side_a) > 1e-8 && dot(side_b, side_b) > 1e-8 {
+            let ndc = (ca.xy / ca.w - cb.xy / cb.w) * 0.5;
+            let length_px = length(ndc * view.viewport.zw);
+            let length_render = length(ndc * view.main_pass_viewport.zw);
+            if length_px >= 2.0 * glow.shape.w && length_render >= 2.0 * glow.extra.z {
+                let at_b = vertex.corner.y > 0.0;
+                let end = select(a, b, at_b);
+                let side = select(side_a, side_b, at_b);
                 let own_w = max(select(vertex.shape.x, vertex.shape.y, at_b), 1e-3);
                 let half_w = max(own_w, floor_half(distance(end, view.world_position.xyz)));
                 share = clamp(own_w / half_w, glow.extra.x, 1.0) * vertex.shape.z;
@@ -154,7 +164,7 @@ fn profile(corner: vec2<f32>, kind: f32) -> f32 {
         }
         let v = clamp(corner.y, 0.0, 1.0);
         let across = exp(-4.0 * x * x) * (1.0 - x * x);
-        let along = select(1.0 - (2.0 * v - 1.0) * (2.0 * v - 1.0), (1.0 - v) * (1.0 - v), kind > 1.5);
+        let along = select(1.0 - (2.0 * v - 1.0) * (2.0 * v - 1.0), smoothstep(0.0, 0.08, v) * (1.0 - v) * (1.0 - v), kind > 1.5);
         return across * along;
     }
     let r2 = dot(corner, corner);

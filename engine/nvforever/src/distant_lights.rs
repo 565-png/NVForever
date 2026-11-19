@@ -109,7 +109,16 @@ pub const FADE_CELLS: f32 = 2.0;
 pub const PEAK: f32 = 1.0;
 /// A shaft's light per pixel against the area-matched share of its round glow
 /// ([`shaft_factor`]) [design: 1, the same light as its dot; to fit by picture].
-pub const SHAFT_BRIGHTNESS: f32 = 1.0;
+pub const SHAFT_BRIGHTNESS: f32 = 1.5;
+/// The most a shaft's light per pixel is raised to keep its total light (a very thin shaft
+/// would otherwise turn into a white bar) [design].
+pub const MAX_SHAFT_GAIN: f32 = 4.0;
+/// A directed shaft's soft start at its source end, as a share of its length (the lamp at
+/// the source is a round core of its own) [design].
+pub const SOURCE_RAMP: f32 = 0.08;
+/// The round core at a directed shaft's source end (the lamp): its strength, and its light
+/// radius per unit of the shaft's width there [design].
+pub const SOURCE_CORE: f32 = 0.6;
 /// A placed light's halo: its share of the centre's brightness, the rest a small bright core
 /// [design: to fit by picture].
 pub const HALO_SHARE: f32 = 0.35;
@@ -326,7 +335,8 @@ fn base_kind(lo: &LoadOrder, schema: &EsmSchema, base: u32) -> BaseKind {
                 b"SCOL" => GlowKind::Collection,
                 _ => return BaseKind::Other,
             };
-            b.world_model_path().map_or(BaseKind::Other, |m| BaseKind::Static(m, kind))
+            // A model the renderer never draws (an editor marker) gives no glow.
+            b.world_model_path().filter(|m| !crate::world::marker_model(b.form_id, m)).map_or(BaseKind::Other, |m| BaseKind::Static(m, kind))
         }
         _ => BaseKind::Other,
     }
@@ -357,7 +367,8 @@ pub struct CellList {
 /// shapes' centre taken by the reference's transform, its radius scaled by the reference's
 /// scale and [`GLOW_RADIUS_SCALE`], the model's colour; and a shaft per long part, its ends
 /// taken by the transform, its widths by the scale, standing in for a light of radius half
-/// its length × [`GLOW_RADIUS_SCALE`] (for the budget and its round fallback).
+/// its length × [`GLOW_RADIUS_SCALE`] (for the budget and its round fallback), with a round
+/// core of [`SOURCE_CORE`] at a directed shaft's source end.
 pub fn static_source(s: &PlacedStatic, g: &ModelGlow) -> Vec<SourceLight> {
     let mut out = Vec::new();
     if !g.shafts_only {
@@ -369,6 +380,10 @@ pub fn static_source(s: &PlacedStatic, g: &ModelGlow) -> Vec<SourceLight> {
         let seg = Segment { a: a.to_array(), b: b.to_array(), width_a: sh.width_a * s.scale, width_b: sh.width_b * s.scale, directed: sh.directed };
         let reach = seg.length().max(seg.width_a).max(seg.width_b) * 0.5;
         out.push(SourceLight { form_id: s.form_id, pos: ((a + b) * 0.5).to_array(), color: sh.colour, radius: (reach * GLOW_RADIUS_SCALE).max(1.0), strength: 1.0, motion: 0, start_enabled: s.start_enabled, shaft: Some(seg), halo: false });
+        // The lamp at a directed shaft's source: a small round core.
+        if seg.directed {
+            out.push(SourceLight { form_id: s.form_id, pos: seg.a, color: sh.colour, radius: (seg.width_a * GLOW_RADIUS_SCALE).max(1.0), strength: SOURCE_CORE, motion: 0, start_enabled: s.start_enabled, shaft: None, halo: false });
+        }
     }
     out
 }
@@ -383,7 +398,8 @@ pub fn list_cell(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], bases: &mut H
         let Some(p) = placement(lo, schema, r) else { continue };
         let Some(base) = p.base else { continue };
         let kind = bases.entry(base).or_insert_with(|| base_kind(lo, schema, base)).clone();
-        if matches!(kind, BaseKind::Other) {
+        // Only what the renderer draws with the cell (no imposters, no editor primitives).
+        if matches!(kind, BaseKind::Other) || !crate::world::drawn_with_cell(&p) {
             continue;
         }
         if p.deleted() {
@@ -722,13 +738,35 @@ pub const CARD_SHAFT: f32 = 1.0;
 pub const CARD_SHAFT_DIRECTED: f32 = 2.0;
 pub const CARD_HALO: f32 = 3.0;
 
-/// The light per pixel of a shaft: [`SHAFT_BRIGHTNESS`] × the area its round glow would have
-/// covered over the shaft's own (held to 1), so a beam keeps about the light its dot had and
-/// does not become a white bar.
+/// The integral of a card's profile ([`card_profile`]) over a round card of half size 1.
+fn round_integral() -> f32 {
+    // In polar terms: 2 pi times the integral of r profile(r) dr over 0..1.
+    let n = 256;
+    (0..n).map(|i| (i as f32 + 0.5) / n as f32).map(|r| r * card_profile([r, 0.0], CARD_ROUND)).sum::<f32>() * std::f32::consts::TAU / n as f32
+}
+
+/// The integral of a shaft's profile over its card in world units: across (x from -1 to 1
+/// spanning each end's half width, which changes linearly along it) and along its length.
+fn shaft_integral(seg: &Segment) -> f32 {
+    let n = 128;
+    let kind = if seg.directed { CARD_SHAFT_DIRECTED } else { CARD_SHAFT };
+    let mut total = 0.0;
+    for j in 0..n {
+        let v = (j as f32 + 0.5) / n as f32;
+        let half_w = 0.5 * (seg.width_a + (seg.width_b - seg.width_a) * v);
+        let across: f32 = (0..n).map(|i| -1.0 + 2.0 * (i as f32 + 0.5) / n as f32).map(|x| card_profile([x, v], kind)).sum::<f32>() * 2.0 / n as f32;
+        total += across * half_w;
+    }
+    total * seg.length() / n as f32
+}
+
+/// The light per pixel of a shaft: [`SHAFT_BRIGHTNESS`] × its round glow's integrated light
+/// over its own (both profiles' integrals included), so at 1 a beam gives the light its dot
+/// gave, held to [`MAX_SHAFT_GAIN`].
 pub fn shaft_factor(radius: f32, seg: &Segment) -> f32 {
     let h = half_size(radius);
-    let area = seg.length() * 0.5 * (seg.width_a + seg.width_b);
-    SHAFT_BRIGHTNESS * (std::f32::consts::PI * h * h / area.max(1e-3)).min(1.0)
+    let dot = round_integral() * h * h;
+    (SHAFT_BRIGHTNESS * dot / shaft_integral(seg).max(1e-3)).min(MAX_SHAFT_GAIN)
 }
 
 /// How bright a card is at `corner` for its kind (`CARD_*`), 1 at its brightest and 0
@@ -745,7 +783,7 @@ pub fn card_profile(corner: [f32; 2], kind: f32) -> f32 {
         }
         let v = corner[1].clamp(0.0, 1.0);
         let across = (-4.0 * x * x).exp() * (1.0 - x * x);
-        let along = if kind > 1.5 { (1.0 - v) * (1.0 - v) } else { 1.0 - (2.0 * v - 1.0).powi(2) };
+        let along = if kind > 1.5 { fnv_world::sky::smoothstep(0.0, SOURCE_RAMP, v) * (1.0 - v) * (1.0 - v) } else { 1.0 - (2.0 * v - 1.0).powi(2) };
         return across * along;
     }
     let r2 = corner[0] * corner[0] + corner[1] * corner[1];
@@ -758,11 +796,13 @@ pub fn card_profile(corner: [f32; 2], kind: f32) -> f32 {
     (-4.0 * r2).exp() * (1.0 - r2)
 }
 
-/// Whether a shaft is drawn as one: its ends' distance on screen (pixels) at least two
-/// [`MIN_PIXELS`] floors; shorter, it is drawn as its round glow (the shader's own copy).
+/// Whether a shaft is drawn as one: its ends' distance on screen at least two floors in
+/// output pixels ([`MIN_PIXELS`]) and in render pixels ([`MIN_RENDER_PIXELS`]); shorter, it
+/// is drawn as its round glow. The shader decides it once for the whole card, from both
+/// ends, with the end-on and behind-the-eye tests of [`axial_corners`] (its own copy).
 #[cfg_attr(not(test), allow(dead_code))]
-pub fn shaft_shows(length_px: f32) -> bool {
-    length_px >= 2.0 * MIN_PIXELS
+pub fn shaft_shows(length_px: f32, length_render_px: f32) -> bool {
+    length_px >= 2.0 * MIN_PIXELS && length_render_px >= 2.0 * MIN_RENDER_PIXELS
 }
 
 /// The four corners of a shaft's card (corner order of [`glow_mesh`]: `a` side across −1
@@ -1288,6 +1328,8 @@ fn update(
         st.glows.retain(|g, _| keep.contains(g));
         st.pass.retain(|g| keep.contains(g));
         st.merging.retain(|g, _| keep.contains(g));
+        // A check under way could publish into a cell no longer wanted.
+        st.checking = None;
         st.built = None;
         st.scan_models = 0;
     }
@@ -1778,17 +1820,24 @@ mod tests {
         assert!(axial_corners(Vec3::ZERO, Vec3::new(0.0, 100.0, 0.0), 1.0, 1.0, Vec3::new(0.0, 500.0, 0.0)).is_none());
     }
 
-    /// A shaft shorter on screen than two pixel floors is drawn round; a beam keeps about the
-    /// light of its dot.
+    /// A shaft shorter on screen than two pixel floors, output or render, is drawn round;
+    /// a shaft's integrated light is SHAFT_BRIGHTNESS times its dot's, held to the gain cap.
     #[test]
     fn short_shafts_go_round_and_beams_keep_their_light() {
-        assert!(!shaft_shows(2.0 * MIN_PIXELS - 0.1));
-        assert!(shaft_shows(2.0 * MIN_PIXELS));
+        assert!(!shaft_shows(2.0 * MIN_PIXELS - 0.1, 100.0));
+        assert!(!shaft_shows(100.0, 2.0 * MIN_RENDER_PIXELS - 0.1), "under the render floor (an upscaler)");
+        assert!(shaft_shows(2.0 * MIN_PIXELS, 2.0 * MIN_RENDER_PIXELS));
+        // The round profile's integral over the unit disc: pi (1 - e^-4) / 4 - pi (1 - 5 e^-4) / 16.
+        let e4 = (-4.0f32).exp();
+        let exact = std::f32::consts::PI * ((1.0 - e4) / 4.0 - (1.0 - 5.0 * e4) / 16.0);
+        assert!((round_integral() - exact).abs() < 1e-3, "{} against {exact}", round_integral());
         let f = shaft_factor(4000.0, &beam());
-        let dot = std::f32::consts::PI * half_size(4000.0).powi(2);
-        let area = 2000.0 * 0.5 * (20.0 + 400.0);
-        assert!((f - SHAFT_BRIGHTNESS * (dot / area).min(1.0)).abs() < 1e-6);
-        assert!(f <= SHAFT_BRIGHTNESS);
+        let dot = round_integral() * half_size(4000.0).powi(2);
+        let light = f * shaft_integral(&beam());
+        assert!(f < MAX_SHAFT_GAIN && (light - SHAFT_BRIGHTNESS * dot).abs() < 1e-3 * dot, "{light} against {}", SHAFT_BRIGHTNESS * dot);
+        // A hair-thin shaft is held to the cap, not a white bar.
+        let thin = Segment { width_a: 0.1, width_b: 0.1, ..beam() };
+        assert_eq!(shaft_factor(4000.0, &thin), MAX_SHAFT_GAIN);
     }
 
     /// The cards' profiles: 1 at the brightest point, a halo wider than the core, a directed
@@ -1800,7 +1849,11 @@ mod tests {
         // At half the radius the halo keeps more than a core alone would.
         let mid = card_profile([0.5, 0.0], CARD_HALO);
         assert!(mid > (1.0 - HALO_SHARE) * (-14.0f32 * 0.25).exp() && mid < card_profile([0.5, 0.0], CARD_ROUND));
-        assert_eq!(card_profile([0.0, 0.0], CARD_SHAFT_DIRECTED), 1.0);
+        // A directed shaft starts softly (the lamp is its own round core) and is near its
+        // brightest just past the ramp.
+        assert_eq!(card_profile([0.0, 0.0], CARD_SHAFT_DIRECTED), 0.0);
+        assert!(card_profile([0.0, SOURCE_RAMP], CARD_SHAFT_DIRECTED) > 0.8);
+        assert!(card_profile([0.0, SOURCE_RAMP * 0.5], CARD_SHAFT_DIRECTED) < card_profile([0.0, SOURCE_RAMP], CARD_SHAFT_DIRECTED));
         assert_eq!(card_profile([0.0, 1.0], CARD_SHAFT_DIRECTED), 0.0);
         assert!(card_profile([0.0, 0.25], CARD_SHAFT_DIRECTED) > card_profile([0.0, 0.75], CARD_SHAFT_DIRECTED));
         assert_eq!(card_profile([0.0, 0.5], CARD_SHAFT), 1.0);
@@ -1808,7 +1861,8 @@ mod tests {
         assert_eq!(card_profile([1.0, 0.5], CARD_SHAFT), 0.0);
         assert_eq!(card_profile([0.8, 0.8], CARD_ROUND), 0.0, "outside the round card");
         let shader = include_str!("distant_lights.wesl");
-        assert!(shader.contains("exp(-14.0 * r2)") && shader.contains("(1.0 - v) * (1.0 - v)"), "the shader's profile is this one");
+        assert!(shader.contains("exp(-14.0 * r2)") && shader.contains("smoothstep(0.0, 0.08, v) * (1.0 - v) * (1.0 - v)"), "the shader's profile is this one");
+        assert_eq!(SOURCE_RAMP, 0.08, "the ramp written in the shader");
     }
 
     /// Shafts keep their shape: they are not merged with a lamp beside them.
@@ -1830,14 +1884,15 @@ mod tests {
         g.shafts[0] = Some(Shaft { a: [0.0; 3], b: [0.0, 0.0, 500.0], width_a: 4.0, width_b: 80.0, directed: true, colour: [0.9, 0.9, 1.0] });
         let s = PlacedStatic { form_id: 7, transform: bevy::math::Affine3A::from_scale_rotation_translation(Vec3::splat(2.0), bevy::math::Quat::IDENTITY, Vec3::new(100.0, 0.0, 0.0)), scale: 2.0, start_enabled: true, model: "m".into(), kind: GlowKind::Static };
         let out = static_source(&s, &g);
-        assert_eq!(out.len(), 2);
+        assert_eq!(out.len(), 3, "the round glow, the shaft and the lamp at its source");
         assert!(out[0].shaft.is_none() && !out[0].halo);
         assert_eq!(out[0].pos, [100.0, 0.0, -40.0]);
         let seg = out[1].shaft.expect("a shaft");
         assert_eq!((seg.a, seg.b, seg.width_a, seg.width_b, seg.directed), ([100.0, 0.0, 0.0], [100.0, 0.0, 1000.0], 8.0, 160.0, true));
         assert_eq!((out[1].pos, out[1].color), ([100.0, 0.0, 500.0], [0.9, 0.9, 1.0]));
+        assert!(out[2].shaft.is_none() && out[2].pos == [100.0, 0.0, 0.0] && out[2].strength == SOURCE_CORE, "the lamp: a round core at the source");
         g.shafts_only = true;
-        assert_eq!(static_source(&s, &g).len(), 1, "no round glow when every part is long");
+        assert_eq!(static_source(&s, &g).len(), 2, "no round glow when every part is long");
     }
 
     #[test]
@@ -2003,6 +2058,7 @@ mod tests {
         const NEON_REF: u32 = 0x309;
         const PLAIN_REF: u32 = 0x30A;
         const BLOCK_REF: u32 = 0x30B;
+        const PRIM_REF: u32 = 0x30C;
 
         fn sub(sig: &[u8; 4], data: Vec<u8>) -> Subrecord {
             Subrecord { sig: *sig, data, extended: false }
@@ -2026,6 +2082,12 @@ mod tests {
         fn refr(fid: u32, flags: u32, base: u32, pos: [f32; 3]) -> Vec<u8> {
             let data: Vec<u8> = [pos[0], pos[1], pos[2], 0.0, 0.0, 0.0].iter().flat_map(|f| f.to_le_bytes()).collect();
             record(b"REFR", flags, fid, &[sub(b"NAME", base.to_le_bytes().to_vec()), sub(b"DATA", data)])
+        }
+
+        /// A trigger primitive (XPRM) whose activator was copied from one with a model.
+        fn primitive(fid: u32, base: u32, pos: [f32; 3]) -> Vec<u8> {
+            let data: Vec<u8> = [pos[0], pos[1], pos[2], 0.0, 0.0, 0.0].iter().flat_map(|f| f.to_le_bytes()).collect();
+            record(b"REFR", 0, fid, &[sub(b"NAME", base.to_le_bytes().to_vec()), sub(b"XPRM", vec![0; 32]), sub(b"DATA", data)])
         }
 
         fn cell(fid: u32, grid: Option<(i32, i32)>) -> Vec<u8> {
@@ -2082,7 +2144,7 @@ mod tests {
                     &group(
                         CELL_B.to_le_bytes(),
                         9,
-                        &[refr(NEON_REF, 0, NEON, [4500.0, 800.0, 30.0]), refr(PLAIN_REF, 0, PLAIN, [4600.0, 800.0, 30.0]), refr(BLOCK_REF, 0, BLOCK, [6000.0, 900.0, 0.0])].concat(),
+                        &[refr(NEON_REF, 0, NEON, [4500.0, 800.0, 30.0]), refr(PLAIN_REF, 0, PLAIN, [4600.0, 800.0, 30.0]), refr(BLOCK_REF, 0, BLOCK, [6000.0, 900.0, 0.0]), primitive(PRIM_REF, NEON, [4700.0, 800.0, 30.0])].concat(),
                     ),
                 ),
             ]
@@ -2137,13 +2199,15 @@ mod tests {
             asked.sort();
             assert_eq!(asked, vec!["meshes\\boulder.nif".to_string(), "meshes\\lamp.nif".to_string()], "only statics with a model are asked");
             // Cell (1, 0): the persistent light standing in it, the glowing activator and the
-            // collection's glowing part, each at its glow; not the plain activator.
+            // collection's glowing part, each at its glow; not the plain activator, nor the
+            // trigger primitive copied from the glowing one (the renderer never draws it).
             let kinds: Vec<GlowKind> = cells[1].1.statics.iter().map(|s| s.kind).collect();
             assert_eq!(kinds, vec![GlowKind::Activator, GlowKind::Activator, GlowKind::Collection]);
             assert_eq!(ids(&b), vec![(PERSISTENT_REF, true), (NEON_REF, true), (BLOCK_REF, true)]);
             assert_eq!((b[1].pos, b[1].color), ([4500.0, 800.0, 130.0], [1.0, 0.2, 0.6]));
             assert_eq!(b[2].pos, [6050.0, 900.0, 10.0]);
-            assert_eq!(stats, Stats { cells: 2, refs: 11, lights: 3, disabled: 1, deleted: 1, negative_off: 1, ..Stats::default() });
+            assert!(cells[1].1.statics.iter().all(|s| s.form_id != PRIM_REF));
+            assert_eq!(stats, Stats { cells: 2, refs: 12, lights: 3, disabled: 1, deleted: 1, negative_off: 1, ..Stats::default() });
             // Counted apart once their models are read.
             let mut st = DistantLights::default();
             st.add_cell((1, 0), cells[1].1.clone());
