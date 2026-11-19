@@ -348,10 +348,14 @@ pub struct HazePlugin;
 impl Plugin for HazePlugin {
     fn build(&self, app: &mut App) {
         let handle: Handle<Shader> = app.world().resource::<AssetServer>().load(PBR_FUNCTIONS);
-        app.insert_resource(HazeShader { handle, patched: false })
-            .add_systems(PreUpdate, patch_haze)
-            .add_systems(Update, update_haze.after(crate::sky::update_sky));
+        app.insert_resource(HazeShader { handle, patched: false });
+        add_systems(app);
     }
+}
+
+/// The plugin's systems (apart from its shader handle, for the scheduling test in aerial.rs).
+pub(crate) fn add_systems(app: &mut App) {
+    app.add_systems(PreUpdate, patch_haze).add_systems(Update, update_haze.after(crate::sky::update_sky).in_set(crate::fog::FogWriters));
 }
 
 /// What the log last said of the haze.

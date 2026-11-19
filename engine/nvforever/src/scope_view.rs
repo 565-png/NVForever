@@ -87,8 +87,9 @@ impl Plugin for ScopeViewPlugin {
                 show.after(nvf_play::PlaySet::Ui).before(nvf_play::PlaySet::Sync),
                 night_vision.after(nvf_play::PlaySet::Sync),
                 sway.in_set(nvf_play::PlaySet::Activation).run_if(resource_exists::<Combat>),
-                // After the aerial perspective's terms (aerial.rs): the lens copies the fog.
-                lens_camera.after(show).after(crate::aerial::AerialSet),
+                // After the desert haze and the aerial perspective (fog.rs FogWriters): the
+                // lens copies the main camera's fog.
+                lens_camera.after(show).after(crate::fog::FogWriters),
             ),
         );
     }

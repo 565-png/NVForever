@@ -2079,25 +2079,34 @@ text would have used no longer exists since the settings menu overhaul).
   [design]):
   - *Per-channel share.* The weather's fog share f (fog.rs `GAME_FOG`'s, with its strength)
     becomes f_c = 1 - (1 - f)^(w_c) per channel: 0 at 0, 1 at 1, rising with f. The weights
-    come from the chroma of the weather's horizon colour at this hour: rho_c = c_c / Y (Y the
-    Rec. 709 luminance), whose luminance-weighted mean is 1 by construction, then
-    w_c = 1 + k (rho_c - 1) with k = 1 (`CHROMA_GAIN`) or less where that would take a weight
-    out of 0.5..2 (`WEIGHT_LOW`, `WEIGHT_HIGH`): w is linear in k and 1 at k = 0, so the
-    luminance-weighted mean stays exactly 1 and the hue keeps its direction (no clamp). A grey
-    or black sky gives 1, 1, 1 (the weather's own fog). The amount of fog stays the weather's
+    come from the chroma of the sky colour behind far land (the drawn dome's at the horizon,
+    below): the deviation d_c = (c_c - Y) / max(Y, 0.01) (Y the Rec. 709 luminance;
+    `DARK_FLOOR`), whose luminance-weighted mean is 0 by construction, then w_c = 1 + k d_c
+    with k = 1 (`CHROMA_GAIN`) or less where that would take a weight out of 0.5..2
+    (`WEIGHT_LOW`, `WEIGHT_HIGH`): w is linear in k and 1 at k = 0, so the luminance-weighted
+    mean stays exactly 1 and the hue keeps its direction (no clamp). Below a luminance of 0.01
+    the chroma fades out continuously, so a fade to or from a near-black sky does not step
+    (tested). A grey or black sky gives 1, 1, 1 (the weather's own fog). The amount of fog stays the weather's
     in that sense: the mean optical-depth multiplier is 1; a channel with w below 1 fogs less
     than f, one above more (the plan review's rule; no floor at f).
   - *In-scatter colour.* Instead of the one fog colour, the fog colour moved toward the sky
-    colour in the view ray's direction by up to 0.8 (`DOME_MIX`): the horizon colour at and
-    below the horizon, moving to the sky-lower colour by 20° up (`LOWER_SIN`). The dome mixes
-    the same two colours (sky.rs `dome_color`) by atmosphere.nif's own vertex weights, which
-    the fog path does not have, so the elevation curve here is ours. Each is taken times the
+    colour in the view ray's direction by up to 0.8 (`DOME_MIX`): the drawn dome's colour at
+    the horizon (0°, and below), moving to its colour at 20° up (`LOWER_SIN`), linearly
+    between (smoothstep in the ray's sine). Those two are what sky.rs `dome_color` makes of the
+    dome's own weights there, read from the dome mesh in use (its positions and `SkyDome`
+    weights, again only for a new dome mesh): the stock atmosphere.nif gives about 0.69
+    horizon + 0.35 sky-lower at 0° and 0.57 sky-lower + 0.53 sky-upper at 20°
+    (docs/spec-notes/world.md "Sky meshes"); the fallback dome its own (all sky-lower at 0°).
+    Before a dome mesh has been read, the horizon and sky-lower colours. Each is taken times the
     dome's sky level (`SkyState::sky_scale`, the factor sky.wesl draws the dome with, 0.88 in
     the Mojave by day, 1.55 in the Capital Wasteland), so a far ridge meets the sky drawn behind
     it. Then toward the weather's sun colour by the normalised Henyey-Greenstein
     lobe ((1 - g)^2 / (1 + g^2 - 2 g cos))^1.5 with g = 0.6 (`HG_G`), at most 0.35 at the sun
     (`LOBE_MOST`), fading in as the sun rises through -2..3° as the sky's disc and glare do
-    (`SkyState::light`): nothing at night. The lobe follows the real sun: below the horizon
+    (`SkyState::light`): nothing at night. The lobe only brightens: its weight is the sun
+    colour's luminance contrast over the air colour, (Y_sun - Y_air) / max(Y_sun, 1e-4) held to
+    0..1, so a weather with a black sun (or one no brighter than its sky) gets none, not a dark
+    patch toward the sun (tested). The lobe follows the real sun: below the horizon
     sky.rs `aim_sun` turns the directional light to the moon's side while this fade still runs,
     so the CPU packs which side the light points to (the sign of the lobe's strength, from the
     light's own clock) and the shader turns the light's direction back toward the sun; the
@@ -2107,8 +2116,10 @@ text would have used no longer exists since the settings menu overhaul).
     (#2915: no clamp added).
   - *Weight.* Both scale with the desert haze's weight (§3.16, `haze::weight`, reused): full
     under a clear weather, none as the weather's own fog gets short or dense, so
-    NVWastelandHazy and HVDustStorm (weight 0 [observed: FalloutNV.esm, fnvtool esm decode,
-    2026-11-17]) are exactly as with the row off: the uniform's vectors are zero there.
+    NVWastelandHazy and HVDustStorm (weight 0: `haze::weight` of their fog distances, which
+    are [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17]; the picture runs logged
+    "weight 0.00, none" for both [observed: NVForever run, 2026-11-18]) are exactly as with
+    the row off: the uniform's vectors are zero there.
 - **Where it sits.** Per fragment in the world shaders' fog path, no pass: everything the
   weather's fog covers, under every anti-aliasing and upscaler. `nvf_aerial` (aerial.rs,
   written before Bevy's `apply_fog` in `pbr_functions.wesl`) wraps the desert haze's call of
@@ -2146,8 +2157,10 @@ text would have used no longer exists since the settings menu overhaul).
   at the start, with no log line. Both fail safe (one `warn!` line, the shader as it was, the
   row does nothing). With the row on, the weather's fog numbers and four of its colours are
   read each frame and the derivation is done again only when they change. The 3D scope's lens
-  camera copies the main camera's fog after the terms are written (and the reflection camera
-  in PostUpdate), so neither shows a frame with the sun's side not yet turned.
+  camera copies the main camera's fog after both writers of it after the sky (fog.rs
+  `FogWriters`: the desert haze and this; the reflection camera copies in PostUpdate), so
+  neither shows a frame with the sun's side not yet turned or the aerial fog without the haze
+  (a scheduling test).
 - **What follows the weather** (from `SkyState` every frame, through weather fades, scripted
   SetWeather/ForceWeather and the hour; no weather names, no hour table, no result kept): the
   weight from the fog numbers, the weights from the horizon colour, the in-scatter colours

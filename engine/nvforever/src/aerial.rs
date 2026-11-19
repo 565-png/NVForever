@@ -56,9 +56,13 @@ use crate::sky::SkyState;
 
 // ---- Constants (the one place; every value an engineering choice by eye [design]) ----
 
-/// How strongly the horizon colour's chroma sets the channel weights: w = 1 + gain × (ρ − 1),
-/// ρ the channel over the colour's luminance (held to the weight range below).
+/// How strongly the sky colour's chroma sets the channel weights: w = 1 + gain × deviation,
+/// the deviation (channel − luminance) / max(luminance, [`DARK_FLOOR`]) (held to the weight
+/// range below).
 pub const CHROMA_GAIN: f32 = 1.0;
+/// Below this luminance (linear) the chroma's deviation is taken over this instead, so it fades
+/// out continuously toward a black sky (a fade to or from a near-black sky does not step).
+pub const DARK_FLOOR: f32 = 0.01;
 /// The smallest channel weight: that channel fogs in as the weather's share to the power 0.5.
 pub const WEIGHT_LOW: f32 = 0.5;
 /// The largest channel weight.
@@ -66,9 +70,14 @@ pub const WEIGHT_HIGH: f32 = 2.0;
 /// How far the in-scatter colour moves from the weather's fog colour toward the sky colour in
 /// the ray's direction (at full weight): a far ridge meets mostly the sky drawn behind it.
 pub const DOME_MIX: f32 = 0.8;
-/// The ray's elevation (sine) at which the sky colour is the sky-lower colour; at and below
-/// the horizon it is the horizon colour (sin 20°: far land is seen within a few degrees).
+/// The second reference elevation (sine): the sky colour is the drawn dome's at the horizon
+/// (0°) and at this height (sin 20°: far land is seen within a few degrees), mixed between.
 pub const LOWER_SIN: f32 = 0.342_020_14;
+/// Vertices of the dome within this (sine of elevation) of a ring's are taken as that ring.
+pub const RING_TOLERANCE: f32 = 0.01;
+/// Without a dome mesh to read (not yet loaded): the horizon colour at 0° and the sky-lower
+/// colour at 20°, as the dome's channels name them.
+pub const NO_DOME_WEIGHTS: [[f32; 3]; 2] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
 /// The Henyey-Greenstein asymmetry of the sun lobe (forward scattering).
 pub const HG_G: f32 = 0.6;
 /// How far the in-scatter colour moves toward the sun colour looking straight at the sun (at
@@ -99,28 +108,28 @@ pub fn luminance(c: [f32; 3]) -> f32 {
     LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]
 }
 
-/// The channel weights from a sky colour (linear) and a gain: ρ_c = c_c / luminance, whose
-/// luminance-weighted mean is 1, then w_c = 1 + k (ρ_c − 1) with k the gain, or less where
-/// the gain would take a weight out of [`WEIGHT_LOW`]..[`WEIGHT_HIGH`] (w is linear in k and 1
-/// at k = 0, so the mean stays 1 and the hue's direction stays). A grey sky, a black one, a
-/// gain of 0 or anything not finite: 1, 1, 1.
+/// The channel weights from a sky colour (linear) and a gain: the deviation d_c = (c_c − Y) /
+/// max(Y, [`DARK_FLOOR`]) (Y the luminance), whose luminance-weighted mean is 0, then
+/// w_c = 1 + k d_c with k the gain, or less where the gain would take a weight out of
+/// [`WEIGHT_LOW`]..[`WEIGHT_HIGH`] (w is linear in k and 1 at k = 0, so the mean stays 1 and
+/// the hue's direction stays). Continuous in the colour, down to black. A grey sky, a black
+/// one, a gain of 0 or anything not finite: 1, 1, 1.
 pub fn chroma_weights(sky: [f32; 3], gain: f32) -> [f32; 3] {
     let c = sky.map(|v| if v.is_finite() { v.max(0.0) } else { 0.0 });
     let y = luminance(c);
-    if !(y > 1e-6 && y.is_finite() && gain.is_finite() && gain > 0.0) {
+    if !(y.is_finite() && gain.is_finite() && gain > 0.0) {
         return [1.0; 3];
     }
-    let rho = c.map(|v| v / y);
+    let d = c.map(|v| (v - y) / y.max(DARK_FLOOR));
     let mut k = gain;
-    for r in rho {
-        let d = r - 1.0;
+    for d in d {
         if d > 1e-6 {
             k = k.min((WEIGHT_HIGH - 1.0) / d);
         } else if d < -1e-6 {
             k = k.min((WEIGHT_LOW - 1.0) / d);
         }
     }
-    rho.map(|r| 1.0 + k * (r - 1.0))
+    d.map(|d| 1.0 + k * d)
 }
 
 /// Each channel's share of the in-scatter colour for the weather's share `f`: 1 − (1 − f)^w
@@ -142,12 +151,47 @@ pub fn lobe(cos: f32) -> f32 {
     q * q.sqrt()
 }
 
-/// The sky's colours now (linear RGB, `SkyState::color`) and what else the aerial terms read.
+/// The dome's own weights (horizon, sky-lower, sky-upper: its vertex colours' red, green and
+/// blue) at the elevation whose sine is `sin_elevation`, seen from the dome's centre, from its
+/// mesh positions (game axes, z up) and weights per vertex: the rings nearest below and above
+/// (vertices within [`RING_TOLERANCE`] of each, averaged), mixed linearly; the nearest ring
+/// beyond the dome's ends. `None` for no usable vertex.
+pub fn dome_weights_at(positions: &[[f32; 3]], weights: &[[f32; 3]], sin_elevation: f32) -> Option<[f32; 3]> {
+    let pts: Vec<(f32, [f32; 3])> = positions
+        .iter()
+        .zip(weights)
+        .filter_map(|(p, w)| {
+            let r = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+            (r.is_finite() && r > 1e-6 && w.iter().all(|v| v.is_finite())).then(|| (p[2] / r, *w))
+        })
+        .collect();
+    let below = pts.iter().map(|(e, _)| *e).filter(|e| *e <= sin_elevation).fold(None, |m: Option<f32>, e| Some(m.map_or(e, |m| m.max(e))));
+    let above = pts.iter().map(|(e, _)| *e).filter(|e| *e >= sin_elevation).fold(None, |m: Option<f32>, e| Some(m.map_or(e, |m| m.min(e))));
+    let ring = |at: f32| {
+        let (sum, n) = pts.iter().filter(|(e, _)| (e - at).abs() <= RING_TOLERANCE).fold(([0.0f32; 3], 0u32), |(s, n), (_, w)| ([s[0] + w[0], s[1] + w[1], s[2] + w[2]], n + 1));
+        sum.map(|v| v / n.max(1) as f32)
+    };
+    match (below, above) {
+        (Some(b), Some(a)) if a - b > 1e-6 => {
+            let (lo, hi, t) = (ring(b), ring(a), (sin_elevation - b) / (a - b));
+            Some(std::array::from_fn(|i| lo[i] + (hi[i] - lo[i]) * t))
+        }
+        (Some(b), _) => Some(ring(b)),
+        (None, Some(a)) => Some(ring(a)),
+        (None, None) => None,
+    }
+}
+
+/// The sky's colours now (linear RGB) and what else the aerial terms read.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SkyColours {
+    /// The weather's fog colour (`SkyState::color`).
     pub fog: [f32; 3],
+    /// The drawn dome's colour at the horizon and at the second reference elevation
+    /// ([`LOWER_SIN`]): sky.rs `dome_color` of the dome's own weights there.
     pub horizon: [f32; 3],
     pub lower: [f32; 3],
+    /// The weather's sun colour.
     pub sun: [f32; 3],
     /// The dome's sky level (`SkyState::sky_scale`, by which sky.wesl scales the dome).
     pub sky_scale: f32,
@@ -166,7 +210,7 @@ pub struct Aerial {
     pub weights: [f32; 3],
     /// How far the in-scatter colour moved toward the sky colour.
     pub sky_share: f32,
-    /// The in-scatter colour looking at the horizon and up at the sky-lower height.
+    /// The in-scatter colour looking at the horizon and up at the second reference height.
     pub horizon: [f32; 3],
     pub lower: [f32; 3],
     /// The sun colour and the lobe's strength looking straight at the sun (0..1).
@@ -233,10 +277,21 @@ pub fn resolve(p: &[Vec4; 3], ray_y: f32, toward_light: f32) -> Option<([f32; 3]
     let mut air: [f32; 3] = std::array::from_fn(|i| p[1][i] + (p[2][i] - p[1][i]) * t);
     if p[0].w != 0.0 {
         let toward_sun = if p[0].w > 0.0 { toward_light } else { -toward_light };
-        let k = (p[0].w.abs() * lobe(toward_sun)).clamp(0.0, 1.0);
-        air = std::array::from_fn(|i| air[i] + (p[0][i] - air[i]) * k);
+        let sun = [p[0][0], p[0][1], p[0][2]];
+        let k = (p[0].w.abs() * lobe(toward_sun) * brightening(sun, air)).clamp(0.0, 1.0);
+        air = std::array::from_fn(|i| air[i] + (sun[i] - air[i]) * k);
     }
     Some((air, [red, green, blue]))
+}
+
+/// How much of the sun lobe applies over the air colour `air` (display values): its luminance
+/// contrast, (Y_sun − Y_air) / max(Y_sun, 1e-4), held to 0..1, so the lobe only brightens: none
+/// for a sun no brighter than the air (a weather's black sun), continuous (what `nvf_aerial`
+/// computes).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn brightening(sun: [f32; 3], air: [f32; 3]) -> f32 {
+    let ys = luminance(sun);
+    ((ys - luminance(air)) / ys.max(1e-4)).clamp(0.0, 1.0)
 }
 
 /// `GAME_FOG`'s aerial branch in display values: the input `input` seen through the weather's
@@ -288,7 +343,8 @@ const AERIAL_FUNCTION: &str = "// NVForever (nvforever aerial.rs AERIAL_FUNCTION
 // the colour toward the horizon and the red weight, [2] the colour toward the sky-lower height
 // and the blue weight. All zero: off, Bevy's call as it was. On, the game's fog (fog.rs GAME_FOG)
 // gets a copy of the uniform with [0] the colour resolved for this ray (alpha -2) and [1] the
-// three weights.
+// three weights. The lobe only brightens: it is weighted by the sun's luminance contrast over
+// the air colour (none for a sun no brighter than it).
 @if(DISTANCE_FOG)
 fn nvf_aerial(
     fog_params: mesh_view_types::Fog,
@@ -310,7 +366,11 @@ fn nvf_aerial(
         let g: f32 = NVF_AERIAL_HG_G;
         let toward = sign(lobe_strength) * dot(ray, view_bindings::lights.directional_lights[0].direction_to_light);
         let q = (1.0 - g) * (1.0 - g) / max(1.0 + g * g - 2.0 * g * toward, 1e-6);
-        air = mix(air, fog_params.nvf_params[0].rgb, clamp(abs(lobe_strength) * q * sqrt(q), 0.0, 1.0));
+        let sun_colour = fog_params.nvf_params[0].rgb;
+        let luma = vec3<f32>(NVF_AERIAL_LUMA_R, NVF_AERIAL_LUMA_G, NVF_AERIAL_LUMA_B);
+        let sun_luma = dot(sun_colour, luma);
+        let brightening = clamp((sun_luma - dot(air, luma)) / max(sun_luma, 1e-4), 0.0, 1.0);
+        air = mix(air, sun_colour, clamp(abs(lobe_strength) * q * sqrt(q) * brightening, 0.0, 1.0));
     }
     var resolved = fog_params;
     resolved.nvf_params[0] = vec4<f32>(air, -2.0);
@@ -415,16 +475,13 @@ impl Plugin for AerialPlugin {
 }
 
 /// The plugin's systems (apart from its shader handle, for the scheduling test). The 3D
-/// scope's lens camera copies the main camera's fog after [`AerialSet`] (scope_view.rs
-/// `ScopeViewPlugin`), and the reflection camera in PostUpdate (reflection.rs), so neither
-/// shows a frame with the sun's side not yet turned at a horizon crossing.
+/// scope's lens camera copies the main camera's fog after the fog's writers (fog.rs
+/// `FogWriters`: this and the desert haze; scope_view.rs `ScopeViewPlugin`), and the
+/// reflection camera in PostUpdate (reflection.rs), so neither shows a frame with the sun's
+/// side not yet turned at a horizon crossing, or without the haze.
 fn add_systems(app: &mut App) {
-    app.add_systems(PreUpdate, patch_aerial.after(crate::haze::patch_haze)).add_systems(Update, update_aerial.after(crate::sky::update_sky).in_set(AerialSet));
+    app.add_systems(PreUpdate, patch_aerial.after(crate::haze::patch_haze)).add_systems(Update, update_aerial.after(crate::sky::update_sky).in_set(crate::fog::FogWriters));
 }
-
-/// Where the aerial terms are written into the main camera's fog (for the cameras that copy it).
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct AerialSet;
 
 /// What the log last said.
 struct Logged {
@@ -446,6 +503,8 @@ struct AerialState {
     /// The last derivation's inputs (the weight times the debug multiplier, the sky) and its
     /// result, used again while they stay the same.
     derived: Option<(f32, SkyColours, Option<Aerial>)>,
+    /// The dome mesh read last and its weights at the two reference elevations.
+    dome: Option<(AssetId<Mesh>, [[f32; 3]; 2])>,
 }
 
 /// The figures for the log.
@@ -467,6 +526,8 @@ fn update_aerial(
     graphics: Option<Res<crate::graphics::Graphics>>,
     sky: Option<Res<SkyState>>,
     mut cams: Query<&mut DistanceFog, With<FlyCam>>,
+    domes: Query<(&Mesh3d, &crate::sky::SkyDome)>,
+    meshes: Res<Assets<Mesh>>,
     mut state: Local<AerialState>,
 ) {
     let wanted = graphics.as_deref().is_some_and(|g| g.aerial_perspective);
@@ -505,10 +566,22 @@ fn update_aerial(
     let range = sky.fog_override.map(|(n, f)| (n, f, 1.0)).or_else(|| sky.fog());
     let (near, far, strength) = range.unwrap_or((0.0, 0.0, 0.0));
     let weight = crate::haze::weight(near, far, sky.fog_power(), strength);
+    // The drawn dome's own weights at the two reference elevations, read again only for a new
+    // dome mesh (a worldspace change spawns one; the fallback dome has weights of its own).
+    if let Some((mesh, dome)) = domes.iter().next().filter(|(m, _)| state.dome.is_none_or(|(id, _)| id != m.0.id())) {
+        if let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) = meshes.get(&mesh.0).and_then(|m| m.attribute(Mesh::ATTRIBUTE_POSITION)) {
+            let at = |s: f32| dome_weights_at(positions, dome.weights(), s);
+            if let (Some(low), Some(high)) = (at(0.0), at(LOWER_SIN)) {
+                state.dome = Some((mesh.0.id(), [low, high]));
+            }
+        }
+    }
+    let [w_low, w_high] = state.dome.map_or(NO_DOME_WEIGHTS, |(_, w)| w);
+    let (sky_lower, sky_horizon, sky_upper) = (sky.color(ColorType::SkyLower), sky.color(ColorType::Horizon), sky.color(ColorType::SkyUpper));
     let colours = SkyColours {
         fog: sky.color(ColorType::Fog),
-        horizon: sky.color(ColorType::Horizon),
-        lower: sky.color(ColorType::SkyLower),
+        horizon: crate::sky::dome_color(w_low, sky_lower, sky_horizon, sky_upper),
+        lower: crate::sky::dome_color(w_high, sky_lower, sky_horizon, sky_upper),
         sun: sky.color(ColorType::Sun),
         sky_scale: sky.sky_scale(),
         sun_elevation: sky.sun_elevation(),
@@ -578,9 +651,10 @@ mod tests {
 
     #[test]
     fn a_grey_or_black_sky_gives_even_weights() {
-        assert_eq!(chroma_weights([0.4, 0.4, 0.4], 1.0), [1.0; 3]);
+        let near = |w: [f32; 3]| w.iter().all(|v| (v - 1.0).abs() < 1e-5);
+        assert!(near(chroma_weights([0.4, 0.4, 0.4], 1.0)));
         assert_eq!(chroma_weights([0.0; 3], 1.0), [1.0; 3]);
-        assert_eq!(chroma_weights([1e-9, 0.0, 0.0], 1.0), [1.0; 3], "as good as black");
+        assert!(near(chroma_weights([1e-9, 0.0, 0.0], 1.0)), "as good as black");
         assert_eq!(chroma_weights([0.3, 0.5, 0.9], 0.0), [1.0; 3], "no gain");
         assert_eq!(chroma_weights([f32::NAN, 0.5, 0.9], f32::NAN), [1.0; 3]);
         let w = chroma_weights([0.4, 0.4, 0.4], 3.0);
@@ -618,6 +692,26 @@ mod tests {
         // More gain moves them further, never past the range.
         let half = chroma_weights(clear_noon().horizon, 0.5);
         assert!((half[2] - 1.0) < (noon[2] - 1.0) && half[2] > 1.0);
+    }
+
+    /// A fade to or from a near-black sky does not step: the weights are continuous in the
+    /// colour down to black (the old cut-off at a luminance of 1e-6 jumped the blue share of a
+    /// blue-only horizon from 0.50 to 0.75 at a fog share of 0.5).
+    #[test]
+    fn the_weights_fade_continuously_toward_a_black_sky() {
+        let (a, b) = (chroma_weights([0.0, 0.0, 0.000_013_8], 1.0), chroma_weights([0.0, 0.0, 0.000_013_9], 1.0));
+        assert!(a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-4), "{a:?} vs {b:?}");
+        let (sa, sb) = (channel_shares(0.5, a), channel_shares(0.5, b));
+        assert!((sa[2] - sb[2]).abs() < 1e-4 && (sa[2] - 0.5).abs() < 1e-3, "{sa:?} vs {sb:?}");
+        // From black up to a bright blue in small steps: no step larger than the slope allows.
+        let mut last = chroma_weights([0.0; 3], 1.0);
+        for k in 1..=2000 {
+            let w = chroma_weights([0.0, 0.0, k as f32 * 1e-5], 1.0);
+            assert!(w.iter().zip(last).all(|(x, y)| (x - y).abs() < 0.01), "{k}: {w:?} after {last:?}");
+            assert!((mean(w) - 1.0).abs() < 1e-4);
+            last = w;
+        }
+        assert!(last[2] > 1.5, "a bright blue sky still fogs blue in first: {last:?}");
     }
 
     #[test]
@@ -765,6 +859,66 @@ mod tests {
         assert!(none.horizon.iter().all(|v| *v >= 0.0));
     }
 
+    /// A weather whose sun colour is black (or no brighter than the air) gets no lobe: the
+    /// in-scatter colour toward the sun is the one without it, and the lobe never darkens.
+    #[test]
+    fn the_sun_lobe_only_brightens() {
+        let black_sun = SkyColours { sun: [0.0; 3], sun_elevation: 30.0, ..clear_noon() };
+        let a = aerial(1.0, &black_sun).unwrap();
+        assert!(a.lobe > 0.0, "the lobe is up by day");
+        let p = pack(Some(&a));
+        let (toward, _) = resolve(&p, 0.0, 1.0).unwrap();
+        assert!(toward.iter().zip(a.horizon).all(|(v, h)| (v - h).abs() < 1e-6), "{toward:?} vs {:?}", a.horizon);
+        for sun in [[0.0; 3], [0.2, 0.1, 0.05], [1.0, 0.9, 0.7], [0.9, 0.2, 0.1], [0.6, 0.6, 0.6]] {
+            let p = pack(Some(&aerial(1.0, &SkyColours { sun, sun_elevation: 30.0, ..clear_noon() }).unwrap()));
+            for c in [-1.0, 0.0, 0.8, 1.0] {
+                let (with, _) = resolve(&p, 0.05, c).unwrap();
+                let mut without = p;
+                without[0].w = 0.0;
+                let (bare, _) = resolve(&without, 0.05, c).unwrap();
+                assert!(luminance(with) >= luminance(bare) - 1e-6, "{sun:?} {c}: {with:?} darker than {bare:?}");
+            }
+        }
+        // Continuous in the sun's brightness through the air's.
+        let air = [0.5, 0.55, 0.6];
+        let y = luminance(air);
+        assert!(brightening([y; 3], air) < 1e-5);
+        assert!(brightening([y + 1e-4; 3], air) < 1e-3);
+        assert!((brightening([1.0; 3], air) - (1.0 - y)).abs() < 1e-5);
+    }
+
+    /// The sky targets are the drawn dome's: its own weights read by elevation from its mesh.
+    #[test]
+    fn the_sky_targets_follow_the_domes_own_weights() {
+        // A dome of rings with weights by elevation as the stock atmosphere.nif's at 0° and 20°
+        // (docs/spec-notes/world.md "Sky meshes": 0.69/0.35/0 and 0/0.57/0.53).
+        let rings: [(f32, [f32; 3]); 5] = [(-10.0, [1.0, 0.0, 0.0]), (0.0, [0.69, 0.35, 0.0]), (10.0, [0.26, 0.64, 0.30]), (20.0, [0.0, 0.57, 0.53]), (90.0, [0.0, 0.0, 0.51])];
+        let (mut pos, mut w) = (Vec::new(), Vec::new());
+        for (deg, weights) in rings {
+            for k in 0..12 {
+                let (az, el) = ((k as f32 * 30.0).to_radians(), deg.to_radians());
+                pos.push([500.0 * el.cos() * az.cos(), 500.0 * el.cos() * az.sin(), 500.0 * el.sin()]);
+                w.push(weights);
+            }
+        }
+        let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-4);
+        assert!(near(dome_weights_at(&pos, &w, 0.0).unwrap(), [0.69, 0.35, 0.0]));
+        assert!(near(dome_weights_at(&pos, &w, LOWER_SIN).unwrap(), [0.0, 0.57, 0.53]));
+        // Between rings, linear in the sine; beyond the ends, the end ring.
+        let mid = dome_weights_at(&pos, &w, 5f32.to_radians().sin()).unwrap();
+        assert!(mid[0] < 0.69 && mid[0] > 0.26, "{mid:?}");
+        assert!(near(dome_weights_at(&pos, &w, -1.0).unwrap(), [1.0, 0.0, 0.0]));
+        assert!(near(dome_weights_at(&pos, &w, 1.0).unwrap(), [0.0, 0.0, 0.51]));
+        assert_eq!(dome_weights_at(&[], &[], 0.0), None);
+        assert_eq!(dome_weights_at(&[[0.0; 3]], &[[1.0, 0.0, 0.0]], 0.0), None, "a vertex at the centre has no elevation");
+        // The target is what the dome draws there: dome_color of those weights.
+        let (lower, horizon, upper) = ([0.3, 0.4, 0.9], [0.5, 0.6, 0.65], [0.1, 0.15, 0.8]);
+        let want = crate::sky::dome_color([0.69, 0.35, 0.0], lower, horizon, upper);
+        let got = crate::sky::dome_color(dome_weights_at(&pos, &w, 0.0).unwrap(), lower, horizon, upper);
+        assert!(near(got, want));
+        assert!(!near(want, horizon), "not the horizon colour alone");
+    }
+
     #[test]
     fn extreme_skies_give_finite_figures() {
         let odd = [
@@ -829,19 +983,22 @@ mod tests {
     }
 
     /// The cameras that clone the main camera's fog do so after it got this frame's aerial
-    /// terms: at a horizon crossing the lens shows no frame with the lobe on the moon's side.
-    /// (The scope's systems are added first, so the order comes from the constraint.)
+    /// terms and haze: at a horizon crossing the lens shows no frame with the lobe on the moon's
+    /// side, and never the aerial fog without the haze. (The scope's systems are added first,
+    /// so the order comes from the constraint.)
     #[test]
     fn the_fog_copies_follow_the_aerial_terms() {
         let mut app = App::new();
         app.add_plugins(crate::scope_view::ScopeViewPlugin);
         add_systems(&mut app);
+        crate::haze::add_systems(&mut app);
         app.world_mut().resource_scope(|world, mut schedules: Mut<bevy::ecs::schedule::Schedules>| {
             let update = schedules.get_mut(Update).expect("Update");
             update.initialize(world).expect("the Update schedule builds");
             let names: Vec<String> = update.systems().expect("initialized").map(|(_, s)| s.name().to_string()).collect();
             let at = |n: &str| names.iter().position(|s| s.ends_with(n)).unwrap_or_else(|| panic!("{n} not in {names:?}"));
             assert!(at("aerial::update_aerial") < at("scope_view::lens_camera"), "{names:?}");
+            assert!(at("haze::update_haze") < at("scope_view::lens_camera"), "the haze's density restored first: {names:?}");
         });
     }
 

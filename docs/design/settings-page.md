@@ -160,7 +160,7 @@ world.md §3 "Smoothing"]. 4 x 4 near draws 4 × 4 near the camera and 2 × 2 fu
 surface [design, #2676]; the INI's older on/off reads as 4 x 4 and Off.
 
 The table names every row the registry can hold [documented: `settings_layout.rs::SECTIONS`],
-139 with #1966's `quality`, the overhaul's `menu-font` (#1966's `enhanced` is gone),
+140 with #1966's `quality`, the overhaul's `menu-font` (#1966's `enhanced` is gone),
 #2014's nine `fps-counter-*` rows, #2242's `fps-counter-upscaling`, #2317's
 `frame-generation-frames`, #2550's `terrain-height-blend`, #2662's `grass-fire`, #2551's `terrain-anti-tiling`, #2688's `sound-cover`, #2670's `cloud-shadows`, #2671's `terrain-shadows`, #2910's `gore-shake`, #2149's `smooth-terrain` and `terrain-wireframe`, the Advanced Movement rows, #2843's `shadow-resolution` (under Graphics › Shadows after `shadow-filter`), #2661's `mesh-terrain-blend` (Graphics › Detail and Distance, after the terrain rows), the six `quick-loot` rows (#2933, NVF Features › Quick Loot), the heat haze prototype's `heat-haze` (Graphics › Lighting and Effects, after `light-shafts`), #2675's `desert-haze` (after `heat-haze`), #2993's `aerial-perspective` (after `desert-haze`), and #3000's `sprint` (NVF Features › Gameplay) (`KNOWN` in
 `settings_layout.rs`); a test keeps
