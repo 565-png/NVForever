@@ -2073,9 +2073,9 @@ glow cards, lamps and signs) [observed: the same listing]. So the glow statics b
 what the feature mostly shows.
 
 - **Source.** The exterior cells whose closest point lies within 12 cells of the camera
-  (`treelod.rs` `cells_within`, as the distant trees choose theirs). When the camera's cell
-  changes, the cells not read yet are listed on the read pool's worker thread (as world.rs
-  reads cells ahead), from the references world.rs spawns a loaded cell from
+  (`treelod.rs` `cells_within`, as the distant trees choose theirs). The cells not read yet
+  are listed on the read pool's worker thread (as world.rs reads cells ahead), from the
+  references world.rs spawns a loaded cell from
   (`cell_refs`: the cell's own and the worldspace's persistent ones standing in it): those
   whose base is a LIGH, not deleted, not negative, not off by default, with a radius (DATA
   radius plus the reference's XRDS) and a colour of the record's own (`fnv_world::lighting`;
@@ -2094,14 +2094,22 @@ what the feature mostly shows.
   sign's glow panel) [design: the last threshold is ours]. Apart from the added unlit
   shapes, which may be long beams, a shape wider than 512 units (bounding-sphere radius)
   does not count, so a self-lit band across a building is the building's picture, not a
-  lamp. A model with one small glowing part among ordinary geometry (a lamp post) qualifies
-  through that part. Per model, read once on the listing worker from the NIF alone (no
-  meshes, materials or textures for the GPU) and kept for the run: the glowing shapes'
-  area-weighted centre below the root (the reference's transform takes it to the world, so
-  a lamp post's glow sits at its bulb), their reach (feeding the size and budget rules as a
-  light's radius would, times 4) and their colour (the emissive hue times a mean hue of the
-  glowing texture, from the top level's compressed blocks, weighted by brightness and
-  alpha; the emissive hue alone when the texture is not readable). Glow statics take the
+  lamp. Helper geometry the near renderer leaves out (`Props::is_helper`) and hidden shapes
+  do not count. A model with one small glowing part among ordinary geometry (a lamp post)
+  qualifies through that part, as long as its glowing shapes together show enough light:
+  the sum of brightness (the glowing texture's mean, times the emission) x radius^2 at
+  least 25 (a bright bulb 5 units in radius; emissive trim and specks show less) [design].
+  A shape whose texture is known dark (black or fully transparent where it blends) shows
+  nothing; an unreadable texture (BC5, a file that does not parse) or none counts as fully
+  bright, the emissive hue alone. Per model, read once from the NIF alone (no meshes,
+  materials or textures for the GPU) and kept for the run: the glowing shapes' centre below
+  the root, weighted by the light they show (the reference's transform takes it to the
+  world, so a lamp post's glow sits at its bulb), their reach (feeding the size and budget
+  rules as a light's radius would, times 4) and their colour (the emissive hue times the
+  mean hue of the glowing texture: every texel of its first mip level of at most 256 x 256,
+  compressed blocks decoded with their selectors, DXT1's transparent selector honoured,
+  weighted by brightness, and by alpha where the shape blends). A glow-mapped lit shape
+  takes the glow map's hue without the diffuse texture the real material multiplies it by. Glow statics take the
   same present state, merge, cap, night share, fog and hand-over as lights, strength 1, no
   shimmer. Parts of static collections (SCOL) are left out [design: not read here]. Counted
   with an approximation of these rules over the records and the meshes (2026-11-19, the
@@ -2110,17 +2118,31 @@ what the feature mostly shows.
   beams (`fxlightbeam*`, HELIOS One's god rays), lamps (`llamp*`, `lamplightlamp`,
   street lights), recessed lighting, the NoVac sign's glow panel, tent lights; also some
   utility girders and fans whose small self-lit part is a fixture.
+- **The scan.** One job at a time on the read pool: first the nearest cells not listed
+  yet, 32 at a time (their references copied on the main thread for those 32 only), then the
+  static models they ask for, 32 at a time, at most 1,024 models per camera cell (the rest
+  wait for the next scan; 895 were read within reach six cells west of Novac [observed
+  2026-11-19]). Models are asked for on the main thread only, each once, so two jobs never
+  read the same model. Every job checks a shared epoch between cells and between models;
+  switching off, another worldspace, going indoors or daylight move it on, so a running job
+  stops after the read under way, its unread models go back to the front of the queue, and
+  no job starts while a stopped one still runs (never two scans at once). A cell's sources
+  are its lights and the statics whose model is read and glows; they are completed as the
+  models come in, so a town fills in over the scan.
 - **Present state.** Whether a listed light shows is the simulation's present state
   (`SimState::present`: not deleted, enabled now), or without a simulation its state at the
   start. Cells listed but not merged yet are checked at once, and every 2 s a pass over all
-  cells starts; both within 2,048 lights a frame (a cell whole once started). A cell is
+  cells starts; both within 2,048 units a frame, a hard bound (a light checked or merged one
+  unit, starting a cell one; a check stopped inside a cell resumes there in the next frame;
+  a cell with more lights than the budget is merged alone in a frame of its own). A cell is
   merged again when the set of its present lights changed (a key of their FormIDs, so
   disabling one lamp and enabling another in the same cell between two checks is seen).
 - **Hand-over.** No glow for a cell inside the loaded grid (the square of `Streamer::radius`
   steps around the grid's centre that world.rs loads), whether loaded already or still
   pending: its own lights draw there, or will within moments. A cell outside the grid that
   is still drawn as it fades out gives its glows 1 - its fade level (`Streamer::cell_level`,
-  fade.rs), so they come back as it goes. The full-detail ring (#2701, another branch) draws
+  fade.rs), so they come back as it goes; during that fade the cell draws both forms, its
+  dithered models and lights and the glows growing back. The full-detail ring (#2701, another branch) draws
   more cells as loaded cells, which hand over by their level; `in_loaded_grid` is the hook.
   The batched mesh is rebuilt when the camera's cell, a cell's share (16 steps) or a cell's
   set of present lights changes: a few hundred cards, a few times a second at most during
@@ -2146,8 +2168,8 @@ what the feature mostly shows.
   (nif.md §6 "Additive blend", "Fog on added light"; nvf_assets `add_display`,
   `fogged_addition`): the glow's colour is the record's colour bytes / 255 (display
   values) times its fade (held to 2), the merged strength and 1.0 at the core (0.8 before
-  the glows were added in display values; a few-pixel glow's centre then sat near 0.5); it is made
-  linear (raised to 2.2), taken through the view's fog (`apply_fog`, with the game's curve
+  the glows were added in display values; a few-pixel glow's centre then sat near 0.5); it
+  is made linear (raised to 2.2), taken through the view's fog (`apply_fog`, with the game's curve
   of fog.rs and the desert haze of §3.16) and, in a view without HDR (Light glow off),
   Bevy's tonemapping, less black through the same, so fog dims the glow and adds no fog
   colour of its own; then added to the opaque frame behind it in display values (the view
@@ -2184,26 +2206,38 @@ what the feature mostly shows.
   (XEMI), no glows indoors or in other worldspaces than the camera's, no occlusion beyond
   the depth test (a glow behind the LOD's hills is hidden by them; one behind a building not
   loaded is not, as the building is not drawn). Not a script's light colour or fade edits
-  (lights.rs session lights). Lights that exist only as part of a large building's own
-  texture (lit windows, a casino's facade) and activators (the Prospector Saloon's neon,
-  ACTI) show no distant glow.
+  (lights.rs session lights).
+- **Known misses of the classification** (a visual rule from the shapes' properties, not a
+  list): lights that exist only as part of a large building's own texture (lit windows, a
+  casino's facade; the 512-unit bound), dim bulbs (a lit shape under emission 1), large
+  lit signs that neither add to the frame nor burn, shapes hidden in the file and shown by
+  an animation (hidden shapes do not count), the parts of static collections (SCOL), and
+  activators (the Prospector Saloon's neon, an ACTI). **False-positive risks**: fully
+  self-lit decorative panels and additive effects that are not lights (the counted Novac
+  area has utility girders and fans whose small self-lit part may be a fixture or trim);
+  the visible-light bound and the helper exclusion take out the smallest. The counts show
+  that the rule finds candidates, not its false-positive rate.
 - **Switching**: the row, `--graphics-only distant-lights`, a `--graphics-cycle` set
   `distant-lights`, `NVF_PLAY_TEST_SETTINGS=<t>:distant-lights`. The first switch-on
-  compiles the glows' pipeline; switching off drops the glows and an outstanding listing.
+  compiles the glows' pipeline; switching off drops the glows and stops the scan. With the
+  test aid `NVF_PLAY_TEST_PIPELINE_LOG=1` the pipeline log names it once compiled:
+  `distant lights pipeline <n> ready` (pipeline_gate.rs, from a fragment definition the
+  material adds, `NVF_DISTANT_LIGHTS`). Smoke: `distant-lights`, `distant-lights-switch`.
   Log lines, only with the row on: `distant lights: on (reach 12 cells, cap 400)` when it
   turns on, `distant lights: off` when it is turned off again, and at the exit `distant
   lights summary: <cells> cells listed (<refs> references), <lights> lights, <g> glow
   statics (<m> glowing models of <k> read), <d> disabled at the start, <drawn> drawn at
   most, skipped: <a> deleted, <b> no colour, <c> negative/off, <e> no radius`, the reasons
   counted over the light references read. The start line names no counts (nothing is
-  listed yet). With
-  the row off nothing runs past the switch's check and the log is as on main. The graphics
+  listed yet). With the row off nothing runs past the switch's check and the log is as on
+  main. The graphics
   line names it (`..., distant lights`) only when it is on.
 - **Cost**: not measured yet (to be measured on the Goodsprings to Primm route at night,
   #3013): one draw of at most 400 cards, each fragment reading the frame behind once; the
-  record listing on a worker per cell change, which reads each static model in reach once
-  for its glow (about 830 models around a town; a NIF decode each, on the worker); at most
-  2,048 present-state checks a frame and a merge of a cell when its present lights change.
+  record listing on a worker, 32 cells a job, and each static model in reach read once for
+  its glow (about 830 to 900 around a town, a NIF decode and at most a 256 x 256 mip of a
+  texture each, 32 a job, one job at a time); at most 2,048 units of present-state work a
+  frame.
 
 ## 4. Tried and dropped
 
