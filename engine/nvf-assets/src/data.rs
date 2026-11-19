@@ -8,18 +8,27 @@ use std::sync::{Arc, OnceLock};
 
 #[derive(Resource, Clone)]
 pub struct GameData {
+    /// Read freely; to mount another VFS use [`GameData::set_vfs`] (or [`GameData::new`]),
+    /// never an assignment, which would keep the previous mount's authored-material index.
     pub vfs: Arc<Vfs>,
     pub schema: Arc<Schema>,
     /// The authored material sets under `textures\pbr\` (#2981), built from `vfs` the
     /// first time [`GameData::pbr_index`] is asked; clones share it, as they share `vfs`.
-    /// A `GameData` over another VFS needs a fresh one: build it with [`GameData::new`].
-    pub pbr: Arc<OnceLock<fnv_pbr::PbrIndex>>,
+    /// Private, so it is only ever made together with its VFS.
+    pbr: Arc<OnceLock<fnv_pbr::PbrIndex>>,
 }
 
 impl GameData {
     /// `vfs` and `schema` with an authored-material index of their own, not yet built.
     pub fn new(vfs: Arc<Vfs>, schema: Arc<Schema>) -> GameData {
         GameData { vfs, schema, pbr: Arc::new(OnceLock::new()) }
+    }
+
+    /// Mount another VFS: the authored-material index starts afresh with it. Clones made
+    /// before keep the old VFS and its index together.
+    pub fn set_vfs(&mut self, vfs: Arc<Vfs>) {
+        self.vfs = vfs;
+        self.pbr = Arc::new(OnceLock::new());
     }
 
     /// The sets of authored material maps the VFS supplies (docs/spec-notes/pbr-materials.md),
@@ -181,6 +190,12 @@ mod tests {
         let fresh = GameData::new(Arc::new(Vfs::open(&other, &[]).unwrap()), data.schema.clone());
         assert!(fresh.pbr.get().is_none());
         assert!(fresh.pbr_index().is_empty());
+        // Mounting another VFS in place renews the index; the clone keeps the old pair.
+        let mut moved = data.clone();
+        moved.set_vfs(Arc::new(Vfs::open(&other, &[]).unwrap()));
+        assert!(moved.pbr.get().is_none());
+        assert!(moved.pbr_index().is_empty());
+        assert_eq!(clone.pbr_index().counts().authored, 1);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

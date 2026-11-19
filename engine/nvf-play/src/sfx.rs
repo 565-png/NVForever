@@ -2961,7 +2961,8 @@ mod tests {
         std::fs::create_dir_all(&beds).unwrap();
         std::fs::write(beds.join("a.wav"), bed).unwrap();
         let vfs = Arc::new(fnv_vfs::Vfs::open(&files.0, &[]).unwrap());
-        app.world_mut().resource_mut::<nvf_assets::GameData>().vfs = vfs;
+        let schema = app.world().resource::<nvf_assets::GameData>().schema.clone();
+        app.insert_resource(nvf_assets::GameData::new(vfs, schema));
         let gate = gated_index(&mut app);
         app.world_mut().resource_mut::<Sfx>().forms.sounds.insert(FOLDER_BED, record("TestBed", Some("fx\\beds"), &["Loop"]));
         app.init_resource::<crate::ambient::Ambient>()
