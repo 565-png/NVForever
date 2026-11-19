@@ -1330,7 +1330,11 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 // Off by height too: under the navmesh of the Jefferson Memorial's intake
                 // pipe the player stood 92 units below it, 0 units off across [observed].
                 let off = hdist(on, feet).hypot(on[2] - feet[2]);
-                if off > 4.0 {
+                // A few units off is left to the path search, which snaps its start from
+                // up to SNAP_RADIUS: put back from 6 units off every frame, the player never
+                // walked (Broken Steel's Powerworks, beside a triangle an obstacle cuts,
+                // 2026-11-19 [observed]).
+                if off > OFF_MESH_PUT {
                     info!("pilot: step {}: off the navmesh at ({:.0}, {:.0}, {:.0}): set on its nearest point, {off:.0} units off", p.i, feet[0], feet[1], feet[2]);
                     if off > 500.0 {
                         // Not clumsiness: the ground went from under the player (#2846).
@@ -2766,6 +2770,9 @@ fn approach(p: &mut Pilot, h: &mut Hands, name: &str, what: &str) -> Result<Opti
     out
 }
 
+/// How far off the navmesh the player must be before the walk puts it back on, game
+/// units [design].
+const OFF_MESH_PUT: f32 = 16.0;
 /// How far a goal with no navmesh under it moves to the nearest point on it, game units
 /// [design].
 const GOAL_SNAP: f32 = 512.0;
