@@ -1159,9 +1159,8 @@ below cover them all.
 
 ### `distant-objects`: Distant objects
 
-- On the page: Draws distant rocks, shacks, pylons and signs the distant LOD leaves out,
-  from their own low-detail models or, if large, their full models, out to 8 or 12 cells.
-  Costs GPU time. Not in the original.
+- On the page: Draws the rocks, shacks, pylons and signs the distant LOD leaves out, up to
+  8 or 12 cells away. Costs GPU time. Not in the original.
 - In full: [design, #3014] A list: Off, 8 cells, 12 cells; Off by default and in both
   presets. Outdoors, beyond the loaded cells and the full-detail scenery, statics and
   static collections the distant LOD blocks do not hold are drawn out to 8 or 12 grid

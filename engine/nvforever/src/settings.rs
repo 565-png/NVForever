@@ -1065,7 +1065,7 @@ fn register_graphics(app: &mut App) {
             key: DISTANT_OBJECTS_KEY,
             group: GROUP_GRAPHICS,
             label: "Distant objects",
-            note: "Draws distant rocks, shacks, pylons and signs the distant LOD leaves out, from their own low-detail models or, if large, their full models, out to 8 or 12 cells. Costs GPU time. Not in the original.",
+            note: "Draws the rocks, shacks, pylons and signs the distant LOD leaves out, up to 8 or 12 cells away. Costs GPU time. Not in the original.",
             switches: "--graphics-only",
             get: |_| false,
             set: |_, _| {},
