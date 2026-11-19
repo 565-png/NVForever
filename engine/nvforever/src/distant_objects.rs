@@ -2091,8 +2091,10 @@ mod tests {
         let key = |b: &BlockContents, st: &DistantState| ScanKey { blocks: b.rev(), now, reach: st.reach, cells: st.cells_rev };
         assert!(st.scan_seen < 200 && !scan_complete(&st, key(&blocks, &st)), "cut short at the deadline: not complete");
         assert!(st.rebuild.is_empty(), "nothing stale yet");
-        // The block of cell (150, 0) arrives empty mid-lap: the lap starts again.
-        blocks.set_for_test((150, 0), 0);
+        // The block of cell (150, 0) arrives empty mid-lap: the lap starts again. A block
+        // is keyed by its level-4 square's south-west cell: (148, 0) on the grid from (0, 0).
+        blocks.set_for_test((148, 0), 0);
+        assert_eq!(blocks.segment((150, 0)), Some(false), "the cell's segment is known and empty");
         let far = Instant::now() + Duration::from_secs(5);
         queue_rebuilds(&mut st, now, &blocks, &|_| None, far);
         assert!(scan_complete(&st, key(&blocks, &st)), "a whole lap for the new block revision");
