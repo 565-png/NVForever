@@ -2059,7 +2059,8 @@ not a fact about the original game, never a parity item, and never to be used to
 difference from the original's frames. Placed lights exist only with their cell (world.rs,
 lights.rs), so past the loaded 5 x 5 cells no lamp is drawn and a town at night is a dark
 shape until its cells load. With the row "Distant lights (experimental)" (Graphics >
-Lighting and Effects) on, the placed lights of the cells beyond the loaded ones, and the
+Detail and Distance, the last row, with the other distance rows; it needs no other row:
+it does not draw on the distant LOD) on, the placed lights of the cells beyond the loaded ones, and the
 statics that are the places' lights, show as small glows. Sprites only: no light entity, no
 shadow, no game state. Code: `distant_lights.rs`, `distant_lights.wesl`,
 `nvf_assets::model_glow`.
@@ -2083,8 +2084,8 @@ what the feature mostly shows.
   colour comes only from its model is left out. Lights disabled at the start (their own flag
   or the enable parent chain, `world::enabled`) are kept with that state, so a script that
   enables one later shows it. The lists are kept per cell and dropped with the worldspace.
-- **Glow statics.** Beside LIGH references, statics and moveable statics (STAT, MSTT) whose
-  model glows, judged from the model's shapes and never from its file name
+- **Glow statics.** Beside LIGH references, statics and moveable statics (STAT, MSTT),
+  activators (ACTI) and static collections (SCOL) whose model glows, judged from the model's shapes and never from its file name
   (`nvf_assets::model_glow`), by the properties the renderer already reads
   (`nif_spawn::shape_props`, `shape_alpha_mode`, `shape_emissive_mult`): an unlit shape
   added to the frame (glow cards, light beams: the additive shapes of nif.md §6 "Additive
@@ -2113,13 +2114,24 @@ what the feature mostly shows.
   weighted by brightness, and by alpha where the shape blends). A glow-mapped lit shape
   takes the glow map's hue without the diffuse texture the real material multiplies it by. Glow statics take the
   same present state, merge, cap, night share, fog and hand-over as lights, strength 1, no
-  shimmer. Parts of static collections (SCOL) are left out [design: not read here]. Counted
-  with an approximation of these rules over the records and the meshes (2026-11-19, the
-  same tools): within 12 cells of Novac 120 references of 22 glowing models (of 833 static
-  models there), of Goodsprings 55 of 23 (of 826): glow cards (`fxglowsimpfill*`), light
-  beams (`fxlightbeam*`, HELIOS One's god rays), lamps (`llamp*`, `lamplightlamp`,
-  street lights), recessed lighting, the NoVac sign's glow panel, tent lights; also some
-  utility girders and fans whose small self-lit part is a fixture.
+  shimmer. A static collection is drawn by its own combined model, as world.rs draws it
+  (the GECK wiki "Static Collection": its Model is the NIF the editor generates for the
+  collection [documented: offline snapshot 2026-10-28]), so its glowing parts are found in
+  that model, each at its place in it; a part as wide as a building is left out by the same
+  512-unit bound. An activator shows its model's stored look: whether a script switched
+  it is not known beyond the loaded cells (activators.rs follows only radio receivers' on
+  state, and only while drawn), so it glows while enabled, and a sign switched off by a
+  script without disabling it still glows [known limit]. Counted with an approximation of
+  these rules over the records and the meshes (2026-11-19, the same tools): within 12
+  cells of Novac 120 static references of 22 glowing models (of 833 static models there),
+  of Goodsprings 55 of 23 (of 826): glow cards (`fxglowsimpfill*`), light beams
+  (`fxlightbeam*`, HELIOS One's god rays), lamps (`llamp*`, `lamplightlamp`, street
+  lights), recessed lighting, the NoVac sign's glow panel, tent lights; also some utility
+  girders and fans whose small self-lit part is a fixture. Activators and collections add
+  27 references of 4 glowing models around Novac (light beams, the motel's lit window,
+  vault control panels, force-field effects) and 16 of 6 around Goodsprings (Primm's lit
+  windows, the Prospector Saloon's neon, a sign, a collection with a cave lamp, force-field
+  effects) [observed, the same approximation, which leaves out the visible-light rule].
 - **The scan.** One job at a time on the read pool: first the nearest cells not listed
   yet, 32 at a time (their references copied on the main thread for those 32 only), then the
   static models they ask for, 32 at a time, at most 1,024 models per camera cell (the rest
@@ -2217,10 +2229,11 @@ what the feature mostly shows.
   list): lights that exist only as part of a large building's own texture (lit windows, a
   casino's facade; the 512-unit bound), dim bulbs (a lit shape under emission 1), large
   lit signs that neither add to the frame nor burn, shapes hidden in the file and shown by
-  an animation (hidden shapes do not count), the parts of static collections (SCOL), and
-  activators (the Prospector Saloon's neon, an ACTI). **False-positive risks**: fully
-  self-lit decorative panels and additive effects that are not lights (the counted Novac
-  area has utility girders and fans whose small self-lit part may be a fixture or trim);
+  an animation (hidden shapes do not count), a collection's part merged into a shape wider
+  than 512 units in its combined model, and an activator's switched-off look. **False-positive
+  risks**: fully self-lit decorative panels and additive effects that are not lights (the
+  counted Novac area has utility girders and fans whose small self-lit part may be a
+  fixture or trim, and force-field effect activators);
   the visible-light bound and the helper exclusion take out the smallest. The counts show
   that the rule finds candidates, not its false-positive rate.
 - **Switching**: the row, `--graphics-only distant-lights`, a `--graphics-cycle` set
@@ -2232,8 +2245,9 @@ what the feature mostly shows.
   Log lines, only with the row on: `distant lights: on (reach 12 cells, cap 400)` when it
   turns on, `distant lights: off` when it is turned off again, and at the exit `distant
   lights summary: <cells> cells listed (<refs> references), <lights> lights, <g> glow
-  statics (<m> glowing models of <k> read), <d> disabled at the start, <drawn> drawn at
-  most, skipped: <a> deleted, <b> no colour, <c> negative/off, <e> no radius`, the reasons
+  statics, <a> glow activators, <c> glow collections (<m> glowing models of <k> read), <d>
+  disabled at the start, <drawn> drawn at most, skipped: <x> deleted, <y> no colour, <z>
+  negative/off, <e> no radius`, the reasons
   counted over the light references read. The start line names no counts (nothing is
   listed yet). With the row off nothing runs past the switch's check and the log is as on
   main. The graphics

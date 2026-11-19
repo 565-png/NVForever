@@ -1947,7 +1947,7 @@ expect = [
   { re = 'graphics: .*distant lights', label = "the graphics line names the distant lights" },
   { text = "distant lights: on (reach 12 cells, cap 400)", count = 1, label = "the distant lights on once" },
   { re = 'distant lights summary: \d+ cells listed \(\d+ references\), (?P<n>\d+) lights', range = [1, 100000], label = "light references beyond the loaded area become glows" },
-  { re = 'distant lights summary: .*?, (?P<n>\d+) glow statics \(', range = [1, 100000], label = "statics whose model glows (glow cards, lamps, beams) are found around Goodsprings" },
+  { re = 'distant lights summary: .*?, (?P<n>\d+) glow statics, ', range = [1, 100000], label = "statics whose model glows (glow cards, lamps, beams) are found around Goodsprings" },
   { re = 'distant lights summary: .*?, (?P<n>\d+) drawn at most', range = [1, 400], label = "glows were drawn, within the cap" },
   { re = 'distant lights pipeline \d+ ready', label = "the glows' pipeline (distant_lights.wesl) compiled and is ready" },
 ]
@@ -1977,7 +1977,7 @@ order = [[
 ]]
 expect = [
   { re = 'graphics: .*distant lights', label = "the graphics line names the distant lights while on" },
-  { re = 'distant lights summary: .*?, (?P<n>\d+) glow statics \(', range = [1, 100000], label = "statics whose model glows were found while the row was on" },
+  { re = 'distant lights summary: .*?, (?P<n>\d+) glow statics, ', range = [1, 100000], label = "statics whose model glows were found while the row was on" },
   { re = 'distant lights summary: .*?, (?P<n>\d+) drawn at most', range = [1, 400], label = "glows were drawn while the row was on" },
   { re = 'distant lights pipeline \d+ ready', label = "the glows' pipeline compiled and is ready after the row turned them on" },
 ]
