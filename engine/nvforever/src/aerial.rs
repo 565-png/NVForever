@@ -72,7 +72,7 @@ pub const WEIGHT_HIGH: f32 = 2.0;
 pub const DOME_MIX: f32 = 0.8;
 /// The second reference elevation (sine): the sky colour is the drawn dome's at the horizon
 /// (0°) and at this height (sin 20°: far land is seen within a few degrees), mixed between.
-pub const LOWER_SIN: f32 = 0.342_020_14;
+pub const LOWER_SIN: f32 = 0.342_020_1;
 /// Vertices of the dome within this (sine of elevation) of a ring's are taken as that ring.
 pub const RING_TOLERANCE: f32 = 0.01;
 /// Without a dome mesh to read (not yet loaded): the horizon colour at 0° and the sky-lower
@@ -668,8 +668,8 @@ mod tests {
     fn the_constants_say_what_their_notes_say() {
         assert!((LOWER_SIN - 20f32.to_radians().sin()).abs() < 1e-6);
         assert!((LUMA.iter().sum::<f32>() - 1.0).abs() < 1e-6);
-        assert!(WEIGHT_LOW > 0.0 && WEIGHT_LOW < 1.0 && WEIGHT_HIGH > 1.0);
-        assert!(DOME_MIX <= 1.0 && LOBE_MOST <= 1.0 && HG_G > 0.0 && HG_G < 1.0);
+        const { assert!(WEIGHT_LOW > 0.0 && WEIGHT_LOW < 1.0 && WEIGHT_HIGH > 1.0) };
+        const { assert!(DOME_MIX <= 1.0 && LOBE_MOST <= 1.0 && HG_G > 0.0 && HG_G < 1.0) };
     }
 
     #[test]
@@ -780,7 +780,7 @@ mod tests {
         let mut last = 0.0;
         for k in -100..=100 {
             let v = lobe(k as f32 / 100.0);
-            assert!(v >= last - 1e-7 && v <= 1.0 + 1e-6 && v >= 0.0, "{k}: {v}");
+            assert!(v >= last - 1e-7 && (0.0..=1.0 + 1e-6).contains(&v), "{k}: {v}");
             last = v;
         }
         assert!(lobe(0.0) < 0.1, "little to the side");
@@ -800,12 +800,12 @@ mod tests {
                 for y in [-1.0, -0.1, 0.0, 0.05, 0.2, 0.5, 1.0] {
                     for c in [-1.0, 0.0, 0.5, 0.9, 1.0] {
                         let (air, w) = resolve(&p, y, c).expect("on");
-                        for i in 0..3 {
+                        for (i, v) in air.iter().enumerate() {
                             let pts = [display(sky.fog[i]), display(sky.horizon[i] * scale), display(sky.lower[i] * scale), display(sky.sun[i])];
                             let (lo, hi) = pts.iter().fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
-                            assert!(air[i] >= lo - 1e-5 && air[i] <= hi + 1e-5, "{strength} {y} {c} ch {i}: {} not in {lo}..{hi}", air[i]);
+                            assert!(*v >= lo - 1e-5 && *v <= hi + 1e-5, "{strength} {y} {c} ch {i}: {v} not in {lo}..{hi}");
                             if hi <= 1.0 {
-                                assert!(air[i] <= 1.0 + 1e-6, "within the display range when the weather's colours are");
+                                assert!(*v <= 1.0 + 1e-6, "within the display range when the weather's colours are");
                             }
                         }
                         // The shader's green is the CPU's.
@@ -869,10 +869,10 @@ mod tests {
         let dim = SkyColours { horizon: [0.2, 0.25, 0.3], lower: [0.15, 0.2, 0.35], sky_scale: 1.55, ..clear_noon() };
         let a = aerial(1.0 / DOME_MIX, &dim).expect("on");
         assert_eq!(a.sky_share, 1.0);
-        for i in 0..3 {
-            assert!((a.horizon[i] - display(dim.horizon[i] * 1.55)).abs() < 1e-6, "{:?}", a.horizon);
-            assert!((a.lower[i] - display(dim.lower[i] * 1.55)).abs() < 1e-6, "{:?}", a.lower);
-            assert!(a.horizon[i] < 1.0 && a.lower[i] < 1.0, "colours under 1 stay under 1");
+        for ((h, l), (dh, dl)) in a.horizon.iter().zip(a.lower).zip(dim.horizon.iter().zip(dim.lower)) {
+            assert!((h - display(dh * 1.55)).abs() < 1e-6, "{:?}", a.horizon);
+            assert!((l - display(dl * 1.55)).abs() < 1e-6, "{:?}", a.lower);
+            assert!(*h < 1.0 && l < 1.0, "colours under 1 stay under 1");
         }
         // Not finite: as drawn at 1; below 0: black, never negative.
         let one = aerial(1.0, &SkyColours { sky_scale: f32::NAN, ..dim }).unwrap();
@@ -1024,18 +1024,18 @@ mod tests {
                 let haze = (h > 0.0).then_some(([0.6, 0.55, 0.5], h));
                 let (_, total) = blend([0.2, 0.15, 0.1], air, w, f, haze);
                 let alone = channel_shares(f, w);
-                for i in 0..3 {
-                    assert!((0.0..=1.0 + 1e-6).contains(&total[i]), "{f} {h}: {total:?}");
-                    assert!(total[i] >= alone[i] - 1e-6, "the haze lowered a share: {f} {h} {total:?} vs {alone:?}");
-                    assert!(total[i] >= h - 1e-6, "{f} {h}: {total:?}");
+                for (t, a) in total.iter().zip(alone) {
+                    assert!((0.0..=1.0 + 1e-6).contains(t), "{f} {h}: {total:?}");
+                    assert!(*t >= a - 1e-6, "the haze lowered a share: {f} {h} {total:?} vs {alone:?}");
+                    assert!(*t >= h - 1e-6, "{f} {h}: {total:?}");
                 }
             }
         }
         // With the haze in the in-scatter colour: one mix with the combined share per channel.
         let (c, total) = blend([0.2; 3], air, w, 0.4, Some((air, 0.3)));
-        for i in 0..3 {
-            let want = 0.2 + (air[i] - 0.2) * total[i];
-            assert!((c[i] - want).abs() < 1e-5, "{c:?}");
+        for ((v, a), t) in c.iter().zip(air).zip(total) {
+            let want = 0.2 + (a - 0.2) * t;
+            assert!((v - want).abs() < 1e-5, "{c:?}");
         }
         // Even weights and the fog colour as the in-scatter colour: the old blend exactly.
         let fog = [0.5, 0.55, 0.6];
