@@ -525,17 +525,38 @@ pub fn band_range(k: u8, d: f32, reach: i32) -> VisibilityRange {
 /// A mesh under a loaded or ring cell at step `k`, at distance `d`: the complement of that
 /// cell's step, as the hand-off needs, short of the reach's fade band (where a cover
 /// stands in practice: within the ring's reach). Should the camera have moved away so far
-/// that the mesh lies in the band, it draws at the smaller of the complement's share and
-/// the reach's fade ([`band_range`]), and from the reach on nothing (culled outright).
+/// that the mesh lies in the band, it keeps the complementary pattern (the thresholds the
+/// cover leaves out) with its share capped at the reach's fade: `complement(j)` keeps
+/// thresholds below `16 - j`, so the larger `j` keeps a subset of them and never one the
+/// cover draws. From the reach on nothing (culled outright). The range depends on `d`, so
+/// [`fade_distant`] gives it again while the camera may carry meshes across the band
+/// ([`cell_zone`]).
 pub fn under_range(k: u8, d: f32, reach: i32) -> VisibilityRange {
-    let (z, w) = edge_band(reach);
+    let (_, w) = edge_band(reach);
     if d >= w {
         return VisibilityRange { start_margin: 0.0..0.0, end_margin: 0.0..0.0, use_aabb: false };
     }
-    if d >= z {
-        return band_range((fade::STEPS - k.min(fade::STEPS)).min(edge_steps(d, reach)), d, reach);
+    let k = k.min(fade::STEPS);
+    fade::complement(k.max(fade::STEPS - edge_steps(d, reach)))
+}
+
+/// Where cell `c` lies against the reach's fade band seen from `eye` (game space): 0 wholly
+/// short of it, 2 wholly at or beyond the reach, 1 across it (heights taken generously: the
+/// camera's height plus 10,000 units). A distance-dependent range ([`band_range`],
+/// [`under_range`]) installed while the cell lies across the band, or when its zone
+/// changes, is given again ([`fade_distant`]).
+pub fn cell_zone(c: Grid, eye: Vec3, reach: i32) -> u8 {
+    let (z, w) = edge_band(reach);
+    let near = crate::lod::square_distance(eye.truncate(), c, 1);
+    let far2 = [(0, 0), (1, 0), (0, 1), (1, 1)].iter().map(|&(dx, dy)| Vec2::new((c.0 + dx) as f32 * CELL_SIZE, (c.1 + dy) as f32 * CELL_SIZE).distance(eye.truncate())).fold(0.0, f32::max);
+    let far = far2.hypot(eye.z.abs() + 10_000.0);
+    if far < z {
+        0
+    } else if near >= w {
+        2
+    } else {
+        1
     }
-    fade::complement(k)
 }
 
 /// Whether a rebuilt cell `c` may crossfade with the one it replaces: the whole cell lies
@@ -590,7 +611,7 @@ pub struct CellState {
     refused_min: Option<u64>,
     /// The cell it replaces, until this one rests.
     old: Option<Old>,
-    applied: Option<(DistantRange, i32)>,
+    applied: Option<(DistantRange, i32, u8)>,
     old_applied: Option<u8>,
 }
 
@@ -1166,6 +1187,11 @@ pub fn stream(
         let Some(list) = st.listed.get(&c).cloned() else {
             if replaces {
                 st.rebuild.remove(&c);
+                // In the hysteresis step outside the wanted cells, with its list gone (the
+                // inner radius shrank): it cannot be judged again, so it goes.
+                if !want.contains(&c) {
+                    drop_unlisted(&mut commands, st, c, fading);
+                }
                 continue;
             }
             stopped = true;
@@ -1381,6 +1407,18 @@ fn scan_complete(st: &DistantState, key: ScanKey) -> bool {
 /// The scan position after looking at `looked` of `n` cells from `at` ([`queue_rebuilds`]).
 fn scan_next(at: usize, looked: usize, n: usize) -> usize {
     (at + looked) % n.max(1)
+}
+
+/// Let drawn cell `c` go (it is outside the wanted cells and has no list to be judged
+/// with): it fades out (at once with fades off) and is retired as a leaving cell is.
+fn drop_unlisted(commands: &mut Commands, st: &mut DistantState, c: Grid, fading: bool) {
+    if fading {
+        if let Some(s) = st.cells.get_mut(&c) {
+            s.leaving = true;
+        }
+    } else if let Some(s) = st.cells.remove(&c) {
+        st.retire_cell(commands, s);
+    }
 }
 
 /// Whether a drawn cell lets the layer sleep: at rest (or held under a cover), not
@@ -1675,12 +1713,16 @@ pub fn fade_distant(
     for (c, s) in &mut st.cells {
         let cover = (streamer.loaded.contains_key(c) || ring.cells.contains_key(c)).then(|| scenery_level(streamer.cell_level(*c), &ring.cells, *c));
         let want = distant_range(s.level, cover);
-        // A fading cell's meshes are given their ranges again at each step (their distance
-        // decides); others when their range changes.
-        if s.applied != Some((want, reach)) {
+        // Given again when the range, the reach or the cell's zone against the band changes,
+        // and every frame while a distance-dependent range lies across the band ([`cell_zone`]).
+        let zone = match (want, eye) {
+            (DistantRange::Own(_) | DistantRange::Under(_), Some(eye)) => cell_zone(*c, eye, reach),
+            _ => 0,
+        };
+        if s.applied != Some((want, reach, zone)) || zone == 1 {
             changed = true;
             let first = s.applied.is_none();
-            s.applied = Some((want, reach));
+            s.applied = Some((want, reach, zone));
             let origin = cell_origin(*c);
             for e in children.iter_descendants(s.entity) {
                 if meshes.contains(e) {
@@ -2137,11 +2179,74 @@ mod tests {
                 }
                 let mid = (z + w) / 2.0;
                 let shown = (0..16).filter(|&t| kept(&DistantRange::Under(k).range(mid, reach), mid, t)).count() as u8;
-                assert!(shown <= edge_steps(mid, reach) && shown <= fade::STEPS - k, "reach {reach}, step {k}: in the band, the smaller");
+                assert_eq!(shown, edge_steps(mid, reach).min(fade::STEPS - k), "reach {reach}, step {k}: in the band, the smaller");
                 let near = z - 500.0;
                 assert!(DistantRange::Under(k).range(near, reach) == fade::complement(k), "short of the band: the complement");
             }
         }
+    }
+
+    /// Review of the closing fixes: under a cover the distant mesh keeps the complementary
+    /// pattern through the band: just below the band's inner edge and exactly at it the
+    /// cover and the mesh draw every pixel once (the union of both masks), and inside the
+    /// band they never draw one pixel twice.
+    #[test]
+    fn the_covered_pattern_stays_complementary_into_the_band() {
+        for reach in [REACH_NEAR, REACH_FAR] {
+            let (z, w) = edge_band(reach);
+            for k in 0..=fade::STEPS {
+                let cover = fade::drawn(k);
+                for d in [z - 0.5, z] {
+                    let mine = DistantRange::Under(k).range(d, reach);
+                    for t in 0..16 {
+                        let n = [&cover, &mine].iter().filter(|r| kept(r, d, t)).count();
+                        assert_eq!(n, 1, "reach {reach}, step {k}, {d}: pixel {t} drawn {n} times");
+                    }
+                }
+                for d in [z + 100.0, (z + w) / 2.0, w - 100.0] {
+                    let mine = DistantRange::Under(k).range(d, reach);
+                    assert!((0..16).all(|t| !(kept(&cover, d, t) && kept(&mine, d, t))), "reach {reach}, step {k}, {d}: a pixel drawn twice in the band");
+                }
+            }
+        }
+    }
+
+    /// Review of the closing fixes: a cell's zone against the band decides when its
+    /// distance-dependent ranges are given again: short of the band, across it, beyond the
+    /// reach, and a change as the camera moves.
+    #[test]
+    fn a_cell_zone_follows_the_camera() {
+        let eye = Vec3::new(0.5 * CELL_SIZE, 0.5 * CELL_SIZE, 1000.0);
+        assert_eq!(cell_zone((3, 0), eye, REACH_NEAR), 0, "well short of the band");
+        assert_eq!(cell_zone((7, 0), eye, REACH_NEAR), 1, "across the band");
+        assert_eq!(cell_zone((10, 0), eye, REACH_NEAR), 2, "beyond the reach");
+        let moved = Vec3::new(-3.5 * CELL_SIZE, 0.5 * CELL_SIZE, 1000.0);
+        assert_ne!(cell_zone((3, 0), eye, REACH_NEAR), cell_zone((3, 0), moved, REACH_NEAR), "the camera moved away: another zone, the ranges are given again");
+    }
+
+    /// Review of the closing fixes: a cell in the hysteresis step outside the wanted cells
+    /// whose list went (the inner radius shrank) and whose block then changed would be
+    /// queued by every scan and dropped by every rebuild, never letting the layer sleep. It
+    /// now goes: leaving with fades on, at once without; once it has gone the remaining
+    /// cells settle.
+    #[test]
+    fn an_unlisted_cell_outside_the_wanted_ones_goes() {
+        let world = World::new();
+        let mut queue = bevy::ecs::world::CommandQueue::default();
+        let mut commands = Commands::new(&mut queue, &world);
+        let now = Stamp::default();
+        let mut st = DistantState::default();
+        let mut stale = drawn_cell(0, None);
+        stale.flagged = true;
+        st.cells.insert((9, 0), stale);
+        st.cells.insert((5, 0), drawn_cell(0, None));
+        assert!(!cell_settled(&st.cells[&(9, 0)], now, Some(false)), "its block changed: the layer stays awake");
+        drop_unlisted(&mut commands, &mut st, (9, 0), true);
+        assert!(st.cells[&(9, 0)].leaving, "fades on: it fades out");
+        assert!(!rejudge_due(&st.cells[&(9, 0)], now, Some(false), false, false), "leaving: no longer queued");
+        drop_unlisted(&mut commands, &mut st, (9, 0), false);
+        assert!(!st.cells.contains_key(&(9, 0)), "fades off (or faded out): gone");
+        assert!(st.cells.iter().all(|(c, s)| cell_settled(s, now, if *c == (9, 0) { Some(false) } else { None })), "the rest settle: the layer can sleep");
     }
 
     /// Round 3: the quiet state needs a whole scan lap for the blocks, stamp, reach and
