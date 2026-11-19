@@ -311,12 +311,13 @@ struct Args {
     fog: Option<String>,
     /// Distant object LOD blocks out to this distance in game units (the game's
     /// fBlockLoadDistance; default the owner's INI value) [hypothesis: lod.rs]; the
-    /// terrain reaches at least as far.
+    /// terrain reaches at least as far. 0 drops only the object blocks: --no-lod turns
+    /// off all distant LOD (terrain, water, objects and trees).
     #[arg(long, default_value_t = 125_000.0)]
     lod_distance: f32,
-    /// Distant terrain LOD chunks out to this distance in game units, or to
-    /// --lod-distance when that is larger (default: where the original's horizon was
-    /// matched above Goodsprings, #3055) [observed + hypothesis: lod.rs].
+    /// Distant terrain LOD chunks (and the distant water on them) out to this distance in
+    /// game units, or to --lod-distance when that is larger (default calibrated at one
+    /// pose above Goodsprings, #3055) [observed + hypothesis: lod.rs].
     #[arg(long, default_value_t = 250_000.0)]
     lod_terrain_distance: f32,
     /// Finest terrain LOD (level 4) within this distance (fBlockLoadDistanceLow).

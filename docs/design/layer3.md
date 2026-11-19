@@ -140,16 +140,17 @@ What it does now:
 - Distant LOD (`--no-lod` turns it off; lod.rs): the game's terrain chunks at levels
   4, 8, 16 and 32 and its level-4 object LOD blocks (world.md §7). Which chunks are drawn
   [hypothesis]: a quadtree over the level-32 grid; no terrain chunk beyond
-  `--lod-terrain-distance` (250,000, or `--lod-distance` when that is larger: the
-  original draws terrain at least about 250,000 units out from the hill above Goodsprings
-  [observed: capture of the original, 2026-11-19, #3055; world.md §7 "Terrain reach"];
-  one fixed reach everywhere is [hypothesis], no INI key gives it); a coarser chunk gives
-  way to its four quarters while the
-  camera is nearer to it (horizontally, closest point) than the larger of
+  `--lod-terrain-distance` (250,000, or `--lod-distance` when that is larger: a default
+  calibrated at one pose above Goodsprings, where 250,000 was the first value tried at
+  which our skyline matched the original's [observed: capture of the original and our
+  runs, 2026-11-19, #3055; world.md §7 "Terrain reach"]; the original's own terrain
+  distance, and one fixed reach everywhere, are [hypothesis], no INI key gives it); a
+  coarser chunk gives way to its four quarters while the camera is nearer to it (horizontally, closest point) than the larger of
   `--lod-near-distance` (fBlockLoadDistanceLow, 50,000) and `--lod-split`
   (fSplitDistanceMult, 1.5) × its side. All levels have 256 texels per chunk side, so
   level 4 reaches 50,000 units, level 8 98,304, level 16 196,608 and level 32 the rest.
-  Distant water planes cover the cells out to the terrain's reach. The choice is redone when the camera enters another cell and
+  Distant water planes cover the cells with water under the chosen chunks, so they end
+  where the terrain does. The choice is redone when the camera enters another cell and
   levels switch at once (the game's `fBlockMorphDistanceMult` suggests it morphs between
   levels; not done). Neighbouring chunks share only some edge vertices (world.md §7), so
   every chunk's open edges get skirts hanging 128 units per cell of chunk side.

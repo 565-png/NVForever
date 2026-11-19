@@ -31,12 +31,16 @@
 //! "High" (32,768 against 50,000) [observed: `low.ini` … `VeryHigh.ini` in the game
 //! folder]. The choice is redone when the camera enters another cell; levels switch at
 //! once. Object blocks are drawn over every 4 × 4-cell square nearer than `far`
-//! (fBlockLoadDistance, 125,000), whatever the terrain level there. The terrain reaches farther than the
-//! objects because the original draws it farther: from the hill above Goodsprings
-//! (-65347, 5770) it shows a mountain range along the whole horizon toward Vegas that a
-//! 125,000 reach leaves out, and ours matches it from 250,000 [observed: capture of the
-//! original, 2026-11-19, #3055]; no INI key gives 250,000 [observed: the game's INI
-//! files], and one fixed reach for every place and preset is [hypothesis].
+//! (fBlockLoadDistance, 125,000), whatever the terrain level there. The terrain's reach
+//! of 250,000 is a calibrated default: at one pose, the hill above Goodsprings (-65347,
+//! 5770, z 13970, heading 27°), our render's skyline matched the original's from the
+//! first tested `--lod-distance` of 250,000, and 150,000, 175,000 and 200,000 did not
+//! (that sweep, before the two reaches were split, also moved the object blocks and the
+//! distant water) [observed: capture of the original and our runs, 2026-11-19, #3055].
+//! How far the original actually draws terrain, and whether it is one reach for every
+//! place and preset, is [hypothesis]; no INI key gives 250,000 [observed: the game's INI
+//! files]. Distant water (water.rs) covers the cells under the chosen chunks
+//! ([`LodState::chosen_chunks`]).
 //!
 //! Neighbouring chunks do not share their edge vertices, at the same level or across
 //! levels [observed: level4.x8.y8 / x12.y8 share 14 of 16 + 52 edge positions], so every
@@ -115,13 +119,14 @@ pub struct LodSettings {
     /// reaches at least this far, [`LodSettings::terrain_reach`]).
     pub far: f32,
     /// No terrain chunk beyond this (or beyond `far`, when that is larger). The default,
-    /// 250,000, is where our terrain matched the original's horizon from the hill above
-    /// Goodsprings (-65347, 5770, z 13970, heading 27°): at 125,000 the mountain range
-    /// toward Vegas was missing, at 150,000 part of it showed, at 200,000 most
-    /// [observed: capture of the original, 2026-11-19, #3055: the original draws terrain
-    /// at least about 250,000 units out from that hill]. The game's INI files hold no
-    /// `[TerrainManager]` key that gives it [observed: `Fallout_default.ini` and the four
-    /// presets]; one fixed number for every place and preset is [hypothesis].
+    /// 250,000, is calibrated at one pose, the hill above Goodsprings (-65347, 5770,
+    /// z 13970, heading 27°): our render's skyline matched the original's from the first
+    /// tested `--lod-distance` of 250,000; 150,000, 175,000 and 200,000 did not (that
+    /// sweep also moved the object blocks and the distant water) [observed: capture of
+    /// the original and our runs, 2026-11-19, #3055]. How far the original draws terrain
+    /// is [hypothesis], as is one fixed number for every place and preset; the game's INI
+    /// files hold no `[TerrainManager]` key that gives it [observed: `Fallout_default.ini`
+    /// and the four presets].
     pub terrain_far: f32,
     /// `[TerrainManager] fBlockLoadDistanceLow`: level-4 terrain chunks within.
     pub near: f32,
@@ -283,10 +288,6 @@ fn despawn_all(commands: &mut Commands, entities: impl IntoIterator<Item = Entit
 #[derive(Resource)]
 pub struct LodState {
     pub settings: LodSettings,
-    /// Level-4 squares around the camera's square that reach the terrain's reach
-    /// ([`LodSettings::terrain_reach`], not the object blocks' `far`): water.rs draws
-    /// distant water that far, over the terrain it lies on.
-    pub terrain_radius: i32,
     pub enabled: bool,
     world_name: String,
     /// The south-west cell of the world's LOD grid ([`grid_origin`]).
@@ -296,6 +297,8 @@ pub struct LodState {
     /// Terrain chunks and object-block squares chosen for `centre`.
     chosen: Vec<Chunk>,
     squares: Vec<Grid>,
+    /// Counts the times `chosen` was replaced (water.rs redoes its cells when it moves).
+    choice: u64,
     terrain: HashMap<Chunk, TerrainEntities>,
     /// Chunks no longer chosen, kept drawn until every chosen chunk over their area is
     /// spawned: those wait for their models on worker threads, and dropping the old ones
@@ -374,6 +377,18 @@ impl LodState {
     pub fn terrain_entities(&self) -> impl Iterator<Item = Entity> + '_ {
         self.terrain.values().chain(self.outgoing.values()).flat_map(|t| t.entities.iter().copied())
     }
+
+    /// The terrain chunks chosen for the camera's cell ([`select_chunks`]; none while
+    /// distant LOD is off or before the first update). Distant water (water.rs) covers
+    /// the cells under them, so it ends where the terrain does.
+    pub fn chosen_chunks(&self) -> &[Chunk] {
+        &self.chosen
+    }
+
+    /// Changes whenever [`LodState::chosen_chunks`] is replaced.
+    pub fn choice(&self) -> u64 {
+        self.choice
+    }
 }
 
 /// Threads baking generated terrain (lodgen::Baker, at the lowest priority).
@@ -434,13 +449,13 @@ impl LodState {
         let name = world.index.worldspaces[&world.index.lod_world(world.world)].edid.clone().unwrap_or_default().to_ascii_lowercase();
         LodState {
             settings,
-            terrain_radius: squares_within(settings.terrain_reach()),
             enabled,
             world_name: name,
             origin: (0, 0),
             centre: None,
             chosen: Vec::new(),
             squares: Vec::new(),
+            choice: 0,
             terrain: HashMap::new(),
             outgoing: HashMap::new(),
             block_entities: HashMap::new(),
@@ -473,6 +488,8 @@ impl LodState {
     pub fn set_enabled(&mut self, commands: &mut Commands, enabled: bool) {
         self.enabled = enabled;
         self.centre = None;
+        self.chosen.clear();
+        self.choice += 1;
         for (_, t) in self.terrain.drain().chain(self.outgoing.drain()) {
             despawn_all(commands, t.entities);
         }
@@ -652,6 +669,7 @@ pub fn update_lod(
         let p = g.truncate();
         let s = lod.settings;
         lod.chosen = select_chunks(p, &s, o);
+        lod.choice += 1;
         lod.squares = block_squares(p, &s, o);
         let finest: Vec<Grid> = lod.chosen.iter().filter(|ch| ch.0 == LEVEL).map(|ch| (ch.1, ch.2)).filter(near_gen).collect();
         schedule_generated(&mut lod, centre_chunk, &finest);
