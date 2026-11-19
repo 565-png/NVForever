@@ -2377,14 +2377,15 @@ mod tests {
         assert_eq!(cell_zone(Some((lo, Vec3::new(30_000.0, 4096.0, 20_000.0))), eye, REACH_NEAR), 1, "a tall mesh reaches into the band");
         assert_eq!(cell_zone(None, eye, REACH_NEAR), 1, "no box yet: taken as across");
         // Given again for another zone; in zone 1 only once the eye has moved past EYE_STEP.
-        let a = Some(Applied { range: DistantRange::Own(15), reach: REACH_NEAR, zone: 1, eye: Some(eye) });
+        let given = Applied { range: DistantRange::Own(15), reach: REACH_NEAR, zone: 1, eye: Some(eye) };
+        let a = Some(given);
         assert!(regive(None, DistantRange::Own(15), REACH_NEAR, 1, Some(eye)), "never given");
         assert!(!regive(a, DistantRange::Own(15), REACH_NEAR, 1, Some(eye)), "a still eye: nothing");
         assert!(!regive(a, DistantRange::Own(15), REACH_NEAR, 1, Some(eye + Vec3::X * 50.0)), "50 units: nothing");
         assert!(regive(a, DistantRange::Own(15), REACH_NEAR, 1, Some(eye + Vec3::X * 100.0)), "100 units: given again");
         assert!(regive(a, DistantRange::Own(15), REACH_NEAR, 0, Some(eye)), "another zone");
         assert!(regive(a, DistantRange::Own(14), REACH_NEAR, 1, Some(eye)), "another step");
-        let short = Some(Applied { zone: 0, ..a.unwrap() });
+        let short = Some(Applied { zone: 0, ..given });
         assert!(!regive(short, DistantRange::Own(15), REACH_NEAR, 0, Some(eye + Vec3::X * 1000.0)), "short of the band: the eye does not matter");
     }
 
