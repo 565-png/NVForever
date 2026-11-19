@@ -77,9 +77,6 @@ menu, on a player's start only (not with `--data`, `NVFOREVER_DATA`, a test aid 
 >
 > [ Send reports ]  [ Not now ]   *What is sent?* (opens §3 in the browser)
 
-(The built popup, `reports/mod.rs` `ASK_TEXT`, still says "Gameplay > Reports", the
-category's name before the settings overhaul; #3018.)
-
 - Neither button is pre-selected; Enter does nothing until one is focused, Esc = Not now.
 - The answer is stored straight away (§2.2), so a crash right after still respects it.
 - An existing install that predates this feature sees the popup once at its next start.
