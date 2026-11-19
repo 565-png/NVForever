@@ -2081,7 +2081,7 @@ settings page's old `enhanced` row no longer exists (the settings menu overhaul)
   `sky::update_night_sky`) writes the two fields per part from the live `SkyState`, worked
   out again only when the climate, the weather, the one fading out, the fade, the hour, the
   days passed or `--fog` changed, and only into a material whose stored value moved by more
-  than 1e-3 (each write remakes
+  than 1e-3 (the disc's place by 1e-3 x its distance, the same angle) (each write remakes
   the uniform on the GPU, #897); `update_sky`'s replacement of the uniform keeps them. A new
   sky (a worldspace change) is caught the frame it appears.
 - **Off is as on main.** With the row off the fields stay zero, the system returns at its
@@ -2182,9 +2182,10 @@ settings page's old `enhanced` row no longer exists (the settings menu overhaul)
   <phase> lit <l>, strength <s>, glow <peak> half width <deg>°` (`no moon` for a climate
   without one); the same figures (as `night sky: <weather>: ...`) when the phase's lit share
   changes, and, outside a time-lapse, when the weather changes or the haze moves by 0.1;
-  `night sky: applied: <n> star part(s) twinkling (amplitude <A>), the dome's glow <g>, <k>
-  cloud part(s) moonlit` once each time it turns on, when the parts' materials hold a
-  twinkle and a glow (not by day or at a new moon); `night sky: detail off` (`... off
+  `night sky: applied: <n> star material(s) twinkling (amplitude <A>), the dome's glow <g>,
+  <k> cloud material(s) moonlit` once each time it turns on, when the materials, read back
+  after the writes, hold a twinkle and a glow (not by day or at a new moon; the cloud count
+  includes hidden layers); `night sky: detail off` (`... off
   indoors` on going in). Debug aid
   `NVF_PLAY_DEBUG_NIGHT_SKY=<multiplier>` (0 to 4, 1 as designed): all three times that,
   logged once (`debug switch NVF_PLAY_DEBUG_NIGHT_SKY: ...`) when the detail first turns on;

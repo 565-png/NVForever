@@ -2190,7 +2190,7 @@ expect = [
   "debug switch NVF_PLAY_DEBUG_NIGHT_SKY: the night sky detail x2",
   { re = 'night sky: detail on: .*?: haze [\d.]+, twinkle (\d+\.\d+), ', range = [0.3, 0.9], label = "the stars twinkle at night: (0.15 + 0.25 x the weather's haze) x 2" },
   { re = 'night sky: detail on: .*, moon full lit 1\.00, strength 2\.00, ', label = "day 0 at 23:00: a full moon, fully up, x2" },
-  { re = 'night sky: applied: [1-9]\d* star part\(s\) twinkling \(amplitude [\d.]+\), the dome.s glow (?P<n>[\d.]+), \d+ cloud part\(s\) moonlit', range = [0.02, 0.4], label = "the stars' materials took a twinkle and the dome's a glow (0.06 x (1 + 0.5 haze) x 2 at the full moon)" },
+  { re = 'night sky: applied: [1-9]\d* star material\(s\) twinkling \(amplitude [\d.]+\), the dome.s glow (?P<n>[\d.]+), \d+ cloud material\(s\) moonlit', range = [0.02, 0.4], label = "the stars' materials hold a twinkle and the dome's a glow, read back after the writes (0.06 x (1 + 0.5 haze) x 2 at the full moon)" },
 ]
 order = [
   [

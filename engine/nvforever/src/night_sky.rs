@@ -390,7 +390,9 @@ fn update_detail(
             Detail::default()
         }
         Some(sky) => {
-            let m = *state.debug.get_or_insert_with(|| match debug_multiplier(std::env::var(DEBUG_VAR).ok().as_deref()) {
+            // The tests' runs keep the multiplier at 1 whatever the environment holds.
+            let text = if cfg!(test) { None } else { std::env::var(DEBUG_VAR).ok() };
+            let m = *state.debug.get_or_insert_with(|| match debug_multiplier(text.as_deref()) {
                 Ok(Some(m)) => {
                     info!("debug switch {DEBUG_VAR}: the night sky detail x{m}");
                     m
@@ -439,8 +441,6 @@ fn update_detail(
             }
         }
     };
-    // What the parts hold once this frame's writes are made (for the line saying so).
-    let (mut twinkling, mut moonlit, mut amplitude, mut glow) = (0, 0, 0.0f32, 0.0f32);
     for (m, star, dome) in &parts {
         let (moon, night) = match (star, dome) {
             (true, _) => (Vec4::ZERO, d.stars),
@@ -448,20 +448,8 @@ fn update_detail(
             _ => (d.cloud_moon, d.cloud_night),
         };
         let Some(mat) = materials.get(&m.0) else { continue };
-        match (star, dome) {
-            (true, _) if night.x > 0.0 => {
-                twinkling += 1;
-                amplitude = night.x;
-            }
-            (false, true) => glow = glow.max(night.w),
-            (false, false) if night.w > 0.0 => moonlit += 1,
-            _ => {}
-        }
         let l = mat.extension.light;
-        // Zero is written exactly (the shader's branches test for above 0); the rest when it
-        // moved by more than the tolerance.
-        let same = |stored: Vec4, want: Vec4| if want == Vec4::ZERO { stored == Vec4::ZERO } else { stored.abs_diff_eq(want, WRITE_TOLERANCE) };
-        if same(l.moon, moon) && same(l.night, night) {
+        if same_night(l.night, night) && same_moon(l.moon, moon) {
             continue;
         }
         if let Some(mut mat) = materials.get_mut(&m.0) {
@@ -470,12 +458,45 @@ fn update_detail(
         }
     }
     state.shown = d != Detail::default();
-    // Once each time it turns on: the stars' materials hold an amplitude and the dome's a glow
-    // (a smoke test's proof that the values reached the parts, not only the log).
-    if state.active && !state.applied && twinkling > 0 && glow > 0.0 {
-        state.applied = true;
-        info!("night sky: applied: {twinkling} star part(s) twinkling (amplitude {amplitude:.2}), the dome's glow {glow:.3}, {moonlit} cloud part(s) moonlit");
+    // Once each time it turns on: the stars' materials hold an amplitude and the dome's a glow,
+    // read back from the materials after the writes (a smoke test's proof that the values
+    // reached the parts, not only the log). The cloud count is of materials, hidden layers
+    // included.
+    if state.active && !state.applied {
+        let (mut twinkling, mut moonlit, mut amplitude, mut glow) = (0, 0, 0.0f32, 0.0f32);
+        for (m, star, dome) in &parts {
+            let Some(night) = materials.get(&m.0).map(|mat| mat.extension.light.night) else { continue };
+            match (star, dome) {
+                (true, _) if night.x > 0.0 => {
+                    twinkling += 1;
+                    amplitude = night.x;
+                }
+                (false, true) => glow = glow.max(night.w),
+                (false, false) if night.w > 0.0 => moonlit += 1,
+                _ => {}
+            }
+        }
+        if twinkling > 0 && glow > 0.0 {
+            state.applied = true;
+            info!("night sky: applied: {twinkling} star material(s) twinkling (amplitude {amplitude:.2}), the dome's glow {glow:.3}, {moonlit} cloud material(s) moonlit");
+        }
     }
+}
+
+/// Whether a stored `night` field may stay for `want`: exactly zero when zero is wanted (the
+/// shader's branches test for above 0), else within [`WRITE_TOLERANCE`].
+fn same_night(stored: Vec4, want: Vec4) -> bool {
+    if want == Vec4::ZERO { stored == Vec4::ZERO } else { stored.abs_diff_eq(want, WRITE_TOLERANCE) }
+}
+
+/// The same for a `moon` field, whose xyz is the disc's place [`SUN_DISTANCE`] out: within
+/// that many times the tolerance there (the same angle as 1e-3 of a unit direction), within
+/// the tolerance in w (the lobe's g).
+fn same_moon(stored: Vec4, want: Vec4) -> bool {
+    if want == Vec4::ZERO {
+        return stored == Vec4::ZERO;
+    }
+    stored.truncate().abs_diff_eq(want.truncate(), WRITE_TOLERANCE * SUN_DISTANCE) && (stored.w - want.w).abs() <= WRITE_TOLERANCE
 }
 
 #[cfg(test)]
@@ -861,6 +882,23 @@ mod tests {
         app.update();
         assert_eq!(light(&app, &star).night, faded);
         assert!(light(&app, &dome).night.w > 0.0);
+    }
+
+    #[test]
+    fn a_moon_place_is_written_again_only_when_it_moved_by_the_tolerances_angle() {
+        let m = Vec3::new(0.3, 0.8, -0.2).normalize();
+        let want = (m * SUN_DISTANCE).extend(0.9);
+        // A step far under a thousandth of a radian stays; a larger one or a new g is written.
+        let near = ((m + Vec3::new(2e-4, 0.0, 0.0)).normalize() * SUN_DISTANCE).extend(0.9);
+        assert!(same_moon(near, want));
+        let far = ((m + Vec3::new(5e-3, 0.0, 0.0)).normalize() * SUN_DISTANCE).extend(0.9);
+        assert!(!same_moon(far, want));
+        assert!(!same_moon(want.with_w(0.85), want));
+        // Zero is written exactly.
+        assert!(same_moon(Vec4::ZERO, Vec4::ZERO));
+        assert!(!same_moon(Vec4::new(1e-3, 0.0, 0.0, 0.0), Vec4::ZERO));
+        assert!(!same_night(Vec4::new(0.0, 0.0, 0.0, 1e-4), Vec4::ZERO));
+        assert!(same_night(Vec4::new(0.3, 258.0, 0.0, 0.0), Vec4::new(0.3005, 258.0, 0.0, 0.0)));
     }
 
     #[test]
