@@ -15,8 +15,10 @@
 //! - **What is drawn** ([`choose`]): exterior STAT and SCOL references that pass the
 //!   ring's scenery filter (not deleted, not an imposter, primitive or marker, not hidden).
 //!   A reference with a model override (`Streamer::model_overrides`: a destroyed object's
-//!   stage, a swap) is not drawn here at all; when the overrides of a cell's references
-//!   change either way, the cell is judged again ([`override_changes`]). Conservative first rule, free of doubling while
+//!   stage, a swap) is not drawn here at all: when its override comes, its shapes are
+//!   despawned at once from every distant cell holding it (drawn, replaced or being
+//!   spawned), and when the overrides of a cell's references change either way, the cell
+//!   is judged again ([`override_changes`]). Conservative first rule, free of doubling while
 //!   the blocks match the load order: a reference flagged visible when distant (its own
 //!   flag or its base's, in any plugin's version: `fnv_world::placed::visible_when_distant`)
 //!   is left to the block while its cell's segment is not empty or not known yet
@@ -30,7 +32,12 @@
 //!   would still pass the cap is left out ([`admits`]). Logged when it bites. The sum is
 //!   never kept as a running count: it is read from the cells alive (their retained
 //!   models, the reservations of cells being spawned, the predecessors still fading out),
-//!   so a cell dropped half-spawned or retired gives its share back by leaving.
+//!   so a cell dropped half-spawned or retired gives its share back by leaving. One
+//!   rebuilt cell at a time counts without its predecessor's share, so the total passes
+//!   the cap by at most that one predecessor's share, from the replacement's first full
+//!   model until the predecessor has faded out. A model refused for the budget is
+//!   recorded apart from one too small ([`Choice::Budget`]), and its cell is judged again
+//!   once room for it comes back.
 //! - **Draw-only**, as the ring's cells: a distant cell's entity carries [`DistantCell`]
 //!   and `nvf_play::DrawOnlyCell`, never `world::CellEntity` or `nvf_play::RenderCell`; its
 //!   models keep `RefVisual` (the simulation's enable state, `activate::sync_visuals` on
@@ -52,21 +59,29 @@
 //!   and spawned are each stopped at the deadline between items; a single item is never
 //!   split, so a frame can pass the budget by one cell's plan (its entries judged) or one
 //!   reference's spawn (all the shapes of its model). Taking finished lists in is bounded
-//!   by [`MAX_LISTING`]; the override check is one pass over the overrides. Going indoors
+//!   by [`MAX_LISTING`]; the override check is one pass over the overrides. A settled frame
+//!   (nothing under way, every wanted cell at rest and judged for now, the inputs the
+//!   same: centre, radii, the loaded cells' and the ring's counts and fades, the blocks'
+//!   revision, the overrides) returns after comparing them, without a pass over the cells;
+//!   the reported time covers both systems. A worker's fit is taken only while it is for
+//!   the centre and reach judged now. Going indoors
 //!   or turning the distant LOD off hides everything at once and despawns it over the next
 //!   frames, in the bounded slices the loaded cells use (`world::despawn_dying`); a travel
 //!   or another worldspace drops everything at once (behind the loading screen).
 //! - **Fades** ([`distant_range`], [`fade_distant`]): a distant cell in a square drawn by
 //!   a loaded or ring cell draws the complement of that cell's fade step (the same
 //!   references in full) and is held at rest as the ring's cells are (`full_detail::hand_off`),
-//!   so each pixel is drawn once; alone it fades in and out by its own step, and always
-//!   dithers out with distance between `reach - 1` and `reach` cells from the camera: the
-//!   temporal step rides on the range's near side and the reach's fade on its far side,
-//!   so nothing beyond the reach shows while a cell fades in or out (within the last cell
-//!   width the distance's dither decides). A rebuilt cell crossfades with the one it
+//!   so each pixel is drawn once (the cover is the loaded or ring cell's scenery level,
+//!   [`scenery_level`], never the ring's tree level); alone it fades in and out by its own
+//!   step, and always dithers out with distance between `reach - 1` and `reach` cells from
+//!   the camera. One range cannot multiply two dithers, so a fading mesh is drawn at the
+//!   smaller of its cell's step and the reach's fade at its own distance ([`band_range`]),
+//!   and nothing beyond the reach; at rest the plain distance fade takes over at the same
+//!   level. After Off the cells fade out with the last reach's fade. A rebuilt cell crossfades with the one it
 //!   replaces only where that whole cell lies within `reach - 2` cells of the middle cell's
 //!   centre ([`crossfade_ok`]); nearer the edge it takes over at once, since the old cell's
-//!   complement could not also carry the reach's fade.
+//!   complement could not also carry the reach's fade, and a predecessor that no longer
+//!   passes (the reach shrank, the centre moved) goes at once.
 //!   Cells leave by fading out past `reach + 1` (or out of a smaller new reach), or once
 //!   the loaded or ring cell over them is fully drawn.
 //! - **Re-judging** ([`Stamp`]): each cell keeps the centre and the ratio table it was
@@ -74,14 +89,16 @@
 //!   budget's fit changes the ratios, or the block of a cell holding flagged references
 //!   answers differently than when it was judged, the cell is judged again as soon as it
 //!   is at rest, alone and not being replaced (a cell fading, covered or replacing then
-//!   catches up later); one whose drawn set changes is built again and crossfaded with the
+//!   catches up later; the scan goes on in a stable order from where it stopped); one
+//!   whose drawn set changes is built again and crossfaded with the
 //!   old one (the new one's step against the old one's complement). A full model already
 //!   drawn stays while its radius is at least [`HYSTERESIS`] of the threshold, so nothing
 //!   flickers at it.
 //! - **Logs** (only while on): `distant objects: reach N cells (ratio R)` when it comes on;
 //!   at the exit `distant objects summary: <cells> cells, <drawn> drawn (<lod> lod, <full>
-//!   full), <held> held by blocks, <unknown> block unknown, <small> too small, <t> ms on
-//!   the main thread`.
+//!   full), <held> held by blocks, <unknown> block unknown, <small> too small, <b> past
+//!   the triangle budget, <t> ms on the main thread`. When the row goes Off, once the last
+//!   cell has gone: `distant objects: off, 0 cells left`.
 
 use crate::emittance::EmittanceState;
 use crate::fade::{self, Fading};
@@ -294,6 +311,9 @@ pub enum Choice {
     /// Left out for its state: a model override (destroyed, swapped), or not enabled with
     /// no simulation to show it.
     Skipped,
+    /// A full model refused for the triangle budget (not too small): its cell is judged
+    /// again when capacity comes back.
+    Budget,
 }
 
 impl Choice {
@@ -412,8 +432,8 @@ pub fn distant_cells(centre: Grid, inner: i32, reach: i32) -> Vec<Grid> {
 /// Which range a distant cell's meshes are drawn with ([`distant_range`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DistantRange {
-    /// Its own fade's step (`fade::drawn`'s near side) with the reach's distance fade on
-    /// the far side ([`edge_range`]).
+    /// Fading in or out at its own step: each mesh drawn at the smaller of that step and
+    /// the reach's fade at its distance ([`band_range`]).
     Own(u8),
     /// Under a loaded or ring cell of the same square: the complement of that cell's step.
     Under(u8),
@@ -422,9 +442,10 @@ pub enum DistantRange {
 }
 
 impl DistantRange {
-    pub fn range(self, reach: i32) -> VisibilityRange {
+    /// The range of a mesh at distance `d` from the camera.
+    pub fn range(self, d: f32, reach: i32) -> VisibilityRange {
         match self {
-            DistantRange::Own(k) => VisibilityRange { start_margin: fade::drawn(k).start_margin, end_margin: edge_range(reach).end_margin, use_aabb: false },
+            DistantRange::Own(k) => band_range(k, d, reach),
             DistantRange::Under(k) => fade::complement(k),
             DistantRange::Edge => edge_range(reach),
         }
@@ -441,7 +462,7 @@ impl DistantRange {
 }
 
 /// The range for a distant cell at `own` (0 … 1) whose square has a loaded or ring cell
-/// drawn at `cover` (the larger of their levels), if any.
+/// drawn at `cover` (the larger of their scenery levels, [`scenery_level`]), if any.
 pub fn distant_range(own: f32, cover: Option<f32>) -> DistantRange {
     match cover {
         Some(l) => DistantRange::Under(fade::step(l)),
@@ -452,21 +473,72 @@ pub fn distant_range(own: f32, cover: Option<f32>) -> DistantRange {
     }
 }
 
+/// How much of cell `c`'s static scenery the loaded cells and the ring draw: the loaded
+/// cell's level (`loaded`) or the ring cell's, whichever is more. Not the ring's tree
+/// level: a ring cell whose trees fall back to the billboards still draws its statics
+/// (`full_detail::tree_level` would read it as absent and let a distant cell draw over it).
+pub fn scenery_level(loaded: f32, ring: &HashMap<Grid, full_detail::RingCellState>, c: Grid) -> f32 {
+    loaded.max(ring.get(&c).map_or(0.0, |s| s.level))
+}
+
+/// The reach's fade band: fully drawn to `reach - 1` cell widths from the camera, nothing
+/// from `reach` (game units).
+fn edge_band(reach: i32) -> (f32, f32) {
+    let inner = (reach - 1).max(1) as f32;
+    (inner * CELL_SIZE, (inner + 1.0) * CELL_SIZE)
+}
+
 /// Fully drawn within `reach - 1` cell widths of the camera, dithering out to nothing at
 /// `reach`.
 pub fn edge_range(reach: i32) -> VisibilityRange {
-    let inner = (reach - 1).max(1) as f32;
-    fade::drawn_within(Some(inner * CELL_SIZE), 1.0 / inner)
+    let (z, w) = edge_band(reach);
+    fade::drawn_within(Some(z), w / z - 1.0)
+}
+
+/// The dither steps (of [`fade::STEPS`]) the reach's fade leaves drawn at distance `d`, as
+/// the visibility-range dither rounds them.
+pub fn edge_steps(d: f32, reach: i32) -> u8 {
+    let (z, w) = edge_band(reach);
+    if d < z {
+        return fade::STEPS;
+    }
+    let hidden = (((d - z) / (w - z)) * fade::STEPS as f32).round().clamp(0.0, fade::STEPS as f32) as u8;
+    fade::STEPS - hidden
+}
+
+/// A fading distant mesh at distance `d`: drawn at the smaller of its cell's step `k` and
+/// the reach's fade there ([`edge_steps`]), on the range's near side, and cut beyond the
+/// reach on its far side. One range cannot multiply the two dithers, so the smaller level
+/// stands for their product: inside the band the step alone, at rest the reach's fade
+/// alone, never anything beyond the reach.
+pub fn band_range(k: u8, d: f32, reach: i32) -> VisibilityRange {
+    let (_, w) = edge_band(reach);
+    VisibilityRange { start_margin: fade::drawn(k.min(edge_steps(d, reach))).start_margin, end_margin: w..w + 1.0, use_aabb: false }
 }
 
 /// Whether a rebuilt cell `c` may crossfade with the one it replaces: the whole cell lies
 /// within `reach - 2` cell widths of the middle cell's centre, so with the camera anywhere
 /// in its cell the old cell (drawn as a complement, which cannot carry the reach's fade)
-/// is short of the reach's fade band. Otherwise the new cell takes over at once.
+/// is short of the reach's fade band. Otherwise the new cell takes over at once; a
+/// predecessor that no longer passes (the reach shrank, the centre moved) goes at once.
 pub fn crossfade_ok(c: Grid, centre: Grid, reach: i32) -> bool {
     let p = centre_point(centre);
     let far = [(0, 0), (1, 0), (0, 1), (1, 1)].iter().map(|&(dx, dy)| Vec2::new((c.0 + dx) as f32 * CELL_SIZE, (c.1 + dy) as f32 * CELL_SIZE).distance(p)).fold(0.0, f32::max);
     far <= (reach - 2).max(0) as f32 * CELL_SIZE
+}
+
+/// The cell a rebuilt one replaces, still drawn as its complement, with the triangles of
+/// each of its full models (still drawn, still counted).
+#[derive(Debug)]
+struct Old {
+    entity: Entity,
+    full_of: HashMap<u32, u64>,
+}
+
+impl Old {
+    fn share(&self) -> u64 {
+        self.full_of.values().sum()
+    }
 }
 
 /// One drawn distant cell.
@@ -488,13 +560,25 @@ pub struct CellState {
     flagged: bool,
     /// The model override of one of its references came or went: judged again.
     dirty: bool,
-    /// Triangles of its full models.
-    full_tris: u64,
-    /// The cell it replaces, drawn as the complement of this one's step until it rests,
-    /// and the triangles of that cell's full models (still drawn, still counted).
-    old: Option<(Entity, u64)>,
+    /// The triangles of each of its full models ([`Budget`]).
+    full_of: HashMap<u32, u64>,
+    /// The smallest full model refused for the budget, if any ([`Choice::Budget`]).
+    refused_min: Option<u64>,
+    /// The cell it replaces, until this one rests.
+    old: Option<Old>,
     applied: Option<(DistantRange, i32)>,
     old_applied: Option<u8>,
+}
+
+impl CellState {
+    fn full_tris(&self) -> u64 {
+        self.full_of.values().sum()
+    }
+
+    /// A full model of it was refused for the budget ([`Choice::Budget`]).
+    fn refused(&self) -> bool {
+        self.refused_min.is_some()
+    }
 }
 
 /// A distant cell whose references are being spawned (hidden until all are in).
@@ -513,7 +597,10 @@ struct CellSpawn {
     segment: Option<bool>,
     /// What was drawn of each reference so far.
     drawn: HashMap<u32, Choice>,
-    full_tris: u64,
+    /// The triangles of each full model it has drawn so far (its reservation).
+    full_of: HashMap<u32, u64>,
+    /// The smallest full model refused for the budget, if any.
+    refused_min: Option<u64>,
     /// An override of one of its references changed while it was spawned.
     dirty: bool,
 }
@@ -533,7 +620,28 @@ pub struct DistantStats {
     pub held: usize,
     pub unknown: usize,
     pub small: usize,
+    /// Full models refused for the triangle budget.
+    pub refused: usize,
     pub ms: f64,
+}
+
+/// What a settled frame compares to tell that nothing changed ([`stream`]): the inputs the
+/// cells are judged and faded from.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct Settle {
+    centre: Option<Grid>,
+    inner: i32,
+    reach: i32,
+    lod: bool,
+    world: u32,
+    travels: u64,
+    loaded: usize,
+    loaded_fading: bool,
+    streaming: bool,
+    ring_cells: usize,
+    ring_moving: bool,
+    overrides: usize,
+    blocks: u64,
 }
 
 /// The distant cells (module notes).
@@ -541,6 +649,8 @@ pub struct DistantStats {
 pub struct DistantState {
     /// Grid steps reached (0: off).
     pub reach: i32,
+    /// The last reach that was on: cells fading out after Off keep its distance fade.
+    fade_reach: i32,
     world: u32,
     travels: u64,
     pub cells: HashMap<Grid, CellState>,
@@ -553,9 +663,9 @@ pub struct DistantState {
     /// Lists came in since the budget was last fitted.
     lists_changed: bool,
     /// The budget's fit wanted (the centre moved, lists came in) and the one running on a
-    /// worker, with the centre it is for.
+    /// worker, with the centre and reach it is for.
     fit_wanted: bool,
-    fitting: Option<(Task<(Vec<f32>, bool)>, Grid)>,
+    fitting: Option<(Task<(Vec<f32>, bool)>, Grid, i32)>,
     /// The centre the size rule was last judged for, and its ratios per ring.
     judged: Option<Grid>,
     ratios: Vec<f32>,
@@ -568,6 +678,26 @@ pub struct DistantState {
     budget_logged: Option<Grid>,
     /// Triangles of each full model drawn so far, by path.
     tris_of: HashMap<String, u64>,
+    /// The one rebuilt cell allowed to count without its predecessor's share ([`admits`]).
+    credit: Option<Grid>,
+    /// The budget's total last frame (capacity coming back re-judges refused cells).
+    last_total: u64,
+    /// The cells in a stable order and where the re-judge scan goes on from
+    /// ([`queue_rebuilds`]); `cells_rev` counts the changes of the cell set.
+    scan: Vec<Grid>,
+    scan_rev: u64,
+    scan_at: usize,
+    cells_rev: u64,
+    /// The cached cells wanted, for this centre, inner radius and reach.
+    want: Vec<Grid>,
+    want_for: Option<(Grid, i32, i32)>,
+    /// Nothing is under way and the inputs were `settled` last frame: a settled frame
+    /// returns at once ([`stream`]); `fade_dirty`: the ranges may need giving again.
+    quiet: bool,
+    settled: Settle,
+    fade_dirty: bool,
+    /// The off line was logged since the row went Off.
+    off_logged: bool,
     /// `world::spawn_model`'s counts for the distant models.
     models: StreamStats,
     pub stats: DistantStats,
@@ -584,7 +714,7 @@ impl DistantState {
     /// the loading screen) despawns them now; otherwise (indoors, the LOD off) they are
     /// hidden now and despawned over the next frames in bounded slices.
     fn clear(&mut self, commands: &mut Commands, at_once: bool) {
-        let olds: Vec<Entity> = self.cells.values().filter_map(|s| s.old.map(|o| o.0)).collect();
+        let olds: Vec<Entity> = self.cells.values().filter_map(|s| s.old.as_ref().map(|o| o.entity)).collect();
         let all: Vec<Entity> = self.cells.drain().map(|(_, s)| s.entity).chain(self.spawning.drain().map(|(_, s)| s.entity)).chain(olds).collect();
         if at_once {
             for e in all.into_iter().chain(self.dying.drain(..)) {
@@ -601,14 +731,18 @@ impl DistantState {
         self.listing.clear();
         self.listed.clear();
         self.judged = None;
+        self.credit = None;
+        self.want_for = None;
+        self.cells_rev += 1;
+        self.quiet = false;
     }
 
     /// The triangle budget's parts, read from the cells alive now ([`Budget`]).
     pub fn budget(&self) -> Budget {
         Budget {
-            retained: self.cells.values().map(|s| s.full_tris).sum(),
-            reserved: self.spawning.values().map(|s| s.full_tris).sum(),
-            fading: self.cells.values().filter_map(|s| s.old.map(|o| o.1)).sum(),
+            retained: self.cells.values().map(CellState::full_tris).sum(),
+            reserved: self.spawning.values().map(|s| s.full_of.values().sum::<u64>()).sum(),
+            fading: self.cells.values().filter_map(|s| s.old.as_ref().map(Old::share)).sum(),
         }
     }
 
@@ -620,10 +754,23 @@ impl DistantState {
 
     /// Retire a drawn cell with the one it replaces.
     fn retire_cell(&mut self, commands: &mut Commands, s: CellState) {
-        if let Some((o, _)) = s.old {
-            self.retire(commands, o);
+        if let Some(o) = s.old {
+            self.retire(commands, o.entity);
         }
         self.retire(commands, s.entity);
+        self.cells_rev += 1;
+    }
+
+    /// The rebuilt cell holding the predecessor credit, if it still needs it: a replacement
+    /// being spawned, or one crossfading with its predecessor.
+    fn release_credit(&mut self) {
+        if let Some(c) = self.credit {
+            let spawning = self.spawning.get(&c).is_some_and(|s| s.replaces);
+            let fading = self.cells.get(&c).is_some_and(|s| s.old.is_some());
+            if !spawning && !fading {
+                self.credit = None;
+            }
+        }
     }
 }
 
@@ -648,17 +795,18 @@ pub struct Budget {
 }
 
 impl Budget {
-    #[cfg(test)]
     pub fn total(self) -> u64 {
         self.retained + self.reserved + self.fading
     }
 }
 
 /// Whether a full model of `tris` triangles may be drawn by a spawn within `cap`: against
-/// everything drawn, reserved and fading, except, for a cell rebuilt in place, the
-/// `predecessor`'s retained models (they go once it rests; counting them would drop
-/// models the new cell keeps). While the two crossfade the total can pass the cap by at
-/// most that one cell's models; every other spawn meanwhile counts both [design].
+/// everything drawn, reserved and fading, except, for the one rebuilt cell holding the
+/// predecessor credit (`DistantState::credit`), its `predecessor`'s retained models (they
+/// go once it rests; counting them would drop models the new cell keeps). So the total
+/// passes the cap by at most one cell's share (that predecessor's), from the
+/// replacement's first full model until the predecessor has faded out; every other
+/// spawn counts everything [design].
 pub fn admits(b: Budget, predecessor: u64, tris: u64, cap: u64) -> bool {
     b.retained.saturating_sub(predecessor) + b.reserved + b.fading + tris <= cap
 }
@@ -690,9 +838,15 @@ fn plan_cell(list: &CellList, c: Grid, centre: Grid, ratios: &[f32], segment: Op
 }
 
 /// The drawn part of a plan (reference, choice), to tell whether a cell must be built
-/// again.
+/// again. A model refused for the budget counts as the full model it was planned as, so a
+/// cell is not rebuilt for that alone (capacity coming back marks it, [`stream`]).
 fn drawn_set(list: &CellList, plan: &[(usize, Choice)]) -> BTreeMap<u32, Choice> {
     plan.iter().filter(|(_, ch)| ch.drawn()).map(|&(i, ch)| (list.entries[i].p.form_id, ch)).collect()
+}
+
+/// [`drawn_set`] of what a drawn cell did draw.
+fn drawn_of(plan: &HashMap<u32, Choice>) -> BTreeMap<u32, Choice> {
+    plan.iter().filter(|(_, ch)| ch.drawn()).map(|(r, ch)| (*r, *ch)).collect()
 }
 
 /// The model (path, alternate textures) a planned reference draws.
@@ -704,8 +858,16 @@ fn model_of(e: &Entry, ch: Choice) -> Option<(&str, &[AltTexture])> {
     }
 }
 
+/// Whether a rebuilt cell's predecessor goes now: the new cell is at rest, under a cover
+/// or leaving, or the predecessor may no longer crossfade ([`crossfade_ok`]: the reach
+/// shrank or the centre moved), when the new cell takes over at once.
+fn predecessor_goes(level: f32, covered: bool, leaving: bool, crossfade: bool) -> bool {
+    level >= 1.0 || covered || leaving || !crossfade
+}
+
 /// The distant cells' streaming each frame (module notes); after the ring, before
-/// [`fade_distant`].
+/// [`fade_distant`]. A settled frame (nothing under way, the inputs unchanged) returns
+/// after comparing them.
 #[allow(clippy::too_many_arguments)]
 pub fn stream(
     mut commands: Commands,
@@ -719,15 +881,41 @@ pub fn stream(
     mut models: ModelCtx,
     mut emittance: ResMut<EmittanceState>,
     (sim, loading): (Option<Res<nvf_play::sim::SimState>>, Option<Res<nvf_play::loading::Loading>>),
-    children: Query<&Children>,
+    (children, refs): (Query<&Children>, Query<&nvf_play::RefVisual>),
 ) {
     let st = &mut *state;
     let reach = if lod.enabled { graphics.distant_objects.reach() } else { 0 };
     if reach == 0 && st.idle() {
         return;
     }
-    world::despawn_dying(&mut commands, &mut st.dying, &children);
+    let started = Instant::now();
     let centre = streamer.centre.filter(|_| streamer.interior.is_none());
+    let inner = streamer.radius.max(graphics.full_detail.radius());
+    let settle = Settle {
+        centre,
+        inner,
+        reach,
+        lod: lod.enabled,
+        world: world.world,
+        travels: streamer.travels,
+        loaded: streamer.loaded.len(),
+        loaded_fading: !streamer.fades.is_empty(),
+        streaming: !streamer.settled || !streamer.spawning.is_empty(),
+        ring_cells: ring.cells.len(),
+        ring_moving: ring.cells.values().any(|s| !s.full()),
+        overrides: streamer.model_overrides.len(),
+        blocks: blocks.rev(),
+    };
+    // Model overrides that came or went (one pass over the overrides, every frame).
+    let changed = override_changes(&st.overrides_seen, &streamer.model_overrides);
+    if st.quiet && st.settled == settle && changed.is_empty() {
+        st.stats.ms += started.elapsed().as_secs_f64() * 1000.0;
+        return;
+    }
+    st.settled = settle;
+    st.quiet = false;
+    st.fade_dirty = true;
+    world::despawn_dying(&mut commands, &mut st.dying, &children);
     let travelled = st.world != world.world || st.travels != streamer.travels;
     if travelled || centre.is_none() || !lod.enabled {
         st.clear(&mut commands, travelled);
@@ -740,6 +928,8 @@ pub fn stream(
         if reach > 0 {
             info!("distant objects: reach {reach} cells (ratio {SIZE_RATIO})");
             st.used = Some(reach);
+            st.fade_reach = reach;
+            st.off_logged = false;
         } else {
             st.listing.clear();
             st.listed.clear();
@@ -748,10 +938,18 @@ pub fn stream(
     }
     let Some(centre) = centre else { return };
     let Ok(root) = root.single() else { return };
-    let inner = streamer.radius.max(graphics.full_detail.radius());
     let fading = streamer.fade_secs > 0.0;
-    let cover = |c: &Grid| (streamer.loaded.contains_key(c) || ring.cells.contains_key(c)).then(|| full_detail::tree_level(streamer.cell_level(*c), Some(&ring.cells), *c));
+    let cover = |c: &Grid| (streamer.loaded.contains_key(c) || ring.cells.contains_key(c)).then(|| scenery_level(streamer.cell_level(*c), &ring.cells, *c));
     let cover_full = |c: &Grid| (streamer.loaded.contains_key(c) && !streamer.fades.contains_key(c)) || ring.cells.get(c).is_some_and(|s| s.full());
+
+    // The shapes of a reference whose override came go at once from every distant cell
+    // holding it; the cells holding a changed one are judged again.
+    if !changed.is_empty() {
+        st.overrides_seen = streamer.model_overrides.keys().copied().collect();
+        let came: HashSet<u32> = changed.iter().copied().filter(|r| streamer.model_overrides.contains_key(r)).collect();
+        hide_overridden(&mut commands, st, &came, &children, &refs);
+        mark_overridden(st, &changed);
+    }
 
     // The hand-off with the loaded and ring cells, then the cells that go.
     let mut gone: Vec<Grid> = Vec::new();
@@ -777,13 +975,18 @@ pub fn stream(
             }
         }
     }
-    let want = if reach > 0 { distant_cells(centre, inner, reach) } else { Vec::new() };
+    if reach > 0 && st.want_for != Some((centre, inner, reach)) {
+        st.want = distant_cells(centre, inner, reach);
+        st.want_for = Some((centre, inner, reach));
+    }
+    let want = if reach > 0 { std::mem::take(&mut st.want) } else { Vec::new() };
     for c in &want {
         if let Some(s) = st.cells.get_mut(c) {
             s.leaving = false;
         }
     }
     let rate = if fading { time.delta_secs() / streamer.fade_secs } else { 1.0 };
+    let clamp_reach = if reach > 0 { reach } else { st.fade_reach };
     let mut rested: Vec<Entity> = Vec::new();
     for (c, s) in &mut st.cells {
         // Held at rest under a cover ([`hand_off`]).
@@ -793,10 +996,16 @@ pub fn stream(
                 gone.push(*c);
             }
         }
-        // A rebuilt cell at rest or under a cover: the one it replaced goes.
-        if s.old.is_some() && (s.level >= 1.0 || cover(c).is_some() || s.leaving) {
-            rested.extend(s.old.take().map(|o| o.0));
-            s.old_applied = None;
+        if s.old.is_some() {
+            let crossfade = crossfade_ok(*c, centre, clamp_reach);
+            if predecessor_goes(s.level, cover(c).is_some(), s.leaving, crossfade) {
+                rested.extend(s.old.take().map(|o| o.entity));
+                s.old_applied = None;
+                // Past the crossfade's reach: the new cell takes over at once.
+                if !crossfade && !s.leaving {
+                    s.level = 1.0;
+                }
+            }
         }
     }
     for e in rested {
@@ -817,11 +1026,17 @@ pub fn stream(
             st.retire(&mut commands, sp.entity);
         }
     }
+    st.release_credit();
     if reach == 0 {
+        // Off: the cells fade out through the frames above; one line once the last is gone.
+        if st.cells.is_empty() && st.spawning.is_empty() && st.used.is_some() && !st.off_logged {
+            st.off_logged = true;
+            info!("distant objects: off, 0 cells left");
+        }
+        st.stats.ms += started.elapsed().as_secs_f64() * 1000.0;
         return;
     }
 
-    let started = Instant::now();
     let deadline = started + SPAWN_BUDGET;
     let behind_screen = loading.is_some_and(|l| l.unseen_frames());
     let loaded = streamer.radius;
@@ -829,16 +1044,22 @@ pub fn stream(
     let idle = streamer.settled && complete && streamer.spawning.is_empty() && !behind_screen && ring.idle(centre, loaded);
     list_cells(&world, st, &want, centre, inner, idle && !streamer.ahead.busy(), &streamer.hide, &models.data.vfs, deadline);
     if !idle {
+        st.want = want;
         st.stats.ms += started.elapsed().as_secs_f64() * 1000.0;
         return;
     }
 
     // The size rule's ratios, fitted to the budget on a worker when the centre moved or
-    // lists came in; a finished fit is taken in first.
-    let fitted = st.fitting.as_mut().and_then(|(task, at)| check_ready(task).map(|r| (r, *at)));
-    if let Some(((ratios, raised), at)) = fitted {
+    // lists came in; a finished fit is taken in only while it is for the centre and reach
+    // judged now (a stale one is dropped and fitted again).
+    let fitted = st.fitting.as_mut().and_then(|(task, at, r)| check_ready(task).map(|res| (res, *at, *r)));
+    if let Some(((ratios, raised), at, r)) = fitted {
         st.fitting = None;
-        take_fit(st, ratios, raised, at);
+        if Some(at) == st.judged && r == st.reach {
+            take_fit(st, ratios, raised, at);
+        } else {
+            st.fit_wanted = true;
+        }
     }
     if st.judged.is_none_or(|j| steps(j, centre) >= REJUDGE_STEPS) {
         st.judged = Some(centre);
@@ -853,11 +1074,11 @@ pub fn stream(
         let at = st.judged.unwrap_or(centre);
         start_fit(st, &want, at, &blocks);
     }
-    // Model overrides that came or went mark the cells holding those references.
-    let changed = override_changes(&st.overrides_seen, &streamer.model_overrides);
-    if !changed.is_empty() {
-        st.overrides_seen = streamer.model_overrides.keys().copied().collect();
-        mark_overridden(st, &changed);
+    // Capacity came back (a cell or a predecessor went): cells whose smallest refused
+    // model fits now are judged again.
+    let mut budget = st.budget();
+    if budget.total() < st.last_total {
+        mark_refused(st, FULL_TRIANGLE_BUDGET.saturating_sub(budget.total()));
     }
     let judged = st.judged.unwrap_or(centre);
     let now = Stamp { centre: judged, ratios: st.ratio_rev };
@@ -868,8 +1089,6 @@ pub fn stream(
     }
 
     let ctx = SpawnCtx { world: &world, streamer: &streamer, simulated: sim.is_some() };
-    // The budget as the cells alive leave it; what this frame spawns is added as it goes.
-    let mut budget = st.budget();
     let mut under_way: Vec<Grid> = st.spawning.keys().copied().collect();
     under_way.sort_by_key(|&c| order_key(c, centre));
     for c in under_way {
@@ -880,6 +1099,7 @@ pub fn stream(
         spawn_refs(&mut commands, &ctx, st, &mut sp, &mut budget, deadline, &mut models, &mut emittance);
         if sp.done() {
             finish(&mut commands, st, c, sp, fading, crossfade_ok(c, centre, reach));
+            budget = st.budget();
         } else {
             st.spawning.insert(c, sp);
         }
@@ -893,8 +1113,10 @@ pub fn stream(
     let simulated = sim.is_some();
     let skip = |e: &Entry| streamer.model_overrides.contains_key(&e.p.form_id) || !full_detail::drawn_for_enable_state(e.enabled, e.p.deleted(), simulated);
     let mut waiting = 0usize;
+    let mut stopped = false;
     for (c, replaces) in todo {
         if Instant::now() >= deadline || waiting >= PREFETCH_CELLS {
+            stopped = true;
             break;
         }
         // Nearest first: a cell waits for its list.
@@ -903,6 +1125,7 @@ pub fn stream(
                 st.rebuild.remove(&c);
                 continue;
             }
+            stopped = true;
             break;
         };
         let segment = blocks.segment(c);
@@ -910,7 +1133,8 @@ pub fn stream(
         let plan = plan_cell(&list, c, judged, &st.ratios, segment, before, &skip);
         if replaces {
             st.rebuild.remove(&c);
-            let same = st.cells.get(&c).is_some_and(|s| drawn_set(&list, &plan) == s.plan.iter().filter(|(_, ch)| ch.drawn()).map(|(r, ch)| (*r, *ch)).collect::<BTreeMap<u32, Choice>>());
+            // The same drawn set, and no model refused for the budget that could go in now.
+            let same = st.cells.get(&c).is_some_and(|s| drawn_set(&list, &plan) == drawn_of(&s.plan) && !s.refused());
             if same {
                 if let Some(s) = st.cells.get_mut(&c) {
                     s.stamp = now;
@@ -932,14 +1156,31 @@ pub fn stream(
         let origin = cell_origin(c);
         let entity = commands.spawn((Name::new(format!("Distant cell {},{}", c.0, c.1)), DistantCell { grid: c }, nvf_play::DrawOnlyCell, Transform::from_translation(origin), Visibility::Hidden)).id();
         commands.entity(root).add_child(entity);
-        let mut sp = CellSpawn { entity, grid: c, replaces, list, plan, next: 0, later: Vec::new(), origin, stamp: now, segment, drawn: HashMap::new(), full_tris: 0, dirty: false };
+        let mut sp = CellSpawn { entity, grid: c, replaces, list, plan, next: 0, later: Vec::new(), origin, stamp: now, segment, drawn: HashMap::new(), full_of: HashMap::new(), refused_min: None, dirty: false };
         spawn_refs(&mut commands, &ctx, st, &mut sp, &mut budget, deadline, &mut models, &mut emittance);
         if sp.done() {
             finish(&mut commands, st, c, sp, fading, crossfade_ok(c, centre, reach));
+            budget = st.budget();
         } else {
             st.spawning.insert(c, sp);
         }
     }
+    st.release_credit();
+    st.last_total = st.budget().total();
+    // Quiet: nothing under way, every wanted cell drawn at rest and judged for now, so the
+    // next frames with the same inputs need do nothing.
+    st.quiet = !stopped
+        && waiting == 0
+        && st.spawning.is_empty()
+        && st.rebuild.is_empty()
+        && st.listing.is_empty()
+        && st.dying.is_empty()
+        && st.fitting.is_none()
+        && !st.fit_wanted
+        && !st.lists_changed
+        && want.iter().all(|c| st.cells.contains_key(c))
+        && st.cells.values().all(|s| (s.level >= 1.0 || s.under) && !s.leaving && s.old.is_none() && !s.dirty && (s.stamp == now || s.under));
+    st.want = want;
     st.stats.ms += started.elapsed().as_secs_f64() * 1000.0;
 }
 
@@ -1014,12 +1255,12 @@ pub fn candidates(cells: &[(i32, Option<bool>, Arc<CellList>)], tris_of: &HashMa
 }
 
 /// Start the budget's fit for `centre` on a worker over the listed wanted cells (the main
-/// thread only gathers the cells' lists).
+/// thread only gathers the cells' lists); the result names the centre and reach it is for.
 fn start_fit(st: &mut DistantState, want: &[Grid], centre: Grid, blocks: &BlockContents) {
     let cells: FitCells = want.iter().filter_map(|c| Some((steps(*c, centre), blocks.segment(*c), st.listed.get(c)?.clone()))).collect();
     let (tris_of, reach) = (st.tris_of.clone(), st.reach);
     let task = nvf_assets::read_pool::read_pool().spawn(async move { fit_budget(&candidates(&cells, &tris_of, centre), reach, SIZE_RATIO, FULL_TRIANGLE_BUDGET) });
-    st.fitting = Some((task, centre));
+    st.fitting = Some((task, centre, reach));
 }
 
 /// Take a finished fit (for `centre`) in: new ratios make every cell's stamp stale; log
@@ -1042,25 +1283,42 @@ fn take_fit(st: &mut DistantState, ratios: Vec<f32>, raised: bool, centre: Grid)
 /// otherwise than when they were judged (it became known, empty or not). Only cells at
 /// rest, alone and not being replaced: the others keep their stale stamp and are queued
 /// once they are (whether the cell is built again is decided when it is planned, by its
-/// drawn set). Stops at the deadline; the rest are looked at next frame.
+/// drawn set). The cells are scanned in a stable order from where the last scan stopped
+/// (at the deadline), so every cell is reached however short the frames.
 fn queue_rebuilds(st: &mut DistantState, now: Stamp, blocks: &BlockContents, cover: &impl Fn(&Grid) -> Option<f32>, deadline: Instant) {
+    if st.scan_rev != st.cells_rev || st.scan.len() != st.cells.len() {
+        st.scan = st.cells.keys().copied().collect();
+        st.scan.sort_unstable();
+        st.scan_rev = st.cells_rev;
+        st.scan_at = 0;
+    }
+    let (n, start) = (st.scan.len(), st.scan_at);
     let mut queue = Vec::new();
-    for (n, (c, s)) in st.cells.iter().enumerate() {
-        if n % 64 == 63 && Instant::now() >= deadline {
+    let mut looked = 0;
+    while looked < n {
+        if looked % 64 == 63 && Instant::now() >= deadline {
             break;
         }
-        if st.rebuild.contains(c) || !rejudge_due(s, now, blocks.segment(*c), cover(c).is_some(), st.spawning.contains_key(c)) {
-            continue;
+        let c = st.scan[(start + looked) % n];
+        looked += 1;
+        let Some(s) = st.cells.get(&c) else { continue };
+        if !st.rebuild.contains(&c) && rejudge_due(s, now, blocks.segment(c), cover(&c).is_some(), st.spawning.contains_key(&c)) {
+            queue.push(c);
         }
-        queue.push(*c);
     }
+    st.scan_at = scan_next(start, looked, n);
     st.rebuild.extend(queue);
+}
+
+/// The scan position after looking at `looked` of `n` cells from `at` ([`queue_rebuilds`]).
+fn scan_next(at: usize, looked: usize, n: usize) -> usize {
+    (at + looked) % n.max(1)
 }
 
 /// Whether a drawn cell is to be judged again now ([`queue_rebuilds`]): `segment` is its
 /// block's answer now, `covered` a loaded or ring cell over it, `spawning` a replacement
-/// under way. A cell whose references' overrides changed goes even while fading or
-/// covered (its old look must not stay).
+/// under way. A cell whose references' overrides changed, or with a model refused for
+/// the budget when capacity came back, goes even while fading or covered.
 fn rejudge_due(s: &CellState, now: Stamp, segment: Option<bool>, covered: bool, spawning: bool) -> bool {
     if s.leaving || s.old.is_some() || spawning {
         return false;
@@ -1072,6 +1330,16 @@ fn rejudge_due(s: &CellState, now: Stamp, segment: Option<bool>, covered: bool, 
         return false;
     }
     s.stamp != now || (s.flagged && s.segment != segment)
+}
+
+/// Mark the drawn cells with a model refused for the budget that would fit in `room`
+/// triangles: judged again (capacity came back).
+fn mark_refused(st: &mut DistantState, room: u64) {
+    for s in st.cells.values_mut() {
+        if s.refused_min.is_some_and(|m| m <= room) {
+            s.dirty = true;
+        }
+    }
 }
 
 /// Mark the drawn cells and the cells being spawned that hold one of `changed` (their
@@ -1089,6 +1357,52 @@ fn mark_overridden(st: &mut DistantState, changed: &HashSet<u32>) {
     }
 }
 
+/// Take the shapes of the references in `came` (an override came) out of every distant
+/// cell now: drawn cells, the cells they replace and cells being spawned. A reference's
+/// entities are the children of its cell carrying its `RefVisual` (`world::spawn_model`
+/// puts its shapes, rig root and holders there); they are despawned, the reference is
+/// recorded as left out and its triangles leave the budget.
+fn hide_overridden(commands: &mut Commands, st: &mut DistantState, came: &HashSet<u32>, children: &Query<&Children>, refs: &Query<&nvf_play::RefVisual>) {
+    if came.is_empty() {
+        return;
+    }
+    let mut take = |cell: Entity| {
+        for &k in children.get(cell).map(|c| &c[..]).unwrap_or(&[]) {
+            if refs.get(k).is_ok_and(|r| came.contains(&r.0)) {
+                commands.entity(k).try_despawn();
+            }
+        }
+    };
+    for s in st.cells.values_mut() {
+        if !came.iter().any(|r| s.plan.get(r).is_some_and(|c| c.drawn())) && !s.old.as_ref().is_some_and(|o| came.iter().any(|r| o.full_of.contains_key(r))) {
+            continue;
+        }
+        take(s.entity);
+        if let Some(o) = s.old.as_mut() {
+            take(o.entity);
+            o.full_of.retain(|r, _| !came.contains(r));
+        }
+        for r in came {
+            if let Some(c) = s.plan.get_mut(r).filter(|c| c.drawn()) {
+                *c = Choice::Skipped;
+            }
+            s.full_of.remove(r);
+        }
+    }
+    for sp in st.spawning.values_mut() {
+        if !came.iter().any(|r| sp.drawn.get(r).is_some_and(|c| c.drawn())) {
+            continue;
+        }
+        take(sp.entity);
+        for r in came {
+            if let Some(c) = sp.drawn.get_mut(r).filter(|c| c.drawn()) {
+                *c = Choice::Skipped;
+            }
+            sp.full_of.remove(r);
+        }
+    }
+}
+
 /// What a distant reference's spawn reads.
 struct SpawnCtx<'a> {
     world: &'a WorldData,
@@ -1101,8 +1415,14 @@ struct SpawnCtx<'a> {
 /// prepares a model on this thread.
 #[allow(clippy::too_many_arguments)]
 fn spawn_refs(commands: &mut Commands, ctx: &SpawnCtx, st: &mut DistantState, sp: &mut CellSpawn, budget: &mut Budget, deadline: Instant, models: &mut ModelCtx, emittance: &mut EmittanceState) {
-    // A rebuilt cell's predecessor goes once it rests ([`admits`]).
-    let predecessor = if sp.replaces { st.cells.get(&sp.grid).map_or(0, |s| s.full_tris) } else { 0 };
+    // A rebuilt cell's predecessor goes once it rests ([`admits`]): one replacement at a
+    // time counts without its predecessor's share.
+    let predecessor = if sp.replaces && st.credit.is_none_or(|c| c == sp.grid) {
+        st.credit = Some(sp.grid);
+        st.cells.get(&sp.grid).map_or(0, CellState::full_tris)
+    } else {
+        0
+    };
     while sp.next < sp.plan.len() && Instant::now() < deadline {
         let (i, ch) = sp.plan[sp.next];
         sp.next += 1;
@@ -1142,7 +1462,9 @@ fn spawn_one(commands: &mut Commands, ctx: &SpawnCtx, st: &mut DistantState, sp:
             tris = models.model_swapped(path, false, alt).map_or(0, |m| m.triangles as u64);
             st.tris_of.insert(e.full.clone(), tris);
             if !admits(*budget, predecessor, tris, FULL_TRIANGLE_BUDGET) {
-                sp.drawn.insert(r, Choice::Small);
+                // Refused for now, not too small: judged again when capacity comes back.
+                sp.drawn.insert(r, Choice::Budget);
+                sp.refused_min = Some(sp.refused_min.map_or(tris, |m| m.min(tris)));
                 return true;
             }
             (*e.base).clone()
@@ -1153,7 +1475,7 @@ fn spawn_one(commands: &mut Commands, ctx: &SpawnCtx, st: &mut DistantState, sp:
     let drawn = world::spawn_model(commands, sp.entity, ctx.world, &e.p, r, &base, rt, models, emittance, &ctx.streamer.hide, &mut st.models, SpawnMode::Scenery);
     // The cell's reservation (read back by [`DistantState::budget`]) and this frame's copy.
     if drawn && ch == Choice::Full {
-        sp.full_tris += tris;
+        sp.full_of.insert(r, tris);
         budget.reserved += tris;
     }
     sp.drawn.insert(r, if drawn { ch } else { Choice::Small });
@@ -1173,11 +1495,11 @@ fn finish(commands: &mut Commands, st: &mut DistantState, c: Grid, sp: CellSpawn
             st.cells.insert(c, prev);
             return;
         }
-        if let Some((o, _)) = prev.old {
-            st.retire(commands, o);
+        if let Some(o) = prev.old {
+            st.retire(commands, o.entity);
         }
         if fading && crossfade {
-            old = Some((prev.entity, prev.full_tris));
+            old = Some(Old { entity: prev.entity, full_of: prev.full_of });
         } else {
             st.retire(commands, prev.entity);
             level = 1.0;
@@ -1191,6 +1513,7 @@ fn finish(commands: &mut Commands, st: &mut DistantState, c: Grid, sp: CellSpawn
             Choice::Held => st.stats.held += 1,
             Choice::Unknown => st.stats.unknown += 1,
             Choice::Small => st.stats.small += 1,
+            Choice::Budget => st.stats.refused += 1,
             Choice::Skipped => {}
         }
     }
@@ -1207,51 +1530,82 @@ fn finish(commands: &mut Commands, st: &mut DistantState, c: Grid, sp: CellSpawn
         segment: sp.segment,
         flagged,
         dirty: sp.dirty,
-        full_tris: sp.full_tris,
+        full_of: sp.full_of,
+        refused_min: sp.refused_min,
         old,
         applied: None,
         old_applied: None,
     };
     st.cells.insert(c, state);
+    st.cells_rev += 1;
+}
+
+/// A mesh's position in game space: its transforms up to its distant cell composed onto
+/// the cell's origin (the frame a mesh is spawned its global transform is not yet there).
+fn game_position(e: Entity, cell: Entity, origin: Vec3, transforms: &Query<&Transform>, parents: &Query<&ChildOf>) -> Vec3 {
+    let mut m = Affine3A::IDENTITY;
+    let mut at = e;
+    while at != cell {
+        let Ok(t) = transforms.get(at) else { break };
+        m = t.compute_affine() * m;
+        let Ok(p) = parents.get(at) else { break };
+        at = p.parent();
+    }
+    origin + Vec3::from(m.translation)
 }
 
 /// Give each distant cell's meshes their range ([`distant_range`]: the complement of a
-/// loaded or ring cell over it, its own fade, or the distance fade at rest) and no sun
-/// shadow; the cell a rebuilt one replaces draws the complement of the new one's step.
-/// Runs after [`stream`], before `fade::fade_cells`.
-#[allow(clippy::type_complexity)]
+/// loaded or ring cell over it, its own fade composed with the reach's per mesh
+/// ([`band_range`]), or the distance fade at rest) and no sun shadow; the cell a rebuilt
+/// one replaces draws the complement of the new one's step. Cells fading out after Off
+/// keep the last reach's fade. Runs after [`stream`], before `fade::fade_cells`; a quiet
+/// frame returns at once.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn fade_distant(
     mut commands: Commands,
     streamer: Res<Streamer>,
     ring: Res<FullDetailRing>,
     mut state: ResMut<DistantState>,
-    children: Query<&Children>,
+    (children, parents, transforms): (Query<&Children>, Query<&ChildOf>, Query<&Transform>),
     meshes: Query<(), Fading>,
     casters: Query<Has<NotShadowCaster>, With<Mesh3d>>,
+    camera: Query<&GlobalTransform, crate::fly::WorldCamera>,
 ) {
-    if state.cells.is_empty() {
+    if state.cells.is_empty() || !state.fade_dirty {
         return;
     }
-    let reach = state.reach.max(1);
-    for (c, s) in &mut state.cells {
-        let cover = (streamer.loaded.contains_key(c) || ring.cells.contains_key(c)).then(|| full_detail::tree_level(streamer.cell_level(*c), Some(&ring.cells), *c));
+    let started = Instant::now();
+    let st = &mut *state;
+    let reach = if st.reach > 0 { st.reach } else { st.fade_reach.max(1) };
+    let eye = camera.single().map(|g| crate::world::bevy_to_game(g.translation())).ok();
+    let mut changed = false;
+    for (c, s) in &mut st.cells {
+        let cover = (streamer.loaded.contains_key(c) || ring.cells.contains_key(c)).then(|| scenery_level(streamer.cell_level(*c), &ring.cells, *c));
         let want = distant_range(s.level, cover);
+        // A fading cell's meshes are given their ranges again at each step (their distance
+        // decides); others when their range changes.
         if s.applied != Some((want, reach)) {
+            changed = true;
             let first = s.applied.is_none();
             s.applied = Some((want, reach));
-            let range = want.range(reach);
+            let origin = cell_origin(*c);
             for e in children.iter_descendants(s.entity) {
                 if meshes.contains(e) {
-                    commands.entity(e).insert(range.clone());
+                    let d = match (want, eye) {
+                        (DistantRange::Own(_), Some(eye)) => game_position(e, s.entity, origin, &transforms, &parents).distance(eye),
+                        _ => 0.0,
+                    };
+                    commands.entity(e).insert(want.range(d, reach));
                 }
                 if first && matches!(casters.get(e), Ok(false)) {
                     commands.entity(e).insert(NotShadowCaster);
                 }
             }
         }
-        if let Some((old, _)) = s.old {
+        if let Some(old) = s.old.as_ref().map(|o| o.entity) {
             let k = want.own_step();
             if s.old_applied != Some(k) {
+                changed = true;
                 s.old_applied = Some(k);
                 let range = fade::complement(k);
                 for e in children.iter_descendants(old).filter(|&e| meshes.contains(e)) {
@@ -1260,6 +1614,8 @@ pub fn fade_distant(
             }
         }
     }
+    st.fade_dirty = changed || !st.quiet;
+    st.stats.ms += started.elapsed().as_secs_f64() * 1000.0;
 }
 
 /// The exit summary (module notes), only when the distant objects were on at some time.
@@ -1269,7 +1625,7 @@ pub fn report(mut exit: MessageReader<AppExit>, state: Res<DistantState>) {
     }
     let s = &state.stats;
     info!(
-        "distant objects summary: {} cells, {} drawn ({} lod, {} full), {} held by blocks, {} block unknown, {} too small, {:.0} ms on the main thread",
+        "distant objects summary: {} cells, {} drawn ({} lod, {} full), {} held by blocks, {} block unknown, {} too small, {} past the triangle budget, {:.0} ms on the main thread",
         s.cells,
         s.lod + s.full,
         s.lod,
@@ -1277,6 +1633,7 @@ pub fn report(mut exit: MessageReader<AppExit>, state: Res<DistantState>) {
         s.held,
         s.unknown,
         s.small,
+        s.refused,
         s.ms
     );
 }
@@ -1437,20 +1794,25 @@ mod tests {
                 for kc in 0..=s {
                     let cover = kc as f32 / s as f32;
                     let Some(level) = hand_off(kd as f32 / s as f32, leaving, Some(kc == s), under) else { continue };
-                    let mine = distant_range(level, Some(cover)).range(REACH_NEAR);
+                    let mine = distant_range(level, Some(cover)).range(d, REACH_NEAR);
                     let theirs = fade::drawn(kc as u8);
                     for t in 0..16 {
                         let n = [&mine, &theirs].iter().filter(|r| kept(r, d, t)).count();
                         assert_eq!(n, 1, "distant step {kd} leaving {leaving}, cover step {kc}: pixel {t} drawn {n} times");
                     }
                     // A loaded cell at step kc with a ring cell under it (ring at rest, its
-                    // complement): the cover level is the ring's 1, the distant cell culled.
+                    // complement): the cover level is the ring's 1, the distant cell culled;
+                    // also when the ring cell's trees fell back to the billboards
+                    // (`trees_kept`): its statics are still drawn (the tree level would not
+                    // count it).
                     let ring = full_detail::ring_range(1.0, Some(cover)).range();
-                    let tree = full_detail::tree_level(cover, Some(&HashMap::from([((3, 0), ring_state(1.0))])), (3, 0));
-                    let mine = distant_range(level, Some(tree)).range(REACH_NEAR);
-                    for t in 0..16 {
-                        let n = [&mine, &theirs, &ring].iter().filter(|r| kept(r, d, t)).count();
-                        assert_eq!(n, 1, "with a ring cell under the loaded one, cover step {kc}: pixel {t} drawn {n} times");
+                    for state in [ring_state(1.0), full_detail::RingCellState::for_test_trees_kept(1.0)] {
+                        let level_here = scenery_level(cover, &HashMap::from([((3, 0), state)]), (3, 0));
+                        let mine = distant_range(level, Some(level_here)).range(d, REACH_NEAR);
+                        for t in 0..16 {
+                            let n = [&mine, &theirs, &ring].iter().filter(|r| kept(r, d, t)).count();
+                            assert_eq!(n, 1, "with a ring cell under the loaded one, cover step {kc}: pixel {t} drawn {n} times");
+                        }
                     }
                 }
             }
@@ -1460,13 +1822,13 @@ mod tests {
             let new = distant_range(k as f32 / s as f32, None);
             let old = fade::complement(new.own_step());
             for t in 0..16 {
-                let n = [&new.range(REACH_FAR), &old].iter().filter(|r| kept(r, d, t)).count();
+                let n = [&new.range(d, REACH_FAR), &old].iter().filter(|r| kept(r, d, t)).count();
                 assert_eq!(n, 1, "rebuild step {k}: pixel {t} drawn {n} times");
             }
         }
         // At rest and alone: the distance fade.
         assert_eq!(distant_range(1.0, None), DistantRange::Edge);
-        let edge = DistantRange::Edge.range(REACH_NEAR);
+        let edge = DistantRange::Edge.range(0.0, REACH_NEAR);
         assert!(fade::at_rest(&edge), "a fully drawn range (the sliders' test)");
         assert!((0..16).all(|t| kept(&edge, 6.5 * CELL_SIZE, t)), "inside reach - 1: every pixel");
         assert!((0..16).all(|t| !kept(&edge, 8.1 * CELL_SIZE, t)), "past the reach: none");
@@ -1489,10 +1851,11 @@ mod tests {
     fn the_reach_fade_holds_during_fades() {
         for reach in [REACH_NEAR, REACH_FAR] {
             for k in 0..fade::STEPS {
-                let own = DistantRange::Own(k).range(reach);
                 let beyond = reach as f32 * CELL_SIZE + 100.0;
-                assert!((0..16).all(|t| !kept(&own, beyond, t)), "reach {reach}, step {k}: something beyond the reach");
+                let far = DistantRange::Own(k).range(beyond, reach);
+                assert!((0..16).all(|t| !kept(&far, beyond, t)), "reach {reach}, step {k}: something beyond the reach");
                 let inside = (reach - 1) as f32 * CELL_SIZE - 500.0;
+                let own = DistantRange::Own(k).range(inside, reach);
                 let shown = (0..16).filter(|&t| kept(&own, inside, t)).count();
                 let plain = (0..16).filter(|&t| kept(&fade::drawn(k), inside, t)).count();
                 assert_eq!(shown, plain, "reach {reach}, step {k}: inside, the temporal step alone");
@@ -1510,6 +1873,118 @@ mod tests {
         assert!(crossfade_ok((9, 0), (0, 0), REACH_FAR));
         assert!(!crossfade_ok((10, 0), (0, 0), REACH_FAR));
         assert!(!crossfade_ok((5, 5), (0, 0), REACH_NEAR), "a diagonal");
+    }
+
+    /// A resting ring cell whose trees fell back to the billboards still covers its square's
+    /// statics: the distant cell under it is culled (the ring's tree level would read the
+    /// cell as absent and let the distant copy draw fully beside the ring's statics).
+    #[test]
+    fn a_ring_cell_with_billboard_trees_still_covers_the_statics() {
+        let ring = HashMap::from([((3, 0), full_detail::RingCellState::for_test_trees_kept(1.0))]);
+        assert_eq!(full_detail::tree_level(0.0, Some(&ring), (3, 0)), 0.0, "the tree level ignores it");
+        assert_eq!(scenery_level(0.0, &ring, (3, 0)), 1.0, "the scenery level counts it");
+        assert_eq!(distant_range(1.0, Some(scenery_level(0.0, &ring, (3, 0)))), DistantRange::Under(fade::STEPS));
+        assert_eq!(scenery_level(0.25, &HashMap::new(), (3, 0)), 0.25, "the loaded cell alone");
+    }
+
+    /// The temporal step and the reach's fade compose as the smaller of the two at every
+    /// distance: inside the band the step alone (even step 0 draws nothing at the band's
+    /// start), across the band never more than either, nothing beyond the reach, and at rest
+    /// the band range meets the distance fade it hands over to.
+    #[test]
+    fn the_temporal_step_and_the_reach_fade_compose() {
+        let shown = |r: &VisibilityRange, d: f32| (0..16).filter(|&t| kept(r, d, t)).count() as u8;
+        for reach in [REACH_NEAR, REACH_FAR] {
+            let (z, w) = edge_band(reach);
+            for d in [z - 200.0, z + 1.0, (z + w) / 2.0, w - 1.0, w + 10.0] {
+                for k in 0..=fade::STEPS {
+                    let r = band_range(k, d, reach);
+                    let edge = edge_steps(d, reach);
+                    assert_eq!(shown(&r, d), k.min(edge), "reach {reach}, step {k}, {d}: the smaller of the two");
+                }
+                assert_eq!(shown(&band_range(fade::STEPS, d, reach), d), shown(&edge_range(reach), d), "reach {reach}, {d}: at rest it meets the distance fade");
+            }
+            assert_eq!(shown(&band_range(0, z + 1.0, reach), z + 1.0), 0, "step 0 at the band's start: nothing");
+            assert_eq!(edge_steps(z - 1.0, reach), fade::STEPS);
+            assert_eq!(edge_steps(w + 1.0, reach), 0);
+            assert_eq!(edge_steps((z + w) / 2.0, reach), fade::STEPS / 2);
+        }
+    }
+
+    /// Off fades the cells out with the last reach's distance fade (not a reach of 1, which
+    /// culled them on the switch frame); a predecessor that may no longer crossfade after a
+    /// shrink (cell (6, 6) at 12 cells, past 8 cell widths diagonally at 8) goes at once and
+    /// its new cell takes over.
+    #[test]
+    fn off_and_a_shrink_mid_fade() {
+        assert!(crossfade_ok((6, 6), (0, 0), REACH_FAR), "a 12-cell crossfade");
+        assert!(!crossfade_ok((6, 6), (0, 0), REACH_NEAR), "not after a shrink to 8");
+        assert!(predecessor_goes(0.4, false, false, crossfade_ok((6, 6), (0, 0), REACH_NEAR)), "the predecessor goes at once");
+        assert!(!predecessor_goes(0.4, false, false, true), "otherwise it crossfades on");
+        assert!(predecessor_goes(1.0, false, false, true) && predecessor_goes(0.4, true, false, true) && predecessor_goes(0.4, false, true, true));
+        // Off: the fade reach stays the last one on.
+        let mut st = DistantState { reach: REACH_FAR, fade_reach: REACH_FAR, ..default() };
+        st.reach = 0;
+        let fade_reach = if st.reach > 0 { st.reach } else { st.fade_reach.max(1) };
+        assert_eq!(fade_reach, REACH_FAR);
+        let mid = 6.0 * CELL_SIZE;
+        assert_eq!((0..16).filter(|&t| kept(&DistantRange::Own(8).range(mid, fade_reach), mid, t)).count(), 8, "half drawn mid-fade, as before the switch");
+    }
+
+    /// Admission outlives no shortage: a model refused for the budget is recorded apart
+    /// from one too small, and its cell is marked once capacity for it comes back; one
+    /// rebuilt cell at a time counts without its predecessor, so the total passes the cap by
+    /// at most that predecessor's share.
+    #[test]
+    fn refused_models_come_back_with_capacity() {
+        assert!(!Choice::Budget.drawn() && Choice::Budget != Choice::Small);
+        let mut st = DistantState::default();
+        let mut s = drawn_cell(0, None);
+        s.refused_min = Some(3000);
+        st.cells.insert((9, 0), s);
+        mark_refused(&mut st, 2000);
+        assert!(!st.cells[&(9, 0)].dirty, "no room for it yet");
+        mark_refused(&mut st, 3000);
+        assert!(st.cells[&(9, 0)].dirty, "room again: judged again");
+        // The credit: held by a replacement while it spawns or crossfades, then released.
+        st.credit = Some((9, 0));
+        st.release_credit();
+        assert_eq!(st.credit, None, "neither spawning nor crossfading: released");
+        st.spawning.insert((9, 0), a_spawn((9, 0), true, 0));
+        st.credit = Some((9, 0));
+        st.release_credit();
+        assert_eq!(st.credit, Some((9, 0)), "its replacement spawns");
+    }
+
+    /// The re-judge scan goes on where it stopped, in a stable order, so every cell is
+    /// reached however short the frames; a fit for another centre or reach is not taken.
+    #[test]
+    fn the_scan_goes_round() {
+        assert_eq!(scan_next(0, 64, 100), 64);
+        assert_eq!(scan_next(64, 64, 100), 28, "wraps round");
+        assert_eq!(scan_next(5, 0, 0), 0);
+        let mut st = DistantState::default();
+        for x in 0..10 {
+            st.cells.insert((x, 0), drawn_cell(0, None));
+        }
+        st.cells_rev = 1;
+        let blocks = BlockContents::default();
+        let now = Stamp { centre: (5, 5), ratios: 0 };
+        queue_rebuilds(&mut st, now, &blocks, &|_| None, Instant::now() + Duration::from_secs(1));
+        assert_eq!(st.rebuild.len(), 10, "every stale cell");
+        assert_eq!(st.scan, (0..10).map(|x| (x, 0)).collect::<Vec<_>>(), "a stable order");
+    }
+
+    /// A settled frame compares its inputs: the same ones leave a quiet state quiet, any
+    /// change (the centre, the ring's cells moving, a block, an override) does not.
+    #[test]
+    fn a_settled_frame_compares_its_inputs() {
+        let a = Settle { centre: Some((0, 0)), inner: 2, reach: 8, lod: true, ..default() };
+        assert_eq!(a, Settle { ..a });
+        assert_ne!(a, Settle { centre: Some((1, 0)), ..a });
+        assert_ne!(a, Settle { ring_moving: true, ..a });
+        assert_ne!(a, Settle { blocks: 1, ..a });
+        assert_ne!(a, Settle { overrides: 1, ..a });
     }
 
     fn ring_state(level: f32) -> full_detail::RingCellState {
@@ -1562,8 +2037,9 @@ mod tests {
             segment: None,
             flagged: false,
             dirty: false,
-            full_tris,
-            old: old.map(|t| (Entity::PLACEHOLDER, t)),
+            full_of: HashMap::from([(1, full_tris)]),
+            refused_min: None,
+            old: old.map(|t| Old { entity: Entity::PLACEHOLDER, full_of: HashMap::from([(1, t)]) }),
             applied: None,
             old_applied: None,
         }
@@ -1582,7 +2058,8 @@ mod tests {
             stamp: Stamp::default(),
             segment: None,
             drawn: HashMap::new(),
-            full_tris,
+            full_of: HashMap::from([(1, full_tris)]),
+            refused_min: None,
             dirty: false,
         }
     }
@@ -1593,7 +2070,7 @@ mod tests {
     /// counts no more. Nothing is left over once every cell is gone.
     #[test]
     fn the_budget_is_the_sum_over_the_cells_alive() {
-        let sum = |st: &DistantState| -> u64 { st.cells.values().map(|s| s.full_tris + s.old.map_or(0, |o| o.1)).sum::<u64>() + st.spawning.values().map(|s| s.full_tris).sum::<u64>() };
+        let sum = |st: &DistantState| -> u64 { st.cells.values().map(|s| s.full_tris() + s.old.as_ref().map_or(0, Old::share)).sum::<u64>() + st.spawning.values().map(|s| s.full_of.values().sum::<u64>()).sum::<u64>() };
         let world = World::new();
         let mut queue = bevy::ecs::world::CommandQueue::default();
         let mut commands = Commands::new(&mut queue, &world);
@@ -1669,7 +2146,7 @@ mod tests {
         s.level = 1.0;
         assert!(!rejudge_due(&s, now, None, true, false), "covered: later");
         assert!(!rejudge_due(&s, now, None, false, true), "being replaced: later");
-        s.old = Some((Entity::PLACEHOLDER, 0));
+        s.old = Some(Old { entity: Entity::PLACEHOLDER, full_of: HashMap::new() });
         assert!(!rejudge_due(&s, now, None, false, false), "replacing: later");
         s.old = None;
         assert!(rejudge_due(&s, now, None, false, false), "caught up once at rest and alone, with no further move");

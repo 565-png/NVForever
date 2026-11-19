@@ -343,6 +343,8 @@ pub struct BlockContents {
     world: String,
     origin: Grid,
     squares: HashMap<Grid, u16>,
+    /// Counts the changes (a settled distant frame compares it).
+    rev: u64,
 }
 
 impl BlockContents {
@@ -351,6 +353,11 @@ impl BlockContents {
     pub fn segment(&self, c: Grid) -> Option<bool> {
         let (sq, bit) = chunk_bit(c, self.origin);
         self.squares.get(&sq).map(|m| m & bit != 0)
+    }
+
+    /// Counts the changes of the masks.
+    pub fn rev(&self) -> u64 {
+        self.rev
     }
 
     /// The masks known (squares).
@@ -365,12 +372,15 @@ impl BlockContents {
             self.world = world.to_string();
             self.origin = origin;
             self.squares.clear();
+            self.rev += 1;
         }
     }
 
     /// Square `sq` (its south-west cell) holds the cells of `mask`.
     fn set(&mut self, sq: Grid, mask: u16) {
-        self.squares.insert(sq, mask);
+        if self.squares.insert(sq, mask) != Some(mask) {
+            self.rev += 1;
+        }
     }
 }
 

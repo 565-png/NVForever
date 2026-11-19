@@ -245,6 +245,12 @@ impl RingCellState {
         RingCellState::new(Entity::PLACEHOLDER, level, BTreeSet::new(), false, Vec::new())
     }
 
+    /// The same with its trees fallen back to the billboards (`trees_kept`).
+    #[cfg(test)]
+    pub(crate) fn for_test_trees_kept(level: f32) -> RingCellState {
+        RingCellState::new(Entity::PLACEHOLDER, level, BTreeSet::new(), true, Vec::new())
+    }
+
     /// Fully drawn and staying.
     pub fn full(&self) -> bool {
         !self.leaving && fade::step(self.level) == fade::STEPS
