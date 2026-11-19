@@ -2564,10 +2564,10 @@ mod tests {
         std::fs::write(fx.join("broken.wav"), b"not a sound file").unwrap();
         std::fs::write(fx.join("takes").join("a.wav"), half_second()).unwrap();
         std::fs::write(fx.join("takes").join("b.wav"), half_second()).unwrap();
-        let data = nvf_assets::GameData {
-            vfs: Arc::new(fnv_vfs::Vfs::open(&dir.0, &[]).unwrap()),
-            schema: Arc::new(fnv_nif::Schema::load_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/nif")).unwrap()),
-        };
+        let data = nvf_assets::GameData::new(
+            Arc::new(fnv_vfs::Vfs::open(&dir.0, &[]).unwrap()),
+            Arc::new(fnv_nif::Schema::load_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/nif")).unwrap()),
+        );
         let mut forms = FxForms::default();
         forms.sounds.insert(BEEP, record("TestBeep", Some("fx\\beep.wav"), &[]));
         forms.sounds.insert(BROKEN, record("TestBroken", Some("fx\\broken.wav"), &[]));

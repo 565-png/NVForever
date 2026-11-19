@@ -4,15 +4,35 @@ use bevy::prelude::*;
 use fnv_nif::Schema;
 use fnv_vfs::Vfs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 #[derive(Resource, Clone)]
 pub struct GameData {
     pub vfs: Arc<Vfs>,
     pub schema: Arc<Schema>,
+    /// The authored material sets under `textures\pbr\` (#2981), built from `vfs` the
+    /// first time [`GameData::pbr_index`] is asked; clones share it, as they share `vfs`.
+    /// A `GameData` over another VFS needs a fresh one: build it with [`GameData::new`].
+    pub pbr: Arc<OnceLock<fnv_pbr::PbrIndex>>,
 }
 
 impl GameData {
+    /// `vfs` and `schema` with an authored-material index of their own, not yet built.
+    pub fn new(vfs: Arc<Vfs>, schema: Arc<Schema>) -> GameData {
+        GameData { vfs, schema, pbr: Arc::new(OnceLock::new()) }
+    }
+
+    /// The sets of authored material maps the VFS supplies (docs/spec-notes/pbr-materials.md),
+    /// built on first use from the VFS's paths under `textures\pbr\` (no file is read) and
+    /// logged in one line. Not used by any material yet.
+    pub fn pbr_index(&self) -> &fnv_pbr::PbrIndex {
+        self.pbr.get_or_init(|| {
+            let index = fnv_pbr::PbrIndex::build(self.vfs.paths(|k| k.starts_with(fnv_pbr::PBR_DIR)));
+            info!("{}", index.summary());
+            index
+        })
+    }
+
     /// Open the default archive set of `data_dir` (read-only) and load the schemas.
     pub fn open(data_dir: &Path, schema_dir: &Path) -> Result<GameData, String> {
         GameData::open_for_plugins(data_dir, &fnv_vfs::DEFAULT_PLUGINS, schema_dir)
@@ -29,7 +49,7 @@ impl GameData {
     pub fn open_for_plugins_in<S: AsRef<str>>(data_dir: &Path, mods: Option<&Path>, plugins: &[S], schema_dir: &Path) -> Result<GameData, String> {
         let vfs = Vfs::open_for_plugins_in(data_dir, mods, plugins).map_err(|e| e.to_string())?;
         let schema = Schema::load_dir(schema_dir).map_err(|e| e.to_string())?;
-        Ok(GameData { vfs: Arc::new(vfs), schema: Arc::new(schema) })
+        Ok(GameData::new(Arc::new(vfs), Arc::new(schema)))
     }
 
     /// [`GameData::open_for_plugins`] with loose files of the mods folders `roots` layered
@@ -37,7 +57,7 @@ impl GameData {
     pub fn open_for_plugins_layered<S: AsRef<str>>(data_dir: &Path, roots: &[PathBuf], plugins: &[S], schema_dir: &Path) -> Result<GameData, String> {
         let vfs = Vfs::open_for_plugins_layered(data_dir, roots, plugins).map_err(|e| e.to_string())?;
         let schema = Schema::load_dir(schema_dir).map_err(|e| e.to_string())?;
-        Ok(GameData { vfs: Arc::new(vfs), schema: Arc::new(schema) })
+        Ok(GameData::new(Arc::new(vfs), Arc::new(schema)))
     }
 
     pub fn read(&self, path: &str) -> Option<Vec<u8>> {
@@ -138,5 +158,29 @@ mod tests {
         let mut b = vec![0u8; 70];
         corrupt(&mut b);
         assert!(b[..64].iter().all(|&x| x == 0) && b[64..].iter().any(|&x| x != 0));
+    }
+
+    /// The authored-material index is built from the VFS on first use, shared by clones,
+    /// and fresh for a `GameData` over another VFS (#2981).
+    #[test]
+    fn pbr_index_is_lazy_shared_and_per_vfs() {
+        let dir = std::env::temp_dir().join(format!("nvf-assets-pbr-index-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let other = dir.join("other");
+        for (root, rel) in [(&dir, "textures/pbr/walls/brick07_orm.dds"), (&dir, "textures/pbr/walls/brick07_n.dds"), (&other, "textures/walls/brick07.dds")] {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b"x").unwrap();
+        }
+        let data = GameData::new(Arc::new(Vfs::open(&dir, &[]).unwrap()), Arc::new(Schema::default()));
+        assert!(data.pbr.get().is_none(), "built before it was asked for");
+        let clone = data.clone();
+        assert_eq!(data.pbr_index().counts().authored, 1);
+        assert!(clone.pbr.get().is_some(), "a clone shares the built index");
+        assert!(data.pbr_index().lookup(r"textures\walls\brick07.dds").is_some());
+        let fresh = GameData::new(Arc::new(Vfs::open(&other, &[]).unwrap()), data.schema.clone());
+        assert!(fresh.pbr.get().is_none());
+        assert!(fresh.pbr_index().is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

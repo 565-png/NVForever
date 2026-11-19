@@ -1112,10 +1112,7 @@ pub(crate) mod bc5_tests {
             std::fs::write(root.join("textures/signed.dds"), dds(b"BC5S", 4, 4, 1, &signed)).unwrap();
             std::fs::write(root.join("textures/unsigned.dds"), dds(b"ATI2", 4, 4, 1, &signed)).unwrap();
             std::fs::write(root.join("textures/old.dds"), dds(b"DXT5", 4, 4, 1, &[255; 16])).unwrap();
-            let data = GameData {
-                vfs: Arc::new(fnv_vfs::Vfs::open(&root, &[]).unwrap()),
-                schema: Arc::new(fnv_nif::Schema::default()),
-            };
+            let data = GameData::new(Arc::new(fnv_vfs::Vfs::open(&root, &[]).unwrap()), Arc::new(fnv_nif::Schema::default()));
             Self { root, data }
         }
     }
