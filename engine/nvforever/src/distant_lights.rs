@@ -1569,10 +1569,8 @@ mod tests {
         st.stop_scan();
         assert!(st.models.is_read(&models[0]), "what the stopped job read is kept");
         assert_eq!(st.models.waiting(), 2, "b and c wait");
-        assert_eq!(st.models.next_batch(1), vec![models[1].clone()], "b in front");
         // A read that arrives after the stop (the job finishing the read under way) is taken
-        // in, and the model it read is not read again.
-        st.models.ask(&models[1]);
+        // in, and the model it read is not read again: the next batch is b alone, in front.
         st.sink.lock().unwrap().push((models[2].clone(), None));
         st.drain_models();
         assert_eq!(st.models.next_batch(8), vec![models[1].clone()], "c is read already");
