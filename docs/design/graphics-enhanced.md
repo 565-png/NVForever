@@ -2180,8 +2180,34 @@ what the feature mostly shows.
   share of light per pixel, held to 0.85. Under an upscaler the floor is in output pixels, so
   the glows keep their size on screen whatever the render scale (the view uniform has both
   sizes). Unlit and additive (Bevy's `AlphaMode::Add`, the transparent pass: depth-tested
-  against the world, no depth written, no prepass, no shadows), a soft round spot
-  (e^(-4 r^2) (1 - r^2)), faded out over the reach's last 2 cells.
+  against the world, no depth written, no prepass, no shadows), faded out over the reach's
+  last 2 cells. Three kinds of card, all in the one mesh and material (the kind and a
+  shaft's ends and widths are vertex attributes, laid out at the top of
+  `distant_lights.wesl`):
+  - *Round* (a static's round glow): a soft spot, e^(-4 r^2) (1 - r^2).
+  - *Core and halo* (a placed light): a small bright core and a wider, fainter halo in the
+    same card, (1 - h) e^(-14 r^2) + h e^(-3 r^2) (1 - r^2), the halo's share h = 0.35
+    (`HALO_SHARE`), sized from the light's radius as before.
+  - *Shaft* (a long glowing part: a light beam, a neon tube): `model_glow` gives each
+    glowing part its shape, the principal axis of its vertices (in the model's space), its
+    length along it and its width across at each end; a part under 1.5 times as long as
+    wide stays round, and a model keeps its 4 brightest long parts as shafts, the rest in
+    its round glow. The bright end is told by the vertex colours (alpha x luminance, the end
+    thirds' means 1.25 times apart), else by the cone (the narrow end, the other 1.5 times
+    wider, is the source), else the shaft is symmetric. The card spans the segment between
+    the ends, widened across by each end's half width (so a cone tapers toward its source)
+    and facing the camera around the axis (an axial billboard), each width held to the pixel
+    floors; soft across (e^(-4 x^2) (1 - x^2)) and along it fading from the source to nothing
+    at the far end, (1 - v)^2, or bright in its middle when symmetric. Its light per pixel is
+    `SHAFT_BRIGHTNESS` (1) times the area its round glow would have covered over its own
+    (held to 1), so a beam keeps about the light its dot had and does not become a white bar.
+    A shaft shorter on screen than two pixel floors, seen end-on or with an end behind the
+    camera is drawn as its round card. Shafts are never merged with other glows. On the
+    beam models of the Mojave the vertex colours carry the gradient (their alpha is near 0
+    at the far end; `fxlightbeambrt03`, `fxlightbeamw01dim`, HELIOS One's `fxhelios_godray1`
+    are brighter at their narrow source end), so the vertex test decides; a beam with even
+    vertex colours and no taper (`fxlightbeamw02` by a rough survey) is symmetric
+    [observed: fnvtool nif decode, 2026-11-19, a rough per-axis survey].
 - **Colour, fog and the HDR path.** As the NIF materials' additive shapes are drawn
   (nif.md §6 "Additive blend", "Fog on added light"; nvf_assets `add_display`,
   `fogged_addition`): the glow's colour is the record's colour bytes / 255 (display
@@ -2212,9 +2238,11 @@ what the feature mostly shows.
   afar would read as noise.
 - **Doubling with other layers.** A glow source in a cell inside the loaded grid draws
   nothing (its own model or light draws). The full-detail ring and distant objects on other
-  branches would draw the real card of a glow static at a distance, where it is under a
-  pixel, so a glow on top of it is accepted; `in_loaded_grid` is the hook if they need it.
-- **Accepted limits.** The glows are depthless additive sprites: they write no depth and no
+  branches would draw the real model of a glow static at a distance; then the sprite and the
+  model show together (a beam's real cone with its shaft over it). `in_loaded_grid` stays the
+  named hook, to be wired when those branches are in.
+- **Accepted limits.** A shaft is a flat sprite facing the camera around its axis: seen
+  end-on it is a dot (it falls back to its round card). The glows are depthless additive sprites: they write no depth and no
   motion, so under temporal anti-aliasing, FSR or DLSS they are resolved like other
   additive shapes (smeared a little while the view moves; a card of a few pixels may
   shimmer). The fog on them is the fog at the card's own pixels, and outdoors the fog blends
