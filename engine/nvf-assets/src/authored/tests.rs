@@ -269,3 +269,11 @@ fn channel_views_parse_and_name_their_defs() {
         assert_eq!((view(), authored_metallic()), (PbrView::Off, 0.0));
     }
 }
+
+/// Landscape LOD models take no set, through the model loader and the direct spawn alike.
+#[test]
+fn landscape_lod_models_are_recognised_whatever_the_spelling() {
+    assert!(crate::model::is_lod_model("Meshes/Landscape/LOD/WastelandNV/WastelandNV.level4.x0.y0.nif"));
+    assert!(crate::model::is_lod_model("meshes/landscape/lod/wastelandnv/blocks/wastelandnv.level4.x0.y0.nif"));
+    assert!(!crate::model::is_lod_model("meshes/architecture/goodsprings/house01.nif"));
+}

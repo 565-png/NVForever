@@ -1294,7 +1294,9 @@ impl SpawnCtx<'_, '_> {
             let Some(data) = dec.get(data_ref) else { continue };
             let Some((mut mesh, tris)) = build_mesh(data) else { continue };
 
-            let props = shape_props(&file, &dec, o, &by_block);
+            let mut props = shape_props(&file, &dec, o, &by_block);
+            // Landscape LOD takes no authored set (#2981), as in the model loader.
+            props.no_authored = crate::model::is_lod_model(path);
             let (material, missing) = shape_material(
                 &props,
                 &mut mesh,

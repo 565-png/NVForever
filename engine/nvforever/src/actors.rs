@@ -496,6 +496,22 @@ pub fn part_uses(a: &Appearance, world: &ActorWorld, ctx: &mut ActorCtx, stats: 
                 worn_skin[i] = Some(t);
             }
         }
+        // #2981: a shape whose role makes it skin (one of the race's skin textures) or the
+        // face (the head's texture targets), or the hair model's, takes no authored set, for
+        // good, from the moment the role is known here, whether or not a FaceGen tint follows
+        // (the actor may have no FaceGen data, or its offset may be missing).
+        {
+            let mut cache = world.facegen.lock().expect("facegen cache");
+            for (i, s) in part.shapes.iter().enumerate().filter(|(_, s)| !s.cap) {
+                let given = worn_skin[i].or(p.texture.as_deref().filter(|_| takes_texture[i]));
+                let race_skin = given.or_else(|| s.base_texture()).map(fnv_vfs::texture_path).is_some_and(|t| {
+                    [&a.body_texture, &a.hand_texture].into_iter().flatten().any(|k| fnv_vfs::texture_path(k) == t)
+                });
+                if race_skin || p.role == "hair" || (p.role == "head:head" && takes_texture[i]) {
+                    materials[i] = cache.role_legacy(&mut ctx.models.materials, &materials[i]);
+                }
+            }
+        }
         let mut meshes = vec![None; part.shapes.len()];
         if let Some(shape) = &shape {
             let _span = info_span!("actor::facegen_morph").entered();
@@ -545,21 +561,6 @@ pub fn part_uses(a: &Appearance, world: &ActorWorld, ctx: &mut ActorCtx, stats: 
         // were drawn untinted, near white (playtest list 5 item 26,
         // actors.md §3).
         drop(skin_span);
-        // The hair model's shapes take no authored set (#2981), even those without the hair
-        // shader flag, which kept them off when their material was made: their role is
-        // known only here. Only a material that took a set is copied (no pack: nothing
-        // changes).
-        if p.role == "hair" {
-            for (i, s) in part.shapes.iter().enumerate() {
-                if s.cap || !ctx.models.materials.get(&materials[i]).is_some_and(nvf_assets::authored::is_authored) {
-                    continue;
-                }
-                if let Some(mut m) = ctx.models.materials.get(&materials[i]).cloned() {
-                    nvf_assets::authored::make_legacy(&mut m);
-                    materials[i] = ctx.models.materials.add(m);
-                }
-            }
-        }
         if p.role == "hair" || p.role == "head_part" {
             if let Some([r, g, b]) = a.hair_color {
                 let tint = Color::srgb(2.0 * f32::from(r) / 255.0, 2.0 * f32::from(g) / 255.0, 2.0 * f32::from(b) / 255.0).to_linear();
