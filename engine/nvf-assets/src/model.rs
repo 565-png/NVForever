@@ -15,7 +15,7 @@ use crate::material_anim::{MaterialSlot, RigMaterials};
 use crate::data::GameData;
 use crate::nif_material::NifMaterial;
 use crate::nif_spawn::{affine, build_mesh, is_editor_marker, shaded_model, shape_material_with, shape_props, shape_skin, to_bevy, StoreTextures, TextureSource};
-use crate::texture::{worker_texture, TextureCache, TextureSnapshot, TextureUsage, WorkerTextures};
+use crate::texture::{worker_texture, worker_texture_exact, TextureCache, TextureSnapshot, TextureUsage, WorkerTextures};
 use bevy::asset::AssetHandleProvider;
 use bevy::image::CompressedImageFormats;
 use bevy::tasks::{futures::check_ready, Task};
@@ -1071,6 +1071,12 @@ impl TextureSource for Stores<'_> {
     fn alpha_is_mask(&self, raw_path: &str) -> bool {
         self.textures.alpha_is_mask(raw_path)
     }
+    fn resolve(&self, raw_path: &str) -> String {
+        self.textures.resolve(raw_path)
+    }
+    fn authored(&mut self, resolved_diffuse: &str) -> Option<crate::authored::AuthoredSet> {
+        self.textures.authored(resolved_diffuse)
+    }
 }
 
 impl ModelSink for Stores<'_> {
@@ -1140,6 +1146,17 @@ impl TextureSource for Deferred {
     }
     fn alpha_is_mask(&self, raw_path: &str) -> bool {
         self.workers.alpha_is_mask(raw_path, &self.data)
+    }
+    fn resolve(&self, raw_path: &str) -> String {
+        crate::texture::resolved_path(raw_path, |p| self.data.vfs.exists(p))
+    }
+    fn authored(&mut self, resolved_diffuse: &str) -> Option<crate::authored::AuthoredSet> {
+        let (data, cached, workers, images, bc, unmasked) = (&self.data, &self.cached, &self.workers, &self.providers.images, self.bc_supported, &mut self.unmasked);
+        crate::authored::find(data, crate::authored::enabled(), resolved_diffuse, &workers.authored, |path, usage| {
+            let (h, _, no_alpha) = worker_texture_exact(path, usage, data, cached, workers, images, bc)?;
+            unmasked.insert(h.id(), no_alpha);
+            Some(h)
+        })
     }
 }
 
@@ -2102,5 +2119,40 @@ mod bc5_model_tests {
         deferred.workers = Arc::new(WorkerTextures::default());
         assert_eq!(deferred.normal("signed.dds"), Some((worker_normal, true)));
         assert_eq!(cache.take_workers(&mut images, 2.0), 0);
+    }
+
+    /// The worker source finds an authored set (#2981) as the main thread does: the members
+    /// by their exact paths in their roles, decoded once, the main thread adopting the
+    /// worker's handles, a later snapshot answering without a decode.
+    #[test]
+    fn deferred_and_store_sources_find_the_same_authored_set() {
+        let pack = crate::authored::tests::Pack::new();
+        let mut cache = TextureCache::default();
+        let mut images = Assets::<Image>::default();
+        let (meshes, materials, bindposes) = (Assets::<Mesh>::default(), Assets::<NifMaterial>::default(), Assets::<SkinnedMeshInverseBindposes>::default());
+        let mut deferred = Deferred {
+            data: pack.data.clone(),
+            providers: Providers {
+                meshes: meshes.get_handle_provider(), materials: materials.get_handle_provider(),
+                bindposes: bindposes.get_handle_provider(), images: images.get_handle_provider(),
+            },
+            cached: Arc::new(TextureSnapshot::new()), workers: cache.workers.clone(), bc_supported: true,
+            unmasked: HashMap::new(), out: DeferredAssets::default(),
+        };
+        let key = deferred.resolve("walls/brick.dds");
+        let set = deferred.authored(&key).expect("authored set on the worker");
+        let normal = set.normal.clone().expect("_n");
+        assert!(deferred.lacks_alpha(&normal), "two channels hold no mask");
+        assert_eq!(set.scalars.roughness_scale, Some(0.5));
+        assert!(deferred.authored(&deferred.resolve("walls/stone.dds")).is_none());
+        assert_eq!(cache.take_workers(&mut images, 1.0), 2, "_orm and _n, once each");
+        assert_eq!(images.get(&set.orm).unwrap().texture_descriptor.format, TextureFormat::Bc7RgbaUnorm);
+        assert_eq!(images.get(&normal).unwrap().texture_descriptor.format, TextureFormat::Bc5RgUnorm);
+        let main = StoreTextures { textures: &mut cache, data: &pack.data, images: &mut images, formats: None }.authored(&key);
+        assert_eq!(main.as_ref(), Some(&set), "the main thread adopts the worker's handles");
+        deferred.cached = Arc::new(cache.snapshot(&images));
+        deferred.workers = Arc::new(WorkerTextures::default());
+        assert_eq!(deferred.authored(&key), Some(set));
+        assert!(deferred.workers.entries_len() == 0, "a snapshot hit decodes nothing");
     }
 }

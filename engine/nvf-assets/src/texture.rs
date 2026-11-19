@@ -51,12 +51,14 @@ const TEXTURE_USAGES: [TextureUsage; 4] = [TextureUsage::Color, TextureUsage::Li
 struct DecodedTexture {
     image: Image,
     lacks_alpha: bool,
+    /// The file's DX10 header names an `_SRGB` format (a hint only; the role decides).
+    srgb_code: bool,
 }
 
 impl From<Image> for DecodedTexture {
     fn from(image: Image) -> Self {
         let lacks_alpha = crate::nif_spawn::format_lacks_alpha(image.texture_descriptor.format);
-        Self { image, lacks_alpha }
+        Self { image, lacks_alpha, srgb_code: false }
     }
 }
 
@@ -103,6 +105,9 @@ pub struct WorkerTextures {
     /// Whether a texture's alpha is a cut-out mask, by resolved path
     /// ([`Self::alpha_is_mask`]).
     masks: Mutex<HashMap<String, bool>>,
+    /// Authored material sets' scalar files and warnings (`crate::authored::find`), shared
+    /// by the main thread and the workers.
+    pub(crate) authored: crate::authored::Memo,
 }
 
 struct WorkerTexture {
@@ -133,13 +138,40 @@ pub(crate) fn worker_texture(
     bc_supported: bool,
 ) -> Option<(Handle<Image>, TextureFormat, bool)> {
     let key = (resolved_path(raw_path, |p| data.vfs.exists(p)), usage);
+    worker_texture_key(key, data, cached, workers, images, bc_supported)
+}
+
+/// [`worker_texture`] for a file at exactly `path` (normalised only, never turned to another
+/// file by [`resolved_path`]): an authored set's member, as the index names it (#2981).
+pub(crate) fn worker_texture_exact(
+    path: &str,
+    usage: TextureUsage,
+    data: &GameData,
+    cached: &TextureSnapshot,
+    workers: &WorkerTextures,
+    images: &AssetHandleProvider,
+    bc_supported: bool,
+) -> Option<(Handle<Image>, TextureFormat, bool)> {
+    worker_texture_key((fnv_vfs::normalize(path), usage), data, cached, workers, images, bc_supported)
+}
+
+fn worker_texture_key(
+    key: (String, TextureUsage),
+    data: &GameData,
+    cached: &TextureSnapshot,
+    workers: &WorkerTextures,
+    images: &AssetHandleProvider,
+    bc_supported: bool,
+) -> Option<(Handle<Image>, TextureFormat, bool)> {
     if let Some(found) = cached.get(&key) {
         return Some(found.clone());
     }
+    let usage = key.1;
     workers.load_once(key, images, |path| {
         let bytes = data.read(path).ok_or_else(|| "not in any archive".to_string())?;
         let mut decoded = dds_texture(&bytes, usage, bc_supported, false)?;
         decoded.image.texture_descriptor.label = Some(folder_label(path));
+        crate::authored::srgb_warning(&workers.authored, path, usage, decoded.srgb_code);
         Ok(decoded)
     })
 }
@@ -158,6 +190,12 @@ impl WorkerTextures {
         let gate = Arc::new(Mutex::new(()));
         loading.insert(key.clone(), Arc::downgrade(&gate));
         gate
+    }
+
+    /// Entries decoded by workers (tests).
+    #[cfg(test)]
+    pub(crate) fn entries_len(&self) -> usize {
+        self.entries.lock().expect("worker textures").len()
     }
 
     /// Reserve one handle and decode once for concurrent requests for this key. The
@@ -382,7 +420,7 @@ fn dds_image_unguarded(bytes: &[u8], usage: TextureUsage, bc_supported: bool, to
         || matches!(dds.format, Format::Bc5U | Format::Bc5S | Format::Bc4U | Format::Bc4S)
         || (dds.format == Format::Dxt1 && dds.header.dx10.is_some())
         || crate::nif_spawn::format_lacks_alpha(format);
-    Ok(DecodedTexture { image: img, lacks_alpha })
+    Ok(DecodedTexture { image: img, lacks_alpha, srgb_code: dds.srgb_hint() == Some(true) })
 }
 
 fn normal_byte(value: f32) -> u8 {
@@ -625,6 +663,20 @@ impl TextureCache {
         self.load(raw_path, TextureUsage::Normal, false, data, images, formats)
     }
 
+    /// Load (once) the file at exactly `path` in role `usage`: normalised only, never turned
+    /// to another file by [`resolved_path`]. For an authored set's members, by the path the
+    /// index names (#2981).
+    pub(crate) fn exact(
+        &mut self,
+        path: &str,
+        usage: TextureUsage,
+        data: &GameData,
+        images: &mut Assets<Image>,
+        formats: Option<&CompressedImageFormatSupport>,
+    ) -> Option<(Handle<Image>, bool)> {
+        self.load_key(fnv_vfs::normalize(path), usage, false, data, images, formats)
+    }
+
     fn load(
         &mut self,
         raw_path: &str,
@@ -635,6 +687,18 @@ impl TextureCache {
         formats: Option<&CompressedImageFormatSupport>,
     ) -> Option<(Handle<Image>, bool)> {
         let path = resolved_path(raw_path, |p| data.vfs.exists(p));
+        self.load_key(path, usage, clamp, data, images, formats)
+    }
+
+    fn load_key(
+        &mut self,
+        path: String,
+        usage: TextureUsage,
+        clamp: bool,
+        data: &GameData,
+        images: &mut Assets<Image>,
+        formats: Option<&CompressedImageFormatSupport>,
+    ) -> Option<(Handle<Image>, bool)> {
         if let Some(h) = (if clamp { &self.clamped } else { &self.map }).get(&(path.clone(), usage)) {
             return h.clone();
         }
@@ -665,8 +729,9 @@ impl TextureCache {
         };
         drop(decode_span);
         let handle = match result {
-            Ok(DecodedTexture { mut image, lacks_alpha }) => {
+            Ok(DecodedTexture { mut image, lacks_alpha, srgb_code }) => {
                 image.texture_descriptor.label = Some(folder_label(&path));
+                crate::authored::srgb_warning(&self.workers.authored, &path, usage, srgb_code);
                 if clamp {
                     if let ImageSampler::Descriptor(d) = &mut image.sampler {
                         d.address_mode_u = ImageAddressMode::ClampToEdge;

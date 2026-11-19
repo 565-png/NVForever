@@ -35,13 +35,20 @@ impl GameData {
 
     /// The sets of authored material maps the VFS supplies (docs/spec-notes/pbr-materials.md),
     /// built on first use from the VFS's paths under `textures\pbr\` (no file is read) and
-    /// logged in one line. Not used by any material yet.
+    /// logged in one line. Asked for only while the run's Authored materials setting is on
+    /// (`crate::authored`).
     pub fn pbr_index(&self) -> &fnv_pbr::PbrIndex {
         self.pbr.get_or_init(|| {
             let index = fnv_pbr::PbrIndex::build(self.vfs.paths(|k| k.starts_with(fnv_pbr::PBR_DIR)));
             info!("{}", index.summary());
             index
         })
+    }
+
+    /// Whether [`GameData::pbr_index`] has been built (tests: the setting off never asks).
+    #[cfg(test)]
+    pub(crate) fn pbr_index_built(&self) -> bool {
+        self.pbr.get().is_some()
     }
 
     /// Open the default archive set of `data_dir` (read-only) and load the schemas.

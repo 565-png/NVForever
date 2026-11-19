@@ -557,6 +557,8 @@ struct Args {
     /// water-reflections, water-effects, terrain-height-blend, terrain-anti-tiling, cloud-shadows, terrain-shadows, heat-haze, desert-haze, and
     /// mesh-terrain-blend, which no look turns on) and choices (fxaa, smaa or taa instead of --msaa;
     /// shadow-filter-hardware or shadow-filter-temporal), for comparing them one at a time.
+    /// The switches on in vanilla are left on unless named off: no-glow, no-eye-adaptation,
+    /// no-neon-glow, no-water-mirror, no-authored-materials.
     #[arg(long, value_delimiter = ',', conflicts_with = "graphics")]
     graphics_only: Option<Vec<String>>,
     /// Test aid: log the mean and the slowest frame time every this many seconds (real
@@ -1622,6 +1624,12 @@ fn main() -> AppExit {
     // `fix_smooth_terrain`), still before the first cell.
     nvf_play::smooth_terrain::set_setting(if args.no_smooth_terrain { nvf_play::smooth_terrain::Smoothing::Off } else { args.smooth_terrain.unwrap_or(nvf_play::smooth_terrain::Smoothing::DEFAULT) });
     nvf_play::smooth_terrain::fix();
+    // Authored materials (#2981): the run's state, fixed before the first material is made
+    // (the command line's, then the INI's saved row by its precedence), so cached models
+    // never mix the two; the page's row changes the next start's.
+    let authored = settings::authored_after_ini(graphics.authored_materials, play.is_some().then(|| settings::given_switches(&args, &command_line())).as_ref());
+    nvf_assets::authored::set_enabled(authored);
+    app.add_systems(Startup, move || info!("authored materials: {}", if authored { "on (sets under textures\\pbr\\ are used where a pack has them)" } else { "off (setting)" }));
     let start_upscaler = {
         let given = play.is_some().then(|| settings::given_switches(&args, &command_line()));
         let ini = given.as_ref().and_then(|_| settings::settings_text_at_start()).map(|text| settings::UpscalerIni::read(&text));

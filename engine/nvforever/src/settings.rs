@@ -1104,7 +1104,7 @@ fn register_graphics(app: &mut App) {
         },
     );
     nvf_play::settings::set_disabled_status(app, "latency-reduction", |w| (!crate::anti_lag::available(w)).then_some("Not on this GPU"));
-    let switches: [Switch; 19] = [
+    let switches: [Switch; 20] = [
         (
             "ambient-occlusion",
             "Ambient occlusion",
@@ -1188,6 +1188,16 @@ fn register_graphics(app: &mut App) {
                 nvf_assets::texture::set_anisotropy(if on { 16 } else { 8 });
             },
         ),
+        // #2981: read once at the start (main.rs, nvf_assets `authored::set_enabled`); the
+        // row keeps the next start's choice, so no pipeline waits for it.
+        (
+            crate::graphics::AUTHORED_MATERIALS_KEY,
+            "Authored materials",
+            AUTHORED_MATERIALS_NOTE,
+            AUTHORED_MATERIALS_SWITCHES,
+            |w| w.resource::<Graphics>().authored_materials,
+            |w, on| w.resource_mut::<Graphics>().authored_materials = on,
+        ),
         (
             "terrain-height-blend",
             "Terrain height blending",
@@ -1267,6 +1277,26 @@ fn register_graphics(app: &mut App) {
     for (key, label, note, switches, get, set) in switches {
         add_setting(app, Setting { key, group: GROUP_GRAPHICS, label, note, switches, get, set, slider: None });
     }
+}
+
+/// The Authored materials row's note (#2981): it takes effect at the next start, as the run's
+/// state is fixed before the first material (main.rs).
+pub(crate) const AUTHORED_MATERIALS_NOTE: &str = "On: surfaces whose textures a texture pack gives material maps for (textures\\pbr\\) are shaded from them. Off: every surface uses the game's own values. Takes effect at the next start.";
+
+/// The command-line switches the Authored materials row weighs against the INI at the start
+/// (`authored_after_ini`).
+pub(crate) const AUTHORED_MATERIALS_SWITCHES: &str = "--graphics-only";
+
+/// The run's Authored materials state (#2981), decided before the first material: the
+/// command line's (`--graphics-only no-authored-materials`, else on), then the INI's stored
+/// row by the settings' own precedence (`nvf_play::settings::switch_after_ini`, as
+/// `apply_stored` decides at PostStartup), so the saved choice of the last run applies from
+/// the start. `given`: the switches a `--play` run was given (`None`: no settings page, the
+/// INI is not read).
+pub(crate) fn authored_after_ini(command_line: bool, given: Option<&nvf_play::settings::GivenSwitches>) -> bool {
+    let Some(given) = given else { return command_line };
+    let stored = stored_at_start(crate::graphics::AUTHORED_MATERIALS_KEY).and_then(|v| nvf_play::settings::parse_switch(&v));
+    nvf_play::settings::switch_after_ini(command_line, stored, given, AUTHORED_MATERIALS_SWITCHES)
 }
 
 /// The Cloud shadows row's note (#2670; docs/design/sun-visibility.md): the label says the
@@ -2636,6 +2666,7 @@ dlss-model=Preset K
             ("neon-glow", &["--graphics-only"]),
             ("sharpen", &["--graphics"]),
             ("anisotropic", &["--graphics"]),
+            (crate::graphics::AUTHORED_MATERIALS_KEY, &["--graphics-only"]),
             ("terrain-height-blend", &["--graphics", "--graphics-only"]),
             ("terrain-anti-tiling", &["--graphics", "--graphics-only"]),
             ("light-shafts", &["--graphics"]),

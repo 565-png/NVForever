@@ -799,6 +799,15 @@ pub(crate) trait TextureSource {
     /// (`texture::WorkerTextures::alpha_is_mask`): asked only for the shapes
     /// [`blended_cutout`] concerns.
     fn alpha_is_mask(&self, raw_path: &str) -> bool;
+    /// The key a NIF texture path loads under (`texture::resolved_path` over this source's
+    /// VFS): the diffuse's key is what an authored set is looked up by.
+    fn resolve(&self, raw_path: &str) -> String;
+    /// The authored set (#2981) for a resolved diffuse key, its maps loaded by the exact paths
+    /// the index names (`crate::authored::find`); `None` when the run's setting is off (then
+    /// nothing is asked of the index), with no set, or when its `_orm` does not load. Every
+    /// production source implements it (no default, so none can leave the feature off by
+    /// omission); test doubles answer for themselves.
+    fn authored(&mut self, resolved_diffuse: &str) -> Option<crate::authored::AuthoredSet>;
 }
 
 /// The main thread's textures: the cache and the image store.
@@ -824,6 +833,18 @@ impl TextureSource for StoreTextures<'_> {
 
     fn alpha_is_mask(&self, raw_path: &str) -> bool {
         self.textures.workers.alpha_is_mask(raw_path, self.data)
+    }
+
+    fn resolve(&self, raw_path: &str) -> String {
+        crate::texture::resolved_path(raw_path, |p| self.data.vfs.exists(p))
+    }
+
+    fn authored(&mut self, resolved_diffuse: &str) -> Option<crate::authored::AuthoredSet> {
+        let workers = self.textures.workers.clone();
+        let (textures, data, images, formats) = (&mut *self.textures, self.data, &mut *self.images, self.formats);
+        crate::authored::find(data, crate::authored::enabled(), resolved_diffuse, &workers.authored, |path, usage| {
+            textures.exact(path, usage, data, images, formats).map(|(h, _)| h)
+        })
     }
 }
 
@@ -1308,6 +1329,12 @@ mod tests {
         fn alpha_is_mask(&self, _: &str) -> bool {
             false
         }
+        fn resolve(&self, raw_path: &str) -> String {
+            fnv_vfs::texture_path(raw_path)
+        }
+        fn authored(&mut self, _: &str) -> Option<crate::authored::AuthoredSet> {
+            None
+        }
     }
 
     /// Textures whose alpha is a cut-out mask when their path says "mask".
@@ -1321,6 +1348,12 @@ mod tests {
         }
         fn alpha_is_mask(&self, raw_path: &str) -> bool {
             raw_path.contains("mask")
+        }
+        fn resolve(&self, raw_path: &str) -> String {
+            fnv_vfs::texture_path(raw_path)
+        }
+        fn authored(&mut self, _: &str) -> Option<crate::authored::AuthoredSet> {
+            None
         }
     }
 
