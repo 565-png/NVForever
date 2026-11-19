@@ -254,12 +254,32 @@ there and given to the VFS by its file name. A damaged archive fails the command
 `plugins_from`, `plugins_asked`, `plugins` (used), `plugins_dropped` (`plugin`, `why`),
 `archive_list` (`names`, `from`; `null`: the shipped list), `archive_order_env` (the
 `NVF_ARCHIVE_ORDER` override when set, else `null`) and `archives` (mounted, lowest
-precedence first: `name`, `file`). Where the engine still differs: a player's start (no
-`--data`) takes the home `plugins.txt` or Mod Organizer 2's synced list, which this command
-does not read; the engine always uses the home `mods` folder, this command only `--mods`;
-the engine's `[Archive] SArchiveList` from NVForever.ini is not read (pass it as
-`--archive-list`); missing add-on masters are left out silently by the engine and listed
-in `plugins_dropped` here only when asked for by name or under `--mo2`.
+precedence first: `name`, `file`). Where the engine's mount still differs (checked
+against engine `main.rs`, `setup.rs` and `world.rs`):
+
+- **Plugin list**: a player's start (no `--data`) takes the home `plugins.txt` or Mod
+  Organizer 2's synced list, which this command does not read. A plugin asked for by name
+  and missing is left out with a warning in both programs. Without plugin arguments both
+  take the base game and the add-on masters present in Data (the engine logs the masters
+  it plays with when some are missing; this command lists them in `plugins_asked`);
+  under `--mo2` with a profile that has no active plugins both try every master and warn
+  for the missing ones.
+- **Mods folder**: outside `--mo2` the engine always layers the home `mods` folder (for
+  plugins and loose files); this command only the `--mods` given. Under `--mo2` neither
+  uses the home folder.
+- **Archive list**: the engine sets `[Archive] SArchiveList` from NVForever.ini first, and
+  the list can be set only once per run (`fnv_vfs::set_archive_list`), so with both an INI
+  list and a Mod Organizer 2 profile's list the engine keeps the INI's. This command reads
+  no INI: it takes `--archive-list`, else the profile's list, else the shipped one.
+- **Code page**: the engine takes `NVF_CODE_PAGE`, else `[Text] CodePage` of NVForever.ini,
+  before opening plugins; this command only `NVF_CODE_PAGE` (else Windows-1252). Master
+  names are decoded when a plugin is opened, so set `NVF_CODE_PAGE` to the INI's value
+  when the load order has non-ASCII plugin names.
+- **Game folder**: the engine takes the install root or its Data folder and refuses an
+  install that lacks required game files (`setup.rs`, `validate`); this command takes any
+  folder as Data.
+- **`--mo2-profile`** (the general fnvtool option) supplies the profile's plugin paths only,
+  made absolute; the mods' loose files and archives are mounted only with `--mo2`.
 
 Other keys: `sets` (sorted by stem: `stem`,
 `diffuse` (the diffuse's path without extension), `state` (`authored`, `height-only`,

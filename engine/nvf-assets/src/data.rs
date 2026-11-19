@@ -8,8 +8,10 @@ use std::sync::{Arc, OnceLock};
 
 #[derive(Resource, Clone)]
 pub struct GameData {
-    /// Read freely; to mount another VFS use [`GameData::set_vfs`] (or [`GameData::new`]),
-    /// never an assignment, which would keep the previous mount's authored-material index.
+    /// The mounted VFS. Read it freely, but replace it only through [`GameData::set_vfs`]
+    /// (or a whole [`GameData::new`]): the lazy authored-material index belongs to the
+    /// mount it was built from, and assigning this field directly would leave the previous
+    /// mount's index attached. (Public because it is read in many places.)
     pub vfs: Arc<Vfs>,
     pub schema: Arc<Schema>,
     /// The authored material sets under `textures\pbr\` (#2981), built from `vfs` the

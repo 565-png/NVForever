@@ -18,7 +18,7 @@ below; a later version adds to them without changing their meaning.
 | Path rules, member names, the index of sets a load order supplies | **implemented** (`crates/fnv-pbr`; `GameData::pbr_index` in `engine/nvf-assets/src/data.rs` builds it on first use and logs one line of counts; nothing in the engine asks for it yet) |
 | `fnvtool pbr list` (which sets a load order has, and which archive or folder supplies each file) | **implemented** (`crates/fnvtool/src/pbr_cmd.rs`, docs/cli-contract.md) |
 | Scalar file reading (`<stem>.toml`) | **implemented** as a parser; no material reads it yet |
-| Reading any member's pixels | **planned** (stage 3): this stage finds files by name only |
+| Reading members' pixels | **planned**: `_orm` and `_n` in stage 3, `_p` in stage 4; `_albedo` stays reserved. This stage finds files by name only |
 | Reading BC7 and BC4 files (DDS with the DX10 header, or legacy `BC4U` / `BC4S`) | stage 1 of #2981 (`crates/fnv-dds`) |
 | Drawing a surface with its set (ORM, normal) | **planned** (stage 3): no material uses a set yet, so installing a pack changes no picture today |
 | Height maps (`_p`, parallax) | **planned** (stage 4, with #2979) |
@@ -45,7 +45,7 @@ A set's members are the stem plus one suffix:
 | File | Role | Required |
 |---|---|---|
 | `<stem>_orm.dds` | red: ambient occlusion; green: perceptual roughness; blue: metallic | makes the set **authored** |
-| `<stem>_n.dds` | tangent-space normal, two channels (X in red, Y in green), green pointing down like the game's normal maps | optional |
+| `<stem>_n.dds` | tangent-space normal, two channels (X in red, Y in green), green pointing down like the game's normal maps [observed: docs/spec-notes/nif.md] | optional |
 | `<stem>_p.dds` | height, brighter is higher | optional; alone it makes a **height-only** set |
 | `<stem>.toml` | scalars (below) | optional |
 | `<stem>_albedo.dds` | **reserved** for a later version: found and counted, never activates a set, will not be read in version 1 | — |
@@ -100,8 +100,10 @@ them correctly.
 - `_orm`: red occlusion (1 = unoccluded), green perceptual roughness (0 smooth, 1 rough),
   blue metallic (0 dielectric, 1 metal). The alpha channel will not be read.
 - `_n`: X in red, Y in green, each 0..1 standing for -1..1; Z is rebuilt from them. Green
-  follows the game's convention (the engine flips Y for every NIF normal map, `flip_normal_map_y`
-  in `engine/nvf-assets/src/nif_spawn.rs`), so a pack can start from the game's normal maps.
+  follows the game's convention, +G pointing down the image [observed: docs/spec-notes/nif.md,
+  "Normal maps", from the game's normal and height map pairs], which the engine follows by
+  flipping Y for every NIF normal map (`flip_normal_map_y` in
+  `engine/nvf-assets/src/nif_spawn.rs`), so a pack can start from the game's normal maps.
   A three-channel normal map (BC7, BC1, BC3) will be accepted and read as X, Y, Z
   (stage 3); its alpha will not be read.
 - `_p`: one channel, red; brighter is higher.
@@ -109,7 +111,8 @@ them correctly.
 ## Compression and sizes
 
 - Recommended formats: `_orm` **BC7** (or BC1 when its quality is enough), `_n` **BC5**
-  (unsigned), `_p` **BC4** (unsigned). BC1 and BC3 will be accepted for any member.
+  (unsigned), `_p` **BC4** (unsigned). BC1 and BC3 will be accepted for `_orm` and `_n`
+  from stage 3, and for `_p` when height maps land (stage 4); `_albedo` stays reserved.
   [documented: Microsoft, "Texture Block Compression in Direct3D 11": BC4 stores one channel
   and BC5 two in 4x4-texel blocks of 8 and 16 bytes; BC7 stores RGB or RGBA in 16-byte
   blocks]
@@ -132,7 +135,7 @@ A TOML file of plain keys, all optional:
 | Key | Meaning | Range | Default |
 |---|---|---|---|
 | `parallax_depth` | depth of the height map's darkest point below the surface, in UV units (planned, stage 4) | 0 to 0.25 | the engine's own depth |
-| `roughness_scale` | multiplies the ORM's roughness (the product is clamped to 1 when drawn) | 0 to 2 | 1.0 |
+| `roughness_scale` | multiplies the ORM's roughness; the product is then clamped to 0.089..1 when drawn (below) | 0 to 2 | 1.0 |
 | `reflectance` | the highlight strength of non-metals; F0 = 0.16 x reflectance² (0 to 16 %) | 0 to 1 | 0.5 (F0 4 %) |
 
 ```toml
@@ -177,10 +180,10 @@ the use of the maps is planned:
   lamps (`display_shader.rs`, `diffuse_occlusion`).
 - The highlight is GGX with the Fresnel factor held at F0 in world views (no brightening at
   grazing angles; `FRESNEL_EDIT`, `engine/nvforever/src/lights.rs`).
-- Roughness is perceptual: the perceptual value is clamped to 0.089..1 and then squared
-  (Bevy's `perceptualRoughnessToRoughness`,
-  `engine/vendor/bevy_pbr/src/render/pbr_lighting.wesl`), so ORM green below 0.089 draws as
-  0.089.
+- Roughness is perceptual: the ORM's green is multiplied by `roughness_scale`, and that
+  product is clamped to 0.089..1 and then squared (Bevy's `perceptualRoughnessToRoughness`,
+  `engine/vendor/bevy_pbr/src/render/pbr_lighting.wesl`). A product below 0.089 draws as
+  0.089; a raw green below 0.089 can still end above the floor with a scale above 1.
 - **Metallic** will be read but **held at 0** in version 1: with no reflection source in the
   engine, a metal would draw black except for lamp highlights. Until a later version adds
   one, a metal surface draws as a dielectric of its diffuse colour with the authored
@@ -203,9 +206,12 @@ What is true of archives today (`Vfs::archive_order_in`, `Vfs::archive_files_lay
   `Data`, in NVForever's mods folder or in a Mod Organizer 2 mod; when the archive list
   names it (`[Archive] SArchiveList` in NVForever.ini, for an archive in `Data`; or a Mod
   Organizer 2 profile's ticked archives, in any of its layers); or when it is `Update.bsa`,
-  which is always mounted after the base list (from `Data`, or under Mod Organizer 2 from
-  the highest layer that has it). A plugin that cannot be read or lacks a master is left
-  out, and its archives with it. A lone `.bsa` that none of these covers is not mounted.
+  which is mounted after the base list (from `Data`, or under Mod Organizer 2 from the
+  highest layer that has it) unless the base list names it, which keeps it at that place,
+  or the `NVF_ARCHIVE_ORDER` override sets the whole order without it. A plugin that cannot
+  be read or lacks a master is left out, and the archives it owns by name with it; an
+  archive list that names one of those archives still mounts it. A lone `.bsa` that none
+  of these covers is not mounted.
 
 ## Log line and listing
 
