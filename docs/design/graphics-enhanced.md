@@ -664,7 +664,8 @@ at the render size and expanded to the display size by nearest texels, and the p
 cost the display's pixels. The band limit stays the displayed pixel's, as the textures'
 mip bias keeps their detail at the display's. The gain then brightens the HDR light before
 tonemapping, so on a bright bed it shows a little less than when it multiplied the
-tonemapped picture [engineering choice; not yet compared by eye]. `NVF_CAUSTICS_BEFORE_UPSCALER=0`
+tonemapped picture [engineering choice; compared by eye with the old placement under
+FSR/DLSS at Boulder Beach in daylight, #3089: looks fine]. `NVF_CAUSTICS_BEFORE_UPSCALER=0`
 keeps the pass after tonemapping under an upscaler too (§6). The log says the placement
 once a view takes it ("underwater caustics: on the HDR picture at the render size, before
 the upscaler").
