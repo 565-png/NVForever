@@ -340,6 +340,7 @@ order = [[
   "settings: distant-objects 8 cells",
   { text = "distant objects: reach 8 cells (ratio", label = "the reach made smaller in play" },
   "settings: distant-objects Off",
+  { text = "distant objects: off, 0 cells left", label = "Off: every distant cell faded out and retired" },
   { re = 'distant objects summary: (?P<n>\d+) cells', range = [1, 2000], label = "the exit summary: cells judged while they were on" },
 ]]
 expect = [
