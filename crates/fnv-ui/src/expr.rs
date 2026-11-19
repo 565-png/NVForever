@@ -96,6 +96,12 @@ pub enum OpKind {
     Cos,
     Log,
     Pow,
+    /// UIO accumulated bit test (ui-bit-test-operator.md).
+    BitTest,
+    /// Bounded exact-integer operations (mcm-rgb-integer-consumers.md).
+    BitAnd,
+    ShiftLeft,
+    ShiftRight,
     Rand,
     Eq,
     Neq,
@@ -135,6 +141,10 @@ impl OpKind {
             "cos" => OpKind::Cos,
             "log" => OpKind::Log,
             "pow" => OpKind::Pow,
+            "bt" => OpKind::BitTest,
+            "land" => OpKind::BitAnd,
+            "shl" => OpKind::ShiftLeft,
+            "shr" => OpKind::ShiftRight,
             "rand" => OpKind::Rand,
             "eq" => OpKind::Eq,
             "neq" => OpKind::Neq,

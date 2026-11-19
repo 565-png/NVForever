@@ -583,14 +583,14 @@ pub fn screen_name(part: &str) -> String {
     }
 }
 
-/// A queued attack's words in the queue's list: the part's name (the target's for a
-/// target without parts), and that it is a special attack [design: NVForever's own].
+/// [design, #2659] Join the data's target and part names with a colon; a target without
+/// parts keeps its name alone. Preserve the existing special-attack suffix.
 pub fn queued_text(target: &str, part: &str, special: bool) -> String {
-    let what = if part.is_empty() || part == "whole" { target } else { part };
+    let what = if part.is_empty() || part == "whole" { target.to_string() } else { format!("{target}: {part}") };
     if special {
         format!("{what} (special)")
     } else {
-        what.to_string()
+        what
     }
 }
 
@@ -637,11 +637,12 @@ impl VatsMode {
         self.style == VatsStyle::Classic && (self.active() || self.classic.restore.is_some())
     }
 
-    /// The queued attacks play (either style): nothing of the HUD is drawn meanwhile
+    /// The queued attacks play (either style): the corner HUD is hidden meanwhile
     /// [design: the fork owner 2026-11-10, "when the vats animation plays ... no hud
     /// element should be visible", and for Dead Eye "port all the fixes we put in vats
     /// into deadeye also"] (`crate::hud`, `crate::reticle`, `crate::corner_messages`,
-    /// `crate::quest_messages`). Dead Eye's own marks stay ([`VatsMode::drawn`]).
+    /// `crate::quest_messages`). [design, #2659] Classic keeps the enemy bar at bottom
+    /// centre; Dead Eye's own marks stay ([`VatsMode::drawn`]).
     pub fn playing_back(&self) -> bool {
         self.phase == Phase::Firing
     }
@@ -719,12 +720,20 @@ impl VatsMode {
         Some(ClassicView { bare: false, parts, queue, special })
     }
 
-    /// Whose name and health the HUD's enemy bar shows at the top of the view, hurt or
-    /// not: the classic style's selected target, or the actor Dead Eye previews (under or
-    /// nearest the crosshair) while it marks [design: the fork owner 2026-11-10, the bars
-    /// "on top in both versions"] (`crate::hud_target`, `crate::hud`).
+    /// [design, #2659] The classic selected target, then the playback attack's target
+    /// (the selected target until the first attack starts); Dead Eye keeps its preview.
     pub fn bar_target(&self) -> Option<u32> {
+        if self.style == VatsStyle::Classic && self.phase == Phase::Firing {
+            return self.shooting.and_then(|i| self.queue.marks().get(i)).map(|m| m.target.0).or(self.classic.selected);
+        }
         self.selected().or_else(|| self.preview.actor.filter(|_| self.style == VatsStyle::DeadEye && self.phase == Phase::Marking))
+    }
+
+    /// [design, #2659] Classic queue reservations affect only the shown loaded count.
+    /// Combat still consumes the actual rounds when firing; playback uses that count.
+    pub fn displayed_ammo(&self, ammo: Option<(u32, u32)>) -> Option<(u32, u32)> {
+        let reserved = if self.style == VatsStyle::Classic && self.phase == Phase::Marking { self.queue.rounds_needed() } else { 0 };
+        ammo.map(|(loaded, spare)| (loaded.saturating_sub(reserved), spare))
     }
 
     /// The damage in sight on the enemy bar's actor ([`VatsMode::bar_target`]): what the
@@ -1123,6 +1132,16 @@ fn player_ap(script: Option<&mut ScriptState>, sim: &mut SimState) -> Option<(f3
     })
 }
 
+/// The Action Points the player has to mark with: unlimited in god mode, where an attack
+/// takes none (`fnv_game::functions::actor::god_spares`) [design: owner decision
+/// 2026-11-15, issue #2743]; unlimited too without the script runtime.
+fn ap_to_mark(script: Option<&mut ScriptState>, sim: &mut SimState) -> f32 {
+    if crate::combat::god_mode() {
+        return f32::INFINITY;
+    }
+    player_ap(script, sim).map_or(f32::INFINITY, |a| a.0)
+}
+
 /// The sound side of [`update`].
 #[derive(SystemParam)]
 struct Sounds<'w> {
@@ -1403,7 +1422,7 @@ fn update(
     mut script: Option<ResMut<ScriptState>>,
     mut phys: ResMut<PhysState>,
     mut player: ResMut<Player>,
-    control: Res<PlayerControl>,
+    (control, stance): (Res<PlayerControl>, Option<Res<crate::stance::StanceMotion>>),
     locks: Res<ControlLocks>,
     mut hud: ResMut<HudMessage>,
     mut sounds: Sounds,
@@ -1467,7 +1486,9 @@ fn update(
     };
     match (v.phase, stop) {
         (Phase::Off, _) => {
-            if let Some(m) = regenerate(script.as_deref_mut(), &mut sim, combat.rules.ap_restore_rate, time.delta_secs()) {
+            // Not while sprinting: a sprint's AP do not come back during it (`crate::sprint`).
+            let sprinting = stance.as_deref().is_some_and(|s| s.sprinting);
+            if let Some(m) = regenerate(script.as_deref_mut(), &mut sim, combat.rules.ap_restore_rate, if sprinting { 0.0 } else { time.delta_secs() }) {
                 if v.regen_mult != Some(m) && (v.regen_mult.is_some() || m != 1.0) {
                     info!("vats mode: AP regenerates at {m:.2} x (the Action Point Regen perks)");
                 }
@@ -1655,7 +1676,11 @@ fn try_enter(v: &mut VatsMode, combat: &Combat, mut script: Option<&mut ScriptSt
         info!("vats mode: perks change the AP cost {:.1} -> {:.1} ({})", w.cost, cost.max(0.0), by.join(", "));
         w.cost = cost.max(0.0);
     }
-    let ap_now = ap.map_or(f32::INFINITY, |a| a.0);
+    let god = crate::combat::god_mode();
+    let ap_now = if god { f32::INFINITY } else { ap.map_or(f32::INFINITY, |a| a.0) };
+    if god {
+        info!("vats mode: god mode: Action Points are unlimited, an attack takes none ({:.0} now)", ap.map_or(0.0, |a| a.0));
+    }
     v.queue = MarkQueue::new(w.cost, w.rounds_per_shot, w.rounds);
     // Not even one mark: no AP for it, or (a burst) not a whole burst loaded.
     if let Err(r) = v.queue.check(ap_now) {
@@ -2200,7 +2225,7 @@ fn barred(v: &VatsMode, mut script: Option<&mut ScriptState>, sim: &mut SimState
     let melee = v.weapon.as_ref().is_some_and(|w| w.style == AttackStyle::Melee);
     // The base from the simulation: the game's world is not attached outside its turn.
     let flagged = melee
-        && sim.base_of(actor).is_some_and(|b| script.as_deref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| { let (seed, at) = sim.pick(&rt.game, FormId(actor)); rt.game.data.no_vats_melee(b, seed, at) }));
+        && sim.base_of(actor).is_some_and(|b| script.as_deref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| { let (seed, at) = sim.pick(&rt.game, FormId(actor)); rt.game.runtime_template_source(b, seed, at, |_| false).is_some_and(|(_, d)| d.no_vats_melee) }));
     if flagged {
         return Err(Bar::NoVatsMelee);
     }
@@ -2581,7 +2606,7 @@ fn mark_actor(
         Ok(true) => info!("vats mode: {actor:08X} is cloaked: marked through Enhanced Sensors"),
         Ok(false) => {}
     }
-    let ap_now = player_ap(script.as_deref_mut(), sim).map_or(f32::INFINITY, |a| a.0);
+    let ap_now = ap_to_mark(script.as_deref_mut(), sim);
     let earlier = v.queue.marks().iter().filter(|m| m.target.0 == actor && m.part == part).count() as u32;
     // The classic style's special attack costs its own AP (vats-classic.md §9).
     let special = v.weapon.as_ref().and_then(|w| w.special).filter(|_| special && v.style == VatsStyle::Classic);
@@ -2639,7 +2664,7 @@ fn mark_actor(
 /// [`WHOLE_TO_HIT`]'s base chance; its point stays where it was marked.
 #[allow(clippy::too_many_arguments)]
 fn mark_object(v: &mut VatsMode, object: u32, point: [f32; 3], mut script: Option<&mut ScriptState>, sim: &mut SimState, player: &Player, hud: &mut HudMessage, sounds: &mut Sounds) {
-    let ap_now = player_ap(script.as_deref_mut(), sim).map_or(f32::INFINITY, |a| a.0);
+    let ap_now = ap_to_mark(script.as_deref_mut(), sim);
     let earlier = v.queue.marks().iter().filter(|m| m.target.0 == object).count() as u32;
     match v.queue.push(FormId(object), None, ap_now) {
         Ok(k) => {
@@ -2728,7 +2753,7 @@ pub fn projectile_under(all: &[crate::combat::VatsProjectile], rules: &Projectil
 /// the distance and the player's skill only, as small as a held weapon [design:
 /// docs/design/tweaks.md; the readme's rule, "only the distance + player skill"].
 fn mark_projectile(v: &mut VatsMode, p: crate::combat::VatsProjectile, script: Option<&mut ScriptState>, sim: &mut SimState, player: &Player, hud: &mut HudMessage, sounds: &mut Sounds) {
-    let ap_now = player_ap(script, sim).map_or(f32::INFINITY, |a| a.0);
+    let ap_now = ap_to_mark(script, sim);
     let earlier = v.spots.iter().filter(|s| s.projectile == Some(p.id)).count() as u32;
     match v.queue.push(FormId(0), None, ap_now) {
         Ok(k) => {
@@ -2835,7 +2860,15 @@ fn start_mark(v: &mut VatsMode, i: usize, script: Option<&mut ScriptState>, sim:
     let Some(m) = v.queue.marks().get(i).copied() else { return 0.0 };
     v.started = v.started.max(i + 1);
     let Some(rt) = script.and_then(|sc| sc.rt.as_mut()) else { return 0.0 };
-    with_world(rt, sim, |rt| fnv_game::functions::add_actor_value_damage(&mut rt.game, FormId::PLAYER_REF, ACTION_POINTS, m.cost as f64));
+    let left = with_world(rt, sim, |rt| {
+        fnv_game::functions::add_actor_value_damage(&mut rt.game, FormId::PLAYER_REF, ACTION_POINTS, m.cost as f64);
+        fnv_game::functions::actor_value(&mut rt.game, FormId::PLAYER_REF, ACTION_POINTS).unwrap_or(0.0)
+    });
+    // God mode: the game takes none (`ap_to_mark`); the cost is still counted as the
+    // attack's in the lines and the summary.
+    if crate::combat::god_mode() {
+        info!("vats mode: god mode: attack {} takes none of the player's Action Points: {left:.0} left", i + 1);
+    }
     v.spent += m.cost;
     v.stats.ap_spent += m.cost;
     m.cost
@@ -3386,10 +3419,9 @@ fn draw_previews(
         }
     }
     drop(shown);
-    // The header: the target's name over its health (the classic style only).
-    // The target's name and health are the HUD's own enemy bar, moved to the top
-    // (`crate::hud`, `crate::hud_target`). Without the file's buttons a line under it says
-    // what the special attack's control queues.
+    // [design, #2659] The target name and health belong to the HUD's bottom enemy bar
+    // (`crate::hud`, `crate::hud_target`). The fallback header keeps the existing
+    // special-attack hint near the top when the file's buttons are unavailable.
     let head = vats.classic_view().and_then(|v| v.special).filter(|_| !from_file).map(|special| format!("[{}] {special}", crate::bindings::label(Control::ReadyItem)));
     for (e, mut h, mut node, mut vis) in &mut header {
         let want = if head.is_some() { Visibility::Inherited } else { Visibility::Hidden };
@@ -3865,6 +3897,62 @@ mod tests {
         assert_eq!(v.reserved(), 26.0);
         v.phase = Phase::Off;
         assert_eq!(v.reserved(), 0.0);
+    }
+
+    #[test]
+    fn queued_rows_keep_the_target_and_data_part_names() {
+        assert_eq!(queued_text("Practice robot", "Left probe", false), "Practice robot: Left probe");
+        assert_eq!(queued_text("Practice robot", "Left probe", true), "Practice robot: Left probe (special)");
+        assert_eq!(queued_text("Practice robot", "", false), "Practice robot");
+        assert_eq!(queued_text("Practice robot", "whole", true), "Practice robot (special)");
+    }
+
+    #[test]
+    fn classic_displayed_ammo_reserves_rounds_without_consuming_them() {
+        for rounds_per_attack in [1, 3] {
+            let mut v = VatsMode { phase: Phase::Marking, style: VatsStyle::Classic, queue: MarkQueue::new(20.0, rounds_per_attack, 6), ..Default::default() };
+            let actual = Some((6, 18));
+            assert_eq!(v.displayed_ammo(actual), actual);
+            v.queue.push(FormId(1), Some(1), 100.0).unwrap();
+            assert_eq!(v.displayed_ammo(actual), Some((6 - rounds_per_attack, 18)));
+            v.queue.push(FormId(2), Some(2), 100.0).unwrap();
+            assert_eq!(v.displayed_ammo(actual), Some((6 - 2 * rounds_per_attack, 18)));
+            assert_eq!(v.queue.rounds, 6);
+            assert_eq!(v.displayed_ammo(None), None);
+            assert_eq!(v.displayed_ammo(Some((0, 18))), Some((0, 18)));
+            v.style = VatsStyle::DeadEye;
+            assert_eq!(v.displayed_ammo(actual), actual);
+            v.style = VatsStyle::Classic;
+            v.phase = Phase::Firing;
+            assert_eq!(v.displayed_ammo(Some((5, 18))), Some((5, 18)));
+            v.phase = Phase::Off;
+            assert_eq!(v.displayed_ammo(actual), actual);
+            v.phase = Phase::Marking;
+            v.queue.pop();
+            assert_eq!(v.displayed_ammo(actual), Some((6 - rounds_per_attack, 18)));
+            while v.queue.pop().is_some() {}
+            assert_eq!(v.displayed_ammo(actual), actual);
+        }
+    }
+
+    #[test]
+    fn classic_enemy_bar_follows_the_playback_attack() {
+        let mut v = VatsMode { phase: Phase::Marking, style: VatsStyle::Classic, queue: MarkQueue::new(20.0, 1, 6), ..Default::default() };
+        v.classic.selected = Some(1);
+        v.queue.push(FormId(2), Some(1), 100.0).unwrap();
+        v.queue.push(FormId(3), Some(2), 100.0).unwrap();
+        assert_eq!(v.bar_target(), Some(1));
+        v.phase = Phase::Firing;
+        assert_eq!(v.bar_target(), Some(1));
+        v.shooting = Some(0);
+        assert_eq!(v.bar_target(), Some(2));
+        v.shooting = Some(1);
+        assert_eq!(v.bar_target(), Some(3));
+        v.phase = Phase::Off;
+        assert_eq!(v.bar_target(), None);
+        v.phase = Phase::Firing;
+        v.style = VatsStyle::DeadEye;
+        assert_eq!(v.bar_target(), None);
     }
 
     #[test]

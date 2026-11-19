@@ -32,10 +32,13 @@ apply the snapshot.
 
 ## 2. What exists today
 
-- `fnv_game::GameSnapshot` (`crates/fnv-game/src/game.rs`, format `fnv.game.state/1`) and
-  `Game::snapshot` / `Game::restore`; it contains `fnv_sim::world::Snapshot`
-  (`crates/fnv-sim/src/world.rs`, format `fnv.sim.state/1`) with `World::snapshot` /
-  `restore`. Both derive serde and are written as JSON in tests.
+- `fnv_game::GameSnapshot` (`crates/fnv-game/src/game.rs`) and `Game::snapshot` /
+  `Game::restore`. The reader accepts the baseline `fnv.game.state/1`, the retired-scene
+  format, and a separate lambda-handle format for each. See
+  [Callable identity](../spec-notes/callable-identity.md) for tags and compatibility rules.
+  The game snapshot contains `fnv_sim::world::Snapshot` (`crates/fnv-sim/src/world.rs`,
+  format `fnv.sim.state/1`) with `World::snapshot` / `restore`. Both derive serde and are
+  written as JSON in tests.
 - Round-trip tests: `crates/fnv-game/tests/dialogue.rs`, `functions.rs`, `synthetic.rs`,
   `engine/nvf-play/src/dropped/tests.rs`.
 - serde and serde_json are already dependencies of fnv-game, fnv-sim, fnv-ai, fnv-combat,
@@ -123,7 +126,7 @@ original lacks it); **Save?**: *yes* (must be saved), *have* (already in the sna
 | Rounds in the clip | `Combat.cycle.magazine` | player record [hypothesis] | **yes: add** |
 | Flashlight (Pip-Boy light) | `Flashlight.on` | not found | **yes: add** |
 | Active quest in the Pip-Boy | `pipboy/data.rs` `DataState.active_quest` | global type 1 quest ref [hypothesis] | **yes: add** |
-| Sitting / lying | `PlayerSeat` | not found | rebuild: stand the player up on load (furniture stays free) |
+| Sitting / lying | `PlayerSeat`; NPCs' seats in `Furnishings`/`OnFurniture` (engine/nvforever/src/furniture.rs); the use scripts read in `RefExtra::furniture` | not found | rebuild: a load stands the player and every NPC up (furniture stays free): `Game::restore` clears each actor's saved furniture use (`Game::stand_everyone_up`), so GetSitting and its kin read 0 until the engine seats the body again and reports it (`furniture: … goes to` / `is on`) [design, #1573 for the player, #2797 for NPCs]. Whether the original puts a seated NPC straight back on its seat is observer check 220 |
 | Current sky weather and fade | `SkyState` (engine/nvforever) | global type 8: two weather refs (§5.1) | **yes: add** the current and previous weather; the fade restarts |
 | Corpse poses | `Ragdolls.rest` | REFR/ACHR moved data [hypothesis] | optional: the corpse's `RefState.pos` is enough at first |
 | Music, radio playback position | `Music`, `Radio` | global type 10 [hypothesis] | drop: start a new track |
@@ -284,8 +287,8 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
   `fnv_install::guard_write`, the save list newest first, the plugin-list check. The body
   is JSON: a short session's save is about 140 KB; measure a long game before choosing a
   binary encoding.
-- **Game layer** (`fnv_game::GameSnapshot`, same format `fnv.game.state/1`, new fields with
-  `#[serde(default)]`): terminals hacked or locked out, the Pip-Boy radio (on, station),
+- **Game layer** (fields added to the baseline `fnv.game.state/1` with `#[serde(default)]`):
+  terminals hacked or locked out, the Pip-Boy radio (on, station),
   NPC radios, the weather shown and rain, grudges and forgiveness. `Autosave` is no longer
   a stub: it asks the engine for an autosave (`UiRequests::autosaves`); nor are SystemSave
   (the one `systemsave` slot) and ForceSave (a new save as by hand)
@@ -436,4 +439,4 @@ shown with a controller); the key, the question and its place are NVForever's]. 
 
 Not built: renaming saves from the menu, in-place loading
 without a new run (by design, see above), AI agent progress, corpse poses beyond their position, the sitting or
-lying pose (the player stands up), playback positions of music and radio.
+lying pose (the player and every NPC stand up, #1573, #2797), playback positions of music and radio.

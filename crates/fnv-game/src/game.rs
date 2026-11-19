@@ -515,6 +515,9 @@ pub struct RefExtra {
     /// reference's (`Game::merchant_container`).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub merchant_container: Option<FormId>,
+    /// RemoveMerchantContainer explicitly clears even an authored XMRC assignment.
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub merchant_container_cleared: bool,
     /// Wait: the Follow or Accompany package the actor waits in, standing where it is,
     /// until StopWaiting (`functions::fo3`; the AI's follow step reads [`Game::waits`]).
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -588,6 +591,10 @@ impl FastTravel {
 /// SetQuestObject, SetCellOwnership, SetCellPublicFlag, SetItemValue, SetEnemy, SetAlly].
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct FormChanges {
+    /// Permanent actor-list entries (actor-list-additions.md), separate from
+    /// the session-only leveled-list edits in OtherState.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub actor_list_additions: BTreeMap<FormId, Vec<(u16, FormId)>>,
     /// Faction → other faction → group combat reaction (0 neutral, 1 enemy, 2 ally,
     /// 3 friend), over the FACT XNAM list.
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
@@ -882,8 +889,8 @@ pub struct PlayerState {
     #[serde(skip_serializing_if = "BTreeSet::is_empty", default)]
     pub enemy_of: BTreeSet<FormId>,
     /// For each faction a crime made the player an enemy of: GameDaysPassed at the last
-    /// such crime. The flag ends iCoolDownTimerSetting game days after it
-    /// (`Game::expire_crimes`). Absent in saves from before #2467 (`Game::date_crimes`).
+    /// such crime. The flag ends `crate::crime::FACTION_FLAG_DAYS` (0.18 game hours) after
+    /// it (`Game::expire_crimes`, #2498). Absent in saves from before #2467 (`Game::date_crimes`).
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub enemy_of_crimes: BTreeMap<FormId, f64>,
     /// Factions a script made the player an enemy of (SetPCEnemyOfFaction 1): kept until
@@ -1053,6 +1060,9 @@ pub mod menus {
     /// `Begin MenuMode 1` block (the crippled-limb tutorial) runs while the Pip-Boy is
     /// open [observed in the masters].
     pub const PIPBOY: u16 = 1;
+    /// Title-screen group, distinct from pause menu 1013 [documented: GECK MenuMode
+    /// block/function pages]. Admitted during the existing startup frames only.
+    pub const TITLE: u16 = 4;
     /// The Pip-Boy's ITEMS page, the inventory [documented: GECK wiki GetSelectedItemRef,
     /// "Inventory Menu (1002)"; GetMenuItemListRefs, "1002 Pip-Boy Inventory Menu"].
     pub const INVENTORY: u16 = 1002;
@@ -1217,10 +1227,13 @@ pub struct Speech {
     /// (`Game::next_conversation_line`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub leads_on: bool,
-    /// The talking activator the speaker says this line of a conversation between
-    /// actors through (`Game::next_conversation_line`): Ramos through Hidden Valley's
-    /// intercom to Veronica (issue #2451). The activator stands for the speaker in the
-    /// world: the next line is said to it.
+    /// The talking activator the speaker says this line through: a line of a
+    /// conversation between actors (`Game::next_conversation_line`), Ramos through Hidden
+    /// Valley's intercom to Veronica (issue #2451), or the activator's Say or SayTo
+    /// (`Game::say`, issue #2768). The activator stands for the speaker in the world
+    /// ([`Speech::place`]): the next line is said to it, the listener looks at it, it must
+    /// be there for the line to go on, and its SayToDone blocks run when a Say or SayTo
+    /// line ends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<FormId>,
 }
@@ -1231,13 +1244,13 @@ pub enum LineLook {
     /// The speaker turns to the listener and the listener looks at the speaker.
     #[default]
     Both,
-    /// The listener is not made to look at the speaker: SayTo's `noTargetLookFlag`
-    /// [documented: GECK wiki SayTo, owner export: with the flag set "Joe is not forced
-    /// to look at the speaker during the SayTo"].
-    Speaker,
     /// Nobody turns: a conversation between actors started with `headTrack` 0
     /// [documented: GECK wiki StartConversation: "Enter 0 to disable" head tracking
-    /// during the conversation].
+    /// during the conversation], and a SayTo line with `noTargetLookFlag` 1
+    /// [hypothesis, observer check 218, #2796] (`functions::misc::say_to`). Until #2796
+    /// that flag only kept the listener still (a variant `Speaker`); a game saved while
+    /// such a line was said reads it as this one.
+    #[serde(alias = "Speaker")]
     Nobody,
 }
 
@@ -1260,6 +1273,12 @@ impl Speech {
     /// a hello (`Game::say_by_script`, #2582).
     pub fn said_by_script(&self) -> bool {
         self.conversation.is_none() && !self.greeting && !self.farewell && !self.hello
+    }
+
+    /// Who says the line in the world: the talking activator it is said through
+    /// ([`Speech::through`]), else its speaker.
+    pub fn place(&self) -> FormId {
+        self.through.unwrap_or(self.speaker)
     }
 }
 
@@ -1301,14 +1320,17 @@ pub struct Game<'a> {
     /// The user-defined functions running, innermost last (script-compiler.md §9).
     udf: Vec<UdfFrame>,
     /// The lambdas scripts made: the unit, the lambda, the instance whose variables it
-    /// shares; named by `LAMBDA_BASE + index`.
+    /// shares. Returned handles are kept separately from vector positions.
     lambdas: Vec<LambdaDef<'a>>,
+    lambda_slots: std::collections::HashMap<u32, usize>,
+    next_lambda: u32,
     /// Extender handlers and queued calls whose function cannot run, by (where, error),
     /// reported once each ([`Game::handler_failed`], #2280).
     unusable_reported: std::collections::HashSet<(String, String)>,
-    /// CompileScript's scripts, named by `COMPILED_BASE + index`, and their files' paths
-    /// (lower case) to them.
+    /// CompileScript's scripts and their exact owned handles; file paths are lower case.
     compiled_files: Vec<&'a Compiled>,
+    compiled_slots: std::collections::HashMap<u32, usize>,
+    next_compiled: u32,
     compiled_paths: std::collections::HashMap<String, u32>,
     compiled_origins: crate::jip_provenance::CompiledOrigins,
     /// Repeated script Console expressions compile once, separately from debug lines.
@@ -1329,7 +1351,10 @@ pub struct Game<'a> {
     /// loops/02, valid after the loop, invalid a frame later].
     pub(crate) temp_refs: Vec<(FormId, FormId)>,
     /// Form lists as ListAddForm and the ListRemove… functions left them, for the
-    /// session only [documented: ListAddForm, its changes are not saved].
+    /// session only [documented: ListAddForm, its changes are not saved]: a load keeps
+    /// them ([`Game::take_session`]), as the original keeps the edited form in memory
+    /// until it quits [hypothesis: an MCM mod's item added under the main menu was in
+    /// MCM's list on the first pause after a load, job mcm976e, menu-xml.md §10.1].
     pub(crate) list_edits: std::collections::HashMap<FormId, Vec<FormId>>,
     /// xNVSE's queued delayed calls (`crate::delayed`); not saved [documented].
     pub(crate) delayed: Vec<crate::delayed::Delayed>,
@@ -1359,6 +1384,8 @@ pub struct Game<'a> {
     /// Effective CSTY edits and copy-time raw clone values; session only.
     pub(crate) combat_style_edits: crate::combat_style_session::CombatStyleEdits,
     pub(crate) clone_seq: u32,
+    /// Saved retired identities only; these do not participate in clone lookup.
+    pub(crate) retired_scene_bases: BTreeMap<FormId, RetiredSceneBase>,
     /// Lines for the console: what scripts print (PrintC, Print …) and script errors;
     /// the engine's console takes them each frame.
     pub console_out: Vec<String>,
@@ -1936,6 +1963,9 @@ pub struct Game<'a> {
 /// variables it shares.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SavedLambda {
+    /// Absent in older snapshots: retain their base-plus-position identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<u32>,
     pub unit: String,
     pub lambda: fnv_script::ir::XExpr,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1953,7 +1983,17 @@ pub struct QueuedBox {
     pub serial: u64,
 }
 
-/// Snapshot of the Layer 5 state plus the world's (`fnv.game.state/1`).
+/// Provenance of a deleted inert scene reference. This is not a live base record:
+/// temporary-clone getters remain invalid after restoration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetiredSceneBase {
+    pub original: FormId,
+    pub kind: [u8; 4],
+    pub model_override: Option<String>,
+}
+
+/// Snapshot of the Layer 5 state plus the world's. Retired scene provenance and
+/// explicit lambda handles each require an opt-in format that older readers reject.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameSnapshot {
     pub format: String,
@@ -1970,6 +2010,10 @@ pub struct GameSnapshot {
     #[serde(default, skip_serializing_if = "crate::nvse_nx::NxVars::is_empty")]
     pub nx: crate::nvse_nx::NxVars,
     pub sim: Snapshot,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub retired_scene_bases: BTreeMap<FormId, RetiredSceneBase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clone_sequence_floor: Option<u32>,
     pub quests: BTreeMap<FormId, QuestState>,
     pub instances: Vec<(InstKey, Instance)>,
     pub extra: BTreeMap<FormId, RefExtra>,
@@ -2121,9 +2165,12 @@ impl GameSnapshot {
     /// Whether [`Game::restore`] and `World::restore` can take this snapshot: a load asks
     /// before it starts anything from the save (docs/design/save-load.md §6).
     pub fn check(&self) -> Result<(), String> {
-        if self.format != SNAPSHOT_FORMAT {
+        if !matches!(self.format.as_str(),
+            SNAPSHOT_FORMAT | LAMBDA_SNAPSHOT_FORMAT | crate::retired_scene::FORMAT | crate::retired_scene::FORMAT_WITH_LAMBDAS)
+        {
             return Err(format!("unsupported snapshot format {:?}", self.format));
         }
+        self.check_retired_scene_bases()?;
         self.sim.check()?;
         crate::coop::checked(self.coop.clone()).map_err(|e| e.to_string())?;
         self.rng_word_pos.parse::<u128>().map_err(|_| format!("bad rng_word_pos {:?}", self.rng_word_pos))?;
@@ -2205,6 +2252,7 @@ impl GameSnapshot {
 }
 
 pub const SNAPSHOT_FORMAT: &str = "fnv.game.state/1";
+pub(crate) const LAMBDA_SNAPSHOT_FORMAT: &str = "fnv.game.state/2-lambda-handles";
 
 /// The player led by an actor's Dialogue package to its trigger location
 /// ([`Game::player_lead`]).
@@ -2312,6 +2360,7 @@ fn unit_lambda(unit: &Compiled, l: &fnv_script::ir::XExpr) -> Option<fnv_script:
 /// and that unit's key, the lambda, and the instance whose variables it shares.
 #[derive(Clone)]
 struct LambdaDef<'a> {
+    handle: u32,
     unit: Option<&'a Compiled>,
     key: String,
     lambda: fnv_script::ir::XExpr,
@@ -2345,6 +2394,8 @@ pub struct Session {
     save_files: crate::nvse_sup4::SaveFiles,
     /// SUP's CallFunctionNextFrame calls with removeOnLoad 0 (`crate::delayed`).
     kept_calls: Vec<crate::delayed::Delayed>,
+    /// The form lists' ListAddForm/ListRemove… edits (`Game::list_edits`), issue #2944.
+    list_edits: std::collections::HashMap<FormId, Vec<FormId>>,
 }
 
 /// An event handler: the event (lower case), the function or lambda, the filters by
@@ -2375,9 +2426,8 @@ pub const MAX_UDF_DEPTH: usize = 30;
 const NOT_A_FUNCTION: &str = " is not a function script";
 const NO_FUNCTION_BLOCK: &str = " has no Function block";
 
-/// Lambdas are named by values from here on, in a `ref` variable's slot [decision: a
-/// FormID this high needs a 255th plugin, which NVForever's load order never gives a
-/// lambda's place to; script-compiler.md §9].
+/// Internal callable regions. Loaded records can also occupy these numbers: allocation
+/// skips them and dispatch uses actual ownership (callable-identity.md).
 /// Ids of foreach's temporary inventory references (B5), below the lambdas'.
 pub const TEMP_REF_BASE: u32 = 0xFE40_0000;
 /// Ids of the scripts CompileScript made from text files, below the temporary
@@ -2440,8 +2490,12 @@ impl<'a> Game<'a> {
             ext: Default::default(),
             udf: Vec::new(),
             lambdas: Vec::new(),
+            lambda_slots: Default::default(),
+            next_lambda: LAMBDA_BASE,
             unusable_reported: Default::default(),
             compiled_files: Vec::new(),
+            compiled_slots: Default::default(),
+            next_compiled: COMPILED_BASE,
             compiled_paths: std::collections::HashMap::new(),
             compiled_origins: Default::default(),
             console_sources: Default::default(),
@@ -2467,6 +2521,7 @@ impl<'a> Game<'a> {
             nx: Default::default(),
             clones: std::collections::HashMap::new(),
             clone_seq: 0,
+            retired_scene_bases: BTreeMap::new(),
             playable_overrides: std::collections::HashMap::new(),
             player_magazine: None,
             console_out: Vec::new(),
@@ -2762,6 +2817,12 @@ impl<'a> Game<'a> {
         }
     }
 
+    /// The start-game-enabled quests the save `s` has no entry for: those of plugins added
+    /// since it was made ([`Game::restore`], issue #2944).
+    fn quests_added_since(&self, s: &GameSnapshot) -> Vec<FormId> {
+        self.data.quests.values().filter(|q| q.start_enabled() && !s.quests.contains_key(&q.form)).map(|q| q.form).collect()
+    }
+
     /// The New Game menu starts the character-generation quest (the original's INI
     /// `sCharGenQuest`, VCG00 by the original's defaults [documented: Fallout_default.ini
     /// `SCharGenQuest=00102037`]) and the quest's `Begin MenuMode` blocks run once, as
@@ -2826,7 +2887,12 @@ impl<'a> Game<'a> {
     /// - a stage already done does nothing unless the quest allows repeated stages
     ///   [observed: VMS16 stage 10 and VCG03 stage 10 set again did not rerun their
     ///   scripts; Generic, with the flag, did];
-    /// - the quest starts if it is not running [observed: VMS16];
+    /// - the quest starts if it is not running [observed: VMS16], unless it is already
+    ///   completed or failed: then the stage is still marked done and its entries run,
+    ///   but the quest stays stopped [observed 2026-11-18, #2958, layer5-captures.md §5.8: VMS16
+    ///   failed by its stage 110, then SetStage 50 and 100: GetStageDone 1, GetQuestRunning
+    ///   0; the same after its complete stage 100. A quest stopped without being
+    ///   completed does start: SetStage 10, StopQuest, SetStage 50, GetQuestRunning 1];
     /// - the stage is marked done, then every entry whose conditions pass runs its result
     ///   script immediately, nested in the caller [documented: wiki, "resolves any of the
     ///   attached stage items that pass their conditions"], then applies its Complete /
@@ -2843,7 +2909,9 @@ impl<'a> Game<'a> {
             self.emit(EventKind::StageIgnored { quest: q, stage, reason: "already_done" });
             return false;
         }
-        self.start_quest(q);
+        if !self.quest(q).completed {
+            self.start_quest(q);
+        }
         self.quest(q).stages_done.insert(stage);
         let player = Some(FormId::PLAYER_REF);
         let label = format!("QUST {q} stage {stage}");
@@ -2901,7 +2969,27 @@ impl<'a> Game<'a> {
     /// clears the completed flag [observed: VMS16 objectives 10 and 5, layer5-captures.md
     /// §5.2], displaying one already shown keeps it [observed: o5_00, VMS19 65 and
     /// VFSAtomicPimp 34, observer check 40, issue #1108].
+    ///
+    /// On a quest already completed or failed neither does anything, running or not
+    /// [observed 2026-11-18, #2958, layer5-captures.md §5.8: VMS16 after its fail stage 110,
+    /// `SetObjectiveDisplayed VMS16 50 1` and `SetObjectiveCompleted VMS16 10 1` left
+    /// both as they were; after its complete stage 100, `SetObjectiveDisplayed VMS16 60
+    /// 1` did nothing, stopped and again after StartQuest]. That is why a player who
+    /// fails Ghost Town Gunfight through Joe Cobb sees no new objective when the
+    /// townspeople's lines set its later stages.
     pub fn set_objective(&mut self, q: FormId, index: i32, displayed: Option<bool>, completed: Option<bool>) -> bool {
+        if self.quests.get(&q).is_some_and(|s| s.completed) {
+            return false;
+        }
+        self.set_objective_whatever(q, index, displayed, completed)
+    }
+
+    /// [`Game::set_objective`] without its completed-quest rule: for
+    /// `CompleteAllObjectives`, which does act on a failed quest [observed 2026-11-18,
+    /// #2958: VMS16 failed, then SetStage 100, whose script calls it: objective 10 read
+    /// completed afterwards, where SetObjectiveCompleted had left it open; hypothesis
+    /// that the function, and not the stage's Complete Quest flag, did it].
+    pub fn set_objective_whatever(&mut self, q: FormId, index: i32, displayed: Option<bool>, completed: Option<bool>) -> bool {
         let data = self.data;
         let Some(def) = data.quests.get(&q) else { return false };
         if !def.objectives.contains_key(&index) {
@@ -3329,11 +3417,12 @@ impl<'a> Game<'a> {
     /// A function script from source text, kept as CompileScript keeps its files; `None`
     /// when it does not compile (the compiler's words go to the trace).
     fn compile_source(&mut self, what: &str, src: String) -> Option<u32> {
-        // The IDs end where the temporary references' begin: no more units past it.
-        if COMPILED_BASE as usize + self.compiled_files.len() >= TEMP_REF_BASE as usize {
+        // Admission precedes compilation/leaking the unit. Loaded forms may consume
+        // numbers inside this internal region too.
+        let Some(id) = self.free_callable_handle(self.next_compiled, TEMP_REF_BASE) else {
             self.emit(EventKind::Skipped { unit: "CompileScript".into(), what: format!("{what}: no compiled-script ID left") });
             return None;
-        }
+        };
         let c = fnv_script::compile::compile_mod_runtime(&src, &self.data.table, &GameEnv { g: self });
         if let Some(e) = c.errors().next() {
             let what = format!("{what}: {}: {}", e.kind.replace('_', " "), e.detail);
@@ -3353,7 +3442,8 @@ impl<'a> Game<'a> {
             source: Some(src),
         };
         let unit: &'a Compiled = Box::leak(Box::new(Compiled::new(unit, d.program, d.report.raw_total())));
-        let id = COMPILED_BASE + self.compiled_files.len() as u32;
+        self.next_compiled = id + 1;
+        self.compiled_slots.insert(id, self.compiled_files.len());
         self.compiled_files.push(unit);
         self.compiled_origins.set(id, crate::jip_provenance::CompiledOrigin::Dynamic);
         Some(id)
@@ -3395,6 +3485,28 @@ impl<'a> Game<'a> {
         self.emit(EventKind::ScriptError { unit, error });
     }
 
+    /// Exact record/owned-handle identity, shared by dispatch and arity admission.
+    fn callable_script(&self, id: u32) -> Option<&'a Compiled> {
+        self.data.script(FormId(id)).or_else(|| self.compiled_slots.get(&id).and_then(|&i| self.compiled_files.get(i).copied()))
+    }
+
+    pub(crate) fn free_callable_handle(&self, start: u32, end: u32) -> Option<u32> {
+        let mut id = start;
+        while id < end {
+            if self.data.sig(FormId(id)).is_none() && !self.package_overrides.contains_key(&FormId(id))
+                && !self.lambda_slots.contains_key(&id) && !self.compiled_slots.contains_key(&id) { return Some(id); }
+            id = id.checked_add(1)?;
+        }
+        None
+    }
+
+    /// Keep the established low-reference policy, including text-compiled functions,
+    /// while admitting actual loaded script records in every load-order slot.
+    pub(crate) fn session_function(&self, value: &fnv_script::vm::XVal) -> bool {
+        matches!(value, fnv_script::vm::XVal::Ref(id) if self.data.script(FormId(*id)).is_some()
+            || (*id < LAMBDA_BASE && !self.lambda_slots.contains_key(id)))
+    }
+
     /// `Call`: a function script's `Begin Function` block with fresh variables of its own,
     /// its parameters set from the arguments, on the calling reference (`ref.Call`); or a
     /// lambda, over the variables of the script that made it [documented: Call; User
@@ -3422,9 +3534,13 @@ impl<'a> Game<'a> {
         }
         let data = self.data;
         let opts = self.opts();
-        let self_ref = on.and_then(|v| v.as_form()).map(FormId);
-        let (unit, params, body, value, locals): (&Compiled, Vec<VarRef>, Vec<Stmt>, Option<fnv_script::ir::XExpr>, Locals) = if id >= LAMBDA_BASE {
-            let d = self.lambdas.get((id - LAMBDA_BASE) as usize).cloned().ok_or("an unknown lambda")?;
+        let self_ref = match on {
+            Some(value) => Some(FormId(value.as_form().ok_or_else(|| VmError::NoReference("call".into()).to_string())?)),
+            None => ctx.self_ref,
+        };
+        let lambda = self.lambda_slots.get(&id).copied();
+        let (unit, params, body, value, locals): (&Compiled, Vec<VarRef>, Vec<Stmt>, Option<fnv_script::ir::XExpr>, Locals) = if let Some(index) = lambda {
+            let d = self.lambdas[index].clone();
             let (unit, l, inst) = (d.unit.ok_or_else(|| format!("the lambda's script {} is gone", d.key))?, d.lambda, d.inst);
             let fnv_script::ir::XExpr::Lambda { params, body, value, .. } = l else { return Err("an unknown lambda".into()) };
             let locals = match inst {
@@ -3433,18 +3549,19 @@ impl<'a> Game<'a> {
             };
             (unit, params, body, value.map(|v| *v), locals)
         } else {
-            let compiled = id.checked_sub(COMPILED_BASE).filter(|_| id < TEMP_REF_BASE).and_then(|i| self.compiled_files.get(i as usize).copied());
-            let unit = match compiled {
-                Some(u) => u,
-                None => data.script(FormId(id)).ok_or_else(|| format!("{}{NOT_A_FUNCTION}", data.name(FormId(id))))?,
-            };
+            let unit = self.callable_script(id).ok_or_else(|| {
+                // Preserve unresolved-handle diagnostics and their reporting frequency;
+                // this fallback does not decide whether an existing callable is a lambda.
+                if id >= LAMBDA_BASE { "an unknown lambda".into() }
+                else { format!("{}{NOT_A_FUNCTION}", data.name(FormId(id))) }
+            })?;
             let block = unit.program.blocks.iter().find(|b| b.event == fnv_script::ir::FUNCTION_BLOCK).ok_or_else(|| format!("{}{NO_FUNCTION_BLOCK}", data.name(FormId(id))))?;
             let params = block.params.iter().flatten().filter_map(|a| if let Arg::Var(v) = a { Some(*v) } else { None }).collect();
             (unit, params, block.body.clone(), None, Locals::Temp(BTreeMap::new()))
         };
         self.udf.push(UdfFrame { value: None, caller });
         self.open_run();
-        let ctx = RunCtx { self_ref: self_ref.or(ctx.self_ref), ..ctx };
+        let ctx = RunCtx { self_ref, ..ctx };
         let mut ex = Exec { game: self, unit, locals, ctx, seconds };
         let mut vm = Vm::new(&data.table, &mut ex, opts);
         let mut result = Ok(());
@@ -3472,17 +3589,17 @@ impl<'a> Game<'a> {
         // variables, for its next call and for the maker's run (`Exec::call_function`)
         // [documented: Lambda, its variables are its maker's; observed: the High and Dry
         // session's repro, `({x} => c += x)` called in its maker's query left `c` 1, #2275].
-        if id >= LAMBDA_BASE {
+        if let Some(index) = lambda {
             if let Locals::Temp(m) = &ex.locals {
                 let m = m.clone();
-                if let Some(d) = ex.game.lambdas.get_mut((id - LAMBDA_BASE) as usize).filter(|d| d.inst.is_none()) {
+                if let Some(d) = ex.game.lambdas.get_mut(index).filter(|d| d.inst.is_none()) {
                     d.captured = Some(m);
                 }
             }
         }
         // A function script's own strings and arrays go with it (a lambda's variables are
         // its maker's).
-        if let (true, Locals::Temp(m)) = (id < LAMBDA_BASE, &ex.locals) {
+        if let (true, Locals::Temp(m)) = (lambda.is_none(), &ex.locals) {
             for (&index, v) in m {
                 match unit.var_type(index) {
                     Some(VarType::Other(t)) if t == "string_var" => ex.game.ext.destroy(v.num() as u32),
@@ -3638,12 +3755,12 @@ impl<'a> Game<'a> {
             XVal::Num(x) => *x as u32,
             _ => return None,
         };
-        if id >= LAMBDA_BASE {
-            let d = self.lambdas.get((id - LAMBDA_BASE) as usize)?;
+        if let Some(&index) = self.lambda_slots.get(&id) {
+            let d = &self.lambdas[index];
             let fnv_script::ir::XExpr::Lambda { params, .. } = &d.lambda else { return None };
             return Some(params.len());
         }
-        let unit = self.data.script(FormId(id))?;
+        let unit = self.callable_script(id)?;
         let block = unit.program.blocks.iter().find(|b| b.event == fnv_script::ir::FUNCTION_BLOCK)?;
         Some(block.params.iter().flatten().count())
     }
@@ -3658,7 +3775,7 @@ impl<'a> Game<'a> {
             .handlers
             .iter()
             .filter(|h| !h.alt)
-            .filter(|h| matches!(h.func, fnv_script::vm::XVal::Ref(f) if f < LAMBDA_BASE))
+            .filter(|h| self.session_function(&h.func))
             .filter(|h| h.filters.iter().all(|(_, v)| !matches!(v, fnv_script::vm::XVal::Array(_))))
             .cloned()
             .collect();
@@ -3666,7 +3783,7 @@ impl<'a> Game<'a> {
             .jip
             .main_loop
             .iter()
-            .filter(|m| m.flags & 8 == 0 && matches!(m.func, fnv_script::vm::XVal::Ref(f) if f < LAMBDA_BASE))
+            .filter(|m| m.flags & 8 == 0 && self.session_function(&m.func))
             .cloned()
             .map(|mut m| {
                 m.due = 0;
@@ -3675,7 +3792,7 @@ impl<'a> Game<'a> {
             .collect();
         let pp = self.pp_take_session();
         let sr_registered = self.sr.take_registered();
-        Session { handlers, main_loop, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls() }
+        Session { handlers, main_loop, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits) }
     }
 
     /// Take over what lasts for the session ([`Game::take_session`]).
@@ -3694,6 +3811,7 @@ impl<'a> Game<'a> {
         self.dialogue_edits = s.dialogue_edits;
         self.save_files = s.save_files;
         self.put_kept_calls(s.kept_calls);
+        self.list_edits = s.list_edits;
     }
 
     /// Run every handler registered for `event` whose filters match, highest priority
@@ -3780,7 +3898,10 @@ impl<'a> Game<'a> {
         };
         // `Begin MenuMode 1` runs for any of the Pip-Boy's menus (`menus::answers`).
         if block.event == event::MENU_MODE && !matches!(params[0], Arg::Ref(_)) {
-            return menus::answers(want.num() as u16, subject.num() as u16);
+            // Group 4 belongs to startup, not every pause page sharing code 1013
+            // (script-language.md, Title-start MenuMode group 4).
+            return (self.start_frames && want.num() == f64::from(menus::TITLE) && subject.num() == f64::from(menus::START))
+                || menus::answers(want.num() as u16, subject.num() as u16);
         }
         match (want.as_form(), subject.as_form()) {
             // A form list as the parameter accepts any of its members [hypothesis, fit
@@ -4033,6 +4154,7 @@ impl<'a> Game<'a> {
         self.small_tick();
         self.vheyes_tick();
         self.knvse_tick();
+        self.advance_first_person_menu_clock();
         // kNVSE's AnimGroupOverride folders: which hold for each actor.
         self.anim_folders_tick();
         // ppNVSE's CallLoop functions due (`crate::nvse_pp`).
@@ -4234,6 +4356,7 @@ impl<'a> Game<'a> {
             return;
         }
         let any = self.start_frames;
+        let title = any && code == menus::START;
         let subject = Some(Value::Num(code as f64));
         let data = self.data;
         let wants = |script: FormId| {
@@ -4251,7 +4374,7 @@ impl<'a> Game<'a> {
                         None | Some([]) if any => return b.event == event::MENU_MODE,
                         _ => return false,
                     };
-                    b.event == event::MENU_MODE && c == code as f64
+                    b.event == event::MENU_MODE && (c == code as f64 || (title && c == f64::from(menus::TITLE)))
                 })
             })
         };
@@ -4316,6 +4439,8 @@ impl<'a> Game<'a> {
     /// no shipped script has a `MenuMode 1013` block [observed: fnvtool script decompile
     /// of the masters]. MenuMode blocks for any menu run in these frames too (side_blocks),
     /// the masters' included. NVForever runs it once when a game starts.
+    /// These frames also admit the title-screen group 4, preserving the existing
+    /// 1013/no-argument blocks. Ordinary held pause pages gain no title context.
     pub fn came_through_start_menu(&mut self, frames: u32, dt: f64) {
         let keep = self.cfg.frame_seconds;
         self.cfg.frame_seconds = dt;
@@ -4427,7 +4552,8 @@ impl<'a> Game<'a> {
 
     pub fn menu_open(&self, code: u16) -> bool {
         let open = |m: Option<u16>| m.is_some_and(|m| menus::answers(code, m));
-        open(self.menu) || open(self.menu_under) || open(self.side_menu()) || (code == menus::DIALOGUE && self.dialogue.is_some())
+        (code == menus::TITLE && self.start_frames && self.page_menu == Some(menus::START))
+            || open(self.menu) || open(self.menu_under) || open(self.side_menu()) || (code == menus::DIALOGUE && self.dialogue.is_some())
     }
 
     /// A menu code that holds beside the open menu: the loading menu (1007) under a
@@ -4447,14 +4573,18 @@ impl<'a> Game<'a> {
     /// menu `code` (the pause menu's Mods page for the start menu, 1013): the `Begin
     /// MenuMode <code>` blocks of the running quests and of the references in loaded
     /// cells run, as under a side menu ([`Game::side_blocks`]), and `MenuMode <code>` is
-    /// true while they do; nothing else of a frame happens (no game time, no queued
-    /// events or OnLoad blocks, no AI) and the open menu is left as it is, so a menu a
+    /// true while they do. Physical key edges reach JIP handlers first (see
+    /// mcm-page-key-events.md); no game time, queued events, OnLoad blocks or AI run.
+    /// The open menu is left as it is, so a menu a
     /// block opens (ShowMessage, ShowTutorialMenu) stays open [design: issue #976 T11].
     pub fn page_tick(&mut self, code: u16) {
         self.frame += 1;
         self.temp_refs.clear();
         self.page_time += self.cfg.frame_seconds;
         let before = self.page_menu.replace(code);
+        // The page holds the world, but its wheel/search handlers still need physical
+        // edges, in the same menu context as its script blocks.
+        self.jip_keys();
         self.side_blocks(code);
         self.page_menu = before;
     }
@@ -4468,6 +4598,13 @@ impl<'a> Game<'a> {
     /// observed: the Begin Again list 2026-11-13, MCM listed none of the 23 it loaded].
     /// How many handlers ran.
     pub fn page_menu_event(&mut self, code: u16, open: bool) -> usize {
+        // Input callbacks can run just before the held page's first script tick.
+        // A new request from that same opening belongs to the new page lifetime.
+        let carry_cursor = open && self.other.jip9.cursor_warp.is_some()
+            && self.other.jip9.cursor_warp_start_menu
+            && self.other.jip9.cursor_warp_requested_generation == self.other.jip9.cursor_warp_generation;
+        self.other.jip9.invalidate_cursor_warp();
+        if carry_cursor { self.other.jip9.cursor_warp_requested_generation = self.other.jip9.cursor_warp_generation; }
         let before = self.page_menu.replace(code);
         let ran = self.jip_event(if open { "menuopen" } else { "menuclose" }, None, vec![fnv_script::vm::XVal::Num(f64::from(code))]);
         self.page_menu = before;
@@ -4666,6 +4803,7 @@ impl<'a> Game<'a> {
 
     pub fn close_menu(&mut self) -> Option<u16> {
         let m = self.menu.take()?;
+        self.other.jip9.invalidate_cursor_warp();
         if m == menus::TUTORIAL {
             // The menu under it is the open one again (`Game::show_tutorial`).
             self.tutorial.clear();
@@ -4774,45 +4912,80 @@ impl<'a> Game<'a> {
     /// takes over, as o30 saw ([`Game::say_line`]). NVForever's talking state ends with
     /// the line, not about 4.9 s after it as o30 measured in the original.
     pub fn say_by_script(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, say_to: bool) -> Option<FormId> {
-        if let Some(s) = self.speech.iter().find(|s| s.speaker == speaker && s.topic == topic && s.said_by_script()) {
+        // A line said through a talking activator is the activator's here ([`Game::say`]).
+        if let Some(s) = self.speech.iter().find(|s| s.place() == speaker && s.topic == topic && s.said_by_script()) {
             return Some(s.info);
         }
         self.say_with(speaker, target, topic, say_to, true)
     }
 
+    /// The line of [`Game::say`] and [`Game::say_by_script`].
+    ///
+    /// **A talking activator** with a talking actor ([`Game::talker`]: the one
+    /// SetTalkingActivatorActor gave it, else the one its scripts name) says that actor's
+    /// lines: the line is chosen with the actor as the speaker (the conditions on the
+    /// speaker such as GetIsID, faction and voice type, the fixed-speaker check, Say Once),
+    /// with IsActorTalkingThroughActivator 1 on it while choosing, and said by the actor
+    /// through the activator ([`Speech::through`]), as a conversation through one is
+    /// (issue #2451) [hypothesis, issue #2768: Vault 101's intercom given Jonas says
+    /// CG02IntercomConv, whose lines test GetIsID Jonas, and the Pitt's Ashur intercom its
+    /// lines of Ashur's (TTW, observed headless by the maintainer); observer check 219;
+    /// documented: catalogue SetTalkingActivatorActor, "makes a talking activator use the
+    /// dialogue of a given actor"]. When the actor has no line of the topic the activator's
+    /// own lines are tried as before [design, #2768: every line said before is said
+    /// still]. Without a talking actor nothing changes.
     fn say_with(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, say_to: bool, in_stead: bool) -> Option<FormId> {
         let listener = target.or(Some(FormId::PLAYER_REF));
-        // The fallback is decided from the data, not from select_line's result: a topic
-        // with a line the speaker passes the fixed-speaker check for never falls back, so
-        // a spent Say Once line or a false condition leaves the call unsaid as before.
-        let chosen = if in_stead && self.no_line_for_speaker(speaker, topic) {
-            self.select_line_as(speaker, listener, topic, |_| true, crate::dialogue::Says::InStead)
-        } else {
-            self.select_line(speaker, listener, topic)
+        let through = match self.talker(speaker) {
+            (actor, Some(t)) if actor != speaker => {
+                let outer = self.talking_through.replace((actor, t));
+                let info = self.choose_said_line(actor, listener, topic, in_stead);
+                self.talking_through = outer;
+                info.map(|i| (actor, t, i))
+            }
+            _ => None,
         };
-        let Some(info) = chosen else {
+        let kind = if say_to { LineKind::SayTo } else { LineKind::Say };
+        if let Some((actor, t, info)) = through {
+            self.say_line_through(actor, target, topic, info, kind, Some(t));
+            return Some(info);
+        }
+        let Some(info) = self.choose_said_line(speaker, listener, topic, in_stead) else {
             self.emit(EventKind::NoLine { speaker, topic });
             if say_to {
                 self.say_to_unsaid.push((speaker, topic));
             }
             return None;
         };
-        self.say_line(speaker, target, topic, info, if say_to { LineKind::SayTo } else { LineKind::Say });
+        self.say_line(speaker, target, topic, info, kind);
         Some(info)
     }
 
-    /// Say's flags on the line `speaker` is saying ([`Speech::force_subtitles`],
-    /// [`Speech::two_d`]).
+    /// The line of `topic` `speaker` says to `listener` by Say or SayTo ([`Game::say_with`]).
+    fn choose_said_line(&mut self, speaker: FormId, listener: Option<FormId>, topic: FormId, in_stead: bool) -> Option<FormId> {
+        // The fallback is decided from the data, not from select_line's result: a topic
+        // with a line the speaker passes the fixed-speaker check for never falls back, so
+        // a spent Say Once line or a false condition leaves the call unsaid as before.
+        if in_stead && self.no_line_for_speaker(speaker, topic) {
+            self.select_line_as(speaker, listener, topic, |_| true, crate::dialogue::Says::InStead)
+        } else {
+            self.select_line(speaker, listener, topic)
+        }
+    }
+
+    /// Say's flags on the line `speaker` is saying, or saying through the talking
+    /// activator `speaker` ([`Speech::force_subtitles`], [`Speech::two_d`]).
     pub fn set_line_flags(&mut self, speaker: FormId, force_subtitles: bool, two_d: bool) {
-        if let Some(s) = self.speech.iter_mut().find(|s| s.speaker == speaker) {
+        if let Some(s) = self.speech.iter_mut().find(|s| s.speaker == speaker || s.through == Some(speaker)) {
             s.force_subtitles = force_subtitles;
             s.two_d = two_d;
         }
     }
 
-    /// Set who the line `speaker` is saying turns to whom ([`LineLook`]).
+    /// Set who the line `speaker` is saying (or saying through the talking activator
+    /// `speaker`) turns to whom ([`LineLook`]).
     pub fn set_line_look(&mut self, speaker: FormId, look: LineLook) {
-        if let Some(s) = self.speech.iter_mut().find(|s| s.speaker == speaker) {
+        if let Some(s) = self.speech.iter_mut().find(|s| s.speaker == speaker || s.through == Some(speaker)) {
             s.look = look;
         }
     }
@@ -4826,21 +4999,24 @@ impl<'a> Game<'a> {
     ///   "forced to look at the speaker" unless `noTargetLookFlag`]: its head only for a
     ///   SayTo line [design], head and body in a conversation between actors, where it
     ///   speaks next [design, as `fnv_ai` has turned both since it started them];
-    /// - nobody, when the line's [`LineLook`] says so.
+    /// - nobody, when the line's [`LineLook`] says so (StartConversation's `headTrack` 0,
+    ///   SayTo's `noTargetLookFlag` 1).
     ///
     /// A line said to nobody (Say) turns nobody. Whether the engine can turn a body (one
-    /// on furniture or on its way cannot) is the engine's.
+    /// on furniture or on its way cannot) is the engine's. A line said through a talking
+    /// activator ([`Speech::through`]) is said by the activator here: the listener looks
+    /// at it, and the actor, who is not there, does not turn (an activator turns nobody)
+    /// [design, docs/spec-notes/talking-activators.md §2].
     pub fn facings(&self) -> Vec<Facing> {
         let mut out = Vec::new();
         for s in &self.speech {
-            let Some(to) = s.target.filter(|t| *t != s.speaker) else { continue };
+            let speaker = s.place();
+            let Some(to) = s.target.filter(|t| *t != speaker) else { continue };
             if s.look == LineLook::Nobody {
                 continue;
             }
-            out.push(Facing { who: s.speaker, to, body: true, speaking: true, info: s.info });
-            if s.look == LineLook::Both {
-                out.push(Facing { who: to, to: s.speaker, body: s.conversation.is_some(), speaking: false, info: s.info });
-            }
+            out.push(Facing { who: speaker, to, body: true, speaking: true, info: s.info });
+            out.push(Facing { who: to, to: speaker, body: s.conversation.is_some(), speaking: false, info: s.info });
         }
         out
     }
@@ -4851,10 +5027,24 @@ impl<'a> Game<'a> {
     /// 3.6 [design]; [`Game::say`]; [`LineKind`]). A line of a conversation
     /// between actors lasts as long as its first response.
     pub(crate) fn say_line(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, info: FormId, kind: LineKind) {
+        self.say_line_through(speaker, target, topic, info, kind, None)
+    }
+
+    /// [`Game::say_line`] for a line `speaker` says through the talking activator
+    /// `through` ([`Speech::through`], [`Game::say`]), marked before its begin script runs.
+    pub(crate) fn say_line_through(&mut self, speaker: FormId, target: Option<FormId>, topic: FormId, info: FormId, kind: LineKind, through: Option<FormId>) {
         let data = self.data;
         let dv = self.dialogue_view();
         let Some(def) = dv.info(&info) else { return };
         self.cut_line(speaker);
+        // One line at a time where it is said: a talking activator's own line and a line
+        // said through it by its talking actor cut each other, whichever starts second
+        // [design, #2768: else both would end, each with its SayToDone].
+        let place = through.unwrap_or(speaker);
+        let others: Vec<FormId> = self.speech.iter().filter(|s| s.speaker != speaker && s.place() == place).map(|s| s.speaker).collect();
+        for o in others {
+            self.cut_line_where(|s| s.speaker == o && s.place() == place);
+        }
         self.mark_said(speaker, info, false);
         let conversation = match kind {
             LineKind::Conversation(n) => Some(n),
@@ -4876,7 +5066,7 @@ impl<'a> Game<'a> {
         let (say_to, greeting, hello) = (kind == LineKind::SayTo, kind == LineKind::Greeting, kind == LineKind::Hello);
         // [design] Mark this line before callbacks can finish it or replace it.
         let immediate = def.has(crate::data::info_flag::RUN_IMMEDIATELY);
-        self.speech.push(Speech { speaker, target, topic, info, remaining: seconds, say_to, greeting, farewell: false, conversation, earlier_topics: Vec::new(), hello, look: LineLook::Both, response: 0, force_subtitles: false, two_d: false, end_ran: immediate, leads_on: false, through: None });
+        self.speech.push(Speech { speaker, target, topic, info, remaining: seconds, say_to, greeting, farewell: false, conversation, earlier_topics: Vec::new(), hello, look: LineLook::Both, response: 0, force_subtitles: false, two_d: false, end_ran: immediate, leads_on: false, through });
         if let Some(&first) = def.response_order().first() {
             self.ask_response_idles(speaker, target, info, first);
         }
@@ -4935,12 +5125,18 @@ impl<'a> Game<'a> {
     /// quest stages and must not be lost; the owner's catch-all statement was about the
     /// greeting].
     pub(crate) fn cut_line(&mut self, speaker: FormId) {
-        if let Some(k) = self.speech.iter().position(|s| s.speaker == speaker) {
+        self.cut_line_where(|s| s.speaker == speaker);
+    }
+
+    /// [`Game::cut_line`] for the first line that `which` picks.
+    fn cut_line_where(&mut self, which: impl Fn(&Speech) -> bool) {
+        if let Some(k) = self.speech.iter().position(which) {
             if self.speech[k].goodbye_at_player() {
                 self.end_line(k);
                 return;
             }
             let s = self.speech.remove(k);
+            let speaker = s.speaker;
             self.emit(EventKind::LineEnded { speaker, info: s.info, cut: true });
             if let (Some(lines), Some(target)) = (s.conversation, s.target) {
                 self.emit(EventKind::ActorConversationEnded { speaker, target, reason: crate::dialogue::ended::CUT, lines });
@@ -4952,8 +5148,9 @@ impl<'a> Game<'a> {
     /// the conversation with the player. While the player chooses, the actor is not
     /// talking [hypothesis]. A SayTo line held by a menu (a conversation included) still
     /// counts, as for the other menus.
+    /// A talking activator a line is said through ([`Speech::through`]) is talking too.
     pub fn is_talking(&self, actor: FormId) -> bool {
-        self.speech.iter().any(|s| s.speaker == actor) || self.dialogue.as_ref().is_some_and(|c| c.actor == actor && c.line.is_some())
+        self.speech.iter().any(|s| s.speaker == actor || s.through == Some(actor)) || self.dialogue.as_ref().is_some_and(|c| c.actor == actor && c.line.is_some())
     }
 
     /// Whether an actor is saying its Goodbye greeting at the player (the player talked
@@ -4990,7 +5187,10 @@ impl<'a> Game<'a> {
         let death = self.data.by_edid("Death");
         for s in self.speech.iter_mut().filter(|s| only.is_none_or(|o| o == s.speaker)) {
             s.remaining -= dt;
-            let here = self.world.peek(s.speaker).is_none_or(|w| !w.deleted()) && self.world.is_enabled(s.speaker).unwrap_or(false);
+            // Through a talking activator the activator must be there, the actor need not
+            // be (`crate::talking_activators`); the actor's death still cuts the line.
+            let place = s.place();
+            let here = self.world.peek(place).is_none_or(|w| !w.deleted()) && self.world.is_enabled(place).unwrap_or(false);
             // A Goodbye greeting at the player whose speaker is drawn into a fight ends at
             // once as if said to the end (`Game::cut_line`, `Game::greets_player`) [owner
             // statement 2026-10-27: "skip to the end of the line as if she finished
@@ -5032,7 +5232,14 @@ impl<'a> Game<'a> {
                 // its speaker's new line ends) neither sees nor clears the outer one's
                 // request, and the outer state comes back afterwards [design].
                 let outer = (std::mem::replace(&mut self.farewell_ending, s.farewell), self.farewell_then.take());
+                // A line said through a talking activator: its speaker still talks through
+                // it while the end script runs (`Game::talking_through`, #2768).
+                let outer_through = match s.through {
+                    Some(t) => self.talking_through.replace((speaker, t)),
+                    None => self.talking_through,
+                };
                 self.run_result(u, RunCtx { self_ref: Some(speaker), action_ref: None, quest: def.quest });
+                self.talking_through = outer_through;
                 then = self.farewell_then.take().filter(|_| s.farewell);
                 (self.farewell_ending, self.farewell_then) = outer;
             }
@@ -5066,8 +5273,10 @@ impl<'a> Game<'a> {
             return;
         }
         // SayToDone follows a line said by Say as well as by SayTo [documented: GECK
-        // tutorials, docs/spec-notes/level-design.md §11.2 D1].
-        self.ref_event(speaker, event::SAY_TO_DONE, Some(Value::Ref(s.topic.0)), None);
+        // tutorials, docs/spec-notes/level-design.md §11.2 D1]. A line said through a
+        // talking activator was the activator's Say or SayTo: its blocks run on it
+        // ([`Game::say`]) [hypothesis, observer check 219].
+        self.ref_event(s.place(), event::SAY_TO_DONE, Some(Value::Ref(s.topic.0)), None);
         // A Dialogue package's Say To line to another actor goes on as a conversation
         // between them (`Game::say_package_line`).
         if s.leads_on {
@@ -5336,6 +5545,14 @@ impl<'a> Game<'a> {
         if !self.activation_goes_on(actor, target) {
             return Ok(serde_json::json!({"result": "destroyed"}));
         }
+        if mode == ActMode::Hand {
+            if !self.pre_activation_allows(actor, target) {
+                return Ok(serde_json::json!({"result": "prevented"}));
+            }
+            if !self.activation_goes_on(actor, target) {
+                return Ok(serde_json::json!({"result": "destroyed"}));
+            }
+        }
         // The player's Disable Character Respec tweak: the activator that offers to remake
         // the character on leaving the start (VCG04ActivatorScript) does nothing
         // [observed: FalloutNV.esm SCPT 0x001164A4 shows the offer, MESG 0x001164A1; design:
@@ -5366,7 +5583,43 @@ impl<'a> Game<'a> {
     /// the target's action reference.
     fn activation_begins(&mut self, actor: FormId, target: FormId) -> bool {
         self.activation_heard(actor, target);
-        self.activation_goes_on(actor, target)
+        self.activation_goes_on(actor, target) && self.pre_activation_allows(actor, target) && self.activation_goes_on(actor, target)
+    }
+
+    /// Regular activation only: after OnActivate observers and before a block or
+    /// default action. An explicit numeric SetFunctionValue 0 prevents activation;
+    /// a void callback keeps the ordinary Call result without becoming a veto.
+    /// See docs/spec-notes/preactivation-events.md.
+    fn pre_activation_allows(&mut self, actor: FormId, target: FormId) -> bool {
+        use fnv_script::vm::XVal;
+        const EVENT: &str = "ShowOff:OnPreActivate";
+        let mut handlers: Vec<_> = self.handlers.iter().filter(|h| h.event.eq_ignore_ascii_case(EVENT)).cloned().collect();
+        if handlers.is_empty() { return true; }
+        handlers.sort_by(|a, b| b.priority.cmp(&a.priority).then(a.seq.cmp(&b.seq)));
+        // A callback may unregister an array-filtered later callback. Keep the
+        // dispatch snapshot's filters alive while its current allowed flag changes.
+        for handler in &handlers {
+            for (_, filter) in &handler.filters { self.ext.retain(filter); }
+        }
+        self.event_names.push(EVENT.into());
+        let door_run = self.npc_door_run.take();
+        let mut allowed = true;
+        for handler in &handlers {
+            let args = vec![XVal::Ref(actor.0), XVal::Num(if allowed { 1.0 } else { 0.0 })];
+            if !self.handler_matches(handler, &args, Some(target)) { continue; }
+            let ctx = RunCtx { self_ref: Some(target), action_ref: Some(actor), ..RunCtx::default() };
+            match self.run_function(&handler.func, Some(Value::Ref(target.0)), args, None, ctx) {
+                Ok(XVal::Num(value)) if self.udf_value_set && value == 0.0 => allowed = false,
+                Ok(_) => {},
+                Err(error) => self.handler_failed(format!("event handler for {EVENT}"), error),
+            }
+        }
+        self.npc_door_run = door_run;
+        self.event_names.pop();
+        for handler in &handlers {
+            for (_, filter) in &handler.filters { self.ext.release(filter); }
+        }
+        allowed
     }
 
     /// The extender's OnActivate handlers hear `actor` activating `target` (the target
@@ -6240,10 +6493,15 @@ impl<'a> Game<'a> {
             .iter()
             .map(|(&id, state)| (id, state.base))
             .chain(snapshot.sim.deleted_created.iter().map(|(&id, &base)| (id, base)))
-            .find(|(_, base)| self.clones.contains_key(base) || self.world.temporary_scene_base(*base).is_some());
+            .find(|(id, base)| {
+                (self.clones.contains_key(base) || self.world.temporary_scene_base(*base).is_some() || self.retired_scene_bases.contains_key(base))
+                    && (snapshot.sim.refs.contains_key(id) || !snapshot.retired_scene_bases.contains_key(base))
+            });
         if let Some((reference, base)) = unsupported {
             return Err(format!("saving reference {reference} of temporary cloned base {base} is not supported yet"));
         }
+        snapshot.check()?;
+        self.validate_retired_scene_bases(&snapshot)?;
         self.log_combat_style_snapshot_loss();
         Ok(snapshot)
     }
@@ -6262,10 +6520,19 @@ impl<'a> Game<'a> {
                 };
             }
         }
+        let retired_scene_bases = self.retired_scene_snapshot(&sim);
+        let clone_sequence_floor = (!retired_scene_bases.is_empty()).then_some(self.clone_seq);
         GameSnapshot {
-            format: SNAPSHOT_FORMAT.into(),
+            format: match (retired_scene_bases.is_empty(), self.lambdas.is_empty()) {
+                (true, true) => SNAPSHOT_FORMAT,
+                (true, false) => LAMBDA_SNAPSHOT_FORMAT,
+                (false, true) => crate::retired_scene::FORMAT,
+                (false, false) => crate::retired_scene::FORMAT_WITH_LAMBDAS,
+            }.into(),
+            retired_scene_bases,
+            clone_sequence_floor,
             ext: self.ext.clone(),
-            lambdas: self.lambdas.iter().map(|d| SavedLambda { unit: d.key.clone(), lambda: d.lambda.clone(), inst: d.inst }).collect(),
+            lambdas: self.lambdas.iter().map(|d| SavedLambda { handle: Some(d.handle), unit: d.key.clone(), lambda: d.lambda.clone(), inst: d.inst }).collect(),
             // A created reference deleted since keeps no variables: its FormID is not
             // used again, so they could never be read.
             nx: crate::nvse_nx::NxVars(self.nx.0.iter().filter(|(id, _)| !sim.deleted_created.contains_key(id)).map(|(k, v)| (*k, v.clone())).collect()),
@@ -6331,8 +6598,20 @@ impl<'a> Game<'a> {
     pub fn restore(data: &'a GameData, world: World<'a>, cfg: GameConfig, s: &GameSnapshot) -> Result<Game<'a>, String> {
         s.check()?;
         let mut g = Game::new(data, world, cfg);
+        g.validate_retired_scene_bases(s)?;
+        g.retired_scene_bases = s.retired_scene_bases.clone();
+        g.clone_seq = s.clone_sequence_floor.unwrap_or(0);
         g.ext = s.ext.clone();
-        for l in &s.lambdas {
+        for (ordinal, l) in s.lambdas.iter().enumerate() {
+            let handle = match l.handle {
+                Some(handle) => handle,
+                None => LAMBDA_BASE.checked_add(u32::try_from(ordinal).map_err(|_| "too many saved lambdas")?).ok_or("too many saved lambdas")?,
+            };
+            if !(LAMBDA_BASE..FormId::FIRST_DYNAMIC.0).contains(&handle) || g.lambda_slots.contains_key(&handle) || data.sig(FormId(handle)).is_some() {
+                return Err(format!("saved lambda handle {handle:08X} is not an unambiguous runtime callable"));
+            }
+            g.next_lambda = g.next_lambda.max(handle + 1);
+            g.lambda_slots.insert(handle, g.lambdas.len());
             // A lambda whose unit is gone (a plugin removed, a console line) keeps its place,
             // so the later ones keep their names; calling it fails.
             let unit = data.unit_by_key.get(&l.unit).map(|&i| &data.units[i]);
@@ -6341,14 +6620,25 @@ impl<'a> Game<'a> {
             // reads every lambda as number 0, and an edited plugin can number other code
             // the same; those get a new ID with the current code when made.
             if let Some(u) = unit.filter(|u| unit_lambda(u, &l.lambda).is_some_and(|now| now == l.lambda)) {
-                g.lambda_ids.entry(lambda_key(u, &l.lambda, l.inst)).or_insert(LAMBDA_BASE + g.lambdas.len() as u32);
+                g.lambda_ids.entry(lambda_key(u, &l.lambda, l.inst)).or_insert(handle);
             }
-            g.lambdas.push(LambdaDef { unit, key: l.unit.clone(), lambda: l.lambda.clone(), inst: l.inst, captured: None });
+            g.lambdas.push(LambdaDef { handle, unit, key: l.unit.clone(), lambda: l.lambda.clone(), inst: l.inst, captured: None });
         }
         g.nx = s.nx.clone();
         g.quests = s.quests.clone();
         g.instances = s.instances.iter().cloned().collect();
+        // A start-game-enabled quest the save has no entry for came with a plugin added
+        // since the game was saved (every game starts them all, `Game::new_game`, and an
+        // entry is never dropped): it starts with the load, as on a new game [hypothesis:
+        // the original starts a newly added plugin's start-game-enabled quests on a load,
+        // which mods added mid-game rely on; observed: the owner's saves of 2026-11-11 to
+        // 13, from before MCM was added, loaded with MCM's quest stopped and its Mods page
+        // empty, issue #2944].
+        for q in g.quests_added_since(s) {
+            g.start_quest(q);
+        }
         g.extra = s.extra.clone();
+        g.stand_everyone_up();
         g.player = s.player.clone();
         // The world does not save the level it rolls at.
         g.sync_player_level();
@@ -6376,6 +6666,7 @@ impl<'a> Game<'a> {
         g.time = s.time;
         g.pending_onload = s.pending_onload.clone();
         g.forms = s.forms.clone();
+        g.refresh_actor_inventory_sources(true);
         g.effects = s.effects.clone();
         g.next_effect = s.next_effect.max(1);
         g.image_modifiers = s.image_modifiers.clone();
@@ -6868,17 +7159,20 @@ impl Host for Exec<'_, '_> {
         if let Some(&id) = self.game.lambda_ids.get(&key) {
             // Made again by a maker with no instance: it reads that run's variables
             // [hypothesis, script-compiler.md §9 Lambdas].
-            if let (Locals::Temp(m), Some(d)) = (&self.locals, self.game.lambdas.get_mut((id - LAMBDA_BASE) as usize)) {
+            if let (Locals::Temp(m), Some(&index)) = (&self.locals, self.game.lambda_slots.get(&id)) {
+                let d = &mut self.game.lambdas[index];
                 d.captured = Some(m.clone());
             }
             return Ok(fnv_script::vm::XVal::Ref(id));
         }
-        let id = LAMBDA_BASE + self.game.lambdas.len() as u32;
+        let id = self.game.free_callable_handle(self.game.next_lambda, FormId::FIRST_DYNAMIC.0).ok_or("runtime lambda handles exhausted")?;
+        self.game.next_lambda = id + 1;
         let captured = match &self.locals {
             Locals::Temp(m) => Some(m.clone()),
             Locals::Instance(_) => None,
         };
-        self.game.lambdas.push(LambdaDef { unit: Some(self.unit), key: self.unit.key(), lambda: l.clone(), inst: key.2, captured });
+        self.game.lambda_slots.insert(id, self.game.lambdas.len());
+        self.game.lambdas.push(LambdaDef { handle: id, unit: Some(self.unit), key: self.unit.key(), lambda: l.clone(), inst: key.2, captured });
         self.game.lambda_ids.insert(key, id);
         Ok(fnv_script::vm::XVal::Ref(id))
     }
@@ -6907,8 +7201,8 @@ impl Host for Exec<'_, '_> {
         // A lambda this run made, called in it, runs on this run's variables and leaves
         // them as it wrote them (`Game::run_function_here`).
         let mine = match (f, &self.locals) {
-            (fnv_script::vm::XVal::Ref(id), Locals::Temp(m)) if *id >= LAMBDA_BASE => {
-                let i = (*id - LAMBDA_BASE) as usize;
+            (fnv_script::vm::XVal::Ref(id), Locals::Temp(m)) if self.game.lambda_slots.contains_key(id) => {
+                let i = self.game.lambda_slots[id];
                 let unit = self.unit as *const Compiled;
                 match self.game.lambdas.get_mut(i) {
                     Some(d) if d.inst.is_none() && d.unit.is_some_and(|u| std::ptr::eq(u, unit)) => {
@@ -6933,7 +7227,7 @@ impl Host for Exec<'_, '_> {
         let sender = self.unit.unit.plugin.clone();
         let registrar = if matches!(&c, fnv_script::vm::EventCall::JipSet { add: true, .. }) {
             let plugin = self.calling_plugin();
-            let compiled = self.game.compiled_files.iter().position(|&unit| std::ptr::eq(unit, self.unit)).map(|i| COMPILED_BASE + i as u32);
+            let compiled = self.game.compiled_slots.iter().find_map(|(&id, &index)| std::ptr::eq(self.game.compiled_files[index], self.unit).then_some(id));
             let origin = compiled.and_then(|id| self.game.compiled_origins.get(id));
             Some(std::sync::Arc::new(crate::jip_provenance::Registrar::capture(self.unit, self.ctx, plugin, compiled, origin)))
         } else { None };
@@ -7052,6 +7346,11 @@ impl Host for Exec<'_, '_> {
     }
 
     fn ext_call(&mut self, name: &str, on: Option<Value>, args: &[fnv_script::vm::XVal]) -> Option<Result<fnv_script::vm::XVal, String>> {
+        if functions::player_source::handles(name) {
+            let source_ctx = Ctx { unit: self.unit.shared_key().clone(), opcode: 0, on: None, self_ref: self.ctx.self_ref,
+                action_ref: self.ctx.action_ref, quest: self.ctx.quest, inst: None, in_condition: false };
+            return functions::player_source::call(self.game, &source_ctx, on, name, args);
+        }
         let on = on.and_then(|v| v.as_form()).map(FormId);
         let ctx = self.ctx;
         // Who calls: DisablePlayerControlsAlt keeps its locks by plugin, GetNthExplicitRef
@@ -7073,7 +7372,7 @@ impl Host for Exec<'_, '_> {
         if let Some(v) = self.game.world.setting_f32(name) {
             return Some(XVal::Num(f64::from(v)));
         }
-        match self.game.world.forms.settings.get(&name.to_ascii_lowercase())? {
+        match self.game.world.setting_value(name)? {
             fnv_sim::settings::Setting::Str(s) => Some(XVal::Str(s.clone())),
             _ => None,
         }
@@ -7149,3 +7448,7 @@ mod effect_lookup_tests {
         assert_eq!(effect_from(&[], 3, 2), None);
     }
 }
+
+#[cfg(test)]
+#[path = "game/callable_allocation_tests.rs"]
+mod callable_allocation_tests;

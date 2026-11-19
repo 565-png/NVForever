@@ -4,6 +4,27 @@ Crates copied from crates.io with a small change, used through `[patch.crates-io
 `engine/Cargo.toml`. Each keeps its own licence files. When the crate is upgraded, copy
 the new version here and apply the change again (or drop the patch if upstream fixed it).
 
+## bevy_winit 0.20.1 (MIT OR Apache-2.0, Bevy)
+
+Adds an explicit cursor request/receipt consumer before ordinary Window
+synchronization. Only acknowledged requests update both Window and its private
+cache; ordinary setters retain their existing path. The cache remains private.
+The `cursor-test-support` feature exposes an offscreen fixture for that same
+consumer with an injected native result, without creating an OS window.
+See `docs/spec-notes/windows-cursor-ack.md` for ownership, bounds and validation
+limits. Both upstream license files are retained.
+
+In `bevy_winit/src/lib.rs`, the crate-level `unsafe_code` lint changes from
+`forbid` to `deny` so Windows-only `native_cursor_owner` in
+`bevy_winit/src/cursor_position.rs` can opt in locally. It uses the live winit-owned
+window handle and a stack `POINT` to check foreground ownership and whether the
+cursor is inside the client area before a warp, even without a motion event. The
+query itself changes neither focus nor cursor position. Every pre-existing
+module retains `forbid`; the rest of the new cursor consumer inherits `deny`.
+
+Source: crates.io `bevy_winit` 0.20.1, archive SHA-256
+`397c685e6ab6d4d87b89fb4ce11993c223d0e3c7b34c415cb4b9f69f213d85b6`.
+
 ## gpu-allocator 0.28.0 (MIT OR Apache-2.0, Traverse-Research/gpu-allocator)
 
 Used by wgpu for Vulkan memory. Change, in `src/vulkan/mod.rs` `MemoryType::free`: an
@@ -26,6 +47,24 @@ Second change (#1429), in `src/vulkan/mod.rs` `MemoryBlock::new` and `src/lib.rs
 single slow frame charged to a render system that only writes a buffer
 (`upload_light_probes`, `write_binned_instance_buffers`) can be matched to a new memory
 block. `std` is linked for the clock (wgpu-hal turns the crate's `std` feature off).
+
+## bevy_post_process 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
+
+Bevy's post-processing, for its auto exposure, which meters the view for the game's eye
+adaptation (`engine/nvforever/src/eye_adapt.rs`). One change (#2892), marked `NVForever
+exact curve`, in `src/auto_exposure/`:
+
+- `compensation_curve.rs`: the compensation curve's table holds the compensation values
+  themselves as `f32` (texture `R32Float`); upstream keeps a `u8` between the curve's
+  lowest and highest value, rounded down (`R8Unorm`). `AutoExposureCompensationCurve::
+  compensation` gives the value for an average as the shader reads it, for tests.
+- `auto_exposure.wesl`: the curve is read between two table entries in proportion;
+  upstream reads the one entry at or below the average.
+
+Why: the exposure is `curve(average) − average`. With one byte entry per 0.086 EV of
+average and bytes 0.067 EV apart, a curve `y = x` (no change) came out as a sawtooth
+between 0 and about −0.15 EV, so a daylight picture was darkened by up to 10 %, by an
+amount that jumped as the view's average crossed an entry.
 
 ## bevy_pbr 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
@@ -76,6 +115,18 @@ unchanged, so nothing else behaves differently. Upstream has no way to get the s
 out of the prepass's own code; drop this when it has, or when the sampling is written in
 nvf-assets.
 
+Another change (equal-depth position invariance,
+docs/spec-notes/depth-equality-invariance.md), marked `NVForever equal-depth passes`:
+`src/render/forward_io.wesl` and `src/prepass/io.wesl` mark both vertex position
+producers invariant for the engine's Equal-depth passes. Position calculations and
+depth policy are unchanged. `nvf-shader-tests/tests/depth_invariance.rs` composes the actual
+source through Bevy WESL and Naga and checks the SPIR-V decoration, including
+unannotated controls. An earlier integrated run passed three controls and exposed
+two compiler-setup failures; the corrected pass-specific feature matrix and shared
+production lighting preparation are unrun. Reapply both annotations
+after upgrading Bevy until upstream provides the same guarantee, or retire them
+with the Equal-depth policy.
+
 Third change (#1803), in `src/material.rs`, each part marked by a comment starting
 `NVForever material queue probe`: `MaterialQueueProbe`, an optional resource
 that records watched main-pass entries and their pipeline IDs as `queue_material_meshes`
@@ -108,6 +159,81 @@ Bevy inserts no such resource, and without it (or with no bits set) nothing chan
 Whoever sets it must hand the lights the held cascades as the frame that drew them had
 them, as the game does.
 Upstream has no way to draw a light's shadow map less often than every frame.
+
+Gated materials (#2661, docs/design/graphics-enhanced.md §3.14 "Off"), in `src/material.rs`,
+each part marked `NVForever gated materials`: `MaterialPlugin::gated(MaterialGate)` (a new
+`gate` field, `None` by default). With a gate, the material type's own systems run only
+while it is open (main world: `mark_meshes_as_changed_if_their_materials_changed`,
+`check_entities_needing_specialization`; render world: `extract_mesh_materials`,
+`early_sweep_material_instances`, the two specialization extractions, and the asset
+extraction and preparation through `ErasedRenderAssetPlugin::gated` below); its shaders are
+loaded and its bind group allocator (with the bindless fallback buffers) made at the first
+extraction after the gate opens, and both dropped at the first extraction after it closes
+(a device recovery while open makes the allocator again, as upstream's startup system
+does). The owner opens the gate before the type's first asset or component and closes it
+only once none has been left for a few frames. Without a gate (every Bevy and every other
+NVForever material) the plugin does what upstream does. Upstream registers a material's
+systems, loads its shaders and makes its allocator at startup, and a plugin cannot be added
+after startup; nvforever's mesh terrain blend, off in most runs, gates its two material
+types with it. Drop it if upstream gains a way to register a material type lazily.
+
+Another change (sun visibility, #2670 and #2671, docs/design/sun-visibility.md), each part
+marked `NVForever sun visibility`, for nvforever's `sun_visibility.rs`:
+
+- `src/render/light.rs`: the render-world component `NvfOutdoorSun`. `prepare_lights` sets
+  the new `DirectionalLightFlags::NVF_OUTDOOR_SUN` (bit 4; `mesh_view_types.wesl`
+  `DIRECTIONAL_LIGHT_FLAGS_NVF_OUTDOOR_SUN_BIT`) in the GPU flags of the directional light
+  whose render entity has it, so a shader can tell the outdoor sun from other directional
+  lights without assuming an index.
+- `src/render/mesh_view_bindings.rs`: the render-world view component
+  `NvfSunVisibilityBindings` (a uniform buffer, a filterable float 2D texture for the
+  clouds, an unfilterable float 2D texture for the terrain shadow-height map and a
+  filtering sampler), the layout key bit `MeshPipelineViewLayoutKey::NVF_SUN_VISIBILITY`
+  and bindings 39-42 of the mesh view bind group, present only for a view with it.
+  Binding 41 is declared `Float { filterable: false }` (2026-11-17, #2671 stage T2): the
+  terrain map is `Rgba32Float`, which is filterable only with the optional
+  `FLOAT32_FILTERABLE` feature, so nvforever reads it with `textureLoad` and never with
+  the sampler; its stand-in while no map is uploaded is nvforever's own one-texel
+  `Rgba32Float` texture, not Bevy's fallback image.
+- `src/render/mesh.rs`: `MeshPipelineKey::NVF_SUN_VISIBILITY`, `NVF_CLOUD_VISIBILITY` and
+  `NVF_TERRAIN_VISIBILITY` (bits 25-27; the key's bit fields above them move up by three,
+  well below the base mesh key's bits from 58), set by `check_views_need_specialization`
+  from the same component, and the shader defs of the same names. The pipelines' layout
+  key and the view's bind group are both read from that one component in the same frame,
+  so they cannot disagree; the component is inserted, changed and removed only during
+  extraction.
+
+The shaders that use the bindings are nvforever's (`sun_visibility.wesl`, patched into
+`apply_pbr_lighting` at run time like lights.rs's edits). Bevy inserts neither component;
+without them the flags, layouts and shader defs are upstream's, and so is every view while
+the game's switches are off; the pipeline keys are the same keys numbered differently (the
+packed fields above the new bits moved up by three). The meshlet path (feature off here) builds its
+view key without the bits, so a meshlet view must not get the component. Upstream has no
+way for an application to add bindings to the mesh view bind group.
+
+Another change (ambient occlusion on the ambient light, #2897 stage two,
+docs/design/graphics-enhanced.md §3.1), each part marked `NVForever ambient occlusion`, for
+nvforever's `ssao_lighting.rs`, built the same way as the sun visibility's:
+
+- `src/render/mesh_view_bindings.rs`: the render-world view component
+  `NvfAmbientOcclusionBindings` (a uniform buffer and an unfilterable float 2D texture, the
+  half-resolution occlusion read with `textureLoad`), the layout key bit
+  `MeshPipelineViewLayoutKey::NVF_AMBIENT_OCCLUSION` and bindings 43-44 of the mesh view
+  bind group, present only for a view with it.
+- `src/render/mesh.rs`: `MeshPipelineKey::NVF_AMBIENT_OCCLUSION` (bit 28; the key's bit
+  fields above it move up by one more, their top, the colour target format, ending at bit
+  49, still below the base mesh key's bits from 58, which the file's `const_assert_eq!`
+  checks), set by `check_views_need_specialization` from the same component, and the shader
+  def of the same name, pushed only for a pipeline that writes depth (opaque, alpha mask,
+  alpha to coverage), the rule Bevy's own `SCREEN_SPACE_AMBIENT_OCCLUSION` def follows: a
+  blended draw is not in the depth prepass the occlusion is worked out from. A blended
+  pipeline of such a view keeps the bindings in its layout and leaves them unread.
+
+The shader that reads the bindings is nvforever's (`ssao_lighting.wesl`, patched into
+`apply_pbr_lighting` at run time after the sun visibility's hook). Bevy inserts no such
+component; without it the layouts and shader defs are upstream's, and the pipeline keys are
+the same keys numbered differently (the packed fields above the new bit moved up by one).
+As for the sun visibility, a meshlet view must not get the component.
 
 ## bevy_render 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
@@ -170,6 +296,11 @@ only the CPU writes (`render_binned_mesh_instance_buffer`, `bin_metadata_buffer`
 `unpack_bins.wesl`). Upstream writes all three every frame: about 300 of a Goodsprings
 frame's 400 `queue.write_buffer` calls, each a copy with its own barrier before the frame's
 first pass. Test aid `NVF_PLAY_TEST_SAME_WRITES=1` writes every frame again.
+
+Gated render assets (#2661), in `src/erased_render_asset.rs`, marked `NVForever gated
+materials`: `ErasedRenderAssetPlugin::gated(Arc<AtomicBool>)` runs the asset type's
+extraction and preparation systems only while the flag is set, for bevy_pbr's gated
+materials above. `Default` has no flag and does what upstream does.
 
 A measuring aid for the encoder spans (`NVF_PLAY_TEST_PROFILE_ENCODERS=1`, `enc:<system>`, #2060),
 in `src/diagnostic/internal.rs` (marked `NVForever encoder gaps`), adds
@@ -337,11 +468,46 @@ starting `NVForever (2026-11-12)`:
   do not present; upstream's `Surface::raw_native_swapchain` gives the handle but nothing
   keeps it alive afterwards, and reading it waits behind a blocked acquire or present. One
   handle for the process: with two windows the newer swapchain takes the calls.
+- `vulkan::swapchains_made` (new, public; marked `NVForever (2026-11-16)`): a count of the
+  swapchains `create_swapchain` has made in the process, on any device, moved on after
+  `vkCreateSwapchainKHR` returned. Streamline's Reflex sets its sleep mode and frame limit on
+  the swapchain it tracks at the call, and a new swapchain starts without them, so the
+  engine sets Reflex's options again when the count moves (`nvforever/src/dlss/frame_token.rs`,
+  LootJunkieAzza/NVForever#2732).
 
 Not run on a GPU yet (2026-11-12): built, and the engine's tests and clippy pass. The copy
 is the crates.io package as published (its `examples` are kept: the manifest names them).
 Drop it when wgpu lets a caller extend swapchain creation, or creates the swapchain with
 the structure itself.
+
+## naga 30.0.1 (MIT OR Apache-2.0, the gfx-rs developers)
+
+wgpu's shader translator, for the Vulkan SPIR-V of `@builtin(sample_mask)` (#2413). Vulkan
+requires the `SampleMask` built-in to be an array of 32-bit integers
+[documented: Vulkan spec, "Built-In Variables", VUID-SampleMask-SampleMask-04359]; naga's
+SPIR-V back end declares it as a scalar `u32`, as WGSL writes it (open upstream as
+gfx-rs/wgpu#7311). The engine's prepass coverage (`nvf-assets/src/nif_material.rs`
+`prepass_coverage`, PR #2181) returns that built-in from the depth prepass. One change,
+each part marked by a comment starting `NVForever`:
+
+- `src/back/spv/mod.rs`: `Writer::sample_mask_vars`, the ids of the `SampleMask` varyings.
+- `src/back/spv/writer.rs`: `write_varying` declares a `SampleMask` input or output as
+  `OpTypeArray` of `u32` with length 1; `load_io_with_f16_polyfill` and
+  `store_io_with_f16_polyfill` load and store it through `sample_mask_element`, an
+  `OpAccessChain` to element 0. The WGSL side (`u32`) and every other varying are as
+  upstream.
+
+Why: on an Intel N150 (driver 32.0.101.7088, Vulkan) the game crashed in the driver's
+shader compiler (`igc64.dll`) while building `pbr_prepass_pipeline` with MSAA on (the
+default `--msaa 4`), 5 runs of 5 [observed]. Upstream naga's output fails `spirv-val` with
+VUID 04359 and the patched output passes [observed]; on the N150 the game then ran 60 s at
+`--msaa 4` with prepass coverage on, all 25 `pbr_prepass_pipeline` builds done
+[observed, 2026-11-13]. The coverage is worth keeping there: the opaque pass took 40.3 ms
+with it and 48.3 ms without, 1080p 4x MSAA [observed]. `nvf-assets/tests/sample_mask_spirv.rs`
+checks the declaration. The copy is the crates.io package as published; its own
+`.gitignore` lists `Cargo.lock`, which is kept here all the same, as for the other copies.
+Drop it when a naga release declares `SampleMask` as an array (gfx-rs/wgpu#7311 fixed).
+
 ## wgpu-ffx 0.1.0 (MIT, the wgpu-ffx developers and Advanced Micro Devices)
 
 The FSR 3.1.4 upscaler (docs/design/fsr-upscaling.md) and, added here, FSR 3.1 frame

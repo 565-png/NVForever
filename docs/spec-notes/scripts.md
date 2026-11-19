@@ -744,7 +744,12 @@ state and one call per frame:
   script) receives it from GetButtonPressed; every other script reads −1 and the box
   stays [hypothesis, from the GECK wiki's ShowMessage and GetButtonPressed pages; with a
   global button the `--play` integration saw Doc Mitchell's chemistry set take every
-  box's button].
+  box's button]. A message box without buttons shows a default OK [documented: GECK
+  wiki ShowMessage notes] and has a `message_box` too (`buttons: 0`): its OK is button 0,
+  read once by the script that showed it [hypothesis: inferred from SCPT 0x000E9483,
+  Black Mountain's Broken Mr. Handy, which waits for button 0 after such a box, #2925;
+  observer check 240]. It does not replace a box with buttons still waiting for the
+  player [design, #2925]. A corner message (no Message Box flag) has none: −1.
 - Round 4 (§7.7): scripts now open menus themselves (`Game::open_menu`: a message box
   is 1001, the name, race, tag-skill, trait and S.P.E.C.I.A.L. menus have their codes),
   and boxes wait in `Game::boxes`. The engine should show `game.menu` and call
@@ -1128,6 +1133,13 @@ the GameYear / GameMonth (from 0) / GameDay globals [hypothesis; 18 October 2281
 masters' start date, is a Tuesday]. IsAlwaysHardcore: on now and never switched off
 [hypothesis].
 
+The source handler `functions::reputation::remove_reputation_exact` reuses the
+fractional reputation writer and its events for `RemoveReputationExact`.
+See [player source commands](player-source-commands.md) for limits, invalid-axis
+policy and revision-specific authored controls. Portable controls passed for c4 in
+hosted composite `23388a32d`; revision-specific results are recorded in PR #2772.
+Native parameter encoding and original-game parity are unmeasured for this contribution.
+
 ### 7.7 Menus, message boxes and dialogue lines (round 4, 2026-10-09)
 
 Evidence: the round 4 captures from the new-game save `nvfnew` (layer5-captures.md §10),
@@ -1388,7 +1400,9 @@ buttons, `moved`, `activated`, `block_run`, `result_script`, `stub` (each distin
 once per unit), `unhandled`, `call_failed`, `script_error`, `skipped`,
 `undeclared_variable`, and from round 4 `menu_opened`, `menu_closed`, `line_started`,
 `line_ended`, `no_line`, and from the dialogue work `dialogue_started`, `response_said`,
-`choices_offered`, `choice_made`, `topic_added`, `dialogue_ended`); `final` (frames,
+`choices_offered`, `choice_made`, `topic_added`, `dialogue_ended`, and `assault_alarm`
+for SendAssaultAlarm with a faction: its victim and the members alive, absent and dead,
+#2926); `final` (frames,
 the running conversation `dialogue`, every touched quest with stages, objectives and
 named variables, the player state, reported references, unhandled and stubbed call
 counts).

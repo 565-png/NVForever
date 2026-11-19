@@ -32,6 +32,10 @@
 //!
 //! Behaviour notes with confidence tags: docs/spec-notes/scripts.md §4 and later.
 
+// Shared test fixtures use the same crate name in library and integration tests.
+#[cfg(test)]
+extern crate self as fnv_game;
+
 pub mod abilities;
 pub mod activate_choices;
 pub mod actor_values;
@@ -63,10 +67,13 @@ mod combat_style_session_tests;
 #[cfg(test)]
 #[path = "../tests/common/mod.rs"]
 mod common;
+#[cfg(test)]
+mod faction_modifier_tests;
 pub mod companion_wheel;
 pub mod coop;
 pub mod cond;
 pub mod coverage;
+pub mod connections;
 pub mod crafting;
 pub mod crime;
 pub mod data;
@@ -92,10 +99,12 @@ pub mod idles;
 pub mod intro;
 pub mod jip_ccc;
 pub mod jip_events;
+mod crosshair_events;
 mod jip_provenance;
 #[cfg(test)]
 mod handler_diagnostics_tests;
 pub mod nvse;
+mod nvse_faction_modifiers;
 pub mod nvse_ttw;
 pub mod nvse_unlisted;
 pub mod nvse_unlisted2;
@@ -166,6 +175,7 @@ pub mod nvse_lu2;
 pub mod nvse_lu3;
 pub mod nvse_showoff4;
 pub mod nvse_leveled;
+mod nvse_actor_queries;
 pub mod nvse_jip2;
 pub mod nvse_gaps;
 pub mod nvse_jip3;
@@ -185,6 +195,7 @@ pub mod nvse_settings;
 pub mod nvse_tokens;
 pub mod nvse_handler_lists;
 pub mod nvse_debug;
+mod local_time;
 pub mod text_codes;
 pub mod script_input;
 pub mod levelup;
@@ -201,6 +212,7 @@ pub mod pickpocket;
 pub mod poker;
 pub mod provocation;
 pub mod revision;
+mod retired_scene;
 pub mod quest;
 pub mod quest_targets;
 pub mod radiation;
@@ -241,3 +253,5 @@ pub mod zones;
 
 pub use data::GameData;
 pub use game::{Game, GameConfig, InstKey};
+
+mod texture_filter;

@@ -252,6 +252,12 @@ def _item_mod_handler(flag):
 # Parameters where a page's argument table is missing or short: what the game took
 # [observed: the probe named] or what the page's own example passes [documented].
 PARAM_FIXES = {
+    # [documented: GECK wiki RemoveReputationExact, the reputation editor ID is
+    # a form operand, followed by the axis and fractional amount]. Source syntax
+    # only: this does not establish a native bytecode encoding.
+    "RemoveReputationExact": [{"name": "FactionID", "type": "editorID", "kind": "form"},
+                              {"name": "Fame/Infamy", "type": "int", "kind": "int"},
+                              {"name": "Amount", "type": "float", "kind": "float"}],
     # [documented: SetCursorTrait's example "SetCursorTrait 0 255"; the table lists the
     # trait only].
     "SetCursorTrait": [{"name": "iTrait", "type": "int", "kind": "int"},
@@ -636,6 +642,14 @@ PAGELESS += [
     _x("GPCDEx", "NVSE", "int", [_I("disabledHow", True), _I("flags", True)]),
 ]
 
+
+# [documented: GECK function index lists both names; original installed source
+# calls use an explicit reference and no arguments]. These source-only rows do
+# not infer a native script opcode; mapped geometry is vats-script-clearance.md.
+PAGELESS += [
+    _x("GetVATSLeftAreaFree", "GECK1", "float", ref="reference", cat="VATS Functions"),
+    _x("GetVATSRightAreaFree", "GECK1", "float", ref="reference", cat="VATS Functions"),
+]
 
 # Pages whose template `name` is another function's (copied from a sibling page): the
 # page title is the function's name [documented: each page's title and its example,

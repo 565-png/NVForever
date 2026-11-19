@@ -145,6 +145,8 @@ mod projectile_launch;
 mod projectile_launch_probe;
 #[cfg(test)]
 mod projectile_launch_tests;
+#[cfg(test)]
+mod critical_damage_hit_tests;
 
 /// The shooter's id for projectiles (the player has no hit volume).
 const PLAYER: ActorId = u64::MAX;
@@ -377,6 +379,14 @@ fn sync_condition_penalty(c: &mut Combat, script: Option<&ScriptState>) {
     }
 }
 
+/// ext-last-core.md: the same critical-damage override that scripts read must
+/// reach every direct hit, including NPC weapons and the player's modified copy.
+fn script_weapon_critical_damage(game: Option<&fnv_game::Game<'_>>, weapon: FormId, stats: &mut WeaponStats) {
+    if let Some(damage) = game.and_then(|game| game.weapon_critical_damage_override(weapon)) {
+        stats.crit_damage = damage;
+    }
+}
+
 fn armour_lines(script: Option<&mut ScriptState>, attacker: Option<FormId>, target: FormId, d: &damage::Damage, floor: f32) {
     if let Some(rt) = script.and_then(|s| s.rt.as_mut()) {
         rt.game.armour_lines(attacker, target, f64::from(d.raw), f64::from(d.dt), f64::from(d.dealt), f64::from(floor));
@@ -462,6 +472,10 @@ pub struct ExplosionFx {
     pub normal: Option<V3>,
     /// How it is drawn.
     pub look: ExplosionLook,
+    /// A body part's own blast as it is blown apart or severed (its BPTD's explodable or
+    /// severable explosion, nvforever `dismember`), not a weapon's or a mine's: it shakes
+    /// the view only with the Gore Shake setting on (`crate::shake`).
+    pub gore: bool,
 }
 
 /// How an explosion is drawn (`nvforever::shot_fx`).
@@ -1270,6 +1284,13 @@ pub struct Combat {
     kick_rng: SplitMix,
     /// The bloom has just shrunk away; logged with the crosshair cone.
     kick_just_settled: bool,
+    /// The view's kick still to come (pitch, heading; radians): with soft recoil a
+    /// shot's kick comes over a moment instead of in one frame ([`ease_kick`]).
+    kick_left: [f32; 2],
+    /// The share of the kicks the view settles back down by (pitch, heading; radians), and
+    /// how far it has, on springs ([`ease_back`]).
+    kick_back_goal: [f32; 2],
+    kick_back: [crate::ease::Spring; 2],
     /// The spent-ammo items' own rolls (docs/spec-notes/spent-ammo-items.md), so they
     /// leave the shots' rolls as they were.
     spent_rng: SplitMix,
@@ -1278,10 +1299,27 @@ pub struct Combat {
 }
 
 impl Combat {
+    /// [design, #2652] Run normal combat initialization over authored plugin tables,
+    /// without the game/render plugins, for downstream engine tests.
+    #[cfg(feature = "test-support")]
+    pub fn over_plugins(play: crate::PlayData) -> Self {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = bevy::prelude::World::new();
+        world.insert_resource(crate::PlayWorld(play));
+        world.run_system_once(init_combat).unwrap();
+        world.remove_resource::<Combat>().unwrap()
+    }
+
     /// Whether the player's flinch (a staggering hit, [`player_flinch`]) still plays: the
     /// player does not walk meanwhile (`crate::player::flinch_holds_walk`).
     pub fn player_flinching(&self) -> bool {
         self.time < self.flinch_until
+    }
+
+    /// Whether the player's weapon is reloading (a reload, a jam's clearing): it ends a sprint
+    /// (`crate::sprint`).
+    pub fn player_reloading(&self) -> bool {
+        self.cycle.as_ref().is_some_and(Cycle::reloading)
     }
 }
 
@@ -1985,7 +2023,17 @@ fn meltdown(mut c: ResMut<Combat>, mut hits: MessageReader<ActorHit>, mut script
 /// The player's Modify Run Speed perks (Travel Light, Tunnel Runner, Implant M-5 …,
 /// perk-entry-points.md §8): their factor on the player's movement, walking and running
 /// alike, their conditions (armour, sneaking) asked every frame (`crate::player::PerkSpeed`).
-fn perk_speed(c: Res<Combat>, mut anim: ResMut<WeaponAnim>, mut script: Option<ResMut<ScriptState>>, mut sim: ResMut<SimState>, speed: Option<ResMut<crate::player::PerkSpeed>>) {
+fn perk_speed(c: Res<Combat>, mut anim: ResMut<WeaponAnim>, mut script: Option<ResMut<ScriptState>>, mut sim: ResMut<SimState>, speed: Option<ResMut<crate::player::PerkSpeed>>, inertia: Option<ResMut<crate::inertia::MovementInertia>>) {
+    // The player's Agility and Strength for the draw's and the aim's pace (the original's
+    // Agility rate, Weapon Handling's classes: `crate::inertia::MovementInertia::equip_rate`).
+    if let Some(mut inertia) = inertia {
+        let mut read = |code| actor_av(script.as_deref_mut(), &mut sim, FormId::PLAYER_REF, code).filter(|v| v.is_finite()).unwrap_or(5.0);
+        let (agility, strength) = (read(fnv_game::actor_values::AGILITY), read(fnv_game::actor_values::STRENGTH));
+        if inertia.agility != agility || inertia.strength != strength {
+            inertia.agility = agility;
+            inertia.strength = strength;
+        }
+    }
     // The Equip Speed perks (Quick Draw) on the weapon in hand: the draw and holster
     // clips play that much faster (`WeaponAnim::equip_rate`, perk-entry-points.md §10).
     if let Some(weapon) = c.weapon {
@@ -2416,6 +2464,9 @@ fn init_combat(mut commands: Commands, d: Res<PlayWorld>) {
         flinch_rng: SplitMix(3),
         kick_rng: SplitMix(5),
         kick_just_settled: false,
+        kick_left: [0.0; 2],
+        kick_back_goal: [0.0; 2],
+        kick_back: [crate::ease::Spring::default(); 2],
         spent_rng: SplitMix(4),
     });
 }
@@ -2598,7 +2649,7 @@ fn equip_sync(mut c: ResMut<Combat>, mut sim: ResMut<SimState>, mut anim: ResMut
 fn model_base(script: Option<&ScriptState>, sim: &SimState, actor: u32) -> Option<FormId> {
     let b = sim.base_of(actor)?;
     let r = FormId(actor);
-    Some(script.and_then(|s| s.rt.as_ref()).map_or(b, |rt| { let (seed, at) = sim.pick(&rt.game, r); rt.game.data.model_base_at(b, seed, at) }))
+    Some(script.and_then(|s| s.rt.as_ref()).map_or(b, |rt| { let (seed, at) = sim.pick(&rt.game, r); rt.game.runtime_template_source(b, seed, at, |d| d.template_model).map_or(b, |(id, _)| id) }))
 }
 
 /// An actor's Impact Material Type (NPC_ / CREA `NAM4`) from its Model/Animation source
@@ -2626,7 +2677,7 @@ fn show_impact(s: &Sfx, script: Option<&ScriptState>, sim: &SimState, mut fx: Im
     if let (Some(a), Some(rt)) = (fx.actor, script.and_then(|s| s.rt.as_ref())) {
         if let Some(b) = sim.base_of(a) {
             let (seed, at) = sim.pick(&rt.game, FormId(a));
-            let (spray, decal) = rt.game.data.no_blood(b, seed, at);
+            let (spray, decal) = rt.game.runtime_template_source(b, seed, at, |d| d.template_model).map_or((false, false), |(_, d)| (d.no_blood_spray, d.no_blood_decal));
             (fx.no_spray, fx.no_decal) = (fx.no_spray || spray, fx.no_decal || decal);
         }
     }
@@ -2665,6 +2716,8 @@ struct PhysView<'a> {
     /// The characters of the actors another system walks (`PhysState::npcs`).
     npcs: Vec<Key>,
     actors: Vec<(ActorId, V3, f32)>,
+    /// Published scaled BBX widths used by actor blocking [design, #2535].
+    actor_block_radii: &'a HashMap<u32, f32>,
     /// The corpses whose ragdoll took over from their hit volume (`crate::hitvol`), with
     /// their trunk's centre and the radius of their bodies' bounds: only blasts reach them
     /// ([`CombatWorld::blast_targets_near`], #2346).
@@ -2800,6 +2853,16 @@ impl CombatWorld for PhysView<'_> {
         self.actors.iter().filter(near).map(|&(id, c, _)| (id, c)).collect()
     }
 
+    fn melee_targets_near(&self, point: V3, radius: f32) -> Vec<(ActorId, V3, f32)> {
+        use fnv_combat::projectile::SWING_BODY_MARGIN;
+        self.actors.iter().filter_map(|&(id, c, r)| {
+            // Match blocking's BBX source, preserving the ordinary ground margin
+            // and the candidate search's existing hit-volume allowance [design, #2535].
+            let margin = crate::blocking::walking_radius(SWING_BODY_MARGIN, self.actor_block_radii.get(&(id as u32)).copied());
+            (vec::len(vec::sub(c, point)) <= radius + margin + r && !self.ghosts.contains(&id)).then_some((id, c, margin))
+        }).collect()
+    }
+
     fn blast_targets_near(&self, point: V3, radius: f32) -> Vec<(ActorId, V3)> {
         let near = |&&(id, c, r): &&(ActorId, V3, f32)| vec::len(vec::sub(c, point)) <= radius + r && !self.ghosts.contains(&id);
         self.actors.iter().chain(&self.corpses).filter(near).map(|&(id, c, _)| (id, c)).collect()
@@ -2857,7 +2920,7 @@ fn view<'p>(phys: &'p mut PhysState, script: Option<&ScriptState>, sim: Option<&
     let mut aims: HashMap<ActorId, Vec<V3>> = actors.iter().map(|&(id, ..)| (id, phys.world.actor_part_centers(id as u32))).filter(|(_, v)| !v.is_empty()).collect();
     aims.extend(corpses.iter().map(|&(id, ..)| (id, phys.world.ragdoll_body_centers(id as u32))).filter(|(_, v)| !v.is_empty()));
     phys.world.update_queries();
-    PhysView { q: phys.world.queries(), player, npcs, actors, corpses, aims, ghosts, passes: layers::shot_ignores(), only: std::cell::Cell::new(None) }
+    PhysView { q: phys.world.queries(), player, npcs, actors, actor_block_radii: &phys.actor_block_radii, corpses, aims, ghosts, passes: layers::shot_ignores(), only: std::cell::Cell::new(None) }
 }
 
 /// An actor's current value as the formulas read it (within its range: S.P.E.C.I.A.L.
@@ -3138,6 +3201,77 @@ fn weapon_sounds(
     }
 }
 
+/// Turn the view by this frame's share of a kick `left` (pitch, heading; radians) and give
+/// what is still to come and how far the view turned (less than asked at the pitch limit).
+/// With `seconds` (soft recoil) the share follows an exponential that has 95 % of the
+/// kick in by then: fastest at once, slower and slower to the end, never past it; a frame
+/// of no time shows none. Without, all of it at once.
+fn ease_kick(player: &mut Player, left: [f32; 2], seconds: Option<f32>, dt: f32) -> ([f32; 2], [f32; 2]) {
+    if left == [0.0; 2] {
+        return (left, [0.0; 2]);
+    }
+    let share = match seconds {
+        Some(s) if s > 0.0 => 1.0 - (-3.0 * dt.max(0.0) / s).exp(),
+        _ => 1.0,
+    };
+    let rest = left.map(|v| v * (1.0 - share));
+    // The last thousandth of a degree comes at once.
+    let (share, rest) = if rest[0].abs() + rest[1].abs() < 2e-5 { (1.0, [0.0; 2]) } else { (share, rest) };
+    let before = player.pitch;
+    player.pitch = (player.pitch + left[0] * share).clamp(-MAX_PITCH, MAX_PITCH);
+    player.heading += left[1] * share;
+    (rest, [player.pitch - before, left[1] * share])
+}
+
+/// With soft recoil, a share of the view's turn by a kick (`turned`, pitch and heading) to
+/// settle back down by ([`ease_back`]): of the turn the view made, so a kick lost at the
+/// pitch limit does not bring the view down after it (review, 2026-11-15).
+fn kick_back(goal: &mut [f32; 2], turned: [f32; 2], soft: bool) {
+    if soft {
+        goal[0] += crate::inertia::KICK_BACK_SHARE * turned[0];
+        goal[1] += crate::inertia::KICK_BACK_SHARE * turned[1];
+    }
+}
+
+/// Settle the view back down by the kicks' returning share `goal` (pitch, heading; radians)
+/// on critically damped springs over `seconds` (95 %): it starts gently while the kick
+/// still rises, and ends slowly. Without `seconds` (soft recoil off) nothing returns
+/// and what was still to return is dropped.
+fn ease_back(player: &mut Player, goal: &mut [f32; 2], back: &mut [crate::ease::Spring; 2], seconds: Option<f32>, dt: f32) {
+    let Some(s) = seconds else {
+        *goal = [0.0; 2];
+        *back = [crate::ease::Spring::default(); 2];
+        return;
+    };
+    if *goal == [0.0; 2] {
+        return;
+    }
+    let omega = crate::ease::omega_for(s);
+    for k in 0..2 {
+        let before = back[k].value;
+        back[k].step(goal[k], omega, dt);
+        let d = back[k].value - before;
+        if k == 0 {
+            player.pitch = (player.pitch - d).clamp(-MAX_PITCH, MAX_PITCH);
+        } else {
+            player.heading -= d;
+        }
+    }
+    // Settled: what has returned is spent.
+    if (0..2).all(|k| (goal[k] - back[k].value).abs() < 2e-5 && back[k].rate.abs() < 1e-4) {
+        for k in 0..2 {
+            let rest = goal[k] - back[k].value;
+            if k == 0 {
+                player.pitch = (player.pitch - rest).clamp(-MAX_PITCH, MAX_PITCH);
+            } else {
+                player.heading -= rest;
+            }
+        }
+        *goal = [0.0; 2];
+        *back = [crate::ease::Spring::default(); 2];
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn fire(
     time: Res<Time>,
@@ -3155,11 +3289,20 @@ pub(crate) fn fire(
     mut sounds: MessageWriter<PlaySound>,
     mut casings: MessageWriter<CasingFx>,
     mut loops: MessageWriter<LoopSound>,
-    (mut hud, mut vats, lens_sway, mut scaled): (Option<ResMut<HudMessage>>, Option<ResMut<crate::vats_mode::VatsMode>>, Option<Res<crate::aim_zoom::LensSway>>, MessageWriter<ScaledSound>),
+    (mut hud, mut vats, lens_sway, inertia, mut scaled): (Option<ResMut<HudMessage>>, Option<ResMut<crate::vats_mode::VatsMode>>, Option<Res<crate::aim_zoom::LensSway>>, Option<Res<crate::inertia::MovementInertia>>, MessageWriter<ScaledSound>),
 ) {
     let dt = time.delta_secs();
     let c = &mut *c;
     c.time += dt;
+    // The view's kick of the last shots, with soft recoil, comes in over a moment.
+    let soft = inertia.as_deref().is_some_and(|i| i.soft_recoil());
+    let kick_seconds = soft.then_some(crate::inertia::KICK_EASE_SECONDS);
+    let pending = std::mem::take(&mut c.kick_left);
+    let turned;
+    (c.kick_left, turned) = ease_kick(&mut player, pending, kick_seconds, dt);
+    kick_back(&mut c.kick_back_goal, turned, soft);
+    let back_seconds = soft.then_some(crate::inertia::KICK_BACK_SECONDS);
+    ease_back(&mut player, &mut c.kick_back_goal, &mut c.kick_back, back_seconds, dt);
     // Where the gun points: the view, turned by a 3D scope's sway (the view itself sways
     // otherwise).
     let gun_dir = lens_sway.as_deref().map_or_else(|| player.look_dir(), |s| s.look_dir(player.heading, player.pitch));
@@ -3616,8 +3759,13 @@ pub(crate) fn fire(
                 if vats_shot.is_none() && !c.no_spread && !c.self_ammo {
                     let rng = &mut c.kick_rng;
                     let kick = c.kick.shot(&c.tuning, &w, cycle.timing.interval, &mut || rng.next_f32());
-                    player.pitch = (player.pitch + kick.pitch_deg.to_radians()).clamp(-MAX_PITCH, MAX_PITCH);
-                    player.heading += kick.yaw_deg.to_radians();
+                    // With soft recoil its first share shows this frame, the rest over the
+                    // next ones; otherwise all at once, as the original.
+                    let left = c.kick_left;
+                    let (rest, turned) = ease_kick(&mut player, [kick.pitch_deg.to_radians(), kick.yaw_deg.to_radians()], kick_seconds, dt);
+                    c.kick_left = [rest[0] + left[0], rest[1] + left[1]];
+                    // A share of the turn the view then settles back down by (soft recoil).
+                    kick_back(&mut c.kick_back_goal, turned, soft);
                     info!(
                         "combat: kick: shot {} in a row, bloom {:.2}, crosshair cone now {:.2} deg, view up {:.2} deg, sideways {:.2} deg",
                         c.kick.burst,
@@ -3787,13 +3935,20 @@ fn item_name(sim: &SimState, item: FormId) -> String {
     sim.name(item).map_or_else(|| item.to_string(), str::to_string)
 }
 
+/// In god mode (`tgm`) the player's weapon and armour lose no condition: firing, a swing,
+/// a hit taken or a hit on the weapon held [design: owner decision 2026-11-15, issue
+/// #2743]. Another actor's wear as ever.
+pub fn keeps_condition(actor: FormId, god: bool) -> bool {
+    god && actor == FormId::PLAYER_REF
+}
+
 /// A hit of `damage` (before armour) wears the armour `target` wears in `zone` (§17):
 /// the player's only. Another actor's armour keeps its condition [observed: Cook-Cook's
 /// armour stayed at health 85 and his DT at 13 through 60 hits, and the troopers' and
 /// Fiends' through theirs, AI observer campaign fight_stats_round 2026-10-19,
 /// npc-behaviour-compare.md §9].
 fn wear_armor(c: &Combat, sim: &mut SimState, stats: &mut CombatStats, target: FormId, zone: Zone, damage: f32) {
-    if target != FormId::PLAYER_REF {
+    if target != FormId::PLAYER_REF || keeps_condition(target, god_mode()) {
         return;
     }
     let worn: Vec<FormId> = worn_armor(&c.forms, sim, target).into_iter().map(|w| w.0).collect();
@@ -3842,6 +3997,9 @@ pub fn wear_weapon(
     points: f32,
     at: Option<V3>,
 ) -> Option<Wear> {
+    if keeps_condition(actor, god_mode()) {
+        return None;
+    }
     // The player's tweak: the companions' weapons do not wear [design: docs/design/tweaks.md].
     if actor != FormId::PLAYER_REF && script.as_deref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.no_companion_item_damage && rt.game.is_teammate(actor)) {
         return None;
@@ -4290,7 +4448,8 @@ fn melee(
         anim.swing = None;
         return;
     }
-    let w = c.player_stats(id).expect("weapon present");
+    let mut w = c.player_stats(id).expect("weapon present");
+    script_weapon_critical_damage(script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game), id, &mut w);
     // The clip the body timed for the swing playing; a new swing runs on the weapon's
     // own timing until the body has read its clip (the next frame).
     // The Modify Attack Speed perks (Slayer, Melee Hacker …) speed the swing as the
@@ -4851,6 +5010,7 @@ fn actor_attacks(
         // place [design: the Fists' other figures stand in for a creature's].
         let Some(id) = b.weapon.or(c.fists) else { continue };
         let Some(mut w) = c.forms.weapons.get(&id).cloned() else { continue };
+        script_weapon_critical_damage(script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game), id, &mut w);
         if let Some(d) = b.creature_damage {
             w.base_damage = d.round() as i32;
         }
@@ -5077,6 +5237,23 @@ fn retire_deleted_shots(c: &mut Combat, game: &mut fnv_game::game::Game<'_>) {
     }
 }
 
+/// Apply explicit source edits before the next physical publication/outcome.
+/// Position never comes back from ordinary engine world writes, avoiding a
+/// flight -> World -> flight feedback loop. Attribution does not change the
+/// physical shooter used for collision/remote-detonation admission.
+fn sync_live_projectile_edits(c: &mut Combat, game: &mut fnv_game::game::Game<'_>) {
+    let positions = std::mem::take(&mut game.gaps.projs.position_sets);
+    for f in &mut c.flying {
+        let Some(r) = f.rref else { continue };
+        if let Some(source) = game.gaps.projs.shots.get(&r).map(|s| s.source) {
+            f.by.actor = source;
+        }
+        if let Some(at) = positions.get(&r).filter(|at| at.iter().all(|v| v.is_finite())) {
+            f.p.pos = *at;
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn fly(
     time: Res<Time>,
@@ -5100,7 +5277,10 @@ fn fly(
     let dt = time.delta_secs();
     let c = &mut *c;
     if let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) {
-        with_world(rt, &mut sim, |rt| retire_deleted_shots(c, &mut rt.game));
+        with_world(rt, &mut sim, |rt| {
+            retire_deleted_shots(c, &mut rt.game);
+            sync_live_projectile_edits(c, &mut rt.game);
+        });
     }
     // What scripts asked (DetonatePlacedExplosives, a placed explosion, DamageObject's
     // stage changes) and what burns down (self-damage).
@@ -5457,13 +5637,13 @@ fn fly(
         let reach = c.forms.setting("fExplosionSplashRadius").filter(|r| *r > 0.0).unwrap_or(WATER_BLAST_REACH);
         let water = water_thrown_up(at, phys.world.water_surface_for(at), ground.as_ref().map(|g| g.point[2]), reach);
         let look = if water.is_some() { ExplosionLook::Hidden } else { ExplosionLook::Own };
-        effects.2.write(ExplosionFx { explosion: id, point: at, cause: cause.map(|c| c.actor), normal: ground.as_ref().map(|g| g.normal), look });
+        effects.2.write(ExplosionFx { explosion: id, point: at, cause: cause.map(|c| c.actor), normal: ground.as_ref().map(|g| g.normal), look, gore: false });
         if let Some(surface) = water {
             let point = [at[0], at[1], surface];
             stats.water_blasts += 1;
             info!("combat: explosion {} throws up water at ({:.0}, {:.0}, {:.0}), {:.0} units from the surface", x.edid.as_deref().unwrap_or("?"), point[0], point[1], point[2], (at[2] - surface).abs());
             // No one's: it is not heard as a second blast (detection hears the blast's).
-            effects.2.write(ExplosionFx { explosion: WATER_EXPLOSION, point, cause: None, normal: None, look: ExplosionLook::WaterSurface });
+            effects.2.write(ExplosionFx { explosion: WATER_EXPLOSION, point, cause: None, normal: None, look: ExplosionLook::WaterSurface, gore: false });
             if let Some(splash) = sfx.as_deref().and_then(|s| s.forms.explosions.get(&WATER_EXPLOSION)) {
                 for sound in splash.sound_1.into_iter().chain(splash.sound_2) {
                     effects.0.write(PlaySound { sound, at: Some(point) });
@@ -5698,6 +5878,7 @@ fn fly(
         // The player's weapon hits with its mods' figures (weapon-mods.md §2).
         let w = if p.by.actor == FormId::PLAYER_REF { c.player_stats(id) } else { c.forms.weapons.get(&id).cloned() };
         let Some(mut w) = w else { continue };
+        script_weapon_critical_damage(script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game), id, &mut w);
         if let Some(s) = &shot {
             w.base_damage = s.damage.round() as i32;
         }
@@ -6095,12 +6276,47 @@ mod tests {
     use super::*;
     use crate::phys::NpcBody;
 
+    /// #2743: god mode keeps the player's weapon and armour from wearing, nobody else's.
+    #[test]
+    fn god_mode_keeps_the_players_condition_only() {
+        assert!(keeps_condition(FormId::PLAYER_REF, true));
+        assert!(!keeps_condition(FormId::PLAYER_REF, false));
+        assert!(!keeps_condition(FormId(0x000F5704), true));
+    }
+
     #[test]
     fn shot_sounds_are_scaled_only_off_one() {
         set_weapon_volume(1.0, 0.5);
         assert_eq!((shot_gain(true), shot_gain(false)), (None, Some(0.5)));
         set_weapon_volume(1.0, 1.0);
         assert_eq!(shot_gain(false), None);
+    }
+
+    #[test]
+    fn a_soft_kick_returns_a_share_of_the_turn_the_view_made() {
+        let mut player = Player { heading: 0.0, pitch: 0.0, eye_height: 0.0, feet: [0.0; 3], body_eye: None, body_view: None, placed: None };
+        let kick = [0.02, 0.01];
+        // Free to rise: it comes in over a few frames, all of it, and 40 % of it returns.
+        let (mut left, mut goal, mut turned_sum) = (kick, [0.0; 2], [0.0; 2]);
+        for _ in 0..120 {
+            let turned;
+            (left, turned) = ease_kick(&mut player, left, Some(crate::inertia::KICK_EASE_SECONDS), 1.0 / 60.0);
+            kick_back(&mut goal, turned, true);
+            turned_sum = [turned_sum[0] + turned[0], turned_sum[1] + turned[1]];
+        }
+        assert!(left == [0.0; 2] && (turned_sum[0] - kick[0]).abs() < 1e-6 && (player.pitch - kick[0]).abs() < 1e-6);
+        assert!((goal[0] - crate::inertia::KICK_BACK_SHARE * kick[0]).abs() < 1e-6);
+        // At the pitch limit the view cannot rise: nothing of the pitch returns after it.
+        let mut player = Player { pitch: MAX_PITCH, ..player };
+        let mut goal = [0.0; 2];
+        let (_, turned) = ease_kick(&mut player, kick, None, 1.0 / 60.0);
+        kick_back(&mut goal, turned, true);
+        assert_eq!((player.pitch, goal[0]), (MAX_PITCH, 0.0));
+        assert!((goal[1] - crate::inertia::KICK_BACK_SHARE * kick[1]).abs() < 1e-6, "the sideways part still turned");
+        // Soft recoil off: nothing returns.
+        let mut goal = [0.0; 2];
+        kick_back(&mut goal, [0.02, 0.01], false);
+        assert_eq!(goal, [0.0; 2]);
     }
 
     #[test]
@@ -6379,6 +6595,81 @@ mod tests {
         phys.npcs.insert(id, NpcBody { prev_feet: ch.feet, ch, velocity: [0.0; 2], jump: false, sink: 0.0, lift: Default::default() });
         phys.world.set_actor_volume(id, fnv_phys::HitVolume { feet: [0.0, 0.0, 30.0], radius: 8.0, height: 30.0, dead: false });
         phys
+    }
+
+    #[test]
+    fn player_knife_reaches_a_low_widened_creature_at_its_blocking_stop() {
+        use crate::blocking::{clip_pushing_nobody, walking_radius, Block};
+        use fnv_combat::projectile::{swing, swing_reaching};
+        // Synthetic low body and knife [design, #2535]. Blocking and combat read
+        // the same published widths, including one beyond the old coarse query.
+        let id = 0x2535;
+        let eye = [0.0, 0.0, 112.0];
+        let reach = 53.5 + 22.0;
+        let tuning = CombatTuning::default();
+        for width in [88.2, 400.0] {
+            for walking in [false, true] {
+                let mut phys = PhysState::default();
+                phys.actor_block_radii.insert(id, width);
+                let radius = walking_radius(22.0, phys.actor_block_radii.get(&id).copied());
+                let target = [width + 100.0, 0.0, 0.0];
+                let block = Block::character(id, target, radius, 30.0, false);
+                let velocity = clip_pushing_nobody(PLAYER as u32, [200.0, 0.0], [0.0; 3], 22.0, 128.0, 1.0, &mut [block]);
+                let feet = [target[0] - velocity[0], 0.0, 0.0];
+                assert!((feet[0] - (width + 22.0)).abs() < 1e-4);
+                phys.world.set_actor_volume(id, fnv_phys::HitVolume { feet, radius: 15.0, height: 30.0, dead: false });
+                if walking {
+                    let ch = phys.world.add_character(id, fnv_phys::CharacterParams::default(), feet);
+                    phys.npcs.insert(id, NpcBody { prev_feet: feet, ch, velocity: [0.0; 2], jump: false, sink: 0.0, lift: Default::default() });
+                }
+                for forward in [[1.0, 0.0, 0.0], vec::normalize([1.0, 0.0, -1.0])] {
+                    let mut world = view(&mut phys, None, None).for_melee();
+                    assert!(swing(&world, &tuning, eye, forward, [0.0, 0.0, 1.0], reach, PLAYER).is_empty());
+                    let hits = swing_reaching(&world, &tuning, eye, 0.0, forward, reach, PLAYER);
+                    assert_eq!(hits.iter().map(|h| h.0).collect::<Vec<_>>(), vec![id as ActorId], "width={width}, walking={walking}");
+                    world.ghosts.push(id as ActorId);
+                    assert!(swing_reaching(&world, &tuning, eye, 0.0, forward, reach, PLAYER).is_empty());
+                }
+                // Widening retains a finite ground-reach boundary [design, #2535].
+                let outside = [reach + width + 0.01, 0.0, 0.0];
+                phys.world.set_actor_volume(id, fnv_phys::HitVolume { feet: outside, radius: 15.0, height: 30.0, dead: false });
+                assert!(swing_reaching(&view(&mut phys, None, None).for_melee(), &tuning, eye, 0.0, [1.0, 0.0, 0.0], reach, PLAYER).is_empty());
+                phys.world.set_actor_volume(id, fnv_phys::HitVolume { feet, radius: 15.0, height: 30.0, dead: false });
+                // A wall still shields the widened target [design, #2535].
+                use fnv_collide::{CollisionObject, Iso, Motion, Shape};
+                let wall = CollisionObject {
+                    node: None, node_block: 0, node_transform: Iso::IDENTITY, body_transform: Iso::IDENTITY,
+                    motion: Motion::Static, layer: layers::STATIC, mass: 0.0, friction: 0.5, restitution: 0.0,
+                    shape: Shape::Box { half_extents: [5.0, 100.0, 100.0] }.into(), shell: 0.0, material: None, wind: false,
+                };
+                phys.world.add_ref(&fnv_phys::RefPose {
+                    form_id: id + 1, position: [30.0, 0.0, 80.0],
+                    rotation: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], scale: 1.0,
+                }, &[wall]);
+                let world = view(&mut phys, None, None).for_melee();
+                assert!(swing_reaching(&world, &tuning, eye, 0.0, [1.0, 0.0, 0.0], reach, PLAYER).iter().all(|h| h.0 != id as ActorId));
+            }
+        }
+    }
+
+    #[test]
+    fn player_ground_reach_keeps_ordinary_targets_at_the_old_boundary() {
+        use fnv_combat::projectile::swing_reaching;
+        // Synthetic body, boundary and invalid/small BBX cases [design, #2535].
+        let id = 0x2535;
+        let reach = 53.5 + 22.0;
+        for bbx in [None, Some(20.0), Some(f32::NAN)] {
+            for (distance, expected) in [(reach + 24.0 - 0.01, true), (reach + 24.0 + 0.01, false)] {
+                let mut phys = PhysState::default();
+                if let Some(bbx) = bbx {
+                    phys.actor_block_radii.insert(id, bbx);
+                }
+                phys.world.set_actor_volume(id, fnv_phys::HitVolume { feet: [distance, 0.0, 0.0], radius: 15.0, height: 30.0, dead: false });
+                let world = view(&mut phys, None, None).for_melee();
+                let hits = swing_reaching(&world, &CombatTuning::default(), [0.0, 0.0, 112.0], 0.0, [1.0, 0.0, 0.0], reach, PLAYER);
+                assert_eq!(hits.iter().any(|h| h.0 == id as ActorId), expected);
+            }
+        }
     }
 
     #[test]
@@ -6678,6 +6969,29 @@ mod tests {
             assert!(a.is_empty(), "no attacker's perks");
             assert_eq!(t.names(), ["Toughness"]);
             assert!(close(blast_on(&mut g, None, FormId::PLAYER_REF).dealt, 94.0));
+        }
+
+        #[test]
+        fn source_critical_damage_changes_the_existing_hit_calculation() {
+            let f = fixture();
+            let mut g = game(&f, &[]);
+            let source = "Begin Function {}\nSetWeaponCritDamage 37 Rifle\nEnd";
+            g.run_query(source, Default::default()).unwrap();
+            for animation in ["Rifle - Automatic (2 Hand)", "One Hand Sword"] {
+                let mut weapon = WeaponStats { base_damage: 20, crit_damage: 11, crit_mult: 1.0, anim_type: Some(animation.into()), ..Default::default() };
+                let hit = |weapon: &WeaponStats| damage::hit(&Rules::defaults(), &CombatTuning::default(),
+                    &HitInput { weapon, projectiles: 1, condition: 1.0, ammo_effects: &[], part: HitPart::default(), power: 1.0 },
+                    &Attacker { sneaking: true, ..Default::default() }, &Target::default(), &NoPerks, &NoPerks, 0.0);
+                let baseline = hit(&weapon);
+                assert_eq!(baseline.crit_bonus, 11.0);
+                script_weapon_critical_damage(Some(&g), FormId(RIFLE), &mut weapon);
+                let corrected = hit(&weapon);
+                assert_eq!(corrected.crit_bonus, 37.0);
+                assert!(close(corrected.dealt - baseline.dealt, 26.0));
+                let before = weapon.clone();
+                script_weapon_critical_damage(Some(&g), FormId(LAUNCHER), &mut weapon);
+                assert_eq!(weapon.crit_damage, before.crit_damage, "another weapon has no override");
+            }
         }
 
         /// A grenade that strikes an actor deals its weapon's hit and its explosion's blast;
