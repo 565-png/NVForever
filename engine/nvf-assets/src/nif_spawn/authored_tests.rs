@@ -227,8 +227,9 @@ fn masks_and_cut_outs_stay_the_game_diffuses() {
 }
 
 /// Through the real synchronous source and a generated pack: the plain texture's set applies;
-/// a height-only set (a first-person twin's own included, which wins over the plain set) and
-/// an `_orm` that does not load leave the shape legacy.
+/// a height-only set (a first-person twin's own included, which wins over the plain set)
+/// leaves the shape the game's but for its height map, and an `_orm` that does not load
+/// leaves it legacy.
 #[test]
 fn the_real_source_applies_sets_and_falls_back_to_legacy() {
     let pack = crate::authored::tests::Pack::new();
@@ -247,4 +248,118 @@ fn the_real_source_applies_sets_and_falls_back_to_legacy() {
         assert!(m.base.metallic_roughness_texture.is_none() && m.extension.emissive_rule.w == 0.0, "{name}");
         assert_eq!(m.base.reflectance, 0.3, "{name}: the legacy value");
     }
+    // Stage 4: the height-only sets add their height map, nothing else.
+    assert!(stone.base.depth_map.is_some() && twin.base.depth_map.is_some());
+    assert!(bad.base.depth_map.is_none() && plain.base.depth_map.is_none() && gun.base.depth_map.is_none());
+}
+
+/// A height map (#2981 stage 4) for the test sets.
+fn height(images: &mut Assets<Image>, depth: f32) -> Parallax {
+    Parallax::height(images.add(Image::default()), depth)
+}
+
+/// A height-only set: the game's own material with the depth map and its settings, nothing
+/// else; the mark stays clear and the legacy look keeps the no-depth-map baseline. Tangents
+/// are made for it on the drawn mesh of a shape without a normal map.
+#[test]
+fn a_height_only_set_adds_its_height_map_to_the_game_material_only() {
+    let mut scratch = Assets::<Image>::default();
+    let h = height(&mut scratch, 0.04);
+    let bare = Props { textures: vec![r"walls\brick.dds".into()], ..Default::default() };
+    for props in [wall(), bare] {
+        let mut source = SetTextures::with(Some((KEY, PbrSet::HeightOnly(crate::authored::HeightSet { stem: r"textures\pbr\walls\brick".into(), height: h.clone() }))));
+        let mut mesh = triangle();
+        let (m, _) = shape_material_with(&props, &mut mesh, &mut source);
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some(), "{props:?}: tangents on the drawn mesh");
+        assert_eq!(Parallax::of(&m.base), h, "{props:?}");
+        assert_eq!((m.base.max_parallax_layer_count, m.base.parallax_mapping_method), (crate::authored::MAX_PARALLAX_LAYERS, crate::authored::PARALLAX_METHOD));
+        assert_ne!(m.extension.emissive_rule.w, AUTHORED_MARK, "the mark stays clear: scripted gloss still applies");
+        assert!(m.base.metallic_roughness_texture.is_none() && m.base.occlusion_texture.is_none());
+        let legacy = m.extension.legacy.clone().unwrap();
+        assert_eq!(legacy.parallax, Parallax::default(), "the baseline has no depth map");
+        assert!(legacy.tangents && crate::authored::height_on(&m, &legacy));
+        // Off, and on without the set: the same game material, without the height map.
+        source.set = None;
+        let (no_set, _) = shape_material_with(&props, &mut triangle(), &mut source);
+        let mut stripped = m.clone();
+        Parallax::default().put(&mut stripped.base);
+        assert_eq!(drawn(&stripped), drawn(&no_set), "{props:?}: the height map is the only difference");
+    }
+}
+
+/// An authored set with `_p`: both on; [`crate::authored::restore`] takes both off.
+#[test]
+fn an_authored_height_map_comes_off_with_the_set() {
+    let mut scratch = Assets::<Image>::default();
+    let mut s = set(&mut scratch, true, Scalars::default());
+    s.height = Some(height(&mut scratch, 0.06));
+    let mut source = SetTextures::new(Some((KEY, s.clone())));
+    let (mut m, _) = shape_material_with(&wall(), &mut triangle(), &mut source);
+    assert!(crate::authored::is_authored(&m));
+    assert_eq!(m.base.depth_map, s.height.as_ref().unwrap().depth_map);
+    assert_eq!(m.base.parallax_depth_scale, 0.06);
+    source.on = false;
+    let (off, _) = shape_material_with(&wall(), &mut triangle(), &mut source);
+    let look = m.extension.legacy.clone().unwrap();
+    crate::authored::restore(&mut m, &look);
+    assert_eq!(drawn(&off), drawn(&m), "depth map, depth, method and layers back too");
+}
+
+/// Shapes the height map may not draw on keep the rest of the set and gain no tangents
+/// for it: alpha-tested, blended, double-sided, decals; a copy of a drawn mesh without
+/// tangents.
+#[test]
+fn a_height_map_needs_an_opaque_single_sided_non_decal_shape_with_tangents() {
+    let mut scratch = Assets::<Image>::default();
+    let mut s = set(&mut scratch, false, Scalars::default());
+    s.height = Some(height(&mut scratch, 0.03));
+    let bare = || Props { textures: vec![r"walls\brick.dds".into()], ..Default::default() };
+    for (why, props) in [
+        // NiAlphaProperty 0x12EC: tested, not blended; 0x10ED: blended, not tested.
+        ("alpha tested", Props { alpha: Some((0x12EC, 127)), ..bare() }),
+        ("blended", Props { alpha: Some((0x10ED, 0)), ..bare() }),
+        ("double-sided", Props { double_sided: true, ..bare() }),
+        ("decal", Props { decal: true, ..bare() }),
+    ] {
+        let mut source = SetTextures::new(Some((KEY, s.clone())));
+        let mut mesh = triangle();
+        let (m, _) = shape_material_with(&props, &mut mesh, &mut source);
+        assert!(m.base.depth_map.is_none(), "{why}");
+        assert!(m.base.metallic_roughness_texture.is_some(), "{why}: the rest of the set applies");
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_none(), "{why}: no tangents made for a height map it cannot draw");
+    }
+    let mut source = SetTextures::new(Some((KEY, s.clone())));
+    let mut copy = triangle();
+    let (m, _) = shape_material_inner(&bare(), &mut copy, &mut source, true);
+    assert!(m.base.depth_map.is_none() && copy.attribute(Mesh::ATTRIBUTE_TANGENT).is_none(), "a copy of a drawn mesh without tangents");
+    assert_eq!(crate::authored::height_gate(&m, false), Err(crate::authored::HeightSkip::NoTangents));
+}
+
+/// Later copies (#2981 review A3): a fade's blended copy and a holed copy drop the height map
+/// and put the baseline back; an opaque copy keeps it. Role copies made legacy and unlit
+/// copies drop it too, with the baseline depth, method and layers.
+#[test]
+fn copies_that_stop_being_eligible_drop_the_height_map() {
+    let mut scratch = Assets::<Image>::default();
+    let h = height(&mut scratch, 0.05);
+    let mut source = SetTextures::with(Some((KEY, PbrSet::HeightOnly(crate::authored::HeightSet { stem: r"textures\pbr\walls\brick".into(), height: h.clone() }))));
+    let (m, _) = shape_material_with(&wall(), &mut triangle(), &mut source);
+    assert!(m.base.depth_map.is_some());
+    let mut kept = m.clone();
+    assert!(!crate::authored::recheck_height(&mut kept), "still opaque");
+    assert_eq!(Parallax::of(&kept.base), h);
+    let mut fading = m.clone();
+    fading.base.alpha_mode = AlphaMode::Blend;
+    assert!(crate::authored::recheck_height(&mut fading));
+    assert_eq!(Parallax::of(&fading.base), Parallax::default());
+    let mut holed = m.clone();
+    holed.extension.holes = Vec4::new(40.0, 4.0, 0.0, 0.0);
+    holed.base.alpha_mode = AlphaMode::Mask(0.0);
+    assert!(crate::authored::recheck_height(&mut holed) && holed.base.depth_map.is_none());
+    let mut role = m.clone();
+    assert!(crate::authored::make_legacy(&mut role));
+    assert_eq!((Parallax::of(&role.base), role.extension.legacy.is_none()), (Parallax::default(), true), "a role copy: the height map off for good");
+    let mut unlit = m.clone();
+    crate::authored::clear_for_unlit_copy(&mut unlit);
+    assert_eq!(Parallax::of(&unlit.base), Parallax::default(), "an unlit copy: no depth map, the baseline's settings");
 }

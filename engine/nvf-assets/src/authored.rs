@@ -481,7 +481,8 @@ pub fn apply(material: &mut crate::NifMaterial, set: &AuthoredSet, legacy: &Lega
     applied
 }
 
-/// Put the legacy look back on `material` (the inverse of [`apply`]).
+/// Put the legacy look back on `material` (the inverse of [`apply`], and of
+/// [`apply_height`]: the parallax fields go back too).
 pub fn restore(material: &mut crate::NifMaterial, legacy: &LegacyLook) {
     let b = &mut material.base;
     b.metallic_roughness_texture = None;
@@ -492,7 +493,100 @@ pub fn restore(material: &mut crate::NifMaterial, legacy: &LegacyLook) {
     b.reflectance = legacy.reflectance;
     b.metallic = legacy.metallic;
     b.specular_tint = legacy.specular_tint;
+    legacy.parallax.put(b);
     material.extension.emissive_rule.w = 0.0;
+}
+
+/// Why a set's height map is not drawn on a material ([`height_gate`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeightSkip {
+    /// Alpha-tested or blended (cut-outs, fades, holes made it `Mask`).
+    NotOpaque,
+    DoubleSided,
+    Decal,
+    /// The drawn mesh has no tangents (a copy of a drawn mesh, a swap onto one).
+    NoTangents,
+    /// Unlit, refracting, or eaten by an effect shader's holes.
+    Other,
+}
+
+/// Whether `material` may draw a height map now, its drawn mesh having tangents (`tangents`):
+/// opaque, single-sided, not a decal, lit, not refracting, without holes [design, the stage 4
+/// review A3]. Why: the depth prepass, the shadow passes and the holes test read alpha at the
+/// unshifted texture coordinates, so a cut-out's or a blend's coverage would not follow the
+/// shifted texels; the march takes the incoming tangent frame without turning it for back
+/// faces; decals already lean on a depth bias. Asked when a material is built, when a swap
+/// puts a set on it ([`retexture`]) and when a copy changes how it draws ([`recheck_height`]).
+pub fn height_gate(material: &crate::NifMaterial, tangents: bool) -> Result<(), HeightSkip> {
+    let (b, e) = (&material.base, &material.extension);
+    if b.unlit || e.refract || (e.holes.x >= 0.0 && e.holes.x < 255.0) {
+        Err(HeightSkip::Other)
+    } else if !matches!(b.alpha_mode, AlphaMode::Opaque) {
+        Err(HeightSkip::NotOpaque)
+    } else if b.double_sided {
+        Err(HeightSkip::DoubleSided)
+    } else if e.decal {
+        Err(HeightSkip::Decal)
+    } else if !tangents {
+        Err(HeightSkip::NoTangents)
+    } else {
+        Ok(())
+    }
+}
+
+/// Put a set's height map on `material` (the depth map, its depth, method and layers) when
+/// [`height_gate`] passes with the legacy look's tangents; nothing else changes (a height-only
+/// set leaves the material the game's own, the authored mark clear). Counts a skip by its
+/// reason. Whether it was put on.
+pub fn apply_height(material: &mut crate::NifMaterial, height: &Parallax, legacy: &LegacyLook) -> Result<(), HeightSkip> {
+    match height_gate(material, legacy.tangents) {
+        Ok(()) => {
+            height.put(&mut material.base);
+            Ok(())
+        }
+        Err(why) => {
+            Stats::add(match why {
+                HeightSkip::NotOpaque => &stats().height_not_opaque,
+                HeightSkip::DoubleSided => &stats().height_double_sided,
+                HeightSkip::Decal => &stats().height_decal,
+                HeightSkip::NoTangents => &stats().height_no_tangents,
+                HeightSkip::Other => &stats().height_other,
+            });
+            Err(why)
+        }
+    }
+}
+
+/// Whether a set's height map is on `material`: its depth map is not the legacy look's
+/// (tracked apart from [`is_authored`]: a height-only set leaves the mark clear).
+pub fn height_on(material: &crate::NifMaterial, legacy: &LegacyLook) -> bool {
+    material.base.depth_map.is_some() && material.base.depth_map != legacy.parallax.depth_map
+}
+
+/// Take whatever set is on `material` off: the authored fields and the height map
+/// ([`restore`]) when it is authored, else the height map alone (a height-only set), back to
+/// the legacy look; a material wearing neither is left as it is.
+pub fn take_off(material: &mut crate::NifMaterial, legacy: &LegacyLook) {
+    if is_authored(material) {
+        restore(material, legacy);
+    } else if height_on(material, legacy) {
+        legacy.parallax.put(&mut material.base);
+    }
+}
+
+/// A copy of a material whose drawing changed after it was made (an effect shader's holes
+/// making an opaque copy `Mask(0)`, a fade making it `Blend`: nvforever `effect_shaders.rs`,
+/// nvf-play `fade.rs`): if it carries a depth map that [`height_gate`] no longer allows, the
+/// depth map comes off and the legacy look's other parallax fields go back. Whether it took
+/// one off.
+pub fn recheck_height(material: &mut crate::NifMaterial) -> bool {
+    if material.base.depth_map.is_none() || height_gate(material, true).is_ok() {
+        return false;
+    }
+    let baseline = material.extension.legacy.as_ref().map(|l| l.parallax.clone()).unwrap_or_default();
+    Parallax { depth_map: None, ..baseline }.put(&mut material.base);
+    Stats::add(&stats().height_dropped);
+    true
 }
 
 /// A script's change of a shape's glossiness (nvforever `nif_mirror.rs`, the material
@@ -523,8 +617,9 @@ pub fn set_legacy_specular_tint(material: &mut crate::NifMaterial, tint: Color, 
     }
 }
 
-/// Whether any shape of `data`'s mount can take an authored set: the run's setting on
-/// (`enabled`) and at least one authored set in the mount's index (built here if it was not).
+/// Whether any shape of `data`'s mount can take a set: the run's setting on (`enabled`) and
+/// at least one active set (authored or height only) in the mount's index (built here if it
+/// was not).
 /// Callers that make shapes legacy for good once their role is known (nvforever `actors.rs`)
 /// skip that work when it is false: no set can reach such a shape in this mount, through a
 /// material build or a later swap alike. A new mount (`GameData::set_vfs`) would need those
@@ -534,7 +629,7 @@ pub fn mount_has_sets(data: &GameData) -> bool {
 }
 
 fn mount_has_sets_when(data: &GameData, on: bool) -> bool {
-    on && data.pbr_index().counts().authored > 0
+    on && data.pbr_index().counts().active() > 0
 }
 
 /// Whether `material` is shaded from an authored set.
@@ -548,24 +643,22 @@ pub fn is_authored(material: &crate::NifMaterial) -> bool {
 /// anything changed.
 pub fn make_legacy(material: &mut crate::NifMaterial) -> bool {
     let Some(legacy) = material.extension.legacy.take() else { return false };
-    if is_authored(material) {
-        restore(material, &legacy);
-    }
+    take_off(material, &legacy);
     Stats::add(&stats().made_legacy);
     true
 }
 
 /// Clear every authored map from an unlit copy (the Pip-Boy's glare and menus copies,
 /// nvforever `pipboy_arm.rs`): the ORM in both slots, the depth map (Bevy applies parallax
-/// before its unlit test), the mark and the legacy look, so nothing of a set reaches it
-/// whatever its source wore [design, a second guard beside the `textures\pipboy3000\`
-/// exclusion].
+/// before its unlit test) with the legacy look's other parallax fields put back, the mark and
+/// the legacy look, so nothing of a set reaches it whatever its source wore [design, a second
+/// guard beside the `textures\pipboy3000\` exclusion].
 pub fn clear_for_unlit_copy(material: &mut crate::NifMaterial) {
     material.base.metallic_roughness_texture = None;
     material.base.occlusion_texture = None;
-    material.base.depth_map = None;
+    let baseline = material.extension.legacy.take().map(|l| l.parallax).unwrap_or_default();
+    Parallax { depth_map: None, ..baseline }.put(&mut material.base);
     material.extension.emissive_rule.w = 0.0;
-    material.extension.legacy = None;
 }
 
 /// What [`retexture`] did to a material.
@@ -575,18 +668,23 @@ pub enum Retextured {
     Untouched,
     /// The new diffuse's set is on it.
     Authored,
+    /// The new diffuse's set is height only: the legacy look with its height map, where
+    /// [`height_gate`] allows one.
+    HeightOnly,
     /// No set for the new diffuse: the legacy look is on it (as it was, or put back).
     Legacy,
 }
 
 /// The one rule for a lit copy of a shape's material whose diffuse was just replaced by
 /// `texture` (a NIF texture path; script `SwapTexture`, the blackjack cards, the Vigor
-/// Tester's buttons and digits): from the material's legacy look ([`LegacyLook`], carried by
-/// the copy), the new diffuse's set is applied (its scalars' defaults, the game's normal map
-/// where it has no `_n` or the drawn mesh has no tangents), or, without one, the legacy
-/// look is put back if a set was on it. Always from the legacy look, never from what the
-/// copy wore: a copy of a material that wore another diffuse's set takes none of it. Only
-/// the set's fields change; tint, animation, fade and every other value stay.
+/// Tester's buttons and digits): whatever set the copy wore comes off first ([`take_off`]:
+/// authored fields and height map alike), then, from the material's legacy look
+/// ([`LegacyLook`], carried by the copy), the new diffuse's set is applied (its scalars'
+/// defaults, the game's normal map where it has no `_n` or the drawn mesh has no tangents;
+/// its height map where [`height_gate`] allows one with the drawn mesh's recorded tangents),
+/// or a height-only set's height map alone, or nothing. Always from the legacy look, never
+/// from what the copy wore: a copy of a material that wore another diffuse's set takes none
+/// of it. Only the set's fields change; tint, animation, fade and every other value stay.
 pub fn retexture(
     material: &mut crate::NifMaterial,
     texture: &str,
@@ -599,16 +697,23 @@ pub fn retexture(
     let Some(legacy) = material.extension.legacy.clone() else { return Retextured::Untouched };
     let mut source = crate::nif_spawn::StoreTextures { textures, data, images, formats };
     let key = source.resolve(texture);
-    match key_eligible(&key).then(|| source.pbr_set(&key)).flatten() {
+    let set = key_eligible(&key).then(|| source.pbr_set(&key)).flatten();
+    take_off(material, &legacy);
+    match set {
         Some(PbrSet::Authored(set)) => {
             apply(material, &set, &legacy);
+            if let Some(height) = &set.height {
+                let _ = apply_height(material, height, &legacy);
+            }
             Stats::add(&stats().swaps_authored);
             Retextured::Authored
         }
-        Some(PbrSet::HeightOnly(_)) | None => {
-            if is_authored(material) {
-                restore(material, &legacy);
-            }
+        Some(PbrSet::HeightOnly(set)) => {
+            let _ = apply_height(material, &set.height, &legacy);
+            Stats::add(&stats().swaps_height);
+            Retextured::HeightOnly
+        }
+        None => {
             Stats::add(&stats().swaps_legacy);
             Retextured::Legacy
         }
@@ -638,10 +743,24 @@ pub struct Stats {
     /// put back the legacy look (cached swaps do not call it again).
     pub swaps_authored: AtomicU64,
     pub swaps_legacy: AtomicU64,
+    /// [`retexture`] calls that put a height-only set on.
+    pub swaps_height: AtomicU64,
+    /// Material builds that put a height map on (`nif_spawn::shape_material`), and of them
+    /// those from a height-only set.
+    pub height_built: AtomicU64,
+    pub height_only_built: AtomicU64,
+    /// Height maps a build or a swap did not put on, by [`HeightSkip`] reason.
+    pub height_not_opaque: AtomicU64,
+    pub height_double_sided: AtomicU64,
+    pub height_decal: AtomicU64,
+    pub height_no_tangents: AtomicU64,
+    pub height_other: AtomicU64,
     /// Sets whose `_p` did not load (the rest of an authored set still applies).
     pub height_failed: AtomicU64,
     /// Sets whose `_p` is signed BC4, refused ([`signed_format`]).
     pub height_signed: AtomicU64,
+    /// Later copies that dropped a height map ([`recheck_height`]).
+    pub height_dropped: AtomicU64,
     stems: Mutex<HashSet<String>>,
 }
 
@@ -657,7 +776,7 @@ impl Stats {
     /// The summary line (without its prefix).
     pub fn line(&self) -> String {
         format!(
-            "{} material builds applied a set ({} distinct set stems at build); builds without one: {} not eligible, {} on excluded textures, {} whose _orm did not load; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to a set, {} to the legacy look)",
+            "{} material builds applied a set ({} distinct set stems at build); builds without one: {} not eligible, {} on excluded textures, {} whose _orm did not load; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to a set, {} to a height-only set, {} to the legacy look); height maps: {} material builds applied one ({} from height-only sets); not put on at build or swap: {} not opaque, {} double-sided, {} decals, {} without tangents, {} unlit, refracting or holed; {} _p not loaded, {} signed _p refused; {} later copies dropped one",
             Self::get(&self.built),
             self.stems.lock().expect("authored stats").len(),
             Self::get(&self.not_eligible),
@@ -665,9 +784,20 @@ impl Stats {
             Self::get(&self.orm_failed),
             Self::get(&self.normal_without_tangents),
             Self::get(&self.made_legacy),
-            Self::get(&self.swaps_authored) + Self::get(&self.swaps_legacy),
+            Self::get(&self.swaps_authored) + Self::get(&self.swaps_height) + Self::get(&self.swaps_legacy),
             Self::get(&self.swaps_authored),
+            Self::get(&self.swaps_height),
             Self::get(&self.swaps_legacy),
+            Self::get(&self.height_built),
+            Self::get(&self.height_only_built),
+            Self::get(&self.height_not_opaque),
+            Self::get(&self.height_double_sided),
+            Self::get(&self.height_decal),
+            Self::get(&self.height_no_tangents),
+            Self::get(&self.height_other),
+            Self::get(&self.height_failed),
+            Self::get(&self.height_signed),
+            Self::get(&self.height_dropped),
         )
     }
 }
@@ -682,6 +812,14 @@ pub fn stats() -> &'static Stats {
 /// [`key_eligible`] instead).
 pub(crate) fn note_skipped(texture: bool) {
     Stats::add(if texture { &stats().excluded_texture } else { &stats().not_eligible });
+}
+
+/// A material built with a height map on (`height_only`: from a height-only set).
+pub(crate) fn note_height_built(height_only: bool) {
+    Stats::add(&stats().height_built);
+    if height_only {
+        Stats::add(&stats().height_only_built);
+    }
 }
 
 /// A material built with `set`.

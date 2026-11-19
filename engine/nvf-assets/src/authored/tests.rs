@@ -335,7 +335,27 @@ fn landscape_lod_models_are_recognised_whatever_the_spelling() {
 #[test]
 fn the_summary_line_names_every_count() {
     let s = Stats::default();
-    for (c, n) in [(&s.built, 3), (&s.not_eligible, 5), (&s.excluded_texture, 1), (&s.orm_failed, 2), (&s.normal_without_tangents, 4), (&s.made_legacy, 6), (&s.swaps_authored, 7), (&s.swaps_legacy, 8)] {
+    for (c, n) in [
+        (&s.built, 3),
+        (&s.not_eligible, 5),
+        (&s.excluded_texture, 1),
+        (&s.orm_failed, 2),
+        (&s.normal_without_tangents, 4),
+        (&s.made_legacy, 6),
+        (&s.swaps_authored, 7),
+        (&s.swaps_legacy, 8),
+        (&s.swaps_height, 9),
+        (&s.height_built, 10),
+        (&s.height_only_built, 11),
+        (&s.height_not_opaque, 12),
+        (&s.height_double_sided, 13),
+        (&s.height_decal, 14),
+        (&s.height_no_tangents, 15),
+        (&s.height_other, 16),
+        (&s.height_failed, 17),
+        (&s.height_signed, 18),
+        (&s.height_dropped, 19),
+    ] {
         for _ in 0..n {
             Stats::add(c);
         }
@@ -343,13 +363,14 @@ fn the_summary_line_names_every_count() {
     s.stems.lock().unwrap().extend(["a".to_string(), "b".to_string()]);
     assert_eq!(
         s.line(),
-        "3 material builds applied a set (2 distinct set stems at build); builds without one: 5 not eligible, 1 on excluded textures, 2 whose _orm did not load; 4 applied without their _n (no tangents); 6 role copies made legacy; 15 retexture calls (7 to a set, 8 to the legacy look)"
+        "3 material builds applied a set (2 distinct set stems at build); builds without one: 5 not eligible, 1 on excluded textures, 2 whose _orm did not load; 4 applied without their _n (no tangents); 6 role copies made legacy; 24 retexture calls (7 to a set, 9 to a height-only set, 8 to the legacy look); height maps: 10 material builds applied one (11 from height-only sets); not put on at build or swap: 12 not opaque, 13 double-sided, 14 decals, 15 without tangents, 16 unlit, refracting or holed; 17 _p not loaded, 18 signed _p refused; 19 later copies dropped one"
     );
 }
 
-/// The role pass's gate: off, or a mount without authored sets, means no shape can take one.
+/// The role pass's gate: off, or a mount without active sets, means no shape can take one; a
+/// mount with only height-only sets has them (its shapes' roles must still be excluded).
 #[test]
-fn a_mount_has_sets_only_with_the_setting_on_and_an_authored_set() {
+fn a_mount_has_sets_only_with_the_setting_on_and_an_active_set() {
     let pack = Pack::new();
     assert!(!mount_has_sets_when(&pack.data, false));
     assert!(!pack.data.pbr_index_built(), "off asks nothing of the index");
@@ -357,6 +378,70 @@ fn a_mount_has_sets_only_with_the_setting_on_and_an_authored_set() {
     let empty = std::env::temp_dir().join(format!("nvf-authored-empty-{}", std::process::id()));
     std::fs::create_dir_all(empty.join("textures")).unwrap();
     let data = GameData::new(Arc::new(fnv_vfs::Vfs::open(&empty, &[]).unwrap()), Arc::new(fnv_nif::Schema::default()));
-    assert!(!mount_has_sets_when(&data, true), "no authored set in the mount");
+    assert!(!mount_has_sets_when(&data, true), "no set in the mount");
     let _ = std::fs::remove_dir_all(&empty);
+    let heights = std::env::temp_dir().join(format!("nvf-authored-heights-{}", std::process::id()));
+    std::fs::create_dir_all(heights.join("textures/pbr/walls")).unwrap();
+    std::fs::write(heights.join("textures/pbr/walls/stone_p.dds"), legacy(b"BC4U", 4, 4, &[0; 8])).unwrap();
+    let data = GameData::new(Arc::new(fnv_vfs::Vfs::open(&heights, &[]).unwrap()), Arc::new(fnv_nif::Schema::default()));
+    assert!(mount_has_sets_when(&data, true), "height-only sets count");
+    let _ = std::fs::remove_dir_all(&heights);
+}
+
+/// The swap rule with height maps (#2981 stage 4): authored with `_p` → height only → none
+/// → authored without `_p`, each from the legacy look, the old overlay taken off first; on a
+/// drawn mesh without tangents no height map goes on; a blended copy takes none.
+#[test]
+fn retexturing_moves_height_maps_with_the_sets() {
+    use crate::nif_spawn::{shape_material, Props};
+    use crate::texture::bc5_tests::triangle;
+    let pack = Pack::new();
+    let mut cache = TextureCache::default();
+    let mut images = Assets::<Image>::default();
+    let props = |t: &str| {
+        let mut p = Props::default();
+        p.textures = vec![t.into()];
+        p
+    };
+    // relief: `_orm` and `_p` (tangents made for the `_p`); plain: no set, no tangents.
+    let (relief, _) = shape_material(&props(r"walls\relief.dds"), &mut triangle(), &mut cache, &pack.data, &mut images, None);
+    let (bare, _) = shape_material(&props(r"walls\plain.dds"), &mut triangle(), &mut cache, &pack.data, &mut images, None);
+    assert!(is_authored(&relief) && relief.base.depth_map.is_some() && relief.base.parallax_depth_scale == 0.05);
+    assert!(relief.extension.legacy.as_ref().unwrap().tangents && !bare.extension.legacy.as_ref().unwrap().tangents);
+    let legacy = relief.extension.legacy.clone().unwrap();
+    let mut m = relief.clone();
+    // Authored with `_p` → height only: the ORM off, stone's height map on, the mark clear.
+    assert_eq!(retexture(&mut m, r"walls\stone.dds", &mut cache, &pack.data, &mut images, None), Retextured::HeightOnly);
+    assert!(!is_authored(&m) && m.base.metallic_roughness_texture.is_none());
+    assert!(m.base.depth_map.is_some() && m.base.depth_map != relief.base.depth_map);
+    assert_eq!(m.base.parallax_depth_scale, fnv_pbr::DEFAULT_PARALLAX_DEPTH);
+    assert_eq!((m.base.reflectance, m.base.perceptual_roughness), (legacy.reflectance, legacy.roughness), "the game's values");
+    // Height only → none: the baseline back.
+    assert_eq!(retexture(&mut m, r"walls\plain.dds", &mut cache, &pack.data, &mut images, None), Retextured::Legacy);
+    assert_eq!(Parallax::of(&m.base), legacy.parallax);
+    // None → authored without `_p` → back to relief: no stale height map, then relief's.
+    assert_eq!(retexture(&mut m, r"walls\nonormal.dds", &mut cache, &pack.data, &mut images, None), Retextured::Authored);
+    assert!(m.base.depth_map.is_none());
+    assert_eq!(retexture(&mut m, r"walls\relief.dds", &mut cache, &pack.data, &mut images, None), Retextured::Authored);
+    assert_eq!(m.base.depth_map, relief.base.depth_map);
+    // Height only → authored without `_p`: the height map off.
+    assert_eq!(retexture(&mut m, r"walls\stone.dds", &mut cache, &pack.data, &mut images, None), Retextured::HeightOnly);
+    assert_eq!(retexture(&mut m, r"walls\nonormal.dds", &mut cache, &pack.data, &mut images, None), Retextured::Authored);
+    assert!(m.base.depth_map.is_none() && is_authored(&m));
+    assert_eq!(m.extension.legacy.as_ref(), Some(&legacy), "the legacy look itself never changes");
+    // A drawn mesh without tangents: no height map from a swap (the recorded tangents).
+    let mut b = bare.clone();
+    assert_eq!(retexture(&mut b, r"walls\stone.dds", &mut cache, &pack.data, &mut images, None), Retextured::HeightOnly);
+    assert!(b.base.depth_map.is_none());
+    assert_eq!(retexture(&mut b, r"walls\relief.dds", &mut cache, &pack.data, &mut images, None), Retextured::Authored);
+    assert!(b.base.depth_map.is_none() && is_authored(&b));
+    // A blended copy (a fade's) takes none either.
+    let mut faded = relief.clone();
+    faded.base.alpha_mode = AlphaMode::Blend;
+    assert_eq!(retexture(&mut faded, r"walls\stone.dds", &mut cache, &pack.data, &mut images, None), Retextured::HeightOnly);
+    assert!(faded.base.depth_map.is_none());
+    // A height-only material made legacy for good (a role found later): the height map off.
+    let (mut skin, _) = shape_material(&props(r"walls\stone.dds"), &mut triangle(), &mut cache, &pack.data, &mut images, None);
+    assert!(skin.base.depth_map.is_some() && !is_authored(&skin));
+    assert!(make_legacy(&mut skin) && skin.base.depth_map.is_none());
 }

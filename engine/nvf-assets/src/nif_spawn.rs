@@ -954,14 +954,19 @@ fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl Text
     }
     let found = key.filter(|_| key_ok).and_then(|k| textures.pbr_set(&k));
     let authored = found.as_ref().and_then(crate::authored::PbrSet::authored);
-    // The final normal is chosen before the tangents are settled: a set's `_n` on a shape
-    // without a normal map needs tangents on the drawn mesh, made here; a copy of a drawn
-    // mesh (`keep_tangents`) gains none, so its `_n` applies only if it has them.
+    let height = found.as_ref().and_then(crate::authored::PbrSet::height);
+    // A height map is drawn only on an opaque, single-sided, non-decal shape
+    // (`crate::authored::height_gate`, asked again of the built material): only such a
+    // shape gains tangents for one.
+    let height_wanted = height.is_some() && matches!(alpha_mode, AlphaMode::Opaque) && !props.double_sided && !props.decal;
+    // The final normal is chosen before the tangents are settled: a set's `_n` or `_p` on a
+    // shape without a normal map needs tangents on the drawn mesh, made here; a copy of a
+    // drawn mesh (`keep_tangents`) gains none, so its `_n` and `_p` apply only if it has them.
     let tangents = if normal.is_some() {
         !keep_tangents || had_tangents
     } else if keep_tangents {
         had_tangents
-    } else if authored.is_some_and(|s| s.normal.is_some()) && !had_tangents {
+    } else if (authored.is_some_and(|s| s.normal.is_some()) || height_wanted) && !had_tangents {
         mesh.generate_tangents().is_ok()
     } else {
         had_tangents
@@ -1040,6 +1045,13 @@ fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl Text
         if let Some(set) = authored {
             crate::authored::apply(&mut material, set, &legacy);
             crate::authored::note_built(set);
+        }
+        // The height map over either kind of set (a height-only set changes nothing else and
+        // leaves the mark clear).
+        if let Some(height) = height {
+            if crate::authored::apply_height(&mut material, height, &legacy).is_ok() {
+                crate::authored::note_height_built(authored.is_none());
+            }
         }
         material.extension.legacy = Some(legacy);
     }
