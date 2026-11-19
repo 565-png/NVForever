@@ -111,22 +111,24 @@ fn frame(means: [u8; PANELS]) -> Vec<u8> {
 }
 
 #[test]
-fn the_comparator_needs_occlusion_alone_the_reference_and_a_visible_normal() {
-    // plain, lit, dark, reference, flat.
-    let on = frame([150, 140, 70, 141, 120]);
+fn the_comparator_needs_occlusion_alone_the_reference_and_the_normals_sign() {
+    // plain, lit, dark, reference, flat; the shape of the observed readbacks.
+    let on = frame([150, 120, 70, 121, 150]);
     let r = compare(&on, true).unwrap();
-    assert_eq!(r.brightest, [150, 140, 70, 141, 120]);
-    assert!(r.describe().contains("lit-dark=70.00"), "{}", r.describe());
+    assert_eq!(r.brightest, [150, 120, 70, 121, 150]);
+    assert!(r.describe().contains("lit-dark=50.00") && r.describe().contains("flat-reference=29.00"), "{}", r.describe());
     assert!(compare(&on, false).is_err(), "off wants the plain-material panels equal");
-    assert!(compare(&frame([150, 140, 135, 141, 120]), true).is_err(), "the occlusion does not show");
-    assert!(compare(&frame([150, 140, 70, 160, 120]), true).is_err(), "the two-channel normal differs from the reference");
-    assert!(compare(&frame([150, 140, 70, 141, 139]), true).is_err(), "the normal does not show");
+    assert!(compare(&frame([150, 120, 115, 121, 150]), true).is_err(), "the occlusion does not show");
+    assert!(compare(&frame([150, 120, 70, 140, 150]), true).is_err(), "the two-channel normal differs from the reference");
+    assert!(compare(&frame([150, 120, 70, 121, 125]), true).is_err(), "the normal does not show");
+    assert!(compare(&frame([150, 160, 110, 161, 130]), true).is_err(), "the normal's sign reversed for every map alike");
     // No set applied at all (every authored panel as plain, the reference only its normal):
     // refused when the setting is on.
     assert!(compare(&frame([150, 150, 150, 130, 150]), true).is_err(), "no occlusion: refused");
     assert!(compare(&frame([150, 151, 149, 130, 150]), false).is_ok());
     assert!(compare(&frame([150, 140, 150, 130, 150]), false).is_err(), "off: a plain-material panel differs");
     assert!(compare(&frame([150; PANELS]), false).is_err(), "off: identical panels mean the reference normal vanished");
+    assert!(compare(&frame([150, 151, 149, 170, 150]), false).is_err(), "off: the reference brighter, its normal's sign reversed");
     // Blank, clipped, translucent or short frames are refused whatever the setting.
     assert!(compare(&frame([0; PANELS]), false).err().is_some_and(|e| e.contains("blank")));
     let mut clipped = frame([150, 151, 149, 130, 150]);

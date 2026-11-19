@@ -17,16 +17,22 @@
 //! - `flat`: `lit`'s `_orm`, no normal map.
 //!
 //! On: `dark` darker than `lit` (the occlusion, alone), `lit` equal to `reference` (the
-//! two-channel rebuild gives the three-channel normal, its Y included), `flat` different from
-//! `reference` (the normal shows at all). Off: `plain`, `lit`, `dark` and `flat` equal, and
-//! `reference` (its game normal map is drawn without a set too) different from them, so a
-//! frame of identical panels fails. Each readback logs every panel's mean and the
-//! differences. The thresholds are an engineering policy set from real readbacks (below);
-//! nothing here is a fact about the game. `flat` draws as `plain` (to a byte): their
-//! roughness and reflectance differ, but in this view and light only the faint direct
-//! highlight shows them. `reference` is brighter with the setting on than off: on it takes
-//! the set's reflectance (0.5, F0 4 %) where the game's shape, without the Specular flag,
-//! has none, and its tilted normal catches that highlight.
+//! two-channel rebuild gives the three-channel normal, its Y included), `reference` darker
+//! than `flat` by the observed sign (the normal shows, tilted the way the game's maps tilt).
+//! Off: `plain`, `lit`, `dark` and `flat` equal, and `reference` (its game normal map is drawn
+//! without a set too) darker than them by the observed sign, so a frame of identical panels,
+//! or one whose normals' Y is reversed for every map alike, fails. Each readback logs every
+//! panel's mean and the signed differences. The thresholds are an engineering policy set
+//! from real readbacks (below); nothing here is a fact about the game.
+//!
+//! [observed, on `7e2de4be1`, the main session's runs: on, plain 103, lit 67, dark 38,
+//! reference 67, flat 103; off, plain, lit, dark and flat 103, reference 60.] Two of these
+//! values have explanations that are [inferred], not isolated by a control: `flat` draws as
+//! `plain` although their roughness and reflectance differ, because in this view and light
+//! only the faint direct highlight would show them; `reference` is brighter on than off
+//! because on it takes the set's reflectance (0.5) and roughness where the game's shape,
+//! without the Specular flag, has reflectance 0 (roughness also enters Bevy's diffuse term,
+//! so the split between the two is not measured).
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -91,8 +97,8 @@ const LIGHT_FROM: Vec3 = Vec3::new(0.5, 0.5, 0.7);
 
 /// The comparator [engineering policy]. Mean luminance of a judged region, in bytes. On:
 /// `lit - dark >= MIN_OCCLUSION`, `|lit - reference| <= SAME`, `|reference - flat| >=
-/// MIN_NORMAL`. Off: `plain`, `lit`, `dark` and `flat` within `SAME_OFF` of each other and
-/// `|reference - plain| >= MIN_NORMAL`. A judged region's mean must lie inside `LIT` and no
+/// MIN_NORMAL` in sign: `flat - reference >= MIN_NORMAL`. Off: `plain`, `lit`, `dark` and
+/// `flat` within `SAME_OFF` of each other and `plain - reference >= MIN_NORMAL`. A judged region's mean must lie inside `LIT` and no
 /// texel in it may be clipped at `CLIP`. Set from the main session's readbacks of
 /// 2026-11-19 (two each, identical), with margins for other GPUs and drivers [observed: on,
 /// plain 103, lit 67, dark 38, reference 67, flat 103; off, 103 everywhere but the reference,
@@ -426,12 +432,12 @@ impl Report {
         let m = &self.mean;
         let panels: Vec<String> = NAMES.iter().zip(m).map(|(n, v)| format!("{n}={v:.2}")).collect();
         format!(
-            "{}; lit-dark={:.2} |lit-reference|={:.2} |reference-flat|={:.2} |reference-plain|={:.2} |plain-lit|={:.2} |plain-dark|={:.2} |plain-flat|={:.2}",
+            "{}; lit-dark={:.2} |lit-reference|={:.2} flat-reference={:.2} plain-reference={:.2} |plain-lit|={:.2} |plain-dark|={:.2} |plain-flat|={:.2}",
             panels.join(" "),
             m[LIT_PANEL] - m[DARK],
             (m[LIT_PANEL] - m[REFERENCE]).abs(),
-            (m[REFERENCE] - m[FLAT]).abs(),
-            (m[REFERENCE] - m[PLAIN]).abs(),
+            m[FLAT] - m[REFERENCE],
+            m[PLAIN] - m[REFERENCE],
             (m[PLAIN] - m[LIT_PANEL]).abs(),
             (m[PLAIN] - m[DARK]).abs(),
             (m[PLAIN] - m[FLAT]).abs(),
@@ -471,9 +477,10 @@ fn measure(bytes: &[u8]) -> Result<Report, String> {
 fn judge(report: Report, on: bool) -> Result<Report, String> {
     let m = &report.mean;
     let pass = if on {
-        m[LIT_PANEL] - m[DARK] >= MIN_OCCLUSION && (m[LIT_PANEL] - m[REFERENCE]).abs() <= SAME && (m[REFERENCE] - m[FLAT]).abs() >= MIN_NORMAL
+        // The signs as observed: the tilted normal draws darker than the flat one.
+        m[LIT_PANEL] - m[DARK] >= MIN_OCCLUSION && (m[LIT_PANEL] - m[REFERENCE]).abs() <= SAME && m[FLAT] - m[REFERENCE] >= MIN_NORMAL
     } else {
-        [LIT_PANEL, DARK, FLAT].iter().all(|&i| (m[PLAIN] - m[i]).abs() <= SAME_OFF) && (m[REFERENCE] - m[PLAIN]).abs() >= MIN_NORMAL
+        [LIT_PANEL, DARK, FLAT].iter().all(|&i| (m[PLAIN] - m[i]).abs() <= SAME_OFF) && m[PLAIN] - m[REFERENCE] >= MIN_NORMAL
     };
     if pass { Ok(report) } else { Err(format!("comparator ({}): {}", if on { "on" } else { "off" }, report.describe())) }
 }
