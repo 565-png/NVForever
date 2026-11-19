@@ -93,7 +93,7 @@ docs/design/graphics-enhanced.md §3.17), each part marked `NVForever (main pass
   `view.main_pass_viewport` and the depth texture's size. With FSR or DLSS the main passes
   fill only the top-left render-size part of full-size textures; upstream's march read the
   whole texture as the view and threw hard-edged false shadows that changed as the camera
-  moved [observed 2026-11-18, the owner's videos; a walk along the Prospector Saloon's
+  moved [observed 2026-11-18, playtest videos; a walk along the Prospector Saloon's
   porch with DLSS Quality, DLSS Performance and FSR was clean after the change].
 
 Without the override the scale and offset are (1, 1) and (0, 0), upstream's march. Bevy's

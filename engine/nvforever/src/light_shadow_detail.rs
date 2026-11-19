@@ -20,7 +20,7 @@
 //!   pictures]. With FSR or DLSS the picture is drawn below its output size into the
 //!   top-left of full-size textures (`MainPassResolutionOverride`); Bevy's march read the
 //!   whole depth texture as the view and threw hard-edged false shadows that changed as
-//!   the camera moved [observed 2026-11-18: the owner's videos, a walk along the
+//!   the camera moved [observed 2026-11-18: playtest videos, a walk along the
 //!   Prospector Saloon's porch]. The vendored march now reads the main pass's viewport
 //!   only (bevy_pbr raymarch.wesl `depth_uv_scale`, engine/vendor/README.md).
 //! - The sun keeps neither: its soft edges are the cascades' filter, and Bevy's contact
@@ -190,7 +190,7 @@ fn contact(
         // the march's per-pixel noise; without one it speckles the walls (§4). Under FSR and
         // DLSS the vendored march reads the depth of the main pass's viewport only
         // (raymarch.wesl `depth_uv_scale`): before that it threw hard-edged false shadows
-        // (owner's videos 2026-11-18, the Prospector Saloon's porch).
+        // (playtest videos 2026-11-18, the Prospector Saloon's porch).
         on = detailed(settings.choice) && !contact_aid_off() && temporal;
         if on && !has {
             commands.entity(e).insert((contact_settings(), DepthPrepass));

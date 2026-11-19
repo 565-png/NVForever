@@ -4,8 +4,8 @@
 //! scenarios; docs/design/graphics-enhanced.md §3.17). An addition of NVForever's own, not a fact
 //! about the original game: there placed lights cast none, and no LIGH record of the
 //! masters sets the Spot Shadow flag [observed: docs/handoff/esm-data-audit-2026-10-25.md,
-//! item 6]. Off by default. Built as the sun's shadows are (shadow_rate.rs), owner
-//! 2026-11-18: "look how sun shadows are calculated and do the same", "use the same
+//! item 6]. Off by default. Built as the sun's shadows are (shadow_rate.rs), [design,
+//! #3074]: "look how sun shadows are calculated and do the same", "use the same
 //! performance optimizations also for the lamp shadows".
 //!
 //! - **Which lights: by distance, as the sun's shadows.** Every drawn placed LIGH light
@@ -42,7 +42,7 @@
 //!   first, then the nearest; the rest wait, and so a moving thing's lamp shadow can lag a
 //!   frame or more. Of a light switched on, only the marked faces are drawn; the others
 //!   keep their maps. A light that has never drawn casts nothing until it has.
-//! - **Other lights** ([`ShadowSource`], owner 2026-11-18: all light sources cast). A
+//! - **Other lights** ([`ShadowSource`], [design, #3074]: all light sources cast). A
 //!   grass fire's light (grass_fire_fx.rs) and a light a script attached to a node (JIP
 //!   AttachLight, nif_mirror.rs) rank and count with the placed lights. Muzzle flashes and
 //!   explosions' lights (shot_fx.rs) are transient ([`SourceKind::transient`]): chosen apart
@@ -72,7 +72,7 @@
 //!   model named as a lamp, and of a light's own model, are taken out of every casting
 //!   light's maps, as is a small shape a light sits in or against. The game hangs its
 //!   lights under their lamps, so a lamp's housing threw its shadow, larger than the lamp,
-//!   onto the ceiling over it (owner 2026-11-18). The sun's shadows keep them.
+//!   onto the ceiling over it ([design, #3074]). The sun's shadows keep them.
 //! - **Near plane** [`NEAR_Z`]: what lies nearer the light than that casts nothing from it,
 //!   so the bulb, shade or flames a light sits in do not black out the room
 //!   [engineering choice; `NVF_LIGHT_SHADOW_NEAR` overrides it for a run].
@@ -85,7 +85,7 @@
 //!   menu and preview scenes (creator_view.rs, vigor_view.rs, poker_view.rs) or the sky's.
 //! - Test aid `NVF_PLAY_TEST_LIGHT_SHADOW_HOLD=0`: every casting light draws every face
 //!   every frame, for comparing the picture and the cost.
-//! - **Performance pass** (2026-11-18, owner: "the quality of the shadow can be reduced
+//! - **Performance pass** (2026-11-18, [design, #3074]: "the quality of the shadow can be reduced
 //!   with distance"; graphics-enhanced.md §3.17 "Performance pass"; none measured in game
 //!   yet), each with an aid that turns it off:
 //!   - Steps of detail by the camera's distance to a light's edge ([`STEPS`], hysteresis
@@ -105,7 +105,7 @@
 //!     renderer's light views, events and `prepare_lights` times, and these systems'
 //!     times, [`renderer_summary`], [`systems_summary`]) and `light shadows: performance
 //!     pass over …` ([`pass_summary`]).
-//! - **Static shadow cache** (2026-11-18, owner: "Since most of the lights in New Vegas are
+//! - **Static shadow cache** (2026-11-18, [design, #3074]: "Since most of the lights in New Vegas are
 //!   static, could we not bake the shadows at least partially?"; graphics-enhanced.md §3.17
 //!   "Static shadow cache"; not measured in game yet). Shadow casters are static (the
 //!   placed world) or dynamic ([`ShadowDynamic`], [`classify_casters`]: skinned shapes,
@@ -125,7 +125,7 @@
 //!   that move keep the plain path ([`plain_path`]). The cache costs as much memory as the
 //!   cubes ([`cube_texture_mb`], logged). Aid `NVF_LIGHT_SHADOW_STATIC_CACHE=0`: the plain
 //!   path for all, as before. The 10-s performance line ends with its counts.
-//! - **Pre-drawn under the loading screen** (owner 2026-11-18, with the cache). While a
+//! - **Pre-drawn under the loading screen** ([design, #3074], with the cache). While a
 //!   loading screen is up (`nvf_play::loading::Loading::active`: a travel, a cover, the start)
 //!   and the renderer has the cells around the camera (`Loading::render_busy` false; the
 //!   destination's lights are spawned with its cells and chosen by distance to the camera,
@@ -287,7 +287,7 @@ impl SourceKind {
 
 /// On a shape of a light fixture: a model named as a lamp ([`is_fixture_model`]) or a
 /// light's own model (a LIGH with a model). It casts no lamp shadows; the sun's it still
-/// casts. Owner 2026-11-18: a hanging box lamp threw its housing's shadow, larger than the
+/// casts. A playtest (2026-11-18, [design, #3074]): a hanging box lamp threw its housing's shadow, larger than the
 /// lamp, onto the ceiling above it. The game hangs its lights below their fixtures: in the
 /// Goodsprings General Store the light under the box lamp `OffRmLightHanging01` sits 86
 /// units under the lamp's reference; over the masters' interiors 3,909 of the 7,543 LIGH
@@ -2695,7 +2695,7 @@ mod tests {
 
     #[test]
     fn the_cache_costs_as_much_again_as_the_cubes() {
-        // 512 squared, 24 lamps: about 150 MB (the owner's figure); 1024: four times that.
+        // 512 squared, 24 lamps: about 150 MB; 1024: four times that.
         assert!((cube_texture_mb(512, 24) - 150.99).abs() < 0.01);
         assert!((cube_texture_mb(1024, 32) - 805.31).abs() < 0.01);
         assert_eq!(cube_texture_mb(512, 0), 0.0);

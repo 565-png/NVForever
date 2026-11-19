@@ -2418,7 +2418,7 @@ forbid = [
 ]
 [[scenario]]
 name = "light-shadows-dlss"
-source = "[design] docs/design/graphics-enhanced.md §3.17 'Soft edges and contact shadows': with --light-shadows=quality and DLSS the lamps take soft edges and contact shadows, and the vendored contact march reads the main pass's viewport (bevy_pbr raymarch.wesl depth_uv_scale): before that, drawn below the output size, it threw hard-edged false shadows that changed as the camera moved (owner's videos 2026-11-18, the Prospector Saloon's porch). The walk along the porch compiles the patched march and draws it without a rendering or pipeline error; the picture is checked by hand"
+source = "[design] docs/design/graphics-enhanced.md §3.17 'Soft edges and contact shadows': with --light-shadows=quality and DLSS the lamps take soft edges and contact shadows, and the vendored contact march reads the main pass's viewport (bevy_pbr raymarch.wesl depth_uv_scale): before that, drawn below the output size, it threw hard-edged false shadows that changed as the camera moved (playtest videos 2026-11-18, the Prospector Saloon's porch). The walk along the porch compiles the patched march and draws it without a rendering or pipeline error; the picture is checked by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadows.rs"]
 note = "needs NVF_DLSS_DIR (NVIDIA's files)."
@@ -2437,7 +2437,7 @@ forbid = [
 
 [[scenario]]
 name = "light-shadows-novac"
-source = "[design] docs/design/graphics-enhanced.md §3.17, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in Novac, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
+source = "[design] docs/design/graphics-enhanced.md §3.17, [design, #3074] ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in Novac, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/vendor/bevy_pbr/src/render/light.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0" }
@@ -2459,7 +2459,7 @@ forbid = [
 
 [[scenario]]
 name = "light-shadows-novac-dlss"
-source = "[design] docs/design/graphics-enhanced.md §3.17, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in Novac with DLSS Quality, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
+source = "[design] docs/design/graphics-enhanced.md §3.17, [design, #3074] ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in Novac with DLSS Quality, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/vendor/bevy_pbr/src/render/light.rs"]
 note = "needs NVF_DLSS_DIR (NVIDIA's files)."
@@ -2483,7 +2483,7 @@ forbid = [
 
 [[scenario]]
 name = "light-shadows-interior"
-source = "[design] docs/design/graphics-enhanced.md §3.17, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in UnderpassRanchInterior01, a random interior, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
+source = "[design] docs/design/graphics-enhanced.md §3.17, [design, #3074] ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in UnderpassRanchInterior01, a random interior, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/vendor/bevy_pbr/src/render/light.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0" }
@@ -2505,7 +2505,7 @@ forbid = [
 
 [[scenario]]
 name = "light-shadows-interior-dlss"
-source = "[design] docs/design/graphics-enhanced.md §3.17, owner 2026-11-18 ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in UnderpassRanchInterior01, a random interior with DLSS Quality, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
+source = "[design] docs/design/graphics-enhanced.md §3.17, [design, #3074] ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in UnderpassRanchInterior01, a random interior with DLSS Quality, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/vendor/bevy_pbr/src/render/light.rs"]
 note = "needs NVF_DLSS_DIR (NVIDIA's files)."

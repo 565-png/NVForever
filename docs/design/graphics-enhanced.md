@@ -2054,7 +2054,7 @@ longer exists (the settings menu overhaul); the haze is a row of its own, "Deser
 ### 3.17 ALC shadows (`light-shadows`; off by default, not part of `enhanced`)
 
 **Name.** ALC stands for All Lights Cast. The row was called Lamp shadows until
-2026-11-19 (renamed by the owner); the INI key `light-shadows`, the switch
+2026-11-19 (renamed, [design, #3074]); the INI key `light-shadows`, the switch
 `--light-shadows`, the log lines starting `light shadows:` and the smoke scenarios'
 `light-shadows-*` names keep the old name, so saved settings and the scenarios still match.
 "Lamp shadows" below, in older notes, is the same feature.
@@ -2064,12 +2064,12 @@ no LIGH of the masters sets the Spot Shadow flag [observed:
 docs/handoff/esm-data-audit-2026-10-25.md, item 6], so lamps light the rooms behind their
 walls. The row ALC shadows (Graphics › Shadows; `--light-shadows[=performance|quality|off]`)
 offers Off, Performance or Quality, as the Sun shadows row does
-(`engine/nvforever/src/light_shadows.rs`). It is built as the sun's shadows are (owner,
+(`engine/nvforever/src/light_shadows.rs`). It is built as the sun's shadows are ([design, #3074],
 2026-11-18: "look how sun shadows are calculated and do the same", "use the same
 performance optimizations also for the lamp shadows").
 
 **First version (dropped the same day).** It used a budget of the 2, 4 or 8 lights that
-scored highest on brightness × (range / distance)². The owner's test: "The shadows pop in
+scored highest on brightness × (range / distance)². A playtest [design, #3074]: "The shadows pop in
 only when you are very close". Among the saloon's 24 lights, a lamp across the room cast
 nothing until it beat the nearest ones. It was also costly: each shadowed point light cost
 about 1 ms of frame time, most of it on the CPU. Each of a point light's six cube faces is
@@ -2153,7 +2153,7 @@ culls, extracts and queues every face view every frame.
     the light's flags (`255 - round(fade × 255)`, so 0 is full strength for every other
     light) and takes `mix(1, shadow, fade)` in shadows.wesl's `fetch_point_shadow` and
     `fetch_spot_shadow`.
-- **Other lights** (owner, 2026-11-18: all light sources cast, muzzle flashes and
+- **Other lights** ([design, #3074]: all light sources cast, muzzle flashes and
   explosions first; `ShadowSource` on the light, `SourceKind`).
   - Grass fires: the light over about one burning patch in six (grass_fire_fx.rs). Still
     while it burns; its intensity flickers.
@@ -2197,7 +2197,7 @@ culls, extracts and queues every face view every frame.
     the player's body casts in both views. The first-person arms do not.
   - Everything `NotShadowCaster` stays out, as for the sun.
   - **Light fixtures cast no shadows from their own lights** (`LightFixture`, `skip_fixtures`; the sun's
-    they still cast). The owner's test, 2026-11-18: a hanging box lamp in the Goodsprings
+    they still cast). A playtest (2026-11-18, [design, #3074]): a hanging box lamp in the Goodsprings
     General Store threw its housing's shadow, larger than the lamp, onto the ceiling. The
     game hangs its lights under their lamps, not in them [observed 2026-11-18,
     `fnvtool world refs`: the LIGH `BasementLightKeyWarm` sits 86 units under the box lamp
@@ -2236,7 +2236,7 @@ culls, extracts and queues every face view every frame.
       2026-11-18, General Store pictures].
     - With FSR or DLSS Bevy's march threw hard-edged false shadows, a dark block over a
       door, streaks down a wall, that changed as the camera moved [observed 2026-11-18:
-      the owner's videos with DLSS; reproduced walking along the Prospector Saloon's porch
+      playtest videos with DLSS; reproduced walking along the Prospector Saloon's porch
       at 14:00 with DLSS and with FSR; gone with `NVF_LIGHT_SHADOW_CONTACT=0`, not with
       `NVF_LIGHT_SHADOW_SOFT=0`]. The cause [documented: bevy_camera
       `MainPassResolutionOverride`, "In shaders, use `View::main_pass_viewport`"; read in
@@ -2311,7 +2311,7 @@ after loading]:
   the point lights only, the faces drawn include the spot lights' maps, and the lights
   casting leave out those fading out); the transients' are totals over the 10 s.
 
-**Performance pass (2026-11-18).** The owner: "The shadows update at a low rate and cause
+**Performance pass (2026-11-18).** The request [design, #3074]: "The shadows update at a low rate and cause
 stuttering in object dense areas. Work on optimizations - the quality of the shadow can be
 reduced with distance." The main session's runs in Primm at 22:00 (release, 1280 × 720,
 `--play`, walking): Off 5.7-7.2 ms 2-s means; Quality windows of 10-84 ms with frames of
@@ -2397,7 +2397,7 @@ tier in the flags beside the slot, a second binding in `mesh_view_bindings` and
 `shadow_sampling.wesl`, hysteresis on the tier, a full redraw on a change: it touches the
 vendored renderer's bindings and shaders, left for after these are measured).
 
-**Static shadow cache (2026-11-18).** The owner: "Since most of the lights in New Vegas are
+**Static shadow cache (2026-11-18).** The request [design, #3074]: "Since most of the lights in New Vegas are
 static, could we not bake the shadows at least partially?" Approved: a static cache with the
 dynamic casters drawn on top, and the lamps drawn in full under a loading screen. **Not
 measured in game yet.**
@@ -2580,7 +2580,7 @@ second, so:
 
 ### 5.3 Sun shadows (2026-10-12, playtest list 4 item 6)
 
-The owner: "shadow rendering seriously affects performance; maybe limits on draw distance or
+The request [design, #3074]: "shadow rendering seriously affects performance; maybe limits on draw distance or
 quality". Bevy times no shadow pass (they do not appear in the GPU list of `--log-frame-times`),
 so the cost was measured as frame time with the cycle's shadow keys (§6) and the casters each
 cascade drew (the log's "shadow casters per cascade" line). Machine: GeForce RTX 4070, 1280 × 800,
