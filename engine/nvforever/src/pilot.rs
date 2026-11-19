@@ -1522,9 +1522,18 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                         // script gives (the Lucky 38's elevator, a message box whose buttons
                         // MoveTo the player to each floor, SCPT 0x0011206A) joins places no
                         // navmesh or door does. Put at the goal, with the same finding.
-                        let ride = !gap && !too_far && !w.gapped && w.tried.is_empty() && here.space != w.goal.space && matches!(e, fnv_nav::PathError::Unreachable { .. });
+                        // Not across the two wastelands: that trip is the mod list's travel below,
+                        // with no finding (it was logged as a gap ~35 times a sweep).
+                        let goal_side = h.game(|g| match w.goal.space {
+                            Space::World(b) => capital_side(g, b),
+                            Space::Interior(c) => outside_door(g, c).is_some(),
+                        }).unwrap_or(false);
+                        let ride = !gap && !too_far && !w.gapped && w.tried.is_empty() && here.space != w.goal.space && here_side == goal_side && matches!(e, fnv_nav::PathError::Unreachable { .. });
+                        // A gap inside one interior is crossed inside it: put out of Vault 101's
+                        // door by the rule's way out, every later step of the chain failed.
+                        let inside = gap && here.space == w.goal.space;
                         let gap = gap || ride;
-                        let arrive = if ride { nav.graph.nearest(w.goal.space, w.goal.pos, 4096.0).map(|(_, on)| Place { space: w.goal.space, pos: on }) } else if here_side && !too_far && !gap { None } else {
+                        let arrive = if ride || inside { nav.graph.nearest(w.goal.space, w.goal.pos, 4096.0).map(|(_, on)| Place { space: w.goal.space, pos: on }) } else if here_side && !too_far && !gap { None } else {
                             match w.goal.space {
                                 Space::World(b) if too_far || h.game(|g| capital_side(g, b)).unwrap_or(false) => nav.graph.nearest(w.goal.space, w.goal.pos, 4096.0).map(|(_, on)| Place { space: w.goal.space, pos: on }),
                                 Space::Interior(cell) => h.game(|g| if too_far { outside_door_to(g, cell, |_, _| true) } else { outside_door(g, cell) }).flatten().and_then(|(cell, pos)| {
