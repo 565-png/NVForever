@@ -360,8 +360,12 @@ pub struct DistantWater {
     /// Worldspace, LOD choice ([`LodState::choice`]) and whether distant water is on, that
     /// `want` was found for.
     want_for: Option<WantKey>,
-    /// `want_for`, the loaded-cell count and [`loaded_signature`] the planes were placed for.
-    built_for: Option<(WantKey, usize, u64)>,
+    /// `want_for` the planes were placed for.
+    built_for: Option<WantKey>,
+    /// The loaded cells the planes were placed for, sorted ([`loaded_changed`]), and a
+    /// buffer for this frame's.
+    loaded_seen: Vec<(i32, i32)>,
+    loaded_now: Vec<(i32, i32)>,
 }
 
 type WantKey = (u32, u64, bool);
@@ -452,14 +456,20 @@ pub fn cells_under(chunks: &[crate::lod::Chunk], candidates: &BTreeSet<(i32, i32
     out
 }
 
-/// Which cells are loaded, as one number that does not depend on their order: a cell that
-/// unloads in the same frame another finishes loading keeps the count but changes this, so
-/// the distant planes are given again (a wet cell's plane back, a loaded one's gone).
-pub fn loaded_signature<'a>(cells: impl IntoIterator<Item = &'a (i32, i32)>) -> u64 {
-    cells.into_iter().fold(0u64, |h, &(x, y)| {
-        let v = ((x as u32 as u64) << 32 | y as u32 as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
-        h ^ (v ^ (v >> 31)).wrapping_mul(0xBF58_476D_1CE4_E5B9)
-    })
+/// Whether the loaded cells differ from `seen` (the set the planes were last placed for,
+/// sorted): `now` is refilled from `loaded` and sorted; when they differ it becomes `seen`.
+/// An exact comparison, so a cell unloading in the same frame another finishes loading is
+/// seen too (the count alone stays the same) [design, #3055 review]; at most the loaded
+/// grid's 25 to 81 cells, in buffers kept between frames.
+pub fn loaded_changed(seen: &mut Vec<(i32, i32)>, now: &mut Vec<(i32, i32)>, loaded: impl Iterator<Item = (i32, i32)>) -> bool {
+    now.clear();
+    now.extend(loaded);
+    now.sort_unstable();
+    if now == seen {
+        return false;
+    }
+    std::mem::swap(seen, now);
+    true
 }
 
 fn visible_surface(world: &WorldData, g: (i32, i32)) -> Option<(f32, u32, [f32; 4])> {
@@ -512,11 +522,12 @@ pub fn distant_water(
     let Ok(root) = root.single() else { return };
     let on = lod.enabled && streamer.interior.is_none();
     let want_key = (world.world, lod.choice(), on);
-    let key = (want_key, streamer.loaded.len(), loaded_signature(streamer.loaded.keys()));
-    if dw.built_for == Some(key) {
+    let dwm = &mut *dw;
+    let loaded = loaded_changed(&mut dwm.loaded_seen, &mut dwm.loaded_now, streamer.loaded.keys().copied());
+    if dw.built_for == Some(want_key) && !loaded {
         return;
     }
-    dw.built_for = Some(key);
+    dw.built_for = Some(want_key);
     // The cells with water under the terrain chunks chosen now (none while the LOD is off
     // or nothing is chosen), redone only when the choice changes.
     if dw.want_for != Some(want_key) {
@@ -731,17 +742,18 @@ mod distant_tests {
     use super::*;
     use crate::lod::{select_chunks, LodSettings};
 
-    /// The loaded cells' signature ignores their order and changes when one cell is swapped
-    /// for another (the count alone would not).
+    /// A swapped loaded cell is a change though the count stays; the order does not matter;
+    /// the same set again is no change.
     #[test]
-    fn a_swapped_loaded_cell_changes_the_signature() {
-        let a = [(0, 0), (1, 0), (0, 1)];
-        let b = [(0, 1), (0, 0), (1, 0)];
-        let swapped = [(0, 0), (1, 0), (-1, 1)];
-        assert_eq!(loaded_signature(a.iter()), loaded_signature(b.iter()));
-        assert_ne!(loaded_signature(a.iter()), loaded_signature(swapped.iter()));
-        assert_ne!(loaded_signature(a.iter()), loaded_signature(a[..2].iter()));
-        assert_eq!(loaded_signature(std::iter::empty()), 0);
+    fn a_swapped_loaded_cell_is_a_change() {
+        let (mut seen, mut now) = (Vec::new(), Vec::new());
+        assert!(!loaded_changed(&mut seen, &mut now, std::iter::empty()), "nothing loaded, nothing seen");
+        assert!(loaded_changed(&mut seen, &mut now, [(1, 0), (0, 0), (0, 1)].into_iter()));
+        assert_eq!(seen, vec![(0, 0), (0, 1), (1, 0)]);
+        assert!(!loaded_changed(&mut seen, &mut now, [(0, 1), (1, 0), (0, 0)].into_iter()), "same cells, another order");
+        assert!(loaded_changed(&mut seen, &mut now, [(0, 0), (1, 0), (-1, 1)].into_iter()), "one swapped, same count");
+        assert!(loaded_changed(&mut seen, &mut now, [(-49, 3), (-49, 7)].into_iter()));
+        assert!(loaded_changed(&mut seen, &mut now, [(-47, 3), (-47, 7)].into_iter()), "two swapped for two");
     }
 
     /// A chunk's cells are `x..x + l` by `y..y + l`: the range per column takes no
