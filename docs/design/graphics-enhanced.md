@@ -2188,9 +2188,10 @@ fog.rs `GAME_FOG`, a patch of the vendored bevy_pbr fog uniform.
   (1 as designed, 0 to 4; the sky share and the lobe are held to 1, the weights to their
   range), logged once; it does not turn the switch on. Smoke: `aerial-perspective`,
   `aerial-perspective-with-haze`.
-- **Cost**: measured 2026-11-19, indicative: 3.22 ms a frame with the row off, 3.31 ms on, at
-  2560x1440 at Goodsprings at 13:00 on the contributor's machine [observed: NVForever run,
-  2026-11-19]. Not measured on a slower GPU or at other resolutions.
+- **Cost**: none that the runs can show: 3.23-3.28 ms a frame with the row off, 3.23-3.29 ms
+  on, main 3.25-3.28 ms (three rounds each, the median of five 4-second periods, 2560x1440,
+  Goodsprings at 13:00 under NVWastelandClear, Sun shadows on, on the contributor's machine)
+  [observed: NVForever run, 2026-11-19]. Not measured on a slower GPU or at other resolutions.
 - **Not done**: between the two reference elevations the sky colour is a smoothstep between
   the dome's two colours, not the dome's own curve; no height dependence (the weather's fog
   has none; the haze has its own); no shadowing of the in-scattered light; the sun's
