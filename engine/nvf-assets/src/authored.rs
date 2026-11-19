@@ -444,11 +444,12 @@ pub fn retexture(
     }
 }
 
-/// What authored sets did this run, for the exit summary ([`report`]): relaxed atomics, a
-/// set of stems only where a set is applied.
+/// What authored sets did this run, for the exit summary ([`report`]): counts of events, not
+/// a census of visible shapes (a material rebuilt or discarded counts again). Relaxed
+/// atomics; a set of stems only where a set is applied.
 #[derive(Default)]
 pub struct Stats {
-    /// Materials built with a set (`nif_spawn::shape_material`).
+    /// Material builds that applied a set (`nif_spawn::shape_material`).
     pub built: AtomicU64,
     /// Shapes the run's setting would serve that may take no set (unlit, refracting, hair,
     /// skin, additive or multiplied, no UVs, particles, landscape LOD).
@@ -459,10 +460,11 @@ pub struct Stats {
     pub orm_failed: AtomicU64,
     /// Sets put on a material without their `_n`, the drawn mesh having no tangents.
     pub normal_without_tangents: AtomicU64,
-    /// Materials made the game's own after they were built (a role found later).
+    /// Copies made the game's own after their material was built (a role found later:
+    /// [`make_legacy`] calls that dropped a legacy look).
     pub made_legacy: AtomicU64,
-    /// Diffuse swaps through [`retexture`] that put a set on, and that left or put back the
-    /// legacy look.
+    /// [`retexture`] calls on materials with a legacy look that put a set on, and that left or
+    /// put back the legacy look (cached swaps do not call it again).
     pub swaps_authored: AtomicU64,
     pub swaps_legacy: AtomicU64,
     stems: Mutex<HashSet<String>>,
@@ -480,7 +482,7 @@ impl Stats {
     /// The summary line (without its prefix).
     pub fn line(&self) -> String {
         format!(
-            "{} materials built with a set ({} distinct sets); skipped: {} shapes not eligible, {} on excluded textures, {} whose _orm did not load, {} sets applied without their _n (no tangents), {} made legacy after their role was known; {} swaps through retexture ({} to a set, {} to the legacy look)",
+            "{} material builds applied a set ({} distinct set stems at build); builds without one: {} not eligible, {} on excluded textures, {} whose _orm did not load; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to a set, {} to the legacy look)",
             Self::get(&self.built),
             self.stems.lock().expect("authored stats").len(),
             Self::get(&self.not_eligible),

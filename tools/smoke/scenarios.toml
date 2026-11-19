@@ -33418,7 +33418,7 @@ expect = [
   { text = "pbr field: first rendered readback PASS", count = 1 },
   { text = "pbr field: second rendered readback PASS", count = 1 },
   { text = "pbr field: occlusion alone darkens, the two-channel normal matches the three-channel reference, the normal shows PASS", count = 1 },
-  { re = 'authored materials summary: [1-9]\d* materials built with a set \([1-9]\d* distinct sets\)', count = 1, label = "the exit summary counts the field's authored materials" },
+  { re = 'authored materials summary: [1-9]\d* material builds applied a set \([1-9]\d* distinct set stems at build\)', count = 1, label = "the exit summary counts the field's authored material builds" },
 ]
 order = [["pbr field: first rendered readback PASS", "pbr field: second rendered readback PASS", "pbr field: occlusion alone darkens, the two-channel normal matches the three-channel reference, the normal shows PASS"]]
 forbid = [
