@@ -2086,9 +2086,11 @@ not the original's behaviour; the code is `engine/nvforever/src/distant_objects.
   filter (not deleted, not imposters, primitives or markers, not among the model paths
   hidden for diagnostics); with the game running, those disabled at the start are drawn
   too and the simulation shows and hides them, as in the ring. A reference with a model
-  override (a destroyed object's stage, a swap) is not drawn here at all; when an
+  override (a destroyed object's stage, a swap) is not drawn here at all: when its
+  override comes, its shapes are despawned at once from every distant cell holding it
+  (drawn, being replaced or being spawned) and its triangles leave the budget; when an
   override comes or goes, the cells holding that reference are judged again, even while
-  fading or covered, and rebuilt (the loaded cells and the ring draw the override). Moveable statics are
+  fading or covered (the loaded cells and the ring draw the override). Moveable statics are
   left out of this stage (an animated rig per reference at a distance, and their effect
   shapes without the emitters).
 - **The rule** (`choose`, conservative, free of doubling while the blocks match the load
@@ -2109,9 +2111,14 @@ not the original's behaviour; the code is `engine/nvforever/src/distant_objects.
   would still pass the cap is left out. The sum is read from the cells alive, in three
   parts (`Budget`): the drawn cells' models, the reservations of cells being spawned and
   the predecessors of rebuilt cells still fading out, so a cell dropped half-spawned or
-  retired gives its share back by leaving. A cell rebuilt in place is judged without its
-  own predecessor (whose models go once it rests); every other spawn counts both, so the
-  total passes the cap only during a crossfade and by at most that one cell's models. Logged once per centre: `distant objects: full models past 4000000 triangles;
+  retired gives its share back by leaving. One rebuilt cell at a time is judged without
+  its own predecessor (whose models go once it rests); every other spawn counts
+  everything, so the total passes the cap by at most that one predecessor's share, from
+  the replacement's first full model until the predecessor has faded out. A model
+  refused for the budget is counted apart from one too small (the summary's `past the
+  triangle budget`), and its cell is judged again once room for its smallest refused
+  model comes back. A worker's fit is taken only while it is for the centre and reach
+  judged now. Logged once per centre: `distant objects: full models past 4000000 triangles;
   size ratio raised from <n> cells out (up to <r>)`.
 - **Draw-only**: as the ring's cells. A distant cell's entity is a `DistantCell` and an
   `nvf_play::DrawOnlyCell` (moved references follow), never a loaded or render cell;
@@ -2131,6 +2138,10 @@ not the original's behaviour; the code is `engine/nvforever/src/distant_objects.
   deadline between items; one cell's plan and one reference's spawn (every shape of its
   model) are never split, so a frame can pass by one of them. Taking finished lists in is
   bounded by the eight in flight; the override check is one pass over the overrides. A
+  settled frame (nothing under way, every wanted cell at rest and judged for now, and the
+  same centre, radii, loaded and ring cell counts and fades, block revision and
+  overrides) returns after comparing those, with no pass over the cells; the summary's
+  milliseconds cover both of the feature's systems from their start. A
   door's travel or a change of worldspace drops everything at once (behind the loading
   screen); going indoors or turning the distant LOD off hides everything at once and
   despawns it over the next frames in the loaded cells' bounded slices.
@@ -2138,12 +2149,16 @@ not the original's behaviour; the code is `engine/nvforever/src/distant_objects.
   a loaded or ring cell draws the complement of that cell's fade step and is held at rest
   under it (the ring's `hand_off`), so a reference drawn there in full and here from its
   LOD model covers each pixel once; it goes once that cell is fully drawn inside the inner
-  radius. Alone it fades in and out by its own step and always dithers out with distance
-  between `reach - 1` and `reach` cell widths from the camera (`edge_range`): the
-  temporal step rides on the range's near side and the reach's fade on its far side, so
-  nothing beyond the reach shows while a cell fades (in the last cell width the
-  distance's dither decides alone). Cells fade out past `reach + 1` or out of a smaller
-  new reach.
+  radius. The cover is the loaded or ring cell's scenery level (`scenery_level`), not
+  the ring's tree level: a ring cell whose trees fell back to the billboards still draws
+  its statics. Alone a distant cell fades in and out by its own step and always dithers
+  out with distance between `reach - 1` and `reach` cell widths from the camera
+  (`edge_range`). One visibility range cannot multiply two dithers, so a fading mesh is
+  drawn at the smaller of its cell's step and the reach's fade at its own distance
+  (`band_range`), and nothing beyond the reach; at rest the plain distance fade takes
+  over at the same level. Cells fade out past `reach + 1`, out of a smaller new reach,
+  or, after Off, all of them, with the last reach's fade; `distant objects: off, 0 cells
+  left` is logged once the last has gone.
 - **Re-judging**: each cell keeps a stamp of the centre and the ratio table it was judged
   for, and its block's answer then. When the loaded grid's centre has moved two cells the
   ratios are fitted again; a cell whose stamp is stale (a new centre or new ratios), or
@@ -2152,13 +2167,16 @@ not the original's behaviour; the code is `engine/nvforever/src/distant_objects.
   that was fading or covered catches up later. One whose drawn set changes is built
   again: crossfaded with the old one (the new cell's step against the old one's
   complement) where the whole cell lies within `reach - 2` cells of the middle cell's
-  centre, at once nearer the edge (a complement cannot also carry the reach's fade). A
+  centre, at once nearer the edge (a complement cannot also carry the reach's fade); a
+  predecessor that no longer passes (the reach shrank, the centre moved) goes at once.
+  The scan for cells to judge again goes round a stable order from where it stopped. A
   model drawn full stays while its radius is at least 0.8 of the threshold
   (`HYSTERESIS`), so nothing flickers at it.
 - **Logs** (only while on): `distant objects: reach 8 cells (ratio 0.01)` when it comes
-  on; at the exit `distant objects summary: <cells> cells, <drawn> drawn (<lod> lod,
-  <full> full), <held> held by blocks, <unknown> block unknown, <small> too small, <t> ms
-  on the main thread`. With the row off nothing is drawn or logged; its two systems and
+  on; `distant objects: off, 0 cells left` after Off once the last cell is gone; at the
+  exit `distant objects summary: <cells> cells, <drawn> drawn (<lod> lod, <full> full),
+  <held> held by blocks, <unknown> block unknown, <small> too small, <b> past the
+  triangle budget, <t> ms on the main thread`. With the row off nothing is drawn or logged; its two systems and
   the exit report return at once, and lod.rs records each block's cells as it takes the
   block in (no log).
 - **Failure cases** [design, known]:
