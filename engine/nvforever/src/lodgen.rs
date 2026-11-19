@@ -375,7 +375,9 @@ impl GenCache {
     fn read(&self, chunk: (i32, i32)) -> Option<(Vec<u8>, Vec<u8>)> {
         let d = std::fs::read(self.file(chunk, "diffuse")).ok()?;
         let n = std::fs::read(self.file(chunk, "normals")).ok()?;
-        (Dds::parse(&d).is_ok() && Dds::parse(&n).is_ok()).then_some((d, n))
+        // Only what [`encode_dds_bc1`] writes: a legacy DXT1 file, never a foreign DX10 one.
+        let own = |b: &[u8]| Dds::parse(b).is_ok_and(|t| t.format == Format::Dxt1 && t.header.dx10.is_none());
+        (own(&d[..]) && own(&n[..])).then_some((d, n))
     }
 
     /// Write via a temporary name and rename, after the install guard.
