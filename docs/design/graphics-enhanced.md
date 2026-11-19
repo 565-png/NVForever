@@ -2076,7 +2076,10 @@ what the feature mostly shows.
 - **Source.** The exterior cells whose closest point lies within 12 cells of the camera
   (`treelod.rs` `cells_within`, as the distant trees choose theirs). The cells not read yet
   are listed on the read pool's worker thread (as world.rs reads cells ahead), from the
-  references world.rs spawns a loaded cell from
+  references world.rs spawns a loaded cell from, through the renderer's own filters
+  (`world::drawn_with_cell`: no imposters, which their regions draw, no editor primitives
+  such as a trigger copied from a glowing activator; `world::marker_model`: no marker
+  models)
   (`cell_refs`: the cell's own and the worldspace's persistent ones standing in it): those
   whose base is a LIGH, not deleted, not negative, not off by default, with a radius (DATA
   radius plus the reference's XRDS) and a colour of the record's own (`fnv_world::lighting`;
@@ -2198,11 +2201,16 @@ what the feature mostly shows.
     the ends, widened across by each end's half width (so a cone tapers toward its source)
     and facing the camera around the axis (an axial billboard), each width held to the pixel
     floors; soft across (e^(-4 x^2) (1 - x^2)) and along it fading from the source to nothing
-    at the far end, (1 - v)^2, or bright in its middle when symmetric. Its light per pixel is
-    `SHAFT_BRIGHTNESS` (1) times the area its round glow would have covered over its own
-    (held to 1), so a beam keeps about the light its dot had and does not become a white bar.
-    A shaft shorter on screen than two pixel floors, seen end-on or with an end behind the
-    camera is drawn as its round card. Shafts are never merged with other glows. On the
+    at the far end, smoothstep(0, 0.08, v) (1 - v)^2 (a short soft start, `SOURCE_RAMP`), or
+    bright in its middle when symmetric; a directed shaft also gets a small round core at
+    its source (the lamp, strength 0.6, `SOURCE_CORE`). Its light per pixel is set so its
+    integrated light (the profile's integral over its card) is `SHAFT_BRIGHTNESS` (1.5, the
+    first pictures read too dim at 1 against the real beam models) times its round glow's,
+    held to 4 times (`MAX_SHAFT_GAIN`), so a hair-thin shaft does not become a white bar.
+    Whether a shaft shows as one is decided once for its whole card from both ends (never
+    half shaft, half dot): both ends between the near and far planes, neither seen end-on,
+    and its length on screen at least two floors in output and in render pixels; otherwise
+    it is drawn as its round card. Shafts are never merged with other glows. On the
     beam models of the Mojave the vertex colours carry the gradient (their alpha is near 0
     at the far end; `fxlightbeambrt03`, `fxlightbeamw01dim`, HELIOS One's `fxhelios_godray1`
     are brighter at their narrow source end), so the vertex test decides; a beam with even
@@ -2252,7 +2260,11 @@ what the feature mostly shows.
   (XEMI), no glows indoors or in other worldspaces than the camera's, no occlusion beyond
   the depth test (a glow behind the LOD's hills is hidden by them; one behind a building not
   loaded is not, as the building is not drawn). Not a script's light colour or fade edits
-  (lights.rs session lights).
+  (lights.rs session lights). An enabled activator that a script switched dark still glows,
+  and one whose stored model is dark misses its switched-on glow. A collection's model is
+  read as stored: alternate textures and damage-stage visibility are not applied. Up to
+  four shafts per model bypass merging and each takes one of the 400 slots. A model not
+  read within a scan's cap of 1,024 waits until the camera changes cell.
 - **Known misses of the classification** (a visual rule from the shapes' properties, not a
   list): lights that exist only as part of a large building's own texture (lit windows, a
   casino's facade; the 512-unit bound), dim bulbs (a lit shape under emission 1), large
