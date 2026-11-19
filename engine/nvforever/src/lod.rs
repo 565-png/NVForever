@@ -1369,8 +1369,8 @@ mod tests {
         assert_eq!(segment_mask(std::iter::empty::<&[std::ops::Range<usize>]>()), 0, "a block with no shape");
         assert_eq!(segment_mask([&[][..]]), u16::MAX, "a shape without segments: every cell");
         assert_eq!(segment_mask([&vec![0..1; CELLS + 1][..]]), u16::MAX, "too many segments");
-        let other = [0..1];
-        assert_eq!(segment_mask([&segments[..], &other[..]]), (1 << 4) | (1 << 9) | 1, "two shapes");
+        let other = 0..1;
+        assert_eq!(segment_mask([&segments[..], std::slice::from_ref(&other)]), (1 << 4) | (1 << 9) | 1, "two shapes");
         let mut c = BlockContents::default();
         c.follow("wastelandnv", (-64, -64));
         assert_eq!(c.segment((-20, 1)), None, "unknown until its block is prepared");

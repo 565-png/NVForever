@@ -258,11 +258,15 @@ pub fn nearest(inner: i32) -> f32 {
     (inner as f32 + 0.5) * CELL_SIZE
 }
 
+/// A base as [`list_cell`] reads it once: the base, its full model and its LOD model;
+/// `None` when the scenery filter leaves it out.
+type ListedBase = Option<(Arc<BaseObject>, String, Option<String>)>;
+
 /// Read cell list: the STAT and SCOL references of `refs` that pass the scenery filter
 /// (module notes), each with what [`choose`] needs. Runs on a worker thread.
 pub fn list_cell(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], hide: &[String], inner: i32, exists: impl Fn(&str) -> bool) -> CellList {
     let mut out = CellList { inner, ..default() };
-    let mut bases: HashMap<u32, Option<(Arc<BaseObject>, String, Option<String>)>> = HashMap::new();
+    let mut bases: HashMap<u32, ListedBase> = HashMap::new();
     let small = SIZE_RATIO * HYSTERESIS * nearest(inner);
     for &r in refs {
         let Some(p) = placement(lo, schema, r) else { continue };
@@ -644,6 +648,10 @@ struct Settle {
     blocks: u64,
 }
 
+/// A budget fit running on a worker ([`fit_budget`]'s answer), with the centre and reach
+/// it is for.
+type Fitting = (Task<(Vec<f32>, bool)>, Grid, i32);
+
 /// The distant cells (module notes).
 #[derive(Resource, Default)]
 pub struct DistantState {
@@ -665,7 +673,7 @@ pub struct DistantState {
     /// The budget's fit wanted (the centre moved, lists came in) and the one running on a
     /// worker, with the centre and reach it is for.
     fit_wanted: bool,
-    fitting: Option<(Task<(Vec<f32>, bool)>, Grid, i32)>,
+    fitting: Option<Fitting>,
     /// The centre the size rule was last judged for, and its ratios per ring.
     judged: Option<Grid>,
     ratios: Vec<f32>,
