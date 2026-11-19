@@ -2142,7 +2142,8 @@ not the original's behaviour; the code is `engine/nvforever/src/distant_objects.
   the replacement's first full model until the predecessor has faded out. A model
   refused for the budget is counted apart from one too small (the summary's `past the
   triangle budget`), and its cell is judged again once room for its smallest refused
-  model comes back. A worker's fit is taken only while it is for the centre and reach
+  model comes back (looked at before spawning and again after the frame's replacements,
+  so room freed late in a frame counts at once). A worker's fit is taken only while it is for the centre and reach
   judged now. Logged once per centre: `distant objects: full models past 4000000 triangles;
   size ratio raised from <n> cells out (up to <r>)`.
 - **Draw-only**: as the ring's cells. A distant cell's entity is a `DistantCell` and an
@@ -2163,9 +2164,11 @@ not the original's behaviour; the code is `engine/nvforever/src/distant_objects.
   deadline between items; one cell's plan and one reference's spawn (every shape of its
   model) are never split, so a frame can pass by one of them. Taking finished lists in is
   bounded by the eight in flight; the override check is one pass over the overrides. A
-  settled frame (nothing under way, every wanted cell at rest and judged for now, and the
-  same centre, radii, loaded and ring cell counts and fades, block revision and
-  overrides) returns after comparing those, with no pass over the cells; the summary's
+  settled frame (nothing under way, every loaded and ring cell at rest, the re-judge scan
+  through a whole lap for the current block revision, centre, reach and ratio table,
+  every wanted cell at rest and judged for now, and the same centre, radii, loaded and
+  ring cell counts, block revision and overrides) returns after comparing those, with no
+  pass over the cells; the summary's
   milliseconds cover both of the feature's systems from their start. A
   door's travel or a change of worldspace drops everything at once (behind the loading
   screen); going indoors or turning the distant LOD off hides everything at once and
@@ -2180,8 +2183,11 @@ not the original's behaviour; the code is `engine/nvforever/src/distant_objects.
   out with distance between `reach - 1` and `reach` cell widths from the camera
   (`edge_range`). One visibility range cannot multiply two dithers, so a fading mesh is
   drawn at the smaller of its cell's step and the reach's fade at its own distance
-  (`band_range`), and nothing beyond the reach; at rest the plain distance fade takes
-  over at the same level. Cells fade out past `reach + 1`, out of a smaller new reach,
+  (`band_range`); from the reach on it is culled outright (an empty far margin at the
+  reach), so nothing at or beyond the reach is drawn at any step. At rest the plain
+  distance fade takes over at the same level; in the band the two dithers keep different
+  pixels at the same count, so when a fading mesh there comes to rest its pattern
+  changes, not its coverage. Cells fade out past `reach + 1`, out of a smaller new reach,
   or, after Off, all of them, with the last reach's fade; `distant objects: off, 0 cells
   left` is logged once the last has gone.
 - **Re-judging**: each cell keeps a stamp of the centre and the ratio table it was judged
