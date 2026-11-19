@@ -28,6 +28,82 @@ use core::{future::Future, mem};
 use std::sync::{Mutex, PoisonError};
 use wgpu::{PipelineCompilationOptions, VertexBufferLayout as RawVertexBufferLayout};
 
+/// NVForever pipeline timing (test aid `NVF_PLAY_TEST_PIPELINE_LOG`, nvforever
+/// `pipeline_gate.rs`): where one pipeline's compile time goes. `queued` is the wait for a
+/// task thread, `lock` the wait for the shader cache's lock, `compose` the WESL composition
+/// of its shaders not composed before (with `defs`), `naga` the part of that spent in
+/// `create_shader_module` (naga's WGSL parse and validation, its SPIR-V output and
+/// `vkCreateShaderModule`), and `create` the pipeline's creation (the driver's compile).
+pub(crate) mod nvf_timing {
+    use core::cell::Cell;
+    use std::sync::OnceLock;
+    use std::time::{Duration, Instant};
+
+    std::thread_local! {
+        /// Time in `load_module` on this thread, and the modules made.
+        pub(crate) static MODULES: Cell<(Duration, u32)> = const { Cell::new((Duration::ZERO, 0)) };
+    }
+
+    pub(crate) fn enabled() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("NVF_PLAY_TEST_PIPELINE_LOG").is_some())
+    }
+
+    pub(crate) fn modules() -> (Duration, u32) {
+        MODULES.with(Cell::get)
+    }
+
+    /// One pipeline's spans, logged when it is created.
+    pub(crate) struct Spans {
+        pub spawned: Instant,
+        pub started: Option<Instant>,
+        pub locked: Option<Instant>,
+        pub shaders: Option<Instant>,
+        pub modules_before: (Duration, u32),
+        pub modules_after: (Duration, u32),
+    }
+
+    impl Spans {
+        pub(crate) fn new() -> Self {
+            Self { spawned: Instant::now(), started: None, locked: None, shaders: None, modules_before: (Duration::ZERO, 0), modules_after: (Duration::ZERO, 0) }
+        }
+        pub(crate) fn start(&mut self) {
+            self.started = Some(Instant::now());
+        }
+        pub(crate) fn locked(&mut self) {
+            self.locked = Some(Instant::now());
+            self.modules_before = modules();
+        }
+        pub(crate) fn shaders_done(&mut self) {
+            self.shaders = Some(Instant::now());
+            self.modules_after = modules();
+        }
+        pub(crate) fn log(&self, label: Option<&str>) {
+            if !enabled() {
+                return;
+            }
+            let ms = |a: Option<Instant>, b: Option<Instant>| match (a, b) {
+                (Some(a), Some(b)) => b.saturating_duration_since(a).as_secs_f64() * 1000.0,
+                _ => 0.0,
+            };
+            let done = Some(Instant::now());
+            let naga = self.modules_after.0.saturating_sub(self.modules_before.0).as_secs_f64() * 1000.0;
+            let made = self.modules_after.1.saturating_sub(self.modules_before.1);
+            let shaders = ms(self.locked, self.shaders);
+            bevy_log::info!(
+                "pipeline timing: queued {:.1} ms, lock {:.1} ms, compose {:.1} ms, naga {:.1} ms ({} modules), create {:.1} ms: {}",
+                ms(Some(self.spawned), self.started),
+                ms(self.started, self.locked),
+                (shaders - naga).max(0.0),
+                naga,
+                made,
+                ms(self.shaders, done),
+                label.unwrap_or("(no label)")
+            );
+        }
+    }
+}
+
 /// A pipeline defining the data layout and shader logic for a specific GPU task.
 ///
 /// Used to store a heterogenous collection of render and compute pipelines together.
@@ -167,6 +243,21 @@ fn load_module(
     shader_source: ShaderCacheSource,
     validate_shader: &ValidateShader,
 ) -> Result<WgpuShaderModule, ShaderCacheError> {
+    // NVForever pipeline timing.
+    let began = std::time::Instant::now();
+    let made = load_module_inner(render_device, shader_source, validate_shader);
+    nvf_timing::MODULES.with(|m| {
+        let (t, n) = m.get();
+        m.set((t + began.elapsed(), n + 1));
+    });
+    made
+}
+
+fn load_module_inner(
+    render_device: &RenderDevice,
+    shader_source: ShaderCacheSource,
+    validate_shader: &ValidateShader,
+) -> Result<WgpuShaderModule, ShaderCacheError> {
     let shader_source = match shader_source {
         #[cfg(feature = "shader_format_spirv")]
         ShaderCacheSource::SpirV(data) => wgpu::util::make_spirv(data),
@@ -262,6 +353,10 @@ pub struct PipelineCache {
     pub(crate) synchronous_pipeline_compilation: bool,
     /// If `true`, the shader cache needs to be repopulated from the main world's `Assets<Shader>`.
     needs_shader_reload: bool,
+    /// NVForever persistent pipeline cache: the driver's pipeline cache every pipeline is
+    /// created with, which nvforever's `pipeline_disk_cache.rs` loads from the disk and saves.
+    /// `None` (the default) creates them without one, as upstream does.
+    wgpu_pipeline_cache: Option<wgpu::PipelineCache>,
 }
 
 impl PipelineCache {
@@ -316,7 +411,31 @@ impl PipelineCache {
             global_shader_defs,
             synchronous_pipeline_compilation,
             needs_shader_reload: true,
+            wgpu_pipeline_cache: None,
         }
+    }
+
+    /// NVForever persistent pipeline cache: create the pipelines asked for from now on with
+    /// this driver pipeline cache (the device needs `Features::PIPELINE_CACHE`).
+    pub fn set_wgpu_pipeline_cache(&mut self, cache: Option<wgpu::PipelineCache>) {
+        self.wgpu_pipeline_cache = cache;
+    }
+
+    /// NVForever composed shaders: compose Wesl shaders through this store from now on
+    /// (bevy_shader `nvf_composed.rs`; `None`: compose every time, as upstream).
+    pub fn set_composed_store(
+        &mut self,
+        store: Option<Arc<bevy_shader::nvf_composed::ComposedStore>>,
+    ) {
+        self.shader_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .set_composed_store(store);
+    }
+
+    /// NVForever persistent pipeline cache: the driver pipeline cache in use, if any.
+    pub fn wgpu_pipeline_cache(&self) -> Option<&wgpu::PipelineCache> {
+        self.wgpu_pipeline_cache.as_ref()
     }
 
     /// Get the state of a cached render pipeline.
@@ -571,6 +690,7 @@ impl PipelineCache {
         descriptor: RenderPipelineDescriptor,
     ) -> CachedPipelineState {
         let device = self.device.clone();
+        let wgpu_pipeline_cache = self.wgpu_pipeline_cache.clone();
         let shader_cache = self.shader_cache.clone();
         let layout_cache = self.layout_cache.clone();
         let mut bindgroup_layout_cache = self.bindgroup_layout_cache.lock().unwrap();
@@ -582,10 +702,13 @@ impl PipelineCache {
             })
             .collect::<SmallVec<[_; BIND_GROUP_LAYOUTS_INLINE_CAPACITY]>>();
 
+        let mut spans = nvf_timing::Spans::new();
         create_pipeline_task(
             async move {
+                spans.start();
                 let mut shader_cache = shader_cache.lock().unwrap();
                 let mut layout_cache = layout_cache.lock().unwrap();
+                spans.locked();
 
                 let vertex_module = match shader_cache.get(
                     id,
@@ -613,6 +736,7 @@ impl PipelineCache {
                 };
 
                 drop((shader_cache, layout_cache));
+                spans.shaders_done();
 
                 let vertex_buffer_layouts = descriptor
                     .vertex
@@ -676,12 +800,12 @@ impl PipelineCache {
                             },
                         },
                     ),
-                    cache: None,
+                    cache: wgpu_pipeline_cache.as_ref(),
                 };
 
-                Ok(Pipeline::RenderPipeline(
-                    device.create_render_pipeline(&descriptor),
-                ))
+                let made = device.create_render_pipeline(&descriptor);
+                spans.log(descriptor.label);
+                Ok(Pipeline::RenderPipeline(made))
             },
             self.synchronous_pipeline_compilation,
         )
@@ -693,6 +817,7 @@ impl PipelineCache {
         descriptor: ComputePipelineDescriptor,
     ) -> CachedPipelineState {
         let device = self.device.clone();
+        let wgpu_pipeline_cache = self.wgpu_pipeline_cache.clone();
         let shader_cache = self.shader_cache.clone();
         let layout_cache = self.layout_cache.clone();
         let mut bindgroup_layout_cache = self.bindgroup_layout_cache.lock().unwrap();
@@ -704,10 +829,13 @@ impl PipelineCache {
             })
             .collect::<SmallVec<[_; BIND_GROUP_LAYOUTS_INLINE_CAPACITY]>>();
 
+        let mut spans = nvf_timing::Spans::new();
         create_pipeline_task(
             async move {
+                spans.start();
                 let mut shader_cache = shader_cache.lock().unwrap();
                 let mut layout_cache = layout_cache.lock().unwrap();
+                spans.locked();
 
                 let compute_module =
                     match shader_cache.get(id, descriptor.shader.id(), &descriptor.shader_defs) {
@@ -722,6 +850,7 @@ impl PipelineCache {
                 };
 
                 drop((shader_cache, layout_cache));
+                spans.shaders_done();
 
                 let constants: Vec<(&str, f64)> = descriptor
                     .constants
@@ -738,12 +867,12 @@ impl PipelineCache {
                         zero_initialize_workgroup_memory: descriptor
                             .zero_initialize_workgroup_memory,
                     },
-                    cache: None,
+                    cache: wgpu_pipeline_cache.as_ref(),
                 };
 
-                Ok(Pipeline::ComputePipeline(
-                    device.create_compute_pipeline(&descriptor),
-                ))
+                let made = device.create_compute_pipeline(&descriptor);
+                spans.log(descriptor.label);
+                Ok(Pipeline::ComputePipeline(made))
             },
             self.synchronous_pipeline_compilation,
         )
@@ -755,6 +884,7 @@ impl PipelineCache {
         descriptor: MeshPipelineDescriptor,
     ) -> CachedPipelineState {
         let device = self.device.clone();
+        let wgpu_pipeline_cache = self.wgpu_pipeline_cache.clone();
         let shader_cache = self.shader_cache.clone();
         let layout_cache = self.layout_cache.clone();
         let mut bindgroup_layout_cache = self.bindgroup_layout_cache.lock().unwrap();
@@ -766,10 +896,13 @@ impl PipelineCache {
             })
             .collect::<SmallVec<[_; BIND_GROUP_LAYOUTS_INLINE_CAPACITY]>>();
 
+        let mut spans = nvf_timing::Spans::new();
         create_pipeline_task(
             async move {
+                spans.start();
                 let mut shader_cache = shader_cache.lock().unwrap();
                 let mut layout_cache = layout_cache.lock().unwrap();
+                spans.locked();
 
                 let mesh_module = match shader_cache.get(
                     id,
@@ -805,6 +938,7 @@ impl PipelineCache {
                 };
 
                 drop((shader_cache, layout_cache));
+                spans.shaders_done();
 
                 let fragment_data = descriptor.fragment.as_ref().map(|fragment| {
                     (
@@ -876,12 +1010,12 @@ impl PipelineCache {
                             },
                         },
                     ),
-                    cache: None,
+                    cache: wgpu_pipeline_cache.as_ref(),
                 };
 
-                Ok(Pipeline::MeshPipeline(
-                    device.create_mesh_pipeline(&descriptor),
-                ))
+                let made = device.create_mesh_pipeline(&descriptor);
+                spans.log(descriptor.label);
+                Ok(Pipeline::MeshPipeline(made))
             },
             self.synchronous_pipeline_compilation,
         )
@@ -1107,12 +1241,56 @@ fn create_pipeline_task(
         PipelineTaskOutput(Some(bevy_tasks::block_on(task)))
     };
     if !sync {
+        if let Some(pool) = nvf_compile_pool() {
+            return CachedPipelineState::Creating(pool.spawn(task));
+        }
         return CachedPipelineState::Creating(bevy_tasks::AsyncComputeTaskPool::get().spawn(task));
     }
 
     match bevy_tasks::block_on(task).into_inner() {
         Ok(pipeline) => CachedPipelineState::Ok(pipeline),
         Err(err) => CachedPipelineState::Err(err),
+    }
+}
+
+/// NVForever compile pool: pipelines compile on a pool of their own, not on Bevy's async
+/// compute pool. A pipeline the driver has not compiled before takes it 0.6-0.8 s of one
+/// thread, and the async compute pool has 25 % of the logical cores, at most 4, shared with
+/// the game's loading work: at a Novac start on a cold driver cache 200 pipelines waited 191 s
+/// in all for a thread and the screen 5.7 s for them; with 12 threads 3.7 s [observed
+/// 2026-11-19, `NVF_PLAY_TEST_SPIRV_SALT`, `NVF_PLAY_TEST_ASYNC_THREADS=12`]. The pool has a
+/// quarter of the logical cores, from 2 to 8 threads; `NVF_PIPELINE_THREADS=<n>` sets it,
+/// and 0 compiles on the async compute pool as upstream does. Its threads sleep when nothing
+/// compiles; with the driver's cache warm a pipeline takes them a few milliseconds.
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    not(target_os = "macos"),
+    feature = "multi_threaded"
+))]
+fn nvf_compile_pool() -> Option<&'static bevy_tasks::TaskPool> {
+    static POOL: std::sync::OnceLock<Option<bevy_tasks::TaskPool>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let cores = std::thread::available_parallelism().map_or(4, usize::from);
+        let threads = nvf_compile_threads(
+            std::env::var("NVF_PIPELINE_THREADS").ok().as_deref(),
+            cores,
+        );
+        bevy_log::info!("pipeline compile pool: {threads} threads ({cores} logical cores)");
+        (threads > 0).then(|| {
+            bevy_tasks::TaskPoolBuilder::new()
+                .num_threads(threads)
+                .thread_name("Pipeline Compile Pool".into())
+                .build()
+        })
+    })
+    .as_ref()
+}
+
+/// NVForever compile pool: its threads for `NVF_PIPELINE_THREADS` and the logical cores.
+fn nvf_compile_threads(setting: Option<&str>, cores: usize) -> usize {
+    match setting.and_then(|v| v.trim().parse::<usize>().ok()) {
+        Some(n) => n.min(64),
+        None => (cores / 4).clamp(2, 8),
     }
 }
 
@@ -1137,7 +1315,7 @@ fn create_pipeline_task(
 // NVForever Streamline integration: no GPU or scheduler timing needed to check teardown.
 #[cfg(test)]
 mod task_output_tests {
-    use super::{PipelineTaskOutput, RENDER_DEVICE_API_GATE};
+    use super::{nvf_compile_threads, PipelineTaskOutput, RENDER_DEVICE_API_GATE};
     use core::sync::atomic::{AtomicBool, Ordering};
 
     struct DropProbe<'a>(&'a AtomicBool);
@@ -1155,5 +1333,17 @@ mod task_output_tests {
         drop(PipelineTaskOutput(Some(DropProbe(&destroyed))));
         assert!(destroyed.load(Ordering::Relaxed));
         assert!(RENDER_DEVICE_API_GATE.try_write().is_ok());
+    }
+
+    // NVForever compile pool.
+    #[test]
+    fn the_compile_pool_has_a_quarter_of_the_cores_within_two_to_eight() {
+        assert_eq!(nvf_compile_threads(None, 32), 8);
+        assert_eq!(nvf_compile_threads(None, 64), 8);
+        assert_eq!(nvf_compile_threads(None, 16), 4);
+        assert_eq!(nvf_compile_threads(None, 4), 2);
+        assert_eq!(nvf_compile_threads(Some("12"), 4), 12, "the setting wins");
+        assert_eq!(nvf_compile_threads(Some("0"), 32), 0, "0: the async compute pool");
+        assert_eq!(nvf_compile_threads(Some("many"), 32), 8, "not a number: the default");
     }
 }

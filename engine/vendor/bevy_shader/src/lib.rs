@@ -4,6 +4,7 @@ extern crate alloc;
 
 mod shader;
 mod shader_cache;
+pub mod nvf_composed;
 pub use shader::*;
 pub use shader_cache::*;
 

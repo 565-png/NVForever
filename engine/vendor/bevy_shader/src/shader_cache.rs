@@ -1,3 +1,4 @@
+use crate::nvf_composed::ComposedStore;
 use crate::shader::*;
 use alloc::borrow::Cow;
 use alloc::sync::Arc;
@@ -106,6 +107,11 @@ pub struct ShaderCache<ShaderModule, RenderDevice> {
     import_path_shaders: HashMap<ShaderImport, AssetId<Shader>>,
     waiting_on_import: HashMap<ShaderImport, Vec<AssetId<Shader>>>,
     missing_import_logged: HashSet<AssetId<Shader>>,
+    /// NVForever composed shaders (`nvf_composed.rs`): compositions kept from earlier runs,
+    /// each shader's source hash, and the shader of each module path as text.
+    composed: Option<Arc<ComposedStore>>,
+    source_hashes: HashMap<AssetId<Shader>, u64>,
+    path_ids: HashMap<String, AssetId<Shader>>,
 }
 
 /// A compile time shader value definition to be inlined into the shader source.
@@ -162,7 +168,16 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
             import_path_shaders: Default::default(),
             waiting_on_import: Default::default(),
             missing_import_logged: Default::default(),
+            composed: None,
+            source_hashes: Default::default(),
+            path_ids: Default::default(),
         }
+    }
+
+    /// NVForever composed shaders: compose Wesl shaders through this store from now on,
+    /// using what it kept and keeping what is composed (`None`: compose every time).
+    pub fn set_composed_store(&mut self, store: Option<Arc<ComposedStore>>) {
+        self.composed = store;
     }
 
     /// Attempts to retrieve or create a compiled shader module for the given
@@ -280,54 +295,98 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
                                 .map(|(name, value)| format!("const {name} = {value};\n"))
                                 .collect();
 
-                            let shader_resolver = ShaderResolver::new(
-                                &self.module_path_to_asset_id,
-                                &self.shaders,
-                                &constants_source,
-                            );
-
-                            let compiled =
-                                wesl::compile(&module_path, &compiler_options, &shader_resolver)
-                                    .map_err(|error| {
-                                        // We use render_plain to avoid rendering ANSI codes
-                                        // Workaround for: https://github.com/tokio-rs/tracing/issues/3378
-                                        if is_module_not_found(&error) {
-                                            if self.missing_import_logged.insert(id) {
-                                                warn!(
-                                                    "Shader `{}` has an unresolved import:\n{}",
-                                                    shader.path,
-                                                    error.diagnostic().render_plain()
-                                                );
-                                            }
-                                            ShaderCacheError::ShaderImportNotYetAvailable
-                                        } else {
-                                            ShaderCacheError::ProcessShaderError(
-                                                error.diagnostic().render_plain(),
-                                            )
-                                        }
-                                    })?;
-
-                            for used in &compiled.modules {
-                                let used_path = match &used.path.origin {
-                                    wesl::syntax::PathOrigin::Package(pkg) if pkg.contains('/') => {
-                                        Cow::Owned(wesl::syntax::ModulePath {
-                                            origin: wesl::syntax::PathOrigin::Package(
-                                                pkg.rsplit('/').next().unwrap().to_string(),
-                                            ),
-                                            components: used.path.components.clone(),
-                                        })
+                            // NVForever composed shaders: a composition kept from an earlier
+                            // run, while the modules it read have the same sources.
+                            let composed_key = self.composed.as_ref().map(|_| {
+                                ComposedStore::key(
+                                    &module_path.to_string(),
+                                    &compiler_options,
+                                    &constants_source,
+                                )
+                            });
+                            if let (Some(store), Some(key)) = (&self.composed, &composed_key)
+                                && let Some((wgsl, used)) =
+                                    store.get(key, |path| module_source_hash(&self.path_ids, &self.source_hashes, path))
+                            {
+                                store
+                                    .hits
+                                    .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                                for path in used {
+                                    if let Some(dep_id) = self.path_ids.get(&path)
+                                        && *dep_id != id
+                                    {
+                                        wesl_dependencies.push(*dep_id);
                                     }
-                                    _ => Cow::Borrowed(&used.path),
-                                };
-                                if let Some(dep_id) =
-                                    self.module_path_to_asset_id.get(used_path.as_ref())
-                                    && *dep_id != id
-                                {
-                                    wesl_dependencies.push(*dep_id);
                                 }
-                            }
+                                ShaderCacheSource::Wgsl(wgsl)
+                            } else {
+                                let shader_resolver = ShaderResolver::new(
+                                    &self.module_path_to_asset_id,
+                                    &self.shaders,
+                                    &constants_source,
+                                );
 
-                            ShaderCacheSource::Wgsl(compiled.to_string())
+                                let compiled = wesl::compile(
+                                    &module_path,
+                                    &compiler_options,
+                                    &shader_resolver,
+                                )
+                                .map_err(|error| {
+                                    // We use render_plain to avoid rendering ANSI codes
+                                    // Workaround for: https://github.com/tokio-rs/tracing/issues/3378
+                                    if is_module_not_found(&error) {
+                                        if self.missing_import_logged.insert(id) {
+                                            warn!(
+                                                "Shader `{}` has an unresolved import:\n{}",
+                                                shader.path,
+                                                error.diagnostic().render_plain()
+                                            );
+                                        }
+                                        ShaderCacheError::ShaderImportNotYetAvailable
+                                    } else {
+                                        ShaderCacheError::ProcessShaderError(
+                                            error.diagnostic().render_plain(),
+                                        )
+                                    }
+                                })?;
+
+                                let mut composed_deps = Vec::new();
+                                for used in &compiled.modules {
+                                    let used_path = match &used.path.origin {
+                                        wesl::syntax::PathOrigin::Package(pkg)
+                                            if pkg.contains('/') =>
+                                        {
+                                            Cow::Owned(wesl::syntax::ModulePath {
+                                                origin: wesl::syntax::PathOrigin::Package(
+                                                    pkg.rsplit('/').next().unwrap().to_string(),
+                                                ),
+                                                components: used.path.components.clone(),
+                                            })
+                                        }
+                                        _ => Cow::Borrowed(&used.path),
+                                    };
+                                    if let Some(dep_id) =
+                                        self.module_path_to_asset_id.get(used_path.as_ref())
+                                        && *dep_id != id
+                                    {
+                                        wesl_dependencies.push(*dep_id);
+                                    }
+                                    if self.composed.is_some() {
+                                        let path = used_path.to_string();
+                                        let hash = module_source_hash(&self.path_ids, &self.source_hashes, &path);
+                                        composed_deps.push((path, hash));
+                                    }
+                                }
+
+                                let wgsl = compiled.to_string();
+                                if let (Some(store), Some(key)) = (&self.composed, composed_key) {
+                                    store
+                                        .misses
+                                        .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                                    store.put(key, wgsl.clone(), composed_deps);
+                                }
+                                ShaderCacheSource::Wgsl(wgsl)
+                            }
                         } else {
                             return Err(ShaderCacheError::ProcessShaderError(format!(
                                 "Wesl shader `{}` has a malformed import path `{:?}`",
@@ -418,6 +477,7 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
                         );
                         pipelines_to_queue.extend(self.clear(existing));
                     }
+                    self.path_ids.insert(module_path.to_string(), id);
                     self.module_path_to_asset_id.insert(module_path, id);
                 }
                 None => warn!(
@@ -426,6 +486,7 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
                 ),
             }
         }
+        self.source_hashes.insert(id, shader_source_hash(&shader));
         self.shaders.insert(id, shader);
         pipelines_to_queue
     }
@@ -436,6 +497,7 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
     /// (directly or indirectly via a shader import) and thus must be recompiled.
     pub fn remove(&mut self, id: AssetId<Shader>) -> Vec<CachedPipelineId> {
         let pipelines_to_queue = self.clear(id);
+        self.source_hashes.remove(&id);
         if let Some(shader) = self.shaders.remove(&id) {
             if self.import_path_shaders.get(&shader.import_path) == Some(&id) {
                 self.import_path_shaders.remove(&shader.import_path);
@@ -444,11 +506,33 @@ impl<ShaderModule, RenderDevice> ShaderCache<ShaderModule, RenderDevice> {
                 && let Some(module_path) = wesl_module_path(&shader.import_path)
                 && self.module_path_to_asset_id.get(&module_path) == Some(&id)
             {
+                self.path_ids.remove(&module_path.to_string());
                 self.module_path_to_asset_id.remove(&module_path);
             }
         }
 
         pipelines_to_queue
+    }
+}
+
+/// NVForever composed shaders: the hash of the source of the shader that provides this
+/// module now, or `None` when none does.
+fn module_source_hash(
+    path_ids: &HashMap<String, AssetId<Shader>>,
+    source_hashes: &HashMap<AssetId<Shader>, u64>,
+    path: &str,
+) -> Option<u64> {
+    let id = path_ids.get(path)?;
+    Some(source_hashes.get(id).copied().unwrap_or(0))
+}
+
+/// NVForever composed shaders: the hash a shader's source is compared by.
+fn shader_source_hash(shader: &Shader) -> u64 {
+    match &shader.source {
+        Source::Wesl(text) | Source::Wgsl(text) => {
+            crate::nvf_composed::source_hash(text.as_bytes())
+        }
+        Source::SpirV(bytes) => crate::nvf_composed::source_hash(bytes),
     }
 }
 
@@ -744,6 +828,44 @@ fn fragment() -> @location(0) vec4<f32> { return batch_b[0]; }
             "embedded://bevy_cycle/a.wesl",
         );
         cache.set_shader(id(1), module_a);
+    }
+
+    // NVForever composed shaders: a second cache (a later run) composes nothing that the
+    // first kept, and composes again what read a module whose source changed.
+    #[test]
+    fn composed_store_skips_compositions_of_unchanged_sources() {
+        use core::sync::atomic::Ordering::Relaxed;
+        let bright = [ShaderDefVal::Bool("BRIGHT".into(), true)];
+        let first = Arc::new(ComposedStore::from_bytes(&[]));
+        let mut cache = test_cache();
+        cache.set_composed_store(Some(first.clone()));
+        let (_, _, root_id) = set_test_shaders(&mut cache);
+        let composed = cache.get(0, root_id, &bright).unwrap();
+        assert_eq!(first.misses.load(Relaxed), 1);
+
+        let second = Arc::new(ComposedStore::from_bytes(&first.to_bytes()));
+        let mut cache = test_cache();
+        cache.set_composed_store(Some(second.clone()));
+        let (_, lighting_id, root_id) = set_test_shaders(&mut cache);
+        assert_eq!(cache.get(0, root_id, &bright).unwrap(), composed);
+        assert_eq!(
+            (second.hits.load(Relaxed), second.misses.load(Relaxed)),
+            (1, 0)
+        );
+        assert!(
+            cache.get(1, root_id, &[]).unwrap() != composed,
+            "other definitions: composed"
+        );
+        assert_eq!(second.misses.load(Relaxed), 1);
+
+        let lighting = Shader::from_wesl(
+            "fn brighten(x: f32) -> f32 { return x + 0.25; }",
+            "embedded://bevy_pbr/render/lighting.wesl",
+        );
+        cache.set_shader(lighting_id, lighting);
+        let changed = cache.get(0, root_id, &bright).unwrap();
+        assert!(changed.contains("+ 0.25"), "an imported module changed: composed again");
+        assert_eq!(second.misses.load(Relaxed), 2);
     }
 
     fn set_test_shaders(

@@ -277,6 +277,37 @@ expect = [
 ]
 
 [[scenario]]
+name = "pipeline-cache-write"
+source = "perf/pipeline-cache (2026-11-19): pipelines compile on their own pool, the start's screen draws every mesh unculled to ask for their pipelines, and the composed shaders and the driver's pipeline cache are saved in the home once the pipelines are quiet (engine/nvforever/src/pipeline_disk_cache.rs, pipeline_prewarm.rs; vendor bevy_shader nvf_composed.rs, bevy_render pipeline_cache.rs)"
+areas = ["renderer"]
+paths = ["engine/nvforever/src/pipeline_disk_cache.rs", "engine/nvforever/src/pipeline_prewarm.rs", "engine/vendor/bevy_shader/**", "engine/vendor/bevy_render/src/render_resource/pipeline_cache.rs"]
+# The home may hold what an earlier smoke run saved: only the saving is checked here, the reading in pipeline-cache-read.
+env = { NVFOREVER_HOME = "pipeline-cache-home" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 15
+expect = [
+  { re = 'pipeline compile pool: (?P<n>\d+) threads', range = [2, 8], label = "pipelines compile on a pool of their own" },
+  { re = 'pipeline prewarm: (?P<n>\d+) meshes drawn unculled under the screen', range = [50, 100000], label = "the start's screen drew the cell's meshes unculled" },
+  { re = 'composed shaders: saved (?P<n>\d+) ', range = [20, 100000], label = "the compositions are kept in the home" },
+]
+forbid = ["composed shaders: not saved", "pipeline cache: not saved"]
+
+[[scenario]]
+name = "pipeline-cache-read"
+source = "perf/pipeline-cache (2026-11-19): the run after pipeline-cache-write in the same home composes (almost) nothing again: the compositions it kept are used while their sources are the same (vendor bevy_shader nvf_composed.rs)"
+areas = ["renderer"]
+paths = ["engine/nvforever/src/pipeline_disk_cache.rs", "engine/vendor/bevy_shader/**", "engine/vendor/bevy_render/src/render_resource/pipeline_cache.rs"]
+env = { NVFOREVER_HOME = "pipeline-cache-home" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 15
+expect = [
+  { re = 'composed shaders: (?P<n>\d+) kept at ', range = [20, 100000], label = "the compositions of the run before are read" },
+  { re = 'composed shaders: saved \d+ \(\d+ bytes; (?P<n>\d+) used again', range = [20, 100000], label = "they are used again" },
+  { re = 'composed shaders: saved \d+ \(\d+ bytes; \d+ used again and (?P<n>\d+) composed this run\)', range = [0, 10], label = "little is composed again" },
+]
+forbid = ["composed shaders: not saved", "pipeline cache: not saved"]
+
+[[scenario]]
 name = "memory-budget-capped"
 source = "#1170: the asset caches' keep limits follow the machine's RAM and the GPU's memory budget (VK_EXT_memory_budget); with the test aids capping the GPU budget at 512 MB, the limits go to their least (30 s, 128 per cache) and the flight over Goodsprings uses over 85 % of it (this process's use of the device-local heaps, VK_EXT_memory_budget), which presses the caches (they keep the least, 30 s and 128)"
 areas = ["renderer"]
