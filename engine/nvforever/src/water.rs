@@ -458,9 +458,10 @@ pub fn distant_water(
         return;
     }
     dw.built_for = Some(key);
-    // The cells the LOD covers around the camera (its chunks are 4 cells), minus the
-    // loaded ones (they have their own water).
-    let r = if lod.enabled && streamer.interior.is_none() { lod.radius * 4 + 3 } else { -1 };
+    // The cells the LOD terrain covers around the camera (in 4-cell squares, out to the
+    // terrain's reach, not the object blocks'), minus the loaded ones (they have their
+    // own water).
+    let r = if lod.enabled && streamer.interior.is_none() { lod.terrain_radius * 4 + 3 } else { -1 };
     let want: HashSet<(i32, i32)> = (-r..=r)
         .flat_map(|dx| (-r..=r).map(move |dy| (centre.0 + dx, centre.1 + dy)))
         .filter(|c| !streamer.loaded.contains_key(c))
