@@ -1173,9 +1173,13 @@ stretches drift downstream. Vanilla leaves the switch off. Enhanced turns it on.
   under `textures\pbr\` (occlusion, roughness and metallic in `_orm`, a normal map in `_n`,
   scalars in a `.toml`); the shapes drawn with that texture then take their roughness,
   highlight strength, occlusion and normal from the set (docs/spec-notes/pbr-materials.md).
-  On in both looks: without a pack nothing changes. Off: no file under `textures\pbr\` is
-  read and every material is the game's own. Read once at the start, so a change applies at
-  the next start. Not in the original.
+  Lit NIF shapes with texture coordinates take a set; unlit, additive, multiplied and
+  refracting shapes, particles, hair, skin and FaceGen heads, landscape LOD and the Pip-Boy's
+  and interface textures never do. A set without `_n` (or a shape whose drawn mesh has no
+  tangents) keeps the game's own normal map, its alpha no longer a highlight mask. On in
+  both looks: without a pack nothing changes. Off: the material path reads no file under
+  `textures\pbr\` and every material is the game's own. Read once at the start, so a change
+  applies at the next start. Not in the original.
 - Command-line switches: `--graphics-only` (`--graphics-only no-authored-materials`)
 - More: docs/spec-notes/pbr-materials.md
 - Registered in `engine/nvforever/src/settings.rs`

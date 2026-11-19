@@ -2059,7 +2059,11 @@ docs/spec-notes/pbr-materials.md): lit NIF shapes whose diffuse has a set take t
 occlusion, roughness, highlight strength and normal from it. On in `vanilla` and `enhanced`,
 like a diffuse replacer: without a pack nothing changes. Read once at the start (a change
 applies at the next start); `--graphics-only no-authored-materials` or the settings switch
-turns it off, and then no file under `textures\pbr\` is read. [design]
+turns it off, and then the material path reads no file under `textures\pbr\`. Lit NIF shapes
+with texture coordinates take a set; unlit, additive, multiplied and refracting shapes,
+particles, hair, skin and FaceGen heads, landscape LOD and the Pip-Boy's and interface
+textures never do; without an `_n` (or tangents on the drawn mesh) the game's own normal map
+stays, its alpha no longer a highlight mask (docs/spec-notes/pbr-materials.md). [design]
 
 ## 4. Tried and dropped
 

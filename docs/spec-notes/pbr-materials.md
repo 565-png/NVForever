@@ -17,10 +17,10 @@ below; a later version adds to them without changing their meaning.
 |---|---|
 | Path rules, member names, the index of sets a load order supplies | **implemented** (`crates/fnv-pbr`; `GameData::pbr_index` in `engine/nvf-assets/src/data.rs` builds it on first use and logs one line of counts; materials ask for it only while the Authored materials setting is on) |
 | `fnvtool pbr list` (which sets a load order has, and which archive or folder supplies each file) | **implemented** (`crates/fnvtool/src/pbr_cmd.rs`, docs/cli-contract.md) |
-| Scalar file reading (`<stem>.toml`) | **implemented**; authored materials read it once per file (stage 3, `engine/nvf-assets/src/authored.rs`) |
+| Scalar file reading (`<stem>.toml`) | **implemented**; read once per mount, by the first shape that asks (stage 3) [documented: `engine/nvf-assets/src/data.rs` `GameData::pbr_scalars`] |
 | Reading members' pixels | `_orm` (linear) and `_n` (two-channel normal role, `TextureUsage::NormalTwoChannel`) **implemented** (stage 3); `_p` **planned** (stage 4); `_albedo` stays reserved |
 | Reading BC7 and BC4 files (DDS with the DX10 header, or legacy `BC4U` / `BC4S`) | stage 1 of #2981 (`crates/fnv-dds`) |
-| Drawing a surface with its set (ORM, normal) | **implemented** (stage 3): `nif_spawn::shape_material`, texture swaps (`authored::retexture`); the setting Authored materials (`authored-materials`, on by default, read at the start; `--graphics-only no-authored-materials`); field test `pbr-authored-field` |
+| Drawing a surface with its set (ORM, normal) | **implemented** in source (stage 3) [documented: `engine/nvf-assets/src/nif_spawn.rs` `shape_material`, `authored.rs` `retexture`]; the setting Authored materials (`authored-materials`, on by default, read at the start; `--graphics-only no-authored-materials`). Its check is the field test `pbr-authored-field` (below); a pack's look in the game is not yet compared |
 | Height maps (`_p`, parallax) | **planned** (stage 4, with #2979) |
 | Metallic | read with the ORM but **held at 0** (stage 3, implemented) until the engine has a reflection source (stage 5) |
 | A pack validator (`fnvtool pbr check`, `fnvtool pbr selftest`) | **implemented** (`crates/fnvtool/src/pbr_check.rs`, docs/cli-contract.md `fnv.pbr.check/1`) |
@@ -198,27 +198,52 @@ Maps tuned for other renderers need these notes:
 
 ## Where a set does not apply, and checking one (stage 3)
 
-- [design] A set applies to lit NIF shapes. It never applies to: unlit, additive,
-  multiplied or refracting shapes, particles, hair (the hair shader and the hair model's
-  shapes) and skin (FaceGen heads and the skin a race's textures tint), landscape LOD
-  (`meshes\landscape\lod\`), shapes without texture coordinates, and diffuses under
-  `textures\pipboy3000\` or `textures\interface\`.
-- [design] A set's `_n` on a shape the game gives no normal map needs tangents: they are
-  made for the shape when its material is made; where a later change of diffuse (a script's
-  texture swap) would bring the first normal map to a mesh without them, the `_n` is not
-  applied (logged once) and the rest of the set is.
+What the engine's source does with a set, as written (not yet compared with a running game
+beyond the field test below):
+
+- [design] Which shapes take a set [documented: `engine/nvf-assets/src/authored.rs`
+  `shape_eligible`, `key_eligible`; `engine/nvforever/src/actors.rs`]: lit NIF shapes with
+  texture coordinates. Never: unlit, additive, multiplied or refracting shapes, particles,
+  hair (the hair shader, and the hair model's shapes once an actor wears it), skin (the skin
+  shader, and any shape whose diffuse is the actor's race body or hand texture or the head's
+  face texture, from the moment that is known, tinted or not), landscape LOD
+  (`meshes\landscape\lod\`), and diffuses under `textures\pipboy3000\` or
+  `textures\interface\`. Unlit copies made later (the Pip-Boy's and the terminal's screens)
+  drop any set.
+- [design] The normal map [documented: `authored.rs` `apply`]: the set's `_n` when it has one
+  and the drawn mesh has tangents; otherwise the game's own normal map, whose alpha is then
+  no specular mask. Tangents are made for a shape whose first normal map is the `_n` when its
+  material is made; where a later change of diffuse (a script's texture swap) or a copy of a
+  drawn mesh would bring the first normal map to a mesh without them, the `_n` is not applied
+  (logged once per set) and the rest of the set is.
 - [design] A swapped diffuse takes its own set, or none, from the shape's legacy look; it
-  never keeps the previous diffuse's maps.
+  never keeps the previous diffuse's maps [documented: `authored.rs` `retexture`]. A script's
+  change of a shape's glossiness goes to the legacy look while a set is on it, so the set's
+  roughness stays [documented: `engine/nvforever/src/nif_mirror.rs` `set_material`].
 - The setting Authored materials (Graphics > Detail and Distance) is read once at the start.
-  Off, no file under `textures\pbr\` is read and every material is the game's own.
+  Off, the material path builds no index, loads no file under `textures\pbr\` and keeps no
+  legacy look [documented: `authored.rs` `find`, `engine/nvf-assets/src/nif_spawn.rs`].
+- A set's scalar file is read and its warnings logged once per mount: by the first shape
+  that asks, on whichever thread; a new mount of the files reads it afresh [documented:
+  `engine/nvf-assets/src/data.rs` `GameData::pbr_scalars`].
 - The smoke scenarios `pbr-authored-field` and `pbr-authored-field-off`
-  (`NVF_PLAY_TEST_PBR_FIELD=1`, `engine/nvf-assets/src/pbr_field.rs`) draw generated sets
-  through the real material path and compare two GPU readbacks [engineering policy].
-- Calibration aids, off by default, read at the start: `NVF_PBR_VIEW` = `roughness`,
-  `metallic`, `occlusion`, `normal` or `authored` draws that input in place of every NIF
-  surface's lit colour; `NVF_PBR_METALLIC=1` builds authored materials metallic by the ORM's
-  blue channel and keeps a metal's ambient highlight, a preview of a later metallic stage
-  (`engine/nvf-assets/src/authored.rs`) [design].
+  (`NVF_PLAY_TEST_PBR_FIELD=1`, `engine/nvf-assets/src/pbr_field.rs`) are the check of the
+  drawn result: generated sets through the real material path, two GPU readbacks compared
+  against control panels (occlusion alone, a three-channel normal reference, a flat
+  normal) [engineering policy; the thresholds are first values, to be set from real
+  readbacks]. [observed: the main session's runs of an earlier four-panel version passed,
+  on and off, 2026-11-19.]
+- Calibration aids, off by default, read at the start [documented: `authored.rs` `PbrView`,
+  `metallic_debug`; `engine/nvf-assets/src/nif_material.wesl`]: `NVF_PBR_VIEW` =
+  `roughness`, `metallic`, `occlusion`, `normal` or `authored` draws that input in place of
+  the lit colour of forward-drawn lit NIF surfaces. Refracting shapes return before the
+  view; additive draws add the view's colour by their alpha and multiplied draws stay
+  neutral, so effects fade out of it; depth and coverage are unchanged.
+  `NVF_PBR_METALLIC=1` builds authored materials metallic by the ORM's blue channel and keeps
+  a metal's ambient highlight, a preview of a later metallic stage [design].
+- The log's exit summary line `authored materials:` counts the materials built with a set,
+  the distinct sets used, the shapes skipped and why, and the swaps through `retexture`
+  [documented: `authored.rs` `summary`].
 
 ## Load order: per file, so ship complete sets
 
