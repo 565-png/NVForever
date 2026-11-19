@@ -229,6 +229,16 @@ impl Props {
     pub(crate) fn is_bare(&self) -> bool {
         !self.has_properties
     }
+
+    /// Drawn without lighting (a BSShaderNoLightingProperty): effects, glows.
+    pub(crate) fn unlit_part(&self) -> bool {
+        self.unlit
+    }
+
+    /// The glow map, when the shape has one.
+    pub(crate) fn glow_part(&self) -> Option<&str> {
+        self.glow.as_deref()
+    }
 }
 
 /// Some block of the model derives from BSShaderProperty, so its shapes without any
