@@ -137,17 +137,56 @@ fn off_asks_nothing_of_the_index() {
 
 #[test]
 fn a_scalar_file_is_parsed_once_per_file() {
-    let memo = Memo::default();
+    let cache = ScalarCache::default();
     let reads = AtomicU64::new(0);
     let read = || {
         reads.fetch_add(1, Ordering::Relaxed);
         Some(b"reflectance = 0.1\nbogus = 1\n".to_vec())
     };
-    let a = memo.scalars("textures\\pbr\\a.toml", read);
-    let b = memo.scalars("textures\\pbr\\a.toml", || panic!("read again"));
+    let a = scalars_cached(&cache, "textures/pbr/a.toml", read);
+    let b = scalars_cached(&cache, "textures/pbr/a.toml", || panic!("read again"));
     assert_eq!((a, a.reflectance), (b, Some(0.1)));
     assert_eq!(reads.load(Ordering::Relaxed), 1);
-    assert_eq!(memo.scalars("textures\\pbr\\gone.toml", || None), Scalars::default());
+    assert_eq!(scalars_cached(&cache, "textures/pbr/gone.toml", || None), Scalars::default());
+}
+
+/// Workers asking for the same file at once: one reads (and warns), the rest wait for it.
+#[test]
+fn simultaneous_first_reads_of_a_scalar_file_read_it_once() {
+    let cache = ScalarCache::default();
+    let reads = AtomicU64::new(0);
+    let start = std::sync::Barrier::new(8);
+    let got: Vec<Scalars> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..8)
+            .map(|_| {
+                scope.spawn(|| {
+                    start.wait();
+                    scalars_cached(&cache, "textures/pbr/walls/brick.toml", || {
+                        reads.fetch_add(1, Ordering::Relaxed);
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        Some(b"roughness_scale = 0.5\nunknown = 2\n".to_vec())
+                    })
+                })
+            })
+            .collect();
+        workers.into_iter().map(|w| w.join().unwrap()).collect()
+    });
+    assert_eq!(reads.load(Ordering::Relaxed), 1, "one read and one set of warnings");
+    assert!(got.iter().all(|s| s.roughness_scale == Some(0.5)));
+}
+
+/// The scalar files belong to the mount: another VFS mounted in place reads them afresh.
+#[test]
+fn scalars_are_read_per_mount() {
+    let pack = Pack::new();
+    let path = r"textures\pbr\walls\brick.toml";
+    assert_eq!(pack.data.pbr_scalars(path).roughness_scale, Some(0.5));
+    let other = Pack::new();
+    let mut moved = pack.data.clone();
+    moved.set_vfs(other.data.vfs.clone());
+    std::fs::write(other.root.join("textures/pbr/walls/brick.toml"), b"roughness_scale = 0.25\n").unwrap();
+    assert_eq!(moved.pbr_scalars(path).roughness_scale, Some(0.25), "not the old mount's value");
+    assert_eq!(pack.data.pbr_scalars(path).roughness_scale, Some(0.5), "the old mount keeps its own");
 }
 
 #[test]

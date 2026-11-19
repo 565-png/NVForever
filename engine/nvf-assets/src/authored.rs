@@ -5,7 +5,8 @@
 //!   never mix the two states. Off, nothing here asks for the index (`GameData::pbr_index`)
 //!   or reads a file under `textures\pbr\`.
 //! - [`find`]: a shape's set by its resolved diffuse key, the members loaded by the exact
-//!   paths the index names, the scalar file read once per set ([`Memo`]).
+//!   paths the index names, the scalar file read once per mount ([`scalars_cached`],
+//!   `GameData::pbr_scalars`).
 //! - [`apply`] / [`restore`]: a set on a material and back, from the legacy look every
 //!   eligible shape's material keeps ([`LegacyLook`]); [`retexture`] is the one rule for a
 //!   lit copy whose diffuse is replaced later.
@@ -17,7 +18,7 @@ use crate::texture::TextureUsage;
 use bevy::prelude::*;
 use fnv_pbr::{Found, Member, PbrIndex, Scalars, SetState};
 use std::collections::{HashMap, HashSet};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// The run's state of the Authored materials setting (module notes).
 static RUN: OnceLock<bool> = OnceLock::new();
@@ -49,12 +50,34 @@ pub struct AuthoredSet {
     pub scalars: Scalars,
 }
 
-/// What [`find`] remembers per mount: the scalar files by path, and the files already warned
-/// about (one warning per file).
+/// The files [`find`] and the decoders already warned about (one warning per file).
 #[derive(Default)]
 pub struct Memo {
-    scalars: Mutex<HashMap<String, Scalars>>,
     warned: Mutex<HashSet<String>>,
+}
+
+/// The scalar files of one mount by path, each read once ([`scalars_cached`]); kept beside the
+/// mount's index (`GameData`), so a new mount starts empty.
+pub type ScalarCache = Mutex<HashMap<String, Arc<OnceLock<Scalars>>>>;
+
+/// The scalars of the file at `path`, from `cache`: the first caller reads (`read`), parses
+/// and logs its warnings while any other caller for the same path waits on that path's cell,
+/// so a file is read and warned about once; other paths are not held up.
+pub(crate) fn scalars_cached(cache: &ScalarCache, path: &str, read: impl FnOnce() -> Option<Vec<u8>>) -> Scalars {
+    let cell = cache.lock().expect("authored scalars").entry(path.to_string()).or_default().clone();
+    *cell.get_or_init(|| match read() {
+        Some(bytes) => {
+            let file = fnv_pbr::parse_scalars(&bytes);
+            for w in &file.warnings {
+                warn!("authored materials: {path}: {w}");
+            }
+            file.scalars
+        }
+        None => {
+            warn!("authored materials: {path} could not be read; the defaults apply");
+            Scalars::default()
+        }
+    })
 }
 
 impl Memo {
@@ -63,28 +86,6 @@ impl Memo {
         if self.warned.lock().expect("authored warnings").insert(path.to_string()) {
             warn!("{}", message());
         }
-    }
-
-    /// The scalars of the file at `path`, parsed the first time (its warnings logged then).
-    fn scalars(&self, path: &str, read: impl FnOnce() -> Option<Vec<u8>>) -> Scalars {
-        if let Some(s) = self.scalars.lock().expect("authored scalars").get(path) {
-            return *s;
-        }
-        let scalars = match read() {
-            Some(bytes) => {
-                let file = fnv_pbr::parse_scalars(&bytes);
-                for w in &file.warnings {
-                    warn!("authored materials: {path}: {w}");
-                }
-                file.scalars
-            }
-            None => {
-                warn!("authored materials: {path} could not be read; the defaults apply");
-                Scalars::default()
-            }
-        };
-        self.scalars.lock().expect("authored scalars").insert(path.to_string(), scalars);
-        scalars
     }
 }
 
@@ -120,7 +121,7 @@ pub(crate) fn find(data: &GameData, enabled: bool, key: &str, memo: &Memo, mut l
         }
         h
     });
-    let scalars = found.path(Member::Scalars).map(|path| memo.scalars(&path, || data.read(&path))).unwrap_or_default();
+    let scalars = found.path(Member::Scalars).map(|path| data.pbr_scalars(&path)).unwrap_or_default();
     Some(AuthoredSet { stem: found.stem, orm, normal, scalars })
 }
 
