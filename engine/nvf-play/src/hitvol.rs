@@ -434,7 +434,7 @@ fn sync_volumes(
 
 /// `NVF_PLAY_TEST_HITVOL_COMPARE`: piped onto [`sync_volumes`], which changes no mesh, so
 /// it sees the meshes that walk saw.
-fn compare_walks(mut compare: ResMut<ScanCompare>, every_mesh: Query<EveryMesh>, sim: Res<SimState>, phys: Res<PhysState>) {
+fn compare_walks(mut compare: ResMut<ScanCompare>, every_mesh: EveryMeshes, sim: Res<SimState>, phys: Res<PhysState>) {
     compare.check_bounds(&every_mesh, &sim);
     compare.check_volumes(phys.world.actor_volumes());
 }
@@ -468,6 +468,9 @@ const COMPARE_TOLD: u64 = 20;
 
 /// What the comparison reads of each mesh: the walk the mark replaced.
 type EveryMesh = (Entity, BoundsPart, Has<ActorBoundsCandidate>);
+/// Every mesh of a reference the comparison walks: not the draw-only copies
+/// (`crate::DrawOnly`), which never make hit volumes ([`CandidateParts`]).
+type EveryMeshes<'w, 's> = Query<'w, 's, EveryMesh, Without<crate::DrawOnly>>;
 
 /// An actor's meshes in one frame's walk over every `RefVisual`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -531,7 +534,7 @@ impl ScanCompare {
     }
 
     /// [`Self::used`] against the walk over every mesh.
-    fn check_bounds(&mut self, every_mesh: &Query<EveryMesh>, sim: &SimState) {
+    fn check_bounds(&mut self, every_mesh: &EveryMeshes, sim: &SimState) {
         let (full, full_scan) = gather(every_mesh.iter().map(|(_, part, _)| part), sim);
         let marked = every_mesh.iter().filter(|(_, _, has)| *has).count();
         self.meshes.clear();
