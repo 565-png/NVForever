@@ -307,7 +307,7 @@ mod tests {
     /// Quick Loot rows; #2965's heat haze row; #2675's desert haze row; Sprint; #2671's terrain
     /// shadows row; #2701's full-detail scenery row; #3014's distant objects row), by the
     /// group it registers with.
-    const KNOWN: [(&str, &str); 140] = [
+    const KNOWN: [(&str, &str); 141] = [
         ("detached-camera", "Gameplay"),
         ("gore-shake", "Gameplay"),
         ("advanced-movement", "Gameplay"),
@@ -431,6 +431,7 @@ mod tests {
         ("heat-haze", "Graphics"),
         ("desert-haze", "Graphics"),
         ("water-reflections", "Graphics"),
+        ("water-effects", "Graphics"),
         ("water-mirror", "Graphics"),
         ("quality", "Graphics"),
         ("volume-master", "Sound"),
