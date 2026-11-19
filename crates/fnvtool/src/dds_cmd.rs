@@ -89,6 +89,16 @@ mod tests {
         for ext in [[98, 3, 0, 0, 0], [98, 0, 0, 1, 0], [98, 4, 0, 2, 0]] {
             assert_eq!(row("x.dds", &layout(b"DX10", ext, 4, 4, 4, 1, 16))["expected_size"], json!(null), "{ext:?}");
         }
+        // A volume with only the legacy cube bits: listed as a cube, so not sized.
+        let mut cube_bits = layout(b"DX10", [98, 4, 0, 1, 0], 4, 4, 4, 1, 16);
+        cube_bits[112..116].copy_from_slice(&0xFE00u32.to_le_bytes());
+        let r = row("vc.dds", &cube_bits);
+        assert_eq!((r["cubemap"].clone(), r["expected_size"].clone()), (json!(true), json!(null)));
+        // A legacy volume (capability bit 0x200000) is not sized either.
+        let mut legacy_volume = file(b"DXT1", 0, 4, 4, 1, 32);
+        legacy_volume[24..28].copy_from_slice(&4u32.to_le_bytes());
+        legacy_volume[112..116].copy_from_slice(&0x20_0000u32.to_le_bytes());
+        assert_eq!(row("lv.dds", &legacy_volume)["expected_size"], json!(null));
         // A legacy file has no array size.
         assert_eq!(row("l.dds", &file(b"DXT1", 0, 4, 4, 1, 8))["array_size"], json!(null));
     }

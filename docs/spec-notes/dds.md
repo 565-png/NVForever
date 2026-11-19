@@ -94,8 +94,9 @@ explicitly, so rendering does not rely on the naming convention.
 ```json
 {"schema": "fnv.dds.listing/1", "archive": "Fallout - Textures.bsa",
  "files": [{"path": "textures\\x.dds", "width": 512, "height": 512, "mip_count": 10,
-            "levels": 10, "format": "DXT1", "cubemap": false, "faces": 1,
-            "expected_size": 174904, "actual_size": 174904, "error": null}]}
+            "levels": 10, "format": "DXT1", "dxgi_format": null, "cubemap": false,
+            "faces": 1, "array_size": null, "expected_size": 174776,
+            "actual_size": 174776, "error": null}]}
 ```
 
 `mip_count` is the stored value; `levels` the number used (§3). `format` is a name from
@@ -109,12 +110,22 @@ element: for a legacy file the number of the six face bits set (1 when not a cub
 for a DX10 cube map always 6, one cube per array element (§6.1). `array_size` is a DX10
 header's array size (`null` for every other file). `expected_size` covers every array
 element, face and level, and for a DX10 volume (3D) each level's slices; it is `null`
-for a DX10 layout the listing does not size (a resource dimension other than 1D, 2D or
-3D, an array size of 0, a volume that is an array or a cube, a 1D cube). Sizes count the
+for a layout the listing does not size: a legacy volume (capabilities-2 bit 0x200000
+[documented: MS "DDS_HEADER", dwCaps2]), and for a DX10 header a resource dimension
+other than 1D, 2D or 3D, an array size of 0, a volume that is an array or a cube, or a
+1D cube, a cube being whatever `cubemap` says. Sizes count the
 bytes after the headers: 128 bytes, or 148 with a DX10 header. The listing reads the
 headers only; it does not apply the refusals of §6.3. `error` is set when the file is
 not a valid DDS (bad magic, short header, a DX10 file shorter than 148 bytes); then the
-other fields are `null`. Lab comparator: **keyed** on `path`, all fields.
+other fields are `null`.
+
+Lab comparator (`parity-lab/scenarios/layer2_dds.json`): **keyed** on `path`, with no
+field list, so each row compares every field the independent oracle
+(`tools/capture/oracle_dds.py`) writes: `path`, `width`, `height`, `mip_count`,
+`levels`, `format`, `cubemap`, `faces`, `expected_size`, `actual_size` and `error`
+(`compare_keyed` in `parity-lab/fnvlab/comparators.py` skips fields the oracle row
+lacks). `dxgi_format` and `array_size` are fnvtool's own: the oracle writes neither, so
+they are outside that comparison and are checked by fnvtool's unit tests only.
 
 ## 6. DX10 header (files from other tools, #2981)
 

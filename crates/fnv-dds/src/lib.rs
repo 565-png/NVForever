@@ -128,6 +128,8 @@ const PF_ALPHA_PIXELS: u32 = 0x1;
 const PF_LUMINANCE: u32 = 0x20000;
 const CAPS2_CUBEMAP: u32 = 0x200;
 const CAPS2_ALL_FACES: u32 = 0xFC00;
+/// `DDSCAPS2_VOLUME` [documented: MS "DDS_HEADER", dwCaps2].
+const CAPS2_VOLUME: u32 = 0x20_0000;
 /// `DDS_DIMENSION_TEXTURE1D`, `_TEXTURE2D`, `_TEXTURE3D` [documented: MS
 /// "DDS_HEADER_DXT10", resourceDimension].
 const DX10_DIMENSION_TEXTURE1D: u32 = 2;
@@ -413,23 +415,31 @@ impl DdsHeader {
 
     /// Whether a DX10 volume texture: each level then holds `depth` slices, halving like
     /// the sides with a minimum of 1, all slices of a level together [documented: MS
-    /// "DDS_HEADER_DXT10", resourceDimension; MS "DDS Volume Texture Example"]. Legacy
-    /// volume bits are not read (no game file is a volume, dds.md §3).
+    /// "DDS_HEADER_DXT10", resourceDimension; MS "DDS Volume Texture Example"]. A legacy
+    /// volume is not sized (no game file is a volume, dds.md §3).
     fn is_dx10_volume(&self) -> bool {
         self.dx10.is_some_and(|x| x.resource_dimension == DX10_DIMENSION_TEXTURE3D)
     }
 
-    /// Whether [`Self::expected_size`] sizes this layout: every legacy file, and a DX10
-    /// one of 1D or 2D textures (an array of at least one; cubes 2D only) or a single
-    /// volume. Anything else (an unknown dimension, an array of 0, a volume array or
-    /// cube) is not sized: the listing prints `null`.
+    /// A volume texture: the legacy capability bit (`DDSCAPS2_VOLUME`) [documented: MS
+    /// "DDS_HEADER", dwCaps2], or a DX10 header's 3D dimension.
+    pub fn is_volume(&self) -> bool {
+        self.caps[1] & CAPS2_VOLUME != 0 || self.is_dx10_volume()
+    }
+
+    /// Whether [`Self::expected_size`] sizes this layout: a legacy file other than a
+    /// volume, and a DX10 one of 1D or 2D textures (an array of at least one; cubes 2D
+    /// only) or a single volume. Anything else (a legacy volume, an unknown dimension, an
+    /// array of 0, a volume array or cube, a 1D cube) is not sized: the listing prints
+    /// `null`. The cube test is the listing's own (`is_cubemap`: the DX10 flag or the
+    /// legacy bit).
     pub fn layout_sized(&self) -> bool {
         match self.dx10 {
-            None => true,
+            None => !self.is_volume(),
             Some(x) => match x.resource_dimension {
-                DX10_DIMENSION_TEXTURE1D => x.array_size >= 1 && !x.is_cubemap(),
+                DX10_DIMENSION_TEXTURE1D => x.array_size >= 1 && !self.is_cubemap(),
                 DX10_DIMENSION_TEXTURE2D => x.array_size >= 1,
-                DX10_DIMENSION_TEXTURE3D => x.array_size == 1 && !x.is_cubemap(),
+                DX10_DIMENSION_TEXTURE3D => x.array_size == 1 && !self.is_cubemap(),
                 _ => false,
             },
         }
@@ -1196,6 +1206,28 @@ mod dx10_tests {
         for e in [Ext { array: 0, ..ext(98) }, Ext { dimension: 0, ..ext(98) }, Ext { dimension: 4, array: 2, ..ext(98) }, Ext { dimension: 4, misc: 0x4, ..ext(98) }, Ext { dimension: 2, misc: 0x4, ..ext(98) }] {
             assert!(!header(e, 1, 4).layout_sized());
         }
+        // A volume or 1D header with only the legacy cube bit is a cube to the listing
+        // too, so it is not sized either; a 2D one is (six legacy faces).
+        let legacy_cube = |dimension: u32| DdsHeader::parse(&dx10(Ext { dimension, ..ext(98) }, 4, 4, 1, CAPS2_CUBEMAP | CAPS2_ALL_FACES, 0)).unwrap();
+        for dimension in [2, 4] {
+            let h = legacy_cube(dimension);
+            assert!(h.is_cubemap() && !h.layout_sized(), "dimension {dimension}");
+        }
+        assert!(legacy_cube(3).layout_sized());
+        assert_eq!(legacy_cube(3).expected_size(Format::Bc7), 6 * 16);
+        // Volumes by the legacy bit or the DX10 dimension.
+        assert!(legacy_cube(4).is_volume() && !legacy_cube(3).is_volume());
+        let mut legacy = vec![0u8; HEADER_LEN];
+        legacy[..4].copy_from_slice(b"DDS ");
+        for (o, v) in [(12usize, 4u32), (16, 4), (24, 4), (28, 1), (80, PF_FOURCC), (112, CAPS2_VOLUME)] {
+            legacy[o..o + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        legacy[84..88].copy_from_slice(b"DXT1");
+        let legacy_volume = DdsHeader::parse(&legacy).unwrap();
+        assert!(legacy_volume.is_volume() && !legacy_volume.layout_sized());
+        legacy[112..116].copy_from_slice(&0u32.to_le_bytes());
+        assert!(!DdsHeader::parse(&legacy).unwrap().is_volume());
+        assert!(DdsHeader::parse(&legacy).unwrap().layout_sized());
         // Legacy files and a flat DX10 2D texture are sized as before.
         assert!(header(ext(98), 1, 0).layout_sized());
         assert_eq!(header(ext(98), 1, 9).expected_size(Format::Bc7), 16, "depth counts for volumes only");
