@@ -135,10 +135,27 @@ fn child_dir(dir: &Path, name: &str) -> Option<(PathBuf, String)> {
     })
 }
 
-/// The pack root a folder stands for: a mod folder with `textures\pbr\` in it, else a
-/// folder with `pbr\` in it (the `textures` folder), else a folder named `pbr`.
+/// The pack root a folder stands for. A folder that names itself first: a `pbr` folder
+/// inside a `textures` folder, then a `textures` folder with `pbr\` in it, so a pack's
+/// own subfolder named `pbr` or `textures` is never taken for the root. Then by what it
+/// holds: a mod folder with `textures\pbr\` in it, else a folder with `pbr\` in it (the
+/// `textures` folder), else any folder named `pbr`.
 fn pack_root(folder: &Path) -> anyhow::Result<PackRoot> {
     anyhow::ensure!(folder.is_dir(), "{}: not a folder", folder.display());
+    let canonical = folder.canonicalize().ok();
+    let name_of = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned());
+    let own = canonical.as_deref().and_then(name_of);
+    let parent = canonical.as_deref().and_then(Path::parent).and_then(name_of);
+    if let (Some(n), Some(t)) = (&own, &parent) {
+        if n.eq_ignore_ascii_case("pbr") && t.eq_ignore_ascii_case("textures") {
+            return Ok(PackRoot { form: "pbr", pbr: folder.to_path_buf(), prefix: format!("{t}\\{n}\\") });
+        }
+    }
+    if let Some(t) = own.as_ref().filter(|t| t.eq_ignore_ascii_case("textures")) {
+        if let Some((pbr, pbr_name)) = child_dir(folder, "pbr") {
+            return Ok(PackRoot { form: "textures", pbr, prefix: format!("{t}\\{pbr_name}\\") });
+        }
+    }
     if let Some((tex, tex_name)) = child_dir(folder, "textures") {
         if let Some((pbr, pbr_name)) = child_dir(&tex, "pbr") {
             return Ok(PackRoot { form: "mod", pbr, prefix: format!("{tex_name}\\{pbr_name}\\") });
@@ -147,8 +164,7 @@ fn pack_root(folder: &Path) -> anyhow::Result<PackRoot> {
     if let Some((pbr, pbr_name)) = child_dir(folder, "pbr") {
         return Ok(PackRoot { form: "textures", pbr, prefix: format!("textures\\{pbr_name}\\") });
     }
-    let name = folder.canonicalize().ok().and_then(|c| c.file_name().map(|n| n.to_string_lossy().into_owned()));
-    match name {
+    match own {
         Some(n) if n.eq_ignore_ascii_case("pbr") => Ok(PackRoot { form: "pbr", pbr: folder.to_path_buf(), prefix: format!("textures\\{n}\\") }),
         _ => anyhow::bail!("{}: has no textures\\pbr\\ or pbr\\ folder in it and is not itself a folder named pbr", folder.display()),
     }
@@ -624,6 +640,12 @@ mod tests {
             d
         });
         put(&pbr, "e/truncated_orm.dds", &dx10_dds(98, 8, 8, 4, -1));
+        put(&pbr, "e/extra_orm.dds", &dx10_dds(98, 4, 4, 4, 0));
+        put(&pbr, "e/badheader_orm.dds", &{
+            let mut d = dx10_dds(98, 4, 4, 3, 0);
+            d[76..80].copy_from_slice(&0u32.to_le_bytes());
+            d
+        });
         put(&pbr, "e/broken.toml", b"reflectance = = 1\n");
         put(&pbr, "e/broken_p.dds", &dx10_dds(80, 4, 4, 3, 0));
         // Warnings.
@@ -637,7 +659,6 @@ mod tests {
         put(&pbr, "w/future_orm.dds", &dx10_dds(98, 4, 4, 3, 0));
         put(&pbr, "w/trailing_orm.dds", &dx10_dds(98, 4, 4, 3, 5));
         put(&pbr, "w/npot_orm.dds", &dx10_dds(98, 12, 12, 4, 0));
-        put(&pbr, "w/extra_orm.dds", &dx10_dds(98, 4, 4, 4, 0));
 
         let o = check(&root.join("mod")).unwrap();
         let v = &o.json;
@@ -654,7 +675,8 @@ mod tests {
             (e, "dds-unreadable", p("e\\unreadable_orm.dds")),
             (e, "not-single-2d", p("e\\volume_orm.dds")),
             (e, "bad-size", p("e\\zero_orm.dds")),
-            (w, "extra-mips", p("w\\extra_orm.dds")),
+            (e, "extra-mips", p("e\\extra_orm.dds")),
+            (e, "bad-header-size", p("e\\badheader_orm.dds")),
             (w, "albedo-reserved", p("w\\future_albedo.dds")),
             (w, "incomplete-set", p("w\\lonely")),
             (w, "incomplete-mips", p("w\\nomips_orm.dds")),
@@ -673,10 +695,10 @@ mod tests {
         want.sort();
         assert_eq!(got, want);
         assert_eq!(v["ok"], false);
-        assert_eq!(o.failure.as_deref(), Some("9 error(s) in the pack (see `findings`)"));
+        assert_eq!(o.failure.as_deref(), Some("11 error(s) in the pack (see `findings`)"));
         let t = &v["totals"];
-        assert_eq!((t["errors"].as_u64(), t["warnings"].as_u64()), (Some(9), Some(10)));
-        assert_eq!(t["sets"], json!({"total": 19, "authored": 16, "height_only": 2, "incomplete": 1}));
+        assert_eq!((t["errors"].as_u64(), t["warnings"].as_u64()), (Some(11), Some(9)));
+        assert_eq!(t["sets"], json!({"total": 20, "authored": 17, "height_only": 2, "incomplete": 1}));
         assert_eq!(t["unmatched"], 1);
         assert_eq!(t["members"]["normal"], json!({"files": 2, "formats": {"BC5_UNORM": 2}, "largest_side": 16}));
         assert_eq!(t["members"]["height"], json!({"files": 3, "formats": {"BC4_UNORM": 3}, "largest_side": 4}));
@@ -685,9 +707,9 @@ mod tests {
         assert_eq!(t["members"]["orm"]["largest_side"], 12);
         assert_eq!((t["members"]["scalars"]["files"].as_u64(), t["members"]["albedo"]["files"].as_u64()), (Some(3), Some(1)));
         // Payloads of the accepted members of active sets: brick 112 + 368 + 24, old 24,
-        // broken_p 24, nomips 64, srgb 48, odd_p 24, future 48, trailing 48, npot 240,
-        // extra 64. Not lonely_n (its set is incomplete) nor any file with an error.
-        assert_eq!(t["gpu_bytes_estimate"], 1088);
+        // broken_p 24, nomips 64, srgb 48, odd_p 24, future 48, trailing 48, npot 240.
+        // Not lonely_n (its set is incomplete) nor any file with an error.
+        assert_eq!(t["gpu_bytes_estimate"], 1024);
         let row = |path: &str| v["files"].as_array().unwrap().iter().find(|f| f["path"] == path).unwrap().clone();
         let brick = row(&p("walls\\brick_n.dds"));
         assert_eq!((brick["format"].clone(), brick["width"].clone(), brick["levels"].clone(), brick["payload_bytes"].clone(), brick["accepted"].clone()), (json!("BC5_UNORM"), json!(16), json!(5), json!(368), json!(true)));
@@ -709,13 +731,35 @@ mod tests {
             assert_eq!(o.json["root"]["form"], form);
             assert_eq!(o.json["root"]["pbr_folder"].as_str().map(PathBuf::from), Some(pbr.clone()), "{form}");
             let paths: Vec<&str> = o.json["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
-            let first = if form == "mod" { "Textures" } else { "textures" };
-            assert_eq!(paths, ["brick.toml", "brick_n.dds", "brick_orm.dds", "brick_p.dds"].map(|n| format!("{first}\\PBR\\walls\\{n}")), "{form}");
+            assert_eq!(paths, ["brick.toml", "brick_n.dds", "brick_orm.dds", "brick_p.dds"].map(|n| format!("Textures\\PBR\\walls\\{n}")), "{form}");
             assert_eq!(o.json["totals"]["sets"]["authored"], 1);
         }
         let Err(e) = check(&root) else { panic!("a folder with no pack was taken") };
         let e = e.to_string();
         assert!(e.contains("is not itself a folder named pbr"), "{e}");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A `textures\pbr` folder given directly is the root also when the pack has a
+    /// subfolder named `pbr` (and a `textures` folder when it has one named `textures`):
+    /// the sets beside that subfolder are read, and the subfolder's files too.
+    #[test]
+    fn a_named_root_wins_over_a_child_of_the_same_name() {
+        let root = fresh("named-root");
+        let pbr = root.join("mod").join("textures").join("pbr");
+        clean_set(&pbr);
+        put(&pbr, "pbr/rock_orm.dds", &dx10_dds(98, 4, 4, 3, 0));
+        put(&pbr, "textures/pbr/sign_orm.dds", &dx10_dds(98, 4, 4, 3, 0));
+        let names = ["pbr\\rock_orm.dds", "textures\\pbr\\sign_orm.dds", "walls\\brick.toml", "walls\\brick_n.dds", "walls\\brick_orm.dds", "walls\\brick_p.dds"];
+        let want: Vec<String> = names.iter().map(|n| format!("textures\\pbr\\{n}")).collect();
+        for (folder, form) in [(pbr.clone(), "pbr"), (root.join("mod").join("textures"), "textures"), (root.join("mod"), "mod")] {
+            let o = check(&folder).unwrap();
+            assert_eq!(o.json["root"]["form"], form);
+            assert_eq!(o.json["root"]["pbr_folder"].as_str().map(PathBuf::from), Some(pbr.clone()), "{form}");
+            let paths: Vec<&str> = o.json["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+            assert_eq!(paths, want, "{form}");
+            assert_eq!(o.json["totals"]["sets"]["authored"], 3, "{form}");
+        }
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -725,7 +769,7 @@ mod tests {
     fn selftest_passes() {
         let t = pbr_check::selftest();
         assert!(t.pass(), "{}", t.line());
-        assert_eq!(t.line(), "pbr selftest: PASS (3 formats, 6 expected findings)");
+        assert_eq!(t.line(), "pbr selftest: PASS (3 formats, 7 expected findings)");
         let v = t.json();
         assert_eq!(v["selftest"]["formats"], json!(["BC4_UNORM", "BC5_UNORM", "BC7_UNORM"]));
         assert_eq!(v["root"]["form"], "selftest");

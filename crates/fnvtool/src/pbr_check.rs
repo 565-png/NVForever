@@ -23,7 +23,8 @@ pub const DDS_HEAD_LEN: usize = fnv_dds::HEADER_LEN + fnv_dds::DX10_HEADER_LEN;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Level {
-    /// The engine will refuse the file (or the file is broken): fails `pbr check`.
+    /// The file breaks the pack format's rules (docs/spec-notes/pbr-materials.md) or is
+    /// broken: fails `pbr check`.
     Error,
     /// Allowed, but probably not what the author meant, or ignored by this version.
     Warning,
@@ -161,6 +162,13 @@ fn check_dds(fc: &mut FileCheck, m: Member, head: &[u8], len: u64) {
             return;
         }
     };
+    // The header's own size field and the pixel format's (dds.md items 2 and 3: 124
+    // and 32 [documented: MS "DDS_HEADER", "DDS_PIXELFORMAT"]). fnv-dds does not check
+    // them; a file with other values is malformed even when the rest reads.
+    let (header_size, pf_size) = (u32::from_le_bytes(head[4..8].try_into().unwrap()), u32::from_le_bytes(head[76..80].try_into().unwrap()));
+    if header_size != 124 || pf_size != 32 {
+        fc.add(Level::Error, "bad-header-size", format!("The header states its size as {header_size} and the pixel format's as {pf_size}; a DDS file has 124 and 32."));
+    }
     let format = h.format();
     let name = match h.format_name() {
         Ok(n) => n.to_string(),
@@ -196,7 +204,9 @@ fn check_dds(fc: &mut FileCheck, m: Member, head: &[u8], len: u64) {
         } else if levels < full {
             fc.add(Level::Warning, "incomplete-mips", format!("The file has {levels} of the {full} mip levels a {w}x{ht} texture has down to 1x1; ship the full chain."));
         } else if levels > full {
-            fc.add(Level::Warning, "extra-mips", format!("The header counts {levels} mip levels, more than the {full} a {w}x{ht} texture has down to 1x1."));
+            // A texture cannot have more levels than its sides allow; the engine's
+            // renderer refuses such a file (nvf-assets `texture.rs`, `checked_image`).
+            fc.add(Level::Error, "extra-mips", format!("The header counts {levels} mip levels, more than the {full} a {w}x{ht} texture has down to 1x1."));
         }
     }
 
@@ -395,6 +405,11 @@ pub fn selftest_inputs() -> Vec<(String, Vec<u8>)> {
         (p("wrongformat_orm.dds"), dx10_dds(BC4_UNORM, 4, 4, 3, 0)),
         (p("truncated_p.dds"), dx10_dds(BC4_UNORM, 8, 8, 4, -16)),
         (p("srgb_orm.dds"), dx10_dds(BC7_UNORM_SRGB, 4, 4, 3, 0)),
+        (p("badheader_orm.dds"), {
+            let mut d = dx10_dds(BC7_UNORM, 4, 4, 3, 0);
+            d[4..8].copy_from_slice(&100u32.to_le_bytes());
+            d
+        }),
         (p("lonely_n.dds"), dx10_dds(BC5_UNORM, 4, 4, 3, 0)),
         // A plain-name file is no member.
         (p("clean.dds"), b"not a member".to_vec()),
@@ -405,7 +420,8 @@ pub fn selftest_inputs() -> Vec<(String, Vec<u8>)> {
 pub const SELFTEST_FORMATS: [&str; 3] = ["BC4_UNORM", "BC5_UNORM", "BC7_UNORM"];
 
 /// (path, code) of every finding the self-test's files must raise, and no other.
-pub const SELFTEST_EXPECTED: [(&str, &str); 6] = [
+pub const SELFTEST_EXPECTED: [(&str, &str); 7] = [
+    ("textures\\pbr\\selftest\\badheader_orm.dds", "bad-header-size"),
     ("textures\\pbr\\selftest\\clean.dds", "unmatched-file"),
     ("textures\\pbr\\selftest\\lonely", "incomplete-set"),
     ("textures\\pbr\\selftest\\srgb_orm.dds", "srgb-linear-member"),
