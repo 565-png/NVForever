@@ -347,9 +347,13 @@ fn dds_image_unguarded(bytes: &[u8], usage: TextureUsage, bc_supported: bool, to
     img.sampler = sampler();
     // No specular mask in the alpha: a format without alpha (BC4 and BC5 also when
     // expanded or decoded on the CPU) or a DX10 header stating every alpha opaque. Every
-    // successful path, the CPU-decoded DXT one included, ends here.
+    // successful path, the CPU-decoded DXT one included, ends here. A DX10 BC1 keeps its
+    // source's classification when decoded to RGBA8 off the block grid, as it has when
+    // uploaded as blocks; a legacy odd-sized DXT1 keeps main's classification (alpha
+    // read as a mask) unchanged.
     let lacks_alpha = dds.alpha_opaque()
         || matches!(dds.format, Format::Bc5U | Format::Bc5S | Format::Bc4U | Format::Bc4S)
+        || (dds.format == Format::Dxt1 && dds.header.dx10.is_some())
         || crate::nif_spawn::format_lacks_alpha(format);
     Ok(DecodedTexture { image: img, lacks_alpha })
 }
@@ -1497,6 +1501,27 @@ mod dx10_tests {
         }
         // DX10 BC1 lacks alpha by its format, as legacy DXT1 does.
         assert!(dds_texture(&dx10(71, 0, 0, 4, 4, 1, &[0; 8]), TextureUsage::Normal, true, false).unwrap().lacks_alpha);
+    }
+
+    /// An odd-sized BC1 normal map decoded to RGBA8: through a DX10 header it keeps BC1's
+    /// "no alpha mask", as the same file on the block grid has. The legacy DXT1 beside it
+    /// keeps main's classification (its alpha read as a mask) on purpose; the difference
+    /// is pinned here.
+    #[test]
+    fn odd_sized_dx10_bc1_normal_keeps_no_mask_unlike_its_legacy_counterpart() {
+        // 6×5 = 2×2 blocks of 8 bytes, colour 0 white above colour 1: opaque texels.
+        let blocks: Vec<u8> = (0..4).flat_map(|_| [0xFF, 0xFF, 0, 0, 0, 0, 0, 0]).collect();
+        let dx10_odd = dds_texture(&dx10(71, 0, 0, 6, 5, 1, &blocks), TextureUsage::Normal, true, false).unwrap();
+        let legacy_odd = dds_texture(&bc5_tests::dds(b"DXT1", 6, 5, 1, &blocks), TextureUsage::Normal, true, false).unwrap();
+        assert_eq!(dx10_odd.image.texture_descriptor.format, TextureFormat::Rgba8Unorm);
+        assert_eq!(legacy_odd.image.texture_descriptor.format, TextureFormat::Rgba8Unorm);
+        assert_eq!(dx10_odd.image.data, legacy_odd.image.data);
+        assert!(dx10_odd.lacks_alpha, "DX10 BC1 carries its source classification through the expansion");
+        assert!(!legacy_odd.lacks_alpha, "legacy odd-sized DXT1: unchanged from main");
+        // On the block grid both are BC1 blocks without a mask.
+        let dx10_even = dds_texture(&dx10(71, 0, 0, 8, 8, 1, &blocks), TextureUsage::Normal, true, false).unwrap();
+        let legacy_even = dds_texture(&bc5_tests::dds(b"DXT1", 8, 8, 1, &blocks), TextureUsage::Normal, true, false).unwrap();
+        assert!(dx10_even.lacks_alpha && legacy_even.lacks_alpha);
     }
 
     #[test]
