@@ -138,7 +138,9 @@ uGridsToLoad=5).
 
 - **Cells** (`nvforever/src/world.rs`, `nvf-assets/src/model.rs`, `texture.rs`;
   `CellSpawn`, `ReadAhead`). Before the start square is in, and behind a loading screen,
-  cells load whole in the frame they are reached, as before. After it:
+  cells load whole in the frame they are reached, as before; under the start's screen they
+  are read ahead from its picture hold on and wait for that read-ahead first
+  (docs/design/loading-screen.md §1a, `NVF_START_POOL_PREP`). After it:
   - *Read-ahead.* The cells up to one step beyond the loaded ones (the 7 × 7 square
     around the camera's cell with `--radius 2`) are read on a worker thread: the
     distinct models their references draw (`cell_models`) and their landscape (LAND

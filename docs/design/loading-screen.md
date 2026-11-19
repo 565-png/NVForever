@@ -123,6 +123,28 @@ A travel asked for under it goes out behind it and is waited for too.
   window once this screen is down.
 - [hypothesis] The original never shows the world before its scripts run: it reads the
   plugins, scripts and all, before the main menu.
+- **The start's models on the read pool** (2026-11-19, `world::start_pool_prep`). The
+  model reads have their own pool since #1732 (`nvf_assets::read_pool`), so under the
+  picture hold `world::read_ahead_under_hold` already reads the cells around the camera
+  ahead, as `stream`'s first frame would: their lists, landscape and models are prepared
+  on that pool while the picture comes up, and `take_cell_work` takes the models in.
+  Once the hold is let go, a cell whose models are not all in waits for that read-ahead
+  (`world::wait_over`), nearest cell first, for at most 1.5 s of real time from the first
+  cell asked for, after which the rest are drawn at once with their models prepared on
+  the main thread as before; the screen still waits until every cell is drawn. Before, the
+  read-ahead began only after the hold, and in the same frame every cell was drawn with
+  each model prepared on the main thread, one after another: 0.48-0.59 s of main-thread
+  time for the 25 cells and about 230 models of a Novac start (`streaming summary`) in
+  two or three long frames, while the 4-thread pool had none of that work, then prepared
+  67-111 of them a second time [observed: `NVF_LOADING_PROBE`, a local probe, Novac
+  start, 4 runs]. Whether the hold itself is still worth its 0.7 s has not been measured
+  (#1732); this uses it instead. Logs: `world: the start's read-ahead
+  begins under the loading screen's picture hold: <n> cells around (<x>, <y>) read on the
+  read pool`, and once the cells are all in `world: the start's cells drawn: <n> with
+  their models prepared on the read pool, <n> before (the rest prepared on the main
+  thread); <n> cells read ahead under the picture hold, <s> s from the first cell to the
+  last`. Test aid `NVF_START_POOL_PREP=0`: as before (logged). A travel's screen is
+  unchanged: no hold comes before it, and its cells are drawn at once.
 
 [design: `engine/nvforever/src/pipboy_arm.rs`, `player_body.rs`,
 `engine/nvf-play/src/pipboy.rs`, `loading.rs`; #1803] Once the start's picture hold is
