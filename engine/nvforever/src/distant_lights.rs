@@ -107,6 +107,12 @@ pub const FADE_CELLS: f32 = 2.0;
 /// are added in display values, where 0.8 left a few-pixel glow's centre near 0.5; still to
 /// fit by picture].
 pub const PEAK: f32 = 1.0;
+/// A shaft's light per pixel against the area-matched share of its round glow
+/// ([`shaft_factor`]) [design: 1, the same light as its dot; to fit by picture].
+pub const SHAFT_BRIGHTNESS: f32 = 1.0;
+/// A placed light's halo: its share of the centre's brightness, the rest a small bright core
+/// [design: to fit by picture].
+pub const HALO_SHARE: f32 = 0.35;
 /// The most strength a glow gets from merged lights [design].
 pub const MERGED_MAX: f32 = 2.0;
 /// Sun elevations (degrees): the glows are full at or below the first and gone at or above
@@ -153,9 +159,30 @@ pub struct SourceLight {
     pub motion: u8,
     /// Enabled at the start of a game (`world::enabled`): what shows without a simulation.
     pub start_enabled: bool,
+    /// A long glowing part (a light beam) drawn along its axis; `None`: round.
+    pub shaft: Option<Segment>,
+    /// A placed light (LIGH): a bright core with a fainter halo.
+    pub halo: bool,
 }
 
-/// One glow to draw: a light or several merged.
+/// A shaft in game space: its ends (`a` the bright end, a beam's source, when `directed`),
+/// its width at each.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Segment {
+    pub a: [f32; 3],
+    pub b: [f32; 3],
+    pub width_a: f32,
+    pub width_b: f32,
+    pub directed: bool,
+}
+
+impl Segment {
+    fn length(&self) -> f32 {
+        Vec3::from_array(self.a).distance(Vec3::from_array(self.b))
+    }
+}
+
+/// One glow to draw: a light or several merged, or a shaft.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Glow {
     pub pos: [f32; 3],
@@ -165,6 +192,8 @@ pub struct Glow {
     pub motion: u8,
     /// 0..1, keeping glows out of step.
     pub seed: f32,
+    pub shaft: Option<Segment>,
+    pub halo: bool,
 }
 
 impl Glow {
@@ -250,7 +279,7 @@ pub fn source_light(form_id: u32, pos: [f32; 3], l: &LightData, xrds: Option<f32
         Some(crate::lights::LightMotion::Flicker | crate::lights::LightMotion::FlickerSlow) => 1,
         Some(_) => 2,
     };
-    Ok(SourceLight { form_id, pos, color: l.color.map(|b| b as f32 / 255.0), radius, strength: l.fade.min(2.0), motion, start_enabled })
+    Ok(SourceLight { form_id, pos, color: l.color.map(|b| b as f32 / 255.0), radius, strength: l.fade.min(2.0), motion, start_enabled, shaft: None, halo: true })
 }
 
 /// The references of exterior cell `g` as world.rs spawns them when it loads the cell
@@ -323,13 +352,25 @@ pub struct CellList {
     pub statics: Vec<PlacedStatic>,
 }
 
-/// The glow source of a static placed by `transform` (scale `scale`) whose model glows as
-/// `g`: at the glowing shapes' centre taken by the reference's transform, its radius
-/// scaled by the reference's scale and [`GLOW_RADIUS_SCALE`], the model's colour, steady,
-/// strength 1.
-pub fn static_source(s: &PlacedStatic, g: &ModelGlow) -> SourceLight {
-    let at = s.transform.transform_point3(Vec3::from_array(g.centre));
-    SourceLight { form_id: s.form_id, pos: at.to_array(), color: g.colour, radius: (g.radius * s.scale * GLOW_RADIUS_SCALE).max(1.0), strength: 1.0, motion: 0, start_enabled: s.start_enabled }
+/// The glow sources of a static placed by `transform` (scale `scale`) whose model glows as
+/// `g`, steady, strength 1: its round glow (unless every glowing part is long) at the round
+/// shapes' centre taken by the reference's transform, its radius scaled by the reference's
+/// scale and [`GLOW_RADIUS_SCALE`], the model's colour; and a shaft per long part, its ends
+/// taken by the transform, its widths by the scale, standing in for a light of radius half
+/// its length × [`GLOW_RADIUS_SCALE`] (for the budget and its round fallback).
+pub fn static_source(s: &PlacedStatic, g: &ModelGlow) -> Vec<SourceLight> {
+    let mut out = Vec::new();
+    if !g.shafts_only {
+        let at = s.transform.transform_point3(Vec3::from_array(g.centre));
+        out.push(SourceLight { form_id: s.form_id, pos: at.to_array(), color: g.colour, radius: (g.radius * s.scale * GLOW_RADIUS_SCALE).max(1.0), strength: 1.0, motion: 0, start_enabled: s.start_enabled, shaft: None, halo: false });
+    }
+    for sh in g.shafts.iter().flatten() {
+        let (a, b) = (s.transform.transform_point3(Vec3::from_array(sh.a)), s.transform.transform_point3(Vec3::from_array(sh.b)));
+        let seg = Segment { a: a.to_array(), b: b.to_array(), width_a: sh.width_a * s.scale, width_b: sh.width_b * s.scale, directed: sh.directed };
+        let reach = seg.length().max(seg.width_a).max(seg.width_b) * 0.5;
+        out.push(SourceLight { form_id: s.form_id, pos: ((a + b) * 0.5).to_array(), color: sh.colour, radius: (reach * GLOW_RADIUS_SCALE).max(1.0), strength: 1.0, motion: 0, start_enabled: s.start_enabled, shaft: Some(seg), halo: false });
+    }
+    out
 }
 
 /// A cell's light references and its statics with a model (`refs`: [`cell_refs`]), with
@@ -372,7 +413,7 @@ pub fn list_cell(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], bases: &mut H
 /// there (`glow`: `Some(Some(_))` glows, `Some(None)` does not, `None` not read yet).
 pub fn resolve(cell: &CellList, glow: impl Fn(&str) -> Option<Option<ModelGlow>>) -> Vec<SourceLight> {
     let mut out = cell.lights.clone();
-    out.extend(cell.statics.iter().filter_map(|s| glow(&s.model).flatten().map(|g| static_source(s, &g))));
+    out.extend(cell.statics.iter().filter_map(|s| glow(&s.model).flatten().map(|g| static_source(s, &g))).flatten());
     out
 }
 
@@ -550,6 +591,12 @@ pub fn merge(lights: &[SourceLight], within: f32) -> Vec<Glow> {
     let mut out: Vec<Glow> = Vec::new();
     for l in order {
         let p = Vec3::from_array(l.pos);
+        // A shaft keeps its shape: it neither joins nor is joined.
+        if l.shaft.is_some() {
+            sums.push((p, Vec3::from_array(l.color), l.strength));
+            out.push(Glow { pos: l.pos, color: l.color, radius: l.radius, strength: l.strength, motion: l.motion, seed: seed(l.form_id), shaft: l.shaft, halo: l.halo });
+            continue;
+        }
         let (bx, by) = bucket(p);
         let mut near: Option<usize> = None;
         for dx in -1..=1 {
@@ -584,7 +631,7 @@ pub fn merge(lights: &[SourceLight], within: f32) -> Vec<Glow> {
             None => {
                 buckets.entry((bx, by)).or_default().push(out.len());
                 sums.push((p * l.strength, Vec3::from_array(l.color) * l.strength, l.strength));
-                out.push(Glow { pos: l.pos, color: l.color, radius: l.radius, strength: l.strength, motion: l.motion, seed: seed(l.form_id) });
+                out.push(Glow { pos: l.pos, color: l.color, radius: l.radius, strength: l.strength, motion: l.motion, seed: seed(l.form_id), shaft: None, halo: l.halo });
             }
         }
     }
@@ -669,27 +716,112 @@ pub fn night_share(elevation: f32) -> f32 {
     1.0 - fnv_world::sky::smoothstep(NIGHT.0, NIGHT.1, elevation)
 }
 
+/// The kinds of glow card, the shader's `shape.w` (distant_lights.wesl).
+pub const CARD_ROUND: f32 = 0.0;
+pub const CARD_SHAFT: f32 = 1.0;
+pub const CARD_SHAFT_DIRECTED: f32 = 2.0;
+pub const CARD_HALO: f32 = 3.0;
+
+/// The light per pixel of a shaft: [`SHAFT_BRIGHTNESS`] × the area its round glow would have
+/// covered over the shaft's own (held to 1), so a beam keeps about the light its dot had and
+/// does not become a white bar.
+pub fn shaft_factor(radius: f32, seg: &Segment) -> f32 {
+    let h = half_size(radius);
+    let area = seg.length() * 0.5 * (seg.width_a + seg.width_b);
+    SHAFT_BRIGHTNESS * (std::f32::consts::PI * h * h / area.max(1e-3)).min(1.0)
+}
+
+/// How bright a card is at `corner` for its kind (`CARD_*`), 1 at its brightest and 0
+/// outside (the shader's own copy): a round card a soft spot; a placed light a small bright
+/// core and a halo of [`HALO_SHARE`]; a shaft (corner x across, y along from `a` at 0 to `b`
+/// at 1) soft across, fading from `a` to nothing at `b` when it fades from `a`, else bright
+/// in its middle.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn card_profile(corner: [f32; 2], kind: f32) -> f32 {
+    if kind > 0.5 && kind < 2.5 {
+        let x = corner[0];
+        if x.abs() >= 1.0 {
+            return 0.0;
+        }
+        let v = corner[1].clamp(0.0, 1.0);
+        let across = (-4.0 * x * x).exp() * (1.0 - x * x);
+        let along = if kind > 1.5 { (1.0 - v) * (1.0 - v) } else { 1.0 - (2.0 * v - 1.0).powi(2) };
+        return across * along;
+    }
+    let r2 = corner[0] * corner[0] + corner[1] * corner[1];
+    if r2 >= 1.0 {
+        return 0.0;
+    }
+    if kind > 2.5 {
+        return (1.0 - HALO_SHARE) * (-14.0 * r2).exp() + HALO_SHARE * (-3.0 * r2).exp() * (1.0 - r2);
+    }
+    (-4.0 * r2).exp() * (1.0 - r2)
+}
+
+/// Whether a shaft is drawn as one: its ends' distance on screen (pixels) at least two
+/// [`MIN_PIXELS`] floors; shorter, it is drawn as its round glow (the shader's own copy).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn shaft_shows(length_px: f32) -> bool {
+    length_px >= 2.0 * MIN_PIXELS
+}
+
+/// The four corners of a shaft's card (corner order of [`glow_mesh`]: `a` side across −1
+/// and +1, then `b` side +1 and −1) seen from `eye`: the segment widened across by each
+/// end's half width, facing the camera around its axis (the shader's own copy, without the
+/// pixel floor). `None` seen end-on.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn axial_corners(a: Vec3, b: Vec3, half_a: f32, half_b: f32, eye: Vec3) -> Option<[Vec3; 4]> {
+    let d = (b - a).normalize_or_zero();
+    let side = |end: Vec3| d.cross((eye - end).normalize_or_zero());
+    let (sa, sb) = (side(a), side(b));
+    if sa.length_squared() < 1e-8 || sb.length_squared() < 1e-8 {
+        return None;
+    }
+    let (sa, sb) = (sa.normalize(), sb.normalize());
+    Some([a - sa * half_a, a + sa * half_a, b + sb * half_b, b - sb * half_b])
+}
+
 /// One mesh of camera-facing cards for `glows` (distant_lights.wesl), positions relative
-/// to `origin` (game space).
+/// to `origin` (game space). Per vertex: POSITION the card's centre; UV_0 its corner;
+/// UV_1 its round half size and motion + phase; COLOR its colour × strength; NORMAL a
+/// shaft's half vector from the centre to its bright end `a` (zero for a round card);
+/// TANGENT a shaft's half widths at `a` and `b`, its light per pixel ([`shaft_factor`]),
+/// and the card's kind (`CARD_*`).
 pub fn glow_mesh(glows: &[Glow], origin: Vec3) -> Mesh {
     let n = glows.len();
     let (mut pos, mut corner, mut size, mut color, mut idx) = (Vec::with_capacity(4 * n), Vec::with_capacity(4 * n), Vec::with_capacity(4 * n), Vec::with_capacity(4 * n), Vec::with_capacity(6 * n));
+    let (mut offset, mut shape) = (Vec::with_capacity(4 * n), Vec::with_capacity(4 * n));
     for g in glows {
         let at = (Vec3::from_array(g.pos) - origin).to_array();
         let first = pos.len() as u32;
         let rgb = g.color.map(|c| c * g.strength);
+        let (half, card) = match &g.shaft {
+            Some(seg) => {
+                let mid = (Vec3::from_array(seg.a) + Vec3::from_array(seg.b)) * 0.5;
+                ((Vec3::from_array(seg.a) - mid).to_array(), [seg.width_a * 0.5, seg.width_b * 0.5, shaft_factor(g.radius, seg), if seg.directed { CARD_SHAFT_DIRECTED } else { CARD_SHAFT }])
+            }
+            None => ([0.0; 3], [0.0, 0.0, 1.0, if g.halo { CARD_HALO } else { CARD_ROUND }]),
+        };
+        let at = match &g.shaft {
+            Some(seg) => (((Vec3::from_array(seg.a) + Vec3::from_array(seg.b)) * 0.5) - origin).to_array(),
+            None => at,
+        };
         for c in [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]] {
             pos.push(at);
             corner.push(c);
             size.push([half_size(g.radius), g.motion as f32 + g.seed.clamp(0.0, 0.999)]);
             color.push([rgb[0], rgb[1], rgb[2], 1.0]);
+            offset.push(half);
+            shape.push(card);
         }
         idx.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
     }
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, offset);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, corner);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, size);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, shape);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, color);
     mesh.insert_indices(Indices::U32(idx));
     mesh
@@ -700,14 +832,14 @@ pub fn glow_mesh(glows: &[Glow], origin: Vec3) -> Mesh {
 pub struct GlowParams {
     /// x: night share × [`PEAK`]; y, z: reach fade start and end; w: [`MIN_PIXELS`].
     pub shape: Vec4,
-    /// x: [`FAR_FLOOR`]; y: [`SHIMMER`]; z: [`MIN_RENDER_PIXELS`].
+    /// x: [`FAR_FLOOR`]; y: [`SHIMMER`]; z: [`MIN_RENDER_PIXELS`]; w: [`HALO_SHARE`].
     pub extra: Vec4,
 }
 
 impl GlowParams {
     fn at(night: f32) -> GlowParams {
         let reach = reach_units();
-        GlowParams { shape: Vec4::new(night * PEAK, reach - FADE_CELLS * CELL_SIZE, reach, MIN_PIXELS), extra: Vec4::new(FAR_FLOOR, SHIMMER, MIN_RENDER_PIXELS, 0.0) }
+        GlowParams { shape: Vec4::new(night * PEAK, reach - FADE_CELLS * CELL_SIZE, reach, MIN_PIXELS), extra: Vec4::new(FAR_FLOOR, SHIMMER, MIN_RENDER_PIXELS, HALO_SHARE) }
     }
 }
 
@@ -1280,7 +1412,7 @@ mod tests {
     use bevy::mesh::VertexAttributeValues;
 
     fn light(id: u32, pos: [f32; 3], strength: f32) -> SourceLight {
-        SourceLight { form_id: id, pos, color: [1.0, 0.5, 0.25], radius: 512.0, strength, motion: 0, start_enabled: true }
+        SourceLight { form_id: id, pos, color: [1.0, 0.5, 0.25], radius: 512.0, strength, motion: 0, start_enabled: true, shaft: None, halo: true }
     }
 
     fn data(flags: u32) -> LightData {
@@ -1351,7 +1483,7 @@ mod tests {
                     }
                     None => {
                         sums.push((p * l.strength, Vec3::from_array(l.color) * l.strength, l.strength));
-                        out.push(Glow { pos: l.pos, color: l.color, radius: l.radius, strength: l.strength, motion: l.motion, seed: seed(l.form_id) });
+                        out.push(Glow { pos: l.pos, color: l.color, radius: l.radius, strength: l.strength, motion: l.motion, seed: seed(l.form_id), shaft: None, halo: l.halo });
                     }
                 }
             }
@@ -1369,7 +1501,7 @@ mod tests {
     }
 
     fn glow(x: f32, strength: f32) -> Glow {
-        Glow { pos: [x, 0.0, 0.0], color: [1.0; 3], radius: 512.0, strength, motion: 0, seed: 0.0 }
+        Glow { pos: [x, 0.0, 0.0], color: [1.0; 3], radius: 512.0, strength, motion: 0, seed: 0.0, shaft: None, halo: true }
     }
 
     #[test]
@@ -1589,13 +1721,130 @@ mod tests {
         assert_eq!(s[0][0], 256.0);
         let Some(VertexAttributeValues::Float32x4(c)) = m.attribute(Mesh::ATTRIBUTE_COLOR) else { panic!() };
         assert_eq!(c[0], [0.5, 0.5, 0.5, 1.0]);
+        // A placed light's round card: no offset, the halo kind.
+        let Some(VertexAttributeValues::Float32x3(o)) = m.attribute(Mesh::ATTRIBUTE_NORMAL) else { panic!() };
+        assert_eq!(o[0], [0.0; 3]);
+        let Some(VertexAttributeValues::Float32x4(k)) = m.attribute(Mesh::ATTRIBUTE_TANGENT) else { panic!() };
+        assert_eq!(k[0], [0.0, 0.0, 1.0, CARD_HALO]);
+    }
+
+    fn beam() -> Segment {
+        Segment { a: [0.0, 0.0, 1000.0], b: [0.0, 2000.0, 1000.0], width_a: 20.0, width_b: 400.0, directed: true }
+    }
+
+    /// A shaft's card: centred at the segment's middle, the half vector to its bright end,
+    /// its half widths, its light per pixel and the directed kind.
+    #[test]
+    fn shaft_mesh_layout() {
+        let g = Glow { shaft: Some(beam()), halo: false, radius: 4000.0, ..glow(0.0, 1.0) };
+        let m = glow_mesh(&[g], Vec3::ZERO);
+        let Some(VertexAttributeValues::Float32x3(p)) = m.attribute(Mesh::ATTRIBUTE_POSITION) else { panic!() };
+        assert_eq!(p[0], [0.0, 1000.0, 1000.0]);
+        let Some(VertexAttributeValues::Float32x3(o)) = m.attribute(Mesh::ATTRIBUTE_NORMAL) else { panic!() };
+        assert_eq!(o[0], [0.0, -1000.0, 0.0]);
+        let Some(VertexAttributeValues::Float32x4(k)) = m.attribute(Mesh::ATTRIBUTE_TANGENT) else { panic!() };
+        assert_eq!((k[0][0], k[0][1], k[0][3]), (10.0, 200.0, CARD_SHAFT_DIRECTED));
+        assert!((k[0][2] - shaft_factor(4000.0, &beam())).abs() < 1e-6);
+    }
+
+    /// The attributes sit where the shader reads them (Bevy's mesh locations: position 0,
+    /// normal 1, UV_0 2, UV_1 3, tangent 4, colour 5).
+    #[test]
+    fn the_attribute_layout_matches_the_shader() {
+        let shader = include_str!("distant_lights.wesl");
+        for line in ["@location(0) position: vec3<f32>", "@location(1) offset: vec3<f32>", "@location(2) corner: vec2<f32>", "@location(3) size: vec2<f32>", "@location(4) shape: vec4<f32>", "@location(5) color: vec4<f32>"] {
+            assert!(shader.contains(line), "the shader declares {line}");
+        }
+        let m = glow_mesh(&[glow(0.0, 1.0)], Vec3::ZERO);
+        for (attr, loc) in [(Mesh::ATTRIBUTE_POSITION, 0), (Mesh::ATTRIBUTE_NORMAL, 1), (Mesh::ATTRIBUTE_UV_0, 2), (Mesh::ATTRIBUTE_UV_1, 3), (Mesh::ATTRIBUTE_TANGENT, 4), (Mesh::ATTRIBUTE_COLOR, 5)] {
+            assert!(m.attribute(attr).is_some(), "{} in the mesh", attr.name);
+            assert_eq!(attr.at_shader_location(loc).shader_location, loc);
+        }
+    }
+
+    /// The axial card for a known camera: the beam along +y at height 1000, seen from the
+    /// side (+x): the card spreads up and down (z), half widths 10 and 200.
+    #[test]
+    fn axial_corners_face_the_camera_around_the_axis() {
+        let s = beam();
+        let eye = Vec3::new(5000.0, 1000.0, 1000.0);
+        let c = axial_corners(Vec3::from_array(s.a), Vec3::from_array(s.b), 10.0, 200.0, eye).expect("seen from the side");
+        let close = |p: Vec3, q: Vec3| (p - q).length() < 1e-2;
+        // d = +y; side = d × (eye − end) is ∓z: the corners lie at z = 1000 ∓ the half width.
+        assert!(close(c[0], Vec3::new(0.0, 0.0, 1010.0)) || close(c[0], Vec3::new(0.0, 0.0, 990.0)), "{:?}", c[0]);
+        assert!((c[0].z - c[1].z).abs() > 19.9 && (c[2].z - c[3].z).abs() > 399.0);
+        assert!(c.iter().all(|p| p.x.abs() < 1e-3), "the card stays in the plane facing the camera");
+        // Seen end-on: no card.
+        assert!(axial_corners(Vec3::ZERO, Vec3::new(0.0, 100.0, 0.0), 1.0, 1.0, Vec3::new(0.0, 500.0, 0.0)).is_none());
+    }
+
+    /// A shaft shorter on screen than two pixel floors is drawn round; a beam keeps about the
+    /// light of its dot.
+    #[test]
+    fn short_shafts_go_round_and_beams_keep_their_light() {
+        assert!(!shaft_shows(2.0 * MIN_PIXELS - 0.1));
+        assert!(shaft_shows(2.0 * MIN_PIXELS));
+        let f = shaft_factor(4000.0, &beam());
+        let dot = std::f32::consts::PI * half_size(4000.0).powi(2);
+        let area = 2000.0 * 0.5 * (20.0 + 400.0);
+        assert!((f - SHAFT_BRIGHTNESS * (dot / area).min(1.0)).abs() < 1e-6);
+        assert!(f <= SHAFT_BRIGHTNESS);
+    }
+
+    /// The cards' profiles: 1 at the brightest point, a halo wider than the core, a directed
+    /// shaft fading from its source to nothing, a symmetric one bright in its middle.
+    #[test]
+    fn card_profiles() {
+        assert_eq!(card_profile([0.0, 0.0], CARD_ROUND), 1.0);
+        assert!((card_profile([0.0, 0.0], CARD_HALO) - 1.0).abs() < 1e-6);
+        // At half the radius the halo keeps more than a core alone would.
+        let mid = card_profile([0.5, 0.0], CARD_HALO);
+        assert!(mid > (1.0 - HALO_SHARE) * (-14.0f32 * 0.25).exp() && mid < card_profile([0.5, 0.0], CARD_ROUND));
+        assert_eq!(card_profile([0.0, 0.0], CARD_SHAFT_DIRECTED), 1.0);
+        assert_eq!(card_profile([0.0, 1.0], CARD_SHAFT_DIRECTED), 0.0);
+        assert!(card_profile([0.0, 0.25], CARD_SHAFT_DIRECTED) > card_profile([0.0, 0.75], CARD_SHAFT_DIRECTED));
+        assert_eq!(card_profile([0.0, 0.5], CARD_SHAFT), 1.0);
+        assert_eq!(card_profile([0.0, 0.0], CARD_SHAFT), 0.0);
+        assert_eq!(card_profile([1.0, 0.5], CARD_SHAFT), 0.0);
+        assert_eq!(card_profile([0.8, 0.8], CARD_ROUND), 0.0, "outside the round card");
+        let shader = include_str!("distant_lights.wesl");
+        assert!(shader.contains("exp(-14.0 * r2)") && shader.contains("(1.0 - v) * (1.0 - v)"), "the shader's profile is this one");
+    }
+
+    /// Shafts keep their shape: they are not merged with a lamp beside them.
+    #[test]
+    fn shafts_are_not_merged() {
+        let shaft = SourceLight { shaft: Some(beam()), halo: false, ..light(1, [0.0, 1000.0, 1000.0], 1.0) };
+        let lamp = light(2, [10.0, 1000.0, 1000.0], 1.0);
+        let glows = merge(&[shaft, lamp], MERGE_DISTANCE);
+        assert_eq!(glows.len(), 2);
+        assert!(glows.iter().any(|g| g.shaft == Some(beam())) && glows.iter().any(|g| g.shaft.is_none() && g.halo));
+    }
+
+    /// A static whose model has a beam and a lamp gives the lamp's round glow and the beam's
+    /// shaft, taken by the reference's transform and scale.
+    #[test]
+    fn a_static_gives_its_round_glow_and_its_shafts() {
+        use nvf_assets::model_glow::Shaft;
+        let mut g = ModelGlow { centre: [0.0, 0.0, -20.0], radius: 10.0, colour: [1.0, 0.8, 0.5], shapes: 2, ..ModelGlow::default() };
+        g.shafts[0] = Some(Shaft { a: [0.0; 3], b: [0.0, 0.0, 500.0], width_a: 4.0, width_b: 80.0, directed: true, colour: [0.9, 0.9, 1.0] });
+        let s = PlacedStatic { form_id: 7, transform: bevy::math::Affine3A::from_scale_rotation_translation(Vec3::splat(2.0), bevy::math::Quat::IDENTITY, Vec3::new(100.0, 0.0, 0.0)), scale: 2.0, start_enabled: true, model: "m".into(), kind: GlowKind::Static };
+        let out = static_source(&s, &g);
+        assert_eq!(out.len(), 2);
+        assert!(out[0].shaft.is_none() && !out[0].halo);
+        assert_eq!(out[0].pos, [100.0, 0.0, -40.0]);
+        let seg = out[1].shaft.expect("a shaft");
+        assert_eq!((seg.a, seg.b, seg.width_a, seg.width_b, seg.directed), ([100.0, 0.0, 0.0], [100.0, 0.0, 1000.0], 8.0, 160.0, true));
+        assert_eq!((out[1].pos, out[1].color), ([100.0, 0.0, 500.0], [0.9, 0.9, 1.0]));
+        g.shafts_only = true;
+        assert_eq!(static_source(&s, &g).len(), 1, "no round glow when every part is long");
     }
 
     #[test]
     fn the_summary_names_what_was_left_out() {
         let mut s = Stats { cells: 3, refs: 40, lights: 5, glow_statics: 12, glow_activators: 3, glow_collections: 2, disabled: 2, deleted: 1, no_colour: 4, negative_off: 6, no_radius: 7, most_drawn: 5, ..Stats::default() };
         let mut models = GlowModels::default();
-        models.take(vec![("meshes\\a.nif".into(), Some(ModelGlow { centre: [0.0; 3], radius: 10.0, colour: [1.0; 3], shapes: 1 })), ("meshes\\b.nif".into(), None)], Vec::new());
+        models.take(vec![("meshes\\a.nif".into(), Some(ModelGlow { centre: [0.0; 3], radius: 10.0, colour: [1.0; 3], shapes: 1, ..ModelGlow::default() })), ("meshes\\b.nif".into(), None)], Vec::new());
         (s.models_read, s.glow_models) = models.counts();
         assert_eq!(
             s.summary(),
@@ -1618,7 +1867,7 @@ mod tests {
         // Asked again while being read: not queued twice.
         models.ask(&lamp);
         assert_eq!(models.waiting(), 0);
-        let glow = ModelGlow { centre: [0.0, 0.0, 300.0], radius: 10.0, colour: [1.0, 0.8, 0.5], shapes: 1 };
+        let glow = ModelGlow { centre: [0.0, 0.0, 300.0], radius: 10.0, colour: [1.0, 0.8, 0.5], shapes: 1, ..ModelGlow::default() };
         models.take(vec![(lamp.clone(), Some(glow)), (rock.clone(), None)], Vec::new());
         models.ask(&lamp);
         models.ask(&rock);
@@ -1677,7 +1926,7 @@ mod tests {
         assert_eq!(st.model_cells[&lamp], vec![(0, 0)]);
         // The other model known behind the cells' back: a resolve of (1, 0) would now give it
         // a glow static, so its list shows whether it was resolved.
-        let glow = ModelGlow { centre: [0.0; 3], radius: 10.0, colour: [1.0; 3], shapes: 1 };
+        let glow = ModelGlow { centre: [0.0; 3], radius: 10.0, colour: [1.0; 3], shapes: 1, ..ModelGlow::default() };
         st.models.take(vec![(other.clone(), Some(glow))], Vec::new());
         st.sink.lock().unwrap().push((lamp.clone(), Some(glow)));
         st.drain_models();
@@ -1858,12 +2107,12 @@ mod tests {
             let cells = list_cells(w.lo, w.schema, vec![((0, 0), cell_refs(&w, (0, 0))), ((1, 0), cell_refs(&w, (1, 0)))], &epoch, epoch.now(), &mut stats);
             assert_eq!(cells.len(), 2);
             // The lamp post's model glows at its bulb, 300 up; the boulder's does not.
-            let bulb = ModelGlow { centre: [0.0, 0.0, 300.0], radius: 10.0, colour: [1.0, 0.8, 0.5], shapes: 1 };
+            let bulb = ModelGlow { centre: [0.0, 0.0, 300.0], radius: 10.0, colour: [1.0, 0.8, 0.5], shapes: 1, ..ModelGlow::default() };
             let mut asked: Vec<String> = cells[0].1.statics.iter().map(|s| s.model.to_string()).collect();
             // The neon sign's model glows 100 up, the collection's combined model at a part
             // 50 along and 10 up; the plain activator's does not.
-            let neon = ModelGlow { centre: [0.0, 0.0, 100.0], radius: 20.0, colour: [1.0, 0.2, 0.6], shapes: 2 };
-            let part = ModelGlow { centre: [50.0, 0.0, 10.0], radius: 8.0, colour: [1.0, 0.9, 0.7], shapes: 1 };
+            let neon = ModelGlow { centre: [0.0, 0.0, 100.0], radius: 20.0, colour: [1.0, 0.2, 0.6], shapes: 2, ..ModelGlow::default() };
+            let part = ModelGlow { centre: [50.0, 0.0, 10.0], radius: 8.0, colour: [1.0, 0.9, 0.7], shapes: 1, ..ModelGlow::default() };
             let glow = |path: &str| {
                 Some(match path {
                     "meshes\\lamp.nif" => Some(bulb),
