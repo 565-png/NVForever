@@ -15,7 +15,7 @@
 //!   (`PhysState::loading_done`), the renderer has drawn its cells (it reports through
 //!   [`Loading::render_busy`]) and no actor in view still waits for its parts
 //!   ([`Loading::actors_busy`]), [`SETTLE_SECS`] later so that textures and meshes reach
-//!   the graphics card behind the picture. With lamp shadows on it also waits while their
+//!   the graphics card behind the picture. With ALC shadows on it also waits while their
 //!   maps are drawn behind it ([`Loading::lamp_shadows_busy`]).
 //! - A run that starts in the world ([`StartCover`]) is held under the screen from its
 //!   first frame until the same is in and the scripts are made (a save put back into
@@ -601,7 +601,7 @@ fn missing(loading: &Loading, phys: Option<&PhysState>, scripts: Option<&crate::
         out.push("the Pip-Boy warm-up");
     }
     if loading.lamp_shadows_busy {
-        out.push("lamp shadows");
+        out.push("ALC shadows");
     }
     out
 }
@@ -775,7 +775,7 @@ mod tests {
     #[test]
     fn a_screen_waits_for_the_lamp_shadows_pre_draw() {
         let mut loading = Loading { lamp_shadows_busy: true, ..default() };
-        assert_eq!(missing(&loading, None, None, false), vec!["lamp shadows"]);
+        assert_eq!(missing(&loading, None, None, false), vec!["ALC shadows"]);
         loading.lamp_shadows_busy = false;
         assert!(missing(&loading, None, None, false).is_empty());
     }

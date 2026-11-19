@@ -300,7 +300,7 @@ mod tests {
     /// #2198's upscaler rows, #2169's FSR library row, #2242's upscaling counter row, #2317's
     /// Generated frames row, the field of view rows, the menu scale and Physics rate rows,
     /// #2662's grass fires, #2550's terrain height blending, #2551's terrain anti-tiling,
-    /// #2688's sound cover, #2670's cloud shadows, the lamp shadows (light_shadows.rs), #2149's smooth terrain and its Debug row terrain wireframe, the
+    /// #2688's sound cover, #2670's cloud shadows, the ALC shadows (light_shadows.rs), #2149's smooth terrain and its Debug row terrain wireframe, the
     /// overhaul's menu font, the Advanced Movement rows of tech/movement-inertia, Weapon
     /// Inertia and Camera Motion in place of weapon sway and head bob, #2843's Shadow
     /// resolution row, Gore Shake and #2670's Cloud shadows; #2661's mesh terrain blend row), by the group it registers with.
