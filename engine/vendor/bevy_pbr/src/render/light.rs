@@ -49,7 +49,7 @@ use bevy_render::occlusion_culling::{
 use bevy_render::sync_world::{MainEntity, MainEntityHashMap, MainEntityHashSet, RenderEntity};
 use bevy_render::view::{
     RenderExtractedShadowMapVisibleEntities, RenderShadowLodOrigin, RenderShadowMapVisibleEntities,
-    RenderVisibleEntities, VisibilityExtractionSystemParam,
+    RenderVisibleEntities, RenderVisibleEntitiesClass, VisibilityExtractionSystemParam,
 };
 use bevy_render::{
     batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport},
@@ -3014,7 +3014,7 @@ pub(crate) struct SpecializeShadowsSystemParam<'w, 's> {
     pending_shadow_queues: ResMut<'w, PendingShadowQueues>,
     dirty_specializations: Res<'w, DirtySpecializations>,
     // NVForever kept shadow phases.
-    nvf_parked: Option<Res<'w, NvfParkedShadowViews>>,
+    nvf_parked: Option<ResMut<'w, NvfParkedShadowViews>>,
 }
 
 pub(crate) fn specialize_shadows(
@@ -3022,8 +3022,11 @@ pub(crate) fn specialize_shadows(
     state: &mut SystemState<SpecializeShadowsSystemParam>,
     mut work_items: Local<Vec<ShadowSpecializationWorkItem>>,
     mut all_shadow_views: Local<HashSet<RetainedViewEntity, FixedHasher>>,
-    // NVForever kept shadow phases: kept views to drop this frame.
+    // NVForever kept shadow phases: kept views to drop this frame, the views live last frame,
+    // and the entities of a view to specialize.
     mut nvf_wiped: Local<Vec<RetainedViewEntity>>,
+    mut nvf_live_before: Local<HashSet<RetainedViewEntity, FixedHasher>>,
+    mut nvf_items: Local<Vec<(Entity, MainEntity)>>,
 ) {
     work_items.clear();
     all_shadow_views.clear();
@@ -3042,8 +3045,11 @@ pub(crate) fn specialize_shadows(
             mut specialized_shadow_material_pipeline_cache,
             mut pending_shadow_queues,
             dirty_specializations,
-            nvf_parked,
+            mut nvf_parked,
         } = state.get_mut(world).unwrap();
+        if let Some(parked) = nvf_parked.as_deref_mut() {
+            parked.resumed.clear();
+        }
 
         for (light_entity, extracted_view_light) in &view_light_entities {
             all_shadow_views.insert(extracted_view_light.retained_view_entity);
@@ -3093,12 +3099,40 @@ pub(crate) fn specialize_shadows(
                 continue;
             };
 
+            // NVForever kept shadow phases: a kept view back after a frame without a view
+            // missed its light's visible-list changes of those frames, so every visible entity
+            // is looked at (the specialized ones are skipped below), as when the view is new.
+            let view = extracted_view_light.retained_view_entity;
+            let resumed = nvf_parked.is_some()
+                && !nvf_live_before.contains(&view)
+                && !dirty_specializations.must_wipe_specializations_for_view(view);
+            nvf_items.clear();
+            if resumed {
+                if let Some(parked) = nvf_parked.as_deref_mut() {
+                    parked.resumed.insert(view);
+                }
+                nvf_items.extend(
+                    visible_entities
+                        .iter_visible()
+                        .chain(view_pending_shadow_queues.prev_frame.iter().filter_map(
+                            |(entity, main_entity)| {
+                                visible_entities
+                                    .entity_pair_is_visible(*entity, *main_entity)
+                                    .then_some((entity, main_entity))
+                            },
+                        ))
+                        .map(|(entity, main_entity)| (*entity, *main_entity)),
+                );
+            } else {
+                nvf_items.extend(
+                    dirty_specializations
+                        .iter_to_specialize(view, visible_entities, &view_pending_shadow_queues.prev_frame)
+                        .map(|(entity, main_entity)| (*entity, *main_entity)),
+                );
+            }
+
             // Now process all shadow meshes that need to be re-specialized.
-            for (render_entity, visible_entity) in dirty_specializations.iter_to_specialize(
-                extracted_view_light.retained_view_entity,
-                visible_entities,
-                &view_pending_shadow_queues.prev_frame,
-            ) {
+            for (render_entity, visible_entity) in nvf_items.iter().map(|(entity, main_entity)| (entity, main_entity)) {
                 if maybe_specialized_shadow_material_pipeline_cache
                     .as_ref()
                     .is_some_and(|specialized_shadow_material_pipeline_cache| {
@@ -3194,6 +3228,8 @@ pub(crate) fn specialize_shadows(
         // an entity that changed (its mesh, material or flags) leaves the kept view's bin and
         // pipeline stale, so that view is dropped whole and drawn again as a new one. Then the
         // kept views keep their pending queues and pipelines like the live ones.
+        nvf_live_before.clear();
+        nvf_live_before.extend(view_light_entities.iter().map(|(_, view)| view.retained_view_entity));
         if let Some(parked) = nvf_parked.as_deref() {
             let (changed, removed) = (
                 &dirty_specializations.changed_renderables,
@@ -3307,7 +3343,11 @@ pub fn queue_shadows(
     mut pending_shadow_queues: ResMut<PendingShadowQueues>,
     dirty_specializations: Res<DirtySpecializations>,
     mut mesh_instances_queued_this_iteration_scratch_space: Local<MainEntityHashSet>,
+    // NVForever kept shadow phases: the views resumed this frame, and the entities to queue.
+    nvf_parked: Option<Res<NvfParkedShadowViews>>,
+    mut nvf_items: Local<Vec<(Entity, MainEntity)>>,
 ) {
+    let (mut nvf_resynced, mut nvf_rebinned) = (0u64, 0u64);
     for (light_entity, extracted_view_light, view_light_render_layers) in &view_light_entities {
         let Some(shadow_phase) =
             shadow_render_phases.get_mut(&extracted_view_light.retained_view_entity)
@@ -3343,13 +3383,44 @@ pub fn queue_shadows(
             shadow_phase.remove(main_entity);
         }
 
+        // NVForever kept shadow phases (engine/vendor/README.md): a kept phase whose view is
+        // back missed the visible-list changes of the frames it had none (its light's list kept
+        // changing, or was made anew, every visible entity "added"), so it is resynced with the
+        // whole list: entities no longer visible leave, visible ones not binned are queued.
+        nvf_items.clear();
+        if nvf_parked
+            .as_deref()
+            .is_some_and(|parked| parked.resumed.contains(&extracted_view_light.retained_view_entity))
+        {
+            nvf_resynced += 1;
+            nvf_resync_kept_phase(shadow_phase, visible_entities, &mut nvf_items);
+            mesh_instances_queued_this_iteration_scratch_space.clear();
+            mesh_instances_queued_this_iteration_scratch_space
+                .extend(nvf_items.iter().map(|(_, main_entity)| *main_entity));
+            nvf_items.extend(
+                view_pending_shadow_queues
+                    .prev_frame
+                    .iter()
+                    .filter(|(_, main_entity)| {
+                        mesh_instances_queued_this_iteration_scratch_space.insert(*main_entity)
+                    })
+                    .copied(),
+            );
+        } else {
+            nvf_items.extend(
+                dirty_specializations
+                    .iter_to_queue(
+                        extracted_view_light.retained_view_entity,
+                        visible_entities,
+                        &view_pending_shadow_queues.prev_frame,
+                        &mut mesh_instances_queued_this_iteration_scratch_space,
+                    )
+                    .map(|(entity, main_entity)| (*entity, *main_entity)),
+            );
+        }
+
         // Now iterate through all newly-visible entities and those needing respecialization.
-        for (render_entity, main_entity) in dirty_specializations.iter_to_queue(
-            extracted_view_light.retained_view_entity,
-            visible_entities,
-            &view_pending_shadow_queues.prev_frame,
-            &mut mesh_instances_queued_this_iteration_scratch_space,
-        ) {
+        for (render_entity, main_entity) in nvf_items.iter().map(|(entity, main_entity)| (entity, main_entity)) {
             let Some(&(pipeline_id, draw_function, is_depth_only_opaque)) =
                 view_specialized_material_pipeline_cache.get(main_entity)
             else {
@@ -3408,7 +3479,9 @@ pub fn queue_shadows(
                 slabs: mesh_slabs,
             };
 
-            shadow_phase.add(
+            // NVForever kept shadow phases: never binned twice (a panic upstream).
+            nvf_rebinned += u64::from(nvf_add_once(
+                shadow_phase,
                 batch_set_key,
                 ShadowBinKey {
                     asset_id: mesh_instance.mesh_asset_id().into(),
@@ -3419,9 +3492,11 @@ pub fn queue_shadows(
                     mesh_instance.should_batch(),
                     &gpu_preprocessing_support,
                 ),
-            );
+            ));
         }
     }
+    nvf_event(NVF_RESYNCED, nvf_resynced);
+    nvf_event(NVF_REBINNED, nvf_rebinned);
 }
 
 pub struct Shadow {
@@ -3818,8 +3893,10 @@ pub const NVF_EVENTS: [&str; NVF_EVENT_COUNT] = [
     "phases reused",
     "kept phases wiped",
     "views kept",
+    "kept phases resynced",
+    "entities rebinned",
 ];
-pub const NVF_EVENT_COUNT: usize = 14;
+pub const NVF_EVENT_COUNT: usize = 16;
 const NVF_SPAWNED: usize = 0;
 const NVF_DESPAWNED: usize = 1;
 const NVF_REMADE: usize = 2;
@@ -3840,6 +3917,11 @@ const NVF_STATIC_MISSES: usize = 10;
 const NVF_PHASES_REUSED: usize = 11;
 const NVF_PARKED_WIPED: usize = 12;
 const NVF_VIEWS_KEPT: usize = 13;
+// NVForever kept shadow phases: kept views back after a frame without a view, their phases
+// resynced with their light's visible list (`queue_shadows`), and entities queued into a bin
+// they were already in, taken out first (none expected; each was a panic before).
+const NVF_RESYNCED: usize = 14;
+const NVF_REBINNED: usize = 15;
 
 /// NVForever kept shadow phases: off with `NVF_LIGHT_SHADOW_KEEP_PHASES=0` (a measuring aid
 /// of the game's: a light's phases, pipeline keys and specialized pipelines go with its views,
@@ -3862,9 +3944,62 @@ pub fn nvf_keep_shadow_phases_on() -> bool {
 /// the light has no views (its maps held, or the light out of view); one whose specialized
 /// pipelines name an entity that changed while it had no view is dropped (`specialize_shadows`),
 /// so that light is specialized and queued in full when it draws again, as upstream.
+///
+/// A kept view that has a view again this frame after none last frame is `resumed`
+/// (`specialize_shadows` fills it each frame): its light's visible list kept changing while it
+/// had no view, and the added and removed entities of those frames were never queued nor taken
+/// out, so its phase is resynced with the whole visible list instead ([`nvf_resync_kept_phase`]).
 #[derive(Resource, Default, Debug)]
 pub struct NvfParkedShadowViews {
     pub views: HashSet<RetainedViewEntity>,
+    pub resumed: HashSet<RetainedViewEntity>,
+}
+
+/// NVForever kept shadow phases: whether the main entity is in the visible list (by main
+/// entity alone; the CPU-culled list is sorted by it).
+pub fn nvf_entity_visible(visible: &RenderVisibleEntitiesClass, main_entity: MainEntity) -> bool {
+    visible
+        .entities_cpu_culling
+        .binary_search_by_key(&main_entity, |(_, main)| *main)
+        .is_ok()
+        || visible.entities_gpu_culling.contains_key(&main_entity)
+}
+
+/// NVForever kept shadow phases: resyncs a kept phase whose view is back with its light's
+/// visible list. The binned entities no longer visible leave their bins; the visible ones not
+/// binned are pushed to `to_queue`. Returns how many left.
+pub fn nvf_resync_kept_phase<BPI: BinnedPhaseItem>(
+    phase: &mut BinnedRenderPhase<BPI>,
+    visible: &RenderVisibleEntitiesClass,
+    to_queue: &mut Vec<(Entity, MainEntity)>,
+) -> usize {
+    let dropped = phase.nvf_retain_binned(|main_entity| nvf_entity_visible(visible, main_entity));
+    to_queue.extend(
+        visible
+            .iter_visible()
+            .filter(|(_, main_entity)| !phase.nvf_is_binned(**main_entity))
+            .map(|(entity, main_entity)| (*entity, *main_entity)),
+    );
+    dropped
+}
+
+/// NVForever kept shadow phases: bins an entity as [`BinnedRenderPhase::add`] does, but one
+/// already binned is taken out of its bin first instead of the add's panic ("Binning main
+/// entity … when it was already binned"). Returns whether it was binned already.
+pub fn nvf_add_once<BPI: BinnedPhaseItem>(
+    phase: &mut BinnedRenderPhase<BPI>,
+    batch_set_key: BPI::BatchSetKey,
+    bin_key: BPI::BinKey,
+    entities: (Entity, MainEntity),
+    input_uniform_index: InputUniformIndex,
+    phase_type: BinnedRenderPhaseType,
+) -> bool {
+    let binned = phase.nvf_is_binned(entities.1);
+    if binned {
+        phase.remove(entities.1);
+    }
+    phase.add(batch_set_key, bin_key, entities, input_uniform_index, phase_type);
+    binned
 }
 
 /// NVForever kept shadow views: what a point or spot light's shadow views are made from (its

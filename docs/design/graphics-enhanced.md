@@ -1818,11 +1818,15 @@ holds a slot for, with or without views, so a light switched on again finds its 
 pipelines and queues only what changed since: the casters its lists gained or lost.
 A kept view that missed a change (an entity in its pipelines whose mesh, material or flags
 changed while it had no view) is dropped whole and the light drawn as new, as before; an
-entity removed is only dropped from its pipelines. And a light re-extracted with the same
+entity removed is only dropped from its pipelines. A kept phase back after frames without a
+view is resynced with its light's whole visible list (the list's differences of those frames
+were never queued): entities no longer visible leave their bins, visible ones not binned are
+queued, and no entity is binned twice (queueing the differences alone did that, a renderer
+panic in Novac at 22:00 on Quality, 2026-11-19). And a light re-extracted with the same
 place, range, near plane and layers (every frame it draws: its casters' lists change) keeps
 its views instead of having them made again ("kept shadow views"). Events on the renderer
 line: `phases reused` (phases a light's new views found kept), `kept phases wiped`, `views
-kept`. Aid `NVF_LIGHT_SHADOW_KEEP_PHASES=0`; `NVF_SHADOW_VIEW_CACHE=0` makes the views anew
+kept`, `kept phases resynced`, `entities rebinned` (none expected). Aid `NVF_LIGHT_SHADOW_KEEP_PHASES=0`; `NVF_SHADOW_VIEW_CACHE=0` makes the views anew
 again too. **Not measured in game yet** [hypothesis: the switch-on's specialization and
 queueing go; the view spawn and the faces' own schedule runs stay].
 

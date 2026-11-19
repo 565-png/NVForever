@@ -150,7 +150,9 @@
 //!   specializes only what changed since (Bevy's renderer threw them away with the views and
 //!   did all of it again: a share of the 1.4 ms a switch-on cost); and a light re-extracted
 //!   with the same place, range, near plane and layers keeps its views as they are. The
-//!   renderer line's events `phases reused`, `kept phases wiped` and `views kept` count them.
+//!   renderer line's events `phases reused`, `kept phases wiped` and `views kept` count them;
+//!   `kept phases resynced` counts kept phases back in view resynced with their light's whole
+//!   visible list, `entities rebinned` entities queued while binned (none expected).
 //!   Aid `NVF_LIGHT_SHADOW_KEEP_PHASES=0` (phases go with the views, as before).
 
 use bevy::camera::primitives::{Aabb, CubemapFrusta, Frustum, Sphere, CUBE_MAP_FACES};
@@ -2195,7 +2197,7 @@ mod tests {
         assert!(s.contains("extract_lights 0.000/0.00, prepare_lights 2.000/5.00, uniform writer"), "{s}");
         // The smoke scenarios read the static cache's three events together; the kept phases'
         // follow them.
-        assert!(s.contains("static cache draws 0, static cache composites 0, static cache misses 0, phases reused 0, kept phases wiped 0, views kept 0;"), "{s}");
+        assert!(s.contains("static cache draws 0, static cache composites 0, static cache misses 0, phases reused 0, kept phases wiped 0, views kept 0, kept phases resynced 0, entities rebinned 0;"), "{s}");
         // No frames counted (nothing rendered since): no division by zero.
         assert!(renderer_summary(&default()).contains("over 0 frames: light views a frame 0.00 alive"));
         // The game's own systems, mean over the game frames and the longest.
@@ -2619,6 +2621,63 @@ mod tests {
         assert!(!predraw_busy(false, false, 0.5), "done");
         assert!(!predraw_busy(true, true, PREDRAW_CAP_SECS), "the cap");
         assert!(predraw_busy(true, true, PREDRAW_CAP_SECS - 0.01));
+    }
+
+    /// The kept shadow phases' re-bin path (vendored bevy_pbr): a lamp's kept phase is back
+    /// after frames without a view, its light's visible list made anew (every visible entity
+    /// "added"), some binned entities gone from it and a new one in it. Upstream's add panicked
+    /// ("Binning main entity … when it was already binned", Novac at 22:00, 2026-11-19).
+    #[test]
+    fn a_kept_shadow_phase_back_in_view_is_resynced_and_never_bins_twice() {
+        use bevy::pbr::{nvf_add_once, nvf_resync_kept_phase, Shadow, ShadowBatchSetKey, ShadowBinKey};
+        use bevy::render::batching::gpu_preprocessing::GpuPreprocessingMode;
+        use bevy::render::mesh::allocator::MeshSlabs;
+        use bevy::render::render_phase::{BinnedRenderPhaseType, DrawFunctionId, InputUniformIndex, ViewBinnedRenderPhases};
+        use bevy::render::render_resource::CachedRenderPipelineId;
+        use bevy::render::sync_world::MainEntity;
+        use bevy::render::view::{RenderVisibleEntitiesClass, RetainedViewEntity};
+
+        let mut world = World::new();
+        let [a, b, c, d] = std::array::from_fn(|_| MainEntity::from(world.spawn_empty().id()));
+        let lamp = MainEntity::from(world.spawn_empty().id());
+        let view = RetainedViewEntity::new(lamp, None, 0);
+        let mut phases = ViewBinnedRenderPhases::<Shadow>::default();
+        phases.prepare_for_new_frame(view, GpuPreprocessingMode::Culling);
+        let phase = phases.get_mut(&view).unwrap();
+        let key = || ShadowBatchSetKey {
+            pipeline: CachedRenderPipelineId::INVALID,
+            draw_function: DrawFunctionId(0),
+            material_bind_group_index: None,
+            slabs: MeshSlabs::default(),
+        };
+        let bin = || ShadowBinKey { asset_id: AssetId::<Mesh>::default().untyped() };
+        let add = |phase: &mut bevy::render::render_phase::BinnedRenderPhase<Shadow>, e: MainEntity, i: u32| {
+            nvf_add_once(phase, key(), bin(), (Entity::PLACEHOLDER, e), InputUniformIndex(i), BinnedRenderPhaseType::MultidrawableMesh)
+        };
+        for (i, e) in [a, b, c].into_iter().enumerate() {
+            assert!(!add(phase, e, i as u32), "binned once");
+        }
+
+        // Back in view: b and c still visible, a gone, d new; the list was made anew.
+        let mut visible = RenderVisibleEntitiesClass::default();
+        let mut now: Vec<(Entity, MainEntity)> = [b, c, d].iter().map(|e| (Entity::PLACEHOLDER, *e)).collect();
+        now.sort_unstable_by_key(|(_, e)| *e);
+        visible.update_cpu_culled_entities(&now);
+        assert_eq!(visible.added_entities().len(), 3, "every visible entity reads as added");
+
+        let mut to_queue = Vec::new();
+        assert_eq!(nvf_resync_kept_phase(phase, &visible, &mut to_queue), 1, "a left its bin");
+        assert_eq!(to_queue, vec![(Entity::PLACEHOLDER, d)], "only d is queued");
+        assert!(!add(phase, d, 3));
+        assert!(!phase.nvf_is_binned(a));
+        assert!([b, c, d].iter().all(|e| phase.nvf_is_binned(*e)));
+
+        // The guard: what the panic was (b queued while binned) is a re-bin.
+        assert!(add(phase, b, 4), "b was binned already");
+        assert!(phase.nvf_is_binned(b));
+        assert_eq!(phase.nvf_retain_binned(|_| true), 0);
+        assert_eq!(phase.nvf_retain_binned(|e| e != c), 1);
+        assert!([b, d].iter().all(|e| phase.nvf_is_binned(*e)) && !phase.nvf_is_binned(c));
     }
 
     #[test]

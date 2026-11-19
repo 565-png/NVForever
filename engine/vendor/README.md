@@ -336,12 +336,19 @@ views`, in `src/render/light.rs` and `src/material.rs`:
   `DirtySpecializations`: an entity in its pipelines that changed (`changed_renderables`:
   its mesh, material or flags) makes the kept view stale, and its phase, key, pipelines and
   pending queue are dropped (counted as `kept phases wiped`), so the light is drawn as a new
-  one; an entity removed is dropped from its pipelines only (the light's casters' list drops
-  it, and so its bin, when it draws again). Bins of an entity whose casters' list membership
-  changed while the light had no views are fixed by the list's own difference when the
-  light is extracted again (`collect_visible_cpu_culled_entities` keeps the old list while
-  the light's maps are off). New events in the light view counts: `phases reused` (phases a
-  light's new views found kept) and `kept phases wiped`. The game's
+  one; an entity removed is dropped from its pipelines only. A kept view back after a frame
+  without a view is `resumed` (`specialize_shadows` fills `NvfParkedShadowViews::resumed`):
+  its light's visible list went on changing (or was made anew, a hidden light's, every
+  visible entity "added") while no `queue_shadows` saw the differences, so instead of them
+  every visible entity is specialized if it is not, and `queue_shadows` resyncs the phase
+  (`nvf_resync_kept_phase`): binned entities no longer visible leave, visible ones not
+  binned are queued. Every add goes through `nvf_add_once`, which takes an entity already
+  binned out first: queueing from the differences alone binned entities twice, bevy_render's
+  panic "Binning main entity … when it was already binned" (Novac at 22:00, ALC Quality,
+  2026-11-19; unit test `a_kept_shadow_phase_back_in_view_is_resynced_and_never_bins_twice`).
+  New events in the light view counts: `phases reused` (phases a light's new views found
+  kept), `kept phases wiped`, `kept phases resynced` (resumed views) and `entities
+  rebinned` (the guard's catches; none expected). The game's
   `NVF_LIGHT_SHADOW_KEEP_PHASES=0` (read once, `nvf_keep_shadow_phases_on`) leaves the set
   empty: upstream's behaviour.
 - **Kept shadow views.** A point or spot light whose `ExtractedPointLight` changed (every
@@ -657,6 +664,12 @@ backends). The loader runs when DLSS is chosen, when the four DLSS files are in 
 folder, or with `NVF_DLSS_PRELOAD=1`; `NVF_DLSS_PRELOAD=0` leaves out the files case
 (`engine/nvforever/src/upscaler.rs` `UpscalerStartup`, docs/design/dlss-upscaling.md, "Loaded
 whenever the files are there"). Every other run takes upstream's path. Drop it if wgpu-hal gains a way to pass the entry in.
+
+Kept shadow phases (2026-11-19, the bevy_pbr "kept shadow phases" above), in
+`src/render_phase/mod.rs`, marked `NVForever kept shadow phases`: `BinnedRenderPhase` gains
+`nvf_is_binned` (whether an entity is binned) and `nvf_retain_binned` (removes the binned
+entities a test refuses, as `remove` does), so a kept phase can be resynced with its light's
+visible list and an entity never binned twice.
 
 ## wgpu-hal 30.0.1 (MIT OR Apache-2.0, the gfx-rs developers)
 
