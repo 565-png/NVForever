@@ -346,6 +346,9 @@ pub const MENU_SECS: f64 = 20.0;
 /// Seconds in which the line a `say_info` names must be begun, the player keeping its
 /// speaker company.
 pub const LINE_SECS: f64 = 120.0;
+/// Within this of the speaker the player counts as beside it for [`LINE_SECS`], game
+/// units [design].
+pub const LINE_NEAR: f32 = 500.0;
 /// Seconds the speaker has stood still, silent, before the player talks to it.
 pub const STILL_SECS: f64 = 6.0;
 /// The weapon and ammo the pilot fights with (Editor IDs of FalloutNV.esm's records).
@@ -712,6 +715,8 @@ struct Pilot {
     across: Option<(FormId, usize)>,
     /// How often this step's walk into a trigger ended outside it and went on.
     trigger_rewalks: u8,
+    /// When this step's player first stood beside the speaker a `say_info` waits on.
+    near_since: Option<f64>,
     /// Since when the player was put on a long way (the fast-travel stand-in): its
     /// teammates follow a moment later, as fast travel brings them.
     followers_due: Option<f64>,
@@ -810,6 +815,7 @@ impl Pilot {
             explored: (usize::MAX, Vec::new()),
             across: None,
             trigger_rewalks: 0,
+            near_since: None,
             followers_due: None,
             chain_plugins: Vec::new(),
             chain_raw: Json::Null,
@@ -926,6 +932,7 @@ impl Pilot {
         (self.waited, self.waiting, self.woke) = (0, None, 0);
         self.across = None;
         self.trigger_rewalks = 0;
+        self.near_since = None;
     }
 
     /// A step, or a fallback, done as the headless run does it: counted.
@@ -2636,7 +2643,7 @@ fn leave_talk(p: &mut Pilot, h: &mut Hands, go_along: bool) -> bool {
             Some(c) => match c
                 .choices
                 .iter()
-                .position(|x| x.goodbye && !x.darkened && g.data.infos.get(&x.info).is_some_and(|d| d.begin.is_none() && d.end.is_none()))
+                .position(|x| x.goodbye && !x.darkened && !choice_to_avoid(g, x) && g.data.infos.get(&x.info).is_some_and(|d| d.begin.is_none() && d.end.is_none()))
                 .or_else(|| c.choices.iter().position(|x| x.goodbye && !choice_to_avoid(g, x)))
                 .or_else(|| c.choices.iter().position(|x| x.goodbye))
             {
@@ -3278,7 +3285,18 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                 p.phase = Phase::Begin;
                 return Some(None);
             }
-            if p.now - p.step_from > LINE_SECS {
+            // The wait for the line counts from when the player stood beside the speaker,
+            // not from the step's start: a long walk, a fight or a stuck stretch on the way
+            // used the 120 s up, and Pearl's line came at once once the player was beside
+            // her (the skipped-lines audit, 2026-11-19 [observed]). A step that never gets
+            // there gives up at three times the wait.
+            let world = h.world;
+            let feet = h.feet();
+            let beside = h.game(|g| runner::resolve(g, speaker).ok().and_then(|r| where_is(g, r)).zip(where_is(g, FormId::PLAYER_REF)).is_some_and(|((cs, at), (cp, _))| same_space(world, cs, cp) && hdist(at, feet) < LINE_NEAR)) == Some(true);
+            if beside && p.near_since.is_none() {
+                p.near_since = Some(p.now);
+            }
+            if p.near_since.is_some_and(|t| p.now - t > LINE_SECS) || p.now - p.step_from > LINE_SECS * 3.0 {
                 p.finding("line_not_said", format!("{speaker} did not say {info} in {LINE_SECS:.0} s with the player beside it: said as the headless run says it"));
                 p.headless("say_info (a line not said)");
                 let mut applier = std::mem::take(&mut p.applier);
@@ -4482,7 +4500,19 @@ fn drive(
             };
             let feet = h.feet();
             let world = h.world;
-            let given_up = p.given_up.clone();
+            let mut given_up = p.given_up.clone();
+            // Not one the chain still talks to or hears a line from: a staged brawl's partner
+            // throws the first punch, and killing her stalled the quest (Somah in Mothership
+            // Zeta's cells: Not of This World needs her alive for DLC05MZ1Fight 6 [observed]).
+            // A player does not kill someone the story still needs.
+            let later: Vec<String> = p.actions.iter().skip(p.i).filter_map(|a| match a {
+                Action::Talk { actor, .. } => Some(actor.clone()),
+                Action::SayInfo { speaker: Some(s), .. } => Some(s.clone()),
+                _ => None,
+            }).collect();
+            if let Some(needed) = h.game(|g| later.iter().filter_map(|n| runner::resolve(g, n).ok()).collect::<Vec<FormId>>()) {
+                given_up.extend(needed);
+            }
             if let Some((who, cell, pos)) = h.game(|g| threat(g, friend, feet, &given_up)).flatten() {
                 let space = cell.and_then(|c| crate::nav::space_of_cell(world, c.0)).unwrap_or(space_of(h.location));
                 arm(p, &mut h);
