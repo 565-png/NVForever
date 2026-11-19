@@ -207,12 +207,15 @@ fn material_table(data: &GameData, model: &str) -> HashMap<String, [f32; 9]> {
 
 /// A shape's material drawn with these values: the specular tint, the emitted light
 /// (colour times mult), the roughness of the glossiness, the alpha [hypothesis: the
-/// spawn's own display tuning of the emitted light is not redone here]. On a material
-/// shaded from an authored set (#2981) the glossiness goes to its legacy look only, so an
-/// edit of any one value leaves the set's roughness (and reflectance) as they are, and the
-/// scripted glossiness applies if the set comes off (`nvf_assets::authored::set_legacy_roughness`).
-fn set_material(m: &mut NifMaterial, v: &[f32; 9]) {
-    m.base.specular_tint = Color::linear_rgb(v[0], v[1], v[2]);
+/// spawn's own display tuning of the emitted light is not redone here]. `changed` is the
+/// index of the value the script set (the others are written back as they were). On a
+/// material shaded from an authored set (#2981) the glossiness and the specular colour go to
+/// its legacy look, so an edit of another value leaves the set's roughness and highlight as
+/// they are, and the scripted values apply if the set comes off
+/// (`nvf_assets::authored::set_legacy_roughness`, `set_legacy_specular_tint`); a specular
+/// colour the script itself set is drawn at once.
+fn set_material(m: &mut NifMaterial, v: &[f32; 9], changed: usize) {
+    nvf_assets::authored::set_legacy_specular_tint(m, Color::linear_rgb(v[0], v[1], v[2]), changed < 3);
     m.base.emissive = LinearRgba::rgb(v[3] * v[8], v[4] * v[8], v[5] * v[8]);
     nvf_assets::authored::set_legacy_roughness(m, nvf_assets::nif_spawn::gloss_roughness(v[6]));
     m.base.base_color.set_alpha(v[7].clamp(0.0, 1.0));
@@ -664,13 +667,13 @@ fn mirror_game(
                 match owned.get(&e).filter(|h| *h == source).cloned() {
                     Some(h) => {
                         if let Some(mut m) = assets.get_mut(&h) {
-                            set_material(&mut m, &vals);
+                            set_material(&mut m, &vals, id);
                         }
                         commands.entity(e).insert(MeshMaterial3d(h));
                     }
                     None => {
                         let Some(mut m) = assets.get(source).cloned() else { continue };
-                        set_material(&mut m, &vals);
+                        set_material(&mut m, &vals, id);
                         let h = assets.add(m);
                         owned.insert(e, h.clone());
                         commands.entity(e).insert(MeshMaterial3d(h));
@@ -880,13 +883,13 @@ mod tests {
     #[test]
     fn a_material_edit_keeps_an_authored_roughness_and_restores_the_scripted_gloss() {
         use nvf_assets::authored::{restore, LegacyLook, AUTHORED_MARK};
-        let look = LegacyLook { normal: None, specular: None, roughness: 0.6, reflectance: 2.0, metallic: 0.0, tangents: true };
+        let look = LegacyLook { normal: None, specular: None, roughness: 0.6, reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE };
         let mut m = nvf_assets::nif_material(StandardMaterial { perceptual_roughness: 0.8, reflectance: 0.5, ..default() });
         m.extension.emissive_rule.w = AUTHORED_MARK;
         m.extension.legacy = Some(look.clone());
         // Specular, emissive, glossiness 50, alpha 0.5 (the edit), emissive mult.
         let v = [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 50.0, 0.5, 1.0];
-        set_material(&mut m, &v);
+        set_material(&mut m, &v, 7);
         assert_eq!((m.base.perceptual_roughness, m.base.reflectance, m.base.base_color.alpha()), (0.8, 0.5, 0.5));
         let scripted = nvf_assets::nif_spawn::gloss_roughness(50.0);
         let kept = m.extension.legacy.clone().unwrap();
@@ -896,12 +899,48 @@ mod tests {
         // A legacy material: drawn and kept alike.
         let mut l = nvf_assets::nif_material(StandardMaterial::default());
         l.extension.legacy = Some(look);
-        set_material(&mut l, &v);
+        set_material(&mut l, &v, 7);
         assert_eq!((l.base.perceptual_roughness, l.extension.legacy.unwrap().roughness), (scripted, scripted));
         // No legacy look (no set possible): as before.
         let mut plain = nvf_assets::nif_material(StandardMaterial::default());
-        set_material(&mut plain, &v);
+        set_material(&mut plain, &v, 7);
         assert_eq!(plain.base.perceptual_roughness, scripted);
+    }
+
+    /// #2981: Bevy draws `specular_tint x reflectance`, and the mirror writes the stored
+    /// specular colour back on every edit. An alpha-only edit on an authored shape whose stored
+    /// colour is black keeps the set's highlight (white tint) and leaves the black colour for
+    /// the legacy look; a colour the script sets itself is drawn; a legacy shape takes the
+    /// stored colour as before.
+    #[test]
+    fn an_alpha_edit_keeps_an_authored_highlight_whatever_the_stored_specular_colour() {
+        use nvf_assets::authored::{restore, LegacyLook, AUTHORED_MARK};
+        let look = LegacyLook { normal: None, specular: None, roughness: 0.6, reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE };
+        let black = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 0.5, 1.0];
+        let mut m = nvf_assets::nif_material(StandardMaterial { reflectance: 0.5, ..default() });
+        m.extension.emissive_rule.w = AUTHORED_MARK;
+        m.extension.legacy = Some(look.clone());
+        set_material(&mut m, &black, 7);
+        assert_eq!((m.base.specular_tint, m.base.reflectance), (Color::WHITE, 0.5), "the set's highlight stays");
+        assert_eq!(m.base.base_color.alpha(), 0.5);
+        let kept = m.extension.legacy.clone().unwrap();
+        assert_eq!(kept.specular_tint, Color::linear_rgb(0.0, 0.0, 0.0));
+        let mut restored = m.clone();
+        restore(&mut restored, &kept);
+        assert_eq!(restored.base.specular_tint, Color::linear_rgb(0.0, 0.0, 0.0), "the scripted colour applies once the set is off");
+        // The script sets the colour itself: drawn at once, set or not.
+        let red = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 0.5, 1.0];
+        set_material(&mut m, &red, 0);
+        assert_eq!(m.base.specular_tint, Color::linear_rgb(1.0, 0.0, 0.0));
+        // A legacy shape, and one with no legacy look: the stored colour, as before.
+        let mut l = nvf_assets::nif_material(StandardMaterial::default());
+        l.extension.legacy = Some(look);
+        set_material(&mut l, &black, 7);
+        let mut plain = nvf_assets::nif_material(StandardMaterial::default());
+        set_material(&mut plain, &black, 7);
+        for x in [&l, &plain] {
+            assert_eq!(x.base.specular_tint, Color::linear_rgb(0.0, 0.0, 0.0));
+        }
     }
 
     #[test]

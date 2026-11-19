@@ -150,6 +150,9 @@ pub struct LegacyLook {
     /// The drawn mesh has tangents, so a set's `_n` can be applied to it even where the game
     /// gives no normal map.
     pub tangents: bool,
+    /// The specular tint (Bevy multiplies the reflectance by it): white as built, a script's
+    /// specular colour once one is set ([`set_legacy_specular_tint`]).
+    pub specular_tint: Color,
 }
 
 /// Whether a shape may take an authored set, by what is known when its material is made:
@@ -293,6 +296,9 @@ pub fn apply(material: &mut crate::NifMaterial, set: &AuthoredSet, legacy: &Lega
     b.perceptual_roughness = set.scalars.roughness_scale_or_default();
     b.reflectance = set.scalars.reflectance_or_default();
     b.metallic = authored_metallic();
+    // A set's highlight strength is its reflectance alone, never scaled by a stored or
+    // scripted specular colour of the game's (#2981).
+    b.specular_tint = Color::WHITE;
     let normal = set.normal.clone().filter(|_| legacy.tangents);
     if normal.is_none() && set.normal.is_some() {
         Stats::add(&stats().normal_without_tangents);
@@ -314,6 +320,7 @@ pub fn restore(material: &mut crate::NifMaterial, legacy: &LegacyLook) {
     b.perceptual_roughness = legacy.roughness;
     b.reflectance = legacy.reflectance;
     b.metallic = legacy.metallic;
+    b.specular_tint = legacy.specular_tint;
     material.extension.emissive_rule.w = 0.0;
 }
 
@@ -328,6 +335,20 @@ pub fn set_legacy_roughness(material: &mut crate::NifMaterial, roughness: f32) {
     }
     if !is_authored(material) {
         material.base.perceptual_roughness = roughness;
+    }
+}
+
+/// A script's specular colour (nvforever `nif_mirror.rs`): the legacy look takes it, so it is
+/// the one restored later; the drawn tint takes it when no set is on the material, or when
+/// the colour is what the script changed (`changed`). The mirror writes every value back
+/// after any one change, so an edit of another property leaves a set's highlight (Bevy draws
+/// `specular_tint x reflectance`) as it is [design].
+pub fn set_legacy_specular_tint(material: &mut crate::NifMaterial, tint: Color, changed: bool) {
+    if let Some(legacy) = material.extension.legacy.as_mut() {
+        legacy.specular_tint = tint;
+    }
+    if changed || !is_authored(material) {
+        material.base.specular_tint = tint;
     }
 }
 
