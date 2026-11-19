@@ -18,6 +18,7 @@ use crate::texture::TextureUsage;
 use bevy::prelude::*;
 use fnv_pbr::{Found, Member, PbrIndex, Scalars, SetState};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The run's state of the Authored materials setting (module notes).
@@ -111,6 +112,7 @@ pub(crate) fn find(data: &GameData, enabled: bool, key: &str, memo: &Memo, mut l
     let found = authored_found(data.pbr_index(), key)?;
     let orm_path = found.path(Member::Orm)?;
     let Some(orm) = load(&orm_path, TextureUsage::Linear) else {
+        Stats::add(&stats().orm_failed);
         memo.warn_once(&orm_path, || format!("authored materials: {orm_path} could not be loaded; surfaces drawn with {key} keep the game's material"));
         return None;
     };
@@ -199,8 +201,10 @@ pub fn metallic_debug() -> bool {
 pub const VIEW_ENV: &str = "NVF_PBR_VIEW";
 
 /// A debug view of the material inputs of NIF surfaces (a calibration aid for authored sets,
-/// off by default): the lit colour of every NIF surface is replaced by one input, read just
-/// after the standard material's sampling (nif_material.wesl, "NVF_PBR_VIEW"). Picked once at
+/// off by default): the lit colour of forward-drawn lit NIF surfaces is replaced by one
+/// input, read just after the standard material's sampling (nif_material.wesl,
+/// "NVF_PBR_VIEW"). Refracting shapes return before it; additive draws add it by their alpha
+/// and multiplied ones stay neutral, so effects fade out of the view. Picked once at
 /// the start by `NVF_PBR_VIEW` = `roughness` | `metallic` | `occlusion` | `normal` |
 /// `authored` [design]. Not a `NVF_PLAY_TEST_*` aid: it does not make a run unattended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -291,6 +295,7 @@ pub fn apply(material: &mut crate::NifMaterial, set: &AuthoredSet, legacy: &Lega
     b.metallic = authored_metallic();
     let normal = set.normal.clone().filter(|_| legacy.tangents);
     if normal.is_none() && set.normal.is_some() {
+        Stats::add(&stats().normal_without_tangents);
         no_tangents_once(&set.stem);
     }
     let applied = normal.is_some();
@@ -340,6 +345,7 @@ pub fn make_legacy(material: &mut crate::NifMaterial) -> bool {
     if is_authored(material) {
         restore(material, &legacy);
     }
+    Stats::add(&stats().made_legacy);
     true
 }
 
@@ -390,14 +396,101 @@ pub fn retexture(
     match key_eligible(&key).then(|| source.authored(&key)).flatten() {
         Some(set) => {
             apply(material, &set, &legacy);
+            Stats::add(&stats().swaps_authored);
             Retextured::Authored
         }
         None => {
             if is_authored(material) {
                 restore(material, &legacy);
             }
+            Stats::add(&stats().swaps_legacy);
             Retextured::Legacy
         }
+    }
+}
+
+/// What authored sets did this run, for the exit summary ([`report`]): relaxed atomics, a
+/// set of stems only where a set is applied.
+#[derive(Default)]
+pub struct Stats {
+    /// Materials built with a set (`nif_spawn::shape_material`).
+    pub built: AtomicU64,
+    /// Shapes the run's setting would serve that may take no set (unlit, refracting, hair,
+    /// skin, additive or multiplied, no UVs, particles, landscape LOD).
+    pub not_eligible: AtomicU64,
+    /// Shapes whose diffuse is under `textures\pipboy3000\` or `textures\interface\`.
+    pub excluded_texture: AtomicU64,
+    /// Shapes whose set's `_orm` did not load (they stay the game's).
+    pub orm_failed: AtomicU64,
+    /// Sets put on a material without their `_n`, the drawn mesh having no tangents.
+    pub normal_without_tangents: AtomicU64,
+    /// Materials made the game's own after they were built (a role found later).
+    pub made_legacy: AtomicU64,
+    /// Diffuse swaps through [`retexture`] that put a set on, and that left or put back the
+    /// legacy look.
+    pub swaps_authored: AtomicU64,
+    pub swaps_legacy: AtomicU64,
+    stems: Mutex<HashSet<String>>,
+}
+
+impl Stats {
+    fn add(counter: &AtomicU64) {
+        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn get(counter: &AtomicU64) -> u64 {
+        counter.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The summary line (without its prefix).
+    pub fn line(&self) -> String {
+        format!(
+            "{} materials built with a set ({} distinct sets); skipped: {} shapes not eligible, {} on excluded textures, {} whose _orm did not load, {} sets applied without their _n (no tangents), {} made legacy after their role was known; {} swaps through retexture ({} to a set, {} to the legacy look)",
+            Self::get(&self.built),
+            self.stems.lock().expect("authored stats").len(),
+            Self::get(&self.not_eligible),
+            Self::get(&self.excluded_texture),
+            Self::get(&self.orm_failed),
+            Self::get(&self.normal_without_tangents),
+            Self::get(&self.made_legacy),
+            Self::get(&self.swaps_authored) + Self::get(&self.swaps_legacy),
+            Self::get(&self.swaps_authored),
+            Self::get(&self.swaps_legacy),
+        )
+    }
+}
+
+/// The run's counts ([`Stats`]).
+pub fn stats() -> &'static Stats {
+    static STATS: OnceLock<Stats> = OnceLock::new();
+    STATS.get_or_init(Stats::default)
+}
+
+/// A shape the setting would serve skipped by [`shape_eligible`] (`texture`: by
+/// [`key_eligible`] instead).
+pub(crate) fn note_skipped(texture: bool) {
+    Stats::add(if texture { &stats().excluded_texture } else { &stats().not_eligible });
+}
+
+/// A material built with `set`.
+pub(crate) fn note_built(set: &AuthoredSet) {
+    Stats::add(&stats().built);
+    let mut stems = stats().stems.lock().expect("authored stats");
+    if !stems.contains(&set.stem) {
+        stems.insert(set.stem.clone());
+    }
+}
+
+/// The exit summary (Last, on the app's exit, as the other systems' summary lines): one line,
+/// `authored materials summary: ...`, or that the setting was off.
+pub fn report(mut exit: MessageReader<AppExit>) {
+    if exit.read().last().is_none() {
+        return;
+    }
+    if enabled() {
+        info!("authored materials summary: {}", stats().line());
+    } else {
+        info!("authored materials summary: off (setting)");
     }
 }
 

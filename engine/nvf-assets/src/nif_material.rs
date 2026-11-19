@@ -1037,6 +1037,7 @@ impl Plugin for NifMaterialPlugin {
         // The authored materials' debug switches are read once, at the start.
         crate::authored::view();
         crate::authored::metallic_debug();
+        app.add_systems(Last, crate::authored::report);
         crate::bc5_field::install(app);
         crate::pbr_field::install(app);
     }

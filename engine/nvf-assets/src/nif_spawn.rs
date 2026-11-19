@@ -939,8 +939,17 @@ fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl Text
     let alpha_mode = if cut.is_some() { AlphaMode::Blend } else { shape_alpha_mode(props) };
     // An authored set (#2981, crate::authored): looked up by the resolved diffuse when the
     // shape may take one; `None` whenever the run's setting is off.
-    let eligible = textures.authored_on() && crate::authored::shape_eligible(props.unlit, props.refraction.is_some(), props.hair, props.skin, alpha_mode, has_uv, props.no_authored);
-    let authored = diffuse.filter(|_| eligible).map(|t| textures.resolve(t)).filter(|k| crate::authored::key_eligible(k)).and_then(|k| textures.authored(&k));
+    let on = textures.authored_on();
+    let eligible = on && crate::authored::shape_eligible(props.unlit, props.refraction.is_some(), props.hair, props.skin, alpha_mode, has_uv, props.no_authored);
+    if on && !eligible {
+        crate::authored::note_skipped(false);
+    }
+    let key = diffuse.filter(|_| eligible).map(|t| textures.resolve(t));
+    let key_ok = key.as_deref().is_some_and(crate::authored::key_eligible);
+    if key.is_some() && !key_ok {
+        crate::authored::note_skipped(true);
+    }
+    let authored = key.filter(|_| key_ok).and_then(|k| textures.authored(&k));
     // The final normal is chosen before the tangents are settled: a set's `_n` on a shape
     // without a normal map needs tangents on the drawn mesh, made here; a copy of a drawn
     // mesh (`keep_tangents`) gains none, so its `_n` applies only if it has them.
@@ -1024,6 +1033,7 @@ fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl Text
         };
         if let Some(set) = &authored {
             crate::authored::apply(&mut material, set, &legacy);
+            crate::authored::note_built(set);
         }
         material.extension.legacy = Some(legacy);
     }

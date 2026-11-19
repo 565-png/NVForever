@@ -277,3 +277,20 @@ fn landscape_lod_models_are_recognised_whatever_the_spelling() {
     assert!(crate::model::is_lod_model("meshes/landscape/lod/wastelandnv/blocks/wastelandnv.level4.x0.y0.nif"));
     assert!(!crate::model::is_lod_model("meshes/architecture/goodsprings/house01.nif"));
 }
+
+/// The exit summary's counts read back in its line (a run's own counters are global; this
+/// one is fresh).
+#[test]
+fn the_summary_line_names_every_count() {
+    let s = Stats::default();
+    for (c, n) in [(&s.built, 3), (&s.not_eligible, 5), (&s.excluded_texture, 1), (&s.orm_failed, 2), (&s.normal_without_tangents, 4), (&s.made_legacy, 6), (&s.swaps_authored, 7), (&s.swaps_legacy, 8)] {
+        for _ in 0..n {
+            Stats::add(c);
+        }
+    }
+    s.stems.lock().unwrap().extend(["a".to_string(), "b".to_string()]);
+    assert_eq!(
+        s.line(),
+        "3 materials built with a set (2 distinct sets); skipped: 5 shapes not eligible, 1 on excluded textures, 2 whose _orm did not load, 4 sets applied without their _n (no tangents), 6 made legacy after their role was known; 15 swaps through retexture (7 to a set, 8 to the legacy look)"
+    );
+}
