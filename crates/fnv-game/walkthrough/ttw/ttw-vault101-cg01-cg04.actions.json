@@ -35,6 +35,8 @@
     {"op": "wait_quest", "quest": "CG00", "field": "done.42", "value": true, "max_frames": 7200, "label": "CG00 42"},
     {"op": "wait_quest", "quest": "CG00", "field": "done.60", "value": true, "max_frames": 7200, "label": "CG00 60"},
     {"op": "wait_menu", "menu": 1036, "max_frames": 600, "label": "race menu at 60"},
+    {"op": "note", "text": "The race menu stays up a while, as a player's choosing does: CG00SCRIPT's Begin MenuMode sets CG00 61 while it is up at stage 60, and its GameMode then sets 62 (TaleOfTwoWastelands.esm SCPT 0x0003A17C [observed: decompiled]). A quest script runs only every few seconds, so a menu closed at once left 61 and 62 unset in the game [observed: pilot round 5, 2026-11-19]."},
+    {"op": "wait_frames", "frames": 600},
     {"op": "close_menus"},
     {"op": "wait_quest", "quest": "CG00", "field": "done.61", "value": true, "max_frames": 7200, "label": "CG00 61"},
     {"op": "wait_quest", "quest": "CG00", "field": "done.62", "value": true, "max_frames": 7200, "label": "CG00 62"},
