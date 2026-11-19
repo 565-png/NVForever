@@ -2338,7 +2338,8 @@ name = "tree-distance-write"
 source = "[design, #3016] docs/design/layer3.md §2.2 (engine/nvforever/src/treelod.rs, settings.rs): the first half of the Tree distance round trip: the slider set to 25% in play at Goodsprings noon is kept in NVForever.ini (tree-distance-read starts in the same home)"
 areas = ["renderer", "settings"]
 paths = ["engine/nvforever/src/treelod.rs", "engine/nvforever/src/draw_distance.rs", "engine/nvforever/src/settings.rs"]
-env = { NVFOREVER_HOME = "tree-distance-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:13", NVF_PLAY_TEST_SETTINGS = "11:tree-distance=0.25" }
+note = "The home's INI may hold 25% from an earlier run: set the row to 100% first, then to 25% (as ui-scale-write does)."
+env = { NVFOREVER_HOME = "tree-distance-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:13", NVF_PLAY_TEST_SETTINGS = "10.5:tree-distance=1,11:tree-distance=0.25" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
 run_seconds = 16
 order = [[
