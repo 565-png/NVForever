@@ -413,7 +413,7 @@ fn make_scene(world: &mut World, data: &GameData, on: bool) -> Result<Scene, Str
             }
             info!("pbr field: setting off, no index built and no textures\\pbr\\ file loaded by the material path (the fixture's own check reads the generated files first)");
         }
-        let height_note = check_height_panels(m[HEIGHT_PANEL], m[CONTROL_PANEL], on, &size)?;
+        let height_note = check_height_panels(m[HEIGHT_PANEL], m[CONTROL_PANEL], on, size)?;
         info!("pbr field: height panels (height, height-control) tilted {TILT_DEGREES} degrees about Y: {height_note}");
         Ok(prepared)
     })?;
