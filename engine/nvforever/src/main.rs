@@ -91,6 +91,7 @@ mod blit_warm;
 mod handoff;
 mod full_detail;
 mod furniture;
+mod game_digest;
 mod graphics;
 mod grass;
 mod grass_fire_fx;
@@ -1844,6 +1845,8 @@ fn main() -> AppExit {
     // The full-detail scenery ring (#2701), off unless the settings or --graphics-only turn
     // it on: draw-only cells beyond the loaded ones (full_detail.rs).
     .add_plugins(full_detail::FullDetailPlugin)
+    // Test aid NVF_PLAY_TEST_GAME_DIGEST: the game's state at given times (game_digest.rs).
+    .add_plugins(game_digest::GameDigestPlugin)
     .add_systems(Update, (doors::script_drawn, doors::register, doors::open_all.run_if(move || open_doors), doors::pose).chain().after(nvf_play::doors::DoorSystems).after(advance_animations))
     .init_resource::<locomotion::ActorAnimCost>()
     .add_systems(PreUpdate, actors::take_background_work)

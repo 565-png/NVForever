@@ -1339,8 +1339,8 @@ source = "[design, #2701] docs/design/graphics-enhanced.md §3.17 Draw-only: the
 note = "Keep env and args the same as full-detail-ring-9x9's but for the --graphics-only keys. GOD and GOTO: two cells east at 8 s, a short walk, back two cells at 16 s. The scripts' exit line has no OnLoad count; its quests running stand for the scripts"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/full_detail.rs", "engine/nvforever/src/destroyed.rs", "engine/nvf-play/src/moved.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GOTO = "8:-59700:1400:9000,16:-67900:1400:8500", NVF_PLAY_TEST_MOVE = "10:1:0,13:0:0" }
-args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12", "--graphics-only", "no-glow"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GOTO = "8:-59700:1400:9000,16:-67900:1400:8500", NVF_PLAY_TEST_MOVE = "10:1:0,13:0:0", NVF_PLAY_TEST_GAME_DIGEST = "6,12,20,25" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12", "--npc-packages", "all", "--graphics-only", "no-glow"]
 run_seconds = 26
 expect = [
   { re = 'streaming summary: (?P<n>\d+) cells loaded', range = [0, 0], label = "the cells the game loaded", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
@@ -1349,6 +1349,12 @@ expect = [
   { re = 'script: .* entered trigger ', count = 0, label = "the triggers entered", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
   { re = 'scripts: \d+ frames, .*; (?P<n>\d+) quests running;', range = [0, 0], label = "the quests running at the end", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
 ]
+order = [[
+  { text = "game digest t=6: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 6 s (cells loaded, residents in high process, triggers, zones, OnLoad blocks so far)", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 6 s
+  { text = "game digest t=12: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 12 s (cells loaded, residents in high process, triggers, zones, OnLoad blocks so far)", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 12 s
+  { text = "game digest t=20: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 20 s (cells loaded, residents in high process, triggers, zones, OnLoad blocks so far)", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 20 s
+  { text = "game digest t=25: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 25 s (cells loaded, residents in high process, triggers, zones, OnLoad blocks so far)", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 25 s
+]]
 forbid = [
   { re = 'full detail', label = "nothing of the ring with the row off" },
   { text = "Caught rendering error", label = "a rendering (validation) error on the ring-off walk" },
@@ -1361,8 +1367,8 @@ source = "[design, #2701] docs/design/graphics-enhanced.md §3.17 Draw-only: ful
 note = "Keep env and args the same as full-detail-ring-off's but for the --graphics-only keys; take the numbers from that scenario's"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/full_detail.rs", "engine/nvforever/src/destroyed.rs", "engine/nvf-play/src/moved.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GOTO = "8:-59700:1400:9000,16:-67900:1400:8500", NVF_PLAY_TEST_MOVE = "10:1:0,13:0:0" }
-args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12", "--graphics-only", "no-glow,full-detail-9x9"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_GOTO = "8:-59700:1400:9000,16:-67900:1400:8500", NVF_PLAY_TEST_MOVE = "10:1:0,13:0:0", NVF_PLAY_TEST_GAME_DIGEST = "6,12,20,25" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67900,1400,8500", "--hour", "12", "--npc-packages", "all", "--graphics-only", "no-glow,full-detail-9x9"]
 run_seconds = 26
 expect = [
   { re = 'full detail summary: 9x9, (?P<n>\d+) cells', range = [1, 1000], label = "the ring drew cells on the way" },
@@ -1372,6 +1378,12 @@ expect = [
   { re = 'script: .* entered trigger ', count = 0, label = "the same triggers entered", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
   { re = 'scripts: \d+ frames, .*; (?P<n>\d+) quests running;', range = [0, 0], label = "the same quests running at the end", known_failing = "numbers to fill from a first run" },  # FILL: from a ring-off run
 ]
+order = [[
+  { text = "game digest t=6: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 6 s, the same as with the ring off", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 6 s
+  { text = "game digest t=12: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 12 s, the same as with the ring off", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 12 s
+  { text = "game digest t=20: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 20 s, the same as with the ring off", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 20 s
+  { text = "game digest t=25: cells FILL residents-high FILL triggers FILL zones FILL onload FILL", label = "the game's state at 25 s, the same as with the ring off", known_failing = "digests to fill from a ring-off run" },  # FILL: the ring-off run's line at 25 s
+]]
 forbid = [
   { text = "Caught rendering error", label = "a rendering (validation) error on the 9 x 9 walk" },
   { text = "panicked", label = "a panic on the 9 x 9 walk" },
