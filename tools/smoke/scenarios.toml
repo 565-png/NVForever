@@ -392,6 +392,23 @@ forbid = [
 ]
 
 [[scenario]]
+name = "water-effects-submerged-fsr"
+source = "[design] docs/design/graphics-enhanced.md §3.8.2: under FSR the submerged caustics run at the render size on the HDR picture before the upscaler (engine/nvforever/src/underwater_caustics.rs caustics_before_upscaler), say so once, and their multiply pipeline builds and draws without a shader, pipeline or rendering error. Same camera as water-effects-submerged."
+areas = ["renderer", "graphics", "water"]
+paths = ["engine/nvforever/src/underwater*", "engine/nvforever/src/caustics.wesl", "engine/nvforever/src/upscaler/prep.rs", "engine/nvforever/src/fsr.rs"]
+env = { NVF_PLAY_TEST_PIPELINE_LOG = "1", WGPU_BACKEND = "vulkan" }
+args = ["--explore", "--pos=57760,37536,2540", "--heading", "90", "--pitch=-20", "--hour", "12", "--size", "1280x720", "--fsr", "quality", "--graphics-only", "water-effects"]
+run_seconds = 24
+expect = ["underwater: the camera is under water", "underwater caustics: active outdoors below the water surface", "underwater caustics: on the HDR picture at the render size, before the upscaler"]
+forbid = [
+  { text = "underwater caustics: after tonemapping at the display size, after the upscaler", label = "the post placement under FSR" },
+  { text = "Caught rendering error", label = "shader validation of the multiply under FSR" },
+  { text = "failed and will not be tried again", label = "multiply pipeline compilation under FSR" },
+  { text = "still being retried after", label = "multiply pipeline retry cap under FSR" },
+  { text = "DeviceLost", label = "GPU device loss under FSR" },
+]
+
+[[scenario]]
 name = "water-effects-disabled"
 source = "[design, #2674] Vanilla graphics leave the optional water effects off while the existing reflection-lake noon camera still draws the lake. This checks the default configuration; pixel identity is a manual before/after check."
 areas = ["renderer", "graphics", "water"]

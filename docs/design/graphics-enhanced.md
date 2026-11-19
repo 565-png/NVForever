@@ -654,6 +654,21 @@ occlusion and before temporal anti-aliasing: each of the three swaps the view's 
 pictures, and unordered they could record on two threads, one reading a stale picture
 for a frame [hypothesis for the flicker reported under water, from the code].
 
+[design] Under a temporal upscaler (FSR, DLSS) the submerged pass runs before it instead,
+as the ambient occlusion's picture placement does (§3.1): at the render size, from the
+depth prepass as the main pass drew it, and multiplied into the HDR picture the upscaler
+reads (and, under FSR, into FSR's opaque copy, so its reactive masks compare the two as
+before). The upscaler then accumulates the pattern with the bed it lights. After the
+upscaler the pattern would be added unsmoothed every frame, from a depth drawn jittered
+at the render size and expanded to the display size by nearest texels, and the pass would
+cost the display's pixels. The band limit stays the displayed pixel's, as the textures'
+mip bias keeps their detail at the display's. The gain then brightens the HDR light before
+tonemapping, so on a bright bed it shows a little less than when it multiplied the
+tonemapped picture [engineering choice; not yet compared by eye]. `NVF_CAUSTICS_BEFORE_UPSCALER=0`
+keeps the pass after tonemapping under an upscaler too (§6). The log says the placement
+once a view takes it ("underwater caustics: on the HDR picture at the render size, before
+the upscaler").
+
 [design] River currents animate the noise layers on selected exterior reaches: the
 Colorado below Hoover Dam through Cottonwood Cove, and the western channel in Zion
 Canyon. No record names a flow, so the downstream directions and the speed (110 units a
@@ -2392,6 +2407,11 @@ remedies for the plants' shimmer (unset: `thin+soft` in the lighting, none on th
 the grey replaces the HDR picture and still passes through the upscaler and tonemapping;
 `NVF_AO_BEFORE_FSR=0` shows it after tonemapping instead. Its pass's GPU time is the
 `nvf_ambient_occlusion` span of `--log-frame-times`.
+
+`NVF_CAUSTICS_BEFORE_UPSCALER=0` (read once at the start) draws the submerged caustics
+after tonemapping at the display size under a temporal upscaler, as builds before it moved
+did (§3.8.2), for before/after pictures; without an upscaler it changes nothing. The pass's
+GPU time is the `nvf_underwater_caustics` span in either placement.
 
 ## 7. Next candidates
 
