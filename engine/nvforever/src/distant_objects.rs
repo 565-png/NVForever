@@ -450,7 +450,7 @@ impl DistantRange {
     pub fn range(self, d: f32, reach: i32) -> VisibilityRange {
         match self {
             DistantRange::Own(k) => band_range(k, d, reach),
-            DistantRange::Under(k) => fade::complement(k),
+            DistantRange::Under(k) => under_range(k, d, reach),
             DistantRange::Edge => edge_range(reach),
         }
     }
@@ -520,6 +520,22 @@ pub fn edge_steps(d: f32, reach: i32) -> u8 {
 pub fn band_range(k: u8, d: f32, reach: i32) -> VisibilityRange {
     let (_, w) = edge_band(reach);
     VisibilityRange { start_margin: fade::drawn(k.min(edge_steps(d, reach))).start_margin, end_margin: w..w, use_aabb: false }
+}
+
+/// A mesh under a loaded or ring cell at step `k`, at distance `d`: the complement of that
+/// cell's step, as the hand-off needs, short of the reach's fade band (where a cover
+/// stands in practice: within the ring's reach). Should the camera have moved away so far
+/// that the mesh lies in the band, it draws at the smaller of the complement's share and
+/// the reach's fade ([`band_range`]), and from the reach on nothing (culled outright).
+pub fn under_range(k: u8, d: f32, reach: i32) -> VisibilityRange {
+    let (z, w) = edge_band(reach);
+    if d >= w {
+        return VisibilityRange { start_margin: 0.0..0.0, end_margin: 0.0..0.0, use_aabb: false };
+    }
+    if d >= z {
+        return band_range((fade::STEPS - k.min(fade::STEPS)).min(edge_steps(d, reach)), d, reach);
+    }
+    fade::complement(k)
 }
 
 /// Whether a rebuilt cell `c` may crossfade with the one it replaces: the whole cell lies
@@ -914,6 +930,11 @@ pub fn stream(
     }
     let started = Instant::now();
     let centre = streamer.centre.filter(|_| streamer.interior.is_none());
+    // Indoors (or the distant LOD off) with everything already gone: nothing to clean up.
+    let empty = st.cells.is_empty() && st.spawning.is_empty() && st.dying.is_empty() && st.listing.is_empty() && st.listed.is_empty() && st.fitting.is_none();
+    if (centre.is_none() || !lod.enabled) && empty && st.world == world.world && st.travels == streamer.travels {
+        return;
+    }
     let inner = streamer.radius.max(graphics.full_detail.radius());
     let settle = Settle {
         centre,
@@ -1208,7 +1229,7 @@ pub fn stream(
         && !st.fit_wanted
         && !st.lists_changed
         && want.iter().all(|c| st.cells.contains_key(c))
-        && st.cells.values().all(|s| (s.level >= 1.0 || s.under) && !s.leaving && s.old.is_none() && !s.dirty && (s.stamp == now || s.under));
+        && st.cells.iter().all(|(c, s)| cell_settled(s, now, blocks.segment(*c)));
     st.want = want;
     st.stats.ms += started.elapsed().as_secs_f64() * 1000.0;
 }
@@ -1360,6 +1381,15 @@ fn scan_complete(st: &DistantState, key: ScanKey) -> bool {
 /// The scan position after looking at `looked` of `n` cells from `at` ([`queue_rebuilds`]).
 fn scan_next(at: usize, looked: usize, n: usize) -> usize {
     (at + looked) % n.max(1)
+}
+
+/// Whether a drawn cell lets the layer sleep: at rest (or held under a cover), not
+/// leaving, replacing or marked, judged for `now`, and, holding flagged references, judged
+/// with the block answer it has now (`segment`). A cell the scan passed while it was
+/// skipped (fading, covered, replacing) and whose block changed meanwhile keeps the state
+/// awake until the scan comes round to it again.
+fn cell_settled(s: &CellState, now: Stamp, segment: Option<bool>) -> bool {
+    (s.level >= 1.0 || s.under) && !s.leaving && s.old.is_none() && !s.dirty && (s.under || (s.stamp == now && (!s.flagged || s.segment == segment)))
 }
 
 /// Whether a drawn cell is to be judged again now ([`queue_rebuilds`]): `segment` is its
@@ -1655,7 +1685,7 @@ pub fn fade_distant(
             for e in children.iter_descendants(s.entity) {
                 if meshes.contains(e) {
                     let d = match (want, eye) {
-                        (DistantRange::Own(_), Some(eye)) => game_position(e, s.entity, origin, &transforms, &parents).distance(eye),
+                        (DistantRange::Own(_) | DistantRange::Under(_), Some(eye)) => game_position(e, s.entity, origin, &transforms, &parents).distance(eye),
                         _ => 0.0,
                     };
                     commands.entity(e).insert(want.range(d, reach));
@@ -2069,6 +2099,48 @@ mod tests {
                 assert!((0..16).all(|t| !kept(&edge_range(reach), d, t)), "reach {reach}, {d}: the resting range");
             }
             assert!(band_range(fade::STEPS, z - 1.0, reach).is_visible_at_all(z - 1.0) && !band_range(0, w, reach).is_visible_at_all(w));
+        }
+    }
+
+    /// Closing review: a cell the scan passed while it was skipped (fading), whose block
+    /// changed meanwhile and which then comes to rest, keeps the layer awake until the scan
+    /// reaches it again, and is due once it is at rest.
+    #[test]
+    fn a_cell_skipped_while_its_block_changed_keeps_the_layer_awake() {
+        let now = Stamp::default();
+        let mut s = drawn_cell(0, None);
+        s.flagged = true;
+        s.level = 0.5;
+        assert!(!rejudge_due(&s, now, None, false, false), "fading: the scan passes it");
+        // Its block arrives empty while it is skipped; then it comes to rest.
+        assert!(!rejudge_due(&s, now, Some(false), false, false), "still fading");
+        s.level = 1.0;
+        assert!(!cell_settled(&s, now, Some(false)), "at rest with an old block answer: not settled");
+        assert!(rejudge_due(&s, now, Some(false), false, false), "due once the scan comes round");
+        s.segment = Some(false);
+        assert!(cell_settled(&s, now, Some(false)), "judged with the answer it has now");
+        s.flagged = false;
+        s.segment = None;
+        assert!(cell_settled(&s, now, Some(true)), "no flagged reference: the block does not matter");
+    }
+
+    /// Closing review: a mesh under a fading cover is cut at the reach too, and inside the
+    /// band draws no more than the reach's fade; short of the band it is the plain
+    /// complement the hand-off needs.
+    #[test]
+    fn the_covered_path_keeps_the_reach() {
+        for reach in [REACH_NEAR, REACH_FAR] {
+            let (z, w) = edge_band(reach);
+            for k in 0..=fade::STEPS {
+                for d in [w, w + 0.01, w + 1.0, w + 1000.0] {
+                    assert!((0..16).all(|t| !kept(&DistantRange::Under(k).range(d, reach), d, t)), "reach {reach}, step {k}, {d}: covered, drawn at the reach");
+                }
+                let mid = (z + w) / 2.0;
+                let shown = (0..16).filter(|&t| kept(&DistantRange::Under(k).range(mid, reach), mid, t)).count() as u8;
+                assert!(shown <= edge_steps(mid, reach) && shown <= fade::STEPS - k, "reach {reach}, step {k}: in the band, the smaller");
+                let near = z - 500.0;
+                assert!(DistantRange::Under(k).range(near, reach) == fade::complement(k), "short of the band: the complement");
+            }
         }
     }
 
