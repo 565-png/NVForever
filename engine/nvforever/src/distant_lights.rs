@@ -19,6 +19,13 @@
 //!   simulation's present state (`SimState::present`; without a simulation, the state at
 //!   the start), checked in slices of [`CHECKS_PER_FRAME`] lights a frame, a pass every
 //!   [`RECHECK_SECS`]; a cell whose set of present lights changed is merged again.
+//! - **Glow statics.** Statics and moveable statics (STAT, MSTT; not the parts of static
+//!   collections) whose model glows by its shapes' properties (`nvf_assets::model_glow`:
+//!   added glow cards and beams, unlit shapes emitting over white, glow-mapped bulbs at full
+//!   emission; read on the worker once per model and kept, [`cached_glow`]) are sources too
+//!   ([`static_source`]): at the glowing shapes' centre (a lamp post's bulb), of their
+//!   colour, their radius × [`GLOW_RADIUS_SCALE`] standing in for a light's radius. They go
+//!   through the same present state, merge, cap, night share, fog and hand-over.
 //! - **Hand-over.** No glow for a cell inside the loaded grid ([`cell_share`]): its own
 //!   lights draw, or will once it is loaded. A cell outside it that is still drawn (fading
 //!   out) gives its glows 1 − its fade level (`Streamer::cell_level`, fade.rs).
@@ -54,12 +61,13 @@ use bevy::shader::ShaderRef;
 use bevy::tasks::{futures::check_ready, Task};
 use fnv_esm::{LoadOrder, Schema as EsmSchema};
 use fnv_world::lighting::{light_data, light_flags, placed_light_radius, ref_xrds, LightData};
-use fnv_world::placed::placement;
+use fnv_world::placed::{base_object, placement};
+use nvf_assets::model_glow::ModelGlow;
 use fnv_world::{cell_of, CELL_SIZE};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 type Grid = (i32, i32);
 
@@ -99,6 +107,10 @@ pub const NIGHT: (f32, f32) = (-4.0, 6.0);
 pub const SHIMMER: f32 = 0.15;
 /// Seconds between passes over the simulation's present states [design].
 pub const RECHECK_SECS: f32 = 2.0;
+/// A glow static's light reach per unit of its glowing shapes' radius, for the size and
+/// the budget rules a LIGH light's radius feeds: a glow card 40 units across reads like a
+/// light of radius 80 [design].
+pub const GLOW_RADIUS_SCALE: f32 = 4.0;
 /// Source lights checked against the simulation per frame at most (new cells first, then
 /// the running pass) [design: a few hundred microseconds at worst].
 pub const CHECKS_PER_FRAME: usize = 2048;
@@ -160,9 +172,15 @@ pub struct Stats {
     pub cells: usize,
     /// References read in those cells.
     pub refs: usize,
-    /// Lights listed, and how many of them were disabled at the start (kept).
+    /// Lights listed, and how many of them (and of the glow statics) were disabled at the
+    /// start (kept).
     pub lights: usize,
     pub disabled: usize,
+    /// References of statics whose model glows (`nvf_assets::model_glow`), listed.
+    pub glow_statics: usize,
+    /// Static models read for their glow, and how many of them glow (from the cache).
+    pub models_read: usize,
+    pub glow_models: usize,
     pub deleted: usize,
     pub no_colour: usize,
     pub negative_off: usize,
@@ -176,6 +194,7 @@ impl Stats {
         self.refs += o.refs;
         self.lights += o.lights;
         self.disabled += o.disabled;
+        self.glow_statics += o.glow_statics;
         self.deleted += o.deleted;
         self.no_colour += o.no_colour;
         self.negative_off += o.negative_off;
@@ -185,8 +204,8 @@ impl Stats {
     /// The exit line.
     pub fn summary(&self) -> String {
         format!(
-            "distant lights summary: {} cells listed ({} references), {} lights ({} disabled at the start), {} drawn at most, skipped: {} deleted, {} no colour, {} negative/off, {} no radius",
-            self.cells, self.refs, self.lights, self.disabled, self.most_drawn, self.deleted, self.no_colour, self.negative_off, self.no_radius
+            "distant lights summary: {} cells listed ({} references), {} lights, {} glow statics ({} glowing models of {} read), {} disabled at the start, {} drawn at most, skipped: {} deleted, {} no colour, {} negative/off, {} no radius",
+            self.cells, self.refs, self.lights, self.glow_statics, self.glow_models, self.models_read, self.disabled, self.most_drawn, self.deleted, self.no_colour, self.negative_off, self.no_radius
         )
     }
 }
@@ -221,33 +240,97 @@ pub fn cell_refs(world: &WorldData, g: Grid) -> Vec<u32> {
     refs
 }
 
-/// The lights of `refs` (a cell's references, [`cell_refs`]), with what was left out
-/// counted in `stats`. Deleted references are left out; disabled ones are kept with their
-/// start state. Runs on a worker thread.
-pub fn list_lights(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], bases: &mut HashMap<u32, Option<LightData>>, stats: &mut Stats) -> Vec<SourceLight> {
+/// What a reference's base is to the listing, read once per base.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BaseKind {
+    Light(LightData),
+    /// A static or moveable static with this model (an archive path): a glow static if
+    /// the model glows.
+    Static(String),
+    Other,
+}
+
+/// What base `base` is to the listing.
+fn base_kind(lo: &LoadOrder, schema: &EsmSchema, base: u32) -> BaseKind {
+    if let Some(l) = light_data(lo, schema, base) {
+        return BaseKind::Light(l);
+    }
+    match base_object(lo, schema, base) {
+        Some(b) if matches!(&b.sig, b"STAT" | b"MSTT") => b.world_model_path().map_or(BaseKind::Other, BaseKind::Static),
+        _ => BaseKind::Other,
+    }
+}
+
+/// The glow source of a static placed by `p` whose model glows as `g`: at the glowing
+/// shapes' centre taken by the reference's transform, its radius scaled by the reference's
+/// scale and [`GLOW_RADIUS_SCALE`], the model's colour, steady, strength 1.
+pub fn static_source(p: &fnv_world::placed::Placement, g: &ModelGlow, start_enabled: bool) -> SourceLight {
+    let at = crate::world::ref_affine(p).transform_point3(Vec3::from_array(g.centre));
+    SourceLight { form_id: p.form_id, pos: at.to_array(), color: g.colour, radius: (g.radius * p.scale * GLOW_RADIUS_SCALE).max(1.0), strength: 1.0, motion: 0, start_enabled }
+}
+
+/// The glow sources of `refs` (a cell's references, [`cell_refs`]): LIGH lights and the
+/// statics whose model glows (`glow`, by model path), with what was left out counted in
+/// `stats`. Deleted references are left out; disabled ones are kept with their start
+/// state. Runs on a worker thread.
+pub fn list_lights(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], bases: &mut HashMap<u32, BaseKind>, glow: &mut impl FnMut(&str) -> Option<ModelGlow>, stats: &mut Stats) -> Vec<SourceLight> {
     let mut out = Vec::new();
     stats.refs += refs.len();
     for &r in refs {
         let Some(p) = placement(lo, schema, r) else { continue };
         let Some(base) = p.base else { continue };
-        let Some(l) = *bases.entry(base).or_insert_with(|| light_data(lo, schema, base)) else { continue };
+        let kind = bases.entry(base).or_insert_with(|| base_kind(lo, schema, base)).clone();
+        let source = match kind {
+            BaseKind::Light(l) => Some(Ok(l)),
+            BaseKind::Static(path) => glow(&path).map(Err),
+            BaseKind::Other => None,
+        };
+        let Some(source) = source else { continue };
         if p.deleted() {
             stats.deleted += 1;
             continue;
         }
         let start = crate::world::enabled(lo, schema, &p, 0);
-        match source_light(p.form_id, p.position, &l, ref_xrds(lo, schema, r), start) {
-            Ok(s) => {
-                stats.lights += 1;
+        match source {
+            Ok(l) => match source_light(p.form_id, p.position, &l, ref_xrds(lo, schema, r), start) {
+                Ok(s) => {
+                    stats.lights += 1;
+                    stats.disabled += usize::from(!start);
+                    out.push(s);
+                }
+                Err(Skip::NegativeOff) => stats.negative_off += 1,
+                Err(Skip::NoRadius) => stats.no_radius += 1,
+                Err(Skip::NoColour) => stats.no_colour += 1,
+            },
+            Err(g) => {
+                stats.glow_statics += 1;
                 stats.disabled += usize::from(!start);
-                out.push(s);
+                out.push(static_source(&p, &g, start));
             }
-            Err(Skip::NegativeOff) => stats.negative_off += 1,
-            Err(Skip::NoRadius) => stats.no_radius += 1,
-            Err(Skip::NoColour) => stats.no_colour += 1,
         }
     }
     out
+}
+
+/// The glows of static models by model path, read once on a worker and kept for the run
+/// (`None`: the model has no glowing shape or could not be read).
+pub type GlowModels = Arc<Mutex<HashMap<String, Option<ModelGlow>>>>;
+
+/// The glow of model `path` from `cache`, worked out by `read` on the first ask.
+pub fn cached_glow(cache: &Mutex<HashMap<String, Option<ModelGlow>>>, path: &str, read: impl FnOnce(&str) -> Option<ModelGlow>) -> Option<ModelGlow> {
+    if let Some(g) = cache.lock().ok().and_then(|c| c.get(path).copied()) {
+        return g;
+    }
+    let g = read(path);
+    if let Ok(mut c) = cache.lock() {
+        c.insert(path.to_string(), g);
+    }
+    g
+}
+
+/// Models read and models that glow, from the cache.
+fn model_counts(cache: &Mutex<HashMap<String, Option<ModelGlow>>>) -> (usize, usize) {
+    cache.lock().map_or((0, 0), |c| (c.len(), c.values().filter(|g| g.is_some()).count()))
 }
 
 /// The lights of `list` that show now (`shows`), and a key of which they are: two sets of
@@ -510,6 +593,8 @@ pub struct DistantLights {
     material: Option<Handle<GlowMaterial>>,
     night: f32,
     stats: Stats,
+    /// The static models' glows, shared with the listing tasks.
+    models: GlowModels,
 }
 
 impl DistantLights {
@@ -600,6 +685,7 @@ fn update(
     streamer: Option<Res<Streamer>>,
     sky: Option<Res<SkyState>>,
     sim: Option<Res<nvf_play::sim::SimState>>,
+    data: Option<Res<nvf_assets::GameData>>,
     time: Res<Time>,
     mut state: ResMut<DistantLights>,
     root: Query<Entity, With<WorldRoot>>,
@@ -678,13 +764,16 @@ fn update(
         if !missing.is_empty() {
             let jobs: Vec<(Grid, Vec<u32>)> = missing.iter().map(|&g| (g, cell_refs(&world, g))).collect();
             let (lo, schema): (&'static LoadOrder<'static>, &'static EsmSchema) = (world.lo, world.schema);
+            let (data, models) = (data.as_deref().cloned(), st.models.clone());
             let task = nvf_assets::read_pool::read_pool().spawn(async move {
                 let (mut bases, mut stats) = (HashMap::new(), Stats::default());
+                // Without the game's files (no archives) no static is read for its glow.
+                let mut glow = |path: &str| data.as_ref().and_then(|d| cached_glow(&models, path, |p| nvf_assets::model_glow::model_glow(d, p)));
                 let lists = jobs
                     .into_iter()
                     .map(|(g, refs)| {
                         stats.cells += 1;
-                        (g, list_lights(lo, schema, &refs, &mut bases, &mut stats))
+                        (g, list_lights(lo, schema, &refs, &mut bases, &mut glow, &mut stats))
                     })
                     .collect::<Vec<(Grid, Vec<SourceLight>)>>();
                 (lists, stats)
@@ -761,7 +850,9 @@ fn update(
 
 fn report(mut exit: MessageReader<AppExit>, state: Res<DistantLights>) {
     if exit.read().last().is_some() && state.ever_on {
-        info!("{}", state.stats.summary());
+        let mut s = state.stats;
+        (s.models_read, s.glow_models) = model_counts(&state.models);
+        info!("{}", s.summary());
     }
 }
 
@@ -1011,11 +1102,29 @@ mod tests {
 
     #[test]
     fn the_summary_names_what_was_left_out() {
-        let s = Stats { cells: 3, refs: 40, lights: 5, disabled: 2, deleted: 1, no_colour: 4, negative_off: 6, no_radius: 7, most_drawn: 5 };
+        let mut s = Stats { cells: 3, refs: 40, lights: 5, glow_statics: 12, disabled: 2, deleted: 1, no_colour: 4, negative_off: 6, no_radius: 7, most_drawn: 5, ..Stats::default() };
+        let models: GlowModels = Arc::default();
+        cached_glow(&models, "meshes\\a.nif", |_| Some(ModelGlow { centre: [0.0; 3], radius: 10.0, colour: [1.0; 3], shapes: 1 }));
+        cached_glow(&models, "meshes\\b.nif", |_| None);
+        (s.models_read, s.glow_models) = model_counts(&models);
         assert_eq!(
             s.summary(),
-            "distant lights summary: 3 cells listed (40 references), 5 lights (2 disabled at the start), 5 drawn at most, skipped: 1 deleted, 4 no colour, 6 negative/off, 7 no radius"
+            "distant lights summary: 3 cells listed (40 references), 5 lights, 12 glow statics (1 glowing models of 2 read), 2 disabled at the start, 5 drawn at most, skipped: 1 deleted, 4 no colour, 6 negative/off, 7 no radius"
         );
+    }
+
+    /// A model's glow is read once, whatever it gave, and kept.
+    #[test]
+    fn model_glows_are_read_once() {
+        let models: GlowModels = Arc::default();
+        let reads = std::cell::Cell::new(0);
+        let glow = ModelGlow { centre: [0.0, 0.0, 300.0], radius: 10.0, colour: [1.0, 0.8, 0.5], shapes: 1 };
+        for _ in 0..3 {
+            assert_eq!(cached_glow(&models, "meshes\\lamp.nif", |_| { reads.set(reads.get() + 1); Some(glow) }), Some(glow));
+            assert_eq!(cached_glow(&models, "meshes\\rock.nif", |_| { reads.set(reads.get() + 1); None }), None);
+        }
+        assert_eq!(reads.get(), 2);
+        assert_eq!(model_counts(&models), (2, 1));
     }
 
     #[test]
@@ -1054,6 +1163,10 @@ mod tests {
         const DELETED_REF: u32 = 0x304;
         const OFF_REF: u32 = 0x305;
         const ROCK_REF: u32 = 0x306;
+        const POST: u32 = 0x103;
+        const BOULDER: u32 = 0x104;
+        const POST_REF: u32 = 0x307;
+        const BOULDER_REF: u32 = 0x308;
 
         fn sub(sig: &[u8; 4], data: Vec<u8>) -> Subrecord {
             Subrecord { sig: *sig, data, extended: false }
@@ -1091,7 +1204,12 @@ mod tests {
             let hedr = [1.34f32.to_le_bytes(), 0i32.to_le_bytes(), 0x800u32.to_le_bytes()].concat();
             let tes4 = record(b"TES4", 0, 0, &[sub(b"HEDR", hedr)]);
             let lights = group(*b"LIGH", 0, &[ligh(LAMP, 0), ligh(OFF_LAMP, light_flags::OFF_BY_DEFAULT)].concat());
-            let stat = group(*b"STAT", 0, &record(b"STAT", 0, ROCK, &[sub(b"EDID", b"Rock\0".to_vec())]));
+            let stats = [
+                record(b"STAT", 0, ROCK, &[sub(b"EDID", b"Rock\0".to_vec())]),
+                record(b"STAT", 0, POST, &[sub(b"EDID", b"LampPost\0".to_vec()), sub(b"MODL", b"Lamp.nif\0".to_vec())]),
+                record(b"STAT", 0, BOULDER, &[sub(b"EDID", b"Boulder\0".to_vec()), sub(b"MODL", b"Boulder.nif\0".to_vec())]),
+            ];
+            let stat = group(*b"STAT", 0, &stats.concat());
             let wrld = record(b"WRLD", 0, WRLD, &[sub(b"EDID", b"TestWorld\0".to_vec())]);
             // The persistent cell (directly in the world children), its persistent light
             // standing in grid square (1, 0).
@@ -1102,6 +1220,8 @@ mod tests {
                 refr(DELETED_REF, ref_flags::DELETED, LAMP, [3000.0, 100.0, 50.0]),
                 refr(OFF_REF, 0, OFF_LAMP, [1000.0, 100.0, 50.0]),
                 refr(ROCK_REF, 0, ROCK, [10.0, 10.0, 0.0]),
+                refr(POST_REF, 0, POST, [400.0, 600.0, 20.0]),
+                refr(BOULDER_REF, 0, BOULDER, [800.0, 600.0, 20.0]),
             ]
             .concat();
             let exterior = [
@@ -1126,16 +1246,29 @@ mod tests {
             let w = world_data();
             assert!(w.index.errors.is_empty(), "{:?}", w.index.errors);
             let (mut bases, mut stats) = (HashMap::new(), Stats::default());
-            let a = list_lights(w.lo, w.schema, &cell_refs(&w, (0, 0)), &mut bases, &mut stats);
-            let b = list_lights(w.lo, w.schema, &cell_refs(&w, (1, 0)), &mut bases, &mut stats);
+            // The lamp post's model glows at its bulb, 300 up; the boulder's does not.
+            let bulb = ModelGlow { centre: [0.0, 0.0, 300.0], radius: 10.0, colour: [1.0, 0.8, 0.5], shapes: 1 };
+            let mut asked = Vec::new();
+            let mut glow = |path: &str| {
+                asked.push(path.to_string());
+                (path == "meshes\\lamp.nif").then_some(bulb)
+            };
+            let a = list_lights(w.lo, w.schema, &cell_refs(&w, (0, 0)), &mut bases, &mut glow, &mut stats);
+            let b = list_lights(w.lo, w.schema, &cell_refs(&w, (1, 0)), &mut bases, &mut glow, &mut stats);
             let ids = |v: &[SourceLight]| v.iter().map(|l| (l.form_id, l.start_enabled)).collect::<Vec<_>>();
             // Cell (0, 0): its temporary light and the one disabled at the start (kept, with
-            // that state); not the deleted one, the one off by default or the static.
-            assert_eq!(ids(&a), vec![(TEMP_REF, true), (DORMANT_REF, false)]);
+            // that state), the lamp post as a glow static; not the deleted light, the one off
+            // by default, the boulder or the static without a model.
+            assert_eq!(ids(&a), vec![(TEMP_REF, true), (DORMANT_REF, false), (POST_REF, true)]);
             assert_eq!(a[0].pos, [100.0, 100.0, 50.0]);
+            let post = a[2];
+            assert_eq!(post.pos, [400.0, 600.0, 320.0], "at the bulb, taken by the reference");
+            assert_eq!((post.color, post.radius, post.strength, post.motion), ([1.0, 0.8, 0.5], 10.0 * GLOW_RADIUS_SCALE, 1.0, 0));
+            asked.sort();
+            assert_eq!(asked, vec!["meshes\\boulder.nif".to_string(), "meshes\\lamp.nif".to_string()], "only statics with a model are asked");
             // Cell (1, 0): the persistent light standing in it.
             assert_eq!(ids(&b), vec![(PERSISTENT_REF, true)]);
-            assert_eq!(stats, Stats { refs: 6, lights: 3, disabled: 1, deleted: 1, negative_off: 1, ..Stats::default() });
+            assert_eq!(stats, Stats { refs: 8, lights: 3, glow_statics: 1, disabled: 1, deleted: 1, negative_off: 1, ..Stats::default() });
         }
     }
 }
