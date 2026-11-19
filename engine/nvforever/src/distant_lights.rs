@@ -21,8 +21,8 @@
 //!   [`RECHECK_SECS`]; a cell whose set of present lights changed is merged again.
 //! - **Glow statics.** Statics and moveable statics (STAT, MSTT; not the parts of static
 //!   collections) whose model glows by its shapes' properties (`nvf_assets::model_glow`:
-//!   added glow cards and beams, unlit shapes emitting over white, glow-mapped bulbs at full
-//!   emission; read on the worker once per model and kept, [`cached_glow`]) are sources too
+//!   added glow cards and beams, unlit shapes emitting over white, lit shapes self-lit at
+//!   full emission; read on the worker once per model and kept, [`cached_glow`]) are sources too
 //!   ([`static_source`]): at the glowing shapes' centre (a lamp post's bulb), of their
 //!   colour, their radius × [`GLOW_RADIUS_SCALE`] standing in for a light's radius. They go
 //!   through the same present state, merge, cap, night share, fog and hand-over.
@@ -90,13 +90,16 @@ pub const MIN_PIXELS: f32 = 2.0;
 /// output's: a card under a render pixel would flicker between samples [design].
 pub const MIN_RENDER_PIXELS: f32 = 1.0;
 /// The least light per pixel a card widened to the pixel floor keeps (its own area over the
-/// area drawn, held to this) [design].
-pub const FAR_FLOOR: f32 = 0.7;
+/// area drawn, held to this) [design: 0.85 since the glows are added in display values,
+/// review round 2: a floored glow's centre pixel at about 0.5 display before fog].
+pub const FAR_FLOOR: f32 = 0.85;
 /// The reach's last cells, over which the glows fade out [design].
 pub const FADE_CELLS: f32 = 2.0;
 /// The brightest a glow's core is, as a share of its colour (display values; the sum with
-/// the frame behind is held as the NIF additive shapes' is) [design].
-pub const PEAK: f32 = 0.8;
+/// the frame behind is held as the NIF additive shapes' is) [design: 1.0 since the glows
+/// are added in display values, where 0.8 left a few-pixel glow's centre near 0.5; still to
+/// fit by picture].
+pub const PEAK: f32 = 1.0;
 /// The most strength a glow gets from merged lights [design].
 pub const MERGED_MAX: f32 = 2.0;
 /// Sun elevations (degrees): the glows are full at or below the first and gone at or above
@@ -1069,9 +1072,9 @@ mod tests {
         assert_eq!(drawn_size(128.0, 10.0, 10.0), (128.0, 1.0));
         let (h, share) = drawn_size(64.0, 128.0, 128.0);
         assert_eq!((h, share), (256.0, FAR_FLOOR), "a sixteenth of the light per pixel, held to the floor");
-        let (h, share) = drawn_size(100.0, 55.0, 55.0);
-        assert_eq!(h, 110.0);
-        assert!((share - (100.0f32 / 110.0).powi(2)).abs() < 1e-6);
+        let (h, share) = drawn_size(100.0, 52.0, 52.0);
+        assert_eq!(h, 104.0);
+        assert!((share - (100.0f32 / 104.0).powi(2)).abs() < 1e-6);
         assert_eq!(drawn_size(10.0, 1000.0, 1000.0).1, FAR_FLOOR);
         // Under an upscaler the floor is in output pixels, and never under a render pixel.
         assert_eq!(drawn_size(10.0, 100.0, 150.0).0, 200.0, "two output pixels");
