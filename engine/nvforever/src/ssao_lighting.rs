@@ -181,7 +181,8 @@ mod tests {
                 continue;
             }
             let code: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("//")).collect();
-            assert!(code[0].starts_with("@if(NVF_AMBIENT_OCCLUSION)"), "{text}");
+            // The def alone, or the def and more (first-person shapes: `&& !FIRST_PERSON_DEPTH`).
+            assert!(code[0].starts_with("@if(NVF_AMBIENT_OCCLUSION)") || code[0].starts_with("@if(NVF_AMBIENT_OCCLUSION && "), "{text}");
         }
         for (line, hooked_line) in [(AMBIENT_LINE, AMBIENT_LINE_HOOKED), (POINT_LINE, POINT_LINE_HOOKED), (SPOT_LINE, SPOT_LINE_HOOKED)] {
             assert!(hooked_line.contains(&format!("        @if(!NVF_AMBIENT_OCCLUSION)\n{line}")), "the line kept word for word under the negation: {line}");

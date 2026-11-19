@@ -322,8 +322,12 @@ outlines; the main session's `view-lighting` pictures at the Goodsprings bushes:
 at plant outlines].
 
 **Who reads it.** By bevy_pbr's rule, the pipelines that write depth (Bevy's own SSAO rule):
-NIF objects opaque and alpha-tested, the terrain, grass, trees, the first-person arms, skinned
-actors. Opted in: the landscape's blended texture layers (they lie on the prepass's surface;
+NIF objects opaque and alpha-tested, the terrain, grass, trees, skinned actors. The
+first-person shapes (the arms, the weapon, the Pip-Boy: `FIRST_PERSON_DEPTH`) take a factor of
+1 on the ambient and the lamps, so only the world is occluded [owner 2026-11-19: "exclude them
+from the calculation so only the environment would be affected"]; their glow in the lamps'
+colour with lamp shadows on was the shade light's relight (vendored bevy_pbr "no directional
+shadows", engine/vendor/README.md). Opted in: the landscape's blended texture layers (they lie on the prepass's surface;
 `nvf_assets` `NifSurfaceKey::terrain_layer`). Opted out: water and refracting NIF shapes (in no
 prepass, the texels under them are the bed's or the wall's behind). Grass and leaf cards read
 it unless their constants say otherwise (`grass.rs` `GRASS_READS_AMBIENT_OCCLUSION`, `tree.rs`

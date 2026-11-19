@@ -38,9 +38,12 @@ pub const LAMP_ANCHOR: &str = "    // Point lights (direct)\n";
 /// lamps that cast no shadow here (`NVF_PLAY_DEBUG_AO_LAMPS`), `mix(1, g, w)`.
 pub const LAMP_TEXT: &str = "    // NVForever ambient occlusion (nvforever ssao_lighting.rs): the ambient's factor, read
     // once, and from it the factor on the light of lamps that cast no shadow here (1 while
-    // NVF_PLAY_DEBUG_AO_LAMPS is 0).
-    @if(NVF_AMBIENT_OCCLUSION)
+    // NVF_PLAY_DEBUG_AO_LAMPS is 0). First-person shapes (the arms, the weapon, the Pip-Boy;
+    // nvf_assets nif_material.rs FIRST_PERSON_DEPTH) take none: only the world is occluded.
+    @if(NVF_AMBIENT_OCCLUSION && !FIRST_PERSON_DEPTH)
     let nvf_ao_ambient = nvf_ambient_visibility(in.frag_coord.xy, -view_z);
+    @if(NVF_AMBIENT_OCCLUSION && FIRST_PERSON_DEPTH)
+    let nvf_ao_ambient = 1.0;
     @if(NVF_AMBIENT_OCCLUSION)
     let nvf_ao_lamps = nvf_ao_multibounce(nvf_lamp_visibility(nvf_ao_ambient), diffuse_color);
 
@@ -85,8 +88,9 @@ pub const DEBUG_FUNCTION: &str = "\nfn main_pass_post_lighting_processing(";
 /// exactly what `nvf_ambient_visibility` gave the fragment: the same position, the same
 /// distance (`view_z` as `apply_pbr_lighting` forms it).
 pub const DEBUG_TEXT: &str = "    // NVForever ambient occlusion (nvforever ssao_lighting.rs): the debug view draws the
-    // factor this fragment's ambient light took, after everything else.
-    @if(NVF_AMBIENT_OCCLUSION)
+    // factor this fragment's ambient light took, after everything else (first-person shapes
+    // take none and keep their colour).
+    @if(NVF_AMBIENT_OCCLUSION && !FIRST_PERSON_DEPTH)
     if nvf_ao_debug() {
         let nvf_view_z = dot(vec4<f32>(
             view_bindings::view.view_from_world[0].z,
