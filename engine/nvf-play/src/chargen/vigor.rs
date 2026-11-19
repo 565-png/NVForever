@@ -610,7 +610,7 @@ fn draw(
         if let (Some(img), Some(mut m)) = (img, ctx.materials.get_mut(h)) {
             m.base.base_color_texture = Some(img);
             // The new picture's authored set, or the legacy look (#2981).
-            nvf_assets::authored::retexture(&mut *m, &tex, &mut ctx.textures, &ctx.data, &mut ctx.images, ctx.formats.as_deref());
+            nvf_assets::authored::retexture(&mut m, &tex, &mut ctx.textures, &ctx.data, &mut ctx.images, ctx.formats.as_deref());
         }
         o.shown.insert(e, tex);
     }
