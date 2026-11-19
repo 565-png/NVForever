@@ -1184,6 +1184,12 @@ impl ModelSink for Deferred {
     }
 }
 
+/// Whether a model is landscape LOD (`meshes\landscape\lod\`: the LOD chunks and object
+/// blocks nvforever's lod.rs draws), which takes no authored set (#2981).
+pub(crate) fn is_lod_model(path: &str) -> bool {
+    fnv_vfs::normalize(path).starts_with("meshes\\landscape\\lod\\")
+}
+
 /// A model prepared on a worker thread, waiting for the main thread.
 type Fetched = (Result<PreparedModel, String>, DeferredAssets);
 
@@ -1779,6 +1785,9 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
         let Some(data) = shape.block_ref("data").and_then(|r| dec.get(r)) else { continue };
         let mut props = shape_props(&file, &dec, o, &by_block);
         let shape_name = o.name.clone().unwrap_or_default();
+        // Object LOD (the landscape's LOD chunks and blocks, nvforever lod.rs) takes no
+        // authored set (#2981): its atlases are not the textures a pack's sets name.
+        props.no_authored = is_lod_model(path);
         props.animated_emissive = emissive_shapes.contains(&shape_name);
         props.animated_alpha = alpha_shapes.contains(&shape_name);
         if props.is_helper(shaded) {

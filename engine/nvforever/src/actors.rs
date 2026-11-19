@@ -545,6 +545,21 @@ pub fn part_uses(a: &Appearance, world: &ActorWorld, ctx: &mut ActorCtx, stats: 
         // were drawn untinted, near white (playtest list 5 item 26,
         // actors.md §3).
         drop(skin_span);
+        // The hair model's shapes take no authored set (#2981), even those without the hair
+        // shader flag, which kept them off when their material was made: their role is
+        // known only here. Only a material that took a set is copied (no pack: nothing
+        // changes).
+        if p.role == "hair" {
+            for (i, s) in part.shapes.iter().enumerate() {
+                if s.cap || !ctx.models.materials.get(&materials[i]).is_some_and(nvf_assets::authored::is_authored) {
+                    continue;
+                }
+                if let Some(mut m) = ctx.models.materials.get(&materials[i]).cloned() {
+                    nvf_assets::authored::make_legacy(&mut m);
+                    materials[i] = ctx.models.materials.add(m);
+                }
+            }
+        }
         if p.role == "hair" || p.role == "head_part" {
             if let Some([r, g, b]) = a.hair_color {
                 let tint = Color::srgb(2.0 * f32::from(r) / 255.0, 2.0 * f32::from(g) / 255.0, 2.0 * f32::from(b) / 255.0).to_linear();

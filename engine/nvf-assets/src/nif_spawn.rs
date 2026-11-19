@@ -172,6 +172,9 @@ pub(crate) struct Props {
     /// An actor's part whose material carries an NiAlphaController for the actor's
     /// clips to drive ([`shape_alpha_mode`], [`material_alpha_controlled`]).
     pub(crate) alpha_gated: bool,
+    /// The caller keeps the shape off authored sets (#2981): particle systems, object LOD
+    /// (`crate::authored::shape_eligible`).
+    pub(crate) no_authored: bool,
     /// Some property is attached (to the shape or an ancestor).
     has_properties: bool,
     /// One of them derives from BSShaderProperty.
@@ -916,14 +919,32 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
 
 fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl TextureSource, keep_tangents: bool) -> (NifMaterial, Option<String>) {
     fix_vertex_colors(mesh, props.vertex_alpha);
-    let base = props.textures.first().filter(|t| !t.is_empty()).and_then(|t| textures.texture(t, true));
+    let diffuse = props.textures.first().filter(|t| !t.is_empty());
+    let base = diffuse.and_then(|t| textures.texture(t, true));
     let normal = props.textures.get(1).filter(|t| !t.is_empty()).and_then(|t| textures.normal(t));
-    let missing = if base.is_none() { props.textures.first().filter(|t| !t.is_empty()).cloned() } else { None };
+    let missing = if base.is_none() { diffuse.cloned() } else { None };
     let has_uv = mesh.attribute(Mesh::ATTRIBUTE_UV_0).is_some();
-    let normal = normal.filter(|_| has_uv && ((keep_tangents && mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some()) || mesh.generate_tangents().is_ok()));
+    let had_tangents = mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some();
+    let normal = normal.filter(|_| has_uv && ((keep_tangents && had_tangents) || mesh.generate_tangents().is_ok()));
     let (normal, unmasked) = normal.map_or((None, false), |(h, unmasked)| (Some(h), unmasked));
     let cut = blend_cut(props, mesh);
     let alpha_mode = if cut.is_some() { AlphaMode::Blend } else { shape_alpha_mode(props) };
+    // An authored set (#2981, crate::authored): looked up by the resolved diffuse when the
+    // shape may take one; `None` whenever the run's setting is off.
+    let eligible = crate::authored::shape_eligible(props.unlit, props.refraction.is_some(), props.hair, props.skin, alpha_mode, has_uv, props.no_authored);
+    let authored = diffuse.filter(|_| eligible).map(|t| textures.resolve(t)).filter(|k| crate::authored::key_eligible(k)).and_then(|k| textures.authored(&k));
+    // The final normal is chosen before the tangents are settled: a set's `_n` on a shape
+    // without a normal map needs tangents on the drawn mesh, made here; a copy of a drawn
+    // mesh (`keep_tangents`) gains none, so its `_n` applies only if it has them.
+    let tangents = if normal.is_some() {
+        !keep_tangents || had_tangents
+    } else if keep_tangents {
+        had_tangents
+    } else if authored.as_ref().is_some_and(|s| s.normal.is_some()) && !had_tangents {
+        mesh.generate_tangents().is_ok()
+    } else {
+        had_tangents
+    };
     let cutout = blended_cutout(props, cut, alpha_mode, || props.textures.first().is_some_and(|t| !t.is_empty() && textures.alpha_is_mask(t)));
     let gloss = props.glossiness.unwrap_or(10.0);
     // Emitted light × glow map, or uniform without a glow map. Not scaled by the camera
@@ -981,6 +1002,23 @@ fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl Text
     // Object LOD atlases hold near-black colour where their alpha is 0 (see
     // `shape_alpha_mode`); a soft edge would draw a little of it around every cut-out.
     material.extension.hard_edges = props.lod_building;
+    // The authored set last, over the legacy values chosen above and after the extension's
+    // `emissive_rule` is assigned (its w lane carries the mark). Shapes that may take a set
+    // keep their legacy look for later swaps (`crate::authored::LegacyLook`).
+    if eligible {
+        let legacy = crate::authored::LegacyLook {
+            normal: material.base.normal_map_texture.clone(),
+            specular: material.base.specular_texture.clone(),
+            roughness: material.base.perceptual_roughness,
+            reflectance: material.base.reflectance,
+            metallic: material.base.metallic,
+            tangents,
+        };
+        if let Some(set) = &authored {
+            crate::authored::apply(&mut material, set, &legacy);
+        }
+        material.extension.legacy = Some(legacy);
+    }
     (material, missing)
 }
 
@@ -1967,6 +2005,9 @@ mod tests {
     }
 }
 
+
+#[cfg(test)]
+mod authored_tests;
 
 #[cfg(test)]
 mod bc5_material_tests {

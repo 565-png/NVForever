@@ -223,9 +223,12 @@ impl FaceGenCache {
         Some(image)
     }
 
-    /// A copy of `material` whose shader adds the FaceGen offset `offset` to its texture.
+    /// A copy of `material` whose shader adds the FaceGen offset `offset` to its texture. A
+    /// FaceGen tint target is skin, which takes no authored set (#2981): a part's shape
+    /// found to be one only here (by the race's skin texture) goes back to the game's look.
     pub fn tinted(&mut self, materials: &mut Assets<NifMaterial>, material: &Handle<NifMaterial>, offset: &Handle<Image>) -> Option<Handle<NifMaterial>> {
         let mut m = materials.get(material)?.clone();
+        nvf_assets::authored::make_legacy(&mut m);
         m.extension.facegen_offset = Some(offset.clone());
         self.shapes_tinted += 1;
         Some(materials.add(m))

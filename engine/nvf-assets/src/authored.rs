@@ -131,6 +131,113 @@ pub(crate) fn find(data: &GameData, enabled: bool, key: &str, memo: &Memo, mut l
     Some(AuthoredSet { stem: found.stem, orm, normal, scalars })
 }
 
+/// The value of `NifSurface::emissive_rule.w` that marks a material shaded from an authored
+/// set (0 on every other material; the lane is otherwise unused, and survives the mesh
+/// terrain blend's conversion).
+pub const AUTHORED_MARK: f32 = 1.0;
+
+/// What a lit shape's material is without a set (its "legacy look"), kept on the material
+/// (`NifSurface::legacy`) for every shape that may take a set, so a later change of its
+/// diffuse (a script's texture swap, the blackjack cards, the Vigor Tester's digits) can put
+/// the new diffuse's set on it or go back to the game's values ([`retexture`]). Never
+/// changed after the material is made; copies carry it along.
+#[derive(Clone, Debug, PartialEq, Reflect)]
+pub struct LegacyLook {
+    /// The game's normal map in use (after the tangent check).
+    pub normal: Option<Handle<Image>>,
+    /// The specular mask (the normal map, when its alpha is one: `nif_spawn::specular`).
+    pub specular: Option<Handle<Image>>,
+    pub roughness: f32,
+    pub reflectance: f32,
+    pub metallic: f32,
+    /// The drawn mesh has tangents, so a set's `_n` can be applied to it even where the game
+    /// gives no normal map.
+    pub tangents: bool,
+}
+
+/// Whether a shape may take an authored set, by what is known when its material is made:
+/// lit, not refracting, not hair or skin (FaceGen), drawn neither additive nor multiplied
+/// (the final alpha mode), with texture coordinates, and not excluded by its caller
+/// (`no_authored`: particles, object LOD) [design, docs/spec-notes/pbr-materials.md "What a
+/// set changes"]. The key is checked by [`key_eligible`].
+pub fn shape_eligible(unlit: bool, refracts: bool, hair: bool, skin: bool, alpha_mode: AlphaMode, has_uv: bool, no_authored: bool) -> bool {
+    !unlit && !refracts && !hair && !skin && has_uv && !no_authored && !matches!(alpha_mode, AlphaMode::Add | AlphaMode::Multiply)
+}
+
+/// Whether a resolved diffuse key may take a set: not the Pip-Boy's or the interface's
+/// textures [design].
+pub fn key_eligible(key: &str) -> bool {
+    !key.starts_with("textures\\pipboy3000\\") && !key.starts_with("textures\\interface\\")
+}
+
+/// The metallic value an authored material is built with: 0 (the ORM's blue channel then has
+/// no effect: no reflection source exists yet, docs/spec-notes/pbr-materials.md "Metallic").
+pub fn authored_metallic() -> f32 {
+    0.0
+}
+
+/// Put `set` on `material` from its legacy look: the ORM as metallic-roughness and occlusion
+/// map (one image in both slots), no specular mask, the scalars' roughness scale and
+/// reflectance (their defaults without a file), [`authored_metallic`], the set's `_n` when it
+/// has one and the drawn mesh has tangents (else the game's normal map, its alpha no longer a
+/// mask), and the mark ([`AUTHORED_MARK`]). Everything else (base colour, alpha, glow,
+/// decal, the extension's other values) stays. Whether the set's `_n` was applied.
+pub fn apply(material: &mut crate::NifMaterial, set: &AuthoredSet, legacy: &LegacyLook) -> bool {
+    let b = &mut material.base;
+    b.metallic_roughness_texture = Some(set.orm.clone());
+    b.occlusion_texture = Some(set.orm.clone());
+    b.specular_texture = None;
+    b.perceptual_roughness = set.scalars.roughness_scale_or_default();
+    b.reflectance = set.scalars.reflectance_or_default();
+    b.metallic = authored_metallic();
+    let normal = set.normal.clone().filter(|_| legacy.tangents);
+    if normal.is_none() && set.normal.is_some() {
+        no_tangents_once(&set.stem);
+    }
+    let applied = normal.is_some();
+    b.normal_map_texture = normal.or_else(|| legacy.normal.clone());
+    material.extension.emissive_rule.w = AUTHORED_MARK;
+    applied
+}
+
+/// Put the legacy look back on `material` (the inverse of [`apply`]).
+pub fn restore(material: &mut crate::NifMaterial, legacy: &LegacyLook) {
+    let b = &mut material.base;
+    b.metallic_roughness_texture = None;
+    b.occlusion_texture = None;
+    b.specular_texture = legacy.specular.clone();
+    b.normal_map_texture = legacy.normal.clone();
+    b.perceptual_roughness = legacy.roughness;
+    b.reflectance = legacy.reflectance;
+    b.metallic = legacy.metallic;
+    material.extension.emissive_rule.w = 0.0;
+}
+
+/// Whether `material` is shaded from an authored set.
+pub fn is_authored(material: &crate::NifMaterial) -> bool {
+    material.extension.emissive_rule.w == AUTHORED_MARK
+}
+
+/// Make `material` the game's own for good: its legacy look put back and its baseline
+/// dropped, so no later swap gives it a set. For shapes found to be hair or a FaceGen tint
+/// target only after their material was made (nvforever `actors.rs`, `facegen.rs`). Whether
+/// anything changed.
+pub fn make_legacy(material: &mut crate::NifMaterial) -> bool {
+    let Some(legacy) = material.extension.legacy.take() else { return false };
+    if is_authored(material) {
+        restore(material, &legacy);
+    }
+    true
+}
+
+/// Log once per set that its `_n` was not applied to a shape without tangents.
+fn no_tangents_once(stem: &str) {
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    if SEEN.get_or_init(Default::default).lock().expect("authored tangents").insert(stem.to_string()) {
+        info!("authored materials: {stem}_n.dds not applied where the drawn mesh has no tangents (the game's normal state is kept)");
+    }
+}
+
 /// The warning for a linear member whose DX10 header names an `_SRGB` format (once per file:
 /// the decode of a (path, role) happens once).
 pub(crate) fn srgb_warning(memo: &Memo, path: &str, usage: TextureUsage, srgb_code: bool) {

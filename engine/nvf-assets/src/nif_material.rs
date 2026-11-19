@@ -466,7 +466,9 @@ pub struct NifSurface {
     pub fire_period: f32,
     /// Unlit emissive rules: x 1 skips the image-space scale; y holds each light channel
     /// to that value on the soft path (0: no hold); z 1: the vertex colours are display
-    /// values, made linear per fragment (`nif_spawn::unlit_vertex_colors`); w unused.
+    /// values, made linear per fragment (`nif_spawn::unlit_vertex_colors`); w 1 marks a lit
+    /// material shaded from an authored set (`crate::authored::AUTHORED_MARK`, #2981), 0
+    /// otherwise.
     /// Zero keeps the default [hypothesis, nif.md §6 "Unlit shapes that are pictures, and
     /// cut-out signs"].
     pub emissive_rule: Vec4,
@@ -543,6 +545,10 @@ pub struct NifSurface {
     pub terrain_repeat: f32,
     /// Landscape anti-tiling on (a landscape material only, with a repeat above 0).
     pub anti_tiling: bool,
+    /// The shape's material without an authored set (#2981, `crate::authored::LegacyLook`),
+    /// kept for shapes that may take one, so a change of diffuse can apply the new one's set
+    /// or go back; `None` for every other material. CPU only.
+    pub legacy: Option<crate::authored::LegacyLook>,
 }
 
 /// The values of a [`NifSurface`] the shaders read (`nif_surface_bindings.wesl`, shared
@@ -647,6 +653,7 @@ impl Default for NifSurface {
             facegen_offset: None,
             terrain_repeat: 0.0,
             anti_tiling: false,
+            legacy: None,
         }
     }
 }
