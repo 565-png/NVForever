@@ -2098,10 +2098,13 @@ settings page's old `enhanced` row no longer exists (the settings menu overhaul)
     the published constants]); the waves are interpolated with smoothstep weights, so the
     factor has no edge between cells. Mean 0 over time and within -1..1, so the factor's mean
     is 1 (the night is as bright as without) and it stays within 1 ± A.
-  - The lattice lies on the direction in world axes: the star dome never turns and is
-    centred on the camera, so the cells are anchored to the dome, not to the screen; a
-    turning camera, the temporal anti-aliasing's jitter and the upscalers see no flicker. A
-    3D lattice has no pole and no seam.
+  - The lattice lies on the direction in world axes from the star dome's own centre (its
+    mesh's place, `get_world_from_local`), not from the eye: the dome never turns and follows
+    the main camera, so the cells are anchored to the dome, not to the screen; a turning
+    camera, the temporal anti-aliasing's jitter and the upscalers see no flicker, and the
+    water reflection's camera (the main camera mirrored below the water, `reflection.rs`)
+    gives a reflected star the same phase at any height above the water. A 3D lattice has no
+    pole and no seam.
   - The cell: about the size of a star on screen. At 1080 lines with the game's default field
     of view (75, the horizontal angle at 4:3; vertical 59.8°, `free_cam::vertical_fov`) a
     pixel spans 9.7e-4 rad; a star of the base game's star dome covers 2 to 4 pixels there
@@ -2126,8 +2129,13 @@ settings page's old `enhanced` row no longer exists (the settings menu overhaul)
   "Diffuse radiation in the Galaxy", Astrophysical Journal 93, 1941 [documented: cited
   publication]) about the moon disc's direction, divided by its value on the axis:
   (1 - g)^3 / (1 + g^2 - 2 g cos)^1.5, 1 at the centre, falling monotonically.
-  - Direction: the disc's (`-sun_dir` from `SkyState::hour`, as `update_night_sky` places
-    it), not the moonlight's (which follows the smoother game clock).
+  - Axis: from the rendering eye to the disc's centre. The uniform carries where the disc is
+    drawn from the sky's centre (`-sun_dir` from `SkyState::hour` x `SUN_DISTANCE`, as
+    `update_night_sky` places it; not the moonlight's direction, which follows the smoother
+    game clock), and the shader adds the sky part's own place (the main camera's). For the
+    main view that is the moon's direction; the water reflection's mirrored eye sees the disc
+    elsewhere (with the camera 5,000 units above the water and the moon 10° up, 3.97° off
+    the moon's direction, a test), and its glow stays round the disc it sees.
   - Width: g = 0.9 in clear air to 0.75 under a full fog share (half the peak at 4.6° to
     12.7° from the centre; the disc is 3.6° across).
   - Strength at the centre: 0.06 x (1 + 0.5 q) (at most 0.09, linear, as the sun's glare is
@@ -2145,8 +2153,9 @@ settings page's old `enhanced` row no longer exists (the settings menu overhaul)
     hue with its brightness scaled down (a black night sunlight gives none). No colour
     constant.
 - **Moonlit clouds** (cloud layers). Added: the cloud's own colour (its weather's PNAM
-  colour at the hour, as `update_clouds` sets it, times its texture) x 0.5 x a broader lobe
-  (g 0.6: the side of the cover facing the moon, half at about 23°) x the moon's strength,
+  colour at the hour, as `update_clouds` sets it, times its texture, times the sky level;
+  without a lightning flash's light, which the sky already adds once) x 0.5 x a broader lobe
+  (g 0.6: the side of the cover facing the moon, half at about 23°; aimed as the glow is) x the moon's strength,
   scaled down so that no channel adds more than 0.06 x the strength. The blend weighs it by
   the texture's alpha. Through a weather fade both sets of cloud shapes take it, each at its
   own alpha. Which layer is a cloud (the night's policy shared with the volumetric clouds):
@@ -2173,25 +2182,41 @@ settings page's old `enhanced` row no longer exists (the settings menu overhaul)
   <phase> lit <l>, strength <s>, glow <peak> half width <deg>°` (`no moon` for a climate
   without one); the same figures (as `night sky: <weather>: ...`) when the phase's lit share
   changes, and, outside a time-lapse, when the weather changes or the haze moves by 0.1;
-  `night sky: detail off` (`... off indoors` on going in). Debug aid
+  `night sky: applied: <n> star part(s) twinkling (amplitude <A>), the dome's glow <g>, <k>
+  cloud part(s) moonlit` once each time it turns on, when the parts' materials hold a
+  twinkle and a glow (not by day or at a new moon); `night sky: detail off` (`... off
+  indoors` on going in). Debug aid
   `NVF_PLAY_DEBUG_NIGHT_SKY=<multiplier>` (0 to 4, 1 as designed): all three times that,
   logged once (`debug switch NVF_PLAY_DEBUG_NIGHT_SKY: ...`) when the detail first turns on;
-  it does not turn the switch on. Smoke: `night-sky-detail` (switched on at Goodsprings at
-  23:00).
+  it does not turn the switch on. Smoke: `night-sky-detail` (switched on in the pause menu at
+  Goodsprings at 23:00 on day 0, a full moon, and left on after the game resumes: the
+  `applied` line proves that a star material took an amplitude and the dome a glow).
+- **Kept between frames**: the detail is worked out again only when the climate, the
+  weather, the weather fading out, the fade, the hour, the days passed or `--fog` changed;
+  the comparison with each part's material runs every frame, so a part made later (a new
+  sky) takes the kept values at once (a system test: a later part, a fade, off and on).
 - **Shader tests**: `engine/nvf-shader-tests/tests/sky.rs` composes the production `sky.wesl`
   with Bevy's own imports through Bevy's shader cache and validates it with Naga, with no definitions (the dome, clouds and moon) and with
   the definitions Bevy's mesh pipeline sets for the additive stars (`PREMULTIPLY_ALPHA`,
   `BLEND_PREMULTIPLIED_ALPHA`), and checks the uniform's layout; `night_sky.rs` checks that
   the shader holds the constants its Rust mirror (`twinkle_factor`, `lobe`, `air_weight`)
-  uses. Only a run of the game proves the pipeline.
+  uses, and the tests check its eye-independent parts (`glow_axis`, `star_direction`) in the
+  water reflection's mirrored view. Only a run of the game proves the pipeline.
 - **Not done**: no colour change in the twinkle (chromatic scintillation), no twinkle of the
   moon or of a mod's starfield drawn on a cloud layer (such a layer is treated as cloud and
   takes the moonlight; no classifier is guessed), no halo ring (the 22° ice halo), no
   moonlight on fog or terrain beyond what the weather's own night light does, nothing
   indoors. The constants are starting values judged by reasoning, for pictures at several
-  strengths (the debug multiplier). Not measured yet: the cost (it should be close to
-  nothing: a few uniform tests per sky fragment, and the twinkle's 8 hashes only on the
-  stars' pixels) and the pictures.
+  strengths (the debug multiplier).
+- **Cost** (operation counts from the code; the time is not measured): every sky fragment
+  pays a few uniform tests; a dome or cloud fragment with the moon up also a matrix fetch, a
+  normalisation, a `pow` and a few multiplies; a star fragment that adds light (most of the
+  sky between the stars is skipped) the lattice: eight corner waves, each two hash
+  finalisations and two sines, and an `exp`. With FSR the sky's blended and additive parts
+  (the stars, the clouds, the moon) are drawn a second time into FSR's opaque reference
+  (`fsr.rs`, the reactive reference pass), so the stars' and clouds' terms run twice there.
+  The water reflection's and a 3D scope's cameras draw the sky too. Not measured: the frame
+  time on any GPU, the handheld path included.
 
 ## 4. Tried and dropped
 

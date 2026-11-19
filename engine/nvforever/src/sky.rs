@@ -72,7 +72,7 @@ const SKY_INNER: f32 = 0.5 * DOME_RADIUS;
 pub const SKY_DEPTH_FROM: f32 = 0.9 * SKY_INNER;
 /// Distance of the sun and moon discs and the sun's size [hypothesis: about 4 degrees
 /// across].
-const SUN_DISTANCE: f32 = 0.8 * SKY_INNER;
+pub(crate) const SUN_DISTANCE: f32 = 0.8 * SKY_INNER;
 const SUN_SIZE: f32 = 0.07 * SUN_DISTANCE;
 /// Angular size (full width, degrees) over which the sun texture is spread around the
 /// sun and the factor on its colour, and the same for the glare texture [hypothesis,
@@ -250,8 +250,9 @@ pub struct SkyLight {
     /// rgb: sun colour × glare strength (linear); w: tan of half the glare's size.
     pub glare: Vec4,
     /// Night sky detail (night_sky.rs; zero with its switch off, and on every part it does not
-    /// touch): xyz the direction to the moon disc, w the Henyey-Greenstein g of the moon's lobe
-    /// (the dome's glow, the clouds' moonlight).
+    /// touch): xyz where the moon disc is drawn from the sky's centre (the main camera, which
+    /// every sky part follows: the direction × [`SUN_DISTANCE`]), w the Henyey-Greenstein g of
+    /// the moon's lobe (the dome's glow, the clouds' moonlight).
     pub moon: Vec4,
     /// Night sky detail, by part: on the stars x the twinkle's amplitude and y its lattice
     /// cells per unit of direction; on the dome and clouds rgb the moon term's gain and w its
@@ -1277,6 +1278,14 @@ fn find_weather(world: &WorldData, name: &str) -> Option<u32> {
 #[derive(Component)]
 pub struct SkyDome(Vec<[f32; 3]>);
 
+#[cfg(test)]
+impl SkyDome {
+    /// A dome without vertex weights (night_sky.rs's system test).
+    pub(crate) fn for_test() -> Self {
+        SkyDome(Vec::new())
+    }
+}
+
 /// One of the four cloud layers (WTHR layer index) in one of two sets: the set showing
 /// the current weather and the one fading out the previous weather.
 #[derive(Component)]
@@ -1288,6 +1297,12 @@ pub struct CloudLayer {
 }
 
 impl CloudLayer {
+    /// Layer 0 of set 0, showing nothing yet (night_sky.rs's system test).
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        CloudLayer { layer: 0, set: 0, shows: None }
+    }
+
     /// The WTHR cloud layer (0-3) this dome shape draws (cloud_shadows.rs).
     pub(crate) fn layer(&self) -> usize {
         self.layer

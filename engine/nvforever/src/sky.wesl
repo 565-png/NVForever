@@ -14,6 +14,7 @@ import bevy_pbr::{
     render::forward_io::{VertexOutput, FragmentOutput},
     render::pbr_types::{STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_ADD},
     render::mesh_view_bindings::{view, globals},
+    render::mesh_functions::get_world_from_local,
 };
 
 // sky.rs SkyLight: daylight on the sky's colours, and the sun.
@@ -26,8 +27,9 @@ struct SkyLight {
     // rgb colour × strength, w tan(half size)
     sun: vec4<f32>,
     glare: vec4<f32>,
-    // Night sky detail (night_sky.rs; all zero with its switch off): xyz the direction to the
-    // moon disc, w the Henyey-Greenstein g of the moon's lobe.
+    // Night sky detail (night_sky.rs; all zero with its switch off): xyz where the moon disc is
+    // drawn from the sky's centre (sky.rs SUN_DISTANCE out), w the Henyey-Greenstein g of the
+    // moon's lobe.
     moon: vec4<f32>,
     // By part: the stars x the twinkle's amplitude, y lattice cells per unit of direction;
     // the dome and clouds rgb the moon term's gain, w its cap (0: none).
@@ -123,8 +125,16 @@ fn night_wave(cell: vec3<i32>, hour: f32) -> f32 {
     return 0.5 * (sin(NIGHT_TAU * fract(k1 * hour + p1)) + sin(NIGHT_TAU * fract(k2 * hour + p2)));
 }
 
-// The factor on a star's added light along the dome direction `dir` (world axes; the star
-// dome never turns, so the lattice is anchored to it, not to the screen): lattice value
+// The sky part's centre in the world: the main camera's place, which every sky part follows
+// (sky.rs). Another camera (the water reflection's, mirrored below the water) sees the sky
+// from elsewhere, so what belongs to the dome is measured from here, not from the eye.
+fn night_centre(instance_index: u32) -> vec3<f32> {
+    return get_world_from_local(instance_index)[3].xyz;
+}
+
+// The factor on a star's added light along the dome direction `dir` (world axes, from the
+// star dome's centre; the dome never turns, so the lattice is anchored to it, not to the
+// screen or the eye): lattice value
 // noise in time (the corner waves, smoothstep-interpolated over the 3D cell of dir × cells),
 // times the amplitude, times 1 - 1/X with X Rozenberg's air mass, 0 at the zenith and 0.975
 // at the horizon. Mean 1 over time; within 1 ± amplitude.
@@ -146,12 +156,11 @@ fn night_twinkle(dir: vec3<f32>) -> f32 {
     return 1.0 + clamp(sky.night.x, 0.0, 1.0) * air * s;
 }
 
-// The moon's light added along `dir` to a part whose colour is `base` (1 on the dome: the
-// glow; the cloud's colour on the clouds): `night.rgb` × a Henyey-Greenstein lobe about the
-// moon's direction, divided by its value at the centre (1 there), the result scaled down so
-// that no channel exceeds `night.w`.
-fn night_moon(base: vec3<f32>, dir: vec3<f32>) -> vec3<f32> {
-    let to_moon = sky.moon.xyz;
+// The moon's light added along the view ray `dir` to a part whose colour is `base` (1 on the
+// dome: the glow; the cloud's own colour on the clouds): `night.rgb` × a Henyey-Greenstein
+// lobe about `to_moon`, the ray from the eye to the disc's centre, divided by its value on the
+// axis (1 there), the result scaled down so that no channel exceeds `night.w`.
+fn night_moon(base: vec3<f32>, dir: vec3<f32>, to_moon: vec3<f32>) -> vec3<f32> {
     if dot(to_moon, to_moon) < 1e-8 {
         return vec3(0.0);
     }
@@ -185,8 +194,13 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         }
         // Night sky detail: the moon's glow on the dome (behind the clouds), moonlight on the
         // clouds (their colour; the blend weighs it by the texture's alpha).
+        // Aimed from this eye at the disc (drawn at the sky's centre + moon.xyz), so a mirrored
+        // eye sees the glow round the disc. The clouds' own colour without the lightning flash
+        // in `glow` (the flash lights the sky once, not again through the moon).
         if sky.night.w > 0.0 {
-            add += night_moon(select(c.rgb, vec3(1.0), sky.params.w > 1.5), dir);
+            let to_moon = night_centre(in.instance_index) + sky.moon.xyz - view.world_position.xyz;
+            let own = pbr_input.material.base_color.rgb * sky.params.x;
+            add += night_moon(select(own, vec3(1.0), sky.params.w > 1.5), dir, to_moon);
         }
         c = vec4(c.rgb + add, c.a);
     }
@@ -197,7 +211,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         var a = c.rgb * select(1.0, c.a, sky.params.y > 0.5);
         // Night sky detail: the stars (the additive parts the light does not apply to) twinkle.
         if sky.params.z < 0.5 && sky.night.x > 0.0 && max(a.r, max(a.g, a.b)) > NIGHT_TWINKLE_SKIP {
-            let dir = normalize(in.world_position.xyz - view.world_position.xyz);
+            let dir = normalize(in.world_position.xyz - night_centre(in.instance_index));
             a *= night_twinkle(dir);
         }
         out.color = vec4(tony_inverse(a.r), tony_inverse(a.g), tony_inverse(a.b), 1.0);

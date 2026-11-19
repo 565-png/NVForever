@@ -31,7 +31,7 @@
 //! Debug aid `NVF_PLAY_DEBUG_NIGHT_SKY=<multiplier>` (0 to 4) scales all three; it does not
 //! turn the switch on.
 
-use crate::sky::{CloudLayer, SkyDome, SkyMaterial, SkyState, Stars, MOON_HIDDEN_Y};
+use crate::sky::{CloudLayer, SkyDome, SkyMaterial, SkyState, Stars, MOON_HIDDEN_Y, SUN_DISTANCE};
 use bevy::prelude::*;
 use fnv_world::sky::{ColorType, MOON_PHASES};
 
@@ -160,6 +160,24 @@ pub fn lobe(cos: f32, g: f32) -> f32 {
     ((1.0 - g) * (1.0 - g) / d).min(1.0).powf(1.5)
 }
 
+/// The moon lobe's axis as sky.wesl `night_moon` takes it (the tests' mirror): from the
+/// rendering `eye` to the disc, drawn at the sky's `centre` (the main camera, which every sky
+/// part follows) + `moon` (the uniform's `moon.xyz`). For the main view the eye is the centre
+/// and this is the moon's direction; for the water reflection's mirrored eye it is still the
+/// way to the disc that eye sees.
+#[cfg(test)]
+pub fn glow_axis(centre: Vec3, moon: Vec3, eye: Vec3) -> Vec3 {
+    (centre + moon - eye).normalize_or_zero()
+}
+
+/// The direction the star lattice is read along (sky.wesl `night_twinkle`'s argument, the
+/// tests' mirror): from the star dome's centre, not the eye, so an eye anywhere (the water
+/// reflection's mirrored one at any height) gives a star the same cell and phase.
+#[cfg(test)]
+pub fn star_direction(fragment: Vec3, centre: Vec3) -> Vec3 {
+    (fragment - centre).normalize_or_zero()
+}
+
 /// The angle (degrees) from the axis at which the lobe of `g` falls to half (for the log).
 pub fn half_width_deg(g: f32) -> f32 {
     let g = g.clamp(0.01, 0.99);
@@ -234,10 +252,10 @@ pub fn detail(i: &Inputs) -> Detail {
         let glow = moonlight_hue(i.moonlight) * glow_peak(haze) * strength;
         let cap = glow.max_element();
         if cap > 0.0 {
-            d.dome_moon = dir.extend(glow_g(haze));
+            d.dome_moon = (dir * SUN_DISTANCE).extend(glow_g(haze));
             d.dome_night = glow.extend(cap);
         }
-        d.cloud_moon = dir.extend(CLOUD_G);
+        d.cloud_moon = (dir * SUN_DISTANCE).extend(CLOUD_G);
         d.cloud_night = Vec3::splat(CLOUD_GAIN * strength).extend(CLOUD_PEAK * strength);
     }
     d
@@ -337,6 +355,8 @@ struct DetailState {
     /// What the last detail was worked from and the detail: worked again only when one of
     /// them changed.
     derived: Option<(Key, Detail)>,
+    /// The line saying the parts took the detail has been written since it turned on.
+    applied: bool,
 }
 
 /// What the detail depends on in the sky: climate, weather, the one fading out, the fade,
@@ -361,6 +381,7 @@ fn update_detail(
                 state.active = false;
                 state.logged = None;
                 state.derived = None;
+                state.applied = false;
                 info!("night sky: detail off{}", if wanted && indoors { " indoors" } else { "" });
             }
             if !state.shown {
@@ -418,6 +439,8 @@ fn update_detail(
             }
         }
     };
+    // What the parts hold once this frame's writes are made (for the line saying so).
+    let (mut twinkling, mut moonlit, mut amplitude, mut glow) = (0, 0, 0.0f32, 0.0f32);
     for (m, star, dome) in &parts {
         let (moon, night) = match (star, dome) {
             (true, _) => (Vec4::ZERO, d.stars),
@@ -425,6 +448,15 @@ fn update_detail(
             _ => (d.cloud_moon, d.cloud_night),
         };
         let Some(mat) = materials.get(&m.0) else { continue };
+        match (star, dome) {
+            (true, _) if night.x > 0.0 => {
+                twinkling += 1;
+                amplitude = night.x;
+            }
+            (false, true) => glow = glow.max(night.w),
+            (false, false) if night.w > 0.0 => moonlit += 1,
+            _ => {}
+        }
         let l = mat.extension.light;
         // Zero is written exactly (the shader's branches test for above 0); the rest when it
         // moved by more than the tolerance.
@@ -438,6 +470,12 @@ fn update_detail(
         }
     }
     state.shown = d != Detail::default();
+    // Once each time it turns on: the stars' materials hold an amplitude and the dome's a glow
+    // (a smoke test's proof that the values reached the parts, not only the log).
+    if state.active && !state.applied && twinkling > 0 && glow > 0.0 {
+        state.applied = true;
+        info!("night sky: applied: {twinkling} star part(s) twinkling (amplitude {amplitude:.2}), the dome's glow {glow:.3}, {moonlit} cloud part(s) moonlit");
+    }
 }
 
 #[cfg(test)]
@@ -613,7 +651,9 @@ mod tests {
         assert!((d.dome_night.w - peak).abs() < 1e-6 && d.dome_night.w <= GLOW_PEAK * (1.0 + GLOW_HAZE_GAIN));
         assert!((d.dome_night.z - peak).abs() < 1e-6, "blue is the moonlight's largest channel");
         assert!(d.dome_night.x < d.dome_night.z);
-        assert!((d.dome_moon.truncate() - night().moon_dir.normalize()).length() < 1e-6);
+        // The disc's place from the sky's centre (sky.rs places it SUN_DISTANCE out).
+        assert!((d.dome_moon.truncate() / SUN_DISTANCE - night().moon_dir.normalize()).length() < 1e-6);
+        assert_eq!(d.cloud_moon.truncate(), d.dome_moon.truncate());
         assert!(d.dome_moon.w > GLOW_G_HAZY && d.dome_moon.w < GLOW_G_CLEAR);
         // The clouds: their colour × the gain, capped.
         assert_eq!(d.cloud_night, Vec4::new(CLOUD_GAIN, CLOUD_GAIN, CLOUD_GAIN, CLOUD_PEAK));
@@ -696,6 +736,133 @@ mod tests {
         assert_eq!((d.stars, d.dome_night, d.cloud_night), (Vec4::ZERO, Vec4::ZERO, Vec4::ZERO));
     }
 
+    /// The water reflection's camera is the main camera mirrored in the water plane
+    /// (reflection.rs), while the sky parts and the moon disc stay centred on the main camera.
+    #[test]
+    fn a_mirrored_eye_sees_the_glow_round_the_disc_and_the_stars_unchanged() {
+        let water = 120.0;
+        let eye = Vec3::new(3_000.0, water + 5_000.0, -8_000.0);
+        let mirrored = Vec3::new(eye.x, 2.0 * water - eye.y, eye.z);
+        let e = 10f32.to_radians();
+        let m = Vec3::new(e.cos() * 0.6, e.sin(), e.cos() * 0.8);
+        let disc = eye + m * SUN_DISTANCE;
+        // The main view: the axis is the moon's direction.
+        assert!((glow_axis(eye, m * SUN_DISTANCE, eye) - m).length() < 1e-5);
+        // The mirrored eye: the axis points at the disc it sees; the moon's own direction
+        // would miss it by about the clear-air glow's half width.
+        let seen = (disc - mirrored).normalize();
+        assert!((glow_axis(eye, m * SUN_DISTANCE, mirrored) - seen).length() < 1e-5);
+        let miss = m.dot(seen).clamp(-1.0, 1.0).acos().to_degrees();
+        assert!(miss > 3.5 && miss < 4.5, "{miss}");
+        // A star of the dome reads the same lattice cell from either eye.
+        let s = Vec3::new(-0.2, 0.3, 0.93).normalize();
+        let star = eye + s * 0.9 * 175_000.0;
+        assert!((star_direction(star, eye) - s).length() < 1e-5);
+        let night = Vec4::new(0.5, twinkle_cells(), 0.0, 0.0);
+        for t in [0.1, 0.37, 0.8] {
+            assert!((twinkle_factor(star_direction(star, eye), t, night) - twinkle_factor(s, t, night)).abs() < 1e-3);
+        }
+        assert!((star - mirrored).normalize().dot(s) < 0.9999, "measured from the eye it would move");
+    }
+
+    /// A weather record whose fog ranges are both unset (0..0) has no fog (`Weather::fog_at`),
+    /// so the live sky gives no haze; an explicit `--fog 0,0` (the case above) is all fog.
+    #[test]
+    fn a_weather_with_both_fog_ranges_unset_has_no_haze() {
+        let mut sky = crate::sky::authored_session_sky();
+        sky.weather.fog = [0.0; 6];
+        sky.hour = 23.0;
+        assert_eq!(sky.fog(), None);
+        assert_eq!(haze_share(sky.fog_override.map(|(n, f)| (n, f, 1.0)).or_else(|| sky.fog()), sky.fog_power()), 0.0);
+        let mut i = night();
+        i.fog = sky.fog();
+        i.fog_power = sky.fog_power();
+        let d = detail(&i);
+        assert_eq!(d.haze, 0.0);
+        assert!((d.stars.x - TWINKLE_CLEAR).abs() < 1e-6);
+        assert_eq!(d.dome_moon.w, GLOW_G_CLEAR);
+    }
+
+    /// A night sky with a moon: sunrise 6-7, sunset 18-19, 23:00, full moon, fog 0..200,000.
+    fn moonlit_sky() -> SkyState {
+        let mut sky = crate::sky::authored_session_sky();
+        sky.climate.form_id = 7;
+        sky.climate.moons = 0x83;
+        sky.climate.sunrise = (6.0, 7.0);
+        sky.climate.sunset = (18.0, 19.0);
+        sky.hour = 23.0;
+        sky.weather.form_id = 1;
+        sky.weather.fog = [0.0, 200_000.0, 0.0, 200_000.0, 1.0, 1.0];
+        sky.weather.colors = vec![vec![[60, 70, 100]; 6]; 10];
+        sky
+    }
+
+    fn part_material(app: &mut App) -> Handle<SkyMaterial> {
+        let m = SkyMaterial { base: StandardMaterial::default(), extension: crate::sky::SkyDisplay::default() };
+        app.world_mut().resource_mut::<Assets<SkyMaterial>>().add(m)
+    }
+
+    fn light(app: &App, h: &Handle<SkyMaterial>) -> crate::sky::SkyLight {
+        app.world().resource::<Assets<SkyMaterial>>().get(h).expect("material").extension.light
+    }
+
+    fn set_on(app: &mut App, on: bool) {
+        app.world_mut().resource_mut::<crate::graphics::Graphics>().night_sky_detail = on;
+    }
+
+    /// The derivation is kept between frames: a part made later takes the kept values, a
+    /// weather fade works them out again, and off clears every part (on fills them again).
+    #[test]
+    fn the_kept_detail_fills_new_parts_follows_a_fade_and_clears_when_off() {
+        let mut app = App::new();
+        let mut g = crate::graphics::Graphics::preset(crate::graphics::Preset::Vanilla);
+        g.night_sky_detail = true;
+        app.insert_resource(g).insert_resource(moonlit_sky()).init_resource::<Assets<SkyMaterial>>().add_systems(Update, update_detail);
+        let (star, dome, cloud) = (part_material(&mut app), part_material(&mut app), part_material(&mut app));
+        app.world_mut().spawn((Stars, MeshMaterial3d(star.clone())));
+        app.world_mut().spawn((SkyDome::for_test(), MeshMaterial3d(dome.clone())));
+        app.world_mut().spawn((CloudLayer::for_test(), MeshMaterial3d(cloud.clone())));
+        app.update();
+        let first = light(&app, &star);
+        assert!(first.night.x > 0.0 && first.moon == Vec4::ZERO, "{first:?}");
+        let dome_first = light(&app, &dome);
+        assert!(dome_first.night.w > 0.0 && dome_first.moon.y > 0.0, "{dome_first:?}");
+        assert!(light(&app, &cloud).night.w > 0.0);
+
+        // A star part made later (a new worldspace's sky), the sky unchanged: the kept values.
+        let late = part_material(&mut app);
+        app.world_mut().spawn((Stars, MeshMaterial3d(late.clone())));
+        app.update();
+        assert_eq!(light(&app, &late).night, first.night);
+
+        // A fade toward a hazier weather: worked out again, every part follows.
+        {
+            let mut sky = app.world_mut().resource_mut::<SkyState>();
+            let mut hazier = sky.weather.clone();
+            hazier.form_id = 2;
+            hazier.fog = [0.0, 20_000.0, 0.0, 20_000.0, 1.0, 1.0];
+            sky.prev = Some(hazier);
+            sky.fade = 0.5;
+        }
+        app.update();
+        let faded = light(&app, &star).night;
+        assert!(faded.x > first.night.x + 0.01, "{faded:?} {:?}", first.night);
+        assert_eq!(light(&app, &late).night, faded);
+        assert!(light(&app, &dome).moon.w < dome_first.moon.w, "wider under the haze");
+
+        // Off: every part back to zero; on again: filled again.
+        set_on(&mut app, false);
+        app.update();
+        for h in [&star, &dome, &cloud, &late] {
+            let l = light(&app, h);
+            assert_eq!((l.moon, l.night), (Vec4::ZERO, Vec4::ZERO));
+        }
+        set_on(&mut app, true);
+        app.update();
+        assert_eq!(light(&app, &star).night, faded);
+        assert!(light(&app, &dome).night.w > 0.0);
+    }
+
     #[test]
     fn the_debug_multiplier_reads_a_number() {
         assert_eq!(debug_multiplier(None), Ok(None));
@@ -724,6 +891,11 @@ mod tests {
             "let lobe = pow(min((1.0 - g) * (1.0 - g) / d, 1.0), 1.5);",
             "moon: vec4<f32>,",
             "night: vec4<f32>,",
+            "return get_world_from_local(instance_index)[3].xyz;",
+            "let to_moon = night_centre(in.instance_index) + sky.moon.xyz - view.world_position.xyz;",
+            "let own = pbr_input.material.base_color.rgb * sky.params.x;",
+            "add += night_moon(select(own, vec3(1.0), sky.params.w > 1.5), dir, to_moon);",
+            "let dir = normalize(in.world_position.xyz - night_centre(in.instance_index));",
         ] {
             assert!(s.contains(line), "sky.wesl must hold `{line}` (night_sky.rs mirrors it)");
         }
