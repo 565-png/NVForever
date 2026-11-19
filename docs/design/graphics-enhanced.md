@@ -2059,9 +2059,18 @@ not a fact about the original game, never a parity item, and never to be used to
 difference from the original's frames. Placed lights exist only with their cell (world.rs,
 lights.rs), so past the loaded 5 x 5 cells no lamp is drawn and a town at night is a dark
 shape until its cells load. With the row "Distant lights (experimental)" (Graphics >
-Lighting and Effects) on, the placed lights of the cells beyond the loaded ones show as
-small glows. Sprites only: no light entity, no shadow, no game state. Code:
-`distant_lights.rs`, `distant_lights.wesl`.
+Lighting and Effects) on, the placed lights of the cells beyond the loaded ones, and the
+statics that are the places' lights, show as small glows. Sprites only: no light entity, no
+shadow, no game state. Code: `distant_lights.rs`, `distant_lights.wesl`,
+`nvf_assets::model_glow`.
+
+The Mojave holds few placed lights: 357 references with a LIGH base in the whole worldspace,
+56 within 12 cells of Novac and 56 of Goodsprings, none disabled at the start [observed:
+FalloutNV.esm, `fnvtool world refs --world WastelandNV`, 2026-11-19]. The towns light
+themselves mostly with statics: glow cards, light beams, lamps with a self-lit bulb, sign
+panels (Novac's within two cells: 12 LIGH references beside light beams, recessed lighting,
+glow cards, lamps and signs) [observed: the same listing]. So the glow statics below are
+what the feature mostly shows.
 
 - **Source.** The exterior cells whose closest point lies within 12 cells of the camera
   (`treelod.rs` `cells_within`, as the distant trees choose theirs). When the camera's cell
@@ -2074,6 +2083,33 @@ small glows. Sprites only: no light entity, no shadow, no game state. Code:
   colour comes only from its model is left out. Lights disabled at the start (their own flag
   or the enable parent chain, `world::enabled`) are kept with that state, so a script that
   enables one later shows it. The lists are kept per cell and dropped with the worldspace.
+- **Glow statics.** Beside LIGH references, statics and moveable statics (STAT, MSTT) whose
+  model glows, judged from the model's shapes and never from its file name
+  (`nvf_assets::model_glow`), by the properties the renderer already reads
+  (`nif_spawn::shape_props`, `shape_alpha_mode`, `shape_emissive_mult`): an unlit shape
+  added to the frame (glow cards, light beams: the additive shapes of nif.md §6 "Additive
+  blend"); an unlit shape whose emitted light, after the picture rule, is over white (what
+  nif_material.wesl burns as a hot source and the neon bright pass picks up); a lit shape
+  self-lit at full emission (emissive colour × multiplier at 1 or more: a lamp's bulb, a
+  sign's glow panel) [design: the last threshold is ours]. Apart from the added unlit
+  shapes, which may be long beams, a shape wider than 512 units (bounding-sphere radius)
+  does not count, so a self-lit band across a building is the building's picture, not a
+  lamp. A model with one small glowing part among ordinary geometry (a lamp post) qualifies
+  through that part. Per model, read once on the listing worker from the NIF alone (no
+  meshes, materials or textures for the GPU) and kept for the run: the glowing shapes'
+  area-weighted centre below the root (the reference's transform takes it to the world, so
+  a lamp post's glow sits at its bulb), their reach (feeding the size and budget rules as a
+  light's radius would, times 4) and their colour (the emissive hue times a mean hue of the
+  glowing texture, from the top level's compressed blocks, weighted by brightness and
+  alpha; the emissive hue alone when the texture is not readable). Glow statics take the
+  same present state, merge, cap, night share, fog and hand-over as lights, strength 1, no
+  shimmer. Parts of static collections (SCOL) are left out [design: not read here]. Counted
+  with an approximation of these rules over the records and the meshes (2026-11-19, the
+  same tools): within 12 cells of Novac 120 references of 22 glowing models (of 833 static
+  models there), of Goodsprings 55 of 23 (of 826): glow cards (`fxglowsimpfill*`), light
+  beams (`fxlightbeam*`, HELIOS One's god rays), lamps (`llamp*`, `lamplightlamp`,
+  street lights), recessed lighting, the NoVac sign's glow panel, tent lights; also some
+  utility girders and fans whose small self-lit part is a fixture.
 - **Present state.** Whether a listed light shows is the simulation's present state
   (`SimState::present`: not deleted, enabled now), or without a simulation its state at the
   start. Cells listed but not merged yet are checked at once, and every 2 s a pass over all
@@ -2101,7 +2137,7 @@ small glows. Sprites only: no light entity, no shadow, no game state. Code:
   leaf cards, tree.wesl). Half size: the light's radius x 0.5, held to 24..320 units, and
   never under 2 output pixels nor 1 render pixel, so a lamp 12 cells away stays a few pixels
   wide (fitted by pictures, 2026-11-18); a card widened to that floor keeps its own area's
-  share of light per pixel, held to 0.7. Under an upscaler the floor is in output pixels, so
+  share of light per pixel, held to 0.85. Under an upscaler the floor is in output pixels, so
   the glows keep their size on screen whatever the render scale (the view uniform has both
   sizes). Unlit and additive (Bevy's `AlphaMode::Add`, the transparent pass: depth-tested
   against the world, no depth written, no prepass, no shadows), a soft round spot
@@ -2109,7 +2145,8 @@ small glows. Sprites only: no light entity, no shadow, no game state. Code:
 - **Colour, fog and the HDR path.** As the NIF materials' additive shapes are drawn
   (nif.md §6 "Additive blend", "Fog on added light"; nvf_assets `add_display`,
   `fogged_addition`): the glow's colour is the record's colour bytes / 255 (display
-  values) times its fade (held to 2), the merged strength and 0.8 at the core; it is made
+  values) times its fade (held to 2), the merged strength and 1.0 at the core (0.8 before
+  the glows were added in display values; a few-pixel glow's centre then sat near 0.5); it is made
   linear (raised to 2.2), taken through the view's fog (`apply_fog`, with the game's curve
   of fog.rs and the desert haze of §3.16) and, in a view without HDR (Light glow off),
   Bevy's tonemapping, less black through the same, so fog dims the glow and adds no fog
@@ -2126,11 +2163,17 @@ small glows. Sprites only: no light entity, no shadow, no game state. Code:
   by the sun's elevation instead: full at -4 degrees and below, gone at 6 degrees and above,
   smooth between. While the share is 0 the mesh is hidden and nothing is listed, checked or
   built. A fitted choice of ours [design], not the original's (which draws no light beyond
-  its loaded cells).
+  its loaded cells). Glow statics take the same share, though many of their shapes glow by
+  day in the original too: by day, at a distance, a glow card is not a light one looks for
+  [design].
 - **Flicker and pulse.** Lights with the flicker flags (flicker, flicker slow) and the pulse
   flags (pulse, pulse slow) get a slow shimmer of up to 15 % (a sine with a phase from the
   reference), slower than the near light's own motion (lights.rs `LightMotion`), which from
   afar would read as noise.
+- **Doubling with other layers.** A glow source in a cell inside the loaded grid draws
+  nothing (its own model or light draws). The full-detail ring and distant objects on other
+  branches would draw the real card of a glow static at a distance, where it is under a
+  pixel, so a glow on top of it is accepted; `in_loaded_grid` is the hook if they need it.
 - **Accepted limits.** The glows are depthless additive sprites: they write no depth and no
   motion, so under temporal anti-aliasing, FSR or DLSS they are resolved like other
   additive shapes (smeared a little while the view moves; a card of a few pixels may
@@ -2141,21 +2184,26 @@ small glows. Sprites only: no light entity, no shadow, no game state. Code:
   (XEMI), no glows indoors or in other worldspaces than the camera's, no occlusion beyond
   the depth test (a glow behind the LOD's hills is hidden by them; one behind a building not
   loaded is not, as the building is not drawn). Not a script's light colour or fade edits
-  (lights.rs session lights).
+  (lights.rs session lights). Lights that exist only as part of a large building's own
+  texture (lit windows, a casino's facade) and activators (the Prospector Saloon's neon,
+  ACTI) show no distant glow.
 - **Switching**: the row, `--graphics-only distant-lights`, a `--graphics-cycle` set
   `distant-lights`, `NVF_PLAY_TEST_SETTINGS=<t>:distant-lights`. The first switch-on
   compiles the glows' pipeline; switching off drops the glows and an outstanding listing.
   Log lines, only with the row on: `distant lights: on (reach 12 cells, cap 400)` when it
   turns on, `distant lights: off` when it is turned off again, and at the exit `distant
-  lights summary: <cells> cells listed (<refs> references), <lights> lights (<d> disabled
-  at the start), <drawn> drawn at most, skipped: <a> deleted, <b> no colour, <c>
-  negative/off, <e> no radius`, the reasons counted over the light references read. With
+  lights summary: <cells> cells listed (<refs> references), <lights> lights, <g> glow
+  statics (<m> glowing models of <k> read), <d> disabled at the start, <drawn> drawn at
+  most, skipped: <a> deleted, <b> no colour, <c> negative/off, <e> no radius`, the reasons
+  counted over the light references read. The start line names no counts (nothing is
+  listed yet). With
   the row off nothing runs past the switch's check and the log is as on main. The graphics
   line names it (`..., distant lights`) only when it is on.
 - **Cost**: not measured yet (to be measured on the Goodsprings to Primm route at night,
   #3013): one draw of at most 400 cards, each fragment reading the frame behind once; the
-  record listing on a worker per cell change; at most 2,048 present-state checks a frame
-  and a merge of a cell when its present lights change.
+  record listing on a worker per cell change, which reads each static model in reach once
+  for its glow (about 830 models around a town; a NIF decode each, on the worker); at most
+  2,048 present-state checks a frame and a merge of a cell when its present lights change.
 
 ## 4. Tried and dropped
 
