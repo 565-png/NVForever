@@ -1933,9 +1933,9 @@ forbid = [{ text = "Caught rendering error", label = "a rendering (validation) e
 
 [[scenario]]
 name = "distant-lights"
-source = "[design, #3013] docs/design/graphics-enhanced.md §3.17 Distant lights at night (engine/nvforever/src/distant_lights.rs, distant_lights.wesl): started with --graphics-only distant-lights at Goodsprings 22:00, the distant lights come on once, list the cells in reach with their light references and glow statics, and the glows' pipeline compiles; the exit summary counts cells and lights, without a rendering, validation or pipeline error. Whether towns glow where they should is checked in pictures by hand"
+source = "[design, #3013] docs/design/graphics-enhanced.md §3.17 Distant lights at night (engine/nvforever/src/distant_lights.rs, distant_lights.wesl): started with --graphics-only distant-lights at Goodsprings 22:00, the distant lights come on once, list the cells in reach with their light references and glow statics, draw glows, and the glows' pipeline compiles and is ready (pipeline_gate.rs `distant lights pipeline <n> ready`, with NVF_PLAY_TEST_PIPELINE_LOG); the exit summary counts cells, lights, glow statics and glows drawn, without a rendering, validation or pipeline error. Whether towns glow where they should is checked in pictures by hand"
 areas = ["renderer", "graphics"]
-paths = ["engine/nvforever/src/distant_lights.rs", "engine/nvforever/src/distant_lights.wesl", "engine/nvf-assets/src/model_glow.rs"]
+paths = ["engine/nvforever/src/distant_lights.rs", "engine/nvforever/src/distant_lights.wesl", "engine/nvf-assets/src/model_glow.rs", "engine/nvforever/src/pipeline_gate.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "22", "--graphics-only", "distant-lights"]
 run_seconds = 30
@@ -1947,6 +1947,9 @@ expect = [
   { re = 'graphics: .*distant lights', label = "the graphics line names the distant lights" },
   { text = "distant lights: on (reach 12 cells, cap 400)", count = 1, label = "the distant lights on once" },
   { re = 'distant lights summary: \d+ cells listed \(\d+ references\), (?P<n>\d+) lights', range = [1, 100000], label = "light references beyond the loaded area become glows" },
+  { re = 'distant lights summary: .*?, (?P<n>\d+) glow statics \(', range = [1, 100000], label = "statics whose model glows (glow cards, lamps, beams) are found around Goodsprings" },
+  { re = 'distant lights summary: .*?, (?P<n>\d+) drawn at most', range = [1, 400], label = "glows were drawn, within the cap" },
+  { re = 'distant lights pipeline \d+ ready', label = "the glows' pipeline (distant_lights.wesl) compiled and is ready" },
 ]
 forbid = [
   { text = "distant lights: off", label = "the distant lights went off while the switch stayed on" },
@@ -1974,6 +1977,9 @@ order = [[
 ]]
 expect = [
   { re = 'graphics: .*distant lights', label = "the graphics line names the distant lights while on" },
+  { re = 'distant lights summary: .*?, (?P<n>\d+) glow statics \(', range = [1, 100000], label = "statics whose model glows were found while the row was on" },
+  { re = 'distant lights summary: .*?, (?P<n>\d+) drawn at most', range = [1, 400], label = "glows were drawn while the row was on" },
+  { re = 'distant lights pipeline \d+ ready', label = "the glows' pipeline compiled and is ready after the row turned them on" },
 ]
 forbid = [
   { text = "Caught rendering error", label = "a rendering (validation) error while the distant lights come and go" },
