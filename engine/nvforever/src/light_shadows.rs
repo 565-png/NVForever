@@ -1,5 +1,7 @@
-//! Shadows of placed lights, the settings row Lamp shadows (`light-shadows`;
-//! docs/design/graphics-enhanced.md §3.15). An addition of NVForever's own, not a fact
+//! Shadows of placed lights, the settings row ALC shadows (ALC: All Lights Cast; called Lamp
+//! shadows until 2026-11-19: the INI key `light-shadows`, the switch `--light-shadows` and
+//! the log lines `light shadows: …` keep that name, for saved settings and the smoke
+//! scenarios; docs/design/graphics-enhanced.md §3.15). An addition of NVForever's own, not a fact
 //! about the original game: there placed lights cast none, and no LIGH record of the
 //! masters sets the Spot Shadow flag [observed: docs/handoff/esm-data-audit-2026-10-25.md,
 //! item 6]. Off by default. Built as the sun's shadows are (shadow_rate.rs), owner
@@ -129,19 +131,32 @@
 //!   destination's lights are spawned with its cells and chosen by distance to the camera,
 //!   which is at the destination by then), every chosen light the camera sees draws all its
 //!   marked faces at once, with no budget, no turns and no face culling ([`predrawing`],
-//!   [`takes_budget`]); the screen waits for it (`Loading::lamp_shadows_busy`, "lamp
-//!   shadows" in its phases line) while lamps drew in the last frame or seen ones still have
-//!   marked faces, at most [`PREDRAW_CAP_SECS`] ([`predraw_busy`]). A light the camera does
-//!   not see cannot draw (Bevy culls a point light's shadow casters only for lights a camera
-//!   sees: vendored bevy_light `check_point_light_mesh_visibility`) and draws in play as
-//!   before. When the screen comes down: `light shadows: <n> lights pre-drawn under the
-//!   loading screen (<f> faces, <s> into the static cache); <c> casting, <u> of them not
-//!   drawn yet (not in view)`. Aid `NVF_LIGHT_SHADOW_PREDRAW=0`.
+//!   [`takes_budget`]). Once none of those has maps left to draw, the chosen lights the
+//!   camera does not see draw too, [`PREDRAW_UNSEEN_PER_FRAME`] a frame, nearest first
+//!   ([`shown_unseen`]): Bevy culls a point light's shadow casters only for lights a camera
+//!   sees (vendored bevy_light `check_point_light_mesh_visibility`), so they are shown to it
+//!   through the patched bevy_light's `NvfShadowLightsShown`, which finds their casters and
+//!   marks them visible for the renderer (engine/vendor/README.md "shown shadow lights");
+//!   their faces go into the static cache as any. The screen waits for it
+//!   (`Loading::lamp_shadows_busy`, "ALC shadows" in its phases line) while lamps drew in the
+//!   last frame or any chosen lamp still has marked faces, at most [`PREDRAW_CAP_SECS`]
+//!   ([`predraw_busy`]). When the screen comes down: `light shadows: <n> lights pre-drawn
+//!   under the loading screen (<f> faces, <s> into the static cache); <c> casting, <u> of
+//!   them not drawn yet; <o> of those pre-drawn out of view`. Aid
+//!   `NVF_LIGHT_SHADOW_PREDRAW=0` (none pre-drawn, in view or not).
+//! - **Kept shadow phases** (2026-11-19, the patched bevy_pbr: engine/vendor/README.md "kept
+//!   shadow phases"). A held light's shadow phases, pipeline keys and specialized pipelines
+//!   outlive its views while it keeps its slot, so switching it on again queues and
+//!   specializes only what changed since (Bevy's renderer threw them away with the views and
+//!   did all of it again: a share of the 1.4 ms a switch-on cost); and a light re-extracted
+//!   with the same place, range, near plane and layers keeps its views as they are. The
+//!   renderer line's events `phases reused`, `kept phases wiped` and `views kept` count them.
+//!   Aid `NVF_LIGHT_SHADOW_KEEP_PHASES=0` (phases go with the views, as before).
 
 use bevy::camera::primitives::{Aabb, CubemapFrusta, Frustum, Sphere, CUBE_MAP_FACES};
 use bevy::camera::visibility::{CubemapVisibleEntities, RenderLayers, VisibilitySystems, VisibleMeshEntities};
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
-use bevy::light::{CascadeShadowConfig, DirectionalLightShadowMap, NotShadowCaster, PointLightShadowMap, SimulationLightSystems};
+use bevy::light::{CascadeShadowConfig, DirectionalLightShadowMap, NotShadowCaster, NvfShadowLightsShown, PointLightShadowMap, SimulationLightSystems};
 use bevy::mesh::skinning::SkinnedMesh;
 use bevy::pbr::HoldLightShadowMaps;
 use bevy::prelude::*;
@@ -434,6 +449,23 @@ pub fn predraw_busy(drew: bool, waiting: bool, secs: f32) -> bool {
     (drew || waiting) && secs < PREDRAW_CAP_SECS
 }
 
+/// Under a loading screen, at most this many lamps the camera does not see are shown to
+/// Bevy's culling a frame to draw their maps (nearest first) [engineering choice: a frame of
+/// the pre-draw stays short, so the screen's own picture keeps moving; 32 lamps in four
+/// frames].
+pub const PREDRAW_UNSEEN_PER_FRAME: usize = 8;
+
+/// Which lamps the camera does not see are shown this frame of a pre-draw: none while a lamp
+/// in view still has maps to draw (`seen_waiting`: those go first), else the `cap` nearest of
+/// `unseen` (`(id, gap)`, the camera's distance to its light's edge) that have maps to draw.
+pub fn shown_unseen<T: Copy>(unseen: &mut [(T, f32)], seen_waiting: bool, cap: usize) -> Vec<T> {
+    if seen_waiting {
+        return Vec::new();
+    }
+    unseen.sort_by(|a, b| a.1.total_cmp(&b.1));
+    unseen.iter().take(cap).map(|u| u.0).collect()
+}
+
 /// Whether a light with maps to draw may draw: always without a limit (`unlimited`: the
 /// hold aid, a pre-draw), else while the frame's `budget` lasts, which it takes one from.
 pub fn takes_budget(budget: &mut usize, unlimited: bool) -> bool {
@@ -534,8 +566,8 @@ struct LampShadowState {
     /// themselves (moved or their full redraw due); and a few of the shapes' names.
     causes: [u64; 4],
     names: Vec<String>,
-    /// Where each shape (its bounds' centre) and each skeleton (its joints' box) was when
-    /// it last marked the lamps, and the frame: moves under [`MOVE_EPS`] add up until they
+    /// Where each shape (its bounds' centre) and each skeleton (by its first joint; its joints'
+    /// box) was when it last marked the lamps, and the frame: moves under [`MOVE_EPS`] add up until they
     /// reach it.
     shapes_at: EntityHashMap<(Vec3, u64)>,
     skeletons_at: EntityHashMap<(Vec3, Vec3, u64)>,
@@ -558,6 +590,9 @@ struct Predraw {
     lights: EntityHashSet,
     faces: u64,
     static_faces: u64,
+    /// Lights drawn while the camera did not see them (shown to Bevy's culling,
+    /// [`shown_unseen`]).
+    unseen: EntityHashSet,
 }
 
 /// What the performance pass's techniques did since the last summary (its own 10-s line).
@@ -632,6 +667,7 @@ impl Plugin for LightShadowsPlugin {
             .init_resource::<LampShadowState>()
             .init_resource::<MapTextureInputs>()
             .init_resource::<HoldLightShadowMaps>()
+            .init_resource::<NvfShadowLightsShown>()
             .add_plugins(ExtractResourcePlugin::<HoldLightShadowMaps>::default())
             .add_systems(PostUpdate, watch_map_textures.before(shadow_lights))
             .add_systems(PostUpdate, classify_casters.before(shadow_lights))
@@ -1293,7 +1329,7 @@ fn shadow_lights(
     directional: Option<Res<DirectionalLightShadowMap>>,
     mut cube: ResMut<PointLightShadowMap>,
     mut state: ResMut<LampShadowState>,
-    (mut out, inputs, mut loading): (ResMut<HoldLightShadowMaps>, Res<MapTextureInputs>, Option<ResMut<nvf_play::loading::Loading>>),
+    (mut out, inputs, mut loading, mut shown): (ResMut<HoldLightShadowMaps>, Res<MapTextureInputs>, Option<ResMut<nvf_play::loading::Loading>>, ResMut<NvfShadowLightsShown>),
     camera: Query<(&GlobalTransform, Option<&Frustum>), crate::fly::WorldCamera>,
     mut lights: Query<Placed, Casters>,
     moved: Query<MovedCasters, MovedFilter>,
@@ -1580,12 +1616,19 @@ fn shadow_lights(
                 }
             }
         }
-        for (e, skin, t, seen, rl) in &skinned {
+        // An actor's skinned shapes share its skeleton: each skeleton (by its first joint) is
+        // gone over and marks once a frame, not once for each of its shapes.
+        let mut skeletons_seen = EntityHashSet::default();
+        for (_, skin, t, seen, rl) in &skinned {
             if !seen.get() || rl.is_some_and(|l| !l.intersects(&layers)) {
                 continue;
             }
             let root = t.translation();
             if !lamps.iter().any(|l| l.at.distance_squared(root) <= (l.range + 512.0) * (l.range + 512.0)) {
+                continue;
+            }
+            let Some(&e) = skin.joints.first() else { continue };
+            if !skeletons_seen.insert(e) {
                 continue;
             }
             let (mut changed, mut lo, mut hi) = (false, Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
@@ -1656,6 +1699,26 @@ fn shadow_lights(
                 s.plain |= moved;
             }
         }
+    }
+
+    // Under a loading screen, the lamps the camera does not see draw too, once those it sees
+    // are done: shown to Bevy's culling (vendored bevy_light `NvfShadowLightsShown`), which
+    // finds their casters and marks them visible, so the renderer draws their maps; the
+    // nearest few a frame. Their faces out of view go into the static cache as any.
+    let to_draw = |s: &LampShadowState, e: &Entity| s.lamps.get(e).is_some_and(|s| s.fresh || s.dirty != 0);
+    let shown_now = if predraw {
+        let seen_waiting = lamps.iter().any(|l| !l.transient && l.seen && to_draw(state, &l.entity));
+        let mut unseen: Vec<(Entity, f32)> = lamps.iter().filter(|l| !l.transient && !l.seen && to_draw(state, &l.entity)).map(|l| (l.entity, l.gap)).collect();
+        shown_unseen(&mut unseen, seen_waiting, PREDRAW_UNSEEN_PER_FRAME)
+    } else {
+        Vec::new()
+    };
+    for l in lamps.iter_mut().filter(|l| shown_now.contains(&l.entity)) {
+        l.seen = true;
+    }
+    if !shown.lights.is_empty() || !shown_now.is_empty() {
+        shown.lights.clear();
+        shown.lights.extend(shown_now.iter().copied());
     }
 
     // 3. Which lights draw this frame: those never drawn first, then the nearest marked ones
@@ -1733,6 +1796,9 @@ fn shadow_lights(
             state.pass.composited += u64::from(composite.count_ones());
             if predraw && !l.transient {
                 state.predraw.lights.insert(l.entity);
+                if shown_now.contains(&l.entity) {
+                    state.predraw.unseen.insert(l.entity);
+                }
                 state.predraw.faces += u64::from(draw.count_ones());
                 state.predraw.static_faces += u64::from(to_static.count_ones());
             }
@@ -1759,11 +1825,11 @@ fn shadow_lights(
     }
 
     // The loading screen waits while the pre-draw draws: lamps drew this frame (their
-    // composites may follow) or seen lamps still have marked faces; at most
+    // composites may follow) or lamps, seen or not, still have marked faces; at most
     // PREDRAW_CAP_SECS. When the screen comes down, what was pre-drawn is logged.
     let busy = predraw && {
         let drew = lamps.iter().any(|l| !l.transient && drawing.contains_key(&l.entity));
-        let waiting = lamps.iter().any(|l| !l.transient && l.seen && state.lamps.get(&l.entity).is_some_and(|s| s.fresh || s.dirty != 0));
+        let waiting = lamps.iter().any(|l| !l.transient && state.lamps.get(&l.entity).is_some_and(|s| s.fresh || s.dirty != 0));
         predraw_busy(drew, waiting, state.predraw.began.map_or(0.0, |b| time.elapsed_secs() - b))
     };
     if let Some(loading) = loading.as_mut() {
@@ -1776,12 +1842,13 @@ fn shadow_lights(
         if p.began.is_some() {
             let casting: Vec<&LampState> = state.lamps.values().filter(|s| !s.transient && !s.leaving).collect();
             info!(
-                "light shadows: {} lights pre-drawn under the loading screen ({} faces, {} into the static cache); {} casting, {} of them not drawn yet (not in view)",
+                "light shadows: {} lights pre-drawn under the loading screen ({} faces, {} into the static cache); {} casting, {} of them not drawn yet; {} of those pre-drawn out of view",
                 p.lights.len(),
                 p.faces,
                 p.static_faces,
                 casting.len(),
-                casting.iter().filter(|s| s.fresh).count()
+                casting.iter().filter(|s| s.fresh).count(),
+                p.unseen.len()
             );
             state.pass.predrawn += p.lights.len() as u64;
         }
@@ -2126,6 +2193,9 @@ mod tests {
         assert!(s.starts_with("light shadows: renderer over 4 frames: light views a frame 7.50 alive, 2.50 run, 6 despawned with their light hidden;"), "{s}");
         assert!(s.contains("views spawned 12, views despawned 0"), "{s}");
         assert!(s.contains("extract_lights 0.000/0.00, prepare_lights 2.000/5.00, uniform writer"), "{s}");
+        // The smoke scenarios read the static cache's three events together; the kept phases'
+        // follow them.
+        assert!(s.contains("static cache draws 0, static cache composites 0, static cache misses 0, phases reused 0, kept phases wiped 0, views kept 0;"), "{s}");
         // No frames counted (nothing rendered since): no division by zero.
         assert!(renderer_summary(&default()).contains("over 0 frames: light views a frame 0.00 alive"));
         // The game's own systems, mean over the game frames and the longest.
@@ -2531,7 +2601,7 @@ mod tests {
         assert!(predrawing(true, true, true, false));
         assert!(!predrawing(true, true, true, true), "cells still coming in: as in play");
         assert!(!predrawing(true, true, false, false), "no screen");
-        assert!(!predrawing(false, true, true, false), "lamp shadows off");
+        assert!(!predrawing(false, true, true, false), "ALC shadows off");
         assert!(!predrawing(true, false, true, false), "NVF_LIGHT_SHADOW_PREDRAW=0");
         // The budget: one a light while it lasts; none taken without a limit.
         let mut budget = 2;
@@ -2545,10 +2615,23 @@ mod tests {
     #[test]
     fn the_screen_waits_for_the_pre_draw_until_nothing_is_left_or_the_cap() {
         assert!(predraw_busy(true, false, 0.5), "lamps drew this frame: their composites may follow");
-        assert!(predraw_busy(false, true, 0.5), "seen lamps with marked faces");
+        assert!(predraw_busy(false, true, 0.5), "lamps, seen or not, with marked faces");
         assert!(!predraw_busy(false, false, 0.5), "done");
         assert!(!predraw_busy(true, true, PREDRAW_CAP_SECS), "the cap");
         assert!(predraw_busy(true, true, PREDRAW_CAP_SECS - 0.01));
+    }
+
+    #[test]
+    fn lamps_out_of_view_are_shown_nearest_first_once_those_in_view_are_done() {
+        let mut unseen = vec![(1, 900.0), (2, 0.0), (3, 300.0), (4, 2500.0)];
+        assert!(shown_unseen(&mut unseen, true, 8).is_empty(), "lamps in view still drawing go first");
+        assert_eq!(shown_unseen(&mut unseen, false, 8), vec![2, 3, 1, 4]);
+        assert_eq!(shown_unseen(&mut unseen, false, 2), vec![2, 3], "a few a frame");
+        assert!(shown_unseen::<u32>(&mut [], false, 8).is_empty());
+        // The cap spreads the most lamps a mode casts over a few frames, well within the
+        // screen's wait (at 60 frames a second).
+        let frames = tuning(2).unwrap().lights.div_ceil(PREDRAW_UNSEEN_PER_FRAME);
+        assert!(frames <= 4 && (frames as f32 / 60.0) < PREDRAW_CAP_SECS);
     }
 
     #[test]

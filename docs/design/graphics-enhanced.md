@@ -1389,12 +1389,18 @@ gate's skipped frames change nothing), the aid's `mesh-terrain-blend-goodsprings
 `-options` and `-widths`; `graphics-enhanced` checks that the enhanced look neither turns
 it on nor logs it.
 
-### 3.15 Lamp shadows (`light-shadows`; off by default, not part of `enhanced`)
+### 3.15 ALC shadows (`light-shadows`; off by default, not part of `enhanced`)
+
+**Name.** ALC stands for All Lights Cast. The row was called Lamp shadows until
+2026-11-19 (renamed by the owner); the INI key `light-shadows`, the switch
+`--light-shadows`, the log lines starting `light shadows:` and the smoke scenarios'
+`light-shadows-*` names keep the old name, so saved settings and the scenarios still match.
+"Lamp shadows" below, in older notes, is the same feature.
 
 [design] An addition of NVForever's own. The original's placed lights cast no shadows, and
 no LIGH of the masters sets the Spot Shadow flag [observed:
 docs/handoff/esm-data-audit-2026-10-25.md, item 6], so lamps light the rooms behind their
-walls. The row Lamp shadows (Graphics › Shadows; `--light-shadows[=performance|quality|off]`)
+walls. The row ALC shadows (Graphics › Shadows; `--light-shadows[=performance|quality|off]`)
 offers Off, Performance or Quality, as the Sun shadows row does
 (`engine/nvforever/src/light_shadows.rs`). It is built as the sun's shadows are (owner,
 2026-11-18: "look how sun shadows are calculated and do the same", "use the same
@@ -1528,7 +1534,7 @@ culls, extracts and queues every face view every frame.
   - A casting light takes the sun's layers (0, `sky::SHADOW_LAYER`, `sky::BODY_LAYER`), so
     the player's body casts in both views. The first-person arms do not.
   - Everything `NotShadowCaster` stays out, as for the sun.
-  - **Light fixtures cast no lamp shadows** (`LightFixture`, `skip_fixtures`; the sun's
+  - **Light fixtures cast no shadows from their own lights** (`LightFixture`, `skip_fixtures`; the sun's
     they still cast). The owner's test, 2026-11-18: a hanging box lamp in the Goodsprings
     General Store threw its housing's shadow, larger than the lamp, onto the ceiling. The
     game hangs its lights under their lamps, not in them [observed 2026-11-18,
@@ -1622,7 +1628,7 @@ distances 100%), upscaler and frame generation off; the Prospector Saloon at 22:
 standing then Trudy's shotgun gunfight (7 flashes); `--log-frame-times 3`, 3-second means
 after loading]:
 
-| Lamp shadows | Standing (3 windows) | Gunfight (6 windows) | Slowest frame in the gunfight |
+| ALC shadows | Standing (3 windows) | Gunfight (6 windows) | Slowest frame in the gunfight |
 |---|---|---|---|
 | Off | 3.21-3.28 ms | 3.23-3.29 ms | 4.2-7.0 ms |
 | Performance | 3.21-3.26 ms | 3.31-3.40 ms | 5.6-15.5 ms |
@@ -1778,25 +1784,57 @@ measured in game yet.**
   spawned with its cells; the camera is already at the destination, as the cells it waits
   for are those around it), every chosen lamp the camera sees draws all its marked faces at
   once: no per-frame budget, no turns, no face culling. Before the cells are in, the lamps
-  draw as in play (each arriving cell would mark them again). The screen waits ("lamp
+  draw as in play (each arriving cell would mark them again). The screen waits ("ALC
   shadows" in its phases line) while lamps drew in the last frame (their composites follow)
-  or seen lamps still have marked faces, at most 3 s from the start of the pre-draw
-  (`PREDRAW_CAP_SECS`) [engineering choice]. A lamp the camera does not see cannot draw
-  (Bevy culls a point light's casters only for lights a camera sees [observed in the code:
-  vendored bevy_light `check_point_light_mesh_visibility`]) and draws in play as before, as a
-  never-drawn light first. When the screen comes down: `light shadows: <n> lights pre-drawn
-  under the loading screen (<f> faces, <s> into the static cache); <c> casting, <u> of them
-  not drawn yet (not in view)`; the performance line ends `loading-screen pre-draw (on) <n>
-  lights`. Aid `NVF_LIGHT_SHADOW_PREDRAW=0`.
+  or any chosen lamp still has marked faces, at most 3 s from the start of the pre-draw
+  (`PREDRAW_CAP_SECS`) [engineering choice]. The performance line
+  ends `loading-screen pre-draw (on) <n> lights`. Aid `NVF_LIGHT_SHADOW_PREDRAW=0`.
+- **Out of view too (2026-11-19).** At first a lamp the camera did not see could not draw
+  under the screen: Bevy culls a point light's casters only for lights a camera sees
+  [observed in the code: vendored bevy_light `check_point_light_mesh_visibility`], and the
+  renderer drops a hidden light. Now, once no lamp in view has maps left to draw, the chosen
+  lamps out of view are shown to that culling, the nearest `PREDRAW_UNSEEN_PER_FRAME` (8) a
+  frame (`shown_unseen`), through the patched bevy_light's `NvfShadowLightsShown`
+  (engine/vendor/README.md "shown shadow lights"): it finds their casters as for a seen light
+  and marks the light visible, so the renderer extracts it and draws its maps; it lights
+  nothing on screen (it lies in no cluster). Their faces out of view go into the static cache
+  as any. Within the same 3-s cap; 32 lamps take four frames. When the screen comes down:
+  `light shadows: <n> lights pre-drawn under the loading screen (<f> faces, <s> into the
+  static cache); <c> casting, <u> of them not drawn yet; <o> of those pre-drawn out of view`
+  (`<u>` should now be 0 but for the cap). In play they then sample their held maps when
+  seen, with nothing to draw.
 - [hypothesis] Where it should help: a lamp near an idle or walking actor redrew every
   caster of the room on each skeleton mark; now the room is copied (a 1 MB layer copy at
   512²) and the actor alone drawn. Where it costs: a static change now draws the cache and,
   with an actor in the face, a composite after it (two switch-ons instead of one); the
   copies' bandwidth; the memory.
 
+**Kept shadow phases (2026-11-19).** Switching a held light on cost about 1.4 ms of CPU once
+(measured 2026-11-18; each of its views made, its six phases made anew, every caster in them
+specialized and queued again). Bevy keeps a shadow view's phase, pipeline key and specialized
+pipelines only while the view lives, and the game's held lights have none. The patched
+bevy_pbr (engine/vendor/README.md "kept shadow phases") keeps them for every light the game
+holds a slot for, with or without views, so a light switched on again finds its bins and
+pipelines and queues only what changed since: the casters its lists gained or lost.
+A kept view that missed a change (an entity in its pipelines whose mesh, material or flags
+changed while it had no view) is dropped whole and the light drawn as new, as before; an
+entity removed is only dropped from its pipelines. And a light re-extracted with the same
+place, range, near plane and layers (every frame it draws: its casters' lists change) keeps
+its views instead of having them made again ("kept shadow views"). Events on the renderer
+line: `phases reused` (phases a light's new views found kept), `kept phases wiped`, `views
+kept`. Aid `NVF_LIGHT_SHADOW_KEEP_PHASES=0`; `NVF_SHADOW_VIEW_CACHE=0` makes the views anew
+again too. **Not measured in game yet** [hypothesis: the switch-on's specialization and
+queueing go; the view spawn and the faces' own schedule runs stay].
+
+Also (2026-11-19): the caster grid finds the drawing lamps by their slots instead of going
+over every entity with a place each frame (`caster_candidates`); an actor's skeleton is gone
+over and marks once a frame, not once for each of its skinned shapes (`shadow_lights`).
+
 **Not built yet.**
-- Keeping a held light's specialization caches, so switching it on costs less.
 - The static cache for spot lights (a second set of layers past the cascades).
+- Held faces of a drawing light still have their views batched each frame (Bevy's
+  `batch_and_prepare_binned_render_phase` goes over every view with an `ExtractedView`);
+  leaving them out needs the GPU preprocessing's buffers looked at.
 
 **Smoke.** `light-shadows` (the Prospector Saloon at 22:00, `--light-shadows=quality`)
 checks that lights cast and that their maps are drawn. The picture is checked by hand.

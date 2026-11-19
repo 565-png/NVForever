@@ -61,7 +61,7 @@ by a comment starting `NVForever FSR integration`:
 Without the override both do what upstream does. This is a new patch for Bevy 0.20.1, not
 the dropped 0.19.1 one below.
 
-The same for the contact shadows' depth march (lamp shadows on Quality, light_shadow_detail.rs;
+The same for the contact shadows' depth march (ALC shadows, once Lamp shadows, on Quality, light_shadow_detail.rs;
 docs/design/graphics-enhanced.md §3.15), each part marked `NVForever (main pass viewport)`:
 
 - `src/ssr/raymarch.wesl`: `DepthRayMarch` and its distance function carry
@@ -90,7 +90,7 @@ directional shadows)`:
   cleared before, which also dropped the lamps' shadows and changed the ambient occlusion's
   factor on lamps; its extrapolation (by up to 1/share) turned that difference into a glow
   on the first-person arms, weapon and Pip-Boy [observed 2026-11-19, Prospector Saloon at
-  22:00, lamp shadows Quality with ambient occlusion; gone after the change].
+  22:00, ALC shadows Quality with ambient occlusion; gone after the change].
 
 Without the bit set the lighting is upstream's.
 
@@ -236,7 +236,7 @@ Without the resource nothing changes. Measured before it (2026-11-18, RTX 5090, 
 the Prospector Saloon): every shadowed point light cost about 1 ms of frame time, six
 Core3d schedule runs a frame.
 
-Two more for the lamp shadows' performance pass (2026-11-18, docs/design/graphics-enhanced.md
+Two more for the ALC shadows' (once Lamp shadows) performance pass (2026-11-18, docs/design/graphics-enhanced.md
 §3.15 "Performance pass"):
 
 - **Hidden light views** (`NVForever hidden light views`, `src/render/light.rs`
@@ -266,7 +266,7 @@ Two more for the lamp shadows' performance pass (2026-11-18, docs/design/graphic
   events counted (`NVF_EVENTS`: views spawned, despawned and made again, shadow phases made
   and dropped, point and directional shadow textures that were not the last frame's). The
   counts are summed in atomics and read and reset by `nvf_take_light_view_counts()` (the
-  game's 10-s lamp shadow summary, `light shadows: renderer over …`). Bevy reads none of it;
+  game's 10-s ALC shadow summary, `light shadows: renderer over …`). Bevy reads none of it;
   the cost is a few clock reads and relaxed atomic adds a frame. Drop it once the counts
   are not wanted.
 - **Cached shadow views** (`NVForever cached shadow views`, `src/render/light.rs`
@@ -285,7 +285,7 @@ Two more for the lamp shadows' performance pass (2026-11-18, docs/design/graphic
   on other render threads); fewer device calls there give it less to wait on. Not measured
   yet.]
 
-One more for the lamp shadows (static shadow cache, 2026-11-18; docs/design/graphics-enhanced.md
+One more for the ALC shadows (static shadow cache, 2026-11-18; docs/design/graphics-enhanced.md
 §3.15 "Static shadow cache"), marked `NVForever static shadow cache`, all in
 `src/render/light.rs`:
 
@@ -319,6 +319,43 @@ One more for the lamp shadows (static shadow cache, 2026-11-18; docs/design/grap
   nothing changes. The cache costs as much memory as the sampled cubes (at 512 × 512, 6 MB a
   lamp). Upstream has no way to draw a shadow map over an earlier picture: its shadow
   attachments always clear. Not measured in game yet.
+
+One more for the ALC shadows (kept shadow phases, 2026-11-19; docs/design/graphics-enhanced.md
+§3.15 "Kept shadow phases"), marked `NVForever kept shadow phases` and `NVForever kept shadow
+views`, in `src/render/light.rs` and `src/material.rs`:
+
+- **Kept shadow phases.** The render-world resource `NvfParkedShadowViews` (registered in
+  `MaterialsPlugin`): `prepare_lights` fills it each frame with the retained view entities of
+  every light `HoldLightShadowMaps` gives a slot (six faces of a point light, one view of a
+  spot light), drawing or held, seen or not. Its closing sweep keeps their shadow phases,
+  `LightKeyCache` entries and specialized pipelines though the light has no views
+  (upstream drops them with the views, so a light whose maps are switched off and on again
+  had every caster specialized and queued anew into new phases).
+  `specialize_shadows` keeps their pending queues and pipelines the same way, and checks
+  each such view that has no view entity this frame against the frame's
+  `DirtySpecializations`: an entity in its pipelines that changed (`changed_renderables`:
+  its mesh, material or flags) makes the kept view stale, and its phase, key, pipelines and
+  pending queue are dropped (counted as `kept phases wiped`), so the light is drawn as a new
+  one; an entity removed is dropped from its pipelines only (the light's casters' list drops
+  it, and so its bin, when it draws again). Bins of an entity whose casters' list membership
+  changed while the light had no views are fixed by the list's own difference when the
+  light is extracted again (`collect_visible_cpu_culled_entities` keeps the old list while
+  the light's maps are off). New events in the light view counts: `phases reused` (phases a
+  light's new views found kept) and `kept phases wiped`. The game's
+  `NVF_LIGHT_SHADOW_KEEP_PHASES=0` (read once, `nvf_keep_shadow_phases_on`) leaves the set
+  empty: upstream's behaviour.
+- **Kept shadow views.** A point or spot light whose `ExtractedPointLight` changed (every
+  frame it draws: its casters' lists change) has its views made again only when what they
+  are made from changed (`NvfViewSource`: a point light's place, a spot light's transform
+  and outer angle, the near plane, the range, the render layers; or its slot or texture, as
+  before). A face drawn on views not made again gets its `RootNonCameraView` back (a held
+  face's was removed). Event `views kept`. With `NVF_SHADOW_VIEW_CACHE=0` they are made again
+  as before.
+
+Without `HoldLightShadowMaps` the set stays empty and the sweep is upstream's. [hypothesis:
+part of the measured 1.4 ms a held light's switch-on cost goes; the view spawn and the drawn
+faces' Core3d runs stay. Not measured in game yet.] Upstream has no way to keep a shadow
+view's phase without the view.
 
 Gated materials (#2661, docs/design/graphics-enhanced.md §3.14 "Off"), in `src/material.rs`,
 each part marked `NVForever gated materials`: `MaterialPlugin::gated(MaterialGate)` (a new
@@ -367,8 +404,8 @@ way for an application to add bindings to the mesh view bind group.
 
 ## bevy_light 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
-Vendored 2026-11-18, unchanged but for one patch (shadow caster candidates, for the lamp
-shadows' performance pass: nvforever light_shadow_casters.rs, docs/design/graphics-enhanced.md
+Vendored 2026-11-18, unchanged but for two patches. The first (shadow caster candidates, for
+the ALC shadows' (once Lamp shadows) performance pass: nvforever light_shadow_casters.rs, docs/design/graphics-enhanced.md
 §3.15 "Performance pass"), marked `NVForever shadow caster candidates`, in `src/lib.rs`:
 
 - The resource `NvfShadowCasterCandidates` (`lights`: a list of entities per light).
@@ -391,6 +428,24 @@ profile build in Primm at night: `check_point_light_mesh_visibility` 0.4 ms at t
 7.6 ms in the worst frames, for at most a few lamps drawing a frame; upstream tests every
 caster for each.] Upstream has no way to hand a light its candidates; drop this if it gains a
 spatial index for light culling.
+
+The second (shown shadow lights, 2026-11-19, the ALC shadows' pre-draw under a loading
+screen: nvforever light_shadows.rs `shown_unseen`, docs/design/graphics-enhanced.md §3.15
+"Out of view too"), marked `NVForever shown shadow lights`, in `src/lib.rs`:
+
+- The resource `NvfShadowLightsShown` (`lights`: a set of point and spot lights).
+  `check_point_light_mesh_visibility` goes over those lights after the ones the cameras see
+  (each once) and finds their casters the same way, and marks each such light visible
+  (its `ViewVisibility`, through a query of the point and spot lights that are not meshes,
+  disjoint from the casters' query). bevy_pbr's `extract_lights` then extracts the light and
+  draws its shadow maps, though no camera sees it; it lies in no cluster of any view, so it
+  lights nothing on screen.
+- Upstream finds casters only for lights a camera sees (its loop goes over the cameras'
+  visible lights), and drops a light no camera sees from the render world, so a light's
+  shadow maps cannot be drawn before it comes into view.
+
+Bevy inserts no such resource; without it, or empty, nothing changes. Upstream has no way to
+draw an unseen light's shadow maps ahead of time; drop this if it gains one.
 
 ## bevy_render 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 

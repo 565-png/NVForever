@@ -557,6 +557,12 @@ pub fn check_point_light_mesh_visibility(
     mut checked_lights: Local<EntityHashSet>,
     // NVForever shadow caster candidates.
     nvf_candidates: Option<Res<NvfShadowCasterCandidates>>,
+    // NVForever shown shadow lights: the lights shown, and their visibility.
+    nvf_shown: Option<Res<NvfShadowLightsShown>>,
+    mut nvf_light_visibility: Query<
+        &mut ViewVisibility,
+        (Or<(With<PointLight>, With<SpotLight>)>, Without<Mesh3d>),
+    >,
 ) {
     checked_lights.clear();
 
@@ -567,10 +573,22 @@ pub fn check_point_light_mesh_visibility(
     );
 
     let visible_entity_ranges = visible_entity_ranges.as_deref();
-    for visible_lights in &visible_point_lights {
-        for &light_entity in visible_lights.get(TypeId::of::<ClusterVisibilityClass>()) {
+    // NVForever shown shadow lights: after the lights the cameras see, those shown (made
+    // visible here, so their shadow maps are extracted and drawn too).
+    let nvf_shown = nvf_shown.as_deref().map(|shown| &shown.lights);
+    let nvf_lights = visible_point_lights
+        .iter()
+        .flat_map(|visible_lights| visible_lights.get(TypeId::of::<ClusterVisibilityClass>()).iter().copied())
+        .chain(nvf_shown.into_iter().flat_map(|shown| shown.iter().copied()));
+    {
+        for light_entity in nvf_lights {
             if !checked_lights.insert(light_entity) {
                 continue;
+            }
+            if nvf_shown.is_some_and(|shown| shown.contains(&light_entity)) {
+                if let Ok(mut view_visibility) = nvf_light_visibility.get_mut(light_entity) {
+                    view_visibility.set_visible();
+                }
             }
 
             // Point lights
@@ -815,6 +833,19 @@ pub fn check_point_light_mesh_visibility(
 pub struct NvfShadowCasterCandidates {
     /// The entities to test, by light.
     pub lights: bevy_ecs::entity::EntityHashMap<Vec<Entity>>,
+}
+
+/// NVForever shown shadow lights (2026-11-19, engine/vendor/README.md): the point and spot
+/// lights [`check_point_light_mesh_visibility`] treats as seen though no camera sees them: it
+/// finds their shadow casters after the cameras' lights and marks the lights themselves
+/// visible (`ViewVisibility`), so `bevy_pbr` extracts them and draws their shadow maps. Such
+/// a light lights nothing on screen (it lies in no cluster of a view). The game shows its
+/// lamps this way under a loading screen, to draw their maps before play. Bevy inserts none;
+/// without it, or empty, nothing changes.
+#[derive(Resource, Default, Debug, Clone)]
+pub struct NvfShadowLightsShown {
+    /// The lights shown this frame.
+    pub lights: EntityHashSet,
 }
 
 /// NVForever shadow caster candidates: a caster as the visibility query gives it.

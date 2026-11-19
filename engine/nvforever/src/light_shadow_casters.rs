@@ -190,7 +190,7 @@ fn caster_candidates(
     all: Query<Meshes, With<Mesh3d>>,
     changed: Query<Meshes, ChangedMeshes>,
     (mut gone, mut unbounded, mut culled): (RemovedComponents<Mesh3d>, RemovedComponents<Aabb>, RemovedComponents<NoFrustumCulling>),
-    lights: Query<(Entity, &GlobalTransform, Option<&PointLight>, Option<&SpotLight>)>,
+    lights: Query<(&GlobalTransform, Option<&PointLight>, Option<&SpotLight>)>,
 ) {
     if settings.choice == 0 || !grid_on() {
         // Off: no grid; switched on again it is built anew.
@@ -233,13 +233,15 @@ fn caster_candidates(
     let (filed, everywhere) = grid.counts();
     FILED.store(filed as u64, Relaxed);
     EVERYWHERE.store(everywhere as u64, Relaxed);
-    // The lamps drawing this frame (shadows switched on, a slot of the game's).
+    // The lamps drawing this frame (shadows switched on, a slot of the game's): looked up by
+    // the slots (a few dozen), not by going over every entity with a place.
     let out = &mut *out;
     out.lights.clear();
-    for (e, t, point, spot) in &lights {
+    for &e in hold.slots.keys().chain(hold.spot_slots.keys()) {
+        let Ok((t, point, spot)) = lights.get(e) else { continue };
         let (on, range) = match (point, spot) {
-            (Some(p), _) => (p.shadow_maps_enabled && hold.slots.contains_key(&e), p.range),
-            (None, Some(s)) => (s.shadow_maps_enabled && hold.spot_slots.contains_key(&e), s.range),
+            (Some(p), _) if hold.slots.contains_key(&e) => (p.shadow_maps_enabled, p.range),
+            (None, Some(s)) if hold.spot_slots.contains_key(&e) => (s.shadow_maps_enabled, s.range),
             _ => continue,
         };
         if !on {
