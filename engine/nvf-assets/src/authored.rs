@@ -256,20 +256,34 @@ pub(crate) fn find(data: &GameData, enabled: bool, key: &str, memo: &Memo, mut l
 }
 
 /// The set's `_p` as a height map at the scalars' depth ([`Scalars::parallax_depth_or_default`]),
-/// or `None`: no `_p`, a depth of 0 (the file is then not loaded), or a `_p` that does not
-/// load (one warning per file).
+/// or `None`: no `_p`, a depth of 0 (the file is then not loaded), a `_p` that does not
+/// load, or a signed one ([`signed_format`]; refused, as `fnvtool pbr check` refuses it), one
+/// warning per file either way.
 fn height_map(found: &Found, scalars: &Scalars, memo: &Memo, load: &mut impl FnMut(&str, TextureUsage) -> Option<Loaded>) -> Option<Parallax> {
     let path = found.path(Member::Height)?;
     let depth = scalars.parallax_depth_or_default();
     if depth <= 0.0 {
         return None;
     }
-    let Some((image, _format)) = load(&path, TextureUsage::Linear) else {
+    let Some((image, format)) = load(&path, TextureUsage::Linear) else {
         Stats::add(&stats().height_failed);
         memo.warn_once(&path, || format!("authored materials: {path} could not be loaded; no height map is drawn from it"));
         return None;
     };
+    if format.is_some_and(signed_format) {
+        Stats::add(&stats().height_signed);
+        memo.warn_once(&path, || format!("authored materials: {path} is signed BC4; a height map is unsigned (0 low, 1 high), so it is not drawn (export it as BC4_UNORM)"));
+        return None;
+    }
     Some(Parallax::height(image, depth))
+}
+
+/// Whether a member went up in a signed format (`_SNORM`: values -1..1). A height map holds
+/// 0 (lowest) to 1 (highest); the parallax march reads `1 - height` as depth, which a negative
+/// sample would push below the deepest layer, so a signed `_p` is refused [design, the
+/// format's rule: docs/spec-notes/pbr-materials.md "Compression and sizes"].
+pub fn signed_format(format: TextureFormat) -> bool {
+    matches!(format, TextureFormat::Bc4RSnorm | TextureFormat::R8Snorm | TextureFormat::Bc5RgSnorm | TextureFormat::Rg8Snorm)
 }
 
 /// The value of `NifSurface::emissive_rule.w` that marks a material shaded from an authored
@@ -626,6 +640,8 @@ pub struct Stats {
     pub swaps_legacy: AtomicU64,
     /// Sets whose `_p` did not load (the rest of an authored set still applies).
     pub height_failed: AtomicU64,
+    /// Sets whose `_p` is signed BC4, refused ([`signed_format`]).
+    pub height_signed: AtomicU64,
     stems: Mutex<HashSet<String>>,
 }
 

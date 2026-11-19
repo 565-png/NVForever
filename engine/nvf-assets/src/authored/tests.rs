@@ -66,6 +66,12 @@ impl Pack {
             ("textures/walls/brokenheight.dds", dxt1.clone()),
             ("textures/pbr/walls/brokenheight_orm.dds", dx10(98, 4, 4, &[0; 16])),
             ("textures/pbr/walls/brokenheight_p.dds", b"not a dds".to_vec()),
+            // Signed BC4 `_p`: refused, legacy FourCC and DX10 (BC4_SNORM, 81) alike.
+            ("textures/walls/signed.dds", dxt1.clone()),
+            ("textures/pbr/walls/signed_p.dds", legacy(b"BC4S", 4, 4, &[0; 8])),
+            ("textures/walls/signedrelief.dds", dxt1.clone()),
+            ("textures/pbr/walls/signedrelief_orm.dds", dx10(98, 4, 4, &[0; 16])),
+            ("textures/pbr/walls/signedrelief_p.dds", dx10(81, 4, 4, &[0; 8])),
             // A first-person twin whose own set is height only, and the plain texture's set.
             ("textures/weapons/gun.dds", dxt1.clone()),
             ("textures/weapons/1stpersongun.dds", dxt1.clone()),
@@ -135,6 +141,10 @@ fn the_synchronous_source_loads_a_set_by_its_exact_member_paths() {
     // A `_p` that does not load: an authored set keeps the rest.
     let broken = authored(source.pbr_set(&source.resolve("walls/brokenheight.dds"))).expect("the _orm still applies");
     assert!(broken.height.is_none());
+    // Signed BC4: a height-only set gives nothing; an authored one keeps the rest.
+    assert!(source.pbr_set(&source.resolve("walls/signed.dds")).is_none(), "a signed _p is refused");
+    let signed = authored(source.pbr_set(&source.resolve("walls/signedrelief.dds"))).expect("the _orm still applies");
+    assert!(signed.height.is_none(), "a signed _p is refused");
     assert!(source.pbr_set(&source.resolve("walls/plain.dds")).is_none());
     assert!(source.pbr_set(&source.resolve("walls/bad.dds")).is_none(), "an _orm that does not load leaves the shape legacy");
     let twin = source.pbr_set(&source.resolve("weapons/1stpersongun.dds")).expect("the twin's own height-only set");
@@ -158,6 +168,8 @@ fn the_synchronous_source_loads_a_set_by_its_exact_member_paths() {
     assert!(warned.contains(r"textures\pbr\walls\bad_orm.dds"), "{warned:?}");
     assert!(!warned.contains(r"textures\pbr\walls\nonormal_orm.dds"));
     assert!(warned.contains(r"textures\pbr\walls\brokenheight_p.dds"), "{warned:?}");
+    assert!(warned.contains(r"textures\pbr\walls\signed_p.dds") && warned.contains(r"textures\pbr\walls\signedrelief_p.dds"), "{warned:?}");
+    assert!(signed_format(TextureFormat::Bc4RSnorm) && signed_format(TextureFormat::R8Snorm) && !signed_format(TextureFormat::Bc4RUnorm) && !signed_format(TextureFormat::R8Unorm));
     assert!(!cache.has_or_ahead(r"textures\pbr\walls\flat_p.dds"), "a depth of 0 loads no _p");
     // `_p` in the linear role, as unsigned BC4.
     for h in [stone_height, relief_height] {

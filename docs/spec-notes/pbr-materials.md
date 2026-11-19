@@ -113,6 +113,10 @@ them correctly.
 - Recommended formats: `_orm` **BC7** (or BC1 when its quality is enough), `_n` **BC5**
   (unsigned), `_p` **BC4** (unsigned). BC1 and BC3 will be accepted for `_orm` and `_n`
   from stage 3, and for `_p` when height maps land (stage 4); `_albedo` stays reserved.
+- [design] `_p` must be **unsigned**: signed BC4 (`BC4_SNORM`, FourCC `BC4S`) is refused,
+  by `fnvtool pbr check` (an error) and by the engine (one warning; the rest of an authored
+  set still applies). A height runs from 0 (lowest) to 1 (highest); a signed sample below 0
+  would read deeper than the deepest layer. Signed BC5 stays allowed for `_n`.
   [documented: Microsoft, "Texture Block Compression in Direct3D 11": BC4 stores one channel
   and BC5 two in 4x4-texel blocks of 8 and 16 bytes; BC7 stores RGB or RGBA in 16-byte
   blocks]

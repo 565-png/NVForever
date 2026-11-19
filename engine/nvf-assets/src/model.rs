@@ -2170,6 +2170,7 @@ mod bc5_model_tests {
         assert_eq!(images.get(&set.orm).unwrap().texture_descriptor.format, TextureFormat::Bc7RgbaUnorm);
         assert_eq!(images.get(&normal).unwrap().texture_descriptor.format, TextureFormat::Bc5RgUnorm);
         assert_eq!(images.get(&depth_map).unwrap().texture_descriptor.format, TextureFormat::Bc4RUnorm);
+        assert!(deferred.pbr_set(&deferred.resolve("walls/signed.dds")).is_none(), "the worker refuses a signed _p as the main thread does");
         let mut main = StoreTextures { textures: &mut cache, data: &pack.data, images: &mut images, formats: None };
         assert_eq!(main.pbr_set(&key).as_ref(), Some(&found), "the main thread adopts the worker's handles");
         assert_eq!(main.pbr_set(&stone_key).as_ref(), Some(&stone), "the worker's _p too");
