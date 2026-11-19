@@ -1213,6 +1213,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fnv-pbr"
+version = "0.8.0"
+dependencies = [
+ "fnv-vfs",
+ "toml",
+]
+
+[[package]]
 name = "fnv-phys"
 version = "0.8.0"
 dependencies = [
