@@ -14,7 +14,7 @@ use crate::anim_play::{Clip, MaterialTarget, MaterialTrack, OwnCycle, Playing};
 use crate::material_anim::{MaterialSlot, RigMaterials};
 use crate::data::GameData;
 use crate::nif_material::NifMaterial;
-use crate::nif_spawn::{affine, build_mesh, is_editor_marker, shaded_model, shape_material_with, shape_props, shape_skin, to_bevy, StoreTextures, TextureSource};
+use crate::nif_spawn::{affine, build_mesh, is_editor_marker, shaded_model, shape_material_tangents, shape_props, shape_skin, to_bevy, StoreTextures, TextureSource};
 use crate::texture::{worker_texture, TextureCache, TextureSnapshot, TextureUsage, WorkerTextures};
 use bevy::asset::AssetHandleProvider;
 use bevy::image::CompressedImageFormats;
@@ -1798,7 +1798,8 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
                 cycle: OwnCycle { start: g.start_time, stop: g.stop_time, frequency: g.frequency.max(1e-6), phase: g.phase, cycle_type: (g.flags >> 1) & 3 },
             })
         });
-        let (material, _missing) = shape_material_with(&props, &mut mesh, sink);
+        // The normal map's tangents: those the file stores (crate::tangents).
+        let (material, _missing) = shape_material_tangents(&props, &mut mesh, sink, crate::tangents::Tangents::Stored(data));
         if let Some(VertexAttributeValues::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
             for v in p {
                 let q = (out.root * t).transform_point3(Vec3::from_array(*v));
@@ -2056,6 +2057,7 @@ mod tests {
 #[cfg(test)]
 mod bc5_model_tests {
     use super::*;
+    use crate::nif_spawn::shape_material_with;
     use crate::texture::bc5_tests::{OwnedData, triangle};
     use bevy::render::render_resource::TextureFormat;
 

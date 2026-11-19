@@ -781,6 +781,7 @@ pub fn report(mut exit: MessageReader<AppExit>, streamer: Res<Streamer>, models:
         "streaming summary: {} cells loaded ({:.0} ms on the main thread), spread over {} frames; {} waited for their read-ahead, {} drawn before it was done; {} models cached, {} in flight; {} late-mesh marks",
         s.cells_loaded, s.load_ms, s.spawn_frames, s.cells_waited, s.cells_forced, models.held(), models.in_flight(), late.marked
     );
+    info!("{}", nvf_assets::tangents::summary());
     // The smoke scenario `terrain-smoothing` reads it (#2149).
     if let Some(t) = terrain {
         // Cell draws counted over the run (a cell drawn again after it unloaded counts

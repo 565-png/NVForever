@@ -1150,6 +1150,43 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   corr(G, dH/dy) from −0.24 to −0.93, the sign of a downward green axis. Bevy assumes
   upward green (glTF), so the renderers set `flip_normal_map_y`. Unflipped, bumps were
   lit from below: rock faces looked inside-out and glistened at the wrong edges.
+- **Stored tangents** (2026-11-19). A shape-data block with bit 12 of its flags set stores
+  "Tangents" then "Bitangents", one vector per vertex each, after its normals
+  [documented: nif.xml NiGeometryData, condition `Has Normals` and `(Data Flags | BS Data
+  Flags) & 4096`; BSGeometryDataFlags bit 12 "Has Tangents"]. nif.xml documents nothing
+  more of them: not which texture axis each follows, nor their handedness. From the data
+  [observed: `prep_bench compare`, a local probe, over the 7,182 models under `meshes\`
+  architecture, clutter, dungeons, landscape, furniture, vehicles and scol of the game's
+  archives (LOD and markers left out), 23,358 normal-mapped shapes, every one of which
+  but 9 stores them; vertices a triangle uses]:
+  - Against each vertex's texture gradients (the position's change along u and along v,
+    from its triangles' UVs): the "bitangent" lies within 25° of +du at 93.3 % of 13.5
+    million vertices (−du: 0.03 %), the "tangent" within 25° of +dv at 89.8 % (−dv:
+    0.03 %). The names are the other way round from the usual ones, where the tangent
+    follows u.
+  - Bevy's frame (`Mesh::generate_tangents`, mikktspace; the shader's bitangent is w ×
+    cross(normal, tangent) and points up the image, towards decreasing v) is the stored
+    "bitangent" made orthogonal to the normal, with w the sign that turns that bitangent
+    towards minus the stored "tangent": within 25° of the generator's, sign included, at
+    97.8 % of 13.65 million vertices (94.2 % within 5°); 1.8 % more than 25° off, 0.4 %
+    with the other sign. Where they differ, neither frame follows the texture gradients at
+    83 % of the vertices (705 shapes with over 5 % differing): a texture stretched or
+    squeezed there.
+  - At 15,457 vertices (0.1 %) the stored tangent lies along the stored bitangent (the
+    texture squeezed to a line), which leaves the sign open; the generator's own sign
+    there is that of the tiny remainder at 72 % of a 17,637-vertex check. 1,752 vertices
+    in 121 shapes store zero vectors.
+
+  The static models' renderer uses them so (`nvf_assets::tangents`): a sign left open
+  takes the remainder's (+ without one); a shape with a zero vector, a bitangent along
+  its normal, a value that is not finite or arrays of the wrong length at a vertex a
+  triangle uses generates its tangents, as do actor parts [design]. That the original's
+  shader reads its normal maps in this stored frame is a [hypothesis]; it is the frame
+  the files carry. The models whose vertices differ most from the generator's (to look at
+  in game): Novac's `novac_home04burned.nif` (18 %), `novac_bungalow*.nif` (13-14 %),
+  `novac_dino.nif` (10 %), `novac_motel02.nif`; Goodsprings' `scol\scolgshouse02.nif` and
+  `06` (14 %, `NVRanchHouse01`), `noso\nv_noso_ranchhouse0*.nif`, the Nellis AFB sign, the
+  Tops' `nv_tops_recmusicsign.nif` (73 %) and the destroyed NoSo apartments (50-65 %).
 - **Specular** [observed, 500 random meshes from `Fallout - Meshes.bsa`]: of 738
   NiMaterialProperty blocks on BSShaderPPLightingProperty shapes, 697 (94%) have a
   black specular colour, 18 white, 23 other; 1,011 of 1,279 such shader properties set
