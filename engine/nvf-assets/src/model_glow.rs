@@ -14,12 +14,13 @@
 //!   the picture rule (emissive colour × the multiplier the renderer uses, over 1 in the
 //!   brightest channel: what `nif_material.wesl` burns as a hot source and the neon bright
 //!   pass picks up, nif.md §6 "Emissive colour of unlit shapes"), not a picture or smoke;
-//! - a lit shape with a glow map whose emissive colour × multiplier reaches 1 (a bulb or a
-//!   lamp's lit panel at full emission) [design: the threshold is ours].
+//! - a lit shape whose emissive colour × multiplier reaches 1: self-lit at full emission,
+//!   over its glow map if it has one, else over its whole surface (a lamp's bulb, the glow
+//!   panel of a sign) [design: the threshold is ours].
 //!
-//! A shape whose bounding sphere is wider than [`MAX_GLOW_RADIUS`] does not count: a lit
-//! window band across a building's whole wall is the building's own picture, not a lamp
-//! [design]. A model with one small glowing part among ordinary geometry (a lamp post)
+//! Apart from the added unlit shapes (glow cards and beams, which may be long), a shape
+//! whose bounding sphere is wider than [`MAX_GLOW_RADIUS`] does not count: a lit window band
+//! across a building's whole wall is the building's own picture, not a lamp [design]. A model with one small glowing part among ordinary geometry (a lamp post)
 //! qualifies through that part, and its glow sits at that part ([`ModelGlow::centre`]).
 //!
 //! Read on a worker thread from the file alone (no meshes, materials or textures made for
@@ -48,22 +49,19 @@ pub struct ShapeTraits {
     /// (`shape_emissive_mult`: held for unlit pictures).
     pub emissive: [f32; 3],
     pub mult: f32,
-    pub glow_map: bool,
     /// The shape's bounding-sphere radius in the model's space.
     pub radius: f32,
 }
 
 /// Whether a shape is a light source by its properties (module notes).
 pub fn glow_shape(t: &ShapeTraits) -> bool {
-    if !(t.radius <= MAX_GLOW_RADIUS) {
-        return false;
-    }
     let light = t.emissive.iter().copied().fold(0.0f32, f32::max) * t.mult;
+    let small = t.radius <= MAX_GLOW_RADIUS;
     match (t.unlit, t.alpha) {
         (_, AlphaMode::Multiply) => false,
         (true, AlphaMode::Add) => true,
-        (true, _) => light > 1.0,
-        (false, _) => t.glow_map && light >= 1.0,
+        (true, _) => small && light > 1.0,
+        (false, _) => small && light >= 1.0,
     }
 }
 
@@ -198,13 +196,13 @@ fn read_glow(data: &GameData, path: &str) -> Option<ModelGlow> {
         let props = shape_props(&file, &dec, o, &by_block);
         let alpha = shape_alpha_mode(&props);
         let (emissive, _) = props.emissive_parts();
-        let traits = ShapeTraits { unlit: props.unlit_part(), alpha, emissive, mult: shape_emissive_mult(&props, alpha), glow_map: props.glow_part().is_some(), radius };
+        let traits = ShapeTraits { unlit: props.unlit_part(), alpha, emissive, mult: shape_emissive_mult(&props, alpha), radius };
         if !glow_shape(&traits) {
             continue;
         }
-        // The colour: the emissive hue times the hue of the texture that glows (an unlit
-        // shape's own, a lit shape's glow map), or the emissive hue alone.
-        let raw = if traits.unlit { props.textures.first().map(String::as_str) } else { props.glow_part() };
+        // The colour: the emissive hue times the hue of the texture that glows (a lit
+        // shape's glow map, else its own texture), or the emissive hue alone.
+        let raw = if traits.unlit { None } else { props.glow_part() }.or(props.textures.first().map(String::as_str));
         let tex = raw.filter(|r| !r.is_empty()).and_then(|r| {
             let p = fnv_vfs::texture_path(r);
             *textures.entry(p.clone()).or_insert_with(|| data.read(&p).and_then(|b| texture_hue(&b)))
@@ -220,28 +218,30 @@ fn read_glow(data: &GameData, path: &str) -> Option<ModelGlow> {
 mod tests {
     use super::*;
 
-    fn traits(unlit: bool, alpha: AlphaMode, emissive: [f32; 3], mult: f32, glow_map: bool) -> ShapeTraits {
-        ShapeTraits { unlit, alpha, emissive, mult, glow_map, radius: 40.0 }
+    fn traits(unlit: bool, alpha: AlphaMode, emissive: [f32; 3], mult: f32) -> ShapeTraits {
+        ShapeTraits { unlit, alpha, emissive, mult, radius: 40.0 }
     }
 
     #[test]
     fn light_sources_by_their_properties() {
-        // A glow card or light beam: unlit and added.
-        assert!(glow_shape(&traits(true, AlphaMode::Add, [0.0; 3], 1.0, false)));
+        // A glow card: unlit and added; a long light beam too.
+        assert!(glow_shape(&traits(true, AlphaMode::Add, [0.0; 3], 1.0)));
+        assert!(glow_shape(&ShapeTraits { radius: 1300.0, ..traits(true, AlphaMode::Add, [1.0; 3], 1.0) }));
         // Neon: unlit, emitting over white.
-        assert!(glow_shape(&traits(true, AlphaMode::Opaque, [1.0, 0.3, 0.2], 25.0, false)));
-        // A lamp's bulb: lit, with a glow map at full emission.
-        assert!(glow_shape(&traits(false, AlphaMode::Opaque, [1.0, 0.9, 0.7], 1.0, true)));
-        // An ordinary static: lit, no glow map, no emission.
-        assert!(!glow_shape(&traits(false, AlphaMode::Opaque, [0.0; 3], 1.0, false)));
-        // A glow map but dim emission, a picture (unlit, held to 1), smoke (unlit, blended,
-        // not emitting over white), a multiply shadow: none.
-        assert!(!glow_shape(&traits(false, AlphaMode::Opaque, [0.3; 3], 1.0, true)));
-        assert!(!glow_shape(&traits(true, AlphaMode::Opaque, [1.0; 3], 1.0, false)));
-        assert!(!glow_shape(&traits(true, AlphaMode::Blend, [0.5; 3], 1.0, false)));
-        assert!(!glow_shape(&traits(true, AlphaMode::Multiply, [1.0; 3], 25.0, false)));
-        // A glowing band as wide as a building: its own picture, not a lamp.
-        assert!(!glow_shape(&ShapeTraits { radius: 2000.0, ..traits(true, AlphaMode::Add, [0.0; 3], 1.0, false) }));
+        assert!(glow_shape(&traits(true, AlphaMode::Opaque, [1.0, 0.3, 0.2], 25.0)));
+        // A lamp's bulb or a sign's glow panel: lit at full emission, blended or not.
+        assert!(glow_shape(&traits(false, AlphaMode::Opaque, [1.0, 0.9, 0.7], 1.0)));
+        assert!(glow_shape(&traits(false, AlphaMode::Blend, [1.0; 3], 1.0)));
+        // An ordinary static: lit, no emission.
+        assert!(!glow_shape(&traits(false, AlphaMode::Opaque, [0.0; 3], 1.0)));
+        // Dim emission, a picture (unlit, held to 1), smoke (unlit, blended, not emitting
+        // over white), a multiply shadow: none.
+        assert!(!glow_shape(&traits(false, AlphaMode::Opaque, [0.3; 3], 1.0)));
+        assert!(!glow_shape(&traits(true, AlphaMode::Opaque, [1.0; 3], 1.0)));
+        assert!(!glow_shape(&traits(true, AlphaMode::Blend, [0.5; 3], 1.0)));
+        assert!(!glow_shape(&traits(true, AlphaMode::Multiply, [1.0; 3], 25.0)));
+        // A self-lit band as wide as a building: its own picture, not a lamp.
+        assert!(!glow_shape(&ShapeTraits { radius: 2000.0, ..traits(false, AlphaMode::Opaque, [1.0; 3], 1.0) }));
     }
 
     #[test]
