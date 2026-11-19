@@ -360,8 +360,8 @@ pub struct DistantWater {
     /// Worldspace, LOD choice ([`LodState::choice`]) and whether distant water is on, that
     /// `want` was found for.
     want_for: Option<WantKey>,
-    /// `want_for` and the loaded-cell count the planes were placed for.
-    built_for: Option<(WantKey, usize)>,
+    /// `want_for`, the loaded-cell count and [`loaded_signature`] the planes were placed for.
+    built_for: Option<(WantKey, usize, u64)>,
 }
 
 type WantKey = (u32, u64, bool);
@@ -452,6 +452,16 @@ pub fn cells_under(chunks: &[crate::lod::Chunk], candidates: &BTreeSet<(i32, i32
     out
 }
 
+/// Which cells are loaded, as one number that does not depend on their order: a cell that
+/// unloads in the same frame another finishes loading keeps the count but changes this, so
+/// the distant planes are given again (a wet cell's plane back, a loaded one's gone).
+pub fn loaded_signature<'a>(cells: impl IntoIterator<Item = &'a (i32, i32)>) -> u64 {
+    cells.into_iter().fold(0u64, |h, &(x, y)| {
+        let v = ((x as u32 as u64) << 32 | y as u32 as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
+        h ^ (v ^ (v >> 31)).wrapping_mul(0xBF58_476D_1CE4_E5B9)
+    })
+}
+
 fn visible_surface(world: &WorldData, g: (i32, i32)) -> Option<(f32, u32, [f32; 4])> {
     let c = world.grid_cell(g)?;
     let ws = &world.index.worldspaces[&world.world];
@@ -502,7 +512,7 @@ pub fn distant_water(
     let Ok(root) = root.single() else { return };
     let on = lod.enabled && streamer.interior.is_none();
     let want_key = (world.world, lod.choice(), on);
-    let key = (want_key, streamer.loaded.len());
+    let key = (want_key, streamer.loaded.len(), loaded_signature(streamer.loaded.keys()));
     if dw.built_for == Some(key) {
         return;
     }
@@ -511,7 +521,8 @@ pub fn distant_water(
     // or nothing is chosen), redone only when the choice changes.
     if dw.want_for != Some(want_key) {
         dw.want_for = Some(want_key);
-        dw.want = if on { cells_under(lod.chosen_chunks(), dw.candidates(&world)) } else { Vec::new() };
+        // No chosen chunk (both reaches 0): no water index is built either.
+        dw.want = if on && !lod.chosen_chunks().is_empty() { cells_under(lod.chosen_chunks(), dw.candidates(&world)) } else { Vec::new() };
         let want: HashSet<(i32, i32)> = dw.want.iter().copied().collect();
         let gone: Vec<(i32, i32)> = dw.planes.keys().filter(|c| !want.contains(c)).copied().collect();
         for c in gone {
@@ -719,6 +730,19 @@ mod wet_tests {
 mod distant_tests {
     use super::*;
     use crate::lod::{select_chunks, LodSettings};
+
+    /// The loaded cells' signature ignores their order and changes when one cell is swapped
+    /// for another (the count alone would not).
+    #[test]
+    fn a_swapped_loaded_cell_changes_the_signature() {
+        let a = [(0, 0), (1, 0), (0, 1)];
+        let b = [(0, 1), (0, 0), (1, 0)];
+        let swapped = [(0, 0), (1, 0), (-1, 1)];
+        assert_eq!(loaded_signature(a.iter()), loaded_signature(b.iter()));
+        assert_ne!(loaded_signature(a.iter()), loaded_signature(swapped.iter()));
+        assert_ne!(loaded_signature(a.iter()), loaded_signature(a[..2].iter()));
+        assert_eq!(loaded_signature(std::iter::empty()), 0);
+    }
 
     /// A chunk's cells are `x..x + l` by `y..y + l`: the range per column takes no
     /// neighbour.
