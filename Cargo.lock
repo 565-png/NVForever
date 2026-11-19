@@ -1356,6 +1356,7 @@ dependencies = [
  "fnv-install",
  "fnv-nav",
  "fnv-nif",
+ "fnv-pbr",
  "fnv-phys",
  "fnv-save",
  "fnv-script",

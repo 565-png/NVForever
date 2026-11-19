@@ -42,6 +42,7 @@ mod nav_cmd;
 mod nav_path;
 mod observer;
 mod nif_cmd;
+mod pbr_cmd;
 mod phys_cmd;
 mod quest_sweep;
 mod script_cmd;
@@ -100,6 +101,9 @@ enum Cmd {
     /// DDS textures.
     #[command(subcommand)]
     Dds(DdsCmd),
+    /// Authored PBR material maps under `textures\pbr\` (docs/spec-notes/pbr-materials.md).
+    #[command(subcommand)]
+    Pbr(pbr_cmd::PbrCmd),
     /// SpeedTree .spt tree parameter files.
     #[command(subcommand)]
     Spt(SptCmd),
@@ -1225,6 +1229,7 @@ fn main() -> ExitCode {
         Cmd::Esm(c) => esm_cmd::run(c),
         Cmd::Nif(c) => nif_cmd::run(c),
         Cmd::Dds(c) => dds_cmd::run(c),
+        Cmd::Pbr(c) => pbr_cmd::run(c),
         Cmd::Spt(c) => spt_cmd::run(c),
         Cmd::World(c) => world_cmd::run(c),
         Cmd::Phys(c) => phys_cmd::run(c),

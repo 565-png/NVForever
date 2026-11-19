@@ -234,6 +234,23 @@ that kind. Not used by the lab.
 
 Defined in docs/spec-notes/dds.md together with the texture notes.
 
+## `fnvtool pbr list --data <Data> [plugins…] [--mods <folder> | --mo2 <instance> [--profile p]] [--archive-list l]` → `fnv.pbr.listing/1`
+
+The authored material sets under `textures\pbr\` that a load order supplies (#2981; the
+format: docs/spec-notes/pbr-materials.md). The VFS is mounted as the engine mounts it:
+the plugins' archives (default plugins: the base game and its add-on masters; with
+`--mo2`, the profile's), loose files of Data, then NVForever's mods folder (`--mods`) or
+the Mod Organizer 2 profile's mods (`--mo2`, with the profile's archive list unless
+`--archive-list` is given). Keys: `data`, `plugins`, `archives` (mounted, lowest
+precedence first), `loose_roots` (lowest first), `sets` (sorted by stem: `stem`,
+`diffuse` (the diffuse's path without extension), `state` (`authored`, `height-only`,
+`incomplete`), `members`: per member present (`orm`, `normal`, `height`, `scalars`,
+`albedo`) its `path` and `source`, the winning file: `{"kind": "archive", "archive",
+"file"}` or `{"kind": "loose", "root", "file"}`), `unmatched` (files under
+`textures\pbr\` that belong to no set), `totals` (`files`, `sets`, `active`, `authored`,
+`height_only`, `incomplete`, `unmatched`, `members` per member) and `summary` (the line
+the engine logs). Only presence is reported; the files are not read. Not used by the lab.
+
 ## `fnvtool spt list <archive>` → `fnv.spt.listing/1`, `fnvtool spt dump <source> [--path p]` → `fnv.spt.dump/1`
 
 SpeedTree parameter files (docs/spec-notes/speedtree.md). `list`: one row per `.spt` in
