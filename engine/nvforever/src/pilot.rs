@@ -1973,6 +1973,24 @@ fn door_switch(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<Switch> {
         let unit = g.data.scripts.get(&g.ref_script(r)?).map(|u| g.data.unit(*u))?;
         unit.program.blocks.iter().any(|b| b.event == fnv_game::game::event::ON_ACTIVATE).then_some(unit)
     };
+    // What the scripts that work the door also name (their variables' holders, the
+    // switches they watch): a switch whose script names one of these works the door
+    // through them. Broken Steel's turret hall: its trigger's script locks and unlocks
+    // the doors by `turrethallonline` of 0x0D0049D6, which only the hall switch's script
+    // sets to 3 [observed: SCPT 0x0D0049D9, 0x0D0049DD]; the pilot went to the hall's
+    // terminals beyond the locked doors instead.
+    let mut through: Vec<u32> = Vec::new();
+    for u in g.data.scripts.values() {
+        let unit = g.data.unit(*u);
+        if unit.unit.refs.iter().any(|s| matches!(s, RefSlot::Form(f) if *f == door)) {
+            through.extend(unit.unit.refs.iter().filter_map(|s| match s {
+                RefSlot::Form(f) if *f != door && *f != FormId::PLAYER_REF.0 => Some(*f),
+                _ => None,
+            }));
+        }
+    }
+    through.sort_unstable();
+    through.dedup();
     let refs: &[FormId] = cell.and_then(|c| g.world.placed.by_cell.get(&c)).map(|v| v.as_slice()).unwrap_or(&[]);
     for &r in refs {
         if r.0 == door || used.iter().any(|(u, d)| *u == r.0 && *d == door) || g.is_dead(r) {
@@ -1983,8 +2001,11 @@ fn door_switch(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<Switch> {
         let unit = scripted(r);
         let names_door = unit.is_some_and(|u| u.unit.refs.iter().any(|s| matches!(s, RefSlot::Form(f) if *f == door)));
         let actor = g.world.placed.get(r).is_some_and(|p| g.data.actors.contains_key(&p.base));
+        let works_through = unit.is_some_and(|u| !opens_a_menu(g, &u.program) && u.unit.refs.iter().any(|s| matches!(s, RefSlot::Form(f) if *f != r.0 && through.binary_search(f).is_ok())));
         if names_door && away < SWITCH_RANGE {
             found.push((0, away, r, pos, WORKS_DOOR));
+        } else if works_through && !actor && away < SWITCH_RANGE {
+            found.push((1, away, r, pos, "its script works the door's own script"));
         } else if g.is_talking_activator(r) && away < BESIDE_DOOR {
             found.push((1, away, r, pos, "a talking activator beside the door"));
         } else if unit.is_some_and(|u| !opens_a_menu(g, &u.program)) && !actor && away < BESIDE_DOOR {
