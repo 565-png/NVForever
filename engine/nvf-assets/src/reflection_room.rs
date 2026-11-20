@@ -30,8 +30,8 @@
 //!   draws (its ambient and sun) goes into the cube, with their lobes.
 //! - **Levels** ([`FilteredCube`]): level 0 is the scene per texel direction; each higher
 //!   level is a box average of the level below (each texel the solid-angle-weighted mean of
-//!   its four); where Bevy's lobe for that level is wider than a texel (levels 2 to 5; level
-//!   1's, about 3.8 degrees, is inside its 5.6-degree texel), it is instead the box average
+//!   its four); where Bevy's lobe reaches or exceeds the texel's angular span (levels 2
+//!   to 5; level 1's, about 3.8 degrees, is inside its 5.6-degree texel), it is instead the box average
 //!   at level 2 (8 x 8 a face) convolved on the CPU with the prefilter kernel max(c, 0) x ((1 + c) / 2)^(p / 2), c the cosine between
 //!   the texel's and a source texel's direction, p = 2 / a^2 - 2 the Blinn-Phong power of
 //!   GGX roughness a = r^2, r = level / (levels - 1) the perceptual roughness Bevy reads that
@@ -466,7 +466,9 @@ impl FilteredCube {
         let levels = (0..SPECULAR_LEVELS)
             .map(|level| {
                 let side = level_side(level);
-                if level == 0 || kernel_half_angle(level_power(level)) <= std::f32::consts::FRAC_PI_2 / side as f32 {
+                // At the last level the angles are equal; the cosine lobe still crosses
+                // face boundaries and needs convolution.
+                if level == 0 || kernel_half_angle(level_power(level)) < std::f32::consts::FRAC_PI_2 / side as f32 {
                     return boxed[level as usize].clone();
                 }
                 let source = level.min(CONVOLVE_SOURCE_LEVEL);

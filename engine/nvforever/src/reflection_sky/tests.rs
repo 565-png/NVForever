@@ -234,6 +234,87 @@ fn the_cube_is_made_only_when_every_condition_holds() {
     assert_eq!(decide(true, true, || true, installed, false), Decision::Wait);
 }
 
+fn spawn_world_camera(app: &mut App) -> Entity {
+    app.world_mut().spawn((
+        FlyCam { yaw: 0.0, pitch: 0.0, speed: 0.0 },
+        GlobalTransform::IDENTITY,
+    )).id()
+}
+
+fn running_producer() -> (App, Entity) {
+    let mut app = App::new();
+    // Exercise a running producer without touching the process-wide render gate.
+    app.insert_resource(ReflectionSky { phase: Phase::On, ..default() })
+        .insert_resource(crate::sky::authored_session_sky())
+        .init_resource::<Assets<Image>>()
+        .init_resource::<Time<Real>>()
+        .add_systems(Update, produce);
+    let camera = spawn_world_camera(&mut app);
+    let cube = ReflectionCube::new(&mut app.world_mut().resource_mut::<Assets<Image>>());
+    app.world_mut().entity_mut(camera).insert(cube);
+    (app, camera)
+}
+
+#[test]
+fn the_producer_only_records_fills_after_writing_the_current_camera_cube() {
+    let (mut app, camera) = running_producer();
+    app.update();
+    let previous = app.world().resource::<ReflectionSky>().last.clone();
+    assert_eq!(app.world().resource::<ReflectionSky>().fills_outdoors, 1);
+
+    app.world_mut().despawn(camera);
+    app.world_mut().resource_mut::<SkyState>().interior = Some(default());
+    app.update();
+    let state = app.world().resource::<ReflectionSky>();
+    assert_eq!(state.last, previous, "no camera means no fill, even on an interior transition");
+    assert_eq!((state.fills_outdoors, state.fills_indoors), (1, 0));
+    assert_eq!(state.refills, [0; 8]);
+
+    app.world_mut().resource_mut::<SkyState>().interior = None;
+    let replacement = spawn_world_camera(&mut app);
+    app.update();
+    let state = app.world().resource::<ReflectionSky>();
+    let cube = app.world().get::<ReflectionCube>(replacement).expect("new camera gets a cube");
+    assert_eq!(state.last, previous);
+    assert_eq!(state.fills_outdoors, 2);
+    assert_eq!(cube.generation(), 1);
+    let previous_cube = cube.specular.id();
+    let old_light = cube.light();
+
+    app.world_mut().entity_mut(replacement).insert(old_light).remove::<ReflectionCube>();
+    app.update();
+    let recovered = app.world().get::<ReflectionCube>(replacement).expect("lost cube is replaced");
+    assert_ne!(recovered.specular.id(), previous_cube);
+    assert_eq!(recovered.generation(), 1);
+    assert!(app.world().get::<EnvironmentMapLight>(replacement).is_none(), "old light must wait for the replacement upload");
+    assert_eq!(app.world().resource::<ReflectionSky>().fills_outdoors, 3);
+
+    app.world_mut().entity_mut(replacement)
+        .insert(EnvironmentMapLight::default())
+        .remove::<ReflectionCube>();
+    app.update();
+    assert!(app.world().get::<EnvironmentMapLight>(replacement).is_some(), "an unrelated map stays installed");
+}
+
+#[test]
+fn removing_the_dome_profile_refills_an_unchanged_outdoor_cube() {
+    let (mut app, camera) = running_producer();
+    app.insert_resource(DomeProfile([[1.0, 0.0, 0.0]; DOME_PROFILE_BINS]));
+    app.update();
+    let previous = app.world().resource::<ReflectionSky>().last.clone();
+    assert_eq!(app.world().get::<ReflectionCube>(camera).unwrap().generation(), 1);
+
+    app.world_mut().remove_resource::<DomeProfile>();
+    app.update();
+    let state = app.world().resource::<ReflectionSky>();
+    assert_eq!(state.last, previous);
+    assert_eq!(state.profile_revision, None);
+    assert_eq!(state.fills_outdoors, 2);
+    assert_eq!(app.world().get::<ReflectionCube>(camera).unwrap().generation(), 2);
+    let i = Refill::ALL.iter().position(|&r| r == Refill::Profile).unwrap();
+    assert_eq!(state.refills[i], 1);
+}
+
 /// The dome profile from vertices: each step the mean of its vertices, empty steps filled
 /// between their neighbours, vertices below the horizon left out; no vertex above it gives
 /// the fallback.
@@ -397,6 +478,17 @@ fn the_box_from_a_marker_the_rays_or_the_default() {
     assert!((d.exit(bevy_eye, Vec3::Y).distance - (DEFAULT_HEIGHT - EYE_HEIGHT)).abs() < 0.1);
 }
 
+#[test]
+fn rotating_a_room_box_about_its_first_axis_can_move_it() {
+    let room = default_box(Vec3::ZERO);
+    let turn = |degrees: f32| RoomBox {
+        axes: room.axes * Mat3::from_quat(Quat::from_rotation_x(degrees.to_radians())),
+        ..room
+    };
+    assert!(!box_moved(&room, &turn(SUN_STEP_DEGREES * 0.5)));
+    assert!(box_moved(&room, &turn(SUN_STEP_DEGREES * 2.0)));
+}
+
 /// The lamps: the nearest MAX_LAMPS of those bright enough, within reach and passing the
 /// test, sorted by id.
 #[test]
@@ -447,6 +539,34 @@ fn the_room_refills_on_a_step() {
     let mut moved = r.expect("a room");
     moved.room.half.x += BOX_STEP + 1.0;
     assert_eq!(Inputs::Indoors { cell, ambient, fog, room: Some(moved) }.change(&base), Some(Refill::Box));
+}
+
+#[test]
+fn a_lit_room_fill_is_logged_after_an_initial_fill_without_lamps() {
+    let mut state = ReflectionSky::default();
+    let cell = Some(0x1234);
+    assert!(state.mark_room_fill_for_log(cell, false), "first room fill");
+    assert!(!state.mark_room_fill_for_log(cell, false), "repeated room fill without lamps");
+    assert!(state.mark_room_fill_for_log(cell, true), "first room fill with lamps");
+    assert!(!state.mark_room_fill_for_log(cell, true), "repeated room fill with lamps");
+    assert!(!state.mark_room_fill_for_log(cell, false), "lights disappearing does not reopen the log");
+    assert!(state.mark_room_fill_for_log(Some(0x5678), true), "first fill in another interior");
+}
+
+#[test]
+fn underground_lamps_cannot_take_outdoor_ground_lamp_slots() {
+    let eye = Vec3::new(0.0, 120.0, 0.0);
+    let buried = warm_lamp(Vec3::new(0.0, -20.0, 0.0), 10.0);
+    let mut candidates: Vec<_> = (1..=MAX_LAMPS as u64).map(|id| (id, buried)).collect();
+    assert!(ground_inputs(eye, 0.0, &candidates).is_none(), "only buried lamps leave the sky fallback");
+    let valid_id = MAX_LAMPS as u64 + 1;
+    candidates.push((valid_id, warm_lamp(Vec3::new(0.0, 250.0, -150.0), 500.0)));
+    let ground = ground_inputs(eye, 0.0, &candidates).expect("a lamp reaches the ground");
+    assert_eq!(ground.lamps.len(), 1);
+    assert_eq!(ground.lamps[0].id, valid_id, "closer buried lamps cannot displace it");
+
+    let crossing = warm_lamp(Vec3::new(0.0, -20.0, 0.0), 30.0);
+    assert!(ground_inputs(eye, 0.0, &[(1, crossing)]).is_some(), "a sphere can reach the ground from below");
 }
 
 /// Outdoors a lamp near the eye adds lit ground below the horizon on top of stage 1, and

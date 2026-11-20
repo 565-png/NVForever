@@ -75,11 +75,13 @@
 //!   eye moved by [`CENTRE_STEP`], the box by [`BOX_STEP`], the lamp set, or a lamp's
 //!   colour (past the colour step), place or radius (past [`LAMP_STEP`]). Indoors against
 //!   outdoors, another interior cell, another room marker and a new dome profile skip the
-//!   wait and refill at once (code review 1, finding 6). One log line at the first fill,
+//!   wait and refill at once (code review 1, finding 6), as does losing the dome profile
+//!   outdoors or replacing the cube's camera. One log line at the first fill of each cube,
 //!   one at the first room fill of each interior (the box's source, its size, the lamps,
 //!   the fill's time), one summary at exit (`reflection sky summary: ...`, with the room
 //!   fills and the refills by reason).
 
+use bevy::light::EnvironmentMapLight;
 use bevy::prelude::*;
 use nvf_assets::reflection_cube::{self, GateState, ReflectionCube, SPECULAR_LEVELS};
 use nvf_assets::reflection_room::{self, FilteredCube, GroundLamps, Lamp, RoomBox, RoomScene, Spot};
@@ -443,7 +445,9 @@ pub fn lamps_moved(a: &[LampInput], b: &[LampInput]) -> bool {
 }
 
 fn box_moved(a: &RoomBox, b: &RoomBox) -> bool {
-    a.centre.distance(b.centre) > BOX_STEP || (a.half - b.half).abs().max_element() > BOX_STEP || (a.axes.col(0).dot(b.axes.col(0)) < SUN_STEP_DEGREES.to_radians().cos())
+    a.centre.distance(b.centre) > BOX_STEP
+        || (a.half - b.half).abs().max_element() > BOX_STEP
+        || (0..3).any(|axis| a.axes.col(axis).dot(b.axes.col(axis)) < SUN_STEP_DEGREES.to_radians().cos())
 }
 
 impl RoomInputs {
@@ -798,10 +802,12 @@ pub fn room_inputs(eye: Vec3, source: BoxSource, room: RoomBox, candidates: &[(u
     Some(RoomInputs { eye, source, room, lamps, sun, sun_dir, fog_range })
 }
 
-/// The ground lamps' inputs outdoors: lamps whose sphere reaches below the ground's height
-/// and comes within [`OUTDOOR_LAMP_REACH`] of the eye; `None` with none.
+/// The ground lamps' inputs outdoors: each lamp's sphere must cross the ground plane
+/// and come within [`OUTDOOR_LAMP_REACH`] of the eye.
 pub fn ground_inputs(eye: Vec3, ground: f32, candidates: &[(u64, Lamp)]) -> Option<GroundInputs> {
-    let lamps = pick_lamps(candidates, eye, |l| l.position.y - l.radius < ground && l.position.distance(eye) - l.radius <= OUTDOOR_LAMP_REACH);
+    let lamps = pick_lamps(candidates, eye, |l| {
+        (l.position.y - ground).abs() < l.radius && l.position.distance(eye) - l.radius <= OUTDOOR_LAMP_REACH
+    });
     (!lamps.is_empty()).then_some(GroundInputs { eye, ground, lamps })
 }
 
@@ -853,6 +859,10 @@ pub struct ReflectionSky {
     authored: bool,
     phase: Phase,
     last: Option<Inputs>,
+    /// Each camera and cube needs a fill even if its lighting inputs equal the previous ones.
+    target: Option<(Entity, AssetId<Image>)>,
+    /// The dome resource's change tick at the last fill, or absent for the fallback.
+    profile_revision: Option<u32>,
     last_check: Option<f64>,
     /// The cheap per-frame key of the last check (indoors, interior cell, room marker): a
     /// change skips the wait ([`CHECK_INTERVAL`]).
@@ -866,15 +876,24 @@ pub struct ReflectionSky {
     slowest_ms: f32,
     /// Refills by reason, in [`Refill::ALL`]'s order.
     refills: [u64; 8],
-    /// The last interior whose first room fill, and first fill with stage 1's content, were
-    /// logged.
-    logged_room_cell: Option<Option<u32>>,
+    /// The last interior whose room fill was logged, and whether that fill had lamps.
+    logged_room_fill: Option<(Option<u32>, bool)>,
+    /// The last interior whose fill with stage 1's content was logged.
     logged_plain_cell: Option<Option<u32>>,
 }
 
 impl ReflectionSky {
     pub fn new(row: bool, authored: bool) -> ReflectionSky {
         ReflectionSky { row, authored, ..default() }
+    }
+
+    /// Log a room's first fill and its first lamp-lit fill if their lights arrive later.
+    fn mark_room_fill_for_log(&mut self, cell: Option<u32>, has_lamps: bool) -> bool {
+        if self.logged_room_fill.is_some_and(|(last, had_lamps)| last == cell && (had_lamps || !has_lamps)) {
+            return false;
+        }
+        self.logged_room_fill = Some((cell, has_lamps));
+        true
     }
 
     /// The summary line (without its prefix).
@@ -974,14 +993,12 @@ fn gather(sky: &SkyState, sun: Option<(&DirectionalLight, &Transform)>, mut s: S
     }
 }
 
-/// The interior lines: the first room fill in each interior (the box's source and size, the
-/// lamps, the level-0 texel toward the nearest lamp, the fill's time), and the first fill
-/// there with stage 1's content.
+/// The interior lines: the first room fill and the first room fill with lamps, if the
+/// lights arrive later. Report a fill with stage 1's content separately.
 fn log_interior(state: &mut ReflectionSky, cell: Option<u32>, room: Option<&RoomInputs>, content: &Content, ms: f32) {
     let name = cell.map_or("unknown".to_string(), |c| format!("{c:08X}"));
     match room {
-        Some(r) if state.logged_room_cell != Some(cell) => {
-            state.logged_room_cell = Some(cell);
+        Some(r) if state.mark_room_fill_for_log(cell, !r.lamps.is_empty()) => {
             let size = r.room.size();
             let nearest = r.lamps.iter().min_by(|a, b| a.lamp.position.distance(r.eye).total_cmp(&b.lamp.position.distance(r.eye)));
             info!(
@@ -1010,6 +1027,13 @@ type PlacedLights<'w, 's> = Query<
     With<crate::lights::SessionLight>,
 >;
 
+type ReflectionCamera<'w, 's> = Query<
+    'w,
+    's,
+    (Entity, &'static GlobalTransform, Option<&'static mut ReflectionCube>, Option<&'static EnvironmentMapLight>),
+    With<FlyCam>,
+>;
+
 /// Make the world camera's cube when [`decide`] allows, then rewrite it when its inputs
 /// moved (module notes).
 #[allow(clippy::too_many_arguments)]
@@ -1021,7 +1045,7 @@ pub fn produce(
     streamer: Option<Res<crate::world::Streamer>>,
     profile: Option<Res<DomeProfile>>,
     sun: Query<(&DirectionalLight, &Transform), With<Sun>>,
-    mut cams: Query<(Entity, &GlobalTransform, Option<&mut ReflectionCube>), With<FlyCam>>,
+    mut cams: ReflectionCamera,
     mut images: ResMut<Assets<Image>>,
     time: Res<Time<Real>>,
     rooms: Option<Res<crate::rooms::Rooms>>,
@@ -1033,10 +1057,10 @@ pub fn produce(
         return;
     }
     let Some(sky) = sky else { return };
-    let camera = cams.single().ok().map(|(e, gt, _)| (e, gt.translation()));
+    let camera = cams.single_mut();
     if state.phase == Phase::Waiting {
         let (row, authored) = (state.row, state.authored);
-        match decide(row, authored, || data.as_deref().is_some_and(nvf_assets::authored::mount_has_sets), reflection_cube::gate_state(), camera.is_some()) {
+        match decide(row, authored, || data.as_deref().is_some_and(nvf_assets::authored::mount_has_sets), reflection_cube::gate_state(), camera.is_ok()) {
             Decision::Wait => return,
             Decision::Off(reason) => {
                 state.phase = Phase::Off(reason);
@@ -1046,13 +1070,16 @@ pub fn produce(
             Decision::Allocate => {}
         }
     }
-    let eye = camera.map_or(Vec3::ZERO, |(_, p)| p);
+    let Ok((entity, transform, cube, environment)) = camera else { return };
+    let target = cube.as_ref().map(|cube| (entity, cube.specular.id()));
+    let target_changed = target.is_none() || target != state.target;
+    let eye = transform.translation();
     let cell = streamer.as_ref().and_then(|s| s.interior);
-    // Indoors against outdoors, another cell or another room marker skip the wait, as does a
-    // new dome profile (code review 1, finding 6).
+    // A new camera or cube, a change of room, or a change to the outdoor dome skips the wait.
     let key = (sky.interior.is_some(), cell, marker_box(rooms.as_deref(), cell, eye).map(|(id, _)| id));
-    let profile_changed = profile.as_ref().is_some_and(|p| p.is_changed());
-    let prompt = state.key != Some(key) || profile_changed;
+    let profile_revision = profile.as_ref().map(|p| p.last_changed().get());
+    let profile_changed = !key.0 && profile_revision != state.profile_revision;
+    let prompt = target_changed || state.key != Some(key) || profile_changed;
     let now = time.elapsed_secs_f64();
     if state.phase == Phase::On && !prompt && state.last_check.is_some_and(|t| now - t < CHECK_INTERVAL) {
         return;
@@ -1073,18 +1100,11 @@ pub fn produce(
         no_interior_fog: tweaks.as_ref().is_some_and(|t| t.no_interior_fog),
     };
     let inputs = gather(&sky, sun.single().ok(), surroundings);
-    if let Some(last) = state.last.as_ref() {
-        let reason = match inputs.change(last) {
-            Some(r) => r,
-            None if profile_changed && !inputs.indoors() => Refill::Profile,
-            None => {
-                state.unchanged += 1;
-                return;
-            }
-        };
-        if let Some(i) = Refill::ALL.iter().position(|r| *r == reason) {
-            state.refills[i] += 1;
-        }
+    let reason = state.last.as_ref()
+        .and_then(|last| inputs.change(last).or(profile_changed.then_some(Refill::Profile)));
+    if !target_changed && reason.is_none() {
+        state.unchanged += 1;
+        return;
     }
     let fallback;
     let profile = match profile.as_deref() {
@@ -1097,17 +1117,28 @@ pub fn produce(
     let started = std::time::Instant::now();
     let content = Content::new(&inputs, profile);
     let fill_cube = |cube: &mut ReflectionCube| cube.fill(|d, level| content.colour(d, level));
-    let first = state.phase == Phase::Waiting;
-    let mut cube_new = None;
-    if first {
-        let Some((entity, _)) = camera else { return };
+    let specular = if let Some(mut cube) = cube {
+        fill_cube(&mut cube);
+        cube.specular.id()
+    } else {
         let mut cube = ReflectionCube::new(&mut images);
         fill_cube(&mut cube);
-        cube_new = Some((entity, cube));
-    } else if let Ok((_, _, Some(mut cube))) = cams.single_mut() {
-        fill_cube(&mut *cube);
+        let specular = cube.specular.id();
+        commands.entity(entity).insert(cube);
+        specular
+    };
+    // If this camera lost its cube but kept the corresponding light, let attach_lights
+    // reconnect it once the new cube is uploaded. Preserve an unrelated environment map.
+    if state.target.is_some_and(|(old_entity, old_specular)| {
+        old_entity == entity && old_specular != specular
+            && environment.is_some_and(|light| light.specular_map.id() == old_specular)
+    }) {
+        commands.entity(entity).remove::<EnvironmentMapLight>();
     }
     let ms = started.elapsed().as_secs_f32() * 1000.0;
+    if let Some(i) = Refill::ALL.iter().position(|&r| Some(r) == reason) {
+        state.refills[i] += 1;
+    }
     if inputs.indoors() {
         state.fills_indoors += 1;
     } else {
@@ -1133,9 +1164,10 @@ pub fn produce(
     }
     let where_ = if inputs.indoors() { "indoors" } else { "outdoors" };
     state.last = Some(inputs);
-    if let Some((entity, cube)) = cube_new {
-        commands.entity(entity).insert(cube);
-        state.phase = Phase::On;
+    state.target = Some((entity, specular));
+    state.profile_revision = profile_revision;
+    state.phase = Phase::On;
+    if target_changed {
         let (up, down) = content.means();
         info!(
             "reflection sky: first fill of the world camera's cube ({where_}; level 0 zenith {:.4?}, horizon {:.4?}, nadir {:.4?}; mean above {:.4?}, below {:.4?}), attached once on the GPU",

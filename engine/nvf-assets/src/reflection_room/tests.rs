@@ -164,11 +164,24 @@ fn levels_approach_the_mean() {
     assert!(spread[..5].windows(2).all(|w| w[1] < w[0]), "{spread:?}");
     assert!(spread[5] < spread[2], "{spread:?}");
     // Level 1's lobe is narrow enough to be a box average alone, the others are convolved.
-    assert!(kernel_half_angle(level_power(1)) <= std::f32::consts::FRAC_PI_2 / level_side(1) as f32);
+    assert!(kernel_half_angle(level_power(1)) < std::f32::consts::FRAC_PI_2 / level_side(1) as f32);
     for level in 2..SPECULAR_LEVELS {
-        assert!(kernel_half_angle(level_power(level)) > std::f32::consts::FRAC_PI_2 / level_side(level) as f32, "level {level}");
+        assert!(kernel_half_angle(level_power(level)) >= std::f32::consts::FRAC_PI_2 / level_side(level) as f32, "level {level}");
     }
     assert_eq!(level_power(SPECULAR_LEVELS - 1), 0.0, "a cosine lobe at the last level");
+}
+
+#[test]
+fn the_coarsest_level_filters_across_cube_faces() {
+    let cube = FilteredCube::new(|d| {
+        if d.x > d.y.abs().max(d.z.abs()) { Vec3::X } else { Vec3::ZERO }
+    });
+    let last = SPECULAR_LEVELS - 1;
+    let facing = cube.colour(Vec3::X, last).x;
+    let adjacent = cube.colour(Vec3::Y, last).x;
+    assert!(adjacent > 0.0, "the adjacent face receives light from +X");
+    assert!(adjacent < facing && facing < 1.0, "facing {facing}, adjacent {adjacent}");
+    assert_eq!(cube.colour(Vec3::NEG_X, last), Vec3::ZERO, "the cosine lobe excludes the opposite hemisphere");
 }
 
 #[test]
