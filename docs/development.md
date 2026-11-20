@@ -58,7 +58,8 @@ python tools/smoke plan
 python tools/smoke run --exe engine/target/release/nvforever.exe --data "$D" --fnvtool target/release/fnvtool.exe
 # (up to 3 games at once on the machine, the smoke slots; --slots 1 runs one alone;
 # --size 3840x2160 runs every game in that window size, --extra-args "--graphics enhanced"
-# adds arguments to every game launch; plan takes both too)
+# adds arguments to every nvforever launch (not fnvtool); plan shows both, the summary and
+# summary.json record them)
 # Stress tests: long trips, every cell, big fights; crashes, hangs, memory, slow frames
 # (design/stress-tests.md).
 python tools/stress --help
