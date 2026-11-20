@@ -127,7 +127,10 @@ them correctly.
   "Programming Guide for DDS"; docs/spec-notes/dds.md, docs/spec-notes/dds-bc5.md]. The
   engine reads the DX10 header and the BC4 FourCCs from stage 1 of #2981 on.
 - [design] The **top level's width and height must be multiples of 4**. The engine has no CPU
-  decoder for BC7, so a file it cannot upload whole will be refused rather than decoded.
+  decoder for BC7, so a file it cannot upload whole will be refused rather than decoded. A
+  `_p` off the grid is refused by the engine too (stage 4 branch: one warning naming the
+  file and its size), though it could decode one, so the engine and `fnvtool pbr check`
+  agree on it.
 - [design] Ship **full mip chains**, down to 1x1. Smaller mip levels need not be multiples of 4.
 - [design] Each member's size is its own: an ORM at 2048 beside a 1024 diffuse and a 4096
   normal map is fine. Nothing ties the sizes together.
@@ -339,9 +342,12 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   went up as BC2 blocks or, off the 4-texel grid, decoded to `Rgba8Unorm`; and a `_p` that went
   up in a format a height map does not take, or whose format the engine could not tell
   [documented: `authored.rs` `height_source_ok`, `height_format_ok`]. The warning names the
-  file's own format (`BC5_SNORM`, `DXT3`). Sizes still differ: the validator refuses a file
-  off the 4-texel grid, while the engine decodes an allowed format off the grid on the CPU
-  and draws it.
+  file's own format (`BC5_SNORM`, `DXT3`). A `_p` whose top level has a side that is not a
+  multiple of 4 is refused as well, with one warning naming the file and its size, as the
+  validator refuses it (`not-block-aligned`), although the engine could decode an allowed
+  format off the grid on the CPU [documented: `authored.rs` `height_size_refusal`]. The size
+  is the file's own, noted when it is decoded (`note_source`); a `_p` whose source the
+  engine did not note is judged by its uploaded format only.
 - [design] **Development switches** (aids for choosing the method, the layers and the
   alpha-tested rule by picture and by frame time without a rebuild; off by default, read once
   at the start, a line in the log when one is set; text that is garbage or out of range is
@@ -380,8 +386,8 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   set's height map, the builds that applied any height map, the swaps to a loaded height-only
   set (a match with a depth of 0 or a `_p` that did not load counts as a swap to the legacy
   look) and of them those that put its map on, the height maps not put on at a build or swap
-  by reason (alpha-tested and blended counted apart), `_p` files that did not load or were refused (signed or in no height map's
-  format), and later copies that dropped one.
+  by reason (alpha-tested and blended counted apart), `_p` files that did not load or were refused (signed, in no height map's
+  format or a side not a multiple of 4), and later copies that dropped one.
   The smoke scenario `pbr-authored-field-height` (the same field, `NVF_PLAY_TEST_PBR_FIELD=1`)
   draws two more panels tilted 50 degrees about Y: `height` (a height-only set whose `_p` is
   high above and low below, depth 0.08, the scalar range's end; 0.1 before the range was

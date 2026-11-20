@@ -77,13 +77,17 @@ impl Pack {
             ("textures/pbr/walls/twochannel_p.dds", legacy(b"ATI2", 4, 4, &[0; 16])),
             // DXT3 `_p`, on the 4-texel grid (BC2 blocks) and off it (decoded to RGBA8 on the
             // CPU): refused alike, as `fnvtool pbr check` refuses DXT3; a DXT1 off the grid
-            // (decoded the same way) is an allowed format and is taken; signed BC5: refused.
+            // (decoded the same way) is an allowed format but refused by its size, as the
+            // validator refuses it, and so is an unsigned BC4 off the grid (6x6, decoded to R8
+            // on the CPU); signed BC5: refused.
             ("textures/walls/dxt3.dds", dxt1.clone()),
             ("textures/pbr/walls/dxt3_p.dds", legacy(b"DXT3", 4, 4, &[0; 16])),
             ("textures/walls/odddxt3.dds", dxt1.clone()),
             ("textures/pbr/walls/odddxt3_p.dds", legacy(b"DXT3", 3, 3, &[0; 16])),
             ("textures/walls/odddxt1.dds", dxt1.clone()),
             ("textures/pbr/walls/odddxt1_p.dds", legacy(b"DXT1", 3, 3, &[0; 8])),
+            ("textures/walls/oddbc4.dds", dxt1.clone()),
+            ("textures/pbr/walls/oddbc4_p.dds", legacy(b"BC4U", 6, 6, &[0; 32])),
             ("textures/walls/signedtwo.dds", dxt1.clone()),
             ("textures/pbr/walls/signedtwo_p.dds", legacy(b"BC5S", 4, 4, &[0; 16])),
             // A first-person twin whose own set is height only, and the plain texture's set.
@@ -163,8 +167,10 @@ fn the_synchronous_source_loads_a_set_by_its_exact_member_paths() {
     // The file's own format decides, as the validator's does: DXT3 on or off the block grid.
     assert!(source.pbr_set(&source.resolve("walls/dxt3.dds")).is_none(), "an aligned DXT3 _p (BC2) is refused");
     assert!(source.pbr_set(&source.resolve("walls/odddxt3.dds")).is_none(), "an odd-sized DXT3 _p is refused though it went up as Rgba8Unorm");
-    let odd_dxt1 = source.pbr_set(&source.resolve("walls/odddxt1.dds")).expect("an odd-sized DXT1 _p is an allowed format");
-    let odd_dxt1_map = odd_dxt1.height().and_then(|h| h.depth_map.clone()).expect("_p");
+    // Off the 4-texel grid: refused by size, though the format is allowed and decodes on the
+    // CPU (the validator's rule, `not-block-aligned`).
+    assert!(source.pbr_set(&source.resolve("walls/odddxt1.dds")).is_none(), "an odd-sized DXT1 _p is refused by its size");
+    assert!(source.pbr_set(&source.resolve("walls/oddbc4.dds")).is_none(), "a 6x6 BC4 _p is refused by its size");
     assert!(source.pbr_set(&source.resolve("walls/signedtwo.dds")).is_none(), "a signed BC5 _p is refused");
     assert!(source.pbr_set(&source.resolve("walls/plain.dds")).is_none());
     assert!(source.pbr_set(&source.resolve("walls/bad.dds")).is_none(), "an _orm that does not load leaves the shape legacy");
@@ -195,8 +201,15 @@ fn the_synchronous_source_loads_a_set_by_its_exact_member_paths() {
     for refused in ["dxt3", "odddxt3", "signedtwo"] {
         assert!(warned.contains(&format!(r"textures\pbr\walls\{refused}_p.dds")), "{refused}: {warned:?}");
     }
-    assert!(!warned.contains(r"textures\pbr\walls\odddxt1_p.dds"), "{warned:?}");
-    assert_eq!(images.get(&odd_dxt1_map).unwrap().texture_descriptor.format, TextureFormat::Rgba8Unorm, "decoded off the block grid");
+    for odd in ["odddxt1", "oddbc4"] {
+        assert!(warned.contains(&format!(r"textures\pbr\walls\{odd}_p.dds")), "{odd}: one warning naming the file: {warned:?}");
+    }
+    // The size rule: each side a multiple of 4, as `fnvtool pbr check` wants.
+    assert_eq!(height_size_refusal(4, 4), None);
+    assert_eq!(height_size_refusal(512, 8), None);
+    assert_eq!(height_size_refusal(3, 3).as_deref(), Some("is 3x3, a side not a multiple of 4"));
+    assert_eq!(height_size_refusal(8, 6).as_deref(), Some("is 8x6, a side not a multiple of 4"));
+    assert_eq!(height_size_refusal(6, 8).as_deref(), Some("is 6x8, a side not a multiple of 4"));
     // The refusal names the file's own format, signed BC5 as BC5, and judges by it.
     use fnv_dds::Format;
     assert_eq!(height_refusal(Some(Format::Bc5S), Some(TextureFormat::Bc5RgSnorm)), "is signed (BC5_SNORM); a height map is unsigned (0 low, 1 high)");
@@ -427,7 +440,7 @@ fn the_summary_line_names_every_count() {
         (&s.height_no_tangents, 15),
         (&s.height_other, 16),
         (&s.height_failed, 17),
-        (&s.height_signed, 18),
+        (&s.height_refused, 18),
         (&s.height_dropped, 19),
     ] {
         for _ in 0..n {
@@ -437,7 +450,7 @@ fn the_summary_line_names_every_count() {
     s.stems.lock().unwrap().extend(["a".to_string(), "b".to_string()]);
     assert_eq!(
         s.line(),
-        "3 material builds applied an ORM set (2 distinct ORM set stems at build), 11 a height-only set's height map; builds without one: 5 not eligible, 1 on excluded textures; 2 ORM load failures at build or swap; 4 applied without their _n (no tangents); 6 role copies made legacy; 24 retexture calls (7 to an ORM set, 9 to a loaded height-only set (20 with its height map applied), 8 to the legacy look); height maps: 10 material builds applied one; not put on at build or swap: 12 alpha-tested, 21 blended, 13 double-sided, 14 decals, 15 without tangents, 16 unlit, refracting or holed; 17 _p not loaded, 18 _p refused (signed or in no height map's format); 19 later copies dropped one"
+        "3 material builds applied an ORM set (2 distinct ORM set stems at build), 11 a height-only set's height map; builds without one: 5 not eligible, 1 on excluded textures; 2 ORM load failures at build or swap; 4 applied without their _n (no tangents); 6 role copies made legacy; 24 retexture calls (7 to an ORM set, 9 to a loaded height-only set (20 with its height map applied), 8 to the legacy look); height maps: 10 material builds applied one; not put on at build or swap: 12 alpha-tested, 21 blended, 13 double-sided, 14 decals, 15 without tangents, 16 unlit, refracting or holed; 17 _p not loaded, 18 _p refused (signed, in no height map's format or a side not a multiple of 4); 19 later copies dropped one"
     );
 }
 

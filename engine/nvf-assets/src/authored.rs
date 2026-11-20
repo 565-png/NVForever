@@ -325,11 +325,20 @@ impl Parallax {
 }
 
 /// The files [`find`] and the decoders already warned about (one warning per file), and the
-/// own formats of the members decoded under `textures\pbr\` ([`note_source`]).
+/// own formats and sizes of the members decoded under `textures\pbr\` ([`note_source`]).
 #[derive(Default)]
 pub struct Memo {
     warned: Mutex<HashSet<String>>,
-    sources: Mutex<HashMap<String, fnv_dds::Format>>,
+    sources: Mutex<HashMap<String, Source>>,
+}
+
+/// A decoded member file's own format and its top level's size, before any decode on the
+/// CPU ([`note_source`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Source {
+    pub format: fnv_dds::Format,
+    pub width: u32,
+    pub height: u32,
 }
 
 /// The scalar files of one mount by path, each read once ([`scalars_cached`]); kept beside the
@@ -436,13 +445,30 @@ fn height_map(found: &Found, scalars: &Scalars, memo: &Memo, load: &mut impl FnM
         return None;
     };
     let source = memo.source(&path);
-    if !height_source_ok(source, format) {
-        Stats::add(&stats().height_signed);
-        let why = height_refusal(source, format);
+    if !height_source_ok(source.map(|s| s.format), format) {
+        Stats::add(&stats().height_refused);
+        let why = height_refusal(source.map(|s| s.format), format);
         memo.warn_once(&path, || format!("authored materials: {path} {why}, so it is not drawn (export it as BC4_UNORM)"));
         return None;
     }
+    if let Some(why) = source.and_then(|s| height_size_refusal(s.width, s.height)) {
+        Stats::add(&stats().height_refused);
+        memo.warn_once(&path, || format!("authored materials: {path} {why}, so it is not drawn (`fnvtool pbr check` refuses it too)"));
+        return None;
+    }
     Some(Parallax::height(image, depth))
+}
+
+/// Why a `_p` whose top level is `width` x `height` is refused by its size, or `None`: each
+/// side must be a multiple of 4, the rule `fnvtool pbr check` applies to every member
+/// (`not-block-aligned`), so the engine and the validator agree on `_p`. The engine could
+/// decode such a file on the CPU and draw it; it refuses it so that a `_p` the game draws
+/// also passes the check [design, review of 2026-11-20; docs/spec-notes/pbr-materials.md
+/// "Compression and sizes"]. Only `_p` is judged so here: `_orm` and `_n` keep the
+/// decoder's own rules. A `_p` whose source is not known here (not decoded through this
+/// memo) is not judged by size.
+pub fn height_size_refusal(width: u32, height: u32) -> Option<String> {
+    (width % 4 != 0 || height % 4 != 0).then(|| format!("is {width}x{height}, a side not a multiple of 4"))
 }
 
 /// Whether a loaded `_p` may be drawn, by the file's own format (`source`, as decoded:
@@ -477,18 +503,19 @@ pub fn height_refusal(source: Option<fnv_dds::Format>, format: Option<TextureFor
     }
 }
 
-/// Note the own format of a file decoded under `textures\pbr\` (`path` as the decoder keys
-/// it, normalised), for [`height_source_ok`]: the main thread and the workers decode with
-/// the same [`Memo`], so a later lookup of a cached or adopted texture finds it.
-pub(crate) fn note_source(memo: &Memo, path: &str, source: Option<fnv_dds::Format>) {
-    if let Some(f) = source.filter(|_| path.starts_with(fnv_pbr::PBR_DIR)) {
-        memo.sources.lock().expect("authored sources").insert(path.to_string(), f);
+/// Note the own format and top-level size (`size`: width, height) of a file decoded under
+/// `textures\pbr\` (`path` as the decoder keys it, normalised), for [`height_source_ok`] and
+/// [`height_size_refusal`]: the main thread and the workers decode with the same [`Memo`],
+/// so a later lookup of a cached or adopted texture finds it.
+pub(crate) fn note_source(memo: &Memo, path: &str, source: Option<fnv_dds::Format>, size: (u32, u32)) {
+    if let Some(format) = source.filter(|_| path.starts_with(fnv_pbr::PBR_DIR)) {
+        memo.sources.lock().expect("authored sources").insert(path.to_string(), Source { format, width: size.0, height: size.1 });
     }
 }
 
 impl Memo {
-    /// The own format of the file at `path` as last decoded ([`note_source`]).
-    fn source(&self, path: &str) -> Option<fnv_dds::Format> {
+    /// The own format and size of the file at `path` as last decoded ([`note_source`]).
+    fn source(&self, path: &str) -> Option<Source> {
         self.sources.lock().expect("authored sources").get(&fnv_vfs::normalize(path)).copied()
     }
 }
@@ -1049,8 +1076,9 @@ pub struct Stats {
     pub height_other: AtomicU64,
     /// Sets whose `_p` did not load (the rest of an authored set still applies).
     pub height_failed: AtomicU64,
-    /// Sets whose `_p` is signed or in no height map's format, refused ([`height_source_ok`]).
-    pub height_signed: AtomicU64,
+    /// Sets whose `_p` is refused: signed or in no height map's format ([`height_source_ok`]),
+    /// or a side not a multiple of 4 ([`height_size_refusal`]).
+    pub height_refused: AtomicU64,
     /// Later copies that dropped a height map ([`recheck_height`]).
     pub height_dropped: AtomicU64,
     stems: Mutex<HashSet<String>>,
@@ -1068,7 +1096,7 @@ impl Stats {
     /// The summary line (without its prefix).
     pub fn line(&self) -> String {
         format!(
-            "{} material builds applied an ORM set ({} distinct ORM set stems at build), {} a height-only set's height map; builds without one: {} not eligible, {} on excluded textures; {} ORM load failures at build or swap; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to an ORM set, {} to a loaded height-only set ({} with its height map applied), {} to the legacy look); height maps: {} material builds applied one; not put on at build or swap: {} alpha-tested, {} blended, {} double-sided, {} decals, {} without tangents, {} unlit, refracting or holed; {} _p not loaded, {} _p refused (signed or in no height map's format); {} later copies dropped one",
+            "{} material builds applied an ORM set ({} distinct ORM set stems at build), {} a height-only set's height map; builds without one: {} not eligible, {} on excluded textures; {} ORM load failures at build or swap; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to an ORM set, {} to a loaded height-only set ({} with its height map applied), {} to the legacy look); height maps: {} material builds applied one; not put on at build or swap: {} alpha-tested, {} blended, {} double-sided, {} decals, {} without tangents, {} unlit, refracting or holed; {} _p not loaded, {} _p refused (signed, in no height map's format or a side not a multiple of 4); {} later copies dropped one",
             Self::get(&self.built),
             self.stems.lock().expect("authored stats").len(),
             Self::get(&self.height_only_built),
@@ -1090,7 +1118,7 @@ impl Stats {
             Self::get(&self.height_no_tangents),
             Self::get(&self.height_other),
             Self::get(&self.height_failed),
-            Self::get(&self.height_signed),
+            Self::get(&self.height_refused),
             Self::get(&self.height_dropped),
         )
     }

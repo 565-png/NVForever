@@ -175,7 +175,8 @@ fn worker_texture_key(
         let mut decoded = dds_texture(&bytes, usage, bc_supported, false)?;
         decoded.image.texture_descriptor.label = Some(folder_label(path));
         crate::authored::srgb_warning(&workers.authored, path, usage, decoded.srgb_code);
-        crate::authored::note_source(&workers.authored, path, decoded.source);
+        let size = decoded.image.texture_descriptor.size;
+        crate::authored::note_source(&workers.authored, path, decoded.source, (size.width, size.height));
         Ok(decoded)
     })
 }
@@ -736,7 +737,8 @@ impl TextureCache {
             Ok(DecodedTexture { mut image, lacks_alpha, srgb_code, source }) => {
                 image.texture_descriptor.label = Some(folder_label(&path));
                 crate::authored::srgb_warning(&self.workers.authored, &path, usage, srgb_code);
-                crate::authored::note_source(&self.workers.authored, &path, source);
+                let size = image.texture_descriptor.size;
+                crate::authored::note_source(&self.workers.authored, &path, source, (size.width, size.height));
                 if clamp {
                     if let ImageSampler::Descriptor(d) = &mut image.sampler {
                         d.address_mode_u = ImageAddressMode::ClampToEdge;
