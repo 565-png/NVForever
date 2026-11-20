@@ -146,6 +146,7 @@ mod wrecks;
 mod talk_clips;
 mod readahead;
 mod reflection;
+mod reflection_sky;
 mod minimap_render;
 mod refraction;
 mod residents;
