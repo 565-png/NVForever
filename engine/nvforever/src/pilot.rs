@@ -592,6 +592,13 @@ struct Walk {
     enable_wait: Option<f64>,
     /// Since when the walk has waited at a locked door for its owner to open it.
     owner_wait: Option<f64>,
+    /// A walk to a spot to fire from: a gap no navmesh joins inside one interior is not
+    /// crossed by a put, the player fires from where it stands (the BB gun range: put by
+    /// target 1, the player was where Dad could not walk up to talk, CG02 stopped at 55).
+    stay: bool,
+    /// With `stay`, in a fight: the player keeps where it is and the foe comes to it (a
+    /// shot from afar hit Dad, who stood between the player and the radroach).
+    hold: bool,
     /// The locked door whose owner the player keeps by, while it does.
     owner_door: Option<u32>,
     /// When the walk last said where the player is on its path (every [`WALK_REPORT_SECS`]).
@@ -749,6 +756,8 @@ struct Pilot {
     /// For a `say_info` kept company: how many lines had been begun when the chain (in
     /// a campaign, the first chain) began, and since when the speaker has stood where it stands.
     mark: u64,
+    /// The lines begun when a `dialogue_package` step began (`Seen::lines_begun`).
+    step_lines: u64,
     still: (f64, [f32; 3]),
     /// An attacker being fought before the step goes on, since when, and when the
     /// attackers are looked for next.
@@ -833,6 +842,7 @@ impl Pilot {
             given_up: Vec::new(),
             mark_items: 0,
             mark: 0,
+            step_lines: 0,
             still: (0.0, [0.0; 3]),
             defend: None,
             defend_from: 0.0,
@@ -1550,6 +1560,17 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                                 _ => None,
                             }
                         };
+                        if w.stay && gap && here.space == w.goal.space {
+                            if !w.gapped {
+                                info!("pilot: step {}: no navmesh way to the spot to fire from ({:?}): the player {} where it stands", p.i, w.goal.space, if w.hold { "waits for its foe" } else { "fires from" });
+                                w.gapped = true;
+                            }
+                            if w.hold {
+                                (h.intent.forward, h.intent.right) = (0.0, 0.0);
+                                return Walked::Going;
+                            }
+                            return Walked::There;
+                        }
                         if let Some(at) = arrive {
                             info!("pilot: step {}: {} ({:?}): the player is put at ({:.0}, {:.0}, {:.0}) in {:?}, as the mod list's travel and a fast travel would put it", p.i, if too_far { "a way longer than the search goes" } else if gap { "no navmesh way there" } else { "no way to the Capital Wasteland side" }, w.goal.space, at.pos[0], at.pos[1], at.pos[2], at.space);
                             w.gapped |= too_far || gap;
@@ -1726,6 +1747,9 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 // the announcer speaks, then opens the player's gate): what it is doing is
                 // waited for, so the door's time counts from when they are back.
                 w.door_since = Some(p.now);
+            } else if lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > PICK_AFTER_SECS) && pick_lock(p, h, door) {
+                // Picked: the next frame opens it, as the menu activates the door it opened.
+                w.door_since = None;
             } else if lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) && try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, door, feet) {
                 w.door_since = Some(p.now);
                 return Walked::Going;
@@ -1814,6 +1838,10 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                     p.finding("unreachable", why.clone());
                     return Walked::No(why);
                 };
+                if pick_lock(p, h, d.door) {
+                    w.door_since = None;
+                    return Walked::Going;
+                }
                 if try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, d.door, feet) {
                     w.door_since = Some(p.now);
                     return Walked::Going;
@@ -1844,7 +1872,36 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
 }
 
 fn walk_to(goal: Place, target: Option<FormId>, radius: f32, now: f64, feet: [f32; 3]) -> Walk {
-    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, gapped: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None, owner_wait: None, owner_door: None, reported: now, travel_since: None }
+    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, gapped: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None, owner_wait: None, owner_door: None, reported: now, travel_since: None, stay: false, hold: false }
+}
+
+/// How long after trying a locked door the player picks its lock.
+const PICK_AFTER_SECS: f64 = 1.0;
+
+/// A locked door the player can pick (its Lockpick skill and a bobby pin, as the menu
+/// asks, `fnv_game::lockpick::opening`): unlocked as the lockpicking menu's won game
+/// unlocks it, with its XP (`fnv_game::lockpick::opened`); the game itself is stood in
+/// (logged as a headless step). Vault 101's Overseer's office door, Very Easy, with
+/// Amata's bobby pins: the escape stopped at it [observed, 2026-11-20].
+fn pick_lock(p: &mut Pilot, h: &mut Hands, door: u32) -> bool {
+    let picked = h.game(|g| {
+        let skill = fnv_game::lockpick::skill(g);
+        match fnv_game::lockpick::opening(g, FormId(door), skill) {
+            fnv_game::lockpick::Opening::Pick { level, skill, pins } => {
+                fnv_game::lockpick::opened(g, FormId(door), level, true);
+                Some(format!("{level:?} lock, Lockpick {skill:.0}, {pins} bobby pin(s)"))
+            }
+            _ => None,
+        }
+    }).flatten();
+    match picked {
+        Some(what) => {
+            info!("pilot: step {}: picks door {door:08X}'s lock ({what}): the lockpicking game stood in", p.i);
+            p.headless("lockpick (the minigame stood in)");
+            true
+        }
+        None => false,
+    }
 }
 
 /// What a player would use to open a door that stays locked (module notes), not used
@@ -2903,7 +2960,7 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
             info!("pilot: step {}: left to the AI: {actor} entering {trigger}", p.i);
             Some(None)
         }
-        Action::TriggerEnter { trigger, .. } => {
+        Action::TriggerEnter { trigger, face, .. } => {
             if matches!(p.phase, Phase::Begin) {
                 match h.place_of(trigger) {
                     Ok((_, place)) => {
@@ -2919,6 +2976,16 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
             // 0x0C001204, and the walk to its middle was refused).
             let r = h.game(|g| runner::resolve(g, trigger).ok()).flatten();
             let inside = r.is_some_and(|r| h.script.rt.as_ref().is_some_and(|rt| rt.triggers.inside.contains(&(r, FormId::PLAYER_REF))));
+            // Inside, turned to the reference the trigger's script wants the player to face
+            // (posing for Jonas's picture), as a player would turn.
+            if let (true, Some(face)) = (inside, face.as_deref()) {
+                if let Some((_, at)) = h.game(|g| runner::resolve(g, face).ok().and_then(|f| where_is(g, f))).flatten() {
+                    let eye = h.player.eye();
+                    let cross: Option<Crosshair> = h.control.crosshair;
+                    h.player.heading = Crosshair::aim_at(cross.as_ref(), eye, [at[0], at[1], eye[2]]).0;
+                    (h.intent.forward, h.intent.right) = (0.0, 0.0);
+                }
+            }
             if inside && p.part != 1 {
                 (p.part, p.phase) = (1, Phase::Wait { until: p.now + 1.0 });
                 return None;
@@ -3628,8 +3695,41 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
             Some(None)
         }
         Action::DialoguePackage { actor, .. } => {
-            info!("pilot: step {}: left to the AI: {actor}'s dialogue package", p.i);
-            Some(None)
+            if p.part == 0 {
+                info!("pilot: step {}: left to the AI: {actor}'s dialogue package", p.i);
+                p.part = 1;
+                p.step_lines = h.game(|g| g.softlock_seen.lines_begun).unwrap_or(0);
+            }
+            // When the chain answers it next (a choice, the talk's end), the actor walks up
+            // and opens the conversation first: the player stands by until it does, as a
+            // player would, instead of choosing in no conversation.
+            let answered = p.actions.iter().skip(p.i + 1).find(|a| !matches!(a, Action::Note { .. })).is_some_and(|a| matches!(a, Action::WaitTalk { .. } | Action::Choose { .. }));
+            if !answered {
+                return Some(None);
+            }
+            let who = h.game(|g| runner::resolve(g, actor).ok()).flatten();
+            let open = h.game(|g| g.dialogue.as_ref().map(|c| c.actor)).flatten();
+            // Or it says its line to the player with no conversation (a Say To package, a
+            // Goodbye greeting: Dad's radroach warning from 643 units [observed]).
+            // A line begun in this step: the line before it may still be said (Dad's
+            // radroach warning was taken for his call to the picture [observed]).
+            let mark = p.step_lines;
+            let said = who.is_some_and(|w| h.game(|g| g.speech.iter().any(|s| s.speaker == w && s.target == Some(FormId::PLAYER_REF) && g.softlock_seen.lines_since(mark).any(|l| l == s.info))) == Some(true));
+            match open {
+                Some(o) if who.is_none_or(|w| w == o) => {
+                    info!("pilot: step {}: {actor} opened the conversation after {:.1} s", p.i, p.now - p.step_from);
+                    Some(None)
+                }
+                None if said => {
+                    info!("pilot: step {}: {actor} says its line to the player after {:.1} s: no conversation to answer", p.i, p.now - p.step_from);
+                    Some(None)
+                }
+                _ if p.now - p.step_from > DIALOGUE_PACKAGE_SECS => {
+                    p.finding("wait_timed_out", format!("{actor}'s dialogue package opened no conversation with the player in {DIALOGUE_PACKAGE_SECS:.0} s"));
+                    Some(None)
+                }
+                _ => None,
+            }
         }
         _ if !runner::applies_now(&a) => {
             p.finding("not_carried_out", "the pilot has no way to do this step yet".into());
@@ -4003,7 +4103,12 @@ fn fight(p: &mut Pilot, h: &mut Hands, name: &str, a: &Action) -> Option<Option<
             Err(e) => return Some(Some(e)),
         };
         arm(p, h);
-        let Phase::Walk(w) = new_walk(place, Some(r), FIGHT_RANGE, p.now, h.feet()) else { unreachable!() };
+        let Phase::Walk(mut w) = new_walk(place, Some(r), FIGHT_RANGE, p.now, h.feet()) else { unreachable!() };
+        // A foe close by is fought from where the player stands when no navmesh joins the
+        // two inside one interior (Vault 101's radroach in the BB gun range: put beside it,
+        // the player was where Dad could not walk up for the picture, CG02 stopped at 70).
+        w.stay = hdist(h.feet(), place.pos) < FIGHT_STAY_NEAR;
+        w.hold = w.stay;
         p.phase = Phase::Fight(Fight { target: r, shooting: None, near: false, blocked: None, began: p.now, in_the_way: None, health: None, afar: false }, w);
     }
     let Phase::Fight(mut f, mut w) = std::mem::replace(&mut p.phase, Phase::Begin) else { return Some(None) };
@@ -4048,6 +4153,11 @@ fn fight(p: &mut Pilot, h: &mut Hands, name: &str, a: &Action) -> Option<Option<
 /// The longest the player goes along with an actor whose package a step waits to end,
 /// seconds [design]: Liberty Prime's march takes minutes.
 const PACKAGE_FOLLOW_SECS: f64 = 900.0;
+/// How long the player stands by for a Dialogue package's actor to walk up and open the
+/// conversation the chain answers next [hypothesis: a force-greet walk across a room].
+const DIALOGUE_PACKAGE_SECS: f64 = 60.0;
+/// How close a foe is for the fight to keep off a put across a gap inside one interior.
+const FIGHT_STAY_NEAR: f32 = 1500.0;
 /// How near the player keeps to that actor, game units [design].
 const PACKAGE_FOLLOW_NEAR: f32 = 600.0;
 
@@ -4183,7 +4293,9 @@ fn shoot_object(p: &mut Pilot, h: &mut Hands, name: &str, weapon: &str, a: &Acti
         // The pilot's own weapon goes back in hand at the next fight (`keep_weapon`).
         p.weapon_check = 0.0;
         let from = h.object_hits.and_then(|m| m.get(&r.0)).copied().unwrap_or(0);
-        p.phase = Phase::Shoot(Shoot { target: r, from, firing: None, backing: false }, walk_to(place, Some(r), SHOOT_OBJECT_FROM, p.now, h.feet()));
+        let mut w = walk_to(place, Some(r), SHOOT_OBJECT_FROM, p.now, h.feet());
+        w.stay = true;
+        p.phase = Phase::Shoot(Shoot { target: r, from, firing: None, backing: false }, w);
     }
     let Phase::Shoot(mut s, mut w) = std::mem::replace(&mut p.phase, Phase::Begin) else { return Some(None) };
     let hits = h.object_hits.and_then(|m| m.get(&s.target.0)).copied().unwrap_or(0);
@@ -4209,6 +4321,7 @@ fn shoot_object(p: &mut Pilot, h: &mut Hands, name: &str, weapon: &str, a: &Acti
         let to = Place { space: space_of(h.location), pos: [pos[0] + dx * back, pos[1] + dy * back, feet[2]] };
         info!("pilot: step {}: {away:.0} units from {name}: steps back to fire at it", p.i);
         w = walk_to(to, None, 60.0, p.now, feet);
+        w.stay = true;
         s.backing = true;
     }
     if s.firing.is_none() && !in_range {

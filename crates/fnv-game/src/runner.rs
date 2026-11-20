@@ -369,6 +369,11 @@ pub enum Action {
         event: Option<String>,
         #[serde(default)]
         frames: Option<u64>,
+        /// A reference the player faces while inside (the pilot; the headless run has no
+        /// heading to turn): a trigger whose script tests GetHeadingAngle to it (Vault
+        /// 101's picture trigger: within 45 degrees of Jonas).
+        #[serde(default)]
+        face: Option<String>,
     },
     /// The player picks a button of the open message box.
     PressButton { button: i32 },
@@ -1730,7 +1735,7 @@ fn step(g: &mut Game, st: &mut RunState, a: &Action) -> Result<Observed, String>
                 return Err(format!("{} has no OnFire block", g.data.name(w)));
             }
         }
-        Action::TriggerEnter { trigger, actor, event: ev, frames } => {
+        Action::TriggerEnter { trigger, actor, event: ev, frames, .. } => {
             let t = resolve(g, trigger)?;
             let a = match actor {
                 Some(a) => resolve(g, a)?,
