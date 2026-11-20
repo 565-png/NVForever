@@ -33,9 +33,9 @@ fn face_centres_point_along_their_world_axes_with_z_negated() {
         assert_eq!(dominant(world_direction(face, 0.0, 0.0)), *name, "layer {face}");
     }
     // Every texel of a layer points along that layer's axis.
-    for face in 0..6 {
+    for (face, name) in want.iter().enumerate() {
         for (s, t) in [(-0.9, -0.9), (0.9, -0.9), (-0.9, 0.9), (0.9, 0.9)] {
-            assert_eq!(dominant(world_direction(face, s, t)), want[face]);
+            assert_eq!(dominant(world_direction(face, s, t)), *name);
         }
     }
 }
