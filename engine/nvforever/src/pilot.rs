@@ -1261,13 +1261,16 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
     // a conversation between them): the player stops and watches, up to [`SCENE_SECS`] a
     // walk. The Silver Rush's entrance plays Jean-Baptiste's scene with the volunteer;
     // walking on through it crosses a trigger that turns the Van Graffs hostile and fails
-    // Birds of a Feather.
+    // Birds of a Feather. An activator's lines (an intercom, a talking activator) are no scene (MQ11's intercom nags
+    // the player to start the purifier while its timer runs: watching it lets the timer
+    // run out, the fail ending).
     if w.scene_held < SCENE_SECS {
         let scene = h
             .game(|g| {
                 let here_cell = g.world.peek(FormId::PLAYER_REF).and_then(|s| s.cell);
                 g.speech.iter().find(|sp| {
                     (sp.say_to || g.in_actor_conversation(sp.speaker)) && !sp.greeting && sp.target != Some(FormId::PLAYER_REF) && !g.chatter_topic(sp.topic)
+                        && fnv_game::functions::base_of(g, sp.speaker).and_then(|b| g.data.sig(b)).is_some_and(|s| [b"NPC_", b"CREA", b"LVLN", b"LVLC"].contains(&&s))
                         && where_is(g, sp.speaker).is_some_and(|(c, at)| c == here_cell && hdist(at, feet) < SCENE_RANGE)
                 }).map(|sp| sp.speaker)
             })
@@ -1889,14 +1892,26 @@ fn pick_lock(p: &mut Pilot, h: &mut Hands, door: u32) -> bool {
         match fnv_game::lockpick::opening(g, FormId(door), skill) {
             fnv_game::lockpick::Opening::Pick { level, skill, pins } => {
                 fnv_game::lockpick::opened(g, FormId(door), level, true);
-                Some(format!("{level:?} lock, Lockpick {skill:.0}, {pins} bobby pin(s)"))
+                Some((false, format!("{level:?} lock, Lockpick {skill:.0}, {pins} bobby pin(s)")))
+            }
+            // Only the skill (or a pin) short: a player who levelled Lockpick, or carries
+            // a pin, picks it; the bot's character is not that player, so it is stood in
+            // and said (a finding, not a stop: a skill gate is no soft lock).
+            fnv_game::lockpick::Opening::Refused(r @ (fnv_game::lockpick::Refusal::Skill { .. } | fnv_game::lockpick::Refusal::NoPins)) => {
+                let level = fnv_game::lockpick::Level::of(g.world.peek(FormId(door)).and_then(|s| s.lock.map(|l| l.level)).unwrap_or(100));
+                fnv_game::lockpick::opened(g, FormId(door), level, true);
+                Some((true, format!("{level:?} lock, Lockpick {skill:.0}, refused: {r:?}")))
             }
             _ => None,
         }
     }).flatten();
     match picked {
-        Some(what) => {
-            info!("pilot: step {}: picks door {door:08X}'s lock ({what}): the lockpicking game stood in", p.i);
+        Some((short, what)) => {
+            if short {
+                p.finding("skill_stood_in", format!("door {door:08X}'s lock ({what}): picked as a player with the skill and a bobby pin would"));
+            } else {
+                info!("pilot: step {}: picks door {door:08X}'s lock ({what}): the lockpicking game stood in", p.i);
+            }
             p.headless("lockpick (the minigame stood in)");
             true
         }
