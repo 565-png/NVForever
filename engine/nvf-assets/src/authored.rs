@@ -213,7 +213,7 @@ pub fn metallic_debug() -> bool {
 /// The environment variable of the metal lift experiment ([`metal_lift`]).
 pub const METAL_LIFT_ENV: &str = "NVF_PBR_METAL_LIFT";
 /// The gains the experiment takes ([`parse_metal_lift`]).
-pub const METAL_LIFT_RANGE: std::ops::RangeInclusive<f32> = 1.0..=8.0;
+pub const METAL_LIFT_RANGE: std::ops::RangeInclusive<f32> = 1.0..=40.0;
 
 /// The value of [`METAL_LIFT_ENV`] as a gain: `Ok(None)` for no value (or an empty one),
 /// `Ok(Some(g))` for a number in [`METAL_LIFT_RANGE`], `Err` with the reason otherwise.
@@ -227,7 +227,7 @@ pub fn parse_metal_lift(text: Option<&str>) -> Result<Option<f32>, String> {
 }
 
 /// The metal lift experiment (a development switch about metal base colour, off by
-/// default; `NVF_PBR_METAL_LIFT=<gain>`, 1.0 to 8.0, read once at the start) [design]: in a
+/// default; `NVF_PBR_METAL_LIFT=<gain>`, 1.0 to 40.0, read once at the start) [design]: in a
 /// view with a reflection cube, an authored material's base colour used for lighting becomes
 /// mix(base, min(base x gain, 1), metallic), metallic the effective one, so a metal's
 /// reflection is tinted by a brighter colour than the game's diffuse (nif_material.wesl,

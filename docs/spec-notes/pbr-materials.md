@@ -415,7 +415,7 @@ it acts only with Authored materials on, and changes no picture without a pack.
   (exact with the clip; with Tony McMapface the glow goes through the inverse curve on its
   own, an approximation). Sources add in linear light. A check of the scale by eye:
   `NVF_PBR_VIEW=reflection` beside the sky in one frame.
-- **Metal lift (development experiment)** [design]: `NVF_PBR_METAL_LIFT=<gain>` (1 to 8,
+- **Metal lift (development experiment)** [design]: `NVF_PBR_METAL_LIFT=<gain>` (1 to 40,
   read once at the start, off by default, reflections on only) tests whether a metal draws
   dark because its base colour, the game's painted diffuse, is a lit look rather than a
   metal's reflectance: in a view with a cube an authored material's base colour for
