@@ -1,13 +1,15 @@
-//! The reflection cube of authored materials (#2981 reflections, slice 1;
-//! docs/spec-notes/pbr-materials.md "Reflections on authored materials, slice 1") [design].
+//! The reflection cube of authored materials (#2981 reflections;
+//! docs/spec-notes/pbr-materials.md "Reflections on authored materials") [design].
 //! NVForever's own rendering: nothing here describes the original, whose look has no ambient
 //! specular (docs/design/layer3.md); only authored materials reflect.
 //!
-//! - The run's development switch ([`enabled`], `NVF_PBR_REFLECT_FIELD=1` read once at the
-//!   start; the settings row comes later). On, every NIF main-pass pipeline gets the opt-in def
-//!   [`REFLECT_DEF`] (nif_material.rs) and authored materials are built with metallic 1
-//!   (authored.rs `authored_metallic`); nif_material.wesl holds metallic at 0 in a view without
-//!   a cube, so such views shade as with the switch off.
+//! - The run's state ([`enabled`], fixed at the start by [`set_enabled`] from the settings'
+//!   Reflections on authored materials and Authored materials rows, nvforever main.rs). On,
+//!   every NIF main-pass pipeline gets the opt-in def [`REFLECT_DEF`] (nif_material.rs) and
+//!   authored materials are built with metallic 1 (authored.rs `authored_metallic`);
+//!   nif_material.wesl holds metallic at 0 in a view without a cube, so such views shade as
+//!   with the row off. The world camera's cube and its content are nvforever
+//!   reflection_sky.rs; the PBR reflection field (pbr_field/reflect.rs) fills its own camera's.
 //! - The gate's state ([`gate_state`]): nvforever lights.rs patches bevy_pbr's
 //!   `pbr_functions` so the view's environment map light reaches opted-in fragments only
 //!   (nvforever `lights/reflection_gate.rs`). Until it is installed no cube is attached; if it
@@ -41,26 +43,31 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
 
-/// The environment variable of the development switch ([`enabled`]).
-pub const REFLECT_ENV: &str = "NVF_PBR_REFLECT_FIELD";
-
 /// The shader def by which a fragment takes the view's environment map light (nvforever
 /// `lights/reflection_gate.rs` writes it into `pbr_functions`; a test there checks the two
 /// agree).
 pub const REFLECT_DEF: &str = "NVF_PBR_REFLECT";
 
-/// The development switch (off by default; `NVF_PBR_REFLECT_FIELD=1`, read once at the
-/// start, before the first NIF pipeline is specialized): authored materials may reflect a
-/// view's [`ReflectionCube`]. In this slice only the PBR field test fills a cube.
+/// The run's state of reflections on authored materials ([`set_enabled`]).
+static RUN: OnceLock<bool> = OnceLock::new();
+
+/// Fix the run's state, before the first material is made and the first NIF pipeline is
+/// specialized: the settings' Reflections on authored materials row and Authored materials
+/// row both on (nvforever main.rs). Called once at the start; a later call that disagrees is
+/// refused with a warning.
+pub fn set_enabled(on: bool) {
+    if RUN.set(on).is_err() && enabled() != on {
+        warn!("authored reflections: already {} for this run; the setting takes effect at the next start", if enabled() { "on" } else { "off" });
+    }
+}
+
+/// Whether authored materials may reflect a view's [`ReflectionCube`] in this run: as
+/// [`set_enabled`] fixed it, else off (the viewer never sets it). On, every NIF main-pass
+/// pipeline gets [`REFLECT_DEF`] and authored materials are built with metallic 1, held at 0
+/// in any view without a cube; the world camera's cube itself is made only where the mount
+/// has authored sets (nvforever reflection_sky.rs).
 pub fn enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| {
-        let on = std::env::var(REFLECT_ENV).is_ok_and(|v| v.trim() == "1");
-        if on {
-            info!("authored materials: reflections development switch ({REFLECT_ENV}=1): authored materials reflect a view's reflection cube, metallic by their ORM's blue channel where the view has one");
-        }
-        on
-    })
+    *RUN.get_or_init(|| false)
 }
 
 /// Whether the reflection gate is in `pbr_functions` (nvforever lights.rs).

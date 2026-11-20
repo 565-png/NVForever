@@ -559,7 +559,7 @@ struct Args {
     /// mesh-terrain-blend, which no look turns on) and choices (fxaa, smaa or taa instead of --msaa;
     /// shadow-filter-hardware or shadow-filter-temporal), for comparing them one at a time.
     /// The switches on in vanilla are left on unless named off: no-glow, no-eye-adaptation,
-    /// no-neon-glow, no-water-mirror, no-authored-materials.
+    /// no-neon-glow, no-water-mirror, no-authored-materials, no-authored-reflections.
     #[arg(long, value_delimiter = ',', conflicts_with = "graphics")]
     graphics_only: Option<Vec<String>>,
     /// Test aid: log the mean and the slowest frame time every this many seconds (real
@@ -1200,6 +1200,19 @@ fn main() -> AppExit {
         }
         None => fnv_install::EngineHome::user().map(|h| h.mods()).into_iter().collect(),
     };
+    // Test aid (reflections, #2981): the PBR reflection field's generated sets as loose files
+    // in this home's own mods folder, before the mount is opened, so the mount has authored
+    // sets (nvf_assets pbr_field/reflect.rs `seed_mount_pack`; an explicit NVFOREVER_HOME
+    // only, never with Mod Organizer 2).
+    if nvf_assets::mount_pack_requested() {
+        match (mo2.is_none(), mods.first()) {
+            (true, Some(dir)) => match nvf_assets::seed_mount_pack(dir) {
+                Ok(n) => eprintln!("pbr mount pack: {n} generated files written under {}", dir.display()),
+                Err(e) => eprintln!("pbr mount pack: FAIL {e}"),
+            },
+            _ => eprintln!("pbr mount pack: FAIL {} needs NVForever's own mods folder (no Mod Organizer 2)", nvf_assets::MOUNT_PACK_ENV),
+        }
+    }
     let opened = world::open_plugins(args.data(), &mods, &args.plugins);
     args.plugins = opened.plugins.iter().map(|p| p.name.clone()).collect();
     // No setting names the code page: the plugins' own text says it (#1443).
@@ -1631,6 +1644,23 @@ fn main() -> AppExit {
     let authored = settings::authored_after_ini(graphics.authored_materials, play.is_some().then(|| settings::given_switches(&args, &command_line())).as_ref());
     nvf_assets::authored::set_enabled(authored);
     app.add_systems(Startup, move || info!("authored materials: {}", if authored { "on (sets under textures\\pbr\\ are used where a pack has them)" } else { "off (setting)" }));
+    // Reflections on authored materials (#2981): the run's state by the same rule, fixed
+    // before the first NIF pipeline (the opt-in def and the metallic factor); the world
+    // camera's cube is made later, only where the mount has authored sets
+    // (reflection_sky.rs).
+    let reflections = settings::reflections_after_ini(graphics.authored_reflections, play.is_some().then(|| settings::given_switches(&args, &command_line())).as_ref());
+    nvf_assets::reflection_cube::set_enabled(reflections && authored);
+    app.add_systems(Startup, move || {
+        info!(
+            "authored reflections: {}",
+            match (reflections, authored) {
+                (true, true) => "on (authored materials reflect the world camera's cube where the mount has authored sets)",
+                (true, false) => "off (Authored materials is off)",
+                _ => "off (setting)",
+            }
+        )
+    });
+    app.add_plugins(reflection_sky::ReflectionSkyPlugin { row: reflections, authored });
     let start_upscaler = {
         let given = play.is_some().then(|| settings::given_switches(&args, &command_line()));
         let ini = given.as_ref().and_then(|_| settings::settings_text_at_start()).map(|text| settings::UpscalerIni::read(&text));

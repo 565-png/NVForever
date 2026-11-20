@@ -20,7 +20,14 @@
 //! legacy control (no set) and a zero-reflectance control (an authored set whose scalar file
 //! sets reflectance 0).
 //!
-//! With the switch on (`NVF_PBR_REFLECT_FIELD=1`), camera A: each tilted metal's colour is
+//! "The switch" below is the run's reflections state (`reflection_cube::enabled`): the
+//! settings' Reflections on authored materials row with Authored materials, which the
+//! scenarios pin with `--graphics-only` (on: `authored-materials`, where the row stays on; off:
+//! `no-authored-reflections`). The field forces nothing else: its cameras are its own, never
+//! the world camera, so the world camera's cube (nvforever reflection_sky.rs, made only where
+//! the game's mount has authored sets) cannot overwrite camera A's fixed cube.
+//!
+//! With the switch on, camera A: each tilted metal's colour is
 //! nearest the face its reflection points at (pins the faces' orientation and Bevy's z flip);
 //! the head-on metals' chromaticity lies nearer the cube's (neutral) mean as roughness rises
 //! (pins the level rule); the smooth head-on metal is clearly tinted; the legacy and
@@ -583,6 +590,37 @@ pub(super) fn fixture() -> Vec<(&'static str, Vec<u8>)> {
         ("textures/pbr/reflect/zero_orm.dds", orm("zero")),
         ("textures/pbr/reflect/zero.toml", b"# the zero-reflectance control\nreflectance = 0.0\n".to_vec()),
     ]
+}
+
+/// The test aid that puts the field's generated files ([`fixture`]) into the game's own mount
+/// before it is opened, so the mount has authored sets and the world camera gets its
+/// reflection cube (nvforever reflection_sky.rs; the scenario `authored-reflections-sky`).
+/// Nothing the game draws uses the files' textures: they only make the mount's index count
+/// authored sets [engineering policy: no game-derived file, no game folder written].
+pub const MOUNT_PACK_ENV: &str = "NVF_PLAY_TEST_PBR_MOUNT_PACK";
+
+/// Whether [`MOUNT_PACK_ENV`] asks for the mount pack (`=1`).
+pub fn mount_pack_requested() -> bool {
+    std::env::var_os(MOUNT_PACK_ENV).is_some_and(|v| v == "1")
+}
+
+/// Write [`fixture`]'s files under `mods` (NVForever's own mods folder of an explicitly chosen
+/// home, `NVFOREVER_HOME`; refused without one, so a player's home is never written), loose
+/// files the mount layers over the game's Data. Files already there are written again. The
+/// number of files written.
+pub fn seed_mount_pack(mods: &Path) -> Result<usize, String> {
+    if std::env::var_os("NVFOREVER_HOME").is_none() {
+        return Err(format!("{MOUNT_PACK_ENV}=1 needs an explicit NVFOREVER_HOME"));
+    }
+    let files = fixture();
+    for (rel, bytes) in &files {
+        let path = mods.join(rel);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    Ok(files.len())
 }
 
 fn write_fixture(out: &Path) -> std::io::Result<()> {

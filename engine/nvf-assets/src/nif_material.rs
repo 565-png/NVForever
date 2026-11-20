@@ -770,8 +770,8 @@ impl MaterialExtension for NifSurface {
         // The metallic debug switch (crate::authored::metallic_debug; off unless
         // NVF_PBR_METALLIC=1 at the start) likewise, except with reflections on, which retire
         // its "keep the metal share" rule.
-        // Reflections (crate::reflection_cube; off unless NVF_PBR_REFLECT_FIELD=1 at the
-        // start): the opt-in to the view's environment map light, main pass only (nvforever
+        // Reflections (crate::reflection_cube; the run's Reflections on authored materials,
+        // fixed at the start): the opt-in to the view's environment map light, main pass only (nvforever
         // lights/reflection_gate.rs compiles bevy_pbr's environment blocks under it), and the
         // view-dependent metallic in nif_material.wesl.
         let reflect = crate::reflection_cube::enabled();
@@ -1041,8 +1041,9 @@ impl Plugin for NifMaterialPlugin {
             .init_resource::<BlendedCutouts>()
             .add_systems(Startup, spawn_transmission_anchor)
             .add_systems(PostUpdate, (apply_blended_cutouts.in_set(BlendedCutoutSystems), see_through_casts_no_shadow.in_set(SeeThroughShadowSystems)));
-        // The authored materials' debug switches are read once, at the start, and the
-        // reflections' development switch with them.
+        // The authored materials' debug switches are read once, at the start, and the run's
+        // reflections state is fixed with them (nvforever main.rs sets it before this; off
+        // where nothing did, as in the viewer).
         crate::authored::view();
         crate::authored::metallic_debug();
         crate::reflection_cube::enabled();
