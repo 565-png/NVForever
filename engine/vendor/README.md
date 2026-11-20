@@ -103,6 +103,22 @@ by a comment starting `NVForever FSR integration`:
 Without the override both do what upstream does. This is a new patch for Bevy 0.20.1, not
 the dropped 0.19.1 one below.
 
+No directional shadows for one lighting call (the NIF shader's shade light,
+nvf_assets `nif_material.wesl` `with_shade_light`), each part marked `NVForever (no
+directional shadows)`:
+
+- `src/render/mesh_types.wesl`: `NVF_MESH_FLAGS_NO_DIRECTIONAL_SHADOWS_BIT` (bit 26 of a
+  `PbrInput`'s flags, which bevy_pbr leaves unused; set by shaders only, never by the CPU).
+- `src/render/pbr_functions.wesl` `apply_pbr_lighting`: the directional loop's shadow-map,
+  transmitted-lobe and contact-shadow conditions skip the light's shadow while the bit is
+  set; point and spot lights keep theirs. `with_shade_light` relit with the receiver bit
+  cleared before, which also dropped the lamps' shadows and changed the ambient occlusion's
+  factor on lamps; its extrapolation (by up to 1/share) turned that difference into a glow
+  on the first-person arms, weapon and Pip-Boy [observed 2026-11-19, Prospector Saloon at
+  22:00, lamp shadows Quality with ambient occlusion; gone after the change].
+
+Without the bit set the lighting is upstream's.
+
 Another change (one resolve, docs/design/frame-rate-audit.md §9), in `src/transmission/`,
 each part marked `NVForever one resolve`, with `ViewTarget::set_resolve_deferred` in
 bevy_render below:

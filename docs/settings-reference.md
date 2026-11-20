@@ -1026,9 +1026,15 @@ below cover them all.
 
 ### `ambient-occlusion`: Ambient occlusion
 
-- On the page: On: creases, corners and the ground under things are darkened by how enclosed
-  they are (screen-space, from the depth). Not in the original.
-- Command-line switches: `--graphics`
+- On the page: Creases, corners and the ground under things darken by how enclosed they are:
+  Off, Performance (cheaper, a little grainier) or Quality. Not in the original.
+- In full: Screen-space ambient occlusion from the depth, on the ambient light and the lamps
+  that cast no shadow: Off; Performance (one slice direction a pixel instead of two: half the
+  horizon march, the same denoise); or Quality (ground-truth ambient occlusion, 2 slices x 4
+  steps a side at half resolution, depth-aware denoise). Quality in the enhanced look.
+- Shown as a list since 2026-11-19; an INI written while it was an on/off switch (`1`/`0`,
+  true/false, on/off, yes/no) still loads as Quality or Off.
+- Command-line switches: `--graphics`, `--ambient-occlusion`
 - More: docs/design/graphics-enhanced.md
 - Registered in `engine/nvforever/src/settings.rs`
 
