@@ -17,27 +17,44 @@
 //!     sky-lower and sky-upper colours (blended across a weather fade,
 //!     `SkyState::color`) mixed by the dome's own weights for that height ([`DomeProfile`],
 //!     read from `atmosphere.nif`'s vertices when the sky is made) the way the dome mixes
-//!     them (sky.rs `dome_color`); below it a ground colour, the weather's ambient colour
-//!     times [`GROUND_FACTOR`]; and a broad lobe toward the directional light in its colour
-//!     and strength (the light as update_sky aims it, the moon's at night), no disc;
-//!   - indoors: the cell's ambient colour above, [`GROUND_FACTOR`] of it below, and a band of
-//!     the cell's fog colour at the horizon ([`FOG_BAND`]), as the water's indoor sky takes
-//!     the fog colour (water.rs `update_water_sky`);
+//!     them (sky.rs `dome_color`), times the sky's display scale (`SkyState::sky_scale`);
+//!     below it lit ground, an assumed albedo [`GROUND_ALBEDO`] under the light falling on
+//!     level ground (the ambient plus the directional light times the sine of its
+//!     elevation, as the fork lights a diffuse surface); and a broad lobe toward the
+//!     directional light in its colour and strength (the light as update_sky aims it, the
+//!     moon's at night), no disc;
+//!   - indoors: the cell's ambient colour above, ground of [`GROUND_ALBEDO`] under the
+//!     ambient below, and a band of the cell's fog colour at the horizon ([`FOG_BAND`]), as
+//!     the water's indoor sky takes the fog colour (water.rs `update_water_sky`);
 //!   - each level is the same function with a wider kernel, not a filter of the level above:
 //!     each hemisphere's colour mixes toward that hemisphere's mean by level / 5, the edge
 //!     between sky and ground widens ([`HORIZON_EDGE`] to [`HORIZON_EDGE_TOP`]), and the
 //!     lobe widens with its total kept ([`SUN_LOBE_POWER`] halved per level).
 //!
 //!   No clouds, no sun disc, no scene objects, no stars or moon disc.
-//! - **Units** ([`texel`]): the colours are taken to display values with the share the
-//!   ambient light has (sky.rs `AMBIENT_SHARE` outdoors, `INTERIOR_AMBIENT_SHARE` indoors;
-//!   the dome's linear colours through `lights::linear_to_display`, the interior's bytes / 255),
-//!   then converted as the fork converts the ambient highlight, v x max(v, 1e-6)^1.2. With the
-//!   cube's intensity `light_unit()` at the default exposure this makes a direction whose
-//!   colour equals the ambient light reflect exactly the converted ambient
-//!   (nvf_assets `ReflectionCube`, "Units"). The lobe is the directional light's display
-//!   colour times its strength in display units (illuminance / (pi x light_unit), as sky.rs
-//!   sets it), converted the same way. Sources add in linear light.
+//! - **Units.** A texel is the value the thing it stands for writes into the view's HDR
+//!   target before tone mapping, so a perfect mirror (white, metallic 1, roughness 0:
+//!   Bevy's environment term is then texel x intensity x view.exposure, intensity
+//!   `light_unit()` = 1 / the default exposure) writes what the thing itself writes, and the
+//!   tone mapping and grade that follow treat both alike:
+//!   - the sky ([`sky_texel`]): sky.wesl writes the dome's linear colour times
+//!     `SkyLight.params.x` (= `SkyState::sky_scale`, sky.rs:1101 and :1117) through
+//!     `tony_inverse` (sky.wesl:67, :86, :104), which is the identity while the main view
+//!     shows display values clipped (lights.rs `display_clip`, the default; GAME_CLIP,
+//!     lights.rs:70) and the inverse of the Tony McMapface table otherwise (`NVF_TONEMAP=tony`);
+//!   - lit ground ([`ground_texel`]): the fork's display-value sum writes a diffuse surface as
+//!     min(diffuse x (ambient + direct)^2.2, 1) (lights/display_shader.rs:108-111, then x
+//!     exposure / exposure), with no inverse tone map;
+//!   - indoors ([`texel`]): no sky is drawn, so the ambient-matched identity stays: a
+//!     display value v (with the ambient's share) is v x max(v, 1e-6)^1.2, so a direction
+//!     coloured like the ambient reflects the converted ambient (nvf_assets
+//!     `ReflectionCube`, "Units"). Outdoors the two rules differ: an ambient-coloured sky
+//!     gives (linear colour x sky scale) by the sky rule and (0.9 x display value)^2.2 by the
+//!     ambient rule, and the sky rule is the one used there.
+//!
+//!   The lobe is the directional light's display colour times its strength in display units
+//!   (illuminance / (pi x light_unit), as sky.rs sets it), taken to linear light by [`texel`]
+//!   and added to the sky in the sky's units. Sources add in linear light.
 //! - **When**: checked at most every [`CHECK_INTERVAL`] seconds of real time and rewritten
 //!   only when an input moved by more than a step from the inputs of the last fill
 //!   ([`Inputs::moved`]: a colour by [`COLOUR_STEP`] in display value, the light's direction
@@ -53,10 +70,11 @@ use crate::fly::FlyCam;
 use crate::sky::{SkyState, Sun};
 use fnv_world::sky::ColorType;
 
-/// The ground below the horizon: the ambient colour times this, outdoors and indoors
-/// [design: a darker floor than the sky, so a metal shows a horizon; not measured against
-/// anything].
-pub const GROUND_FACTOR: f32 = 0.5;
+/// The assumed albedo of the ground below the horizon, as display values (texture bytes /
+/// 255), a neutral warm grey; the shader's diffuse colour is its linear value (about 0.089,
+/// 0.073, 0.051) [design: the first runs' sunlit Goodsprings sand read about (70, 58, 32) on
+/// screen; not measured against anything else].
+pub const GROUND_ALBEDO: [f32; 3] = [0.33, 0.30, 0.25];
 /// Indoors, the fog band's half-width in sine of elevation (about 11.5 degrees), a Gaussian
 /// weight peaking at 1 on the horizon [design].
 pub const FOG_BAND: f32 = 0.2;
@@ -91,6 +109,60 @@ pub fn texel(display: Vec3) -> Vec3 {
         let a = a.max(0.0);
         a * a.max(1e-6).powf(1.2)
     })
+}
+
+/// Tony McMapface's response to grey as sky.wesl samples it (input linear, output linear),
+/// the same numbers as `TONY_IN` / `TONY_OUT` there (sky.wesl:62-63) [observed there: Bevy
+/// 0.19.1 renders of a flat grey sky].
+pub const TONY_IN: [f32; 24] = [0.0, 0.005, 0.01, 0.02, 0.04, 0.07, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.3, 1.7, 2.2, 3.0, 5.0, 8.0, 16.0, 40.0, 100.0];
+pub const TONY_OUT: [f32; 24] = [0.0, 0.0056, 0.0113, 0.0222, 0.0437, 0.0723, 0.0999, 0.1470, 0.1812, 0.2542, 0.3140, 0.3663, 0.4125, 0.4910, 0.5457, 0.6172, 0.6867, 0.7454, 0.8070, 0.8796, 0.9216, 0.9473, 0.9771, 0.9875];
+
+/// sky.wesl's `tony_inverse` (sky.wesl:67) with Tony McMapface in place: the linear input
+/// the table maps to `y`, piecewise linear; the last input above the table.
+pub fn tony_inverse(y: f32) -> f32 {
+    for i in 1..TONY_IN.len() {
+        if y <= TONY_OUT[i] {
+            let t = (y - TONY_OUT[i - 1]) / (TONY_OUT[i] - TONY_OUT[i - 1]).max(1e-6);
+            return TONY_IN[i - 1] + (TONY_IN[i] - TONY_IN[i - 1]) * t;
+        }
+    }
+    TONY_IN[TONY_IN.len() - 1]
+}
+
+/// The table forward (the tone map sky.wesl undoes), for the tests: piecewise linear.
+#[cfg(test)]
+pub fn tony_forward(x: f32) -> f32 {
+    for i in 1..TONY_IN.len() {
+        if x <= TONY_IN[i] {
+            let t = (x - TONY_IN[i - 1]) / (TONY_IN[i] - TONY_IN[i - 1]);
+            return TONY_OUT[i - 1] + (TONY_OUT[i] - TONY_OUT[i - 1]) * t;
+        }
+    }
+    TONY_OUT[TONY_OUT.len() - 1]
+}
+
+/// The sky's units (module notes): the texel for a sky colour `scaled`, linear and already
+/// times the sky's display scale, as sky.wesl writes it into the HDR target: `scaled` itself
+/// while the main view shows display values clipped (`clip`, the default), else
+/// [`tony_inverse`] per channel, so that the view's tone map gives back the colour the dome
+/// shows. A perfect mirror, whose output is texel x intensity x view.exposure = texel at the
+/// default exposure, then shows the dome as drawn. Negative input is held at 0.
+pub fn sky_texel(scaled: Vec3, clip: bool) -> Vec3 {
+    let scaled = scaled.max(Vec3::ZERO);
+    if clip { scaled } else { scaled.map(tony_inverse) }
+}
+
+/// Lit ground's units (module notes): what the fork's display-value sum writes for a diffuse
+/// surface of linear colour `albedo` under the display-value light `light` (ambient +
+/// direct, lights/display_shader.rs:108-111): min(albedo x light^2.2, 1) per channel, no
+/// inverse tone map (the surface itself is tone-mapped like the mirror).
+pub fn ground_texel(albedo: Vec3, light: Vec3) -> Vec3 {
+    (albedo * light.max(Vec3::ZERO).powf(2.2)).min(Vec3::ONE)
+}
+
+/// [`GROUND_ALBEDO`] as the shader's linear diffuse colour.
+pub fn ground_albedo() -> Vec3 {
+    Vec3::from_array(GROUND_ALBEDO.map(crate::lodgen::srgb_to_linear))
 }
 
 /// The dome's weights of the horizon, sky-lower and sky-upper colours by height
@@ -182,6 +254,11 @@ pub enum Inputs {
         sun: Vec3,
         /// Toward the light (unit, Bevy world).
         sun_dir: Vec3,
+        /// The sky's display scale (`SkyState::sky_scale`, sky.wesl's `params.x`).
+        sky_scale: f32,
+        /// The main view shows display values clipped (`lights::display_clip`): the sky is
+        /// written without its inverse tone map.
+        clip: bool,
     },
     Indoors {
         /// The interior cell (world.rs `Streamer::interior`).
@@ -201,11 +278,13 @@ impl Inputs {
         let dome = |v: Vec3| v.map(crate::lights::linear_to_display);
         match (self, last) {
             (
-                Inputs::Outdoors { horizon, lower, upper, ambient, sun, sun_dir },
-                Inputs::Outdoors { horizon: h0, lower: l0, upper: u0, ambient: a0, sun: s0, sun_dir: d0 },
+                Inputs::Outdoors { horizon, lower, upper, ambient, sun, sun_dir, sky_scale, clip },
+                Inputs::Outdoors { horizon: h0, lower: l0, upper: u0, ambient: a0, sun: s0, sun_dir: d0, sky_scale: k0, clip: c0 },
             ) => {
                 let lit = sun.max_element() > COLOUR_STEP || s0.max_element() > COLOUR_STEP;
-                colour(dome(*horizon), dome(*h0))
+                clip != c0
+                    || (sky_scale - k0).abs() > COLOUR_STEP * k0.abs().max(1.0)
+                    || colour(dome(*horizon), dome(*h0))
                     || colour(dome(*lower), dome(*l0))
                     || colour(dome(*upper), dome(*u0))
                     || colour(*ambient, *a0)
@@ -259,19 +338,24 @@ impl SkyContent {
     pub fn new(inputs: &Inputs, profile: &DomeProfile) -> SkyContent {
         let at = |i: usize| i as f32 / (SAMPLES - 1) as f32;
         match inputs {
-            Inputs::Outdoors { horizon, lower, upper, ambient, sun, sun_dir } => {
-                let share = crate::sky::AMBIENT_SHARE;
+            Inputs::Outdoors { horizon, lower, upper, ambient, sun, sun_dir, sky_scale, clip } => {
+                // The dome as sky.wesl writes it (module notes, "Units").
                 let up = std::array::from_fn(|i| {
                     let linear = crate::sky::dome_color(profile.weights(at(i)), lower.to_array(), horizon.to_array(), upper.to_array());
-                    texel(Vec3::from_array(linear).map(crate::lights::linear_to_display) * share)
+                    sky_texel(Vec3::from_array(linear) * *sky_scale, *clip)
                 });
-                let ground = texel(*ambient * share * GROUND_FACTOR);
+                // Level ground under the ambient and the directional light (N = up), as the
+                // display-value sum lights it: the ambient as the view's (display value x
+                // share), the light as nvf_directional_display gives it.
+                let sun_dir = sun_dir.normalize_or_zero();
+                let light = *ambient * crate::sky::AMBIENT_SHARE + *sun * sun_dir.y.max(0.0);
+                let ground = ground_texel(ground_albedo(), light);
                 let down = [ground; SAMPLES];
-                SkyContent { up_mean: hemisphere_mean(&up), down_mean: ground, up, down, sun: texel(*sun) * SUN_LOBE_PEAK, sun_dir: sun_dir.normalize_or_zero() }
+                SkyContent { up_mean: hemisphere_mean(&up), down_mean: ground, up, down, sun: sky_texel(texel(*sun) * SUN_LOBE_PEAK, *clip), sun_dir }
             }
             Inputs::Indoors { ambient, fog, .. } => {
                 let share = crate::sky::INTERIOR_AMBIENT_SHARE;
-                let (sky, ground, fog) = (texel(*ambient * share), texel(*ambient * share * GROUND_FACTOR), texel(*fog * share));
+                let (sky, ground, fog) = (texel(*ambient * share), ground_texel(ground_albedo(), *ambient * share), texel(*fog * share));
                 let band = |e: f32| (-(e / FOG_BAND).powi(2)).exp();
                 let up = std::array::from_fn(|i| sky.lerp(fog, band(at(i))));
                 let down = std::array::from_fn(|i| ground.lerp(fog, band(at(i))));
@@ -399,6 +483,8 @@ fn gather(sky: &SkyState, sun: Option<(&DirectionalLight, &Transform)>, cell: Op
                 ambient: c(ColorType::Ambient).map(crate::lights::linear_to_display),
                 sun,
                 sun_dir,
+                sky_scale: sky.sky_scale(),
+                clip: crate::lights::display_clip(),
             }
         }
     }

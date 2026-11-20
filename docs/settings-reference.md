@@ -1191,7 +1191,7 @@ stretches drift downstream. Vanilla leaves the switch off. Enhanced turns it on.
   at the next start.
 - In full: [design, #2981] Surfaces shaded from an authored set reflect a small cube of the
   world camera's surroundings, blurred by their roughness, and the `_orm`'s metallic channel
-  takes effect: outdoors the weather's sky colours, a darker ground and a broad glow toward
+  takes effect: outdoors the sky as drawn, sunlit ground and a broad glow toward
   the sun or the moon; indoors the cell's ambient colour with its fog colour at the
   horizon. No clouds, sun disc, nearby objects or rooms are reflected. Only authored
   materials reflect: the game's own materials, terrain, trees, grass and water are
