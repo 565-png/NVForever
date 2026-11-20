@@ -3733,6 +3733,16 @@ pub fn drive(
                 }
                 Ok(()) if r.spawned => {
                     r.at_once = false;
+                    // The first frame of play goes on from this body, as the draw loop
+                    // would from its last frame: its drawn feet and its walker's. And it
+                    // is put at its walker's place then (`jumped`), not turned or walked
+                    // there: a script that moves it on the scripts' first frame (MoveTo)
+                    // is not seen by `Core::take_moved`, which runs before it is handed
+                    // to the AI [#3081 review]. Its seat is still `Seat::None`, so
+                    // nothing else changes.
+                    r.drawn_feet = feet;
+                    r.last_feet = b.feet;
+                    r.jumped = true;
                     Placed::Drawn
                 }
                 Ok(()) => Placed::NotYet,
@@ -3740,7 +3750,7 @@ pub fn drive(
         });
         start.placed += placed;
         if let Some(l) = screen.as_deref_mut() {
-            l.start_actors = Some(nvf_play::loading::StartActors { placed: start.placed, left, under_screen: start.on });
+            l.start_actors = Some(nvf_play::loading::StartActors { placed: start.placed, left, under_screen: start.on, drawing: may });
         }
     }
     crate::profile::actor_spawns(spawn_stats.equipment_spawns, spawn_stats.record_spawns);

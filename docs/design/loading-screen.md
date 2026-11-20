@@ -145,10 +145,18 @@ A travel asked for under it goes out behind it and is waited for too.
     after the screen, as before [design: `residents::drive` runs after the scripts]. A KillActor naming a limb on a body in view (two corpses
     in Novac at the start, limb location 1) now finds its body and dismembers it as asked
     (`dismember::scripted_check`), where before it logged `no part at location 1 can go
-    (or its body is not drawn)` [observed: those lines in the Novac start logs; the effect:
-    hypothesis, not run].
-  - The cap: 3 s (`PLACE_CAP_SECS`) from the first frame the screen waits for them; then
-    it lets them go with `loading screen: <n> residents in view still not drawn after 3 s;
+    (or its body is not drawn)` [observed, Novac starts at 22:00 (#3081's description):
+    before, those lines; with it, `dismember: Raider 0x000CEDCA: Head exploded
+    (KillActor)` and the same for Glowing One 0x000CD346]. A body drawn under the screen
+    is put at its walker's place on the first frame of play, not turned or walked there,
+    so a first-frame MoveTo moves it as it did a body drawn then [design].
+  - Their parts are read from when the cells are in (`readahead.rs`: the placed actors
+    of the loaded cells, listed once under the start's screen), not from when they may be
+    drawn, after the scripts. Log: `actor read-ahead: under the start's screen, <n>
+    actors of the <m> loaded cells listed`.
+  - The cap: 3 s (`PLACE_CAP_SECS`) from the first frame they may be drawn (the cells in,
+    the scripts made: `StartActors::drawing`), counted afresh if that stops; then it lets
+    them go with `loading screen: <n> residents in view still not drawn after 3 s;
     going on without them (drawn after the screen)`, nvforever stops drawing them under
     it, and those left are drawn after it, three a frame, as before.
   - Test aid `NVF_START_ACTORS_UNDER_SCREEN=0`: drawn after the screen, as before (logged
@@ -289,7 +297,7 @@ cancellation and a cold New Game gift at 16:9 and 4:3 after this review revision
   screen up and clock paused before the travel goes out, held while the renderer is busy,
   down and playing again after; held while actors are read; the start's screen and its
   clock; a travel under the start's screen; the start held while residents in view are to
-  place, not with the aid, and let go at the cap), `loading_look::tests` (the tip's box and band
+  place, not with the aid, and let go at the cap, counted only while they may be drawn), `loading_look::tests` (the tip's box and band
   and the emblem's place at 1280x720 and 1280x1024, its turning).
 - `nvforever`: `residents::tests` (the start's residents drawn where the AI takes them up,
   the frame's budget, the aid).

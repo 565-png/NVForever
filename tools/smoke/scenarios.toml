@@ -33203,9 +33203,9 @@ expect = [
 [[scenario]]
 name = "start-residents-under-screen"
 source = "a Novac start at 22:00 drew its 15-17 residents in view after the start's loading screen, three a frame (residents.rs SPAWNS_PER_FRAME): a frame of 65-106 ms and about a second of 20-54 ms frames after it [observed 2026-11-19, 0.1 s frame windows]. They are drawn under the screen now, which waits for them; their first package is still chosen on the first frame of play (docs/design/loading-screen.md §1a)"
-note = "written without running the game; the count's floor is a third of the 15-17 seen in Novac's start at 22:00"
+note = "passed on #3081's first revision (99ae69440, its description); the count's floor is a third of the 15-17 seen in Novac's start at 22:00. The read-ahead line under the start's screen came with the review fix and is written without running the game"
 areas = ["loading", "ai"]
-paths = ["engine/nvforever/src/residents.rs", "engine/nvf-play/src/loading.rs"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvf-play/src/loading.rs", "engine/nvforever/src/readahead.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
 args = ["--cell", "Novac", "--play", "--hour", "22", "--no-voice", "--no-messages"]
 run_seconds = 6
@@ -33215,6 +33215,9 @@ order = [[
   { re = 'loading screen phases: up [\d.]+ s; .*actors to place [\d.]+ s', label = "the phases name the wait for them" },
   { re = 'ai \[22:\d\d\] .*: (walks|runs) to ', label = "their packages are chosen after it, on the first frame of play" },
 ]]
+expect = [
+  { re = 'actor read-ahead: under the start.s screen, (?P<n>\d+) actors of the \d+ loaded cells listed', range = [5, 10000], label = "the loaded cells' actors are read from when the cells are in, not from when the scripts are made" },
+]
 forbid = [
   { text = "residents in view still not drawn after", label = "the screen's cap for them" },
 ]
@@ -33222,7 +33225,7 @@ forbid = [
 [[scenario]]
 name = "start-residents-after-screen-aid"
 source = "test aid NVF_START_ACTORS_UNDER_SCREEN=0 draws the start's residents after its loading screen, three a frame, as before they were drawn under it (docs/design/loading-screen.md §1a): the twin of start-residents-under-screen"
-note = "written without running the game"
+note = "passed on #3081's first revision (99ae69440, its description)"
 areas = ["loading", "ai"]
 paths = ["engine/nvforever/src/residents.rs", "engine/nvf-play/src/loading.rs"]
 env = { NVF_START_ACTORS_UNDER_SCREEN = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }

@@ -10,7 +10,9 @@
 //! are loaded from their KF files on a worker thread (`actors::Anims::warm`). So an actor
 //! walking into the loaded cells, or a cell of them loading, finds what it is drawn from
 //! ready and is drawn at once without reading or preparing it in that frame [engineering
-//! choice].
+//! choice]. Under the start's loading screen the actors of the loaded cells themselves are
+//! listed once, as soon as those cells are in: the residents are drawn under it only once
+//! the scripts are made (docs/design/loading-screen.md §1a).
 //!
 //! An actor is drawn only once its parts are prepared (behind a loading screen: read, so
 //! they can be prepared without reading a file) and its current stance and FaceGen files
@@ -265,6 +267,8 @@ pub struct ReadAhead {
     /// The placed actors of each cell listed in a ring (reference, base, creature), for the
     /// worldspace in `.0`, so a ring one cell on reads only its new cells' records.
     cell_actors: (u32, HashMap<(i32, i32), CellActors>),
+    /// The actors of the loaded cells were listed under the start's screen ([`read_ahead`]).
+    start_listed: bool,
 }
 
 /// One cell's placed actors: reference, base, creature.
@@ -408,6 +412,22 @@ impl ReadAhead {
     }
 }
 
+/// The placed actors and creatures of a cell's references `refs` that are not deleted and
+/// start enabled: (reference, base, creature).
+fn placed_actors<'a>(world: &WorldData, refs: impl Iterator<Item = &'a u32>) -> CellActors {
+    refs.filter_map(|&r| {
+        let p = placement(world.lo, world.schema, r).filter(|p| !p.deleted() && world.enabled(p, 0))?;
+        let b = p.base.and_then(|b| base_object(world.lo, world.schema, b)).filter(|b| matches!(&b.sig, b"NPC_" | b"CREA"))?;
+        Some((r, b.form_id, &b.sig == b"CREA"))
+    })
+    .collect()
+}
+
+/// [`placed_actors`] of exterior cell `g` (with the persistent references of its square).
+fn grid_actors(world: &WorldData, g: (i32, i32)) -> CellActors {
+    placed_actors(world, world.grid_cell(g).map(|c| c.refs.as_slice()).unwrap_or_default().iter().chain(world.persistent_by_grid.get(&g).into_iter().flatten()))
+}
+
 /// The exterior cells in the band just outside the loaded `(2r+1)²` grid around `centre`.
 fn ring(centre: (i32, i32), r: i32) -> HashSet<(i32, i32)> {
     let n = r + 1;
@@ -436,27 +456,46 @@ pub fn read_ahead(
     let Some(aw) = actor_world.as_deref().filter(|_| !ahead.off) else { return };
     let t0 = Instant::now();
     let ahead = &mut *ahead;
+    // [design] #2956 follow-up: each cell's actors are read from the load order's
+    // records (placement, base, initial enable state: all fixed for the run) once per
+    // worldspace; reading every reference of the whole ring at each crossing was
+    // 10-15 ms of the frame [observed 2026-11-19, `profile hitch`].
+    if ahead.cell_actors.0 != world.world {
+        ahead.cell_actors = (world.world, HashMap::new());
+    }
+    // Under the start's screen, once its cells are in: the actors of the loaded cells.
+    // `residents::drive` draws the residents in view under the screen only once the
+    // scripts are made, seconds later on a cold start, and nothing else read their parts
+    // before (the ring is the band outside the loaded cells; `Residents::undrawn_in` lists
+    // only residents handed to the AI) [#3081 review]. `ready_to_draw` asks again with
+    // the game's equipment when they are drawn, so a plan from the placed records that
+    // turns out stale costs nothing but its reads [design].
+    if !ahead.start_listed && streamer.settled && loading.as_deref().is_some_and(|l| l.starting()) {
+        ahead.start_listed = true;
+        let mut listed = HashSet::new();
+        let actors: Vec<(u32, u32, bool)> = match streamer.interior {
+            Some(id) => world.index.cells.get(&id).map(|c| placed_actors(&world, c.refs.iter())).unwrap_or_default(),
+            None => streamer
+                .loaded
+                .keys()
+                .flat_map(|&g| ahead.cell_actors.1.entry(g).or_insert_with(|| grid_actors(&world, g)).clone())
+                .collect(),
+        };
+        for (r, base, creature) in actors {
+            if listed.insert(r) {
+                ahead.jobs.push_back(Job::Actor { reference: r, base, creature });
+            }
+        }
+        ahead.actors_listed += listed.len();
+        info!("actor read-ahead: under the start's screen, {} actors of the {} loaded cells listed", listed.len(), if streamer.interior.is_some() { 1 } else { streamer.loaded.len() });
+    }
     // Outdoors, once the start's cells are in.
     let centre = streamer.centre.filter(|_| streamer.interior.is_none() && streamer.settled);
     if centre.is_some() && centre != ahead.centre {
         let cells = ring(centre.unwrap_or_default(), streamer.radius);
         let mut listed = HashSet::new();
-        // [design] #2956 follow-up: each cell's actors are read from the load order's
-        // records (placement, base, initial enable state: all fixed for the run) once per
-        // worldspace; reading every reference of the whole ring at each crossing was
-        // 10-15 ms of the frame [observed 2026-11-19, `profile hitch`].
-        if ahead.cell_actors.0 != world.world {
-            ahead.cell_actors = (world.world, HashMap::new());
-        }
         for &g in &cells {
-            let actors = ahead.cell_actors.1.entry(g).or_insert_with(|| {
-                let placed = world.grid_cell(g).map(|c| c.refs.as_slice()).unwrap_or_default().iter().chain(world.persistent_by_grid.get(&g).into_iter().flatten());
-                placed.filter_map(|&r| {
-                    let p = placement(world.lo, world.schema, r).filter(|p| !p.deleted() && world.enabled(p, 0))?;
-                    let b = p.base.and_then(|b| base_object(world.lo, world.schema, b)).filter(|b| matches!(&b.sig, b"NPC_" | b"CREA"))?;
-                    Some((r, b.form_id, &b.sig == b"CREA"))
-                }).collect()
-            });
+            let actors = ahead.cell_actors.1.entry(g).or_insert_with(|| grid_actors(&world, g));
             for &(r, base, creature) in actors.iter() {
                 if listed.insert(r) {
                     ahead.jobs.push_back(Job::Actor { reference: r, base, creature });
