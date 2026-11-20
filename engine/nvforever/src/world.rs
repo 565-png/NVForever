@@ -325,11 +325,11 @@ pub fn setup_root(mut commands: Commands) {
     commands.spawn((Name::new("World"), WorldRoot, game_to_bevy(), Visibility::default(), ChildOf(parent)));
 }
 
-#[allow(clippy::too_many_arguments)]
 /// [`stream`]'s actor resources and the frame's pace, as one parameter (a system takes at
 /// most 16).
 type StreamActors<'w> = (Option<Res<'w, crate::actors::ActorWorld>>, Option<Res<'w, nvf_play::sim::SimState>>, ResMut<'w, crate::readahead::ReadAhead>, Res<'w, crate::stream_pace::StreamPace>);
 
+#[allow(clippy::too_many_arguments)]
 pub fn stream(
     mut commands: Commands,
     world: Res<WorldData>,
@@ -619,6 +619,7 @@ impl CellStart {
     /// Take the next step; `None` when the start is done. With `growth` the grass is grown
     /// on a read thread and left there to be taken in ([`CellSpawn::grown`]); without, it
     /// is grown here.
+    #[allow(clippy::too_many_arguments)]
     fn step(self, commands: &mut Commands, cell: Entity, world: &WorldData, models: &mut ModelCtx, terrain: &mut TerrainMaterials, grass: &mut crate::grass::GrassCtx, growth: Option<&mut Option<crate::grass::GrassGrowth>>) -> Option<Self> {
         match self {
             Self::Terrain { mut spawn, land_id, water } => {
