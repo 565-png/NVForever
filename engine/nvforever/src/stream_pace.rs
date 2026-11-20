@@ -22,10 +22,19 @@
 //! frames, the longer frames raise the budgets, and the budgets lengthen the frames again
 //! until they are back at the 60 fps sizes.
 //!
-//! `NVF_STREAM_PACE=0` keeps the budgets as they were at every frame rate, to compare.
+//! [design] The jobs also share the frame. A job whose one piece of work cannot be split
+//! (a cell's start, a tree LOD step, a LOD rebuild) runs over its budget, and the jobs
+//! after it used to take their own in full all the same. Now all of them together get
+//! [`FRAME_SHARE`] of the frame's own length: a job is given what is left of that, or its
+//! own budget if that is less, and never under [`LEAST_SLICE`] of its own, so one that
+//! runs late in the frame still moves every frame. At 30 fps the share is larger than the
+//! budgets' sum and changes nothing.
+//!
+//! `NVF_STREAM_PACE=0` keeps the budgets as they were at every frame rate, to compare;
+//! `NVF_STREAM_PACE=scale` follows the frame rate without the shared allowance.
 //! This is not a behaviour of the original game.
 use bevy::prelude::*;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 /// [design] The frame length the budgets were chosen against.
@@ -33,6 +42,10 @@ pub const REFERENCE_FRAME: f32 = 1.0 / 60.0;
 /// [design] The least share of a budget a frame gets (reached at 240 fps), so a very fast
 /// machine still streams in useful slices.
 pub const LEAST_SCALE: f32 = 0.25;
+/// [design] The share of a frame's own length the streaming jobs may take together.
+pub const FRAME_SHARE: f32 = 0.5;
+/// [design] The least a job gets of its own budget once the frame's allowance is used up.
+pub const LEAST_SLICE: f32 = 0.25;
 /// Frames the median is taken over [design: about half a second at 120 fps].
 const WINDOW: usize = 64;
 /// [design] A longer frame is a stall or a load, not a frame rate: left out of the median.
@@ -43,10 +56,38 @@ pub fn scale_for(own: f32) -> f32 {
     (own / REFERENCE_FRAME).clamp(LEAST_SCALE, 1.0)
 }
 
+/// What follows the frame rate: nothing, each budget, or each budget and the frame's
+/// shared allowance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode { Off, Scale, Shared }
+
+impl Mode {
+    /// `NVF_STREAM_PACE`: `0` off, `scale` without the shared allowance, else both.
+    fn parse(value: Option<&str>) -> Self {
+        match value.map(str::trim) {
+            Some("0") => Self::Off,
+            Some("scale") => Self::Scale,
+            _ => Self::Shared,
+        }
+    }
+    fn name(self) -> &'static str {
+        match self {
+            Self::Off => "off (NVF_STREAM_PACE=0)",
+            Self::Scale => "on, each budget alone (NVF_STREAM_PACE=scale)",
+            Self::Shared => "on",
+        }
+    }
+}
+
 #[derive(Resource)]
 pub struct StreamPace {
-    on: bool,
+    mode: Mode,
     scale: f32,
+    /// What the jobs may take together this frame; `None`: no shared allowance.
+    allowance: Option<Duration>,
+    /// A job was given less than its own budget this frame.
+    held_back: AtomicBool,
+    capped: u64,
     /// The recent frames' lengths less their streaming work, seconds (a ring).
     own: [f32; WINDOW],
     next: usize,
@@ -60,30 +101,45 @@ pub struct StreamPace {
 }
 
 impl Default for StreamPace {
-    fn default() -> Self { Self::new(aid()) }
-}
-
-/// Whether the budgets follow the frame rate (`NVF_STREAM_PACE=0` turns it off).
-fn aid() -> bool {
-    !std::env::var("NVF_STREAM_PACE").is_ok_and(|v| v.trim() == "0")
+    fn default() -> Self { Self::new(Mode::parse(std::env::var("NVF_STREAM_PACE").ok().as_deref())) }
 }
 
 impl StreamPace {
-    pub fn new(on: bool) -> Self {
-        Self { on, scale: 1.0, own: [0.0; WINDOW], next: 0, filled: 0, spent: AtomicU64::new(0), frames: 0, scaled: 0, scale_sum: 0.0, least: 1.0 }
+    pub fn new(mode: Mode) -> Self {
+        Self { mode, scale: 1.0, allowance: None, held_back: AtomicBool::new(false), capped: 0, own: [0.0; WINDOW], next: 0, filled: 0, spent: AtomicU64::new(0), frames: 0, scaled: 0, scale_sum: 0.0, least: 1.0 }
+    }
+
+    /// What is left of the frame's shared allowance (`None`: there is none).
+    fn left(&self) -> Option<Duration> {
+        self.allowance.map(|a| a.saturating_sub(Duration::from_nanos(self.spent.load(Ordering::Relaxed))))
     }
 
     /// The share of a budget this frame gets: 1 at 60 fps or less, down to [`LEAST_SCALE`].
+    #[cfg(test)]
     pub fn scale(&self) -> f32 { self.scale }
 
-    /// A time budget for this frame.
+    /// A time budget for this frame: the job's own at this frame rate, or what the jobs
+    /// before it left of the frame's allowance, at least [`LEAST_SLICE`] of its own.
     pub fn time(&self, budget: Duration) -> Duration {
-        if self.scale >= 1.0 { budget } else { budget.mul_f32(self.scale) }
+        let own = if self.scale >= 1.0 { budget } else { budget.mul_f32(self.scale) };
+        match self.left() {
+            Some(left) if left < own => {
+                self.held_back.store(true, Ordering::Relaxed);
+                left.max(own.mul_f32(LEAST_SLICE))
+            }
+            _ => own,
+        }
     }
 
-    /// A count budget for this frame, at least 1.
+    /// A count budget for this frame, at least 1: the job's own at this frame rate, or
+    /// [`LEAST_SLICE`] of it once the frame's allowance is used up.
     pub fn count(&self, budget: usize) -> usize {
-        if self.scale >= 1.0 || budget == 0 { budget } else { ((budget as f32 * self.scale).round() as usize).clamp(1, budget) }
+        let own = if self.scale >= 1.0 || budget == 0 { budget } else { ((budget as f32 * self.scale).round() as usize).clamp(1, budget) };
+        if own > 1 && self.left().is_some_and(|left| left.is_zero()) {
+            self.held_back.store(true, Ordering::Relaxed);
+            return ((own as f32 * LEAST_SLICE).round() as usize).clamp(1, own);
+        }
+        own
     }
 
     /// A streaming job reports the main-thread time it took this frame.
@@ -100,12 +156,19 @@ impl StreamPace {
     /// do not apply there, and its frames say nothing of the frame rate).
     pub fn frame(&mut self, frame: f32, held: bool) {
         let spent = Duration::from_nanos(self.spent.swap(0, Ordering::Relaxed)).as_secs_f32();
-        if held || !(frame > 0.0 && frame <= LONGEST_FRAME) { return; }
+        if held || !(frame > 0.0 && frame <= LONGEST_FRAME) {
+            self.held_back.store(false, Ordering::Relaxed);
+            return;
+        }
         self.own[self.next] = (frame - spent).max(0.0);
         self.next = (self.next + 1) % WINDOW;
         self.filled = (self.filled + 1).min(WINDOW);
+        self.capped += u64::from(self.held_back.swap(false, Ordering::Relaxed));
         // Until half the window is in, the budgets are what they were.
-        self.scale = if self.on && self.filled >= WINDOW / 2 { scale_for(self.median()) } else { 1.0 };
+        let known = self.filled >= WINDOW / 2;
+        let own = self.median();
+        self.scale = if self.mode != Mode::Off && known { scale_for(own) } else { 1.0 };
+        self.allowance = (self.mode == Mode::Shared && known).then(|| Duration::from_secs_f32(own * FRAME_SHARE));
         self.frames += 1;
         self.scaled += u64::from(self.scale < 1.0);
         self.scale_sum += f64::from(self.scale);
@@ -122,8 +185,8 @@ impl StreamPace {
     fn summary(&self) -> String {
         let mean = if self.frames > 0 { self.scale_sum / self.frames as f64 } else { 1.0 };
         format!(
-            "stream pace summary: {} ({} fps reference, least share {LEAST_SCALE}); {} frames, budgets scaled in {} (mean share {mean:.2}, least {:.2})",
-            if self.on { "on" } else { "off (NVF_STREAM_PACE=0)" }, (1.0 / REFERENCE_FRAME).round(), self.frames, self.scaled, self.least,
+            "stream pace summary: {} ({} fps reference, least share {LEAST_SCALE}); {} frames, budgets scaled in {} (mean share {mean:.2}, least {:.2}), a job held to the frame's allowance in {}",
+            self.mode.name(), (1.0 / REFERENCE_FRAME).round(), self.frames, self.scaled, self.least, self.capped,
         )
     }
 }
@@ -164,7 +227,7 @@ mod tests {
     #[test]
     fn budgets_are_whole_at_the_reference_rate_and_below() {
         for fps in [60.0, 59.0, 30.0, 12.0] {
-            let mut pace = StreamPace::new(true);
+            let mut pace = StreamPace::new(Mode::Scale);
             settled(&mut pace, 1.0 / fps);
             assert_eq!(pace.scale(), 1.0, "{fps} fps");
             assert_eq!(pace.time(Duration::from_millis(3)), Duration::from_millis(3));
@@ -174,7 +237,7 @@ mod tests {
 
     #[test]
     fn a_faster_frame_gets_the_same_share_of_itself() {
-        let mut pace = StreamPace::new(true);
+        let mut pace = StreamPace::new(Mode::Scale);
         settled(&mut pace, 1.0 / 150.0);
         assert!((pace.scale() - 0.4).abs() < 1e-3, "{}", pace.scale());
         let spawn = pace.time(Duration::from_millis(3)).as_secs_f32();
@@ -189,7 +252,7 @@ mod tests {
 
     #[test]
     fn the_share_has_a_floor_and_a_count_is_at_least_one() {
-        let mut pace = StreamPace::new(true);
+        let mut pace = StreamPace::new(Mode::Scale);
         settled(&mut pace, 1.0 / 1000.0);
         assert_eq!(pace.scale(), LEAST_SCALE);
         assert_eq!(pace.count(1), 1);
@@ -200,7 +263,7 @@ mod tests {
 
     #[test]
     fn the_budgets_are_whole_until_the_frame_rate_is_known() {
-        let mut pace = StreamPace::new(true);
+        let mut pace = StreamPace::new(Mode::Scale);
         for _ in 0..WINDOW / 2 - 1 { pace.frame(1.0 / 150.0, false); }
         assert_eq!(pace.scale(), 1.0);
         pace.frame(1.0 / 150.0, false);
@@ -209,7 +272,7 @@ mod tests {
 
     #[test]
     fn streaming_work_does_not_raise_its_own_budget() {
-        let mut pace = StreamPace::new(true);
+        let mut pace = StreamPace::new(Mode::Scale);
         settled(&mut pace, 1.0 / 150.0);
         let before = pace.scale();
         // A long stretch of crossings: every frame 5 ms longer, all of it reported.
@@ -226,7 +289,7 @@ mod tests {
 
     #[test]
     fn stalls_and_loading_screens_are_left_out() {
-        let mut pace = StreamPace::new(true);
+        let mut pace = StreamPace::new(Mode::Scale);
         settled(&mut pace, 1.0 / 150.0);
         let before = pace.scale();
         for _ in 0..WINDOW {
@@ -241,8 +304,57 @@ mod tests {
     }
 
     #[test]
+    fn jobs_share_half_the_frame() {
+        let mut pace = StreamPace::new(Mode::Shared);
+        settled(&mut pace, 1.0 / 150.0);
+        let ms = |d: Duration| d.as_secs_f32() * 1000.0;
+        // 150 fps: each budget at 0.4, and 3.33 ms for all the jobs together.
+        assert!((ms(pace.time(Duration::from_millis(3))) - 1.2).abs() < 1e-3);
+        assert_eq!(pace.count(24), 10);
+        // A cell's start ran to 2.5 ms: the read-ahead gets what is left, not its 1.6 ms.
+        pace.spent(Duration::from_micros(2500));
+        assert!((ms(pace.time(Duration::from_millis(4))) - 0.833).abs() < 2e-3, "{}", ms(pace.time(Duration::from_millis(4))));
+        assert_eq!(pace.count(24), 10, "counts are whole while any of the allowance is left");
+        // Used up: a quarter of each job's own, and at least one of a count.
+        pace.spent(Duration::from_millis(1));
+        assert!((ms(pace.time(Duration::from_millis(4))) - 0.4).abs() < 1e-3);
+        assert_eq!(pace.count(24), 3);
+        assert_eq!(pace.count(12), 1);
+        assert_eq!(pace.count(1), 1);
+        assert_eq!(pace.count(0), 0);
+        // The next frame starts whole again, and the frame is counted as held back.
+        pace.frame(1.0 / 150.0 + 0.0035, false);
+        assert!((ms(pace.time(Duration::from_millis(4))) - 1.6).abs() < 1e-3);
+        assert!(pace.summary().ends_with("a job held to the frame's allowance in 1"), "{}", pace.summary());
+    }
+
+    #[test]
+    fn at_thirty_frames_a_second_the_share_changes_nothing() {
+        let mut pace = StreamPace::new(Mode::Shared);
+        settled(&mut pace, 1.0 / 30.0);
+        // Every time budget spent in full (13 ms) is still inside half the frame (16.7 ms).
+        for budget in [2, 3, 4, 4] {
+            assert_eq!(pace.time(Duration::from_millis(budget)), Duration::from_millis(budget));
+            pace.spent(Duration::from_millis(budget));
+        }
+        assert_eq!(pace.count(24), 24);
+    }
+
+    #[test]
+    fn the_aid_picks_what_follows_the_frame_rate() {
+        assert_eq!(Mode::parse(None), Mode::Shared);
+        assert_eq!(Mode::parse(Some("1")), Mode::Shared);
+        assert_eq!(Mode::parse(Some(" 0 ")), Mode::Off);
+        assert_eq!(Mode::parse(Some("scale")), Mode::Scale);
+        let mut alone = StreamPace::new(Mode::Scale);
+        settled(&mut alone, 1.0 / 150.0);
+        alone.spent(Duration::from_millis(50));
+        assert!((alone.time(Duration::from_millis(3)).as_secs_f32() - 0.0012).abs() < 1e-5);
+    }
+
+    #[test]
     fn switched_off_the_budgets_stay_whole() {
-        let mut pace = StreamPace::new(false);
+        let mut pace = StreamPace::new(Mode::Off);
         settled(&mut pace, 1.0 / 240.0);
         assert_eq!(pace.scale(), 1.0);
         assert_eq!(pace.count(24), 24);

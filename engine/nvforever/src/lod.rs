@@ -656,7 +656,7 @@ pub fn update_lod(
     let started = std::time::Instant::now();
     let mut rebuilt = 0usize;
     // Above 60 fps a frame gets the same share of itself (stream_pace.rs).
-    let budget_ms = REBUILD_BUDGET_MS * pace.scale();
+    let budget_ms = pace.time(std::time::Duration::from_secs_f32(REBUILD_BUDGET_MS / 1000.0)).as_secs_f32() * 1000.0;
     let over_budget = |rebuilt: usize| rebuilt > 0 && started.elapsed().as_secs_f32() * 1000.0 >= budget_ms;
     let chosen = std::mem::take(&mut lod.chosen);
     for &chunk in &chosen {

@@ -1079,6 +1079,7 @@ fn apply_configured_variants(p: &mut Conversion, c: BlendConfig) {
     let published = cache.published.as_ref().map(publication_key);
     let revision = published.map_or(0, |k| k.0);
     let clone_work = pace.as_deref().map_or(CLONE_WORK_PER_FRAME, |p| p.count(CLONE_WORK_PER_FRAME));
+    let _spending = pace.as_deref().map(|p| p.spending());
     let restricted = follow_coverage(cache, variants, blends, clone_work);
     let create_budget = clone_work.saturating_sub(restricted);
     // A follow that used its whole budget may have left clones for the next frame: not a
