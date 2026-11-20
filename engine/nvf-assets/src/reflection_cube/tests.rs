@@ -104,29 +104,54 @@ fn intensity_is_the_light_unit() {
 fn an_upload_waits_for_the_texture_and_is_written_once_per_fill() {
     let mut images = Assets::<Image>::default();
     let mut cube = ReflectionCube::new(&mut images);
-    let mut up = Upload::default();
+    let mut up = Upload::<u32>::default();
     // Nothing before the first fill.
     up.receive(&cube);
-    assert!(up.take(true).is_none());
+    assert!(up.take(Some(1)).is_none());
     assert!(!cube.ready());
     cube.fill(|_, _| Vec3::splat(0.25));
     up.receive(&cube);
     // Pending until the texture exists.
-    assert!(up.take(false).is_none());
-    let levels = up.take(true).expect("written once the texture exists");
+    assert!(up.take(None).is_none());
+    let levels = up.take(Some(1)).expect("written once the texture exists");
     assert_eq!(levels.len(), SPECULAR_LEVELS as usize);
     assert!(!cube.ready(), "not ready before the write is recorded");
-    up.written();
+    up.written(1);
     assert!(cube.ready());
     // The same generation again: nothing more to write.
     up.receive(&cube);
-    assert!(up.take(true).is_none());
+    assert!(up.take(Some(1)).is_none());
     // A new fill: written again, and the cube is not ready until it is.
     cube.fill(|_, _| Vec3::splat(0.5));
     assert!(!cube.ready());
     up.receive(&cube);
-    assert!(up.take(true).is_some());
-    up.written();
+    assert!(up.take(Some(1)).is_some());
+    up.written(1);
+    assert!(cube.ready());
+}
+
+/// Review finding 3: the GPU image made again under the same handle is a new, empty texture;
+/// the retained levels are written into it with no new fill, once.
+#[test]
+fn a_replaced_texture_gets_the_retained_levels_again() {
+    let mut images = Assets::<Image>::default();
+    let mut cube = ReflectionCube::new(&mut images);
+    let mut up = Upload::<u32>::default();
+    cube.fill(|_, _| Vec3::splat(0.25));
+    up.receive(&cube);
+    let first = up.take(Some(1)).unwrap();
+    up.written(1);
+    // The same texture: nothing.
+    up.receive(&cube);
+    assert!(up.take(Some(1)).is_none());
+    // Gone for a frame (not yet prepared again): nothing, and nothing lost.
+    assert!(up.take(None).is_none());
+    // Another texture under the same handle: the same levels again, then nothing more.
+    up.receive(&cube);
+    let again = up.take(Some(2)).expect("the retained levels into the new texture");
+    assert!(Arc::ptr_eq(&first, &again));
+    up.written(2);
+    assert!(up.take(Some(2)).is_none());
     assert!(cube.ready());
 }
 
