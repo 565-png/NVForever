@@ -1034,9 +1034,12 @@ impl Plugin for NifMaterialPlugin {
             .init_resource::<BlendedCutouts>()
             .add_systems(Startup, spawn_transmission_anchor)
             .add_systems(PostUpdate, (apply_blended_cutouts.in_set(BlendedCutoutSystems), see_through_casts_no_shadow.in_set(SeeThroughShadowSystems)));
-        // The authored materials' debug switches are read once, at the start.
+        // The authored materials' debug switches are read once, at the start, and the
+        // reflections' development switch with them.
         crate::authored::view();
         crate::authored::metallic_debug();
+        crate::reflection_cube::enabled();
+        app.add_plugins(crate::reflection_cube::ReflectionCubePlugin);
         app.add_systems(Last, crate::authored::report);
         crate::bc5_field::install(app);
         crate::pbr_field::install(app);
