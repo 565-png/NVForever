@@ -468,7 +468,7 @@ fn height_map(found: &Found, scalars: &Scalars, memo: &Memo, load: &mut impl FnM
 /// decoder's own rules. A `_p` whose source is not known here (not decoded through this
 /// memo) is not judged by size.
 pub fn height_size_refusal(width: u32, height: u32) -> Option<String> {
-    (width % 4 != 0 || height % 4 != 0).then(|| format!("is {width}x{height}, a side not a multiple of 4"))
+    (!width.is_multiple_of(4) || !height.is_multiple_of(4)).then(|| format!("is {width}x{height}, a side not a multiple of 4"))
 }
 
 /// Whether a loaded `_p` may be drawn, by the file's own format (`source`, as decoded:
