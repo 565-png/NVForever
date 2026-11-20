@@ -4699,6 +4699,7 @@ dependencies = [
  "rodio",
  "serde",
  "serde_json",
+ "swash",
 ]
 
 [[package]]
