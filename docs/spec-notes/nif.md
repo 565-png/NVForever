@@ -1187,6 +1187,19 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   `novac_dino.nif` (10 %), `novac_motel02.nif`; Goodsprings' `scol\scolgshouse02.nif` and
   `06` (14 %, `NVRanchHouse01`), `noso\nv_noso_ranchhouse0*.nif`, the Nellis AFB sign, the
   Tops' `nv_tops_recmusicsign.nif` (73 %) and the destroyed NoSo apartments (50-65 %).
+
+  Looked at, same camera with the stored tangents and with `NVF_STORED_TANGENTS=0`
+  [observed 2026-11-20, the free-camera explorer's `--screenshot`, 1600 × 900, weather
+  `NVWastelandClear`, GTX 1050; differences counted in grey levels outside the HUD]:
+  `novac_home04burned.nif` (reference 0015246B) from the south at 07:00 and from the west
+  at 18:00, the sun low and to the side; `nv_noso_apartments02_dest03/08.nif` (0013D685,
+  0014DC33-35) and `scol\scolgshouse02.nif` (00177CA4) from the south at 07:00;
+  `nv_tops_recmusicsign.nif` (00152D6C, TOPSCasino) from the north. No surface lit from
+  the wrong side and no seam in either. The burned home's walls and the NoSo ruins match
+  to the eye; the pixels that differ by more than 24 levels (0.33-0.73 % at Novac, 0.02 %
+  at NoSo, 0.007 % in Goodsprings) are the swaying grass and one roof edge. The Tops sign
+  differs by a mean of 0.02 levels: it is a glowing sign, which its normal map barely
+  shows on.
 - **Specular** [observed, 500 random meshes from `Fallout - Meshes.bsa`]: of 738
   NiMaterialProperty blocks on BSShaderPPLightingProperty shapes, 697 (94%) have a
   black specular colour, 18 white, 23 other; 1,011 of 1,279 such shader properties set
