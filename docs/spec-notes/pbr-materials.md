@@ -451,6 +451,75 @@ it acts only with Authored materials on, and changes no picture without a pack.
   fragment, terrain, grass and tree leaves in a view with a cube: only the opted-in NIF
   fragment reads the cube.
 
+## Reflections indoors: the analytic room
+
+[design] Indoors, where a lamp is in reach or a room box is known, the world camera's cube
+holds a lit box around the camera instead of stage 1's ambient, ground and fog band, so an
+authored metal in a room shows the room's lamp-lit walls, floor and ceiling and where the
+lamps are. NVForever's own rendering, nothing of the original's (whose look has no ambient
+reflection); computed on the CPU from what the renderer already lights the room with
+(`engine/nvf-assets/src/reflection_room.rs`, gathered by `engine/nvforever/src/reflection_sky.rs`).
+
+- **The box**, in this order: the room marker the camera is in (the first room box holding
+  it, the test `rooms.rs` uses for the camera's room, only for the interior the markers were
+  read for); else, in play mode, six physics rays from the eye (east, west, north, south, up,
+  down; past actors, moving objects and what a character walks through; at least five must
+  hit within 2048 units, a miss putting that wall 256 units away); else a default box 512 x
+  512 units and 320 high, its floor 120 units under the eye. No half extent is under 16.
+- **The lamps**: the cell's placed lights that are on (lights.rs `SessionLight`, not hidden),
+  with a colour, within 4096 units of the eye and whose sphere of light reaches the box,
+  the nearest 16 to the eye. Each brings its display colour times its steady brightness
+  (a flickering or pulsing light's full intensity), its radius and, for a spot light, its
+  cone as Bevy hands it to the shader.
+- **Lighting a wall.** Toward each direction the eye sees the point where the ray leaves
+  the box: a floor (assumed display albedo 0.33, 0.30, 0.25, stage 1's ground), a wall (0.40,
+  0.38, 0.35) or a ceiling (0.45, 0.45, 0.43). It is lit as the display-value sum lights a
+  diffuse surface: light = the cell's ambient + its directional light x N.L + for each lamp
+  colour x brightness x the game's attenuation saturate(1 - d^2 / radius^2) x N.L (x the
+  cone), and the surface writes min(albedo x light^2.2, 1), the units of stage 1's ground.
+  The renderer's lamps cast no shadows, so neither do these; a lamp behind a wall lights it
+  as on screen. The cell's directional light lights the walls at full (its shadows left
+  out). The cell's fog mixes walls toward its colour by distance as the fog does indoors.
+- **A lamp seen directly**: a lamp inside the box (within 32 units of the wall behind it)
+  adds a small lobe toward itself, its converted colour x 1 at the peak, falling as cos^256
+  of the angle (half at about 4 degrees).
+- **Levels.** Level 0 is the scene at each texel's centre. Each level above is the
+  solid-angle-weighted box average of the level below; where Bevy's lobe for that level is
+  wider than a texel (levels 2 to 5), it is instead the level-2 average convolved with the
+  kernel max(c, 0) x ((1 + c) / 2)^(p / 2), p = 2 / a^2 - 2 for GGX roughness a =
+  (level / 5)^2: a cosine lobe at the last level.
+- **Outdoors near lamps.** Below the horizon, stage 1's lit ground also takes what placed
+  lamps add to level ground under the eye (found by a ray down in play mode, else 120 units
+  under it), for lamps whose sphere reaches the ground and comes within 512 units of the eye,
+  with their lobes; nothing changes without such a lamp. By day the lamps add little beside
+  the sun.
+- **Falls back** to stage 1's interior content exactly when no lamp reaches the box and the
+  box is the default one.
+- **When it is written.** With a room or ground lamps, besides stage 1's steps: the eye moved
+  64 units from the last fill, a box moved 32, another set of lamps, a lamp's colour past
+  1/128 or its place or radius past 8. Indoors against outdoors, another interior cell,
+  another room marker and a new sky dome profile refill at once, without the quarter-second
+  wait. A room fill takes 6,144 level-0 texels x the lamps plus the filter, on the main
+  thread.
+- **Log lines.** `reflection sky: room fill in interior <cell>: box from <room marker
+  <id>|rays|default> (<x> x <y> x <height> game units, x y height), <n> lamps, level 0 toward
+  the nearest lamp [...], filled in <ms> ms` at the first room fill in each interior, or
+  `reflection sky: interior <cell>: no lamp in reach and no room box, so stage 1's interior
+  content`; the exit summary adds the room fills by box source, the ground-lamp fills, the
+  slowest fill and the refills by reason (mode, cell, room, box, moved, lamps, light,
+  profile).
+- **Not there.** No captured scene: no objects, textures, signs or bulbs' shapes, no
+  actors; uniform walls of assumed albedo; one box per fill, centred on the camera, so it
+  is exact only near the camera (no parallax), and rooms joined without a marker share the
+  rays' or the default box; no shadows from lamps or the directional light; no flicker; no
+  probes. Every constant is a guess, chosen by reasoning and not yet judged in pictures.
+- **Checking it.** Unit tests in `reflection_room.rs` and `reflection_sky.rs` (an empty
+  room is the ambient on each surface, a lamp brightens its wall and its lobe points at it,
+  a lamp out of reach adds nothing, the levels approach the mean, the fallback is stage 1's
+  content exactly, the refill steps). The smoke scenario `authored-reflections-room` in Doc
+  Mitchell's house (`GSDocMitchellHouse`, the generated sets of `authored-reflections-sky`):
+  the first room fill line and the summary. Log lines only.
+
 ## Load order: per file, so ship complete sets
 
 [design] Each file resolves on its own through the virtual file system, like every other
