@@ -144,7 +144,7 @@ A TOML file of plain keys, all optional:
 
 | Key | Meaning | Range | Default |
 |---|---|---|---|
-| `parallax_depth` | depth of the height map's darkest point below the surface, in UV units (stage 4 branch); 0 draws no height map | 0 to 0.25 | 0.03 (`fnv_pbr::DEFAULT_PARALLAX_DEPTH`) |
+| `parallax_depth` | depth of the height map's darkest point below the surface, in UV units (stage 4 branch); 0 draws no height map | 0 to 0.08 | 0.03 (`fnv_pbr::DEFAULT_PARALLAX_DEPTH`) |
 | `roughness_scale` | multiplies the ORM's roughness; the product is held to 0..1 when drawn, and to 0.089..1 for the highlight's shape (below) | 0 to 2 | 1.0 |
 | `reflectance` | the highlight strength of non-metals; F0 = 0.16 x reflectance² (0 to 16 %) | 0 to 1 | 0.5 (F0 4 %) |
 
@@ -154,9 +154,20 @@ roughness_scale = 0.9
 reflectance = 0.35
 ```
 
+[design: banding and wall streaks in the main session's pictures from 0.06 on a 512 map]
+`parallax_depth` stops at **0.08** (it went to 0.25 before 2026-11-20). On a tiled floor
+with missing patches (set `offrmfloor01`, a 512 BC4 `_p` derived from the game's normal
+map), 0.015 looked convincing; at 0.06 the occlusion method drew stair-step bands on every
+patch edge, and the relief method, which removes the bands, drew vertical streaks on the
+patch walls instead: texels stretched over a near-vertical wall of a map with nearly two
+levels, a property of the map that no march fixes [observed: those pictures, 2026-11-20].
+A deeper relief wants a map with gentle slopes and more texels, which the bound leaves to
+a later look rather than allowing by default.
+
 [design] Reading is lenient (`fnv_pbr::parse_scalars`): an integer counts as a number; an
 unknown key, a table, or a value that is not a finite number is ignored with a warning; a
-number outside its range is clamped into it with a warning; a file that is not UTF-8 or
+number outside its range is clamped into it with a warning (judged as the 32-bit float the
+value is kept in, so an end written as it is, `0.08`, is inside); a file that is not UTF-8 or
 not TOML is ignored whole with a warning. A UTF-8 byte order mark is accepted.
 `normal_strength` is not a key: bake the strength into the normal map.
 
@@ -373,10 +384,12 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   format), and later copies that dropped one.
   The smoke scenario `pbr-authored-field-height` (the same field, `NVF_PLAY_TEST_PBR_FIELD=1`)
   draws two more panels tilted 50 degrees about Y: `height` (a height-only set whose `_p` is
-  high above and low below, depth 0.1) and its control without one; it measures a narrow
+  high above and low below, depth 0.08, the scalar range's end; 0.1 before the range was
+  cut) and its control without one; it measures a narrow
   stripe's centre in both bands of both panels and wants the low band's stripe moved towards
   decreasing mesh U by the prediction from the shader's geometry (−depth × sin tilt × 128 =
-  −9.81 pixels) within 2.5 pixels, and the high band's and the control's within 1.5 of their
+  −7.84 pixels; −9.81 at 0.1) within 2.5 pixels (the relief search stops about 1 % short of
+  the flat band's depth, about 0.1 pixel), and the high band's and the control's within 1.5 of their
   place; with the setting off (`pbr-authored-field-off`) neither panel has a depth map and
   neither stripe moves more than 1.5. The height panels report on their own lines
   (`pbr field height: ...`: the shifts, the brightest value and the ground level per
@@ -384,8 +397,9 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   verdict. [observed, field only, on `b4660af00`, the main session's first GPU run with the
   setting on: high +0.00 px, low −9.76 px against −9.81; stripe centres 64.00/54.24 (height)
   and 64.00/64.00 (control); the sRGB 230 stripe then read 255 and failed the clip check, so
-  the stripe and ground were darkened to sRGB 180 on 90, not yet run again.] The thresholds
-  are an engineering policy set from that readback with margins.
+  the stripe and ground were darkened to sRGB 180 on 90, not yet run again; that run used
+  the depth 0.1 and the occlusion method of then.] The thresholds are an engineering policy
+  set from that readback with margins; the field has not been run at depth 0.08 with relief.
 
 ### Known limits (stage 4)
 

@@ -5,8 +5,11 @@
 use std::ops::RangeInclusive;
 
 /// [design] `parallax_depth`: how deep the height map's darkest point lies below the
-/// surface, in UV units (Bevy's `parallax_depth_scale`). Above 0.25 the relief tears.
-pub const PARALLAX_DEPTH_RANGE: RangeInclusive<f32> = 0.0..=0.25;
+/// surface, in UV units (Bevy's `parallax_depth_scale`). Up to 0.08: in the main session's
+/// pictures of 2026-11-20 (a tiled floor, a 512 `_p`) a depth of 0.06 already drew stair-step
+/// bands with the occlusion method and, with the relief method, vertical streaks on the
+/// patch walls (docs/spec-notes/pbr-materials.md, "Scalars").
+pub const PARALLAX_DEPTH_RANGE: RangeInclusive<f32> = 0.0..=0.08;
 
 /// [design] `roughness_scale`: multiplies the ORM's green channel. Up to 2 so a pack can
 /// make a map rougher as well as smoother; the product is clamped to 1 when drawn.
@@ -109,9 +112,12 @@ pub fn parse_scalars(bytes: &[u8]) -> ScalarFile {
             out.warnings.push(format!("`{key}` = {n} is not a finite number: ignored"));
             continue;
         }
+        // Judged in f32, the type the value is kept in: an end written as it is (0.08) is
+        // inside its range, though the f64 it parses to lies a hair beyond the f32 end.
         let (lo, hi) = (*range.start(), *range.end());
-        let clamped = n.clamp(f64::from(lo), f64::from(hi)) as f32;
-        if n < f64::from(lo) || n > f64::from(hi) {
+        let v = n as f32;
+        let clamped = v.clamp(lo, hi);
+        if v < lo || v > hi {
             out.warnings.push(format!("`{key}` = {n} is outside {lo} to {hi}: clamped to {clamped}"));
         }
         *slot = Some(clamped);

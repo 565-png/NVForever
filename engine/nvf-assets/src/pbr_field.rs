@@ -40,10 +40,13 @@
 //! the shifts in pixels, the brightest value and the ground level on every readback, a PASS
 //! or FAIL per readback and a final PASS), so a height problem never fails the five panels'
 //! verdict or their scenarios. [observed, field only, on `b4660af00`, the main session's
-//! first GPU run (setting on): high +0.00 px, low −9.76 px against the predicted −9.81;
+//! first GPU run (setting on), at the depth of then (0.1) and the occlusion method of then:
+//! high +0.00 px, low −9.76 px against the predicted −9.81;
 //! stripe centres height 64.00/54.24, control 64.00/64.00 px (high/low band); the then sRGB
 //! 230 stripe clipped at 255, so the stripe and its ground were darkened (sRGB 180 on 90).]
-//! The thresholds are an engineering policy set from that readback with margins.
+//! The thresholds are an engineering policy set from that readback with margins. The depth
+//! is 0.08 since the scalar range was cut to it (prediction −7.84 px) and the method relief
+//! with 4 steps (both 2026-11-20); the field has not been run at them yet.
 //!
 //! [observed, on `7e2de4be1`, the main session's runs: on, plain 103, lit 67, dark 38,
 //! reference 67, flat 103; off, plain, lit, dark and flat 103, reference 60.] Two of these
@@ -103,9 +106,11 @@ const ALL_NAMES: [&str; TOTAL] = ["plain", "lit", "dark", "reference", "flat", "
 /// tangent-space view has a negative X and the march's samples move to larger U with depth
 /// (vendored `parallax_mapping.wesl`, `pbr_fragment.wesl`).
 const TILT_DEGREES: f32 = 50.0;
-/// The height-only set's depth (its scalar file's `parallax_depth`): chosen so the low
-/// band's stripe travels several pixels ([`predicted_low_shift`], about 9.8).
-const HEIGHT_DEPTH: f32 = 0.1;
+/// The height-only set's depth (its scalar file's `parallax_depth`): the scalar range's
+/// upper end (`fnv_pbr::PARALLAX_DEPTH_RANGE`, 0.08 since the pictures of 2026-11-20; the
+/// field ran at 0.1 before), so the low band's stripe travels several pixels
+/// ([`predicted_low_shift`], about 7.8).
+const HEIGHT_DEPTH: f32 = 0.08;
 /// The stripe diffuse (64 x 64): ground and stripe colours (sRGB) and the stripe's columns,
 /// centred on U 0.5. Mid values: an sRGB 230 stripe read 255 on the tilted panel (module
 /// notes, observed); the five panels' grey 160 reads 103 flat on, and the tilted panels take
@@ -139,7 +144,10 @@ const MIN_CONTRAST: f64 = 20.0;
 /// ends at depth 1 (height 0) where its UV offset is `depth × Vt.x / Vt.z` against the view,
 /// `Vt` the view direction in tangent space (here `Vt.x = −sin tilt`, `Vt.z = cos tilt`), and
 /// one U spans `PANEL × cos tilt` pixels: `−depth × sin tilt × PANEL` [derived from the
-/// vendored shader; not measured].
+/// vendored shader; not measured]. The relief method's search (the default, `relief:4`)
+/// stops within its last halving of depth 1, here about 1 % short of it (about 0.1 px),
+/// well inside [`SHIFT_TOLERANCE`]; the occlusion method's interpolation lands on it [derived
+/// from `parallaxed_uv` for the flat low band; not measured].
 fn predicted_low_shift() -> f64 {
     -f64::from(HEIGHT_DEPTH) * f64::from(TILT_DEGREES.to_radians().sin()) * PANEL as f64
 }
