@@ -1347,7 +1347,11 @@ impl NvfListJob {
             let mut cache = self.shader_cache.lock().unwrap_or_else(PoisonError::into_inner);
             let mut steps = Vec::new();
             for stage in recipe.stages() {
+                // On an early return the stages prepared so far (`steps`) are dropped while
+                // the lock is still held: a `ModuleStep::Build` among them fails its slot
+                // before any other thread can be handed that slot to wait on.
                 let Some(id) = cache.shader_by_path(&stage.shader) else {
+                    drop(steps);
                     drop(cache);
                     self.manifest.retry(entry);
                     return;
@@ -1358,11 +1362,13 @@ impl NvfListJob {
                         ShaderCacheError::ShaderNotLoaded(_)
                         | ShaderCacheError::ShaderImportNotYetAvailable,
                     ) => {
+                        drop(steps);
                         drop(cache);
                         self.manifest.retry(entry);
                         return;
                     }
                     Err(_) => {
+                        drop(steps);
                         drop(cache);
                         self.fail(&entry);
                         return;
@@ -1371,9 +1377,17 @@ impl NvfListJob {
             }
             steps
         };
-        let Ok(modules) = nvf_modules(&self.shader_cache, &self.device, steps) else {
-            self.fail(&entry);
-            return;
+        let modules = match nvf_modules(&self.shader_cache, &self.device, steps) {
+            Ok(modules) => modules,
+            // Another thread's maker stopped before making a module this one waited for.
+            Err(ShaderCacheError::ShaderNotLoaded(_) | ShaderCacheError::ShaderImportNotYetAvailable) => {
+                self.manifest.retry(entry);
+                return;
+            }
+            Err(_) => {
+                self.fail(&entry);
+                return;
+            }
         };
         let modules: Vec<Arc<WgpuShaderModule>> = modules.into_iter().flatten().collect();
         // The game's own task may have taken it meanwhile.

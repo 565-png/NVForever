@@ -35,10 +35,15 @@
 //! pipeline without one [documented: bevy_render 0.20.1 `pipeline_cache.rs`, `cache:
 //! None`]. wgpu can create them with one (`Features::PIPELINE_CACHE`, a `VkPipelineCache` on
 //! Vulkan) and hand its contents out (`PipelineCache::get_data`), with a header that checks
-//! the adapter, the driver and the data when it is read back, so a cache from another GPU,
-//! another driver or a damaged file is not used [documented: wgpu-core 30
-//! `pipeline_cache.rs` `validate_pipeline_cache`; `fallback: true` makes an empty cache
-//! instead]. The key is wgpu's for the adapter (`util::pipeline_cache_key`). On NVIDIA it
+//! the adapter, the driver and the length when it is read back, so a cache from another GPU
+//! or another driver is not used [documented: wgpu-core 30 `pipeline_cache.rs`
+//! `validate_pipeline_cache`; `fallback: true` makes an empty cache instead]. wgpu does not
+//! check the body (its header's hash space is a constant; protecting the body is left to
+//! the app), so the file ends with a trailer of its own, [`TRAILER_MAGIC`] and the body's
+//! hash, checked before the body reaches the driver: a damaged body is not used. Past
+//! [`MAX_DRIVER_BYTES`] the file is removed, and the next run starts a new cache, since a
+//! `VkPipelineCache` keeps all it was loaded with and would never fit again. The key is
+//! wgpu's for the adapter (`util::pipeline_cache_key`). On NVIDIA it
 //! adds little to the driver's own disk cache, which already answers; it is for drivers and
 //! settings without one (NVIDIA's shader cache can be switched off or fill up).
 //!
@@ -71,9 +76,11 @@
 //! [`QUIET_SECS`], at most every [`MIN_GAP_SECS`], when more were asked for since the last
 //! save (`pipeline_gate::PipelineGate`; a run that does not reach the world saves nothing),
 //! so a loading screen's and a new place's compiles are kept soon after they finish and a
-//! quiet game writes nothing. Each file is written on the I/O pool to a temporary file that
-//! is renamed over the old one, so a crash mid-write leaves the previous one; a driver cache
-//! whose contents did not change is not written again.
+//! quiet game writes nothing. Each file is written on the I/O pool (the driver cache's
+//! contents are taken there too, not on the main thread) to a temporary file of this
+//! process's own (its PID and a count in the name, so two instances on one home never write
+//! the same one) that is renamed over the old one, so a crash mid-write leaves the previous
+//! one; a driver cache whose contents did not change is not written again.
 
 use crate::pipeline_gate::PipelineGate;
 use bevy::prelude::*;
@@ -93,8 +100,13 @@ pub const QUIET_SECS: f64 = 2.0;
 pub const MIN_GAP_SECS: f64 = 10.0;
 /// A driver cache bigger than this is neither written nor read: it keeps every pipeline it
 /// was ever given (each new build's or driver's shaders add to it [observed: 7.8 MB for one
-/// set, 23 MB after three]), so past this the run starts a new one.
+/// set, 23 MB after three]), so past this its file is removed and the next run starts a
+/// new one.
 const MAX_DRIVER_BYTES: usize = 128 << 20;
+/// The driver cache file's trailer: this, then the body's hash (`source_hash`, 8 bytes
+/// little-endian).
+const TRAILER_MAGIC: &[u8; 8] = b"NVFPCH01";
+const TRAILER_LEN: usize = TRAILER_MAGIC.len() + 8;
 /// The composed shaders' file in the cache folder.
 const COMPOSED_FILE: &str = "composed-shaders.bin";
 /// The pipeline list's file in the cache folder.
@@ -252,16 +264,17 @@ fn driver_cache(world: &World, dir: &Path) -> Option<(wgpu::PipelineCache, PathB
         return None;
     };
     let file = dir.join(format!("{key}.bin"));
-    let data = std::fs::read(&file).ok().filter(|d| {
-        let fits = d.len() <= MAX_DRIVER_BYTES;
-        if !fits {
-            info!("pipeline cache: {} bytes at {}, more than {MAX_DRIVER_BYTES}: starting a new one", d.len(), file.display());
+    let data = std::fs::read(&file).ok().and_then(|d| match driver_body(&d) {
+        Ok(body) => Some(body.to_vec()),
+        Err(why) => {
+            info!("pipeline cache: {} bytes at {}, {why}: starting a new one", d.len(), file.display());
+            None
         }
-        fits
     });
-    // SAFETY: the data is what `get_data` gave on an earlier run (or a damaged copy of it);
-    // wgpu checks its header, adapter key, size and hash, and falls back to an empty cache
-    // when any does not match [documented: wgpu-core 30 `validate_pipeline_cache`].
+    // SAFETY: the body is what `get_data` gave on an earlier run, byte for byte: its hash
+    // in the file's trailer matched (`driver_body`). wgpu then checks its header (adapter,
+    // driver, cache UUID, length) and falls back to an empty cache when any does not match
+    // [documented: wgpu-core 30 `validate_pipeline_cache`].
     let cache = unsafe {
         device.wgpu_device().create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
             label: Some("nvforever pipeline cache"),
@@ -274,6 +287,32 @@ fn driver_cache(world: &World, dir: &Path) -> Option<(wgpu::PipelineCache, PathB
         None => info!("pipeline cache: none yet at {}", file.display()),
     }
     Some((cache, file))
+}
+
+/// The body of a driver cache file whose trailer matches it (module notes), or why not.
+fn driver_body(file: &[u8]) -> Result<&[u8], &'static str> {
+    let Some(at) = file.len().checked_sub(TRAILER_LEN) else { return Err("too short for its trailer") };
+    let (body, trailer) = file.split_at(at);
+    if &trailer[..TRAILER_MAGIC.len()] != TRAILER_MAGIC {
+        return Err("no trailer (written by an older build, or damaged)");
+    }
+    if body.len() > MAX_DRIVER_BYTES {
+        return Err("more than the cap");
+    }
+    let hash = u64::from_le_bytes(trailer[TRAILER_MAGIC.len()..].try_into().unwrap());
+    if bevy::shader::nvf_composed::source_hash(body) != hash {
+        return Err("its body does not match its hash (damaged, or hashed by another build)");
+    }
+    Ok(body)
+}
+
+/// A driver cache file: the body, then its trailer.
+fn driver_file(body: &[u8], hash: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(body.len() + TRAILER_LEN);
+    out.extend_from_slice(body);
+    out.extend_from_slice(TRAILER_MAGIC);
+    out.extend_from_slice(&hash.to_le_bytes());
+    out
 }
 
 /// `<cache>\pipelines` of this run's home, or `None` when this run keeps nothing (module notes).
@@ -313,7 +352,9 @@ fn save_when_quiet(gate: Option<Res<PipelineGate>>, mut disk: ResMut<DiskCache>)
     }
     disk.saved_asked = asked;
     disk.last_save = Some(now);
-    let driver = disk.driver.as_ref().and_then(|(cache, file)| cache.get_data().map(|d| (d, file.clone())));
+    // The driver cache's contents (up to MAX_DRIVER_BYTES) are copied out on the I/O pool,
+    // not here on the main thread.
+    let driver = disk.driver.clone();
     let composed = disk.composed.clone().filter(|(store, _)| store.changed());
     let list = disk.list.clone().filter(|(list, _)| list.changed());
     let at_screen_end = disk.at_screen_end;
@@ -324,7 +365,9 @@ fn save_when_quiet(gate: Option<Res<PipelineGate>>, mut disk: ResMut<DiskCache>)
     writing.store(true, Relaxed);
     IoTaskPool::get()
         .spawn(async move {
-            if let Some((data, file)) = driver {
+            // Cleared however the task ends, a panic included: else no save would run again.
+            let _writing = ClearOnDrop(writing);
+            if let Some((data, file)) = driver.and_then(|(cache, file)| cache.get_data().map(|d| (d, file))) {
                 save_driver(&data, &file, &driver_saved, asked);
             }
             if let Some((store, file)) = composed {
@@ -346,15 +389,31 @@ fn save_when_quiet(gate: Option<Res<PipelineGate>>, mut disk: ResMut<DiskCache>)
             if let Some((list, file)) = list {
                 save_list(&list, &file, at_screen_end);
             }
-            writing.store(false, Relaxed);
         })
         .detach();
 }
 
-/// Write the driver cache's contents unless they are what was written last.
+/// Clears a flag when dropped.
+struct ClearOnDrop(Arc<AtomicBool>);
+
+impl Drop for ClearOnDrop {
+    fn drop(&mut self) {
+        self.0.store(false, Relaxed);
+    }
+}
+
+/// Write the driver cache's contents unless they are what was written last. Past
+/// [`MAX_DRIVER_BYTES`] the file is removed instead, so the next run starts a new cache
+/// (this one holds everything it was loaded with, so it would never fit again).
 fn save_driver(data: &[u8], file: &Path, saved: &AtomicU64, asked: u32) {
     if data.len() > MAX_DRIVER_BYTES {
-        info!("pipeline cache: {} bytes, more than {MAX_DRIVER_BYTES}; not saved", data.len());
+        if saved.swap(u64::MAX, Relaxed) != u64::MAX {
+            match std::fs::remove_file(file) {
+                Ok(()) => info!("pipeline cache: {} bytes, more than {MAX_DRIVER_BYTES}: {} removed, the next run starts a new one", data.len(), file.display()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => warn!("pipeline cache: {} bytes, more than {MAX_DRIVER_BYTES}; {} not removed: {e}", data.len(), file.display()),
+            }
+        }
         return;
     }
     let hash = bevy::shader::nvf_composed::source_hash(data);
@@ -362,7 +421,7 @@ fn save_driver(data: &[u8], file: &Path, saved: &AtomicU64, asked: u32) {
         return;
     }
     let began = Instant::now();
-    match write_replacing(file, data) {
+    match write_replacing(file, &driver_file(data, hash)) {
         Ok(()) => {
             saved.store(hash, Relaxed);
             info!("pipeline cache: saved {} bytes ({asked} pipelines asked) in {:.0} ms to {}", data.len(), began.elapsed().as_secs_f64() * 1000.0, file.display());
@@ -399,14 +458,20 @@ fn save_list(
     }
 }
 
-/// Write `data` to a temporary file beside `file`, then rename it over `file`.
+/// Write `data` to a temporary file beside `file`, then rename it over `file`. The temporary
+/// name carries this process's id and a count, so two instances (or two saves) on one home
+/// never write the same temporary file.
 fn write_replacing(file: &Path, data: &[u8]) -> std::io::Result<()> {
+    static COUNT: AtomicU64 = AtomicU64::new(0);
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = file.with_extension("bin.tmp");
-    std::fs::write(&tmp, data)?;
-    std::fs::rename(&tmp, file)
+    let tmp = file.with_extension(format!("bin.{}-{}.tmp", std::process::id(), COUNT.fetch_add(1, Relaxed)));
+    let written = std::fs::write(&tmp, data).and_then(|()| std::fs::rename(&tmp, file));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
 
 #[cfg(test)]
@@ -463,7 +528,32 @@ mod tests {
         write_replacing(&file, b"first").unwrap();
         write_replacing(&file, b"second").unwrap();
         assert_eq!(std::fs::read(&file).unwrap(), b"second");
-        assert!(!file.with_extension("bin.tmp").exists(), "no temporary file left");
+        let left: Vec<_> = std::fs::read_dir(file.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, ["key.bin"], "no temporary file left");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_driver_cache_is_read_back_only_when_its_body_matches_its_hash() {
+        let body = b"vk pipeline cache body".as_slice();
+        let file = driver_file(body, bevy::shader::nvf_composed::source_hash(body));
+        assert_eq!(driver_body(&file), Ok(body));
+        let mut damaged = file.clone();
+        damaged[3] ^= 1;
+        assert!(driver_body(&damaged).is_err(), "a body damaged at the same length is not used");
+        assert!(driver_body(body).is_err(), "a file without the trailer (an older build's) is not used");
+        assert!(driver_body(b"short").is_err());
+    }
+
+    #[test]
+    fn a_driver_cache_past_the_cap_is_removed_so_the_next_run_starts_a_new_one() {
+        let dir = std::env::temp_dir().join(format!("nvf-pipeline-cache-cap-{}", std::process::id()));
+        let file = dir.join("key.bin");
+        let saved = AtomicU64::new(0);
+        save_driver(b"data", &file, &saved, 1);
+        assert!(file.exists());
+        save_driver(&vec![0; MAX_DRIVER_BYTES + 1], &file, &saved, 2);
+        assert!(!file.exists(), "over the cap: removed, not left to be read and grow again");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -477,7 +567,7 @@ mod tests {
         save_driver(b"data", &file, &saved, 2);
         assert!(!file.exists(), "the same contents are not written again");
         save_driver(b"more", &file, &saved, 3);
-        assert!(file.exists());
+        assert_eq!(driver_body(&std::fs::read(&file).unwrap()), Ok(b"more".as_slice()), "written with its trailer");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -15,8 +15,9 @@
 //! entries, vertex buffers and states, as serde's JSON of wgpu's own types. Mesh (task/mesh
 //! shader) pipelines and pipelines whose shader has no path of its own are not kept.
 //!
-//! **How a run uses it:** `PipelineCache` feeds the list, in the order the pipelines were
-//! first asked for in the run that last asked for them, to a pool of its own (half the
+//! **How a run uses it:** `PipelineCache` feeds the pipelines asked for in the last
+//! [`REBUILD_RUNS`] runs (at most [`MAX_REBUILT`]), in the order they were first asked for
+//! in the run that last asked for them, to a pool of its own (half the
 //! compile pool's threads), as their shaders load; each builds its modules (shared with the
 //! game's pipelines through the shader cache) and creates the pipeline inside an error
 //! scope, so a stale entry (a shader that changed so the old descriptor no longer fits) is
@@ -43,6 +44,15 @@ use std::sync::{Condvar, Mutex, PoisonError};
 
 /// A pipeline no run asked for in this many runs is dropped.
 pub const KEEP_RUNS: u32 = 30;
+/// Only pipelines asked for in the last this many runs are built ahead from the start of a
+/// run; the rest stay listed (kept in the file, and matched when the game asks for one) but
+/// are not built unasked. The list covers every place and setting of up to [`KEEP_RUNS`]
+/// runs, and building all of it on every launch would keep cores busy behind gameplay and
+/// hold driver memory for pipelines this run never asks for (review of #3079).
+pub const REBUILD_RUNS: u32 = 3;
+/// At most this many listed pipelines are built ahead in one run, the most recently asked
+/// first [a Novac start with 12 s of play asked about 260, observed 2026-11-19].
+pub const MAX_REBUILT: usize = 768;
 /// The file is cut to this size, the pipelines asked longest ago first.
 pub const MAX_BYTES: usize = 512 << 20;
 /// Times an entry waits for its shaders' imports before it is given up for this run.
@@ -392,7 +402,8 @@ impl PipelineManifest {
     }
 
     /// Take in what an earlier run saved (on a background thread; asks before it are kept).
-    /// Returns the pipelines taken in.
+    /// Returns the pipelines taken in; only the recent ones are queued to be built ahead
+    /// ([`REBUILD_RUNS`], [`MAX_REBUILT`]).
     pub fn load(&self, bytes: &[u8]) -> u32 {
         let text = core::str::from_utf8(bytes).unwrap_or("");
         let mut lines = text.lines();
@@ -423,9 +434,15 @@ impl PipelineManifest {
             }
             self.run.store(this_run, Relaxed);
         }
-        loaded.sort_by_key(|e| e.order());
         let n = loaded.len() as u32;
         self.listed.store(n, Relaxed);
+        // Built ahead: those asked in the last REBUILD_RUNS runs, at most MAX_REBUILT, the
+        // latest run's first; then in the order they were asked.
+        let last_run = |e: &Arc<Entry>| lock(&e.meta).last_run;
+        loaded.retain(|e| this_run.saturating_sub(last_run(e)) <= REBUILD_RUNS);
+        loaded.sort_by_key(|e| (core::cmp::Reverse(last_run(e)), e.order()));
+        loaded.truncate(MAX_REBUILT);
+        loaded.sort_by_key(|e| e.order());
         lock(&self.queue).todo.extend(loaded);
         self.loaded.store(true, Relaxed);
         n
@@ -686,6 +703,41 @@ mod tests {
             bytes = later.to_bytes();
         }
         assert_eq!(PipelineManifest::new().load(&bytes), 0);
+    }
+
+    #[test]
+    fn only_pipelines_asked_in_recent_runs_are_built_ahead() {
+        let first = PipelineManifest::new();
+        first.loaded.store(true, Relaxed);
+        first.ask(recipe("old", "s/old"), &[]);
+        let mut bytes = first.to_bytes();
+        // Runs that never ask for it again: listed all along, built ahead only at first.
+        for later_run in 2..=REBUILD_RUNS + 2 {
+            let later = PipelineManifest::new();
+            assert_eq!(later.load(&bytes), 1, "still listed in run {later_run}");
+            let ahead = later.queued();
+            if later_run - 1 <= REBUILD_RUNS {
+                assert_eq!(ahead, 1, "asked {} run(s) ago: built ahead", later_run - 1);
+            } else {
+                assert_eq!(ahead, 0, "asked {} runs ago: not built unasked", later_run - 1);
+                // Asked again, it is matched as before.
+                assert!(matches!(later.ask(recipe("old", "s/old"), &[]), Some(Asked::Build(_))));
+                assert_eq!(later.stats().claimed, 1, "the listed entry, built by the game's task");
+            }
+            bytes = later.to_bytes();
+        }
+    }
+
+    #[test]
+    fn at_most_max_rebuilt_are_built_ahead_the_latest_first() {
+        let first = PipelineManifest::new();
+        first.loaded.store(true, Relaxed);
+        for i in 0..MAX_REBUILT + 5 {
+            first.ask(recipe(&format!("p{i}"), "s/p"), &[]);
+        }
+        let second = PipelineManifest::new();
+        assert_eq!(second.load(&first.to_bytes()), (MAX_REBUILT + 5) as u32);
+        assert_eq!(second.queued(), MAX_REBUILT);
     }
 
     #[test]

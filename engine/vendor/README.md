@@ -479,7 +479,8 @@ each part marked by a comment starting `NVForever`:
   set_pipeline_manifest`. The render and compute tasks turn their descriptor into a recipe
   (shaders by `Shader::path`) and ask the list: a pipeline the list built from the same
   modules is handed over, else the task builds it and the list keeps the recipe.
-  `process_queue` feeds the list's recipes whose shaders have loaded to a pool of its own
+  `process_queue` feeds the list's recipes whose shaders have loaded (only those asked in
+  the last `REBUILD_RUNS` runs, at most `MAX_REBUILT`) to a pool of its own
   (`nvf_list_pool`, half the compile pool's default threads), which builds each inside a
   validation error scope. For the JSON of the recipes the crate depends on `serde` and
   `serde_json` and on `wgpu-types` with `serde` (all already in the build).
@@ -516,7 +517,10 @@ Drop it when Bevy caches compositions itself.
 (compose under the lock; returns `ModuleStep::Ready`, `Build` with the composed source, or
 `Wait` on the `ModuleSlot` of the thread making the same module) and `finish` (keep the
 module made, unless the shader was replaced meanwhile: each shader's data has a
-`generation` that `clear` bumps, and `clear` drops the slots being made). `get` is
+`generation` that `clear` bumps, and `clear` drops the slots being made). A `ModuleBuild`
+dropped unfinished (its maker panicked or stopped early) fills its slot with
+`ShaderImportNotYetAvailable`, an error the pipeline cache retries, so a waiter's pipeline
+is queued again rather than failed for the run. `get` is
 `prepare`, the module made holding the lock, and `finish`, as before. `ShaderCacheError` is
 `Clone` for the waiters. For the pipeline list (bevy_render above): `shader_path`,
 `shader_by_path` (a path two shaders share is neither) and `shaders_set`, and `prepare`

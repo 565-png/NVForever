@@ -187,12 +187,14 @@ impl<ShaderModule> ModuleBuild<ShaderModule> {
 }
 
 impl<ShaderModule> Drop for ModuleBuild<ShaderModule> {
-    /// A build dropped unfinished (its maker panicked) still wakes the threads waiting.
+    /// A build dropped unfinished (its maker panicked, or stopped early because its
+    /// pipeline's other shader was not ready) still wakes the threads waiting. They get an
+    /// error the pipeline cache retries (`ShaderImportNotYetAvailable`): the module itself
+    /// never failed, so a waiter's pipeline is queued again and the next ask makes it (the
+    /// failed slot is passed over, `step`), instead of failing for the rest of the run.
     fn drop(&mut self) {
         if let Some(slot) = self.slot.take() {
-            slot.fill(Err(ShaderCacheError::CreateShaderModule(
-                "the thread making this module stopped".into(),
-            )));
+            slot.fill(Err(ShaderCacheError::ShaderImportNotYetAvailable));
         }
     }
 }
@@ -1035,7 +1037,10 @@ fn fragment() -> @location(0) vec4<f32> {
         let ModuleStep::Build(build) = cache.prepare(Some(0), root_id, &[]).unwrap() else { panic!() };
         let ModuleStep::Wait(slot) = cache.prepare(Some(1), root_id, &[]).unwrap() else { panic!() };
         drop(build);
-        assert!(slot.wait().is_err());
+        assert!(
+            matches!(slot.wait(), Err(ShaderCacheError::ShaderImportNotYetAvailable)),
+            "the waiter gets an error its pipeline retries, not a final one"
+        );
         assert!(
             matches!(cache.prepare(Some(2), root_id, &[]).unwrap(), ModuleStep::Build(_)),
             "the next ask makes it again"
