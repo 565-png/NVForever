@@ -335,6 +335,9 @@ pub const SCENE_RANGE: f32 = 1500.0;
 pub const SCENE_SECS: f64 = 90.0;
 /// Seconds without a line that end a scene being watched.
 pub const SCENE_GAP: f64 = 20.0;
+/// Fewer navmesh nodes than this expanded from the start of a failed search: the player
+/// stands on a scrap of navmesh, not in a place a way leads out of.
+pub const STRANDED_EXPANDED: usize = 16;
 /// Seconds an actor the player cannot walk to is waited for, and how many times the walk
 /// is tried again when it comes near.
 pub const AWAIT_SECS: f64 = 60.0;
@@ -599,6 +602,8 @@ struct Walk {
     /// With `stay`, in a fight: the player keeps where it is and the foe comes to it (a
     /// shot from afar hit Dad, who stood between the player and the radroach).
     hold: bool,
+    /// Put back once where a path was last found (`Pilot::walked_from`).
+    stranded: bool,
     /// The locked door whose owner the player keeps by, while it does.
     owner_door: Option<u32>,
     /// When the walk last said where the player is on its path (every [`WALK_REPORT_SECS`]).
@@ -758,6 +763,9 @@ struct Pilot {
     mark: u64,
     /// The lines begun when a `dialogue_package` step began (`Seen::lines_begun`).
     step_lines: u64,
+    /// Where the player last stood when a path was found from there: put back there when
+    /// it ends up on a scrap of navmesh that leads nowhere (`Walk::stranded`).
+    walked_from: Option<Place>,
     still: (f64, [f32; 3]),
     /// An attacker being fought before the step goes on, since when, and when the
     /// attackers are looked for next.
@@ -843,6 +851,7 @@ impl Pilot {
             mark_items: 0,
             mark: 0,
             step_lines: 0,
+            walked_from: None,
             still: (0.0, [0.0; 3]),
             defend: None,
             defend_from: 0.0,
@@ -1441,6 +1450,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 info!("pilot: step {}: walks {:.0} units over {} leg(s) to ({:.0}, {:.0}, {:.0}): {}", p.i, path.length, path.legs.len(), w.goal.pos[0], w.goal.pos[1], w.goal.pos[2], legs.join("; "));
                 w.locked_way = false;
                 w.snapped = path.end();
+                p.walked_from = Some(here);
                 w.follower = Some(Follower::new(path));
                 w.seen = (p.now, feet);
             }
@@ -1585,6 +1595,21 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                             p.followers_due = Some(p.now);
                             w.seen = (p.now, at.pos);
                             return Walked::Going;
+                        }
+                        // From a scrap of navmesh that leads nowhere (the search found next to
+                        // nothing to expand: a ledge the fight led onto, a bad snap): back where
+                        // the last path began, once, as a player drops down or walks back. Old
+                        // World Blues' X-8 chased an attacker up a gantry and stopped there
+                        // (Unreachable { expanded: 0 }, round 7 [observed]).
+                        if matches!(e, fnv_nav::PathError::Unreachable { expanded } if expanded < STRANDED_EXPANDED) && !w.stranded && here.space == w.goal.space && w.tried.is_empty() {
+                            if let Some(back) = p.walked_from.filter(|b| b.space == here.space && hdist(b.pos, feet) > 64.0) {
+                                w.stranded = true;
+                                p.finding("stranded", format!("no way on from ({:.0}, {:.0}, {:.0}) in {:?} ({e:?}): put back at ({:.0}, {:.0}, {:.0}), where the last path began", feet[0], feet[1], feet[2], here.space, back.pos[0], back.pos[1], back.pos[2]));
+                                p.headless("move_player (back off a scrap of navmesh)");
+                                h.put(back);
+                                w.seen = (p.now, back.pos);
+                                return Walked::Going;
+                            }
                         }
                         let tried = if w.tried.is_empty() { "locked doors or not".to_string() } else { format!("the doors tried: {}", w.tried.iter().map(|(d, l)| format!("{d:08X} ({l})")).collect::<Vec<_>>().join(", ")) };
                         let why = format!("no way from ({:.0}, {:.0}, {:.0}) in {:?} to ({:.0}, {:.0}, {:.0}) in {:?} ({e:?}), {tried}: a player could not get there; the player stays where it is", feet[0], feet[1], feet[2], here.space, w.goal.pos[0], w.goal.pos[1], w.goal.pos[2], w.goal.space);
@@ -1875,7 +1900,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
 }
 
 fn walk_to(goal: Place, target: Option<FormId>, radius: f32, now: f64, feet: [f32; 3]) -> Walk {
-    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, gapped: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None, owner_wait: None, owner_door: None, reported: now, travel_since: None, stay: false, hold: false }
+    Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, gapped: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None, owner_wait: None, owner_door: None, reported: now, travel_since: None, stay: false, hold: false, stranded: false }
 }
 
 /// How long after trying a locked door the player picks its lock.
