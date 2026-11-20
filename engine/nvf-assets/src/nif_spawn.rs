@@ -1031,6 +1031,7 @@ fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl Text
             metallic: material.base.metallic,
             tangents,
             specular_tint: material.base.specular_tint,
+            scripted_tint: None,
         };
         if let Some(set) = &authored {
             crate::authored::apply(&mut material, set, &legacy);

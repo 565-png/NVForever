@@ -100,7 +100,7 @@ fn an_authored_set_fills_its_fields_over_the_legacy_ones() {
     assert_eq!(m.extension.soft, Vec4::ZERO, "soft stays zero: terrain blending still takes the material");
     assert_eq!(
         m.extension.legacy,
-        Some(LegacyLook { normal: Some(game_normal.clone()), specular: Some(game_normal), roughness: gloss_roughness(50.0), reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE })
+        Some(LegacyLook { normal: Some(game_normal.clone()), specular: Some(game_normal), roughness: gloss_roughness(50.0), reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, scripted_tint: None })
     );
 }
 

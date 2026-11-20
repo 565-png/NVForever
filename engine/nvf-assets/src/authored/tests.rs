@@ -251,6 +251,40 @@ fn retexturing_goes_from_set_to_set_to_legacy_from_the_legacy_look() {
     assert_eq!(retexture(&mut skin, r"walls\brick.dds", &mut cache, &pack.data, &mut images, None), Retextured::Untouched);
 }
 
+/// Review of stage 3 (#2981): a specular colour a script set itself stays drawn when a swap
+/// puts another set on the copy, and when it puts the legacy look back; the stored colour the
+/// mirror writes back with another value's edit does not, and the next set draws white.
+#[test]
+fn a_scripted_specular_colour_survives_a_swap_to_another_set_and_back_to_legacy() {
+    use crate::nif_spawn::{shape_material, Props};
+    use crate::texture::bc5_tests::triangle;
+    let pack = Pack::new();
+    let mut cache = TextureCache::default();
+    let mut images = Assets::<Image>::default();
+    let mut props = Props::default();
+    props.textures = vec![r"walls\brick.dds".into()];
+    let (built, _) = shape_material(&props, &mut triangle(), &mut cache, &pack.data, &mut images, None);
+    assert!(is_authored(&built));
+    let red = Color::linear_rgb(1.0, 0.25, 0.25);
+    let mut scripted = built.clone();
+    set_legacy_specular_tint(&mut scripted, red, true);
+    assert_eq!(scripted.base.specular_tint, red, "drawn at once");
+    // Another value's edit writes the same colour back, not as the change.
+    set_legacy_specular_tint(&mut scripted, red, false);
+    assert_eq!(scripted.extension.legacy.as_ref().unwrap().scripted_tint, Some(red));
+    let mut swapped = scripted.clone();
+    assert_eq!(retexture(&mut swapped, r"walls\nonormal.dds", &mut cache, &pack.data, &mut images, None), Retextured::Authored);
+    assert_eq!(swapped.base.specular_tint, red, "another set keeps the scripted colour");
+    assert_eq!(retexture(&mut swapped, r"walls\plain.dds", &mut cache, &pack.data, &mut images, None), Retextured::Legacy);
+    assert_eq!(swapped.base.specular_tint, red, "the legacy look keeps it too");
+    // Only written back (a stored black with an alpha edit): the next set draws white.
+    let mut stored = built.clone();
+    set_legacy_specular_tint(&mut stored, Color::linear_rgb(0.0, 0.0, 0.0), false);
+    assert_eq!(stored.base.specular_tint, Color::WHITE);
+    assert_eq!(retexture(&mut stored, r"walls\nonormal.dds", &mut cache, &pack.data, &mut images, None), Retextured::Authored);
+    assert_eq!(stored.base.specular_tint, Color::WHITE, "a stored colour does not scale a set's highlight");
+}
+
 #[test]
 fn channel_views_parse_and_name_their_defs() {
     assert_eq!(PbrView::parse(""), Some(PbrView::Off));

@@ -136,7 +136,8 @@ pub const AUTHORED_MARK: f32 = 1.0;
 /// (`NifSurface::legacy`) for every shape that may take a set, so a later change of its
 /// diffuse (a script's texture swap, the blackjack cards, the Vigor Tester's digits) can put
 /// the new diffuse's set on it or go back to the game's values ([`retexture`]). Changed
-/// after the material is made only by a script's glossiness edit ([`set_legacy_roughness`]);
+/// after the material is made only by a script's glossiness or specular colour edit
+/// ([`set_legacy_roughness`], [`set_legacy_specular_tint`]);
 /// copies carry it along.
 #[derive(Clone, Debug, PartialEq, Reflect)]
 pub struct LegacyLook {
@@ -153,6 +154,10 @@ pub struct LegacyLook {
     /// The specular tint (Bevy multiplies the reflectance by it): white as built, a script's
     /// specular colour once one is set ([`set_legacy_specular_tint`]).
     pub specular_tint: Color,
+    /// A specular colour a script set itself (the colour was the value it changed), which a
+    /// set put on later keeps drawing in place of white ([`apply`]); `None` as built, and when
+    /// only the stored colour was written back with another value [design].
+    pub scripted_tint: Option<Color>,
 }
 
 /// Whether a shape may take an authored set, by what is known when its material is made:
@@ -296,9 +301,10 @@ pub fn apply(material: &mut crate::NifMaterial, set: &AuthoredSet, legacy: &Lega
     b.perceptual_roughness = set.scalars.roughness_scale_or_default();
     b.reflectance = set.scalars.reflectance_or_default();
     b.metallic = authored_metallic();
-    // A set's highlight strength is its reflectance alone, never scaled by a stored or
-    // scripted specular colour of the game's (#2981).
-    b.specular_tint = Color::WHITE;
+    // A set's highlight strength is its reflectance alone, never scaled by the game's stored
+    // specular colour (#2981); a colour a script set itself stays drawn, as it is on the
+    // material the script edited, across a later set (a texture swap's).
+    b.specular_tint = legacy.scripted_tint.unwrap_or(Color::WHITE);
     let normal = set.normal.clone().filter(|_| legacy.tangents);
     if normal.is_none() && set.normal.is_some() {
         Stats::add(&stats().normal_without_tangents);
@@ -342,10 +348,15 @@ pub fn set_legacy_roughness(material: &mut crate::NifMaterial, roughness: f32) {
 /// the one restored later; the drawn tint takes it when no set is on the material, or when
 /// the colour is what the script changed (`changed`). The mirror writes every value back
 /// after any one change, so an edit of another property leaves a set's highlight (Bevy draws
-/// `specular_tint x reflectance`) as it is [design].
+/// `specular_tint x reflectance`) as it is [design]. A colour the script changed is kept as
+/// its override (`LegacyLook::scripted_tint`), so a set applied later ([`apply`], through a
+/// swap's [`retexture`]) keeps drawing it instead of going back to white.
 pub fn set_legacy_specular_tint(material: &mut crate::NifMaterial, tint: Color, changed: bool) {
     if let Some(legacy) = material.extension.legacy.as_mut() {
         legacy.specular_tint = tint;
+        if changed {
+            legacy.scripted_tint = Some(tint);
+        }
     }
     if changed || !is_authored(material) {
         material.base.specular_tint = tint;
