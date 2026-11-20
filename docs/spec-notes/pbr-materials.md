@@ -20,7 +20,7 @@ below; a later version adds to them without changing their meaning.
 | Scalar file reading (`<stem>.toml`) | **implemented**; read once per mount, by the first shape that asks (stage 3) [documented: `engine/nvf-assets/src/data.rs` `GameData::pbr_scalars`] |
 | Reading members' pixels | `_orm` (linear) and `_n` (two-channel normal role, `TextureUsage::NormalTwoChannel`) **implemented** (stage 3); `_p` **planned** (stage 4); `_albedo` stays reserved |
 | Reading BC7 and BC4 files (DDS with the DX10 header, or legacy `BC4U` / `BC4S`) | stage 1 of #2981 (`crates/fnv-dds`) |
-| Drawing a surface with its set (ORM, normal) | **implemented** in source (stage 3) [documented: `engine/nvf-assets/src/nif_spawn.rs` `shape_material`, `authored.rs` `retexture`]; the setting Authored materials (`authored-materials`, on by default, read at the start; `--graphics-only no-authored-materials`). Its check is the field test `pbr-authored-field` (below); a pack's look in the game is not yet compared |
+| Drawing a surface with its set (ORM, normal) | **implemented** in source (stage 3) [documented: `engine/nvf-assets/src/nif_spawn.rs` `shape_material`, `authored.rs` `retexture`]; the setting Authored materials (`authored-materials`, on by default, read at the start; `--graphics-only no-authored-materials`). Its check is the field test `pbr-authored-field` (below). A sample pack was drawn in the game with the setting off and on by the main session as of head `bebd7841a` (pictures not committed; they show the pack's own values, and no reference look exists to judge them by); those pictures are owed again after the fixes that followed that head |
 | Height maps (`_p`, parallax) | **planned** (stage 4, with #2979) |
 | Metallic | read with the ORM but **held at 0** (stage 3, implemented) until the engine has a reflection source (stage 5) |
 | A pack validator (`fnvtool pbr check`, `fnvtool pbr selftest`) | **implemented** (`crates/fnvtool/src/pbr_check.rs`, docs/cli-contract.md `fnv.pbr.check/1`) |
@@ -219,7 +219,13 @@ beyond the field test below):
 - [design] A swapped diffuse takes its own set, or none, from the shape's legacy look; it
   never keeps the previous diffuse's maps [documented: `authored.rs` `retexture`]. A script's
   change of a shape's glossiness goes to the legacy look while a set is on it, so the set's
-  roughness stays [documented: `engine/nvforever/src/nif_mirror.rs` `set_material`].
+  roughness stays [documented: `engine/nvforever/src/nif_mirror.rs` `set_material`]. A
+  specular colour the script set itself is drawn at once and kept as an override that a set
+  put on later (a swap's) keeps drawing; the stored colour the mirror writes back with an
+  edit of another value never scales a set's highlight [documented: `authored.rs`
+  `set_legacy_specular_tint`, `apply`, `LegacyLook::scripted_tint`]. Several edits of one
+  shape in one mirror update go to one private copy [documented: `nif_mirror.rs`,
+  `SceneEdit::Material`].
 - The setting Authored materials (Graphics > Detail and Distance) is read once at the start.
   Off, the material path builds no index, loads no file under `textures\pbr\` and keeps no
   legacy look [documented: `authored.rs` `find`, `engine/nvf-assets/src/nif_spawn.rs`].
@@ -236,8 +242,9 @@ beyond the field test below):
   dark 38, reference 67, flat 103; off, plain, lit, dark and flat 103, reference 60.] The
   comparator's thresholds were set from those readbacks with margins [engineering policy:
   occlusion at least 15, lit and reference within 3, reference at least 15 darker than flat
-  (on) or plain (off), the off panels within 2]; the scenarios with those thresholds have not
-  been run again yet.
+  (on) or plain (off), the off panels within 2]. The main session reports both scenarios
+  passing with those thresholds as of head `bebd7841a`; a run of `pbr-authored-field` and
+  `pbr-authored-field-off` at the head that carries the final review's fixes is owed.
 - Calibration aids, off by default, read at the start [documented: `authored.rs` `PbrView`,
   `metallic_debug`; `engine/nvf-assets/src/nif_material.wesl`]: `NVF_PBR_VIEW` =
   `roughness`, `metallic`, `occlusion`, `normal` or `authored` draws that input in place of
@@ -249,12 +256,14 @@ beyond the field test below):
 - On the app's exit the log has one line `authored materials summary: ...` (or
   `authored materials summary: off (setting)`): counts of build events, not of visible
   shapes: material builds that applied a set, the distinct set stems seen at those builds,
-  builds that skipped a set and why, role copies made legacy, and calls of `retexture`
-  [documented: `authored.rs` `Stats`, `report`]. Rebuilt or discarded materials count again.
+  builds that skipped a set and why, `_orm` load failures (at a build or a swap alike), role
+  copies made legacy, and calls of `retexture` [documented: `authored.rs` `Stats`, `report`].
+  Rebuilt or discarded materials count again.
 
 ### Known limits (stage 3)
 
-From the source review of 2026-11-19, not yet fixed [documented: the files named]:
+From the source reviews of 2026-11-19 and 2026-11-20 [documented: the files named]. Two
+are not fixed:
 
 - **A script's material edit during a fade.** The property mirror
   (`engine/nvforever/src/nif_mirror.rs`) makes the shape's private material from the
@@ -264,12 +273,28 @@ From the source review of 2026-11-19, not yet fixed [documented: the files named
   authored shape the set's roughness first looks right, and a later swap to a diffuse
   without a set brings back the gloss stored before the edit. Fixing it means the fades
   rebuilding their copies from a per-shape material, a change to the fade system itself.
-- **A texture swap during a fade** gives the swapped material to both fades' stored
-  originals (`texture_swap.rs`, `Faded::retarget`), so ending either fade keeps the swap.
 - **A placed shape the mirror gave a private material, then swapped.** The swap matches
   shapes by their original material, and a placed shape without a shape name no longer
   matches once the mirror replaced it, so its old diffuse stays drawn with its authored
   fields (set, mark, metallic). This predates stage 3 (`texture_swap.rs`, `nif_mirror.rs`).
+
+What holds for a texture swap while the shape fades, and its remaining gap:
+
+- **SetActorAlpha and a fade on one mesh.** Whichever started second copied what the mesh
+  wore then, so its stored original can be the other's see-through copy. The swap matches
+  and copies the mesh's own material beneath both
+  (`engine/nvforever/src/effect_shaders.rs` `persistent_material`, `texture_swap.rs`), the
+  actor's alpha copies that material too rather than a fade's copy, and releasing the alpha
+  while a fade runs drops the fade's copy so its next step copies the mesh's own material.
+  Ending the two in either order then leaves the mesh's own material, or the swapped one,
+  opaque (test `texture_swap.rs`
+  `both_fades_in_either_start_and_release_order_give_back_the_own_or_swapped_material_opaque`,
+  through the production systems, not yet run in the game).
+- **Gap:** when a fade ends while the actor's alpha stays on and the fade's original is the
+  mesh's own material (the fade started first, or a swap was made), the mesh is drawn opaque
+  until the actor's alpha changes or is released; the alpha's see-through copy is not put
+  back [documented: `engine/nvf-play/src/fade.rs` `step`, `effect_shaders.rs`
+  `AlphaDrawing::sync`].
 
 ## Load order: per file, so ship complete sets
 
