@@ -490,8 +490,19 @@ fn gather(sky: &SkyState, sun: Option<(&DirectionalLight, &Transform)>, cell: Op
     }
 }
 
+/// Whether the room changed since the last fill's inputs: indoors against outdoors, or
+/// another interior cell (`indoors` and `cell` now). Such a change refills at once, without
+/// waiting for [`CHECK_INTERVAL`] (review finding 6, 2026-11-20) [design].
+pub fn room_changed(last: &Inputs, indoors: bool, cell: Option<u32>) -> bool {
+    match last {
+        Inputs::Indoors { cell: c0, .. } => !indoors || *c0 != cell,
+        Inputs::Outdoors { .. } => indoors,
+    }
+}
+
 /// Make the world camera's cube when [`decide`] allows, then rewrite it when its inputs
-/// moved (module notes).
+/// moved (module notes). A room change ([`room_changed`]) or a new dome profile refills at
+/// once; the [`CHECK_INTERVAL`] limit is for the continuous weather and clock changes.
 #[allow(clippy::too_many_arguments)]
 pub fn produce(
     mut commands: Commands,
@@ -523,12 +534,14 @@ pub fn produce(
         }
     }
     let now = time.elapsed_secs_f64();
-    if state.phase == Phase::On && state.last_check.is_some_and(|t| now - t < CHECK_INTERVAL) {
+    let cell = streamer.and_then(|s| s.interior);
+    let sudden = profile.as_ref().is_some_and(|p| p.is_changed()) || state.last.as_ref().is_some_and(|last| room_changed(last, sky.interior.is_some(), cell));
+    if state.phase == Phase::On && !sudden && state.last_check.is_some_and(|t| now - t < CHECK_INTERVAL) {
         return;
     }
     state.last_check = Some(now);
-    let inputs = gather(&sky, sun.single().ok(), streamer.and_then(|s| s.interior));
-    if state.last.as_ref().is_some_and(|last| !inputs.moved(last)) {
+    let inputs = gather(&sky, sun.single().ok(), cell);
+    if !sudden && state.last.as_ref().is_some_and(|last| !inputs.moved(last)) {
         state.unchanged += 1;
         return;
     }

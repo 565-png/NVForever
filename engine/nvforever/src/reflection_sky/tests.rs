@@ -266,3 +266,17 @@ fn the_summary_line() {
     s.unchanged = 40;
     assert_eq!(s.line(), "4 fills (3 outdoors, 1 indoors), 40 checks skipped as unchanged");
 }
+
+/// Review finding 6: indoors against outdoors and another interior cell are room changes
+/// (refilled at once); the same room is not, whatever its colours.
+#[test]
+fn a_room_change_is_indoors_against_outdoors_or_another_cell() {
+    let outdoors = Inputs::Outdoors { horizon: Vec3::ONE, lower: Vec3::ONE, upper: Vec3::ONE, ambient: Vec3::ONE, sun: Vec3::ZERO, sun_dir: Vec3::Y, sky_scale: 1.0, clip: true };
+    let indoors = |cell| Inputs::Indoors { cell, ambient: Vec3::splat(0.2), fog: Vec3::splat(0.1) };
+    assert!(!room_changed(&outdoors, false, None));
+    assert!(!room_changed(&outdoors, false, Some(7)), "outdoors stays outdoors (the cell is an interior's only)");
+    assert!(room_changed(&outdoors, true, Some(7)));
+    assert!(room_changed(&indoors(Some(7)), false, None));
+    assert!(room_changed(&indoors(Some(7)), true, Some(8)));
+    assert!(!room_changed(&indoors(Some(7)), true, Some(7)));
+}

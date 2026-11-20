@@ -448,9 +448,11 @@ it acts only with Authored materials on, and changes no picture without a pack.
   `NVF_PBR_VIEW=reflection` beside the sky in one frame.
 - **Metal base colour** (next section): a metal's reflection is tinted by its base colour,
   lifted by the set's metal gain in a view with a cube.
-- **When it is written.** Checked at most four times a second (real time) and rewritten only
-  when an input moved past a step from the last fill: a colour by 1/128 in display value,
-  the light's direction by 3 degrees, indoors or out, another interior cell. One log line at
+- **When it is written.** [design] A change of room (indoors against outdoors, another
+  interior cell) or a new dome profile refills at once; otherwise the inputs are checked at
+  most four times a second (real time) and the cube rewritten only when one moved past a
+  step from the last fill: a colour by 1/128 in display value, the light's direction by 3
+  degrees [documented: `reflection_sky.rs` `produce`, `room_changed`, `Inputs::moved`]. One log line at
   the first fill (`reflection sky: first fill ...`, with the level-0 zenith, horizon and
   nadir texels) and one at exit (`reflection sky summary: N fills (... outdoors, ...
   indoors), M checks skipped as unchanged`, or `off (reason)`).
