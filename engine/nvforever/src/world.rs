@@ -339,8 +339,9 @@ pub fn stream(
     let before = (streamer.stats.actors.equipment_spawns, streamer.stats.actors.record_spawns);
     let frame_start = std::time::Instant::now();
     // Under the start's screen the cells wait for their read-ahead on the read pool
-    // ([`start_pool_prep`]).
-    let pool_start = start_pool_prep() && loading.as_deref().is_some_and(|l| l.starting());
+    // ([`start_pool_prep`]), unless a travel has gone out under it ([`start_pool_cells`]).
+    let pool_prep = start_pool_prep();
+    let pool_start = loading.as_deref().is_some_and(|l| start_pool_cells(pool_prep, l.starting(), l.travelling()));
     let behind_screen = loading.is_some_and(|l| l.unseen_frames());
     let mut actors = actor_world.as_deref().map(|w| (w, &mut *actor_parts, sim.as_deref().map(|s| &s.world), &mut *ahead));
     despawn_dying(&mut commands, &mut streamer.dying, &children);
@@ -515,6 +516,15 @@ fn wait_over(budgeted: bool, waited: f64, pool_wait: Option<f64>) -> bool {
     } else {
         pool_wait.is_none_or(|w| w >= MAX_WAIT_SECS)
     }
+}
+
+/// Whether the cells asked for this frame are the start's, which wait for the read pool
+/// ([`wait_over`]) and are counted in the start's line ([`StartPrep`]): with the pool
+/// preparation `on` ([`start_pool_prep`]), under the start's screen, and not for a travel
+/// that went out under it, whose cells are drawn at once as behind any travel's screen and
+/// would otherwise share the start's `StartPrep::since` and counts.
+fn start_pool_cells(on: bool, starting: bool, travelling: bool) -> bool {
+    on && starting && !travelling
 }
 
 /// Direct children of retired cells despawned per frame (each with everything below it)
@@ -2032,6 +2042,17 @@ mod tests {
         assert!(!wait_over(false, 0.0, Some(0.0)));
         assert!(!wait_over(false, 0.0, Some(MAX_WAIT_SECS - 0.01)));
         assert!(wait_over(false, 0.0, Some(MAX_WAIT_SECS)));
+    }
+
+    /// Only the start's own cells wait for the read pool and are counted: not with the aid
+    /// off, not behind a travel's screen, and not for a travel sent under the start's.
+    #[test]
+    fn a_travel_under_the_start_screen_is_not_the_starts() {
+        assert!(start_pool_cells(true, true, false));
+        assert!(!start_pool_cells(false, true, false), "NVF_START_POOL_PREP=0");
+        assert!(!start_pool_cells(true, false, true), "a travel's screen");
+        assert!(!start_pool_cells(true, true, true), "a travel under the start's screen");
+        assert!(!start_pool_cells(true, false, false), "in play");
     }
 
     /// The start's line: once, after its cells were counted, with how they came in.

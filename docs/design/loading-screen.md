@@ -144,7 +144,9 @@ A travel asked for under it goes out behind it and is waited for too.
   their models prepared on the read pool, <n> before (the rest prepared on the main
   thread); <n> cells read ahead under the picture hold, <s> s from the first cell to the
   last`. Test aid `NVF_START_POOL_PREP=0`: as before (logged). A travel's screen is
-  unchanged: no hold comes before it, and its cells are drawn at once.
+  unchanged: no hold comes before it, and its cells are drawn at once. So are those of a
+  travel asked for under the start's screen, and they are not counted in the start's line
+  (`world::start_pool_cells`).
 
 [design: `engine/nvforever/src/pipboy_arm.rs`, `player_body.rs`,
 `engine/nvf-play/src/pipboy.rs`, `loading.rs`; #1803] Once the start's picture hold is
