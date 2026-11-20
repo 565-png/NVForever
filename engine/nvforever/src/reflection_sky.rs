@@ -27,6 +27,7 @@
 //!     each hemisphere's colour mixes toward that hemisphere's mean by level / 5, the edge
 //!     between sky and ground widens ([`HORIZON_EDGE`] to [`HORIZON_EDGE_TOP`]), and the
 //!     lobe widens with its total kept ([`SUN_LOBE_POWER`] halved per level).
+//!
 //!   No clouds, no sun disc, no scene objects, no stars or moon disc.
 //! - **Units** ([`texel`]): the colours are taken to display values with the share the
 //!   ambient light has (sky.rs `AMBIENT_SHARE` outdoors, `INTERIOR_AMBIENT_SHARE` indoors;
