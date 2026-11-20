@@ -311,8 +311,18 @@ pub fn bevy_to_game(p: Vec3) -> Vec3 {
     Vec3::new(p.x, -p.z, p.y)
 }
 
+/// `World`, with a parent above it (issue #1387). Bevy assigns the `GlobalTransform` of a root
+/// whose tree is dirty, which marks it changed even with the same value, and then has to
+/// recompute every direct child; a child's goes through `set_if_neq`, so with this parent
+/// `World`'s stays unchanged when only something under it moves, and its clean direct
+/// children stop at their test [design: bevy_transform 0.20.1 `src/systems.rs` :529, :707-718].
+///
+/// The parent has only `World` under it and stays identity: particles.rs and shot_fx.rs read
+/// `World`'s local matrix as the game-to-Bevy conversion. What is directly under `World` stays
+/// so (nav.rs `show_actor` finds a driven body by its parent being `World`).
 pub fn setup_root(mut commands: Commands) {
-    commands.spawn((Name::new("World"), WorldRoot, game_to_bevy(), Visibility::default()));
+    let parent = commands.spawn((Name::new("World parent"), Transform::IDENTITY, Visibility::default())).id();
+    commands.spawn((Name::new("World"), WorldRoot, game_to_bevy(), Visibility::default(), ChildOf(parent)));
 }
 
 #[allow(clippy::too_many_arguments)]
