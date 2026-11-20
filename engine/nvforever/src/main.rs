@@ -2199,10 +2199,12 @@ fn main() -> AppExit {
                 if let Some(a) = actors {
                     let fg = a.facegen.lock().expect("facegen cache");
                     info!(
-                        "FaceGen: {} shapes morphed, {} faces textured, {} skins textured, {} shapes tinted in the shader ({:.1} ms making offsets, {:.1} ms reading .egt files), {} EGMs not matching their shape",
+                        "FaceGen: {} shapes morphed, {} faces textured, {} skins textured ({} offsets made ahead on a worker thread, {} of them drawn), {} shapes tinted in the shader ({:.1} ms making offsets, {:.1} ms reading .egt files), {} EGMs not matching their shape",
                         fg.morphed_shapes,
                         fg.faces_tinted,
                         fg.skins_tinted,
+                        fg.offsets_ahead,
+                        fg.offsets_ahead_used,
                         fg.shapes_tinted,
                         fg.offset_time.as_secs_f64() * 1e3,
                         fg.egt_time.as_secs_f64() * 1e3,
