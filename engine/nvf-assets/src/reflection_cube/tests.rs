@@ -107,25 +107,25 @@ fn an_upload_waits_for_the_texture_and_is_written_once_per_fill() {
     let mut up = Upload::<u32>::default();
     // Nothing before the first fill.
     up.receive(&cube);
-    assert!(up.take(Some(1)).is_none());
+    assert!(up.levels_to_write(Some(1)).is_none());
     assert!(!cube.ready());
     cube.fill(|_, _| Vec3::splat(0.25));
     up.receive(&cube);
     // Pending until the texture exists.
-    assert!(up.take(None).is_none());
-    let levels = up.take(Some(1)).expect("written once the texture exists");
+    assert!(up.levels_to_write(None).is_none());
+    let levels = up.levels_to_write(Some(1)).expect("written once the texture exists");
     assert_eq!(levels.len(), SPECULAR_LEVELS as usize);
     assert!(!cube.ready(), "not ready before the write is recorded");
     up.written(1);
     assert!(cube.ready());
     // The same generation again: nothing more to write.
     up.receive(&cube);
-    assert!(up.take(Some(1)).is_none());
+    assert!(up.levels_to_write(Some(1)).is_none());
     // A new fill: written again, and the cube is not ready until it is.
     cube.fill(|_, _| Vec3::splat(0.5));
     assert!(!cube.ready());
     up.receive(&cube);
-    assert!(up.take(Some(1)).is_some());
+    assert!(up.levels_to_write(Some(1)).is_some());
     up.written(1);
     assert!(cube.ready());
 }
@@ -139,20 +139,47 @@ fn a_replaced_texture_gets_the_retained_levels_again() {
     let mut up = Upload::<u32>::default();
     cube.fill(|_, _| Vec3::splat(0.25));
     up.receive(&cube);
-    let first = up.take(Some(1)).unwrap();
+    let first = up.levels_to_write(Some(1)).unwrap();
     up.written(1);
     // The same texture: nothing.
     up.receive(&cube);
-    assert!(up.take(Some(1)).is_none());
-    // Gone for a frame (not yet prepared again): nothing, and nothing lost.
-    assert!(up.take(None).is_none());
+    assert!(up.levels_to_write(Some(1)).is_none());
+    // Gone for a frame (not yet prepared again): no ready texture, and no content lost.
+    assert!(up.levels_to_write(None).is_none());
+    assert!(!cube.ready());
     // Another texture under the same handle: the same levels again, then nothing more.
     up.receive(&cube);
-    let again = up.take(Some(2)).expect("the retained levels into the new texture");
+    let again = up.levels_to_write(Some(2)).expect("the retained levels into the new texture");
     assert!(Arc::ptr_eq(&first, &again));
     up.written(2);
-    assert!(up.take(Some(2)).is_none());
+    assert!(up.levels_to_write(Some(2)).is_none());
     assert!(cube.ready());
+}
+
+#[test]
+fn an_incompatible_replacement_does_not_lose_the_pending_levels() {
+    let mut images = Assets::<Image>::default();
+    let mut cube = ReflectionCube::new(&mut images);
+    let mut up = Upload::<u32>::default();
+    cube.fill(|_, _| Vec3::splat(0.25));
+    up.receive(&cube);
+    let first = up.levels_to_write(Some(1)).expect("the first texture");
+    up.written(1);
+    assert!(cube.ready());
+
+    // The render system finds a replacement, but rejects its descriptor instead of writing.
+    assert!(up.levels_to_write(Some(2)).is_some());
+    assert!(up.reject(2));
+    assert!(!up.reject(2), "report the incompatible texture only once");
+    assert!(!cube.ready(), "the previous texture's upload does not make the replacement ready");
+
+    // A valid replacement gets the same fill, even though the producer has not filled again.
+    up.receive(&cube);
+    let retained = up.levels_to_write(Some(3)).expect("the retained levels into the valid texture");
+    assert!(Arc::ptr_eq(&first, &retained));
+    up.written(3);
+    assert!(cube.ready());
+    assert!(up.levels_to_write(Some(3)).is_none());
 }
 
 #[test]
