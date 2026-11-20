@@ -301,6 +301,10 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
     let base = |g: &Game, f: FormId| crate::functions::base_of(g, f).unwrap_or(f);
     let zero = XVal::Num(0.0);
     let v = match name {
+        // Ordinary source calls use the current physical caster, never a stale
+        // CPTH room (vats-script-clearance.md). Generic receiver policy is unchanged.
+        name if crate::vats::handles_area_query(name) =>
+            XVal::Num(crate::vats::script_area(g, subject, name == "getvatsleftareafree")),
         // ---- magic items and effects ----
         // The item's effects in record order [observed: gaps2, the stimpak 4, the first
         // RestoreHealth, past the end 0].
@@ -1431,9 +1435,17 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "getactivemenumode" => XVal::Num(g.menu.or_else(|| g.menu_open(crate::game::menus::START).then_some(crate::game::menus::START)).map_or(0.0, f64::from)),
         // [observed: gaps3, 1]
         "getglobaltimemultiplier" => XVal::Num(g.ui.time_multiplier.unwrap_or(1.0)),
-        // No water under the crosshair here [observed: gaps2, 0; hypothesis: the engine
-        // tells no crosshair water].
-        "getcrosshairwater" => XVal::Ref(0),
+        // Activation-range object water, through the same effective ACTI/WNAM
+        // accessor as GetActivatorWaterType. This does not detect open surfaces.
+        "getcrosshairwater" => {
+            let base = g.senses.crosshair_ref
+                .and_then(|r| crate::functions::base_of(g, r))
+                .filter(|&b| g.data.sig(b) == Some(*b"ACTI"));
+            match base.and_then(|b| crate::nvse::record_value(g, b, "WNAM", "")) {
+                Some(XVal::Ref(water)) => XVal::Ref(water),
+                _ => XVal::Ref(0),
+            }
+        }
         // Return 0 [observed: gaps4].
         "setsoundflag" | "stopsoundalt" => zero,
         // An unknown patch [observed: gaps2 and gaps4, 0 for both].

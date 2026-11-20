@@ -65,8 +65,9 @@ The profile's `settings.ini` decides the rest, as it does for MO2:
   setters). NVForever's own settings are not taken from them.
 - `LocalSaves=true` — a bare `--load <name>` reads the profile's saves in `<profile>/saves`,
   the folder MO2 maps over the game's own. NVForever never writes there: every save and
-  autosave goes to `Documents\My Games\NVForever\saves`. Without the switch, `--load` reads
-  NVForever's folder.
+  autosave goes to NVForever's own home — `~/.local/share/nvforever/saves` on Linux, the
+  one place `--mo2` is used (`Documents\My Games\NVForever\saves` on Windows). Without the
+  switch, `--load` reads NVForever's folder.
 
 The start prints which INI files and which saves folder was read for `--load`. Design and
 limits: [mod-folders](design/mod-folders.md).

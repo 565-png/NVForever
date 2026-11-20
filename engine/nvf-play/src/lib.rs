@@ -57,6 +57,7 @@ pub mod flashlight;
 pub mod free_cam;
 pub mod script_camera;
 pub mod shake;
+pub mod sprint;
 pub mod game_start;
 pub mod furniture;
 pub mod grab;
@@ -123,6 +124,7 @@ pub mod reverb;
 pub mod repair;
 pub mod repeat;
 pub mod reputation;
+pub mod quick_loot;
 pub mod reticle;
 pub mod rumble;
 pub mod save;
@@ -130,6 +132,9 @@ pub mod screen_splatter;
 pub mod script;
 pub mod script_input;
 pub mod script_switches;
+mod script_texture_filter;
+#[cfg(target_os = "windows")]
+mod script_cursor;
 pub mod script_draw;
 pub mod script_events;
 pub mod script_hud;
@@ -145,6 +150,7 @@ pub mod settings_view;
 pub mod start_menu;
 pub mod sim;
 pub mod space;
+pub mod stance;
 pub mod terminal;
 pub mod tiles;
 pub mod tutorial_menu;
@@ -404,9 +410,10 @@ impl Plugin for PlayPlugin {
             .configure_sets(Update, (PlaySet::Input, PlaySet::Physics, PlaySet::Activation, PlaySet::Scripts, PlaySet::Ui, PlaySet::Sync).chain())
             .add_plugins((sim::SimPlugin, phys::PhysPlugin, player::PlayerPlugin, activate::ActivatePlugin, menu::MenuPlugin, dropped::DroppedPlugin, moved::MovedPlugin, pause::PausePlugin, wait::WaitPlugin, flashlight::FlashlightPlugin))
             .add_plugins((script::ScriptPlugin, hitvol::HitVolumePlugin, combat::CombatPlugin, sfx::SfxPlugin, music::MusicPlugin, ambient::AmbientPlugin, radio::RadioPlugin, voice::VoicePlugin, holotape::HolotapePlugin, loading::LoadingPlugin, dialogue_look::DialogueLookPlugin, hud::HudPlugin, compass::CompassPlugin))
-            .add_plugins((world_sounds::WorldSoundsPlugin, effect_sounds::EffectSoundsPlugin, reticle::ReticlePlugin, xp_meter::XpMeterPlugin, radiation::RadiationPlugin, borders::BordersPlugin))
+            .add_plugins((world_sounds::WorldSoundsPlugin, effect_sounds::EffectSoundsPlugin, reticle::ReticlePlugin, quick_loot::QuickLootPlugin, xp_meter::XpMeterPlugin, radiation::RadiationPlugin, borders::BordersPlugin))
             .add_plugins((ui_sounds::UiSoundsPlugin, pad::PadPlugin, key_repeat::KeyRepeatPlugin, rumble::RumblePlugin, shake::ShakePlugin, script_input::ScriptInputPlugin, aim_assist::AimAssistPlugin))
             .add_plugins(script_switches::ScriptSwitchesPlugin)
+            .add_plugins(script_texture_filter::ScriptTextureFilterPlugin)
             .add_plugins((chargen::ChargenPlugin, creator::CreatorPlugin, fade::FadePlugin))
             .add_plugins((levelup::LevelUpPlugin, sneak_gauges::SneakGaugesPlugin, sound_cover::SoundCoverPlugin))
             .add_plugins(perk_marks::PerkMarksPlugin)

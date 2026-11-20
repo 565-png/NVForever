@@ -1143,6 +1143,12 @@ impl SkyState {
         sun_direction(&self.climate, self.hour, SUN_SOUTH)[2].clamp(-1.0, 1.0).asin().to_degrees()
     }
 
+    /// Sun elevation in degrees at another `hour` of the same climate (any value; the
+    /// heat haze's afternoon lag, `heat_haze.rs`).
+    pub fn sun_elevation_at(&self, hour: f32) -> f32 {
+        sun_direction(&self.climate, hour, SUN_SOUTH)[2].clamp(-1.0, 1.0).asin().to_degrees()
+    }
+
     /// Star and moon visibility (0..1) at this hour.
     pub fn night_visibility(&self) -> (f32, f32) {
         let e = self.sun_elevation();
@@ -1832,6 +1838,9 @@ pub fn sun_height_and_fade(sky: &SkyState) -> (f32, f32) {
 /// Switch the sun's shadows on or off now (the settings page); they reach
 /// [`SkyState::shadow_distance`].
 pub fn set_shadows(world: &mut World, on: bool) {
+    if let Some(mut work) = world.get_resource_mut::<crate::quality_probe::Work>() {
+        work.shadow_updates += 1;
+    }
     let distance = {
         let mut sky = world.resource_mut::<SkyState>();
         sky.shadows = on;

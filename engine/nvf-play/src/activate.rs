@@ -53,7 +53,7 @@ impl Plugin for ActivatePlugin {
             .init_resource::<HudMessage>()
             .init_resource::<ActivateNext>()
             .insert_resource(AutoActivate::from_env())
-            .add_systems(Update, (shift_talks, find_target, activate).chain().in_set(PlaySet::Activation).run_if(in_state(PlayState::Playing)))
+            .add_systems(Update, (shift_talks, find_target, crate::quick_loot::follow, activate).chain().in_set(PlaySet::Activation).run_if(in_state(PlayState::Playing)))
             .add_systems(Update, sync_visuals.in_set(PlaySet::Sync));
     }
 }
@@ -292,11 +292,7 @@ pub(crate) fn find_target(
         }
         // GetCrosshairRef: what is in activation reach; GetCrosshairRefEx: at any range.
         let now = hit.as_ref().and_then(|h| h.form_id).map(FormId);
-        // JohnnyGuitar's crosshair handlers hear each reference the prompt comes onto.
-        if let Some(r) = now.filter(|_| now != rt.game.senses.crosshair_ref) {
-            rt.game.jg8_crosshair(r);
-        }
-        rt.game.senses.crosshair_ref = now;
+        rt.game.set_crosshair_ref(now);
         rt.game.senses.crosshair_far = far_ref.map(FormId);
     }
     let mut described: HashMap<u32, Option<(String, Action)>> = HashMap::new();
@@ -662,6 +658,14 @@ pub(crate) fn activate(
     } else {
         *hold = None;
     }
+    // Quick Loot has Activate while its list shows (it takes); its Wait asks for the
+    // full menu, activated here as Activate would (`crate::quick_loot`) [design,
+    // #2933].
+    let full = crate::quick_loot::take_full_request();
+    if full || crate::quick_loot::holds_input() {
+        pressed_now = full;
+        *hold = None;
+    }
     if !pressed_now && !fired && queued.is_none() {
         return;
     }
@@ -691,7 +695,7 @@ pub(crate) fn activate(
     };
     // E pressed on something the player can hold: a tap activates it when E comes up,
     // a hold picks it up (`crate::grab`, docs/spec-notes/grab.md §2).
-    if queued.is_none() && !fired {
+    if queued.is_none() && !fired && !full {
         if let Some(g) = grab.as_mut().filter(|g| g.holdable(t.form_id) && g.tap.is_none()) {
             let candidate = g.candidate.expect("holdable has a candidate");
             g.tap = Some(crate::grab::Tap { target: Some(t.clone()), candidate, held: 0.0 });
