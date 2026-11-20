@@ -1822,6 +1822,8 @@ fn main() -> AppExit {
     .add_plugins(terrain_shadows::TerrainShadowsPlugin)
     .add_systems(Update, (cell_buffer::remember, cell_buffer::tell_game).chain().after(world::stream))
     .add_systems(Update, world::script_markers.before(world::stream))
+    // The start's cells read ahead under its picture hold, before `stream` may run.
+    .add_systems(Update, world::read_ahead_under_hold.before(world::stream))
     .add_systems(Update, world::draw_waiting_actors.after(world::stream))
     // Actors of the next ring of cells read and prepared before they come into range.
     .insert_resource(readahead::ReadAhead::from_env())

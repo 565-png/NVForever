@@ -174,13 +174,15 @@ uGridsToLoad=5).
 
 - **Cells** (`nvforever/src/world.rs`, `nvf-assets/src/model.rs`, `texture.rs`;
   `CellSpawn`, `ReadAhead`). Before the start square is in, and behind a loading screen,
-  cells load whole in the frame they are reached, as before. After it:
+  cells load whole in the frame they are reached, as before; under the start's screen they
+  are read ahead from its picture hold on and wait for that read-ahead first
+  (docs/design/loading-screen.md §1a, `NVF_START_POOL_PREP`). After it:
   - *Read-ahead.* The cells up to one step beyond the loaded ones (the 7 × 7 square
     around the camera's cell with `--radius 2`) are read on a worker thread: the
     distinct models their references draw (`cell_models`) and their landscape (LAND
     read, quadrant meshes built: `terrain::prepare_terrain`). Each model not prepared yet
     is then prepared on a worker thread (`ModelCtx::models_ready`): read, inflated,
-    parsed, meshes built (tangents included), textures decoded. The worker puts its
+    parsed, meshes built (tangents included: below), textures decoded. The worker puts its
     meshes, materials and skins under handles reserved from the asset stores; the main
     thread puts them in (`ModelCtx::take_fetched`, PreUpdate, at most 2 ms a frame) and
     the model joins the cache. Textures a worker decodes go into a list shared with the
@@ -204,6 +206,34 @@ uGridsToLoad=5).
   - *Caches.* Unused models, actor parts and textures stay 300 s (was 60 s), at most 2,048
     of each (was 256): models read ahead wait unused until their cell loads, and turning
     back finds the cells left behind still prepared.
+  - *Tangents from the files* (`nvf_assets::tangents`, 2026-11-19). A static model's
+    normal-mapped shapes take the tangents their files store instead of generating them
+    (Bevy's `generate_tangents`, mikktspace), which was about 80 % of a model's
+    preparation [observed: `NVF_LOADING_PROBE`, Novac start: 2.6-3.8 s of the read pool's
+    time and 0.33-0.46 s on the main thread under the screen]. The mapping and its checks:
+    docs/spec-notes/nif.md §6 "Stored tangents". A shape that stores none, or unusable ones
+    (wrong length, not finite, a zero vector or a bitangent along the normal at a vertex a
+    triangle uses), generates them as before; so do actor parts (`nvf_assets::actor`), which
+    #3072 rewrites. Test aid `NVF_STORED_TANGENTS=0`: all generated. A run ends with
+    `models: normal-map tangents of <n> shapes read from their files (…), <n> generated
+    (…)`. Bench (a local probe, not in the repo: the 230 static models of the Novac start
+    prepared without the game, on the calling thread and on the read pool, the time
+    `generate_tangents` took counted apart; 7 alternating runs each, medians, a busy
+    machine) [observed 2026-11-19]:
+
+    | preparing the 230 models | generated | read from the files |
+    |---|---|---|
+    | on one thread (wall) | 560 ms (tangents 344 ms) | 215 ms (tangents 7 ms) |
+    | on the 4-thread read pool (wall) | 165 ms | 66 ms |
+    | on the read pool (its threads' time) | 648 ms (tangents 403 ms) | 260 ms (tangents 8 ms) |
+
+    To measure it again with what is in the repo: start at Novac (`--cell Novac --play
+    --hour 22`) as is and with `NVF_STORED_TANGENTS=0`, a few runs each, and compare the
+    main thread's cell loading in `streaming summary: <n> cells loaded (<ms> ms on the main
+    thread)` and the start's cells in `world: the start's cells drawn: …` (the smoke
+    scenarios `start-pool-prep` and `start-pool-prep-off` run that start, the second with
+    `NVF_START_POOL_PREP=0` too). That measures the start in the game, not the models'
+    preparation alone as the bench did.
 
 - **The reads' own pool** (#1732, `nvf_assets::read_pool`). Everything above that runs "on
   a worker thread" for cells, models, textures, actor parts, clips and `.egt` files runs

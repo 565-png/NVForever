@@ -38,6 +38,7 @@ use crate::model::ModelCtx;
 use crate::nif_material::NifMaterial;
 use crate::model::ModelSink;
 use crate::nif_spawn::{affine, build_mesh, is_editor_marker, shaded_model, shape_material_reusing_tangents, shape_material_with, shape_props, shape_skin, to_bevy, Props};
+use crate::tangents::Tangents;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::DynamicSkinnedMeshBounds;
 use bevy::math::Affine3A;
@@ -1008,7 +1009,7 @@ fn prepare_part_into(sink: &mut impl ModelSink, path: &str, nif: Nif, failures: 
         }
         // The actor's clips may fade this shape's material alpha (Mr. House's screens).
         props.alpha_gated = crate::nif_spawn::material_alpha_controlled(&file, &dec, o.block);
-        let Some((mut mesh, _tris)) = build_mesh(data) else { continue };
+        let Some((mut mesh, _tris, _)) = build_mesh(data) else { continue };
         // Hair-shader shapes (hair, beards, eyebrows) carry a mask in their vertex
         // colours, not a colour [observed: red 0.04–0.39 with green and blue at 1 in
         // `hairbase.nif` and `beardmustachecurly.nif`; multiplied in, the hair turns
@@ -1034,7 +1035,7 @@ fn prepare_part_into(sink: &mut impl ModelSink, path: &str, nif: Nif, failures: 
         if caps > 0 {
             props.double_sided = true;
         }
-        let (material, missing) = shape_material_with(&props, &mut mesh, sink);
+        let (material, missing) = shape_material_with(&props, &mut mesh, sink, Tangents::Generate);
         if let Some(t) = missing {
             failures.push(format!("{path}: texture {t} not loaded"));
         }

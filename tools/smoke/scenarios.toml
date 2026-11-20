@@ -9348,6 +9348,46 @@ expect = [
 ]
 
 [[scenario]]
+name = "start-pool-prep"
+source = "docs/design/loading-screen.md §1a (2026-11-19): the start's cells are read ahead under the picture hold and wait for that read-ahead, so their models are prepared on the read pool instead of on the main thread in the first frame after the hold; static models take the tangents their files store (docs/spec-notes/nif.md §6 \"Stored tangents\", docs/design/streaming-hitches.md §2)"
+note = "Passed 2026-11-20 (GTX 1050, a build of this change with the other open performance PRs). At Novac 22:00 the start draws 25 cells and about 230 static models [observed: NVF_LOADING_PROBE, a local probe, 2026-11-19]. The twin start-pool-prep-off runs with both test aids off"
+areas = ["loading", "streaming"]
+paths = ["engine/nvforever/src/world.rs", "engine/nvf-assets/src/tangents.rs", "engine/nvf-assets/src/model.rs", "engine/nvf-assets/src/nif_spawn.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Novac", "--play", "--hour", "22", "--no-voice", "--no-messages"]
+run_seconds = 10
+order = [[
+  { re = "world: the start's read-ahead begins under the loading screen's picture hold: (?P<n>\\d+) cells", range = [9, 100], label = "the cells around the start are read ahead under the picture hold" },
+  "loading screen: the world starts loading",
+  { re = "world: the start's cells drawn: (?P<n>\\d+) with their models prepared on the read pool", range = [1, 100], label = "the start's cells come in with their models prepared on the read pool" },
+  "loading screen down after",
+]]
+expect = [
+  { re = 'models: normal-map tangents of (?P<n>\d+) shapes read from their files', range = [100, 1000000], label = "the static models' normal maps use the tangents their files store" },
+]
+forbid = ["test aid NVF_START_POOL_PREP=0", "test aid NVF_STORED_TANGENTS=0"]
+
+[[scenario]]
+name = "start-pool-prep-off"
+source = "the test aids NVF_START_POOL_PREP=0 and NVF_STORED_TANGENTS=0 put the start and the static models' tangents back as they were before 2026-11-19 (docs/design/loading-screen.md §1a, docs/spec-notes/nif.md §6 \"Stored tangents\")"
+note = "Passed 2026-11-20 (as start-pool-prep); start-pool-prep's twin"
+areas = ["loading", "streaming"]
+paths = ["engine/nvforever/src/world.rs", "engine/nvf-assets/src/tangents.rs", "engine/nvf-assets/src/model.rs", "engine/nvf-assets/src/nif_spawn.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_START_POOL_PREP = "0", NVF_STORED_TANGENTS = "0" }
+args = ["--cell", "Novac", "--play", "--hour", "22", "--no-voice", "--no-messages"]
+run_seconds = 10
+order = [[
+  "test aid NVF_START_POOL_PREP=0",
+  "loading screen: the world starts loading",
+  "loading screen down after",
+]]
+expect = [
+  "test aid NVF_STORED_TANGENTS=0",
+  { re = 'models: normal-map tangents of 0 shapes read from their files .*test aid (?P<n>\d+)\)', range = [100, 1000000], label = "every static model's tangents generated" },
+]
+forbid = ["world: the start's read-ahead begins under", "world: the start's cells drawn:"]
+
+[[scenario]]
 name = "holmes-comes-from-far"
 source = "owner 2026-10-24 (actors heading for the player from outside the loaded area): Malcolm Holmes after the first star cap, as the original's observer capture holmes_far_travel showed (fnv_ai::process, docs/spec-notes/ai-observer.md §13)"
 note = "the player stands on Holmes's observed route, about 15,000 units west of SSHQMalcolmHolmesMarker; at 1 s AddItem gives the first star cap, whose OnAdd script (NVStarBottleCapScript) moves him to the marker out of the loaded area and enables him. His Dialogue package (Always Run, the player) walks him at the Low level, every 120 s, and the walk stops at the edge of the loaded area; from there he runs in and talks"
