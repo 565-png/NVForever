@@ -656,13 +656,22 @@ fn inventory_sources(_data: &GameData, sim: &SimState, game: &Game<'_>) -> std::
 }
 
 impl Runtime {
-    fn new(data: &'static GameData, sim: &mut SimState, new_game: bool, packages: bool) -> Runtime {
+    fn new(
+        data: &'static GameData,
+        sim: &mut SimState,
+        new_game: bool,
+        packages: bool,
+        tweaks: Option<&fnv_game::tweaks::Tweaks>,
+    ) -> Runtime {
         // Message boxes are menus until the player closes them (the default,
         // `GameConfig::modal_message_boxes`). With actors living by their packages, the
         // packages' scripts and idles run from the first frame (the residents ask for the
         // same interval when they start).
         let cfg = GameConfig { frame_seconds: 1.0 / 60.0, package_interval: packages.then_some(PACKAGE_INTERVAL), ..GameConfig::default() };
-        let game = Game::new(data, World::new(sim.forms, sim.refs, sim.world.config()), cfg);
+        let mut game = Game::new(data, World::new(sim.forms, sim.refs, sim.world.config()), cfg);
+        if let Some(tweaks) = tweaks {
+            game.bind_stewie_stat_settings(tweaks);
+        }
         // The simulation's world is the one played (`with_world`): its placed actors carry
         // their template's items too (template flag "Inventory"), each picked at the
         // level it reads leveled lists at, as `Game::new` picks them (not level 1).
@@ -1971,9 +1980,16 @@ pub(crate) fn start_world_aids(
     }
 }
 
-/// The run's furniture, terminal and door messages, a refused load and the save's engine part
-/// still to put back (`crate::save::PendingEngine`).
-type UsesAndLoads<'w> = (MessageWriter<'w, crate::furniture::UseFurniture>, MessageWriter<'w, crate::terminal::OpenTerminal>, Option<ResMut<'w, crate::doors::Doors>>, MessageWriter<'w, crate::save::LoadRefused>, Option<Res<'w, crate::save::PendingEngine>>);
+/// Furniture, terminal and door messages, refused loads, the pending engine save
+/// state, and the application settings to bind before startup and restore scripts.
+type UsesAndLoads<'w> = (
+    MessageWriter<'w, crate::furniture::UseFurniture>,
+    MessageWriter<'w, crate::terminal::OpenTerminal>,
+    Option<ResMut<'w, crate::doors::Doors>>,
+    MessageWriter<'w, crate::save::LoadRefused>,
+    Option<Res<'w, crate::save::PendingEngine>>,
+    Option<Res<'w, crate::tweaks::TweakSettings>>,
+);
 
 /// [`run_scripts`]'s loading screen, keys, menu files, the pause menu's page and the
 /// count of MenuMode frames under its Mods page (`crate::tiles::mods`), and the main menu
@@ -2032,11 +2048,11 @@ pub(crate) fn run_scripts(
     mut hud: ResMut<ScriptHud>,
     mut corner: ResMut<crate::corner_messages::CornerMessages>,
     mut quest_lines: ResMut<crate::quest_messages::QuestMessages>,
-    (mut changed, mut fades, mut repose): (MessageWriter<RefChanged>, MessageWriter<crate::fade::RefFade>, MessageWriter<crate::RefRepose>),
+    (mut changed, mut fades, mut repose, mut script_sounds): (MessageWriter<RefChanged>, MessageWriter<crate::fade::RefFade>, MessageWriter<crate::RefRepose>, Option<ResMut<crate::sfx::ScriptSounds>>),
     mut travel: MessageWriter<TravelRequest>,
     mut open: MessageWriter<OpenContainer>,
     mut used: MessageReader<ItemUsed>,
-    (mut sit, mut terminals, mut doors, mut refused, pending_engine): UsesAndLoads,
+    (mut sit, mut terminals, mut doors, mut refused, pending_engine, tweak_settings): UsesAndLoads,
     paused: Res<crate::pause::Paused>,
     (mut screen, bindings, tiles, page, mut mods_ticks, menu_to_open): ScreenAndMenus,
 ) {
@@ -2060,7 +2076,8 @@ pub(crate) fn run_scripts(
             }
             Some(Ok((data, secs))) => {
                 st.loader = None;
-                let mut rt = Runtime::new(data, &mut sim, st.new_game, play.0.packages);
+                let tweaks = tweak_settings.as_deref().map(|settings| &settings.game);
+                let mut rt = Runtime::new(data, &mut sim, st.new_game, play.0.packages, tweaks);
                 // A save loaded later keeps the game's configuration (`Runtime::restore_save`).
                 rt.game.cfg.answer_ok_boxes = st.no_messages;
                 rt.start = st.start.clone();
@@ -2087,6 +2104,9 @@ pub(crate) fn run_scripts(
                         Ok(changed_refs) => {
                             info!("load: restored {}: {} changed references, {} quests, {} script instances", path.display(), changed_refs.len(), rt.game.quests.len(), rt.game.instances.len());
                             restored = true;
+                            if let Some(tweaks) = tweaks {
+                                rt.game.bind_stewie_stat_settings(tweaks);
+                            }
                             // SUP's GetSaveName and GetLoadedSaveSize read the last save
                             // loaded (`fnv_game::nvse_sup4`).
                             let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -2534,6 +2554,11 @@ pub(crate) fn run_scripts(
             }
             ScriptEffect::OpenContainer(c) => {
                 open.write(OpenContainer { container: c });
+            }
+            ScriptEffect::ItemAddedSound(item) => {
+                if let Some(s) = script_sounds.as_deref_mut() {
+                    s.items_added.push(item);
+                }
             }
             ScriptEffect::Notify(mut note) => {
                 // The player string codes (`&PCName;`) as they read now; ShowMessage's
@@ -2989,6 +3014,9 @@ mod runtime_start_tests {
         assert!(!runtime_waits(false, false), "the menu is open, paused, or was never asked for");
     }
 }
+
+#[cfg(test)]
+mod stewie_profile_tests;
 
 #[cfg(test)]
 mod clearance_tests;

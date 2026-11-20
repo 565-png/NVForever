@@ -400,6 +400,7 @@ mod tests {
         ("item-distance", "Display"),
         ("shadow-distance", "Display"),
         ("grass-distance", "Display"),
+        ("tree-distance", "Display"),
         ("upscaler", "Graphics"),
         ("upscaler-quality", "Graphics"),
         ("dlss-model", "Graphics"),

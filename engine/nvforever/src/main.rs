@@ -325,7 +325,9 @@ struct Args {
     /// (fSplitDistanceMult).
     #[arg(long, default_value_t = 1.5)]
     lod_split: f32,
-    /// Distant trees drawn as billboards out to this distance (fTreeLoadDistance); 0: none.
+    /// Distant trees drawn as billboards out to this distance (fTreeLoadDistance), at most
+    /// --lod-distance: the Tree distance slider's start (a kept or moved slider wins); 0:
+    /// none, whatever the slider.
     #[arg(long, default_value_t = 40_000.0)]
     tree_distance: f32,
     /// Do not draw distant LOD.
@@ -570,6 +572,12 @@ struct Args {
     /// shadow-filter-hardware or shadow-filter-temporal), for comparing them one at a time.
     #[arg(long, value_delimiter = ',', conflicts_with = "graphics")]
     graphics_only: Option<Vec<String>>,
+    /// Ambient occlusion on at this level whatever the look (--graphics, --graphics-only)
+    /// says: `performance` (one slice direction a pixel instead of two, ssao.rs `AoLevel`) or
+    /// `quality` (also a bare `--ambient-occlusion`). The settings page's Ambient occlusion row
+    /// chooses Off, Performance or Quality too.
+    #[arg(long, value_enum, num_args = 0..=1, default_missing_value = "quality", require_equals = true)]
+    ambient_occlusion: Option<ssao::AoLevel>,
     /// Test aid: log the mean and the slowest frame time every this many seconds (real
     /// time), for measuring what a graphics switch costs; the picture is then not held to
     /// the display's refresh (no vsync).
@@ -1594,6 +1602,10 @@ fn main() -> AppExit {
     };
     graphics.upscaler = requested_upscaler;
     graphics.dlss_model = args.dlss_model.unwrap_or_default();
+    if let Some(level) = args.ambient_occlusion {
+        graphics.ambient_occlusion = true;
+        graphics.ambient_occlusion_level = level;
+    }
     let frame_times = match (args.log_frame_times, args.graphics_cycle.as_deref()) {
         (None, _) => None,
         (Some(every), cycle) => {
@@ -2795,6 +2807,17 @@ mod tests {
             let args = parse(a);
             assert!(args.play && args.menu && !args.explore, "{a:?}");
         }
+    }
+
+    /// `--ambient-occlusion` alone means Quality, `=performance` the cheaper level; the value
+    /// needs its `=`, as `--sun-shadows`'s.
+    #[test]
+    fn ambient_occlusion_takes_an_optional_level() {
+        use crate::ssao::AoLevel;
+        assert_eq!(parse(&["--cell", "Goodsprings"]).ambient_occlusion, None);
+        assert_eq!(parse(&["--ambient-occlusion", "--cell", "Goodsprings"]).ambient_occlusion, Some(AoLevel::Quality));
+        assert_eq!(parse(&["--ambient-occlusion=performance"]).ambient_occlusion, Some(AoLevel::Performance));
+        assert_eq!(parse(&["--ambient-occlusion=quality", "--graphics", "vanilla"]).ambient_occlusion, Some(AoLevel::Quality));
     }
 
     /// `--sun-shadows` alone still means the default mode (Quality); `=performance` the
