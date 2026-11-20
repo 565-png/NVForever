@@ -183,7 +183,14 @@ fn patch_display_sum(mut state: ResMut<FunctionsShader>, mut shaders: ResMut<Ass
         None => (patched, false),
     };
     let patched = crate::fog::with_source(shader, patched);
-    let _ = shaders.insert(&state.handle, patched);
+    // Nothing is published as installed unless the patched shader is in place: a gate
+    // reported installed over Bevy's ungated text would hand the cube to every lit shader.
+    if let Err(e) = shaders.insert(&state.handle, patched) {
+        error!("{PBR_FUNCTIONS}: the patched shader could not be stored ({e:?}); surfaces keep Bevy's lighting sum");
+        crate::ssao_lighting::set_hook_state(crate::ssao_lighting::HookState::Failed);
+        reflection_gate_failed();
+        return;
+    }
     info!("lights: display-value lighting sum installed");
     if ao_hooked {
         crate::ssao_lighting::set_hook_state(crate::ssao_lighting::HookState::Installed);
@@ -1174,7 +1181,8 @@ mod tests {
         let gated = gate_patched(&input).expect("the gate's anchors match");
         assert!(ungated_blocks(&gated).is_empty());
         assert_eq!(gated.matches(&format!("@if(ENVIRONMENT_MAP && {}) {{", nvf_assets::reflection_cube::REFLECT_DEF)).count(), 2, "the def the NIF pipelines set");
-        assert_eq!(gated.matches("    if specular_occlusion > 0.0 {\n").count(), 1);
+        assert_eq!(gated.matches("    if specular_occlusion > 0.0 {\n").count(), 2, "both cube lookups skipped at weight 0, the reflection and the transmitted light");
+        assert_eq!(gated.matches("    var transmitted_environment_light: environment_map::EnvironmentMapLight;\n").count(), 1);
         assert!(crate::sun_visibility::tests::balanced(&gated));
         // Undo: each replacement back to its anchor, in order, gives the input.
         let mut undone = gated.clone();

@@ -121,3 +121,22 @@ fn the_opted_in_fragment_asks_whether_the_view_has_its_own_cube() {
         }
     }
 }
+
+#[test]
+fn a_refracting_nif_main_pass_with_the_opt_in_composes_with_the_gated_transmitted_light() {
+    // NIF refraction sets specular transmission, so its main pass compiles the transmitted
+    // environment block under the opt-in (lights/reflection_gate.rs, fourth edit: no cube
+    // lookup at weight 0). It composes, plain and alpha-tested; REFRACT returns before any
+    // lighting, so the fragment reads no cube.
+    let mut compiler = Compiler::with_reflection_gate();
+    let refract = ["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "REFRACT", "STANDARD_MATERIAL_SPECULAR_TRANSMISSION", "STANDARD_MATERIAL_DIFFUSE_OR_SPECULAR_TRANSMISSION"];
+    let refract_cut = ["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "REFRACT", "STANDARD_MATERIAL_SPECULAR_TRANSMISSION", "STANDARD_MATERIAL_DIFFUSE_OR_SPECULAR_TRANSMISSION", "MAY_DISCARD"];
+    for extra in [&refract[..], &refract_cut[..]] {
+        let compiled = compiler.compile("nvf_assets/nif_material.wesl", extra);
+        assert!(compiled.module.entry_points.iter().any(|e| e.stage == naga::ShaderStage::Fragment), "{extra:?}: a fragment entry point");
+        assert!(!fragment_reads(&compiled, SPECULAR_CUBE.0, SPECULAR_CUBE.1), "{extra:?}: refraction returns before lighting");
+    }
+    // Bevy's own fragment with transmission and a cube, without the opt-in: no cube read.
+    let compiled = compiler.compile("bevy_pbr/render/pbr.wesl", &["ENVIRONMENT_MAP", "STANDARD_MATERIAL_SPECULAR_TRANSMISSION", "STANDARD_MATERIAL_DIFFUSE_OR_SPECULAR_TRANSMISSION"]);
+    assert!(!fragment_reads(&compiled, SPECULAR_CUBE.0, SPECULAR_CUBE.1));
+}

@@ -13,7 +13,12 @@
 //! first block, the ordinary reflection, also skips its cube lookup where its weight
 //! (`specular_occlusion`, which the NIF fragment sets to the authored mark times its other
 //! factors) is 0, so a legacy NIF shape of a view with a cube reads nothing. The second, the
-//! transmitted environment light, needs a transmission def no NIF pipeline has.
+//! transmitted environment light, compiles where a transmission def is set as well: NIF
+//! refraction sets specular transmission (nvf_assets nif_spawn.rs `refraction_material`, and
+//! the transmission anchor nif_material.rs makes), so a refracting NIF main pass compiles it
+//! with the opt-in. That is harmless today, since nif_material.wesl's REFRACT path returns
+//! before any lighting; the gate's fourth edit also skips its cube lookup where the weight is
+//! 0, as the first block's, so no non-authored material could read the cube through it.
 //!
 //! Without `NVF_PBR_REFLECT` the edited text compiles to what it compiled to without
 //! `ENVIRONMENT_MAP`: nothing of the environment map is read, whatever the view has.
@@ -22,7 +27,7 @@
 /// 0.20.1, after lights/display_shader.rs `DISPLAY_EDITS`, the sun visibility's and the
 /// ambient occlusion's hooks, none of which touches these lines], in order, each at the
 /// first occurrence of its anchor after the last edit: (anchor, replacement).
-pub const GATE_EDITS: [(&str, &str); 3] = [
+pub const GATE_EDITS: [(&str, &str); 4] = [
     (
         "    // Environment map light (indirect)\n@if(ENVIRONMENT_MAP) {\n",
         "    // Environment map light (indirect)
@@ -42,6 +47,24 @@ pub const GATE_EDITS: [(&str, &str); 3] = [
 @if(ENVIRONMENT_MAP && NVF_PBR_REFLECT) {
 
 @if(STANDARD_MATERIAL_DIFFUSE_OR_SPECULAR_TRANSMISSION) {
+",
+    ),
+    (
+        "    let transmitted_environment_light = environment_map::environment_map_light(
+        &transmissive_environment_light_input,
+        &clusterable_object_index_ranges,
+        false,
+    );
+",
+        "    // NVForever reflection gate: no cube lookup where the weight is 0 (the light stays zero).
+    var transmitted_environment_light: environment_map::EnvironmentMapLight;
+    if specular_occlusion > 0.0 {
+    transmitted_environment_light = environment_map::environment_map_light(
+        &transmissive_environment_light_input,
+        &clusterable_object_index_ranges,
+        false,
+    );
+    }
 ",
     ),
 ];
