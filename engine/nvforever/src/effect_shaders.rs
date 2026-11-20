@@ -297,6 +297,28 @@ impl Faded {
     }
 }
 
+/// The mesh's own material under the see-through copies it may wear (#2981): the material
+/// both SetActorAlpha's [`Faded`] and a fade's `nvf_play::fade::Fading` give back in the end,
+/// never one of their blended copies. Whichever of the two started second copied what the
+/// mesh wore then, so its stored original may be the other's copy:
+/// - actor alpha first: the fade's original is the alpha's copy; `Faded::original` is the
+///   mesh's own;
+/// - fade first: the alpha's original is the mesh's own when it was made from the fade's
+///   original (as [`AlphaDrawing`] does now), or, made before that rule, the fade's copy, and
+///   then the fade's original is the mesh's own.
+///
+/// A texture swap (`crate::texture_swap`) matches and copies this material, and the actor's
+/// alpha copies it, so neither bakes another fade's alpha into a material that stays
+/// [design].
+pub(crate) fn persistent_material(drawn: &Handle<NifMaterial>, drawing: Option<&nvf_assets::nif_material::MaterialOverride>, faded: Option<&Faded>, fading: Option<&nvf_play::fade::Fading>) -> Handle<NifMaterial> {
+    match (faded, fading) {
+        (Some(a), Some(f)) if a.original.id() == f.copy().id() => f.original().clone(),
+        (Some(a), _) => a.original.clone(),
+        (None, Some(f)) => f.original().clone(),
+        (None, None) => nvf_assets::nif_material::plain_material(drawn, drawing).clone(),
+    }
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct Shaders {
     records: HashMap<u32, Option<Box<EffectShader>>>,
@@ -893,7 +915,7 @@ pub(crate) struct AlphaDrawing<'w, 's> {
     st: ResMut<'w, Shaders>,
     materials: ResMut<'w, Assets<NifMaterial>>,
     #[allow(clippy::type_complexity)]
-    drawn: Query<'w, 's, (Entity, &'static RefVisual, Option<&'static MeshMaterial3d<NifMaterial>>, Option<&'static crate::mesh_terrain_blend::BlendShape>, Option<&'static Faded>, Option<&'static nvf_assets::nif_material::MaterialOverride>), Without<Overlay>>,
+    drawn: Query<'w, 's, (Entity, &'static RefVisual, Option<&'static MeshMaterial3d<NifMaterial>>, Option<&'static crate::mesh_terrain_blend::BlendShape>, Option<&'static Faded>, Option<&'static nvf_assets::nif_material::MaterialOverride>, Option<&'static nvf_play::fade::Fading>), Without<Overlay>>,
 }
 
 impl AlphaDrawing<'_, '_> {
@@ -901,18 +923,28 @@ impl AlphaDrawing<'_, '_> {
         let Self { commands, st, materials, drawn } = self;
         let st = &mut **st;
         let mut changed: HashMap<u32, (f32, u32)> = HashMap::new();
-        for (e, rv, mat, blend, faded, drawing) in &*drawn {
+        for (e, rv, mat, blend, faded, drawing, fading) in &*drawn {
             let Some(mat) = nvf_assets::nif_surface_blend::source_material(mat, blend) else { continue };
             let want = alpha.get(&FormId(rv.0)).copied();
             match (want, faded) {
                 (None, None) => {}
                 (None, Some(f)) => {
-                    commands.entity(e).insert(MeshMaterial3d(f.original.clone())).remove::<Faded>();
+                    let original = persistent_material(mat, drawing, Some(f), fading);
+                    commands.entity(e).insert(MeshMaterial3d(original)).remove::<Faded>();
+                    // A fade under way copied what the mesh wore, maybe this alpha's copy,
+                    // which it would give back at its end and leave the mesh see-through
+                    // (#2981): its copy goes, and its next step copies the mesh's own
+                    // material, as after a texture swap (texture_swap.rs).
+                    if let Some(f) = fading {
+                        materials.remove(f.copy());
+                        commands.entity(e).remove::<nvf_play::fade::Fading>();
+                    }
                     changed.entry(rv.0).or_insert((1.0, 0)).1 += 1;
                 }
                 (Some(a), Some(f)) if f.alpha == a && f.made_from == f.original.id() => {}
                 (Some(a), f) => {
-                    let original = f.map(|f| f.original.clone()).unwrap_or_else(|| nvf_assets::nif_material::plain_material(mat, drawing).clone());
+                    // The mesh's own material, not a fade's see-through copy (#2981).
+                    let original = persistent_material(mat, drawing, f, fading);
                     let key = (original.id(), (a * 256.0).round() as u16);
                     let copy = match st.faded.get(&key) {
                         Some(h) => h.clone(),
