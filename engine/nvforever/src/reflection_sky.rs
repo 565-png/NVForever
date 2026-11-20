@@ -489,7 +489,8 @@ impl GroundInputs {
 impl Inputs {
     /// Whether these inputs differ from `last` (the last fill's) by more than a step
     /// (module notes, "When"): see [`change`](Self::change).
-    pub fn moved(&self, last: &Inputs) -> bool {
+    #[cfg(test)]
+    fn moved(&self, last: &Inputs) -> bool {
         self.change(last).is_some()
     }
 
