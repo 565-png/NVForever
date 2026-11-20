@@ -75,6 +75,17 @@ impl Pack {
             // A `_p` in a format no height map takes (unsigned BC5): refused too.
             ("textures/walls/twochannel.dds", dxt1.clone()),
             ("textures/pbr/walls/twochannel_p.dds", legacy(b"ATI2", 4, 4, &[0; 16])),
+            // DXT3 `_p`, on the 4-texel grid (BC2 blocks) and off it (decoded to RGBA8 on the
+            // CPU): refused alike, as `fnvtool pbr check` refuses DXT3; a DXT1 off the grid
+            // (decoded the same way) is an allowed format and is taken; signed BC5: refused.
+            ("textures/walls/dxt3.dds", dxt1.clone()),
+            ("textures/pbr/walls/dxt3_p.dds", legacy(b"DXT3", 4, 4, &[0; 16])),
+            ("textures/walls/odddxt3.dds", dxt1.clone()),
+            ("textures/pbr/walls/odddxt3_p.dds", legacy(b"DXT3", 3, 3, &[0; 16])),
+            ("textures/walls/odddxt1.dds", dxt1.clone()),
+            ("textures/pbr/walls/odddxt1_p.dds", legacy(b"DXT1", 3, 3, &[0; 8])),
+            ("textures/walls/signedtwo.dds", dxt1.clone()),
+            ("textures/pbr/walls/signedtwo_p.dds", legacy(b"BC5S", 4, 4, &[0; 16])),
             // A first-person twin whose own set is height only, and the plain texture's set.
             ("textures/weapons/gun.dds", dxt1.clone()),
             ("textures/weapons/1stpersongun.dds", dxt1.clone()),
@@ -149,6 +160,12 @@ fn the_synchronous_source_loads_a_set_by_its_exact_member_paths() {
     let signed = authored(source.pbr_set(&source.resolve("walls/signedrelief.dds"))).expect("the _orm still applies");
     assert!(signed.height.is_none(), "a signed _p is refused");
     assert!(source.pbr_set(&source.resolve("walls/twochannel.dds")).is_none(), "a _p in no unsigned height format is refused");
+    // The file's own format decides, as the validator's does: DXT3 on or off the block grid.
+    assert!(source.pbr_set(&source.resolve("walls/dxt3.dds")).is_none(), "an aligned DXT3 _p (BC2) is refused");
+    assert!(source.pbr_set(&source.resolve("walls/odddxt3.dds")).is_none(), "an odd-sized DXT3 _p is refused though it went up as Rgba8Unorm");
+    let odd_dxt1 = source.pbr_set(&source.resolve("walls/odddxt1.dds")).expect("an odd-sized DXT1 _p is an allowed format");
+    let odd_dxt1_map = odd_dxt1.height().and_then(|h| h.depth_map.clone()).expect("_p");
+    assert!(source.pbr_set(&source.resolve("walls/signedtwo.dds")).is_none(), "a signed BC5 _p is refused");
     assert!(source.pbr_set(&source.resolve("walls/plain.dds")).is_none());
     assert!(source.pbr_set(&source.resolve("walls/bad.dds")).is_none(), "an _orm that does not load leaves the shape legacy");
     let twin = source.pbr_set(&source.resolve("weapons/1stpersongun.dds")).expect("the twin's own height-only set");
@@ -175,6 +192,19 @@ fn the_synchronous_source_loads_a_set_by_its_exact_member_paths() {
     assert!(warned.contains(r"textures\pbr\walls\signed_p.dds") && warned.contains(r"textures\pbr\walls\signedrelief_p.dds"), "{warned:?}");
     assert!(signed_format(TextureFormat::Bc4RSnorm) && signed_format(TextureFormat::R8Snorm) && !signed_format(TextureFormat::Bc4RUnorm) && !signed_format(TextureFormat::R8Unorm));
     assert!(warned.contains(r"textures\pbr\walls\twochannel_p.dds"), "{warned:?}");
+    for refused in ["dxt3", "odddxt3", "signedtwo"] {
+        assert!(warned.contains(&format!(r"textures\pbr\walls\{refused}_p.dds")), "{refused}: {warned:?}");
+    }
+    assert!(!warned.contains(r"textures\pbr\walls\odddxt1_p.dds"), "{warned:?}");
+    assert_eq!(images.get(&odd_dxt1_map).unwrap().texture_descriptor.format, TextureFormat::Rgba8Unorm, "decoded off the block grid");
+    // The refusal names the file's own format, signed BC5 as BC5, and judges by it.
+    use fnv_dds::Format;
+    assert_eq!(height_refusal(Some(Format::Bc5S), Some(TextureFormat::Bc5RgSnorm)), "is signed (BC5_SNORM); a height map is unsigned (0 low, 1 high)");
+    assert_eq!(height_refusal(Some(Format::Bc4S), Some(TextureFormat::R8Snorm)), "is signed (BC4_SNORM); a height map is unsigned (0 low, 1 high)");
+    assert_eq!(height_refusal(Some(Format::Dxt3), Some(TextureFormat::Rgba8Unorm)), "is in DXT3, not in a height map's format (BC4_UNORM, DXT1 or DXT5)");
+    assert_eq!(height_refusal(None, Some(TextureFormat::Bc2RgbaUnorm)), "is in Bc2RgbaUnorm, not in a height map's format (BC4_UNORM, DXT1 or DXT5)");
+    assert!(!height_source_ok(Some(Format::Dxt3), Some(TextureFormat::Rgba8Unorm)) && height_source_ok(Some(Format::Dxt1), Some(TextureFormat::Rgba8Unorm)));
+    assert!(!height_source_ok(None, Some(TextureFormat::Rgba8Unorm)) && height_source_ok(None, Some(TextureFormat::Bc4RUnorm)), "an unknown source: only formats that name it");
     // Unknown format metadata is refused, not accepted by default.
     assert!(!height_format_ok(None) && !height_format_ok(Some(TextureFormat::Bc5RgUnorm)) && !height_format_ok(Some(TextureFormat::Bc4RSnorm)));
     assert!(height_format_ok(Some(TextureFormat::Bc4RUnorm)) && height_format_ok(Some(TextureFormat::R8Unorm)) && height_format_ok(Some(TextureFormat::Bc1RgbaUnorm)));
@@ -406,7 +436,7 @@ fn the_summary_line_names_every_count() {
     s.stems.lock().unwrap().extend(["a".to_string(), "b".to_string()]);
     assert_eq!(
         s.line(),
-        "3 material builds applied an ORM set (2 distinct ORM set stems at build), 11 a height-only set's height map; builds without one: 5 not eligible, 1 on excluded textures; 2 ORM load failures at build or swap; 4 applied without their _n (no tangents); 6 role copies made legacy; 24 retexture calls (7 to an ORM set, 9 matched a height-only set (20 with its height map applied), 8 to the legacy look); height maps: 10 material builds applied one; not put on at build or swap: 12 not opaque, 13 double-sided, 14 decals, 15 without tangents, 16 unlit, refracting or holed; 17 _p not loaded, 18 _p refused (signed or not an unsigned format); 19 later copies dropped one"
+        "3 material builds applied an ORM set (2 distinct ORM set stems at build), 11 a height-only set's height map; builds without one: 5 not eligible, 1 on excluded textures; 2 ORM load failures at build or swap; 4 applied without their _n (no tangents); 6 role copies made legacy; 24 retexture calls (7 to an ORM set, 9 to a loaded height-only set (20 with its height map applied), 8 to the legacy look); height maps: 10 material builds applied one; not put on at build or swap: 12 not opaque, 13 double-sided, 14 decals, 15 without tangents, 16 unlit, refracting or holed; 17 _p not loaded, 18 _p refused (signed or in no height map's format); 19 later copies dropped one"
     );
 }
 
@@ -473,8 +503,8 @@ fn retexturing_moves_height_maps_with_the_sets() {
     assert!(m.base.depth_map.is_none() && is_authored(&m));
     assert_eq!(m.extension.legacy.as_ref(), Some(&legacy), "the legacy look itself never changes");
     // A drawn mesh without tangents: no height map from a swap (the recorded tangents).
-    // `HeightOnly` says the new diffuse matched a height-only set; the gate refused its map,
-    // which the summary counts apart ("matched a height-only set (N with its height map
+    // `HeightOnly` says the new diffuse's height-only set loaded; the gate refused its map,
+    // which the summary counts apart ("to a loaded height-only set (N with its height map
     // applied)": this call adds to the first count only).
     let mut b = bare.clone();
     assert_eq!(retexture(&mut b, r"walls\stone.dds", &mut cache, &pack.data, &mut images, None), Retextured::HeightOnly);

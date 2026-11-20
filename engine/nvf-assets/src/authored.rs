@@ -161,10 +161,12 @@ impl Parallax {
     }
 }
 
-/// The files [`find`] and the decoders already warned about (one warning per file).
+/// The files [`find`] and the decoders already warned about (one warning per file), and the
+/// own formats of the members decoded under `textures\pbr\` ([`note_source`]).
 #[derive(Default)]
 pub struct Memo {
     warned: Mutex<HashSet<String>>,
+    sources: Mutex<HashMap<String, fnv_dds::Format>>,
 }
 
 /// The scalar files of one mount by path, each read once ([`scalars_cached`]); kept beside the
@@ -270,14 +272,62 @@ fn height_map(found: &Found, scalars: &Scalars, memo: &Memo, load: &mut impl FnM
         memo.warn_once(&path, || format!("authored materials: {path} could not be loaded; no height map is drawn from it"));
         return None;
     };
-    if !height_format_ok(format) {
+    let source = memo.source(&path);
+    if !height_source_ok(source, format) {
         Stats::add(&stats().height_signed);
-        let shown = format.map_or("an unknown format".to_string(), |f| format!("{f:?}"));
-        let why = if format.is_some_and(signed_format) { "is signed BC4" } else { "is not in an unsigned height format" };
-        memo.warn_once(&path, || format!("authored materials: {path} {why} ({shown}); a height map is unsigned (0 low, 1 high), so it is not drawn (export it as BC4_UNORM)"));
+        let why = height_refusal(source, format);
+        memo.warn_once(&path, || format!("authored materials: {path} {why}, so it is not drawn (export it as BC4_UNORM)"));
         return None;
     }
     Some(Parallax::height(image, depth))
+}
+
+/// Whether a loaded `_p` may be drawn, by the file's own format (`source`, as decoded:
+/// [`note_source`]) and the format it went up in (`format`, [`height_format_ok`]). The file's
+/// format must be one `fnvtool pbr check` allows for `_p` (its `allowed_formats`: BC4 unsigned,
+/// DXT1/BC1, DXT5/BC3), so a DXT3 file is refused whether it went up as BC2 blocks or, off the
+/// 4-texel grid, decoded to `Rgba8Unorm` [design, review of 2026-11-20]. A `_p` whose own
+/// format is not known here (not decoded through this memo) is taken only in a format that
+/// names its source (`Rgba8Unorm` comes from a block file off the grid or an uncompressed one).
+pub fn height_source_ok(source: Option<fnv_dds::Format>, format: Option<TextureFormat>) -> bool {
+    use fnv_dds::Format;
+    height_format_ok(format)
+        && match source {
+            Some(f) => matches!(f, Format::Bc4U | Format::Dxt1 | Format::Dxt5),
+            None => format != Some(TextureFormat::Rgba8Unorm),
+        }
+}
+
+/// Why a `_p` is refused ([`height_source_ok`]), naming the format it is in: the file's own
+/// where known (`BC5_SNORM`, `DXT3`), else the one it went up in.
+pub fn height_refusal(source: Option<fnv_dds::Format>, format: Option<TextureFormat>) -> String {
+    use fnv_dds::Format;
+    let shown = match (source, format) {
+        (Some(f), _) => f.name().to_string(),
+        (None, Some(f)) => format!("{f:?}"),
+        (None, None) => "an unknown format".to_string(),
+    };
+    if matches!(source, Some(Format::Bc4S | Format::Bc5S)) || format.is_some_and(signed_format) {
+        format!("is signed ({shown}); a height map is unsigned (0 low, 1 high)")
+    } else {
+        format!("is in {shown}, not in a height map's format (BC4_UNORM, DXT1 or DXT5)")
+    }
+}
+
+/// Note the own format of a file decoded under `textures\pbr\` (`path` as the decoder keys
+/// it, normalised), for [`height_source_ok`]: the main thread and the workers decode with
+/// the same [`Memo`], so a later lookup of a cached or adopted texture finds it.
+pub(crate) fn note_source(memo: &Memo, path: &str, source: Option<fnv_dds::Format>) {
+    if let Some(f) = source.filter(|_| path.starts_with(fnv_pbr::PBR_DIR)) {
+        memo.sources.lock().expect("authored sources").insert(path.to_string(), f);
+    }
+}
+
+impl Memo {
+    /// The own format of the file at `path` as last decoded ([`note_source`]).
+    fn source(&self, path: &str) -> Option<fnv_dds::Format> {
+        self.sources.lock().expect("authored sources").get(&fnv_vfs::normalize(path)).copied()
+    }
 }
 
 /// Whether a member went up in a signed format (`_SNORM`: values -1..1). A height map holds
@@ -291,7 +341,8 @@ pub fn signed_format(format: TextureFormat) -> bool {
 /// Whether a loaded `_p` went up in a format a height map takes: the unsigned linear forms
 /// the format allows (BC4 unsigned, BC1, BC3) and their decoded fallbacks (`R8Unorm`,
 /// `Rgba8Unorm`). Anything else, a signed format or a format the caller could not tell
-/// (`None`), is refused rather than accepted by default [design, review of 2026-11-20].
+/// (`None`), is refused rather than accepted by default [design, review of 2026-11-20]. The
+/// file's own format is judged too ([`height_source_ok`]).
 pub fn height_format_ok(format: Option<TextureFormat>) -> bool {
     matches!(
         format,
@@ -798,8 +849,9 @@ pub struct Stats {
     /// put back the legacy look (cached swaps do not call it again).
     pub swaps_authored: AtomicU64,
     pub swaps_legacy: AtomicU64,
-    /// [`retexture`] calls whose new diffuse matched a height-only set, and of them those that
-    /// put its height map on ([`height_gate`] passed).
+    /// [`retexture`] calls whose new diffuse's height-only set loaded (a match with a depth of
+    /// 0 or a `_p` that did not load or was refused counts in `swaps_legacy`), and of them
+    /// those that put its height map on ([`height_gate`] passed).
     pub swaps_height: AtomicU64,
     pub swaps_height_applied: AtomicU64,
     /// Material builds that put a height map on (`nif_spawn::shape_material`), and of them
@@ -814,7 +866,7 @@ pub struct Stats {
     pub height_other: AtomicU64,
     /// Sets whose `_p` did not load (the rest of an authored set still applies).
     pub height_failed: AtomicU64,
-    /// Sets whose `_p` is signed or in no unsigned height format, refused ([`height_format_ok`]).
+    /// Sets whose `_p` is signed or in no height map's format, refused ([`height_source_ok`]).
     pub height_signed: AtomicU64,
     /// Later copies that dropped a height map ([`recheck_height`]).
     pub height_dropped: AtomicU64,
@@ -833,7 +885,7 @@ impl Stats {
     /// The summary line (without its prefix).
     pub fn line(&self) -> String {
         format!(
-            "{} material builds applied an ORM set ({} distinct ORM set stems at build), {} a height-only set's height map; builds without one: {} not eligible, {} on excluded textures; {} ORM load failures at build or swap; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to an ORM set, {} matched a height-only set ({} with its height map applied), {} to the legacy look); height maps: {} material builds applied one; not put on at build or swap: {} not opaque, {} double-sided, {} decals, {} without tangents, {} unlit, refracting or holed; {} _p not loaded, {} _p refused (signed or not an unsigned format); {} later copies dropped one",
+            "{} material builds applied an ORM set ({} distinct ORM set stems at build), {} a height-only set's height map; builds without one: {} not eligible, {} on excluded textures; {} ORM load failures at build or swap; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to an ORM set, {} to a loaded height-only set ({} with its height map applied), {} to the legacy look); height maps: {} material builds applied one; not put on at build or swap: {} not opaque, {} double-sided, {} decals, {} without tangents, {} unlit, refracting or holed; {} _p not loaded, {} _p refused (signed or in no height map's format); {} later copies dropped one",
             Self::get(&self.built),
             self.stems.lock().expect("authored stats").len(),
             Self::get(&self.height_only_built),

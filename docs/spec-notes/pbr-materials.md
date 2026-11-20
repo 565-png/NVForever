@@ -311,16 +311,23 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   bindless and its ordinary sample, `1 - r`; engine/vendor/README.md). No other material in
   the engine sets a depth map.
 - [design] **Signed `_p` is refused** (one warning per file; an authored set keeps its other
-  maps), as `fnvtool pbr check` refuses it ("Compression and sizes"); so is a `_p` that went up
-  in any format other than the unsigned ones a height map takes (BC4 unsigned, BC1, BC3 and
-  their decoded `R8Unorm`/`Rgba8Unorm`), or whose format the engine could not tell.
+  maps), as `fnvtool pbr check` refuses it ("Compression and sizes"); so is a `_p` whose file
+  is in any format other than those the validator allows for it (BC4 unsigned, DXT1/BC1,
+  DXT5/BC3), judged by the file's own format as decoded, so a DXT3 file is refused whether it
+  went up as BC2 blocks or, off the 4-texel grid, decoded to `Rgba8Unorm`; and a `_p` that went
+  up in a format a height map does not take, or whose format the engine could not tell
+  [documented: `authored.rs` `height_source_ok`, `height_format_ok`]. The warning names the
+  file's own format (`BC5_SNORM`, `DXT3`). Sizes still differ: the validator refuses a file
+  off the 4-texel grid, while the engine decodes an allowed format off the grid on the CPU
+  and draws it.
 - Checking it: `NVF_PBR_VIEW=height` draws the height as stored (white high, the original
   height, not the inverted depth), read at the unshifted coordinates, and dark blue on shapes
   without a depth map. The exit summary line adds the builds that applied a height-only
-  set's height map, the builds that applied any height map, the swaps that matched a
-  height-only set and of them those that put its map on, the height maps not put on at a
-  build or swap by reason, `_p` files that did not load or were refused (signed or not an
-  unsigned format), and later copies that dropped one.
+  set's height map, the builds that applied any height map, the swaps to a loaded height-only
+  set (a match with a depth of 0 or a `_p` that did not load counts as a swap to the legacy
+  look) and of them those that put its map on, the height maps not put on at a build or swap
+  by reason, `_p` files that did not load or were refused (signed or in no height map's
+  format), and later copies that dropped one.
   The smoke scenario `pbr-authored-field-height` (the same field, `NVF_PLAY_TEST_PBR_FIELD=1`)
   draws two more panels tilted 50 degrees about Y: `height` (a height-only set whose `_p` is
   high above and low below, depth 0.1) and its control without one; it measures a narrow
