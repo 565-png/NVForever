@@ -1674,7 +1674,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
             h.player.heading = turn_towards(h.player.heading, want, TURN_RATE * h.dt);
             h.player.pitch = turn_towards(h.player.pitch, 0.0, TURN_RATE * h.dt);
             if heading_delta(h.player.heading, want).abs() < 0.7 {
-                (h.intent.forward, h.intent.right, h.intent.walk) = (1.0, 0.0, false);
+                (h.intent.forward, h.intent.right, h.intent.walk) = (1.0, 0.0, h.control.sneak);
             }
             // Round what it walked into: a step to the side, as a player takes.
             match w.dodge {
@@ -2254,7 +2254,7 @@ fn keep_by(h: &mut Hands, feet: [f32; 3], owner: [f32; 3]) {
         let want = heading_of([owner[0] - feet[0], owner[1] - feet[1]]);
         h.player.heading = turn_towards(h.player.heading, want, TURN_RATE * h.dt);
         if heading_delta(h.player.heading, want).abs() < 0.7 {
-            (h.intent.forward, h.intent.right, h.intent.walk) = (1.0, 0.0, false);
+            (h.intent.forward, h.intent.right, h.intent.walk) = (1.0, 0.0, h.control.sneak);
         }
     }
 }
@@ -3730,7 +3730,14 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                 p.scene_left = Some(place.space);
             }
             p.pkg_was_in = Some(here);
-            if p.scene_left == Some(place.space) && here != place.space {
+            if p.scene_left == Some(here) {
+                p.scene_left = None;
+            }
+            // Out of the scene, a walk that is not running is one the scene already had: Colonel
+            // Autumn walks up to the player in Vault 87 before the fade, then a script puts
+            // her in Raven Rock beside it (the same run, step 34, 13 minutes waited).
+            let over = p.scene_left.is_some() && p.part == 0 && now_running != wanted;
+            if (p.scene_left == Some(place.space) && here != place.space) || over {
                 info!("pilot: step {}: a script moved the player away from {actor}: its {package} is left to the AI", p.i);
                 p.headless("package (a script moved the player away)");
                 (h.intent.forward, h.intent.right) = (0.0, 0.0);
@@ -4621,6 +4628,10 @@ fn drive(
         p.step_from = p.now;
         return;
     }
+    // Crouched, the player walks, as a player sneaking past a patrol does: at a run the
+    // detection counts it running, and the X-13 robobrain heard the pilot at 400 units
+    // (Old World Blues, round 9, 2026-11-20: "sneaking, running", sound 41.5).
+    h.intent.walk = h.control.sneak;
     if watch_stall(p, &mut h) {
         return;
     }
@@ -4701,6 +4712,10 @@ fn drive(
             let later: Vec<String> = p.actions.iter().skip(p.i).filter_map(|a| match a {
                 Action::Talk { actor, .. } => Some(actor.clone()),
                 Action::SayInfo { speaker: Some(s), .. } => Some(s.clone()),
+                // Nor one a coming step strikes with a given weapon: shot dead in a fight
+                // first, Wasteland Survival Guide's second mole rat was never struck with
+                // the Repellent Stick and MS03b1 stayed at two of three (round 9, 2026-11-20).
+                Action::Hit { target, weapon: Some(_), .. } => Some(target.clone()),
                 _ => None,
             }).collect();
             if let Some(needed) = h.game(|g| later.iter().filter_map(|n| runner::resolve(g, n).ok()).collect::<Vec<FormId>>()) {
