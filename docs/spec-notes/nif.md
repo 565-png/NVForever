@@ -1198,8 +1198,28 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   the wrong side and no seam in either. The burned home's walls and the NoSo ruins match
   to the eye; the pixels that differ by more than 24 levels (0.33-0.73 % at Novac, 0.02 %
   at NoSo, 0.007 % in Goodsprings) are the swaying grass and one roof edge. The Tops sign
-  differs by a mean of 0.02 levels: it is a glowing sign, which its normal map barely
-  shows on.
+  differs by a mean of 0.02 levels; that it is a glowing sign, which its normal map barely
+  shows on, is a [hypothesis].
+
+  A second, wider look [observed 2026-11-20, a build of this change alone (head 5b5e4cf09),
+  `--graphics vanilla`, 1600 × 900; pixels differing by more than 8
+  levels]: six framed views at 07:30, each stored, generated and stored again (the run-to-
+  run noise), then the four exterior sites from the north, east, south and west, raised
+  350 units, at 07:00 and 17:30 (38 views). `novac_home04burned.nif`: no difference on the
+  building from any side (at most 0.6 %, all of it wind-moved grass and bushes, as between
+  two stored runs). `scolgshouse02.nif`: small differences in the shingle relief near the
+  two roof vents (north view, 17:30). `scolgshouse06.nif` (00177CAE): small differences in
+  the shingle edges of the west slope (east view). The NoSo apartments: the broken brick
+  ends, whose texture is stretched into streaks, are a little brighter or darker here and
+  there (that the streaks come from the stretched UVs, not the tangents, is a
+  [hypothesis]). In none of them a seam, a light/dark flip, bumps lit from the wrong side
+  or faceting, in either version.
+
+  Not compared with the original game: an nvf_capture run reached every camera but each
+  screenshot failed (`StretchBlt failed`), and a run from the `nvfstrip` save crashed the
+  original after `coc TOPSCasino` [observed 2026-11-20]. So these looks show that the
+  stored tangents add no artifact the generated ones avoid, not which of the two the
+  original's look matches.
 - **Specular** [observed, 500 random meshes from `Fallout - Meshes.bsa`]: of 738
   NiMaterialProperty blocks on BSShaderPPLightingProperty shapes, 697 (94%) have a
   black specular colour, 18 white, 23 other; 1,011 of 1,279 such shader properties set
