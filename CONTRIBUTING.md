@@ -128,6 +128,11 @@ people building the same thing:
    never sends to the project's server anyway: only builds from the release workflow do.
 4. **Open a pull request** against `main` and fill in the template. CI runs the build and
    tests on Linux. First-time contributors' CI runs wait for a maintainer's approval.
+   The template's **clean-room checklist is required**: a pull request is not merged until
+   all six items are in its description and ticked. Tick only what is true. Where a
+   constant or behaviour has no cited source or observation in the original game, tag it
+   `[hypothesis]` or `[design]` in the notes and list it in the description, as the
+   template says.
 
 ### What a good pull request looks like
 
