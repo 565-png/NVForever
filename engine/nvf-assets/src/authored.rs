@@ -210,6 +210,50 @@ pub fn metallic_debug() -> bool {
     })
 }
 
+/// The environment variable of the metal lift experiment ([`metal_lift`]).
+pub const METAL_LIFT_ENV: &str = "NVF_PBR_METAL_LIFT";
+/// The gains the experiment takes ([`parse_metal_lift`]).
+pub const METAL_LIFT_RANGE: std::ops::RangeInclusive<f32> = 1.0..=8.0;
+
+/// The value of [`METAL_LIFT_ENV`] as a gain: `Ok(None)` for no value (or an empty one),
+/// `Ok(Some(g))` for a number in [`METAL_LIFT_RANGE`], `Err` with the reason otherwise.
+pub fn parse_metal_lift(text: Option<&str>) -> Result<Option<f32>, String> {
+    let Some(t) = text.map(str::trim).filter(|t| !t.is_empty()) else { return Ok(None) };
+    match t.parse::<f32>() {
+        Ok(g) if METAL_LIFT_RANGE.contains(&g) => Ok(Some(g)),
+        Ok(g) => Err(format!("{METAL_LIFT_ENV}={g} is outside {}..{}", METAL_LIFT_RANGE.start(), METAL_LIFT_RANGE.end())),
+        Err(_) => Err(format!("{METAL_LIFT_ENV}={t} is not a number")),
+    }
+}
+
+/// The metal lift experiment (a development switch about metal base colour, off by
+/// default; `NVF_PBR_METAL_LIFT=<gain>`, 1.0 to 8.0, read once at the start) [design]: in a
+/// view with a reflection cube, an authored material's base colour used for lighting becomes
+/// mix(base, min(base x gain, 1), metallic), metallic the effective one, so a metal's
+/// reflection is tinted by a brighter colour than the game's diffuse (nif_material.wesl,
+/// `NVF_PBR_METAL_LIFT`; reflections must be on). A value that is no number or out of range
+/// is warned about once (the value is read once) and the experiment stays off.
+pub fn metal_lift() -> Option<f32> {
+    static LIFT: OnceLock<Option<f32>> = OnceLock::new();
+    *LIFT.get_or_init(|| match parse_metal_lift(std::env::var(METAL_LIFT_ENV).ok().as_deref()) {
+        Ok(Some(g)) => {
+            info!("authored materials: metal lift experiment ({METAL_LIFT_ENV}={g}): with reflections on, an authored metal's base colour is lifted by {g} where the view has a reflection cube");
+            Some(g)
+        }
+        Ok(None) => None,
+        Err(reason) => {
+            warn!("authored materials: {reason}; the metal lift experiment stays off");
+            None
+        }
+    })
+}
+
+/// The gain as the shader's valued def (`NVF_PBR_METAL_LIFT_E3`, `constants::` in WESL):
+/// thousandths, rounded.
+pub fn metal_lift_e3(gain: f32) -> u32 {
+    (gain * 1000.0).round() as u32
+}
+
 /// The environment variable that picks a channel view ([`PbrView`]).
 pub const VIEW_ENV: &str = "NVF_PBR_VIEW";
 

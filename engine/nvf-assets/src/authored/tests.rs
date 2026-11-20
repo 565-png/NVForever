@@ -342,3 +342,25 @@ fn a_mount_has_sets_only_with_the_setting_on_and_an_authored_set() {
     assert!(!mount_has_sets_when(&data, true), "no authored set in the mount");
     let _ = std::fs::remove_dir_all(&empty);
 }
+
+/// The metal lift experiment's value: a gain from 1 to 8, nothing for no value, a reason for
+/// anything else (the caller warns once and keeps the experiment off); the shader's
+/// thousandths.
+#[test]
+fn the_metal_lift_takes_a_gain_from_one_to_eight() {
+    assert_eq!(parse_metal_lift(None), Ok(None));
+    assert_eq!(parse_metal_lift(Some("  ")), Ok(None));
+    assert_eq!(parse_metal_lift(Some("1")), Ok(Some(1.0)));
+    assert_eq!(parse_metal_lift(Some(" 2.5 ")), Ok(Some(2.5)));
+    assert_eq!(parse_metal_lift(Some("8")), Ok(Some(8.0)));
+    assert!(parse_metal_lift(Some("0.5")).is_err_and(|e| e.contains("outside")));
+    assert!(parse_metal_lift(Some("9")).is_err());
+    assert!(parse_metal_lift(Some("NaN")).is_err(), "not in the range");
+    assert!(parse_metal_lift(Some("bright")).is_err_and(|e| e.contains("not a number")));
+    assert_eq!(metal_lift_e3(2.5), 2500);
+    assert_eq!(metal_lift_e3(1.0), 1000);
+    // The tests run without the variable: the experiment is off.
+    if std::env::var_os(METAL_LIFT_ENV).is_none() {
+        assert_eq!(metal_lift(), None);
+    }
+}

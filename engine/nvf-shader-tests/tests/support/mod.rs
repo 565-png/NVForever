@@ -148,6 +148,11 @@ impl Compiler {
     }
 
     pub fn compile(&mut self, name: &str, extra: &[&'static str]) -> Arc<Compiled> {
+        self.compile_with_values(name, extra, &[])
+    }
+
+    /// [`Compiler::compile`] with valued defs as well (read as `constants::NAME`).
+    pub fn compile_with_values(&mut self, name: &str, extra: &[&'static str], values: &[ShaderDefVal]) -> Arc<Compiled> {
         // Representative storage-buffer mesh view; constants are the renderer's
         // specialization inputs, not substitute shader declarations.
         let prepass =
@@ -197,6 +202,7 @@ impl Compiler {
             ShaderDefVal::UInt("MAX_DIRECTIONAL_LIGHTS".into(), 10),
             ShaderDefVal::UInt("MAX_RECT_LIGHTS".into(), 1),
         ]);
+        definitions.extend(values.iter().cloned());
         self.cache
             .get(0, self.shaders[name], &definitions)
             .unwrap_or_else(|error| panic!("{name}, {extra:?}: {error}"))

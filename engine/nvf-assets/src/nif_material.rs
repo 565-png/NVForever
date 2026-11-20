@@ -778,9 +778,17 @@ impl MaterialExtension for NifSurface {
         let metallic_def: &[&str] = if crate::authored::metallic_debug() && !reflect { &["NVF_PBR_METALLIC"] } else { &[] };
         let reflect_def: &[&str] = if reflect { &[crate::reflection_cube::REFLECT_DEF] } else { &[] };
         let view_defs = crate::authored::view().shader_defs();
+        // The metal lift experiment (crate::authored::metal_lift; off unless NVF_PBR_METAL_LIFT
+        // is set at the start), with reflections only: a switch def and the gain in
+        // thousandths, read in WESL as constants::NVF_PBR_METAL_LIFT_E3.
+        let lift = crate::authored::metal_lift().filter(|_| reflect);
         if !(view_defs.is_empty() && metallic_def.is_empty() && reflect_def.is_empty()) && !descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
             if let Some(fragment) = descriptor.fragment.as_mut() {
                 fragment.shader_defs.extend(view_defs.iter().chain(metallic_def).chain(reflect_def).map(|d| ShaderDefVal::from(*d)));
+                if let Some(gain) = lift {
+                    fragment.shader_defs.push(ShaderDefVal::from("NVF_PBR_METAL_LIFT"));
+                    fragment.shader_defs.push(ShaderDefVal::UInt("NVF_PBR_METAL_LIFT_E3".into(), crate::authored::metal_lift_e3(gain)));
+                }
             }
         }
         // StandardMaterial has set the rasteriser's bias from the material's depth bias.
@@ -1046,6 +1054,7 @@ impl Plugin for NifMaterialPlugin {
         // where nothing did, as in the viewer).
         crate::authored::view();
         crate::authored::metallic_debug();
+        crate::authored::metal_lift();
         crate::reflection_cube::enabled();
         app.add_plugins(crate::reflection_cube::ReflectionCubePlugin);
         app.add_systems(Last, crate::authored::report);

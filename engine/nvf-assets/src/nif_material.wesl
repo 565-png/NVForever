@@ -738,6 +738,12 @@ fn nif_fragment(
     let emissive_scale = select(view_emissive_scale(), 1.0, surface.emissive_rule.x > 0.5 || (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS) == STANDARD_MATERIAL_FLAGS_ALPHA_MODE_ADD);
     let e = vec4(pbr_input.material.emissive.rgb * emissive_scale, pbr_input.material.emissive.a);
     pbr_input.material.emissive = vec4(e.rgb * pbr_input.material.base_color.rgb, e.a);
+    // NVF_PBR_METAL_LIFT (nvf-assets authored.rs `metal_lift`, a development experiment about
+    // metal base colour, off unless set at the start, with reflections only): in a view with a
+    // cube an authored material's base colour for both lighting calls becomes
+    // mix(base, min(base x gain, 1), metallic), metallic the effective one (after the per-view
+    // hold and the terrain mix); the glow above keeps the unlifted colour, alpha is unchanged.
+    @if(NVF_PBR_METAL_LIFT && NVF_PBR_REFLECT && ENVIRONMENT_MAP && !PREPASS_PIPELINE) if surface.emissive_rule.w > 0.5 { let lift_base = pbr_input.material.base_color.rgb; pbr_input.material.base_color = vec4(mix(lift_base, min(lift_base * (f32(constants::NVF_PBR_METAL_LIFT_E3) / 1000.0), vec3(1.0)), pbr_input.material.metallic), pbr_input.material.base_color.a); }
     @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) if terrain_unlit { pbr_input.material.emissive = vec4(vec3(0.0), e.a); }
 
     // Kept out of the lighting sum: multiply_factor adds it in display values.

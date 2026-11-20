@@ -70,3 +70,21 @@ fn the_opted_in_nif_fragment_compiles_in_a_view_without_a_cube() {
         assert!(compiled.module.entry_points.iter().any(|e| e.stage == naga::ShaderStage::Fragment), "{extra:?}: a fragment entry point");
     }
 }
+
+#[test]
+fn the_metal_lift_experiment_composes_in_the_opted_in_fragment() {
+    // NVF_PBR_METAL_LIFT (nvf-assets authored.rs `metal_lift`): the switch def and the gain in
+    // thousandths as a valued def, read as constants::NVF_PBR_METAL_LIFT_E3; with a cube, the
+    // plain and the first-person shade-light variants; without a cube the lift is not compiled.
+    let mut compiler = Compiler::with_reflection_gate();
+    let gain = [bevy_shader::ShaderDefVal::UInt("NVF_PBR_METAL_LIFT_E3".into(), 3000)];
+    for extra in [
+        &["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "NVF_PBR_METAL_LIFT"][..],
+        &["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "NVF_PBR_METAL_LIFT", "FIRST_PERSON_DEPTH", "SHADE_LIGHT"][..],
+        &["NVF_PBR_REFLECT", "NVF_PBR_METAL_LIFT"][..],
+    ] {
+        let compiled = compiler.compile_with_values("nvf_assets/nif_material.wesl", extra, &gain);
+        assert!(compiled.module.entry_points.iter().any(|e| e.stage == naga::ShaderStage::Fragment), "{extra:?}: a fragment entry point");
+        assert_eq!(fragment_reads(&compiled, SPECULAR_CUBE.0, SPECULAR_CUBE.1), extra.contains(&"ENVIRONMENT_MAP"), "{extra:?}: the cube read as without the lift");
+    }
+}
