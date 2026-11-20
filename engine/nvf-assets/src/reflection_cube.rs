@@ -363,9 +363,13 @@ fn write_cubes(mut uploads: ResMut<CubeUploads>, images: Res<RenderAssets<GpuIma
         let Some(gpu) = gpu else { continue };
         let texture = gpu.texture.id();
         let d = &gpu.texture_descriptor;
-        if d.mip_level_count != SPECULAR_LEVELS || d.size != (Extent3d { width: SPECULAR_SIDE, height: SPECULAR_SIDE, depth_or_array_layers: 6 }) || d.format != FORMAT {
+        if d.mip_level_count != SPECULAR_LEVELS
+            || d.size != (Extent3d { width: SPECULAR_SIDE, height: SPECULAR_SIDE, depth_or_array_layers: 6 })
+            || d.format != FORMAT
+            || !d.usage.contains(TextureUsages::COPY_DST)
+        {
             if upload.reject(texture) {
-                error!("reflection cube: the specular texture is {:?} with {} levels, not the cube this module makes; not written", d.size, d.mip_level_count);
+                error!("reflection cube: incompatible specular texture ({:?}, {:?}, {} levels, {:?}); upload deferred", d.size, d.format, d.mip_level_count, d.usage);
             }
             continue;
         }
