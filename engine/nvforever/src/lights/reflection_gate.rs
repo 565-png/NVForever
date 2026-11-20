@@ -1,5 +1,5 @@
-//! The reflection gate in bevy_pbr's `pbr_functions` (#2981 reflections, slice 1;
-//! docs/spec-notes/pbr-materials.md "Reflections on authored materials, slice 1") [design].
+//! The reflection gate in bevy_pbr's `pbr_functions` (#2981 reflections;
+//! docs/spec-notes/pbr-materials.md "Reflections on authored materials") [design].
 //! Plain text and the standard library only, so the shader compile checks
 //! (engine/nvf-shader-tests) apply the very same edits before composing.
 //!

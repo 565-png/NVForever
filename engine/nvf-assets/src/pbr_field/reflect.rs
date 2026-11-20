@@ -1,5 +1,5 @@
-//! The reflection field (#2981 reflections, slice 1; docs/spec-notes/pbr-materials.md
-//! "Reflections on authored materials, slice 1"), default off, behind
+//! The reflection field (#2981 reflections; docs/spec-notes/pbr-materials.md
+//! "Reflections on authored materials"), default off, behind
 //! `NVF_PLAY_TEST_PBR_REFLECT_FIELD=1`, on the PBR field's pattern (pbr_field.rs): every file
 //! generated into a fresh folder under `NVFOREVER_HOME`, read through a real VFS, the panels'
 //! materials from the real `shape_material`, GPU readbacks judged.
