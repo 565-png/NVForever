@@ -33568,7 +33568,7 @@ note = "The row off with the same generated sets in the mount: no cube is alloca
 
 [[scenario]]
 name = "authored-reflections-room"
-source = "[design, #2981] docs/spec-notes/pbr-materials.md \"Reflections indoors: the analytic room\": indoors the world camera's reflection cube holds a lit box (room marker, physics rays or default box; the cell's placed lamps in reach); generated sets only (the reflection field's fixture as loose files in the run's own mods folder), no game-derived file"
+source = "[design, #2981] docs/spec-notes/pbr-materials.md \"Reflections indoors: the analytic room\": indoors the world camera's reflection cube holds a lit box (room marker, physics rays or default box; the cell's placed lamps in reach); generated sets only (the reflection field's fixture written into a fresh folder and mounted over the loose layers for the run), no game-derived file"
 areas = ["renderer", "textures", "lights"]
 paths = ["engine/nvforever/src/reflection_sky.rs", "engine/nvforever/src/reflection_sky/", "engine/nvf-assets/src/reflection_room.rs", "engine/nvf-assets/src/reflection_room/", "engine/nvf-assets/src/reflection_cube.rs", "engine/nvf-assets/src/pbr_field/reflect.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/rooms.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/fog.rs", "engine/nvforever/src/main.rs"]
 env = { NVF_PLAY_TEST_PBR_MOUNT_PACK = "1", NVFOREVER_HOME = "pbr-reflect-home", NVF_PLAY_TEST_GOD = "1" }
@@ -33577,7 +33577,7 @@ args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages",
 run_seconds = 20
 timeout = 180
 expect = [
-  { re = 'pbr mount pack: \d+ generated files written under ', count = 1, label = "the generated sets are in the run's own mods folder before the mount opens" },
+  { re = 'pbr mount pack: \d+ generated files written under ', count = 1, label = "the generated sets are in the run's own fresh mount folder" },
   { text = "authored reflections: on (", count = 1, label = "both rows on for the interior run" },
   { text = "lights: reflection gate installed", count = 1, label = "the gate, before any cube" },
   { re = "reflection sky: first fill of the world camera's cube \\((indoors|outdoors);", count = 1, label = "the first fill (outdoors only if the camera came before the interior)" },
