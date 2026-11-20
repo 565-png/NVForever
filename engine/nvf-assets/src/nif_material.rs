@@ -768,12 +768,19 @@ impl MaterialExtension for NifSurface {
         // A channel view of the authored materials' inputs (crate::authored::PbrView; off
         // unless NVF_PBR_VIEW is set at the start): the main pass's colour only.
         // The metallic debug switch (crate::authored::metallic_debug; off unless
-        // NVF_PBR_METALLIC=1 at the start) likewise.
-        let metallic_def: &[&str] = if crate::authored::metallic_debug() { &["NVF_PBR_METALLIC"] } else { &[] };
+        // NVF_PBR_METALLIC=1 at the start) likewise, except with reflections on, which retire
+        // its "keep the metal share" rule.
+        // Reflections (crate::reflection_cube; off unless NVF_PBR_REFLECT_FIELD=1 at the
+        // start): the opt-in to the view's environment map light, main pass only (nvforever
+        // lights/reflection_gate.rs compiles bevy_pbr's environment blocks under it), and the
+        // view-dependent metallic in nif_material.wesl.
+        let reflect = crate::reflection_cube::enabled();
+        let metallic_def: &[&str] = if crate::authored::metallic_debug() && !reflect { &["NVF_PBR_METALLIC"] } else { &[] };
+        let reflect_def: &[&str] = if reflect { &[crate::reflection_cube::REFLECT_DEF] } else { &[] };
         let view_defs = crate::authored::view().shader_defs();
-        if !(view_defs.is_empty() && metallic_def.is_empty()) && !descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
+        if !(view_defs.is_empty() && metallic_def.is_empty() && reflect_def.is_empty()) && !descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
             if let Some(fragment) = descriptor.fragment.as_mut() {
-                fragment.shader_defs.extend(view_defs.iter().chain(metallic_def).map(|d| ShaderDefVal::from(*d)));
+                fragment.shader_defs.extend(view_defs.iter().chain(metallic_def).chain(reflect_def).map(|d| ShaderDefVal::from(*d)));
             }
         }
         // StandardMaterial has set the rasteriser's bias from the material's depth bias.

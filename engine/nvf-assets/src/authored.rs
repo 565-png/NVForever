@@ -176,12 +176,14 @@ pub fn key_eligible(key: &str) -> bool {
 }
 
 /// The metallic value an authored material is built with: 0 (the ORM's blue channel then has
-/// no effect: no reflection source exists yet, docs/spec-notes/pbr-materials.md "Metallic"),
-/// or 1 in the metallic channel view ([`PbrView::Metallic`]), so the material's sample of
-/// the blue channel is the per-texel value the view shows, and under the metallic debug
-/// switch ([`metallic_debug`]), so the blue channel takes effect.
+/// no effect: no reflection source, docs/spec-notes/pbr-materials.md "Metallic"), or 1 in the
+/// metallic channel view ([`PbrView::Metallic`]), so the material's sample of the blue
+/// channel is the per-texel value the view shows, under the metallic debug switch
+/// ([`metallic_debug`]), so the blue channel takes effect, and with reflections on
+/// (`reflection_cube::enabled`), where nif_material.wesl holds the sampled value at 0 in every
+/// view without a reflection cube, so only a view with one shades a metal as a metal.
 pub fn authored_metallic() -> f32 {
-    if view() == PbrView::Metallic || metallic_debug() { 1.0 } else { 0.0 }
+    if view() == PbrView::Metallic || metallic_debug() || crate::reflection_cube::enabled() { 1.0 } else { 0.0 }
 }
 
 /// The environment variable of the metallic debug switch ([`metallic_debug`]).
@@ -193,7 +195,10 @@ pub const METALLIC_ENV: &str = "NVF_PBR_METALLIC";
 /// the metal's share of it on authored materials ((1 - m) of it is removed, m the sampled
 /// metallic), so a metal shows the ambient light in its colour instead of drawing black where
 /// no lamp's highlight falls (`NVF_PBR_METALLIC` shader def) [design, DESIGN option (b)].
-/// Every other material is drawn as without it.
+/// Every other material is drawn as without it. With reflections on
+/// (`reflection_cube::enabled`) the "keep the metal share" rule is retired: the shader def is
+/// not set and the full ambient highlight is removed, also at metallic 1, since the cube
+/// replaces it (nif_material.rs, reflections slice 1).
 pub fn metallic_debug() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {

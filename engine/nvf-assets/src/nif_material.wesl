@@ -8,7 +8,8 @@
 //   colour), as NIF emissive is;
 // - ambient light is diffuse only: the specular part Bevy adds for its ambient light is
 //   taken out again, since the game's ambient term is a flat colour and highlights come
-//   from lights (and environment maps, not drawn yet);
+//   from lights (and, on authored materials with reflections on, from the view's reflection
+//   cube: NVF_PBR_REFLECT below; the game's own environment maps are not drawn yet);
 // - a multiply-blended shape's colour is a factor on what lies behind it: summed in
 //   display values, held to 0..1, and neither fogged nor tonemapped;
 // - an additive shape adds what it would add to the display values of the opaque frame
@@ -644,6 +645,9 @@ fn nif_fragment(
     // top of nif_fragment (before any discard), passed in for the lookup's branches; #2661
     // review: the face's steepness from the world-position derivatives captured there.
     @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) let terrain_inputs = MeshTerrainInputs(distance(view.world_position, in.world_position.xyz), terrain_dx, terrain_dy, view.mip_bias, mesh_terrain_shading(in.instance_index), mesh_terrain_face_up(terrain_wdx, terrain_wdy, pbr_input.world_normal));
+    // [design] Reflections (NVF_PBR_REFLECT, below): the mesh's share of the reflection, 1
+    // unless full mesh terrain shading moves the material towards the landscape's.
+    @if(!PREPASS_PIPELINE && NVF_PBR_REFLECT) var reflect_share = 1.0;
     @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) {
         let terrain = mesh_terrain_lookup(in.instance_index, in.world_position.xyz, pbr_input.world_normal, terrain_inputs);
         let terrain_view = mesh_terrain_view(in.instance_index);
@@ -664,8 +668,33 @@ fn nif_fragment(
                 pbr_input.material.clearcoat *= 1.0 - w;
                 pbr_input.material.anisotropy_strength *= 1.0 - w;
                 pbr_input.anisotropy_strength *= 1.0 - w;
+                // The reflection fades with the mesh's share, so the dielectric sheen is gone
+                // at w = 1 as well as the metal.
+                @if(NVF_PBR_REFLECT) reflect_share = 1.0 - w;
             }
         }
+    }
+    // [design] Reflections on authored materials (#2981 reflections, slice 1; nvf_assets
+    // reflection_cube.rs). NVF_PBR_REFLECT is set on every NIF main-pass pipeline while the
+    // run's switch is on; ENVIRONMENT_MAP is the view's (bevy_pbr sets it once the view's
+    // EnvironmentMapLight has both its images on the GPU, which reflection_cube.rs attaches
+    // only after the cube's content is written). An authored material's metallic is the
+    // ORM's blue (NVF_PBR_VIEW=metallic, taken above, shows it); a view without a cube holds
+    // it at 0, so the water mirror, the scope, the minigame views and the first frames before
+    // the cube shade it exactly as with the switch off.
+    @if(!PREPASS_PIPELINE && NVF_PBR_REFLECT && !ENVIRONMENT_MAP) if surface.emissive_rule.w > 0.5 {
+        pbr_input.material.metallic = 0.0;
+    }
+    // A view with a cube: its reflection (bevy_pbr pbr_functions' environment blocks, compiled
+    // for this fragment only by nvforever lights/reflection_gate.rs) is weighted by
+    // specular_occlusion, set here for both lighting calls below (the second is the
+    // first-person shadow correction, with_shade_light): the authored mark (every other
+    // material gets 0, and the gate then skips the cube lookup), the ORM's occlusion (red;
+    // pbr_input.diffuse_occlusion holds it alone, Bevy's screen-space occlusion being unused)
+    // and the mesh's share under the mesh terrain blend.
+    @if(!PREPASS_PIPELINE && NVF_PBR_REFLECT && ENVIRONMENT_MAP) {
+        let reflect_weight = select(0.0, reflect_share * pbr_input.diffuse_occlusion.x, surface.emissive_rule.w > 0.5);
+        pbr_input.specular_occlusion = pbr_input.specular_occlusion * reflect_weight;
     }
     // base_color already holds texture × vertex colour × material colour.
     // Bevy's pbr_input_from_standard_material fills the emissive light in only for lit
@@ -710,8 +739,11 @@ fn nif_fragment(
             // took the ambient colour as linear light (`nvf_ambient_ratio`).
             ambient_spec *= pow(max(lights.ambient_color.rgb * view.exposure, vec3(1e-6)), vec3(1.2));
         }
+        // Removed in full, also from a metal (metallic 1 with reflections on): the reflection
+        // cube's light, where the view has one, takes the highlight's place (#2981 reflections).
         @if(!NVF_PBR_METALLIC) out.color = vec4(max(out.color.rgb - view.exposure * ambient_spec, vec3(0.0)), out.color.a);
-        // NVF_PBR_METALLIC (nvf-assets authored.rs `metallic_debug`, a debug switch): on a
+        // NVF_PBR_METALLIC (nvf-assets authored.rs `metallic_debug`, a debug switch, not set
+        // while reflections are on, which retire it): on a
         // material shaded from an authored set (emissive_rule.w), only the dielectric share
         // (1 - m) of the highlight is removed, m the sampled metallic after the terrain mix,
         // so a metal keeps its ambient highlight; m = 0 removes it all, as above. Other
