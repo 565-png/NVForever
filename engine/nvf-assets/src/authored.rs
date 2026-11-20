@@ -467,7 +467,8 @@ pub struct Stats {
     pub not_eligible: AtomicU64,
     /// Shapes whose diffuse is under `textures\pipboy3000\` or `textures\interface\`.
     pub excluded_texture: AtomicU64,
-    /// Shapes whose set's `_orm` did not load (they stay the game's).
+    /// Sets whose `_orm` did not load, asked for by a material build or by a swap's
+    /// [`retexture`] alike ([`find`]; the shape stays the game's).
     pub orm_failed: AtomicU64,
     /// Sets put on a material without their `_n`, the drawn mesh having no tangents.
     pub normal_without_tangents: AtomicU64,
@@ -493,7 +494,7 @@ impl Stats {
     /// The summary line (without its prefix).
     pub fn line(&self) -> String {
         format!(
-            "{} material builds applied a set ({} distinct set stems at build); builds without one: {} not eligible, {} on excluded textures, {} whose _orm did not load; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to a set, {} to the legacy look)",
+            "{} material builds applied a set ({} distinct set stems at build); builds without one: {} not eligible, {} on excluded textures; {} ORM load failures at build or swap; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to a set, {} to the legacy look)",
             Self::get(&self.built),
             self.stems.lock().expect("authored stats").len(),
             Self::get(&self.not_eligible),

@@ -325,7 +325,7 @@ fn the_summary_line_names_every_count() {
     s.stems.lock().unwrap().extend(["a".to_string(), "b".to_string()]);
     assert_eq!(
         s.line(),
-        "3 material builds applied a set (2 distinct set stems at build); builds without one: 5 not eligible, 1 on excluded textures, 2 whose _orm did not load; 4 applied without their _n (no tangents); 6 role copies made legacy; 15 retexture calls (7 to a set, 8 to the legacy look)"
+        "3 material builds applied a set (2 distinct set stems at build); builds without one: 5 not eligible, 1 on excluded textures; 2 ORM load failures at build or swap; 4 applied without their _n (no tangents); 6 role copies made legacy; 15 retexture calls (7 to a set, 8 to the legacy look)"
     );
 }
 
