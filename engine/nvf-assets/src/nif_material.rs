@@ -1050,6 +1050,7 @@ impl Plugin for NifMaterialPlugin {
         app.add_systems(Last, crate::authored::report);
         crate::bc5_field::install(app);
         crate::pbr_field::install(app);
+        crate::pbr_field::reflect::install(app);
     }
 }
 

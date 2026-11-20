@@ -33452,3 +33452,60 @@ forbid = [
   { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
 ]
 note = "The same field with the setting off: the index is never built (no 'authored materials: N sets' line), the material path loads no pbr file (the fixture's own check reads the generated files first), the plain, lit, dark and flat panels draw the same and the reference (its game normal map) differs from them."
+
+[[scenario]]
+name = "pbr-reflect-field"
+source = "[design, #2981] docs/spec-notes/pbr-materials.md \"Reflections on authored materials, slice 1\": generated authored sets on the real material path under a fixed asymmetric reflection cube; engineering comparator policy set from reasoning, not original-game pixels"
+areas = ["renderer", "textures", "nif"]
+paths = ["engine/nvf-assets/src/reflection_cube.rs", "engine/nvf-assets/src/reflection_cube/", "engine/nvf-assets/src/pbr_field.rs", "engine/nvf-assets/src/pbr_field/reflect.rs", "engine/nvf-assets/src/pbr_field/reflect/", "engine/nvf-assets/src/authored.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/", "engine/vendor/bevy_pbr/src/render/pbr_functions.wesl", "engine/vendor/bevy_pbr/src/light_probe/"]
+env = { NVF_PLAY_TEST_PBR_REFLECT_FIELD = "1", NVF_PBR_REFLECT_FIELD = "1", NVFOREVER_HOME = "pbr-field-home", NVF_PLAY_TEST_GOD = "1" }
+# The Authored materials row pinned on, as in pbr-authored-field (the two share a home).
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--graphics-only", "authored-materials"]
+run_seconds = 30
+timeout = 180
+expect = [
+  "authored materials: on",
+  { text = "authored materials: reflections development switch (NVF_PBR_REFLECT_FIELD=1)", count = 1 },
+  { text = "lights: reflection gate installed", count = 1 },
+  { text = "pbr reflect field: actual NIF material source, 10 panels (metal20+X, …), switch on, gate Installed", count = 1 },
+  { text = "pbr reflect field: camera A's cube attached (switch on)", count = 1 },
+  { re = 'pbr reflect field: readback \d A \[metal20\+X=', count = 2, label = "each readback logs both cameras' panel means and the judged quantities" },
+  { text = "pbr reflect field: first rendered readback PASS", count = 1 },
+  { text = "pbr reflect field: second rendered readback PASS", count = 1 },
+  { text = "pbr reflect field: metals show the faces their reflections point at, rougher nearer the cube's mean, controls and the cube-less camera unchanged PASS", count = 1 },
+]
+order = [["pbr reflect field: camera A's cube attached", "pbr reflect field: first rendered readback PASS", "pbr reflect field: second rendered readback PASS", "pbr reflect field: metals show the faces their reflections point at"]]
+forbid = [
+  { re = '(?i)pbr reflect field:.*(FAIL|timeout|missing|wrong byte count)' },
+  { re = 'reflection gate.*(not found|not installed)' },
+  { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
+]
+note = "Development slice of the reflections (switch NVF_PBR_REFLECT_FIELD=1; no settings row, no weather). Ten panels, white diffuse, two cameras of one pose (Bevy's default exposure, MSAA 4x, world-view ambient 0.6 with negative alpha, no sun): camera A carries a reflection cube with a different linear colour per world face (+X red, -X cyan, +Y green, -Y magenta, +Z blue, -Z yellow; each level mixed towards their grey mean by level/5), camera B none. Judged on camera A: the five tilted smooth metals (roughness 0.2) show the face their reflection points at (+X, -X, +Y, -Y, +Z: face orientation and Bevy's z flip), the head-on metals at roughness 0.2/0.5/0.9 lie nearer the neutral mean in chromaticity as roughness rises (the level rule), the smooth one clearly blue; the legacy and zero-reflectance controls equal camera B's; the dielectric does not darken. On camera B every panel is the same white under the ambient (metallic held at 0 without a cube). THE THRESHOLDS (pbr_field/reflect.rs) ARE SET FROM REASONING, NOT FROM READBACKS: the main session must confirm them against the first real readbacks, and compare this run's camera B means (the readback line, B [...]) with pbr-reflect-field-off's, panel for panel: they should be equal. Each run reserves a new run-* child under pbr-field-home/pbr-reflect-field-output with both cameras' readbacks (.rgba, .ppm) and the comparator reports."
+manual = "Open readback-2-a.ppm: top row red, cyan, green, magenta, blue panels (tilted); bottom row a duller blue, an almost grey panel, then three white-grey panels. readback-2-b.ppm: ten identical grey panels."
+
+[[scenario]]
+name = "pbr-reflect-field-off"
+source = "[design, #2981] docs/spec-notes/pbr-materials.md \"Reflections on authored materials, slice 1\": the switch off, a reflection cube on a camera changes no panel (the reflection gate keeps it from every shader that did not opt in)"
+areas = ["renderer", "textures", "nif"]
+paths = ["engine/nvf-assets/src/reflection_cube.rs", "engine/nvf-assets/src/reflection_cube/", "engine/nvf-assets/src/pbr_field/reflect.rs", "engine/nvf-assets/src/pbr_field/reflect/", "engine/nvf-assets/src/authored.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/", "engine/vendor/bevy_pbr/src/render/pbr_functions.wesl", "engine/vendor/bevy_pbr/src/light_probe/"]
+env = { NVF_PLAY_TEST_PBR_REFLECT_FIELD = "1", NVFOREVER_HOME = "pbr-field-home", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--graphics-only", "authored-materials"]
+run_seconds = 30
+timeout = 180
+expect = [
+  "authored materials: on",
+  { text = "lights: reflection gate installed", count = 1 },
+  { text = "pbr reflect field: actual NIF material source, 10 panels (metal20+X, …), switch off, gate Installed", count = 1 },
+  { text = "pbr reflect field: camera A's cube attached (switch off)", count = 1 },
+  { re = 'pbr reflect field: readback \d A \[metal20\+X=', count = 2, label = "each readback logs both cameras' panel means with the switch off" },
+  { re = "pbr reflect field: first rendered readback PASS", count = 1, label = "first readback with the switch off" },
+  { re = "pbr reflect field: second rendered readback PASS", count = 1, label = "second readback with the switch off" },
+  { text = "pbr reflect field: switch off, the cube on camera A changes no panel PASS", count = 1 },
+]
+forbid = [
+  { re = '(?i)pbr reflect field:.*(FAIL|timeout|missing|wrong byte count)' },
+  { re = 'reflections development switch' },
+  { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
+  { re = 'reflection gate.*(not found|not installed)', label = "the gate in place with the switch off too" },
+]
+note = "The reflection field with the switch off: authored materials are built with metallic 0 and no NIF pipeline opts in, yet camera A still carries the filled cube (Bevy sets ENVIRONMENT_MAP for its pipelines), so every panel of camera A must equal camera B's: the reflection gate keeps the cube from shaders without the opt-in. Camera B is today's picture of these panels. Thresholds as in pbr-reflect-field (set from reasoning; the main session confirms them against the first real readbacks). Output under pbr-field-home/pbr-reflect-field-output."
