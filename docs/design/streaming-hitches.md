@@ -187,14 +187,24 @@ uGridsToLoad=5).
     triangle uses), generates them as before; so do actor parts (`nvf_assets::actor`), which
     #3072 rewrites. Test aid `NVF_STORED_TANGENTS=0`: all generated. A run ends with
     `models: normal-map tangents of <n> shapes read from their files (…), <n> generated
-    (…)`. Bench (`prep_bench`, a local probe, the 230 static models of the Novac start, 7
-    alternating runs each, medians, a busy machine) [observed 2026-11-19]:
+    (…)`. Bench (a local probe, not in the repo: the 230 static models of the Novac start
+    prepared without the game, on the calling thread and on the read pool, the time
+    `generate_tangents` took counted apart; 7 alternating runs each, medians, a busy
+    machine) [observed 2026-11-19]:
 
     | preparing the 230 models | generated | read from the files |
     |---|---|---|
     | on one thread (wall) | 560 ms (tangents 344 ms) | 215 ms (tangents 7 ms) |
     | on the 4-thread read pool (wall) | 165 ms | 66 ms |
     | on the read pool (its threads' time) | 648 ms (tangents 403 ms) | 260 ms (tangents 8 ms) |
+
+    To measure it again with what is in the repo: start at Novac (`--cell Novac --play
+    --hour 22`) as is and with `NVF_STORED_TANGENTS=0`, a few runs each, and compare the
+    main thread's cell loading in `streaming summary: <n> cells loaded (<ms> ms on the main
+    thread)` and the start's cells in `world: the start's cells drawn: …` (the smoke
+    scenarios `start-pool-prep` and `start-pool-prep-off` run that start, the second with
+    `NVF_START_POOL_PREP=0` too). That measures the start in the game, not the models'
+    preparation alone as the bench did.
 
 - **The reads' own pool** (#1732, `nvf_assets::read_pool`). Everything above that runs "on
   a worker thread" for cells, models, textures, actor parts, clips and `.egt` files runs

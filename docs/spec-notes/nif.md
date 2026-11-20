@@ -1155,10 +1155,16 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   [documented: nif.xml NiGeometryData, condition `Has Normals` and `(Data Flags | BS Data
   Flags) & 4096`; BSGeometryDataFlags bit 12 "Has Tangents"]. nif.xml documents nothing
   more of them: not which texture axis each follows, nor their handedness. From the data
-  [observed: `prep_bench compare`, a local probe, over the 7,182 models under `meshes\`
+  [observed: a local probe, not in the repo, over the 7,182 models under `meshes\`
   architecture, clutter, dungeons, landscape, furniture, vehicles and scol of the game's
   archives (LOD and markers left out), 23,358 normal-mapped shapes, every one of which
-  but 9 stores them; vertices a triangle uses]:
+  but 9 stores them; vertices a triangle uses. Per shape-data block it took the arrays
+  `fnv_nif::scene::mesh_data` decodes, the texture gradients from the triangles' UVs, and
+  `Mesh::generate_tangents` on the mesh `nvf_assets::nif_spawn::build_mesh` makes, and
+  compared their directions per vertex. What the repo keeps of it: the tests of
+  `nvf_assets::tangents` check the mapping below against Bevy's generator on a plain and a
+  mirrored quad, and a game run logs at exit how many shapes took the stored arrays and
+  why the others did not (`models: normal-map tangents of …`)]:
   - Against each vertex's texture gradients (the position's change along u and along v,
     from its triangles' UVs): the "bitangent" lies within 25° of +du at 93.3 % of 13.5
     million vertices (−du: 0.03 %), the "tangent" within 25° of +dv at 89.8 % (−dv:
