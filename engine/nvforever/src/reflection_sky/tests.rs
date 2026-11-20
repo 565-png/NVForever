@@ -16,6 +16,7 @@ fn day() -> Inputs {
         sun_dir: Vec3::new(1.0, 1.0, 0.0).normalize(),
         sky_scale: 0.88,
         clip: true,
+        ground: None,
     }
 }
 
@@ -34,7 +35,7 @@ fn tony(mut inputs: Inputs) -> Inputs {
 }
 
 fn room() -> Inputs {
-    Inputs::Indoors { cell: Some(0x1234), ambient: Vec3::new(0.4, 0.35, 0.3), fog: Vec3::new(0.2, 0.25, 0.3) }
+    Inputs::Indoors { cell: Some(0x1234), ambient: Vec3::new(0.4, 0.35, 0.3), fog: Vec3::new(0.2, 0.25, 0.3), room: None }
 }
 
 /// The units identity of nvf_assets `ReflectionCube` ("Units"): with the cube's intensity
@@ -91,7 +92,7 @@ fn a_mirror_of_the_sky_shows_the_dome_as_drawn() {
 #[test]
 fn a_sky_of_one_colour_is_that_colour_times_the_sky_scale() {
     let colour = Vec3::new(0.25, 0.3, 0.35);
-    let inputs = Inputs::Outdoors { horizon: colour, lower: colour, upper: colour, ambient: Vec3::splat(0.4), sun: Vec3::ZERO, sun_dir: Vec3::Y, sky_scale: 0.88, clip: true };
+    let inputs = Inputs::Outdoors { horizon: colour, lower: colour, upper: colour, ambient: Vec3::splat(0.4), sun: Vec3::ZERO, sun_dir: Vec3::Y, sky_scale: 0.88, clip: true, ground: None };
     let c = SkyContent::new(&inputs, &DomeProfile::fallback());
     for e in [0.3f32, 0.7, 1.0] {
         let d = Vec3::new((1.0 - e * e).sqrt(), e, 0.0);
@@ -214,7 +215,7 @@ fn small_changes_do_not_refill_and_large_ones_do() {
     assert!(!dark(with(&turn(30.0))).moved(&dark(base.clone())));
     // Indoors against outdoors, and another cell.
     assert!(room().moved(&base) && base.moved(&room()));
-    let other = Inputs::Indoors { cell: Some(0x9999), ambient: Vec3::new(0.4, 0.35, 0.3), fog: Vec3::new(0.2, 0.25, 0.3) };
+    let other = Inputs::Indoors { cell: Some(0x9999), ambient: Vec3::new(0.4, 0.35, 0.3), fog: Vec3::new(0.2, 0.25, 0.3), room: None };
     assert!(other.moved(&room()));
     assert!(!room().moved(&room()));
 }
@@ -264,5 +265,207 @@ fn the_summary_line() {
     s.fills_outdoors = 3;
     s.fills_indoors = 1;
     s.unchanged = 40;
-    assert_eq!(s.line(), "4 fills (3 outdoors, 1 indoors), 40 checks skipped as unchanged");
+    s.room_fills = [1, 0, 0];
+    s.refills[1] = 2;
+    s.slowest_ms = 0.5;
+    assert_eq!(
+        s.line(),
+        "4 fills (3 outdoors, 1 indoors), 40 checks skipped as unchanged; 1 room fills (1 marker, 0 rays, 0 default), 0 ground-lamp fills, slowest room or lamp fill 0.50 ms; refills: 0 mode, 2 cell, 0 room, 0 box, 0 moved, 0 lamps, 0 light, 0 profile"
+    );
+}
+
+// The analytic room (stage 2 version 1).
+
+fn warm_lamp(position: Vec3, radius: f32) -> Lamp {
+    Lamp { position, colour: Vec3::new(1.0, 0.8, 0.6), radius, spot: None }
+}
+
+/// The room module's copies of stage 1's rules are the same rules: the lit surface, the
+/// units identity, the floor's albedo, the fog share.
+#[test]
+fn the_room_rules_are_stage_1s() {
+    for (albedo, light) in [(Vec3::splat(0.2), Vec3::new(0.3, 0.6, 1.4)), (ground_albedo(), Vec3::new(0.0, 0.05, 2.5))] {
+        assert_eq!(reflection_room::lit_texel(albedo, light), ground_texel(albedo, light));
+    }
+    for v in [Vec3::new(0.0, 1e-7, 0.3), Vec3::new(0.9, 1.0, 2.0), Vec3::new(-0.5, 0.2, 0.1)] {
+        assert_eq!(reflection_room::display_texel(v), texel(v));
+    }
+    assert_eq!(reflection_room::FLOOR_ALBEDO, GROUND_ALBEDO);
+    assert!(near(reflection_room::Albedo::default().floor, ground_albedo(), 1e-7));
+    let fog = reflection_room::Fog { texel: Vec3::ZERO, near: 100.0, far: 900.0, power: 1.7 };
+    for d in [0.0f32, 100.0, 300.0, 899.0, 2000.0] {
+        assert!((fog.share(d) - crate::fog::share(100.0, 900.0, 1.7, d)).abs() < 1e-6, "{d}");
+    }
+}
+
+#[test]
+fn brightness_inverts_the_lights_lumens() {
+    for b in [0.0f32, 0.4, 1.0, 2.7] {
+        assert!((brightness(crate::lights::lumens(b, crate::sky::light_unit())) - b).abs() < 1e-5 * b.max(1.0), "{b}");
+    }
+}
+
+/// A placed light as a lamp: display colour x steady brightness (a moving light's full
+/// intensity), range as radius, a spot light's cone along its forward axis.
+#[test]
+fn a_placed_light_becomes_a_lamp() {
+    let unit = crate::sky::light_unit();
+    let point = PointLight { color: crate::lights::display_color([1.0, 0.5, 0.25]), intensity: crate::lights::lumens(2.0, unit), range: 300.0, ..default() };
+    let l = lamp_of(Vec3::new(1.0, 2.0, 3.0), Vec3::NEG_Z, Some(&point), None, None).unwrap();
+    assert!(near(l.colour, Vec3::new(2.0, 1.0, 0.5), 1e-4) && l.radius == 300.0 && l.spot.is_none());
+    let steady = lamp_of(Vec3::ZERO, Vec3::NEG_Z, Some(&point), None, Some(crate::lights::lumens(3.0, unit))).unwrap();
+    assert!(near(steady.colour, Vec3::new(3.0, 1.5, 0.75), 1e-4), "a flickering light at its full intensity");
+    let spot = SpotLight { color: crate::lights::display_color([1.0, 1.0, 1.0]), intensity: crate::lights::lumens(1.0, unit), range: 200.0, outer_angle: 0.5, inner_angle: 0.4, ..default() };
+    let s = lamp_of(Vec3::ZERO, Vec3::NEG_Y, None, Some(&spot), None).unwrap();
+    assert!(s.spot.is_some_and(|c| near(c.direction, Vec3::NEG_Y, 1e-6) && c.factor(Vec3::NEG_Y) == 1.0 && c.factor(Vec3::X) == 0.0));
+    assert!(lamp_of(Vec3::ZERO, Vec3::NEG_Z, None, None, None).is_none());
+}
+
+/// The fallback the brief pins: with no lamp in reach and only the default box, the indoor
+/// content is stage 1's, texel for texel at every level.
+#[test]
+fn no_lamp_and_no_box_is_stage_1_exactly() {
+    let eye = Vec3::new(10.0, 20.0, 30.0);
+    let far = warm_lamp(eye + Vec3::new(3000.0, 0.0, 0.0), 300.0);
+    assert_eq!(room_inputs(eye, BoxSource::Default, default_box(eye), &[(1, far)], Vec3::ZERO, Vec3::Y, None), None);
+    let profile = DomeProfile::fallback();
+    let (content, stage1) = (Content::new(&room(), &profile), SkyContent::new(&room(), &profile));
+    assert!(matches!(content, Content::Sky(_)));
+    for level in 0..SPECULAR_LEVELS {
+        for d in [Vec3::Y, Vec3::NEG_Y, Vec3::X, Vec3::new(0.3, -0.2, 0.9).normalize(), Vec3::new(-0.5, 0.7, 0.1).normalize()] {
+            assert_eq!(content.colour(d, level), stage1.colour(d, level), "level {level} {d}");
+        }
+    }
+    // A room marker's box with no lamp is a room (its surfaces under the ambient), not stage 1.
+    let marked = room_inputs(eye, BoxSource::Marker(7), default_box(eye), &[], Vec3::ZERO, Vec3::Y, None);
+    assert!(marked.is_some_and(|r| r.lamps.is_empty()));
+}
+
+/// With a lamp in reach the content is the analytic room: brighter toward the lamp than
+/// stage 1 there, and the wall near the lamp brighter than the far one.
+#[test]
+fn a_lamp_in_reach_makes_the_room() {
+    let eye = Vec3::new(0.0, 100.0, 0.0);
+    let lamp = warm_lamp(eye + Vec3::new(150.0, 60.0, 0.0), 300.0);
+    let r = room_inputs(eye, BoxSource::Default, default_box(eye), &[(5, lamp)], Vec3::ZERO, Vec3::Y, None).expect("a room");
+    let Inputs::Indoors { cell, ambient, fog, .. } = room() else { unreachable!() };
+    let inputs = Inputs::Indoors { cell, ambient, fog, room: Some(r) };
+    let profile = DomeProfile::fallback();
+    let (content, stage1) = (Content::new(&inputs, &profile), SkyContent::new(&room(), &profile));
+    assert!(matches!(content, Content::Room(_)));
+    let toward = (lamp.position - eye).normalize();
+    assert!(content.colour(toward, 0).x > stage1.colour(toward, 0).x + 0.5, "the lamp's lobe");
+    let wall = Vec3::new(1.0, -0.3, 0.0).normalize();
+    assert!(content.colour(wall, 0).x > content.colour(-wall, 0).x, "the wall near the lamp is the brighter");
+}
+
+/// A room marker's box in game space comes to Bevy space with the eye inside it, only for
+/// the interior the rooms belong to; the rays' box needs five hits; the default box puts
+/// the floor EYE_HEIGHT under the eye.
+#[test]
+fn the_box_from_a_marker_the_rays_or_the_default() {
+    let mut rooms = crate::rooms::Rooms::default();
+    rooms.cell = Some(0x42);
+    rooms.rooms.push(crate::rooms::RoomBox { id: 0x0006_0001, center: Vec3::new(100.0, 200.0, 50.0), rot: Mat3::IDENTITY, half: Vec3::new(150.0, 100.0, 80.0) });
+    // Bevy (120, 60, -210) is game (120, 210, 60).
+    let inside = Vec3::new(120.0, 60.0, -210.0);
+    let (id, b) = marker_box(Some(&rooms), Some(0x42), inside).expect("in the room");
+    assert_eq!(id, 0x0006_0001);
+    assert!(b.contains(inside, 0.0) && near(b.centre, Vec3::new(100.0, 50.0, -200.0), 1e-4));
+    assert!(near(b.size(), Vec3::new(300.0, 200.0, 160.0), 1e-4), "sizes in game order: x, y, height");
+    assert!((b.exit(inside, Vec3::NEG_Y).distance - 90.0).abs() < 0.1, "the floor at game z -30");
+    assert!(marker_box(Some(&rooms), Some(0x43), inside).is_none(), "another interior");
+    assert!(marker_box(Some(&rooms), Some(0x42), Vec3::new(1000.0, 0.0, 0.0)).is_none(), "outside every room");
+    assert!(marker_box(None, Some(0x42), inside).is_none());
+
+    // Game space: the eye 100 over the floor.
+    let eye = Vec3::new(0.0, 0.0, 100.0);
+    let hits = [Some(100.0), Some(300.0), Some(50.0), Some(150.0), Some(140.0), Some(100.0)];
+    let b = box_from_rays(eye, hits).expect("six hits");
+    assert!(near(b.size(), Vec3::new(400.0, 200.0, 240.0), 1e-3));
+    let bevy_eye = Vec3::new(0.0, 100.0, 0.0);
+    assert!(b.contains(bevy_eye, 0.0) && (b.exit(bevy_eye, Vec3::NEG_Y).distance - 100.0).abs() < 0.1);
+    let one_miss = box_from_rays(eye, [Some(100.0), None, Some(50.0), Some(150.0), Some(140.0), Some(100.0)]).expect("five hits");
+    assert!((one_miss.size().x - (100.0 + ROOM_RAY_MISS)).abs() < 1e-3);
+    assert!(box_from_rays(eye, [Some(100.0), None, None, Some(150.0), Some(140.0), Some(100.0)]).is_none());
+    let tight = box_from_rays(eye, [Some(1.0); 6]).unwrap();
+    assert!(tight.half.min_element() >= MIN_HALF);
+
+    let d = default_box(bevy_eye);
+    assert!(d.contains(bevy_eye, 0.0));
+    assert!((d.exit(bevy_eye, Vec3::NEG_Y).distance - EYE_HEIGHT).abs() < 0.1);
+    assert!((d.exit(bevy_eye, Vec3::Y).distance - (DEFAULT_HEIGHT - EYE_HEIGHT)).abs() < 0.1);
+}
+
+/// The lamps: the nearest MAX_LAMPS of those bright enough, within reach and passing the
+/// test, sorted by id.
+#[test]
+fn the_nearest_lamps_light_the_room() {
+    let eye = Vec3::ZERO;
+    let mut candidates: Vec<(u64, Lamp)> = (0..24).map(|i| (100 - i as u64, warm_lamp(Vec3::new(50.0 + 10.0 * i as f32, 0.0, 0.0), 500.0))).collect();
+    candidates.push((1, Lamp { colour: Vec3::splat(COLOUR_STEP * 0.5), ..warm_lamp(Vec3::X, 500.0) }));
+    candidates.push((2, warm_lamp(Vec3::new(LAMP_DISTANCE + 10.0, 0.0, 0.0), 1e5)));
+    let picked = pick_lamps(&candidates, eye, |_| true);
+    assert_eq!(picked.len(), MAX_LAMPS);
+    assert!(picked.windows(2).all(|w| w[0].id < w[1].id), "sorted by id");
+    let ids: Vec<u64> = picked.iter().map(|l| l.id).collect();
+    assert_eq!(ids, (0..MAX_LAMPS as u64).map(|i| 100 - i).rev().collect::<Vec<_>>(), "the nearest sixteen; the dim and the far ones left out");
+    assert_eq!(pick_lamps(&candidates, eye, |l| l.position.x < 75.0).len(), 3);
+}
+
+/// What refills the room: the eye past CENTRE_STEP, the box past BOX_STEP, the lamp set, a
+/// lamp's colour past the step, another source; small moves do not.
+#[test]
+fn the_room_refills_on_a_step() {
+    let eye = Vec3::new(0.0, 100.0, 0.0);
+    let lamp = warm_lamp(eye + Vec3::new(100.0, 50.0, 0.0), 300.0);
+    let Inputs::Indoors { cell, ambient, fog, .. } = room() else { unreachable!() };
+    let make = |eye: Vec3, source: BoxSource, lamps: &[(u64, Lamp)]| Inputs::Indoors {
+        cell,
+        ambient,
+        fog,
+        room: room_inputs(eye, source, default_box(Vec3::new(0.0, 100.0, 0.0)), lamps, Vec3::ZERO, Vec3::Y, Some([0.0, 3000.0, 1.0])),
+    };
+    let base = make(eye, BoxSource::Rays, &[(3, lamp)]);
+    assert_eq!(base.change(&base), None);
+    assert_eq!(make(eye + Vec3::X * (CENTRE_STEP * 0.5), BoxSource::Rays, &[(3, lamp)]).change(&base), None);
+    assert_eq!(make(eye + Vec3::X * (CENTRE_STEP + 1.0), BoxSource::Rays, &[(3, lamp)]).change(&base), Some(Refill::Moved));
+    assert_eq!(make(eye, BoxSource::Marker(9), &[(3, lamp)]).change(&base), Some(Refill::Room));
+    let other = warm_lamp(eye + Vec3::new(-100.0, 50.0, 0.0), 300.0);
+    assert_eq!(make(eye, BoxSource::Rays, &[(3, lamp), (4, other)]).change(&base), Some(Refill::Lamps));
+    let dimmer = Lamp { colour: lamp.colour - Vec3::splat(COLOUR_STEP * 0.5), ..lamp };
+    assert_eq!(make(eye, BoxSource::Rays, &[(3, dimmer)]).change(&base), None, "below the colour step");
+    let out = Lamp { colour: lamp.colour * 0.5, ..lamp };
+    assert_eq!(make(eye, BoxSource::Rays, &[(3, out)]).change(&base), Some(Refill::Lamps));
+    // The room comes and goes with its lamps on the default box.
+    assert_eq!(make(eye, BoxSource::Default, &[]).change(&make(eye, BoxSource::Default, &[(3, lamp)])), Some(Refill::Lamps));
+    // Another cell, and indoors against outdoors, come first.
+    let Inputs::Indoors { room: r, .. } = base.clone() else { unreachable!() };
+    assert_eq!(Inputs::Indoors { cell: Some(0x9999), ambient, fog, room: r.clone() }.change(&base), Some(Refill::Cell));
+    assert_eq!(day().change(&base), Some(Refill::Mode));
+    // A box moved past BOX_STEP.
+    let mut moved = r.expect("a room");
+    moved.room.half.x += BOX_STEP + 1.0;
+    assert_eq!(Inputs::Indoors { cell, ambient, fog, room: Some(moved) }.change(&base), Some(Refill::Box));
+}
+
+/// Outdoors a lamp near the eye adds lit ground below the horizon on top of stage 1, and
+/// nothing far above the horizon away from it.
+#[test]
+fn lamps_light_the_ground_outdoors_at_night() {
+    let eye = Vec3::new(0.0, 120.0, 0.0);
+    let lamp = warm_lamp(Vec3::new(0.0, 250.0, -150.0), 500.0);
+    let g = ground_inputs(eye, 0.0, &[(1, lamp)]).expect("a lamp near");
+    assert!(ground_inputs(eye, 0.0, &[(1, warm_lamp(Vec3::new(3000.0, 250.0, 0.0), 500.0))]).is_none(), "too far");
+    assert!(ground_inputs(eye, 0.0, &[(1, warm_lamp(Vec3::new(0.0, 900.0, 0.0), 500.0))]).is_none(), "its light does not reach the ground");
+    let night = dark(day());
+    let Inputs::Outdoors { horizon, lower, upper, ambient, sun, sun_dir, sky_scale, clip, .. } = night.clone() else { unreachable!() };
+    let lit = Inputs::Outdoors { horizon, lower, upper, ambient, sun, sun_dir, sky_scale, clip, ground: Some(g) };
+    let profile = DomeProfile::fallback();
+    let (with, without) = (Content::new(&lit, &profile), Content::new(&night, &profile));
+    let below = Vec3::new(0.0, -0.6, -0.8).normalize();
+    assert!(with.colour(below, 0).x > without.colour(below, 0).x);
+    let away = Vec3::new(0.0, 0.8, 0.6).normalize();
+    assert!(near(with.colour(away, 0), without.colour(away, 0), 1e-6));
+    assert_eq!(lit.change(&night), Some(Refill::Lamps));
 }
