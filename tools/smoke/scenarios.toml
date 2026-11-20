@@ -33277,6 +33277,46 @@ expect = [
 ]
 
 [[scenario]]
+name = "start-residents-under-screen"
+source = "a Novac start at 22:00 drew its 15-17 residents in view after the start's loading screen, three a frame (residents.rs SPAWNS_PER_FRAME): a frame of 65-106 ms and about a second of 20-54 ms frames after it [observed 2026-11-19, 0.1 s frame windows]. They are drawn under the screen now, which waits for them; their first package is still chosen on the first frame of play (docs/design/loading-screen.md §1a)"
+note = "passed on #3081's first revision (99ae69440, its description); the count's floor is a third of the 15-17 seen in Novac's start at 22:00. The read-ahead line under the start's screen came with the review fix and is written without running the game"
+areas = ["loading", "ai"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvf-play/src/loading.rs", "engine/nvforever/src/readahead.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Novac", "--play", "--hour", "22", "--no-voice", "--no-messages"]
+run_seconds = 6
+order = [[
+  { re = 'ai: the start.s screen waits for (?P<n>\d+) residents in view to be drawn under it', range = [5, 1000], label = "the residents in view are drawn under the start's screen" },
+  { re = 'loading screen: start residents: (?P<n>\d+) drawn under the screen, 0 in view left for after it$', range = [5, 1000], label = "all of them drawn before it came down" },
+  { re = 'loading screen phases: up [\d.]+ s; .*actors to place [\d.]+ s', label = "the phases name the wait for them" },
+  { re = 'ai \[22:\d\d\] .*: (walks|runs) to ', label = "their packages are chosen after it, on the first frame of play" },
+]]
+expect = [
+  { re = 'actor read-ahead: under the start.s screen, (?P<n>\d+) actors of the \d+ loaded cells listed', range = [5, 10000], label = "the loaded cells' actors are read from when the cells are in, not from when the scripts are made" },
+]
+forbid = [
+  { text = "residents in view still not drawn after", label = "the screen's cap for them" },
+]
+
+[[scenario]]
+name = "start-residents-after-screen-aid"
+source = "test aid NVF_START_ACTORS_UNDER_SCREEN=0 draws the start's residents after its loading screen, three a frame, as before they were drawn under it (docs/design/loading-screen.md §1a): the twin of start-residents-under-screen"
+note = "passed on #3081's first revision (99ae69440, its description)"
+areas = ["loading", "ai"]
+paths = ["engine/nvforever/src/residents.rs", "engine/nvf-play/src/loading.rs"]
+env = { NVF_START_ACTORS_UNDER_SCREEN = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Novac", "--play", "--hour", "22", "--no-voice", "--no-messages"]
+run_seconds = 6
+expect = [
+  { text = "test aid NVF_START_ACTORS_UNDER_SCREEN=0: the start's residents are drawn after its loading screen", label = "the aid is on" },
+  { re = 'loading screen: start residents: 0 drawn under the screen, (?P<n>\d+) in view left for after it \(test aid', range = [5, 1000], label = "none drawn under the screen, all left for after it" },
+]
+forbid = [
+  { re = 'loading screen phases: .*actors to place', label = "the screen does not wait for them" },
+  { text = "ai: the start's screen waits for", label = "nobody is drawn under it" },
+]
+
+[[scenario]]
 name = "repconn-load-door-lock"
 source = "[observed: capture run15b_a, 2026-11-15] #2538: RocketLabBasement tunnel load door 0x000CE1AD has no XLOC but reads its partner 0x0008F97C as locked, level 255, no key; activation is refused (docs/spec-notes/cells-refs.md section 6)"
 note = "[design, #2538] Written without running the game. Start in the tunnel 130 units in front of the door, heading 225; aim and activate it. Require the Locked level-255 result and no teleport. Pitch 0 is provisional [hypothesis]."
