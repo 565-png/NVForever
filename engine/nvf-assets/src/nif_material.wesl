@@ -544,6 +544,11 @@ fn nif_fragment(
     }
     @if(!TERRAIN_ANTI_TILING) var pbr_input = pbr_input_from_standard_material(vin, is_front);
     @if(TERRAIN_ANTI_TILING) var pbr_input = terrain_pbr_standard(vin, is_front, terrain_fp);
+    // An authored set's roughness is its scale (0 to 2, fnv-pbr `ROUGHNESS_SCALE_RANGE`) times
+    // the ORM's green, so it can pass 1, which Bevy's sampling does not clamp: F_AB's
+    // polynomial then leaves its range and the highlight terms blow up to white patches
+    // (#2981). No surface is rougher than 1; Bevy clamps the low end where it needs to.
+    pbr_input.material.perceptual_roughness = min(pbr_input.material.perceptual_roughness, 1.0);
     // NVF_PBR_VIEW (nvf-assets authored.rs `PbrView`, a debug view, off unless NVF_PBR_VIEW is
     // set at the start): one material input, taken here, right after the standard material's
     // sampling and before the mesh terrain blend, and written over the colour at the end.
