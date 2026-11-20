@@ -43,6 +43,11 @@ fn only_the_opted_in_nif_fragment_reads_the_view_cube() {
         ("nvf_assets/nif_material.wesl", &["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "FIRST_PERSON_DEPTH", "SHADE_LIGHT"][..], true),
         // Without the opt-in (the switch off) the view's cube is not read.
         ("nvf_assets/nif_material.wesl", &["ENVIRONMENT_MAP"][..], false),
+        // The reflection channel view (NVF_PBR_VIEW=reflection) reads it in the opted-in
+        // fragment only; with the reflections off it draws the authored view's colours.
+        ("nvf_assets/nif_material.wesl", &["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "NVF_PBR_VIEW", "NVF_PBR_VIEW_REFLECTION"][..], true),
+        ("nvf_assets/nif_material.wesl", &["ENVIRONMENT_MAP", "NVF_PBR_VIEW", "NVF_PBR_VIEW_REFLECTION"][..], false),
+        ("nvf_assets/nif_material.wesl", &["NVF_PBR_REFLECT", "NVF_PBR_VIEW", "NVF_PBR_VIEW_REFLECTION"][..], false),
         // Every other lit shader of a view with a cube.
         ("bevy_pbr/render/pbr.wesl", &["ENVIRONMENT_MAP"][..], false),
         ("nvforever/terrain.wesl", &["ENVIRONMENT_MAP"][..], false),

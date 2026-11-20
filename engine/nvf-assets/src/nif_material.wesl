@@ -101,6 +101,25 @@ import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_mate
 @if(NVF_PBR_VIEW_OCCLUSION && !PREPASS_PIPELINE) import bevy_pbr::render::pbr_types::STANDARD_MATERIAL_FLAGS_OCCLUSION_TEXTURE_BIT;
 @if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::{mesh_terrain_lookup, mesh_terrain_view, mesh_terrain_shading, mesh_terrain_unlit_view, mesh_terrain_diagnostic, mesh_terrain_blend_normal, mesh_terrain_target_colour, mesh_terrain_target_normal, mesh_terrain_face_up, MeshTerrainInputs, LOOKUP_SUCCESS, LAND_ROUGHNESS, LAND_REFLECTANCE};
 @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) import bevy_pbr::render::pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
+// NVF_PBR_VIEW=reflection (nvf-assets authored.rs `PbrView::Reflection`): the view's cube,
+// read here only by this opted-in fragment (NVF_PBR_REFLECT) in a view that has one.
+@if(NVF_PBR_VIEW_REFLECTION && ENVIRONMENT_MAP && NVF_PBR_REFLECT && !PREPASS_PIPELINE) import bevy_pbr::render::mesh_view_bindings::{light_probes, environment_map_sampler};
+@if(NVF_PBR_VIEW_REFLECTION && ENVIRONMENT_MAP && NVF_PBR_REFLECT && !PREPASS_PIPELINE && !MULTIPLE_LIGHT_PROBES_IN_ARRAY) import bevy_pbr::render::mesh_view_bindings::specular_environment_map;
+@if(NVF_PBR_VIEW_REFLECTION && ENVIRONMENT_MAP && NVF_PBR_REFLECT && !PREPASS_PIPELINE && MULTIPLE_LIGHT_PROBES_IN_ARRAY) import bevy_pbr::render::mesh_view_bindings::specular_environment_maps;
+
+// NVF_PBR_VIEW=reflection: what a white perfect mirror (metallic 1, roughness 0) facing N
+// writes for the viewer at V: the view's cube at level 0 along the mirror direction (z
+// negated, as bevy_pbr environment_map.wesl samples it; the component's rotation is
+// identity, nvf_assets reflection_cube.rs), times the light's intensity and the view's
+// exposure, as Bevy's environment term writes it (F ~ 1 there).
+@if(NVF_PBR_VIEW_REFLECTION && ENVIRONMENT_MAP && NVF_PBR_REFLECT && !PREPASS_PIPELINE) fn nvf_reflection_view(N: vec3<f32>, V: vec3<f32>) -> vec3<f32> {
+    var dir = reflect(-V, N);
+    dir.z = -dir.z;
+    var texel = vec3(0.0);
+    @if(!MULTIPLE_LIGHT_PROBES_IN_ARRAY) if light_probes.view_cubemap_index >= 0 { texel = textureSampleLevel(specular_environment_map, environment_map_sampler, dir, 0.0).rgb; }
+    @if(MULTIPLE_LIGHT_PROBES_IN_ARRAY) if light_probes.view_cubemap_index >= 0 { texel = textureSampleLevel(specular_environment_maps[light_probes.view_cubemap_index], environment_map_sampler, dir, 0.0).rgb; }
+    return texel * light_probes.intensity_for_view * view.exposure;
+}
 
 // Main-pass geometry uses the render viewport, which can be smaller than the
 // display attachment when FSR is enabled. Transmission remains a full-size texture.
@@ -567,6 +586,13 @@ fn nif_fragment(
     @if(NVF_PBR_VIEW_AUTHORED && !PREPASS_PIPELINE) {
         let view_brightness = 0.25 + 0.75 * dot(pbr_input.material.base_color.rgb, vec3(0.2126, 0.7152, 0.0722));
         pbr_view = select(vec3(0.5), vec3(1.0, 0.45, 0.05), surface.emissive_rule.w > 0.5) * view_brightness;
+    }
+    // reflection: as `authored` (grey, orange where no cube is read), and an authored surface
+    // of a view with a cube shows what a white perfect mirror there would write.
+    @if(NVF_PBR_VIEW_REFLECTION && !PREPASS_PIPELINE) {
+        let reflection_brightness = 0.25 + 0.75 * dot(pbr_input.material.base_color.rgb, vec3(0.2126, 0.7152, 0.0722));
+        pbr_view = select(vec3(0.5), vec3(1.0, 0.45, 0.05), surface.emissive_rule.w > 0.5) * reflection_brightness;
+        @if(ENVIRONMENT_MAP && NVF_PBR_REFLECT) if surface.emissive_rule.w > 0.5 { pbr_view = nvf_reflection_view(pbr_input.N, pbr_input.V); }
     }
     @if(FACEGEN_TINT && VERTEX_UVS_A) if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u {
         // base_color is material colour × vertex colour × texel: the texel is read again

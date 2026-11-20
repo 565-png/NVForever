@@ -256,7 +256,13 @@ beyond the field test below):
 - Calibration aids, off by default, read at the start [documented: `authored.rs` `PbrView`,
   `metallic_debug`; `engine/nvf-assets/src/nif_material.wesl`]: `NVF_PBR_VIEW` =
   `roughness`, `metallic`, `occlusion`, `normal` or `authored` draws that input in place of
-  the lit colour of forward-drawn lit NIF surfaces. Refracting shapes return before the
+  the lit colour of forward-drawn lit NIF surfaces; `reflection` draws, on an authored
+  surface, what a white perfect mirror would write there (the view's reflection cube at
+  level 0 along the mirror direction, times the cube's intensity and the exposure, then
+  tone-mapped as the picture is), so its scale can be judged against the sky in the same
+  frame, and every other surface grey as `authored` does (authored ones orange where the view
+  has no cube or reflections are off; only the opted-in fragment reads the cube).
+  Refracting shapes return before the
   view; additive draws add the view's colour by their alpha and multiplied draws stay
   neutral, so effects fade out of it; depth and coverage are unchanged.
   `NVF_PBR_METALLIC=1` builds authored materials metallic by the ORM's blue channel and keeps
@@ -361,31 +367,54 @@ it acts only with Authored materials on, and changes no picture without a pack.
   diffuse cube (the ambient light stays the game's flat colour), written straight into the
   texture on the GPU after each fill (`reflection_cube.rs`).
 - **What it holds** (`reflection_sky.rs` `SkyContent`), per world direction and level:
-  - outdoors, above the horizon, the sky dome's colour at the direction's height: the
-    weather's horizon, sky-lower and sky-upper colours at the hour (blended across a weather
-    fade) mixed as the dome mixes them (`sky.rs` `dome_color`), by the dome's own weights
-    for that height (`atmosphere.nif`'s vertex colours averaged in 16 steps of the sine of
-    elevation, `DomeProfile`); below the horizon a ground colour, the weather's ambient
-    colour times 0.5; and a broad glow toward the directional light (the sun, or the moon
-    at night), in its colour and strength, peak 0.5 of it at level 0;
-  - indoors, the cell's ambient colour above, 0.5 of it below, and the cell's fog colour
-    as a band at the horizon (a Gaussian of half-width 0.2 in sine of elevation), as the
-    water's indoor sky takes the fog colour;
+  - outdoors, above the horizon, the sky dome as it is drawn in that direction (clouds, the
+    sun disc and the glare aside): the weather's horizon, sky-lower and sky-upper colours at
+    the hour (blended across a weather fade) mixed as the dome mixes them (`sky.rs`
+    `dome_color`), by the dome's own weights for that height (`atmosphere.nif`'s vertex
+    colours averaged in 16 steps of the sine of elevation, `DomeProfile`), times the sky's
+    display scale (`SkyState::sky_scale`, the image space's LUM Ramp No Tex, as sky.wesl
+    scales the dome);
+  - outdoors, below the horizon, lit ground: an assumed albedo, a neutral warm grey of
+    display value (0.33, 0.30, 0.25), linear about (0.089, 0.073, 0.051), under the light
+    falling on level ground, the ambient light plus the directional light times the sine of
+    its elevation (the light as the sky aims it: the moon's, with its share, at night, and
+    the ambient alone where neither is above the horizon);
+  - a broad glow toward the directional light (the sun, or the moon at night), in its colour
+    and strength, peak 0.5 of it at level 0, added to the sky;
+  - indoors, the cell's ambient colour above, ground of the same albedo under the ambient
+    alone below (the cell's directional light is left out), and the cell's fog colour as a
+    band at the horizon (a Gaussian of half-width 0.2 in sine of elevation), as the water's
+    indoor sky takes the fog colour;
   - each level is the same function with a wider kernel, not a filter of the level above:
     each hemisphere mixes toward its mean by level / 5, the edge between sky and ground
     widens from 0.05 to 0.5 (sine of elevation), and the glow's power, 16 at level 0, halves
     per level with its total kept. Bevy reads level = perceptual roughness x 5.
   Every constant is NVForever's choice, chosen by reasoning and not yet judged in pictures.
-- **Units.** Linear texels and intensity `light_unit()` (Bevy's default exposure's inverse).
-  A colour is taken to a display value with the ambient light's share (0.9 outdoors, 1.0
-  indoors; the dome's linear colours through the display conversion once, the interior's
-  bytes / 255) and converted as the fork converts the ambient highlight, v x max(v, 1e-6)^1.2
-  (`reflection_sky.rs` `texel`): at the default exposure a direction whose colour equals the
-  ambient light reflects exactly the converted ambient, about A^2.2. The glow is the light's
-  display colour times its strength in display units, converted the same way; the sources
-  add in linear light. The sky's own display scale (the image space's sky level and emissive
-  multiplier) is not applied, nor the sky shader's inverse tone mapping. A calibration check
-  of the identity in pictures is still to come.
+- **Units.** Linear texels and intensity `light_unit()` (Bevy's default exposure's inverse),
+  so a white perfect mirror writes texel x intensity x exposure = the texel into the HDR
+  target at the default exposure. Each texel is what the thing it stands for writes there
+  before tone mapping, so the tone map and the grade treat mirror and original alike:
+  - the sky (`reflection_sky.rs` `sky_texel`): sky.wesl writes the dome's linear colour times
+    `params.x` (= `SkyState::sky_scale`, `engine/nvforever/src/sky.rs` `SkyState::light`
+    and `sky_scale`) through `tony_inverse` (`engine/nvforever/src/sky.wesl`), which is the
+    identity while the main view shows display values clipped (the default,
+    `engine/nvforever/src/lights.rs` `GAME_CLIP`) and the inverse of the Tony McMapface table
+    under `NVF_TONEMAP=tony`; the cube holds the same value, so a mirror shows the dome as
+    drawn;
+  - lit ground (`ground_texel`): the fork's display-value sum writes a diffuse surface as
+    min(diffuse x (ambient + direct)^2.2, 1) (`engine/nvforever/src/lights/display_shader.rs`,
+    the edit before "Total light"), with the ambient as the view's (display value x 0.9) and
+    the light as `nvf_directional_display` gives it for an upward normal;
+  - indoors (`texel`): no sky is drawn, so the ambient-matched identity stays: a display
+    value v with the ambient's share becomes v x max(v, 1e-6)^1.2, so a direction coloured
+    like the ambient reflects the converted ambient, about A^2.2.
+  The two rules conflict outdoors: an ambient-coloured sky is (linear colour x sky scale) by
+  the sky rule and (0.9 x display value)^2.2 by the ambient rule, and outdoors the sky rule
+  wins. The glow is the light's display colour times its strength in display units, taken
+  to linear light by the ambient rule's conversion and added to the sky in the sky's units
+  (exact with the clip; with Tony McMapface the glow goes through the inverse curve on its
+  own, an approximation). Sources add in linear light. A check of the scale by eye:
+  `NVF_PBR_VIEW=reflection` beside the sky in one frame.
 - **When it is written.** Checked at most four times a second (real time) and rewritten only
   when an input moved past a step from the last fill: a colour by 1/128 in display value,
   the light's direction by 3 degrees, indoors or out, another interior cell. One log line at

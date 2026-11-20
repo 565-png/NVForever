@@ -219,7 +219,7 @@ pub const VIEW_ENV: &str = "NVF_PBR_VIEW";
 /// "NVF_PBR_VIEW"). Refracting shapes return before it; additive draws add it by their alpha
 /// and multiplied ones stay neutral, so effects fade out of the view. Picked once at
 /// the start by `NVF_PBR_VIEW` = `roughness` | `metallic` | `occlusion` | `normal` |
-/// `authored` [design]. Not a `NVF_PLAY_TEST_*` aid: it does not make a run unattended.
+/// `authored` | `reflection` [design]. Not a `NVF_PLAY_TEST_*` aid: it does not make a run unattended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PbrView {
     Off,
@@ -233,10 +233,17 @@ pub enum PbrView {
     Normal,
     /// Authored shapes tinted orange, every other shape grey, by its base colour's brightness.
     Authored,
+    /// What an authored surface reflects: the view's reflection cube at level 0 along the
+    /// surface's mirror direction, as a white perfect mirror writes it (texel x intensity x
+    /// exposure, tone-mapped as the rest of the picture), so its scale can be judged against
+    /// the sky in the same frame. Every other shape grey as in [`PbrView::Authored`];
+    /// authored shapes orange where the view has no cube or reflections are off. Only the
+    /// opted-in NIF fragment (`reflection_cube::REFLECT_DEF`) reads the cube.
+    Reflection,
 }
 
 impl PbrView {
-    pub const ALL: [PbrView; 5] = [PbrView::Roughness, PbrView::Metallic, PbrView::Occlusion, PbrView::Normal, PbrView::Authored];
+    pub const ALL: [PbrView; 6] = [PbrView::Roughness, PbrView::Metallic, PbrView::Occlusion, PbrView::Normal, PbrView::Authored, PbrView::Reflection];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -246,6 +253,7 @@ impl PbrView {
             PbrView::Occlusion => "occlusion",
             PbrView::Normal => "normal",
             PbrView::Authored => "authored",
+            PbrView::Reflection => "reflection",
         }
     }
 
@@ -267,6 +275,7 @@ impl PbrView {
             PbrView::Occlusion => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_OCCLUSION"],
             PbrView::Normal => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_NORMAL"],
             PbrView::Authored => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_AUTHORED"],
+            PbrView::Reflection => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_REFLECTION"],
         }
     }
 }
@@ -285,7 +294,7 @@ pub fn view() -> PbrView {
                 v
             }
             None => {
-                warn!("authored materials: {VIEW_ENV}={text} is none of roughness, metallic, occlusion, normal, authored; no channel view");
+                warn!("authored materials: {VIEW_ENV}={text} is none of roughness, metallic, occlusion, normal, authored, reflection; no channel view");
                 PbrView::Off
             }
         }
