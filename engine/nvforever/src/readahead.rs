@@ -451,9 +451,16 @@ impl ReadAhead {
             if cache.offset_ready(&ctx.models.images, key) {
                 continue;
             }
-            // A skin no drawn shape shows: drawing does not ask for its offset.
-            if skin.as_ref().and_then(|s| s.shown(ctx)) == Some(false) {
-                continue;
+            // A skin no drawn shape shows: drawing does not ask for its offset. Until the
+            // parts are prepared that is not known: queued once they are (the NPC waits
+            // for its parts anyway, `parts_ready`).
+            match skin.as_ref().map(|s| s.shown(ctx)) {
+                Some(Some(false)) => continue,
+                Some(None) => {
+                    offsets_ready &= self.unseen;
+                    continue;
+                }
+                None | Some(Some(true)) => {}
             }
             offsets_ready &= self.unseen;
             if self.offsets_queued.insert(key.clone()) {
