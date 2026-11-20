@@ -405,7 +405,7 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   and 64.00/64.00 (control); the sRGB 230 stripe then read 255 and failed the clip check, so
   the stripe and ground were darkened to sRGB 180 on 90; that run used depth 0.1 and
   occlusion mapping.] [observed, two readbacks at `ca0e10c9e` with depth 0.08 and four
-  relief steps after eight layers: high +0.13 px, low ?7.86 px against ?7.84; the control
+  relief steps after eight layers: high +0.13 px, low −7.86 px against −7.84; the control
   stayed centred at 64.00/64.00 and both readbacks passed.] The thresholds are an
   engineering policy set from the first readback with margins.
 
