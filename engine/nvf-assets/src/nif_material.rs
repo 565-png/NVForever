@@ -1657,7 +1657,7 @@ mod tests {
         let bindings = include_str!("nif_surface_bindings.wesl");
         let lift: Vec<&str> = shader.lines().filter(|l| !l.trim_start().starts_with("//") && l.contains("terrain.y")).collect();
         assert_eq!(lift.len(), 1, "one reader: {lift:?}");
-        assert!(lift[0].trim_start().starts_with("@if(NVF_PBR_REFLECT && ENVIRONMENT_MAP && !PREPASS_PIPELINE) if surface.emissive_rule.w > 0.5 {"), "{}", lift[0]);
+        assert!(lift[0].trim_start().starts_with("@if(NVF_PBR_REFLECT && ENVIRONMENT_MAP && !PREPASS_PIPELINE) if surface.emissive_rule.w > 0.5 && nvf_view_has_cube() {"), "{}", lift[0]);
         assert!(lift[0].contains("nvf_metal_base(pbr_input.material.base_color.rgb, surface.terrain.y, pbr_input.material.metallic)"));
         assert!(!prepass.contains("terrain.y") && !bindings.contains(".terrain.y"));
         assert!(!shader.contains("NVF_PBR_METAL_LIFT"), "the experiment's defs are retired");

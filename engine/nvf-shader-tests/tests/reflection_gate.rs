@@ -31,6 +31,9 @@ fn fragment_reads(compiled: &Compiled, group: u32, binding: u32) -> bool {
 }
 
 const SPECULAR_CUBE: (u32, u32) = (1, 1);
+/// The view's light probe uniform (`view_cubemap_index`), group 0 binding 12
+/// (bevy_pbr mesh_view_bindings.wesl).
+const LIGHT_PROBES: (u32, u32) = (0, 12);
 
 #[test]
 fn only_the_opted_in_nif_fragment_reads_the_view_cube() {
@@ -92,5 +95,29 @@ fn the_metal_base_lift_composes_in_the_opted_in_fragment() {
         let wanted = extra.contains(&"ENVIRONMENT_MAP") && extra.contains(&"NVF_PBR_REFLECT");
         assert_eq!(lift, wanted, "{extra:?}: the lift only with the opt-in and a cube");
         assert_eq!(fragment_reads(&compiled, SPECULAR_CUBE.0, SPECULAR_CUBE.1), wanted, "{extra:?}: the cube read as without the lift");
+    }
+}
+
+#[test]
+fn the_opted_in_fragment_asks_whether_the_view_has_its_own_cube() {
+    // ENVIRONMENT_MAP is also set for a view that only sees a light-probe volume, with
+    // view_cubemap_index -1 (nif_material.wesl `nvf_view_has_cube`): with the opt-in and the
+    // def, the fragment reads the view's light probe uniform for the metallic hold, the
+    // reflection weight, the lift and the mirror view; without either it does not read it.
+    let mut compiler = Compiler::with_reflection_gate();
+    for (extra, reads) in [
+        (&["ENVIRONMENT_MAP", "NVF_PBR_REFLECT"][..], true),
+        (&["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "FIRST_PERSON_DEPTH", "SHADE_LIGHT"][..], true),
+        (&["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "NVF_PBR_VIEW", "NVF_PBR_VIEW_REFLECTION"][..], true),
+        (&["NVF_PBR_REFLECT"][..], false),
+        (&["NVF_PBR_REFLECT", "NVF_PBR_VIEW", "NVF_PBR_VIEW_REFLECTION"][..], false),
+    ] {
+        let compiled = compiler.compile("nvf_assets/nif_material.wesl", extra);
+        assert!(compiled.module.entry_points.iter().any(|e| e.stage == naga::ShaderStage::Fragment), "{extra:?}: a fragment entry point");
+        let helper = compiled.module.functions.iter().any(|(_, f)| f.name.as_deref().is_some_and(|n| n.contains("nvf_view_has_cube")));
+        assert_eq!(helper, reads, "{extra:?}: the own-cube test compiled");
+        if reads {
+            assert!(fragment_reads(&compiled, LIGHT_PROBES.0, LIGHT_PROBES.1), "{extra:?}: the light probe uniform read");
+        }
     }
 }

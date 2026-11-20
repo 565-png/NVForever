@@ -381,9 +381,16 @@ it acts only with Authored materials on, and changes no picture without a pack.
   component goes on once the first fill is on the GPU. The water mirror, the scope, the
   minigame views and the terminal have none.
 - **Metallic.** With the setting on, authored materials are built with metallic 1, so the
-  ORM's blue acts, but the NIF fragment holds it at 0 in any view without a cube on the GPU
-  (the shader def `ENVIRONMENT_MAP` that Bevy sets from the view), so those views, and the
-  world camera's first frames, shade an authored metal as with the setting off.
+  ORM's blue acts, but the NIF fragment holds it at 0 in any view without a cube of its own
+  on the GPU: the shader def `ENVIRONMENT_MAP` that Bevy sets from the view, and the view's
+  `view_cubemap_index` at 0 or above, since Bevy also sets the def for a view that only sees
+  a light-probe volume and leaves the index at -1 there [documented:
+  `engine/vendor/bevy_pbr/src/light_probe/mod.rs`; `nif_material.wesl` `nvf_view_has_cube`,
+  which the reflection weight, the metal base lift and the mirror debug view ask too]. So
+  those views, and the world camera's first frames, shade an authored metal as with the
+  setting off. No view of the game has a light-probe volume today [documented: the review of
+  2026-11-20 found none]; the reflection field has no probe-only camera (a probe volume would
+  also change what its cube camera draws inside it), so the composition test alone covers it.
   `NVF_PBR_VIEW=metallic` still shows the ORM's blue.
 - **The ambient highlight.** Bevy's ambient highlight stays removed in full, also from a
   metal: the cube takes its place. A metal with a black cube and no lamp is black.
@@ -466,7 +473,8 @@ it acts only with Authored materials on, and changes no picture without a pack.
   world camera's cube never replaces the field's: the field's cameras are its own.
   `authored-reflections-sky` and `authored-reflections-off` (the test aid
   `NVF_PLAY_TEST_PBR_MOUNT_PACK=1` writes the field's generated sets into a fresh folder of
-  the run under an explicit, non-empty `NVFOREVER_HOME` (`pbr-mount-packun-*`, every file
+  the run under an explicit, non-empty `NVFOREVER_HOME` (`pbr-mount-pack
+un-*`, every file
   created new, the folder removed again on a failure) and mounts it over every other loose
   layer for that run only, so the mount has authored sets; no mods folder is written
   [documented: `pbr_field/reflect.rs` `seed_mount_pack`, `fnv_vfs::Vfs::add_loose_root`]): with the setting on, the world camera's cube is
