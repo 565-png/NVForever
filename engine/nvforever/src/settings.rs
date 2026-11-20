@@ -477,6 +477,9 @@ pub(crate) const FPS_SPLIT_NOTE: &str = "What a frame took on the main thread, t
 /// The frame split row's command-line switches: none, so the INI's state always applies.
 pub(crate) const FPS_SPLIT_SWITCHES: &str = "";
 
+/// The Tree distance row's note [design: our own words, #3016].
+const TREE_DISTANCE_NOTE: &str = "How far from you trees beyond the loaded cells are drawn as flat pictures, at most as far as distant land reaches. Farther runs slower.";
+
 /// The field of view's least and greatest degrees on the settings page, in steps of 5.
 const FOV_MIN: f32 = 50.0;
 const FOV_MAX: f32 = 110.0;
@@ -823,7 +826,8 @@ pub fn script_fov(args: Res<Args>, script: Option<ResMut<nvf_play::script::Scrip
 }
 
 /// The draw-distance sliders (`draw_distance.rs`): each a part of its full distance, the
-/// full one drawing as without them.
+/// full one drawing as without them; the Tree distance's full one is the distant LOD's far
+/// limit and it starts at `--tree-distance`'s part of that (#3016).
 fn register_distances(app: &mut App) {
     if !app.world().contains_resource::<DrawDistances>() {
         return;
@@ -858,6 +862,22 @@ fn register_distances(app: &mut App) {
             "How far from you grass is drawn, as a part of the farthest grass distance and its fade range.",
             slider(|w| w.resource::<DrawDistances>().grass, draw_distance::set_grass),
         ),
+        // A part of the distant LOD's far limit, shown as the distance it gives (#3016).
+        Setting::slider(
+            "tree-distance",
+            GROUP_PICTURE,
+            "Tree distance",
+            TREE_DISTANCE_NOTE,
+            Slider {
+                get: |w| w.resource::<DrawDistances>().trees,
+                set: draw_distance::set_trees,
+                min: draw_distance::TREE_STEP,
+                step: draw_distance::TREE_STEP,
+                shown: Some(draw_distance::tree_distance_text),
+            },
+        )
+        // Its start is the flag's distance, so a given flag wins over the INI in a test run.
+        .with_switches("--tree-distance"),
     ];
     for s in sliders {
         add_setting(app, s);
@@ -2847,6 +2867,42 @@ mod viewmodel_fov_tests {
         // Out of range stays at the ends.
         assert_eq!(viewmodel_fov_part(10.0), 0.0);
         assert_eq!(viewmodel_fov_part(120.0), 1.0);
+    }
+}
+
+#[cfg(test)]
+mod tree_distance_tests {
+    use super::*;
+    use clap::Parser;
+    use nvf_play::settings::Settings;
+
+    /// #3016: the Tree distance row is a slider of the distant LOD's far limit in steps of
+    /// 0.02 (2,500 units at the defaults), starting at `--tree-distance`'s 40,000 on a step,
+    /// shown in units; its note keeps to the budget.
+    #[test]
+    fn the_row_reaches_the_far_limit_and_starts_at_the_flag() {
+        let args = Args::try_parse_from(crate::with_default_mode(vec!["nvforever".to_string()])).unwrap();
+        let mut app = App::new();
+        app.insert_resource(DrawDistances::new(&args));
+        register_distances(&mut app);
+        let settings = app.world().resource::<Settings>();
+        let s = settings.list()[settings.index("tree-distance").unwrap()];
+        let slider = s.slider.expect("a slider");
+        assert_eq!(nvf_play::settings::note_over_budget(s.note), None);
+        assert_eq!(s.switches, "--tree-distance");
+        assert_eq!(nvf_play::settings::slider_values(&slider), 50);
+        assert!(!nvf_play::settings::few_step_slider(&s));
+        let start = (slider.get)(app.world());
+        assert_eq!(start, 0.32);
+        assert_eq!(slider.fit(start), start, "the default is on a step");
+        // No test builds DrawDistancePlugin: shown against the default far limit, 125,000.
+        assert_eq!(slider.text(start), "40,000 units");
+        assert_eq!(slider.text(slider.fit(start + slider.step)), "42,500 units");
+        assert_eq!(slider.text(slider.fit(start - slider.step)), "37,500 units");
+        assert_eq!(slider.text(slider.fit(0.08)), "10,000 units");
+        assert_eq!(slider.text(slider.fit(1.0)), "125,000 units");
+        assert_eq!(slider.fit(0.0), 0.02, "the least is one step");
+        assert_eq!(slider.text(slider.fit(0.0)), "2,500 units");
     }
 }
 

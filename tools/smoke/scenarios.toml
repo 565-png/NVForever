@@ -2362,6 +2362,69 @@ order = [[
 forbid = [{ text = "Caught rendering error", label = "a rendering (validation) error while anti-aliasing or the filters change" }]
 
 [[scenario]]
+name = "tree-distance-row"
+source = "[design, #3016] docs/design/layer3.md §2.2 (distant trees; engine/nvforever/src/treelod.rs, draw_distance.rs): the settings page's Tree distance slider, a part of the distant LOD's far limit (125,000 units), goes to 0.08 while the game runs at Goodsprings noon and the distant tree billboards' reach drops from --tree-distance's 40,000 units to 10,000 at once, then to the full part and 125,000, beyond the flag, without a rendering or validation error; the exit's distant LOD line still counts trees"
+areas = ["renderer", "settings"]
+paths = ["engine/nvforever/src/treelod.rs", "engine/nvforever/src/draw_distance.rs", "engine/nvforever/src/settings.rs", "crates/nvf-settings-layout/src/lib.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:tree-distance=0.08,12.5:tree-distance=1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 20
+order = [[
+  "settings: tree-distance 10,000 units",
+  { text = "distant trees: reach 40000 -> 10000 units", label = "0.08 of the far limit, from the flag's 40,000 units: the billboards' cells are chosen again at once" },
+  "settings: tree-distance 125,000 units",
+  { text = "distant trees: reach 10000 -> 125000 units", label = "the full part: out to the distant LOD's far limit, beyond --tree-distance" },
+]]
+expect = [
+  { re = 'distant LOD at the end: .* trees (?P<n>\d+)', range = [1, 1000000], label = "the distant tree billboards are drawn again at the end" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error while the trees' reach changes" },
+  { text = "Shader validation error", label = "a shader that does not validate while the trees' reach changes" },
+  { text = "Validation Error", label = "a graphics API validation error while the trees' reach changes" },
+  { text = "panicked", label = "a panic while the trees' reach changes" },
+  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
+]
+
+[[scenario]]
+name = "tree-distance-write"
+source = "[design, #3016] docs/design/layer3.md §2.2 (engine/nvforever/src/treelod.rs, settings.rs): the first half of the Tree distance round trip: the slider set to 10,000 units (0.08 of the far limit) in play at Goodsprings noon is kept in NVForever.ini (tree-distance-read starts in the same home)"
+areas = ["renderer", "settings"]
+paths = ["engine/nvforever/src/treelod.rs", "engine/nvforever/src/draw_distance.rs", "engine/nvforever/src/settings.rs"]
+note = "The home's INI may hold 10,000 units from an earlier run: set the row to the full part (125,000) first, then to 0.08 (as ui-scale-write does)."
+env = { NVFOREVER_HOME = "tree-distance-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:13", NVF_PLAY_TEST_SETTINGS = "10.5:tree-distance=1,11:tree-distance=0.08" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 16
+order = [[
+  "settings: tree-distance 10,000 units",
+  { text = "distant trees: reach 125000 -> 10000 units", label = "the slider shortens the billboards' reach from the full part, to be kept in the home's INI" },
+]]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error as the trees' reach is set and kept" },
+  { text = "panicked", label = "a panic as the trees' reach is set and kept" },
+]
+
+[[scenario]]
+name = "tree-distance-read"
+source = "[design, #3016] docs/design/layer3.md §2.2 (engine/nvforever/src/treelod.rs, settings.rs): the second half of the Tree distance round trip: a new start in tree-distance-write's home takes the slider's 10,000 units from NVForever.ini from the start, and the distant tree billboards are drawn within that reach, without a rendering or validation error"
+areas = ["renderer", "settings"]
+paths = ["engine/nvforever/src/treelod.rs", "engine/nvforever/src/draw_distance.rs", "engine/nvforever/src/settings.rs"]
+env = { NVFOREVER_HOME = "tree-distance-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 16
+expect = [
+  { re = 'settings: \d+ of \d+ switch\(es\) read from .*NVForever\.ini, \d+ changed: (.*, )?tree-distance 10,000 units', label = "the kept Tree distance is set at the start" },
+  { re = 'distant LOD at the end: .* trees (?P<n>\d+)', range = [1, 1000000], label = "the distant tree billboards within 10,000 units are drawn at the end" },
+]
+forbid = [
+  { text = "distant trees: reach 10000 -> 40000 units", label = "the kept reach is not put back to --tree-distance's" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the kept trees' reach" },
+  { text = "Shader validation error", label = "a shader that does not validate with the kept trees' reach" },
+  { text = "Validation Error", label = "a graphics API validation error with the kept trees' reach" },
+  { text = "panicked", label = "a panic with the kept trees' reach" },
+]
+
+[[scenario]]
 name = "viewmodel-fov-setting"
 source = "docs/design/graphics-enhanced.md §3.10: the settings page's Viewmodel field of view row, under Field of view, changes the first-person arms' and weapon's angle while the game runs (70, then back to the default 55), without a rendering error"
 areas = ["settings", "player-body"]
