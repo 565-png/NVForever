@@ -104,7 +104,7 @@ fn an_authored_set_fills_its_fields_over_the_legacy_ones() {
     assert_eq!(m.extension.soft, Vec4::ZERO, "soft stays zero: terrain blending still takes the material");
     assert_eq!(
         m.extension.legacy,
-        Some(LegacyLook { normal: Some(game_normal.clone()), specular: Some(game_normal), roughness: gloss_roughness(50.0), reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, parallax: Parallax::default() })
+        Some(LegacyLook { normal: Some(game_normal.clone()), specular: Some(game_normal), roughness: gloss_roughness(50.0), reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, parallax: Parallax::default(), scripted_tint: None })
     );
 }
 
@@ -395,7 +395,7 @@ fn the_unlit_cleanup_leaves_parallax_settings_it_did_not_put_on() {
     crate::authored::clear_for_unlit_copy(&mut own);
     assert_eq!((own.base.parallax_depth_scale, own.base.max_parallax_layer_count, own.base.depth_map.is_none()), (0.2, 32.0, true));
     // Restoring a material without an overlay changes no parallax field either.
-    let look = LegacyLook { normal: None, specular: None, roughness: 0.5, reflectance: 0.5, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, parallax: Parallax::default() };
+    let look = LegacyLook { normal: None, specular: None, roughness: 0.5, reflectance: 0.5, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, parallax: Parallax::default(), scripted_tint: None };
     let mut authored = own.clone();
     authored.extension.emissive_rule.w = AUTHORED_MARK;
     crate::authored::restore(&mut authored, &look);

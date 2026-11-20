@@ -1041,6 +1041,7 @@ fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl Text
             tangents,
             specular_tint: material.base.specular_tint,
             parallax: crate::authored::Parallax::of(&material.base),
+            scripted_tint: None,
         };
         if let Some(set) = authored {
             crate::authored::apply(&mut material, set, &legacy);

@@ -308,7 +308,8 @@ pub const AUTHORED_MARK: f32 = 1.0;
 /// (`NifSurface::legacy`) for every shape that may take a set, so a later change of its
 /// diffuse (a script's texture swap, the blackjack cards, the Vigor Tester's digits) can put
 /// the new diffuse's set on it or go back to the game's values ([`retexture`]). Changed
-/// after the material is made only by a script's glossiness edit ([`set_legacy_roughness`]);
+/// after the material is made only by a script's glossiness or specular colour edit
+/// ([`set_legacy_roughness`], [`set_legacy_specular_tint`]);
 /// copies carry it along.
 #[derive(Clone, Debug, PartialEq, Reflect)]
 pub struct LegacyLook {
@@ -328,6 +329,10 @@ pub struct LegacyLook {
     /// The parallax fields as built (no depth map on any game material today; the game's
     /// own height slot would set them, upstream issue #2979: [`game_height_map`]).
     pub parallax: Parallax,
+    /// A specular colour a script set itself (the colour was the value it changed), which a
+    /// set put on later keeps drawing in place of white ([`apply`]); `None` as built, and when
+    /// only the stored colour was written back with another value [design].
+    pub scripted_tint: Option<Color>,
 }
 
 /// Where the game's own height map would give a material its baseline parallax (the
@@ -487,9 +492,10 @@ pub fn apply(material: &mut crate::NifMaterial, set: &AuthoredSet, legacy: &Lega
     b.perceptual_roughness = set.scalars.roughness_scale_or_default();
     b.reflectance = set.scalars.reflectance_or_default();
     b.metallic = authored_metallic();
-    // A set's highlight strength is its reflectance alone, never scaled by a stored or
-    // scripted specular colour of the game's (#2981).
-    b.specular_tint = Color::WHITE;
+    // A set's highlight strength is its reflectance alone, never scaled by the game's stored
+    // specular colour (#2981); a colour a script set itself stays drawn, as it is on the
+    // material the script edited, across a later set (a texture swap's).
+    b.specular_tint = legacy.scripted_tint.unwrap_or(Color::WHITE);
     let normal = set.normal.clone().filter(|_| legacy.tangents);
     if normal.is_none() && set.normal.is_some() {
         Stats::add(&stats().normal_without_tangents);
@@ -640,10 +646,15 @@ pub fn set_legacy_roughness(material: &mut crate::NifMaterial, roughness: f32) {
 /// the one restored later; the drawn tint takes it when no set is on the material, or when
 /// the colour is what the script changed (`changed`). The mirror writes every value back
 /// after any one change, so an edit of another property leaves a set's highlight (Bevy draws
-/// `specular_tint x reflectance`) as it is [design].
+/// `specular_tint x reflectance`) as it is [design]. A colour the script changed is kept as
+/// its override (`LegacyLook::scripted_tint`), so a set applied later ([`apply`], through a
+/// swap's [`retexture`]) keeps drawing it instead of going back to white.
 pub fn set_legacy_specular_tint(material: &mut crate::NifMaterial, tint: Color, changed: bool) {
     if let Some(legacy) = material.extension.legacy.as_mut() {
         legacy.specular_tint = tint;
+        if changed {
+            legacy.scripted_tint = Some(tint);
+        }
     }
     if changed || !is_authored(material) {
         material.base.specular_tint = tint;
@@ -775,7 +786,8 @@ pub struct Stats {
     pub not_eligible: AtomicU64,
     /// Shapes whose diffuse is under `textures\pipboy3000\` or `textures\interface\`.
     pub excluded_texture: AtomicU64,
-    /// Shapes whose set's `_orm` did not load (they stay the game's).
+    /// Sets whose `_orm` did not load, asked for by a material build or by a swap's
+    /// [`retexture`] alike ([`find`]; the shape stays the game's).
     pub orm_failed: AtomicU64,
     /// Sets put on a material without their `_n`, the drawn mesh having no tangents.
     pub normal_without_tangents: AtomicU64,
@@ -821,7 +833,7 @@ impl Stats {
     /// The summary line (without its prefix).
     pub fn line(&self) -> String {
         format!(
-            "{} material builds applied an ORM set ({} distinct ORM set stems at build), {} a height-only set's height map; builds without one: {} not eligible, {} on excluded textures, {} whose _orm did not load; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to an ORM set, {} matched a height-only set ({} with its height map applied), {} to the legacy look); height maps: {} material builds applied one; not put on at build or swap: {} not opaque, {} double-sided, {} decals, {} without tangents, {} unlit, refracting or holed; {} _p not loaded, {} _p refused (signed or not an unsigned format); {} later copies dropped one",
+            "{} material builds applied an ORM set ({} distinct ORM set stems at build), {} a height-only set's height map; builds without one: {} not eligible, {} on excluded textures; {} ORM load failures at build or swap; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to an ORM set, {} matched a height-only set ({} with its height map applied), {} to the legacy look); height maps: {} material builds applied one; not put on at build or swap: {} not opaque, {} double-sided, {} decals, {} without tangents, {} unlit, refracting or holed; {} _p not loaded, {} _p refused (signed or not an unsigned format); {} later copies dropped one",
             Self::get(&self.built),
             self.stems.lock().expect("authored stats").len(),
             Self::get(&self.height_only_built),

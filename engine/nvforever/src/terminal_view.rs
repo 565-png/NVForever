@@ -303,7 +303,7 @@ mod tests {
         let mut images = Assets::<Image>::default();
         let mut source = nvf_assets::nif_material(StandardMaterial::default());
         let baseline = Parallax::default();
-        source.extension.legacy = Some(LegacyLook { normal: None, specular: None, roughness: 0.7, reflectance: 0.3, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, parallax: baseline.clone() });
+        source.extension.legacy = Some(LegacyLook { normal: None, specular: None, roughness: 0.7, reflectance: 0.3, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, parallax: baseline.clone(), scripted_tint: None });
         let mut overlay = Parallax::height(images.add(Image::default()), 0.07);
         overlay.method = bevy::pbr::ParallaxMappingMethod::DEFAULT_RELIEF_MAPPING;
         overlay.put(&mut source.base);

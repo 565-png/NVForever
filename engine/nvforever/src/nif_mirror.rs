@@ -545,6 +545,8 @@ fn mirror_game(
         };
         edits_rest.push((view, edit, Some(entity)));
     }
+    // The private material copies made in this drain, by shape (`SceneEdit::Material`).
+    let mut made_now: HashMap<Entity, Handle<NifMaterial>> = HashMap::new();
     for (view, edit, entity) in edits_rest {
         let r = match &edit {
             SceneEdit::Translation { r, .. } | SceneEdit::Rotation { r, .. } | SceneEdit::Scale { r, .. } | SceneEdit::Flags { r, .. } | SceneEdit::ChildFlags { r, .. } | SceneEdit::Rename { r, .. } | SceneEdit::Remove { r, .. } | SceneEdit::Insert { r, .. } | SceneEdit::Attach { r, .. } | SceneEdit::Light { r, .. } | SceneEdit::Material { r, .. } | SceneEdit::Particle { r, .. } => *r,
@@ -663,8 +665,14 @@ fn mirror_game(
                 let Some(assets) = assets.as_deref_mut() else { continue };
                 let Ok((handle, blend, drawing)) = drawn.get(e) else { continue };
                 let Some(handle) = nvf_assets::nif_surface_blend::source_material(handle, blend) else { continue };
-                let source = nvf_assets::nif_material::plain_material(handle, drawing);
-                match owned.get(&e).filter(|h| *h == source).cloned() {
+                // A private copy made earlier in this drain is not drawn yet (deferred
+                // insert): a later edit of the same shape goes to that copy, or a second
+                // copy of the old material would win with the first edit lost (#2981).
+                let source = match made_now.get(&e) {
+                    Some(h) => h.clone(),
+                    None => nvf_assets::nif_material::plain_material(handle, drawing).clone(),
+                };
+                match owned.get(&e).filter(|h| **h == source).cloned() {
                     Some(h) => {
                         if let Some(mut m) = assets.get_mut(&h) {
                             set_material(&mut m, &vals, id);
@@ -672,10 +680,11 @@ fn mirror_game(
                         commands.entity(e).insert(MeshMaterial3d(h));
                     }
                     None => {
-                        let Some(mut m) = assets.get(source).cloned() else { continue };
+                        let Some(mut m) = assets.get(&source).cloned() else { continue };
                         set_material(&mut m, &vals, id);
                         let h = assets.add(m);
                         owned.insert(e, h.clone());
+                        made_now.insert(e, h.clone());
                         commands.entity(e).insert(MeshMaterial3d(h));
                     }
                 }
@@ -883,7 +892,7 @@ mod tests {
     #[test]
     fn a_material_edit_keeps_an_authored_roughness_and_restores_the_scripted_gloss() {
         use nvf_assets::authored::{restore, LegacyLook, AUTHORED_MARK};
-        let look = LegacyLook { normal: None, specular: None, roughness: 0.6, reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, parallax: Default::default() };
+        let look = LegacyLook { normal: None, specular: None, roughness: 0.6, reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, parallax: Default::default(), scripted_tint: None };
         let mut m = nvf_assets::nif_material(StandardMaterial { perceptual_roughness: 0.8, reflectance: 0.5, ..default() });
         m.extension.emissive_rule.w = AUTHORED_MARK;
         m.extension.legacy = Some(look.clone());
@@ -915,7 +924,7 @@ mod tests {
     #[test]
     fn an_alpha_edit_keeps_an_authored_highlight_whatever_the_stored_specular_colour() {
         use nvf_assets::authored::{restore, LegacyLook, AUTHORED_MARK};
-        let look = LegacyLook { normal: None, specular: None, roughness: 0.6, reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, parallax: Default::default() };
+        let look = LegacyLook { normal: None, specular: None, roughness: 0.6, reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, parallax: Default::default(), scripted_tint: None };
         let black = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 10.0, 0.5, 1.0];
         let mut m = nvf_assets::nif_material(StandardMaterial { reflectance: 0.5, ..default() });
         m.extension.emissive_rule.w = AUTHORED_MARK;
