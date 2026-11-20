@@ -655,10 +655,12 @@ fn nif_forward_composes_with_the_authored_debug_defs_and_is_unchanged_without_th
                 }
                 // #2981 stage 4: a material with a depth map. With UVs and tangents (`mapped`;
                 // the base defs carry VERTEX_TANGENTS) the composed shader holds the parallax
-                // march, which the occlusion method (the one authored height maps use) runs
+                // march, which the occlusion method (the development switch's comparison) runs
                 // from the material's DEPTH_MAP flag alone, through the vendored inversion
-                // (`sample_depth_map`). The relief key (`RELIEF_MAPPING`, StandardMaterialKey)
-                // composes and validates too, alone and with the height view.
+                // (`sample_depth_map`). The relief key (`RELIEF_MAPPING`, StandardMaterialKey;
+                // the method authored height maps use by default, nvf-assets authored.rs
+                // `PARALLAX_METHOD`) composes and validates too, alone and with the height
+                // view and the alpha-tested switch.
                 if mapped {
                     let composed = compose(&modules, entry, &base);
                     assert!(composed.contains("1.0 - height"), "{key}: the vendored inversion is in the march's depth read");

@@ -301,10 +301,19 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   (`NifSurface::height_overlay`) and touches the parallax fields only where it put one on. A mount with only height-only sets still runs
   the actors' role exclusions (`mount_has_sets` counts every active set).
 - [design] **How it is drawn.** As Bevy's parallax: `StandardMaterial::depth_map` = the
-  `_p`, `parallax_depth_scale` = `parallax_depth` (default 0.03), the occlusion method (a march
-  through layers, then one interpolation), at most **8 layers** (`MAX_PARALLAX_LAYERS`;
-  Bevy's default is 16); the development switches below change the method and the layers
-  for a run. A depth of 0 means no height map: the `_p` is not even loaded. The
+  `_p`, `parallax_depth_scale` = `parallax_depth` (default 0.03), the **relief method with 4
+  refinement steps** (`PARALLAX_METHOD`: a march through at most **8 layers**,
+  `MAX_PARALLAX_LAYERS`, Bevy's default being 16, then a binary search between the last two
+  layers, halving the step 4 times, one read each); the development switches below change
+  the method and the layers for a run. Why relief: in the main session's pictures of
+  2026-11-20 (a tiled floor with missing patches, set `offrmfloor01`, a 512 BC4 `_p`), the
+  occlusion method at 8 layers showed the first layering on long patch edges at a low angle
+  from depth 0.03 and stair-step bands on every patch edge at 0.06; 16 and 32 layers made
+  the bands finer without removing them, while `relief:4` at 8 layers removed them at 0.03
+  [observed: those pictures; the frame cost of either is not measured cleanly]. Relief is a
+  pipeline variant (`RELIEF_MAPPING`, Bevy's `StandardMaterialKey`), so height-mapped
+  materials get pipelines of their own. A depth of 0 means no height map: the `_p` is not
+  even loaded. The
   base colour, alpha, glow, ORM and the forward-sampled normal are read at the shifted
   coordinates; the geometry, its depth and its shadow do not move.
 - [design] **Height, not depth.** The file stores height (white high); Bevy's march reads
@@ -331,12 +340,11 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
     takes, in place of 8. At a head-on view the march still takes one layer (Bevy mixes the
     count from the most down to 1 by the view's steepness).
   - `NVF_PBR_PARALLAX_METHOD=occlusion | relief:<steps>`, steps from 1 to 8: Bevy's
-    `ParallaxMappingMethod`. `occlusion` (the default) reads once more after the march and
-    interpolates between the last two layers; `relief:<steps>` instead runs a binary search
-    between them, halving the step `steps` times, one read each (vendored
-    `parallax_mapping.wesl` `parallaxed_uv`). Relief is a pipeline variant
-    (`RELIEF_MAPPING`, Bevy's `StandardMaterialKey`), so its materials get their own
-    pipelines.
+    `ParallaxMappingMethod`. `relief:<steps>` (the default is `relief:4`) runs a binary
+    search between the last two layers after the march, halving the step `steps` times, one
+    read each; `occlusion` instead reads once more and interpolates between them, the
+    cheaper method kept for comparing pictures and frame times (vendored
+    `parallax_mapping.wesl` `parallaxed_uv`).
   - `NVF_PBR_PARALLAX_MASK=1`: alpha-tested shapes (`AlphaMode::Mask`) may take a height
     map as opaque ones do (they gain tangents for it the same way); blended shapes stay
     refused. Every depth-only pass reads the cut-out's alpha at the **unshifted**
@@ -407,7 +415,11 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   the Pip-Boy screen and the holes test also read at unshifted coordinates (none of them
   takes a height map today).
 - **Unmeasured:** the cost on a close first-person weapon and on grazing, screen-filling
-  surfaces, and whether 8 layers look as good as Bevy's 16 (no comparison has been made).
+  surfaces, and the relief search's cost over the occlusion method's. One reading on a
+  noisy machine (a floor filling a 1080p frame, occlusion at 8 layers, a fast desktop GPU)
+  put the march between about +0.2 ms and +1.5 ms on a 2.2 ms frame [observed: the main
+  session, 2026-11-20; not a clean measurement]. The picture comparison of 8, 16 and 32
+  layers and of `relief:4` is in "How it is drawn" above.
 - **What the field proves:** the signed displacement of two flat height bands (the low band
   moves by the predicted amount the predicted way, the high band stays). It does not test
   the march on varying heights (slopes, steps inside the band, self-occlusion), where an

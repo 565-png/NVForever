@@ -546,7 +546,11 @@ fn the_method_switch_takes_occlusion_or_relief_with_its_steps() {
         assert!(parse_parallax_method(bad).is_err(), "{bad:?}");
     }
     assert_eq!(parallax_method_name(ParallaxMappingMethod::Relief { max_steps: 5 }), "relief:5");
-    assert_eq!(parallax_method_name(PARALLAX_METHOD), "occlusion");
+    // The default: relief with 4 halvings after the march (the occlusion method stays the
+    // switch's comparison).
+    assert_eq!(PARALLAX_METHOD, ParallaxMappingMethod::Relief { max_steps: 4 });
+    assert_eq!(parallax_method_name(PARALLAX_METHOD), "relief:4");
+    assert_eq!(parse_parallax_method(&parallax_method_name(PARALLAX_METHOD)), Ok(PARALLAX_METHOD), "the default is a value the switch takes");
 }
 
 /// The alpha-tested switch (`NVF_PBR_PARALLAX_MASK`): `1` on, `0` off, nothing else.
@@ -577,7 +581,8 @@ fn a_switch_logs_what_it_took_or_refused_and_keeps_the_default_otherwise() {
     }
     let method = |text: Option<&str>| switch_value(PARALLAX_METHOD_ENV, text, PARALLAX_METHOD, parse_parallax_method, parallax_method_name, |_| false);
     assert_eq!(method(Some("relief:3")).0, ParallaxMappingMethod::Relief { max_steps: 3 });
-    assert!(matches!(method(Some("relief:12")), (ParallaxMappingMethod::Occlusion, SwitchLog::Refused(_))));
+    assert!(matches!(method(Some("relief:12")), (m, SwitchLog::Refused(_)) if m == PARALLAX_METHOD), "out of range keeps the default");
+    assert!(matches!(method(Some("occlusion")), (ParallaxMappingMethod::Occlusion, SwitchLog::Taken(_))), "the comparison method is taken");
     let mask = |text: Option<&str>| switch_value(PARALLAX_MASK_ENV, text, false, parse_parallax_mask, |_| "on".to_string(), |on| !on);
     assert_eq!(mask(Some("0")), (false, SwitchLog::Quiet));
     assert!(matches!(mask(Some("1")), (true, SwitchLog::Taken(_))));

@@ -108,13 +108,21 @@ impl From<AuthoredSet> for PbrSet {
     }
 }
 
-/// The parallax method a set's height map is drawn with: Bevy's occlusion method (a march
-/// through layers, then one interpolation) [design, the stage 4 review's starting point;
-/// relief costs a binary search on top].
-pub const PARALLAX_METHOD: ParallaxMappingMethod = ParallaxMappingMethod::Occlusion;
+/// The parallax method a set's height map is drawn with: Bevy's relief method, the march
+/// through layers ([`MAX_PARALLAX_LAYERS`]) followed by a binary search of 4 halvings between
+/// the last two layers, one read each [design: the main session's pictures of 2026-11-20 on
+/// a tiled floor (set `offrmfloor01`, a 512 BC4 `_p`): the occlusion method at 8 layers
+/// showed stair-step bands on the patch edges from depth 0.03 on, more layers only made them
+/// finer (16, 32), and `relief:4` at 8 layers removed them at 0.03; its frame cost is not
+/// measured]. Relief is its own pipeline variant (`RELIEF_MAPPING`, Bevy's
+/// `StandardMaterialKey`), so height-mapped materials get their own pipelines. The method
+/// switch (`NVF_PBR_PARALLAX_METHOD=occlusion`, [`parallax_method`]) brings back the
+/// occlusion method for a comparison.
+pub const PARALLAX_METHOD: ParallaxMappingMethod = ParallaxMappingMethod::Relief { max_steps: 4 };
 
-/// The most layers the march takes (Bevy's default is 16; at a head-on view it takes one)
-/// [design, the review's starting point; no frame-time budget is measured for it].
+/// The most layers the march takes before the relief search (Bevy's default is 16; at a
+/// head-on view it takes one) [design, the review's starting point; no frame-time budget is
+/// measured for it].
 pub const MAX_PARALLAX_LAYERS: f32 = 8.0;
 
 /// The environment variable of the layer switch ([`parallax_layers`]).
