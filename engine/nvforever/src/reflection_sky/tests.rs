@@ -262,6 +262,7 @@ fn the_producer_only_records_fills_after_writing_the_current_camera_cube() {
     let previous = app.world().resource::<ReflectionSky>().last.clone();
     assert_eq!(app.world().resource::<ReflectionSky>().fills_outdoors, 1);
 
+    let inherited_light = app.world().get::<ReflectionCube>(camera).unwrap().light();
     app.world_mut().despawn(camera);
     app.world_mut().resource_mut::<SkyState>().interior = Some(default());
     app.update();
@@ -272,7 +273,9 @@ fn the_producer_only_records_fills_after_writing_the_current_camera_cube() {
 
     app.world_mut().resource_mut::<SkyState>().interior = None;
     let replacement = spawn_world_camera(&mut app);
+    app.world_mut().entity_mut(replacement).insert(inherited_light);
     app.update();
+    assert!(app.world().get::<EnvironmentMapLight>(replacement).is_none(), "an inherited light must wait for the new cube");
     let state = app.world().resource::<ReflectionSky>();
     let cube = app.world().get::<ReflectionCube>(replacement).expect("new camera gets a cube");
     assert_eq!(state.last, previous);

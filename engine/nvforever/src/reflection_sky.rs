@@ -1127,10 +1127,10 @@ pub fn produce(
         commands.entity(entity).insert(cube);
         specular
     };
-    // If this camera lost its cube but kept the corresponding light, let attach_lights
-    // reconnect it once the new cube is uploaded. Preserve an unrelated environment map.
-    if state.target.is_some_and(|(old_entity, old_specular)| {
-        old_entity == entity && old_specular != specular
+    // A camera can retain or inherit the light from the previous cube. Remove that light
+    // so attach_lights can install the new one after upload. Preserve unrelated maps.
+    if state.target.is_some_and(|(_, old_specular)| {
+        old_specular != specular
             && environment.is_some_and(|light| light.specular_map.id() == old_specular)
     }) {
         commands.entity(entity).remove::<EnvironmentMapLight>();
