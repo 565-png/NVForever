@@ -11,7 +11,7 @@
 mod support;
 use support::{Compiled, Compiler};
 
-/// Whether the module's fragment entry point reads the global at `group`, `binding`.
+/// Whether Naga reports static fragment usage of the global at `group`, `binding`.
 fn fragment_reads(compiled: &Compiled, group: u32, binding: u32) -> bool {
     let Some((handle, _)) = compiled
         .module
@@ -31,6 +31,9 @@ fn fragment_reads(compiled: &Compiled, group: u32, binding: u32) -> bool {
 }
 
 const SPECULAR_CUBE: (u32, u32) = (1, 1);
+/// The view's light probe uniform (`view_cubemap_index`), group 0 binding 12
+/// (bevy_pbr mesh_view_bindings.wesl).
+const LIGHT_PROBES: (u32, u32) = (0, 12);
 
 #[test]
 fn only_the_opted_in_nif_fragment_reads_the_view_cube() {
@@ -72,19 +75,80 @@ fn the_opted_in_nif_fragment_compiles_in_a_view_without_a_cube() {
 }
 
 #[test]
-fn the_metal_lift_experiment_composes_in_the_opted_in_fragment() {
-    // NVF_PBR_METAL_LIFT (nvf-assets authored.rs `metal_lift`): the switch def and the gain in
-    // thousandths as a valued def, read as constants::NVF_PBR_METAL_LIFT_E3; with a cube, the
-    // plain and the first-person shade-light variants; without a cube the lift is not compiled.
+fn the_metal_base_lift_composes_in_the_opted_in_fragment() {
+    // Metal base colour (nvf-assets nif_material.wesl `nvf_metal_base`, the gain from the
+    // uniform's terrain.y): compiled with the opt-in in a view with a cube, in the plain, the
+    // alpha-tested and the first-person shade-light variants; without a cube or without the
+    // opt-in it is not compiled. The cube is read exactly as before.
     let mut compiler = Compiler::with_reflection_gate();
-    let gain = [bevy_shader::ShaderDefVal::UInt("NVF_PBR_METAL_LIFT_E3".into(), 3000)];
     for extra in [
-        &["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "NVF_PBR_METAL_LIFT"][..],
-        &["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "NVF_PBR_METAL_LIFT", "FIRST_PERSON_DEPTH", "SHADE_LIGHT"][..],
-        &["NVF_PBR_REFLECT", "NVF_PBR_METAL_LIFT"][..],
+        &["ENVIRONMENT_MAP", "NVF_PBR_REFLECT"][..],
+        &["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "MAY_DISCARD"][..],
+        &["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "FIRST_PERSON_DEPTH", "SHADE_LIGHT"][..],
+        &["NVF_PBR_REFLECT"][..],
+        &["ENVIRONMENT_MAP"][..],
     ] {
-        let compiled = compiler.compile_with_values("nvf_assets/nif_material.wesl", extra, &gain);
+        let compiled = compiler.compile("nvf_assets/nif_material.wesl", extra);
         assert!(compiled.module.entry_points.iter().any(|e| e.stage == naga::ShaderStage::Fragment), "{extra:?}: a fragment entry point");
-        assert_eq!(fragment_reads(&compiled, SPECULAR_CUBE.0, SPECULAR_CUBE.1), extra.contains(&"ENVIRONMENT_MAP"), "{extra:?}: the cube read as without the lift");
+        // By name (the composer may decorate it with its module's path).
+        let lift = compiled.module.functions.iter().any(|(_, f)| f.name.as_deref().is_some_and(|n| n.contains("nvf_metal_base")));
+        let wanted = extra.contains(&"ENVIRONMENT_MAP") && extra.contains(&"NVF_PBR_REFLECT");
+        assert_eq!(lift, wanted, "{extra:?}: the lift only with the opt-in and a cube");
+        assert_eq!(fragment_reads(&compiled, SPECULAR_CUBE.0, SPECULAR_CUBE.1), wanted, "{extra:?}: the cube read as without the lift");
     }
+}
+
+#[test]
+fn the_opted_in_fragment_asks_whether_the_view_has_its_own_cube() {
+    // ENVIRONMENT_MAP is also set for a view that only sees a light-probe volume, with
+    // view_cubemap_index -1 (nif_material.wesl `nvf_view_has_cube`): with the opt-in and the
+    // def, the fragment reads the view's light probe uniform for the metallic hold, the
+    // reflection weight, the lift and the mirror view; without either it does not read it.
+    let mut compiler = Compiler::with_reflection_gate();
+    for (extra, reads) in [
+        (&["ENVIRONMENT_MAP", "NVF_PBR_REFLECT"][..], true),
+        (&["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "FIRST_PERSON_DEPTH", "SHADE_LIGHT"][..], true),
+        (&["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "NVF_PBR_VIEW", "NVF_PBR_VIEW_REFLECTION"][..], true),
+        (&["NVF_PBR_REFLECT"][..], false),
+        (&["NVF_PBR_REFLECT", "NVF_PBR_VIEW", "NVF_PBR_VIEW_REFLECTION"][..], false),
+    ] {
+        let compiled = compiler.compile("nvf_assets/nif_material.wesl", extra);
+        assert!(compiled.module.entry_points.iter().any(|e| e.stage == naga::ShaderStage::Fragment), "{extra:?}: a fragment entry point");
+        let helper = compiled.module.functions.iter().any(|(_, f)| f.name.as_deref().is_some_and(|n| n.contains("nvf_view_has_cube")));
+        assert_eq!(helper, reads, "{extra:?}: the own-cube test compiled");
+        if reads {
+            assert!(fragment_reads(&compiled, LIGHT_PROBES.0, LIGHT_PROBES.1), "{extra:?}: the light probe uniform read");
+        }
+    }
+}
+
+#[test]
+fn a_refracting_nif_main_pass_with_the_opt_in_composes_with_the_gated_transmitted_light() {
+    // NIF refraction returns its screen sample before lighting. Naga counts cube
+    // references in the lighting code that follows, so test composition and the
+    // screen binding here. The opaque variants above check cube isolation.
+    const VIEW_TRANSMISSION: (u32, u32) = (0, 24);
+    let mut compiler = Compiler::with_reflection_gate();
+    let transmission = [
+        "ENVIRONMENT_MAP",
+        "VIEW_TRANSMISSION_TEXTURE",
+        "STANDARD_MATERIAL_SPECULAR_TRANSMISSION",
+        "STANDARD_MATERIAL_DIFFUSE_OR_SPECULAR_TRANSMISSION",
+    ];
+    let mut refract = transmission.to_vec();
+    refract.extend(["NVF_PBR_REFLECT", "REFRACT"]);
+    let mut refract_cut = refract.clone();
+    refract_cut.push("MAY_DISCARD");
+    for extra in [&refract, &refract_cut] {
+        let compiled = compiler.compile("nvf_assets/nif_material.wesl", extra);
+        assert!(
+            fragment_reads(&compiled, VIEW_TRANSMISSION.0, VIEW_TRANSMISSION.1),
+            "{extra:?}: the fragment uses the view transmission texture",
+        );
+    }
+    // Bevy's standard transmissive fragment still uses the screen texture with
+    // the reflection opt-in absent, and its lighting does not read the cube.
+    let compiled = compiler.compile("bevy_pbr/render/pbr.wesl", &transmission);
+    assert!(fragment_reads(&compiled, VIEW_TRANSMISSION.0, VIEW_TRANSMISSION.1));
+    assert!(!fragment_reads(&compiled, SPECULAR_CUBE.0, SPECULAR_CUBE.1));
 }

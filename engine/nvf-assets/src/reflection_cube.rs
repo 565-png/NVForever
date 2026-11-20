@@ -35,7 +35,7 @@ use bevy::image::{ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::EnvironmentMapLight;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssets;
-use bevy::render::render_resource::{Extent3d, TexelCopyBufferLayout, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor, TextureViewDimension};
+use bevy::render::render_resource::{Extent3d, TexelCopyBufferLayout, TextureDimension, TextureFormat, TextureId, TextureUsages, TextureViewDescriptor, TextureViewDimension};
 use bevy::render::renderer::RenderQueue;
 use bevy::render::texture::GpuImage;
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
@@ -268,17 +268,29 @@ impl ReflectionCube {
 #[derive(Resource, Default)]
 struct CubeUploads(HashMap<AssetId<Image>, Upload>);
 
-#[derive(Default)]
-struct Upload {
+/// One cube's upload. `K` identifies the GPU texture written ([`TextureId`]; tests use a
+/// number).
+struct Upload<K = TextureId> {
     /// [`ReflectionCube::generation`] of the levels held.
     seen: u64,
     levels: Arc<Vec<Vec<u8>>>,
     /// Not yet written into the texture.
     pending: bool,
+    /// The texture the held levels were last written into: when the GPU image is made again
+    /// under the same handle (a new texture, empty), the retained levels are written again,
+    /// though no new fill came (a static room may never fill again).
+    written_to: Option<K>,
     uploaded: Arc<AtomicU64>,
 }
 
-impl Upload {
+// Not derived: a derive would ask `K: Default`, which `TextureId` is not.
+impl<K> Default for Upload<K> {
+    fn default() -> Self {
+        Upload { seen: 0, levels: Arc::default(), pending: false, written_to: None, uploaded: Arc::default() }
+    }
+}
+
+impl<K: Copy + PartialEq> Upload<K> {
     /// Take the cube's content when it changed since the last extraction.
     fn receive(&mut self, cube: &ReflectionCube) {
         self.uploaded = cube.uploaded.clone();
@@ -289,19 +301,25 @@ impl Upload {
         }
     }
 
-    /// The levels to write now: the newest received, once the texture exists
-    /// (`texture_ready`); until then they stay pending. Levels of the wrong sizes are dropped.
-    fn take(&mut self, texture_ready: bool) -> Option<Arc<Vec<Vec<u8>>>> {
-        if !self.pending || !texture_ready {
+    /// The levels to write now into `texture` (`None` while the texture does not exist yet:
+    /// they stay pending): the newest received when they are not written yet, or the retained
+    /// ones again when the texture is not the one they were written into. Levels of the wrong
+    /// sizes are dropped.
+    fn take(&mut self, texture: Option<K>) -> Option<Arc<Vec<Vec<u8>>>> {
+        let texture = texture?;
+        let replaced = self.written_to.is_some_and(|t| t != texture);
+        if !self.pending && !replaced {
             return None;
         }
         self.pending = false;
+        self.written_to = None;
         let sizes_ok = self.levels.len() == SPECULAR_LEVELS as usize && self.levels.iter().enumerate().all(|(l, b)| b.len() == level_bytes(l as u32));
         sizes_ok.then(|| self.levels.clone())
     }
 
-    /// The written generation, for [`ReflectionCube::ready`].
-    fn written(&self) {
+    /// The held generation is in `texture`, for [`ReflectionCube::ready`].
+    fn written(&mut self, texture: K) {
+        self.written_to = Some(texture);
         self.uploaded.store(self.seen, Ordering::Release);
     }
 }
@@ -319,13 +337,14 @@ fn extract_cubes(cubes: Extract<Query<&ReflectionCube>>, mut uploads: ResMut<Cub
 /// Write the extracted levels into each specular cube's texture, after the render assets are
 /// prepared (`PrepareResources` follows `PrepareAssets`, which makes the texture) and before
 /// the frame draws (the queue's writes go ahead of the frame's command buffers): one write
-/// per level covering the six layers. The image asset is never changed after it is made, so
-/// its texture and view are never made again. A texture of another shape than
+/// per level covering the six layers. The image asset is never changed after it is made, but
+/// should its GPU texture be made again under the same handle, the retained levels are
+/// written into the new one ([`Upload::take`] compares the texture's id). A texture of another shape than
 /// [`ReflectionCube::new`] makes is left alone, with an error.
 fn write_cubes(mut uploads: ResMut<CubeUploads>, images: Res<RenderAssets<GpuImage>>, queue: Res<RenderQueue>) {
     for (id, upload) in uploads.0.iter_mut() {
         let gpu = images.get(*id);
-        let Some(levels) = upload.take(gpu.is_some()) else { continue };
+        let Some(levels) = upload.take(gpu.map(|g| g.texture.id())) else { continue };
         let Some(gpu) = gpu else { continue };
         let d = &gpu.texture_descriptor;
         if d.mip_level_count != SPECULAR_LEVELS || d.size != (Extent3d { width: SPECULAR_SIDE, height: SPECULAR_SIDE, depth_or_array_layers: 6 }) || d.format != FORMAT {
@@ -343,7 +362,7 @@ fn write_cubes(mut uploads: ResMut<CubeUploads>, images: Res<RenderAssets<GpuIma
                 Extent3d { width: side, height: side, depth_or_array_layers: 6 },
             );
         }
-        upload.written();
+        upload.written(gpu.texture.id());
     }
 }
 

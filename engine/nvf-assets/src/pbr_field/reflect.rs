@@ -4,7 +4,7 @@
 //! generated into a fresh folder under `NVFOREVER_HOME`, read through a real VFS, the panels'
 //! materials from the real `shape_material`, GPU readbacks judged.
 //!
-//! Ten panels (2x2 quads, white diffuse) in two rows, drawn by two cameras of the same pose,
+//! Thirteen panels (2x2 quads) in three rows, drawn by two cameras of the same pose,
 //! exposure (Bevy's default, the production one), MSAA (4x) and world-view ambient light (a
 //! display value of 0.6 with the negative alpha that marks a world view,
 //! nvforever `lights::display_ambient`; brightness `light_unit()`), no directional light:
@@ -18,7 +18,13 @@
 //! all facing the camera (reflection +Z, the face's centre at every level): the metal at
 //! roughness 128/255 and 230/255, an authored dielectric (roughness 0.5, reflectance 0.5), a
 //! legacy control (no set) and a zero-reflectance control (an authored set whose scalar file
-//! sets reflectance 0).
+//! sets reflectance 0). Rows one and two have a white diffuse, so the metal gain changes
+//! nothing on them (the brightest channel is 1 already). Row three, the metal base colour
+//! (docs/spec-notes/pbr-materials.md "Metal base colour"), head-on metals at roughness 0.5:
+//! `lift`, a dark bronze diffuse ([`BRONZE`]) with the default metal gain (12, limited to
+//! 1 / 0.40 by the bronze's red, so lifted to (1, 0.75, 0.5)); `lift1`, the same with
+//! `metal_gain = 1`; `albedo`, a white diffuse whose set's `_albedo` is the bronze (gain
+//! default 1 with an `_albedo`).
 //!
 //! "The switch" below is the run's reflections state (`reflection_cube::enabled`): the
 //! settings' Reflections on authored materials row with Authored materials, which the
@@ -31,9 +37,11 @@
 //! nearest the face its reflection points at (pins the faces' orientation and Bevy's z flip);
 //! the head-on metals' chromaticity lies nearer the cube's (neutral) mean as roughness rises
 //! (pins the level rule); the smooth head-on metal is clearly tinted; the legacy and
-//! zero-reflectance controls equal camera B's; the dielectric does not darken. Camera B
-//! (no cube): every panel draws the same white under the ambient light, the metals included
-//! (metallic held at 0 where the view has no cube). With the switch off, the cube stays on
+//! zero-reflectance controls equal camera B's; the dielectric does not darken; the lifted
+//! bronze is clearly brighter than `lift1` with the same hue, and `albedo` equals `lift1`.
+//! Camera B (no cube): every white panel draws the same white under the ambient light, the
+//! metals included (metallic held at 0 where the view has no cube), and the three bronze
+//! panels the same bronze (no lift without a cube; the `_albedo` drawn in every view). With the switch off, the cube stays on
 //! camera A, so the run also shows that the reflection gate keeps it from every shader that
 //! did not opt in: camera A equals camera B panel for panel. The off run's camera B is
 //! today's picture; that the on run's camera B equals it is compared across the two runs'
@@ -67,7 +75,7 @@ use crate::{GameData, NifMaterial, TextureCache};
 const LAYER: usize = 28;
 const CELL: usize = 128;
 const COLS: usize = 5;
-const ROWS: usize = 2;
+const ROWS: usize = 3;
 const WIDTH: usize = CELL * COLS;
 const HEIGHT: usize = CELL * ROWS;
 /// The judged region of each cell: its middle half (a tilted panel spans about 90 of the
@@ -100,7 +108,7 @@ pub(super) struct Panel {
     pub cell: (usize, usize),
 }
 
-pub(super) const PANELS: [Panel; 10] = [
+pub(super) const PANELS: [Panel; 13] = [
     Panel { name: "metal20+X", stem: "metal20", reflect: Vec3::X, cell: (0, 0) },
     Panel { name: "metal20-X", stem: "metal20", reflect: Vec3::NEG_X, cell: (1, 0) },
     Panel { name: "metal20+Y", stem: "metal20", reflect: Vec3::Y, cell: (2, 0) },
@@ -111,6 +119,9 @@ pub(super) const PANELS: [Panel; 10] = [
     Panel { name: "dielectric", stem: "dielectric", reflect: Vec3::Z, cell: (2, 1) },
     Panel { name: "legacy", stem: "legacy", reflect: Vec3::Z, cell: (3, 1) },
     Panel { name: "zero", stem: "zero", reflect: Vec3::Z, cell: (4, 1) },
+    Panel { name: "lift", stem: "lift", reflect: Vec3::Z, cell: (0, 2) },
+    Panel { name: "lift1", stem: "lift1", reflect: Vec3::Z, cell: (1, 2) },
+    Panel { name: "albedo", stem: "painted", reflect: Vec3::Z, cell: (2, 2) },
 ];
 /// The tilted metals (orientation), by index.
 const ORIENTED: std::ops::Range<usize> = 0..5;
@@ -119,16 +130,30 @@ const ROUGHNESS: [usize; 3] = [4, 5, 6];
 const DIELECTRIC: usize = 7;
 const LEGACY: usize = 8;
 const ZERO: usize = 9;
+/// The bronze metal at its default gain, at gain 1, and the white diffuse with a bronze
+/// `_albedo`.
+const LIFT: usize = 10;
+const LIFT1: usize = 11;
+const PAINTED: usize = 12;
+/// The panels with a white diffuse (rows one and two).
+const WHITE_PANELS: std::ops::Range<usize> = 0..10;
+const BRONZE_PANELS: [usize; 3] = [LIFT, LIFT1, PAINTED];
 
 /// The ORMs (RGBA bytes: occlusion, roughness, metallic) of the authored sets.
-const ORMS: [(&str, [u8; 4]); 5] = [
+const ORMS: [(&str, [u8; 4]); 8] = [
     ("metal20", [255, 51, 255, 255]),
     ("metal50", [255, 128, 255, 255]),
     ("metal90", [255, 230, 255, 255]),
     ("dielectric", [255, 128, 0, 255]),
     ("zero", [255, 128, 0, 255]),
+    ("lift", [255, 128, 255, 255]),
+    ("lift1", [255, 128, 255, 255]),
+    ("painted", [255, 128, 255, 255]),
 ];
 const WHITE: [u8; 4] = [255, 255, 255, 255];
+/// A dark bronze as sRGB bytes, about linear (0.40, 0.30, 0.20): the `lift` panels' diffuse
+/// and the `albedo` panel's `_albedo`.
+const BRONZE: [u8; 4] = [170, 149, 124, 255];
 const DIFFUSE_SIDE: u32 = 8;
 const ORM_SIDE: u32 = 16;
 
@@ -141,13 +166,20 @@ const ORM_SIDE: u32 = 16;
 /// the smooth head-on metal about (34, 34, 125) in bytes (blue less red about 90, against
 /// [`MIN_TINT`]); the dielectric about 2 bytes brighter on camera A (against
 /// [`DIELECTRIC_GAIN`]); every camera-B panel and every control the same to rounding (against
-/// [`SAME`] and [`SAME_B`]).
+/// [`SAME`] and [`SAME_B`]). Row three, with F0 the bronze (0.40, 0.30, 0.20) at roughness 0.5
+/// (F_ab about 0.72, the +Z face at level 2.5, (0.225, 0.225, 0.475)): `lift1` about (17, 13,
+/// 18) in bytes (luminance about 14, a little more with Bevy's multiple-scattering term),
+/// `lift` 2.49 times it, about (41, 31, 44), the same chromaticity (distance under 0.01;
+/// against [`LIFT_RATIO`] and [`HUE_SAME`]); `albedo` equal to `lift1` (against [`SAME`]);
+/// on camera B the three bronze panels the same (against [`SAME_B`]).
 const FACE_MARGIN: f64 = 0.05;
 const MIP_STEP: f64 = 0.05;
 const MIN_TINT: f64 = 30.0;
 const SAME: f64 = 1.5;
 const SAME_B: f64 = 2.0;
 const DIELECTRIC_GAIN: std::ops::RangeInclusive<f64> = -1.5..=15.0;
+const LIFT_RATIO: f64 = 1.6;
+const HUE_SAME: f64 = 0.04;
 const LIT: std::ops::Range<f64> = 8.0..247.0;
 const CLIP: u8 = 254;
 
@@ -330,6 +362,21 @@ pub(super) fn make_scene(world: &mut World, data: &GameData, on: bool) -> Result
             if panel.stem == "zero" && material.base.reflectance != 0.0 {
                 return Err(format!("zero panel: reflectance {}, expected 0 from its scalar file", material.base.reflectance));
             }
+            // Row three: each set's metal gain (the run's override replaces them all), and the
+            // `_albedo` drawn in place of the white diffuse.
+            let gain = match panel.stem {
+                "lift" => Some(fnv_pbr::DEFAULT_METAL_GAIN),
+                "lift1" | "painted" => Some(1.0),
+                _ => None,
+            };
+            if let Some(want) = gain.map(|g| crate::authored::metal_gain_override().unwrap_or(g)) {
+                if material.extension.metal_gain != want {
+                    return Err(format!("{} panel: metal gain {}, expected {want}", panel.name, material.extension.metal_gain));
+                }
+            }
+            if panel.stem == "painted" && (material.extension.authored_albedo.is_none() || material.base.base_color_texture != material.extension.authored_albedo) {
+                return Err("albedo panel: its set's _albedo is not the base colour texture".into());
+            }
             prepared.push((mesh, material));
         }
         Ok(prepared)
@@ -463,7 +510,7 @@ pub(super) fn describe(a: &Report, b: &Report) -> String {
     });
     let chroma = ROUGHNESS.map(|i| format!("{}={:.3}", PANELS[i].name, chroma_distance(a.mean[i])));
     format!(
-        "A [{}] B [{}] faces A [{}] chroma A [{}] |A-B| legacy={:.2} zero={:.2} dielectric gain={:.2} B spread={:.2}",
+        "A [{}] B [{}] faces A [{}] chroma A [{}] |A-B| legacy={:.2} zero={:.2} dielectric gain={:.2} B spread={:.2} lift A ratio={:.2} hue={:.3} |albedo-lift1| A={:.2} B bronze spread={:.2}",
         means(a),
         means(b),
         faces.collect::<Vec<_>>().join(" "),
@@ -472,12 +519,37 @@ pub(super) fn describe(a: &Report, b: &Report) -> String {
         max_channel_diff(a.mean[ZERO], b.mean[ZERO]),
         luminance(a.mean[DIELECTRIC]) - luminance(b.mean[DIELECTRIC]),
         b_spread(b),
+        lift_ratio(a),
+        chroma_between(a.mean[LIFT], a.mean[LIFT1]),
+        max_channel_diff(a.mean[PAINTED], a.mean[LIFT1]),
+        bronze_spread(b),
     )
 }
 
-/// The largest channel difference of any camera-B panel from B's dielectric.
+/// The largest channel difference of any white camera-B panel from B's dielectric.
 fn b_spread(b: &Report) -> f64 {
-    b.mean.iter().map(|m| max_channel_diff(*m, b.mean[DIELECTRIC])).fold(0.0, f64::max)
+    b.mean[WHITE_PANELS].iter().map(|m| max_channel_diff(*m, b.mean[DIELECTRIC])).fold(0.0, f64::max)
+}
+
+/// The largest channel difference of a bronze panel from `lift1` on one camera.
+fn bronze_spread(r: &Report) -> f64 {
+    BRONZE_PANELS.iter().map(|&i| max_channel_diff(r.mean[i], r.mean[LIFT1])).fold(0.0, f64::max)
+}
+
+/// The lifted bronze's luminance over the unlifted one's.
+fn lift_ratio(a: &Report) -> f64 {
+    luminance(a.mean[LIFT]) / luminance(a.mean[LIFT1]).max(1e-9)
+}
+
+/// The distance between two colours' chromaticities (each channel over the sum): 0 for the
+/// same hue and saturation at any brightness.
+pub(super) fn chroma_between(c: [f64; 3], d: [f64; 3]) -> f64 {
+    let norm = |c: [f64; 3]| {
+        let sum = (c[0] + c[1] + c[2]).max(1e-9);
+        c.map(|v| v / sum)
+    };
+    let (c, d) = (norm(c), norm(d));
+    (0..3).map(|i| (c[i] - d[i]).powi(2)).sum::<f64>().sqrt()
 }
 
 /// The panels' means, or why the frame cannot be judged (wrong size, not opaque, a blank or
@@ -518,6 +590,11 @@ pub(super) fn judge(a: &Report, b: &Report, on: bool) -> Result<(), String> {
     if b_spread(b) > SAME_B {
         failed.push(format!("camera B's panels differ by {:.2}", b_spread(b)));
     }
+    // Camera B, both runs: the bronze panels the same (no lift without a cube, the `_albedo`
+    // drawn in every view).
+    if bronze_spread(b) > SAME_B {
+        failed.push(format!("camera B's bronze panels differ by {:.2}", bronze_spread(b)));
+    }
     if on {
         for i in ORIENTED {
             let (face, margin) = nearest_face(a.mean[i]);
@@ -542,6 +619,18 @@ pub(super) fn judge(a: &Report, b: &Report, on: bool) -> Result<(), String> {
         let gain = luminance(a.mean[DIELECTRIC]) - luminance(b.mean[DIELECTRIC]);
         if !DIELECTRIC_GAIN.contains(&gain) {
             failed.push(format!("the dielectric's gain {gain:.2} outside {DIELECTRIC_GAIN:?}"));
+        }
+        // Metal base colour: the lift brightens the bronze and keeps its hue; the `_albedo`
+        // draws as the same bronze at gain 1.
+        if lift_ratio(a) < LIFT_RATIO {
+            failed.push(format!("the lifted metal is {:.2} times as bright as at gain 1, under {LIFT_RATIO}", lift_ratio(a)));
+        }
+        let hue = chroma_between(a.mean[LIFT], a.mean[LIFT1]);
+        if hue > HUE_SAME {
+            failed.push(format!("the lift moved the hue by {hue:.3}, over {HUE_SAME}"));
+        }
+        if max_channel_diff(a.mean[PAINTED], a.mean[LIFT1]) > SAME {
+            failed.push(format!("albedo differs from lift1 by {:.2}", max_channel_diff(a.mean[PAINTED], a.mean[LIFT1])));
         }
     } else {
         for (i, panel) in PANELS.iter().enumerate() {
@@ -575,6 +664,7 @@ fn save_readback(out: &Path, ordinal: u8, frame: u64, a: &[u8], b: &[u8], result
 /// Every generated file, by its path under the output folder.
 pub(super) fn fixture() -> Vec<(&'static str, Vec<u8>)> {
     let white = rgba(DIFFUSE_SIDE, WHITE);
+    let bronze = rgba(DIFFUSE_SIDE, BRONZE);
     let orm = |stem: &str| ORMS.iter().find(|(s, _)| *s == stem).map(|(_, t)| rgba(ORM_SIDE, *t)).expect("an ORM per authored stem");
     vec![
         ("textures/reflect/metal20.dds", white.clone()),
@@ -582,21 +672,31 @@ pub(super) fn fixture() -> Vec<(&'static str, Vec<u8>)> {
         ("textures/reflect/metal90.dds", white.clone()),
         ("textures/reflect/dielectric.dds", white.clone()),
         ("textures/reflect/legacy.dds", white.clone()),
-        ("textures/reflect/zero.dds", white),
+        ("textures/reflect/zero.dds", white.clone()),
+        ("textures/reflect/lift.dds", bronze.clone()),
+        ("textures/reflect/lift1.dds", bronze.clone()),
+        ("textures/reflect/painted.dds", white),
         ("textures/pbr/reflect/metal20_orm.dds", orm("metal20")),
         ("textures/pbr/reflect/metal50_orm.dds", orm("metal50")),
         ("textures/pbr/reflect/metal90_orm.dds", orm("metal90")),
         ("textures/pbr/reflect/dielectric_orm.dds", orm("dielectric")),
         ("textures/pbr/reflect/zero_orm.dds", orm("zero")),
         ("textures/pbr/reflect/zero.toml", b"# the zero-reflectance control\nreflectance = 0.0\n".to_vec()),
+        // Row three: `lift` has no scalar file (the default gain), `lift1` sets gain 1,
+        // `painted` draws its `_albedo` (the bronze) over a white diffuse.
+        ("textures/pbr/reflect/lift_orm.dds", orm("lift")),
+        ("textures/pbr/reflect/lift1_orm.dds", orm("lift1")),
+        ("textures/pbr/reflect/lift1.toml", b"# the unlifted bronze\nmetal_gain = 1\n".to_vec()),
+        ("textures/pbr/reflect/painted_orm.dds", orm("painted")),
+        ("textures/pbr/reflect/painted_albedo.dds", bronze),
     ]
 }
 
-/// The test aid that puts the field's generated files ([`fixture`]) into the game's own mount
-/// before it is opened, so the mount has authored sets and the world camera gets its
-/// reflection cube (nvforever reflection_sky.rs; the scenario `authored-reflections-sky`).
-/// Nothing the game draws uses the files' textures: they only make the mount's index count
-/// authored sets [engineering policy: no game-derived file, no game folder written].
+/// The test aid that adds the field's generated files ([`fixture`]) to the game's own mount,
+/// so the mount has authored sets and the world camera gets its reflection cube (nvforever
+/// reflection_sky.rs; the scenarios `authored-reflections-sky` and `-off`). Nothing the game
+/// draws uses the files' textures: they only make the mount's index count authored sets
+/// [engineering policy: no game-derived file, no game folder written].
 pub const MOUNT_PACK_ENV: &str = "NVF_PLAY_TEST_PBR_MOUNT_PACK";
 
 /// Whether [`MOUNT_PACK_ENV`] asks for the mount pack (`=1`).
@@ -604,21 +704,51 @@ pub fn mount_pack_requested() -> bool {
     std::env::var_os(MOUNT_PACK_ENV).is_some_and(|v| v == "1")
 }
 
-/// Write [`fixture`]'s files under `mods` (NVForever's own mods folder of an explicitly chosen
-/// home, `NVFOREVER_HOME`; refused without one, so a player's home is never written), loose
-/// files the mount layers over the game's Data. Files already there are written again. The
-/// number of files written.
-pub fn seed_mount_pack(mods: &Path) -> Result<usize, String> {
-    if std::env::var_os("NVFOREVER_HOME").is_none() {
-        return Err(format!("{MOUNT_PACK_ENV}=1 needs an explicit NVFOREVER_HOME"));
+/// The home the mount pack may write under: `NVFOREVER_HOME` when it is set and not empty
+/// (`fnv_install` takes an empty value for unset, the player's default home), else a refusal.
+pub fn mount_pack_home(value: Option<std::ffi::OsString>) -> Result<PathBuf, String> {
+    match value.filter(|v| !v.is_empty()) {
+        Some(home) => Ok(PathBuf::from(home)),
+        None => Err(format!("{MOUNT_PACK_ENV}=1 needs an explicit, non-empty NVFOREVER_HOME")),
     }
+}
+
+/// Write [`fixture`]'s files into a fresh folder of this run under the explicit home
+/// ([`mount_pack_home`]): `<home>\pbr-mount-pack\run-<stamp>-<process>-<n>`, reserved by
+/// creating it (never an existing folder), every file created new (`create_new`), so no file
+/// that existed before is opened for writing. On any failure the run's own folder is removed
+/// again and nothing is mounted. The caller mounts the folder over every other loose layer
+/// for this run only (`GameData::open_for_plugins_in_over`); no mods folder is written. The
+/// folder and the number of files written.
+pub fn seed_mount_pack() -> Result<(PathBuf, usize), String> {
+    let home = mount_pack_home(std::env::var_os("NVFOREVER_HOME"))?;
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| format!("clock: {e}"))?.as_nanos();
+    seed_mount_pack_in(&home, stamp, std::process::id())
+}
+
+pub(super) fn seed_mount_pack_in(home: &Path, stamp: u128, process: u32) -> Result<(PathBuf, usize), String> {
+    let dir = new_output_in(home, "pbr-mount-pack", stamp, process).map_err(|e| format!("fresh fixture folder under {}: {e}", home.display()))?;
+    let written = write_pack(&dir);
+    match written {
+        Ok(n) => Ok((dir, n)),
+        Err(e) => {
+            // The folder is this run's own (just reserved): nothing else is in it.
+            let _ = std::fs::remove_dir_all(&dir);
+            Err(format!("{}: {e}; nothing mounted", dir.display()))
+        }
+    }
+}
+
+/// [`fixture`]'s files under `out`, a folder of the caller's own: every folder made inside it,
+/// every file created new.
+fn write_pack(out: &Path) -> std::io::Result<usize> {
     let files = fixture();
     for (rel, bytes) in &files {
-        let path = mods.join(rel);
+        let path = out.join(rel);
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        create_file(&path, bytes)?;
     }
     Ok(files.len())
 }
@@ -633,7 +763,7 @@ fn write_fixture(out: &Path) -> std::io::Result<()> {
     create_file(
         &out.join("scene.txt"),
         format!(
-            "{} panels in {ROWS} rows of {COLS} cells of {CELL} px, 2x2 quads with white diffuse, each tilted so its reflection (orthographic view, V = +Z) points to: {}; two cameras of one pose, exposure Bevy's default, MSAA 4x, ambient display value {AMBIENT} (world view, brightness light_unit), no directional light, no tonemapping; camera A has a reflection cube (linear faces {}; level L mixed towards ({:.2}) by L / 5), camera B none\n",
+            "{} panels in {ROWS} rows of {COLS} cells of {CELL} px, 2x2 quads (white diffuse; row three a bronze diffuse at the default metal gain and at gain 1, and a white diffuse with a bronze _albedo), each tilted so its reflection (orthographic view, V = +Z) points to: {}; two cameras of one pose, exposure Bevy's default, MSAA 4x, ambient display value {AMBIENT} (world view, brightness light_unit), no directional light, no tonemapping; camera A has a reflection cube (linear faces {}; level L mixed towards ({:.2}) by L / 5), camera B none\n",
             PANELS.len(),
             PANELS.iter().map(|p| format!("{} {}", p.name, face_name(p.reflect))).collect::<Vec<_>>().join(", "),
             faces.join(", "),

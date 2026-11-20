@@ -1200,19 +1200,24 @@ fn main() -> AppExit {
         }
         None => fnv_install::EngineHome::user().map(|h| h.mods()).into_iter().collect(),
     };
-    // Test aid (reflections, #2981): the PBR reflection field's generated sets as loose files
-    // in this home's own mods folder, before the mount is opened, so the mount has authored
-    // sets (nvf_assets pbr_field/reflect.rs `seed_mount_pack`; an explicit NVFOREVER_HOME
-    // only, never with Mod Organizer 2).
-    if nvf_assets::mount_pack_requested() {
-        match (mo2.is_none(), mods.first()) {
-            (true, Some(dir)) => match nvf_assets::seed_mount_pack(dir) {
-                Ok(n) => eprintln!("pbr mount pack: {n} generated files written under {}", dir.display()),
-                Err(e) => eprintln!("pbr mount pack: FAIL {e}"),
-            },
-            _ => eprintln!("pbr mount pack: FAIL {} needs NVForever's own mods folder (no Mod Organizer 2)", nvf_assets::MOUNT_PACK_ENV),
+    // Test aid (reflections, #2981): the PBR reflection field's generated sets written into a
+    // fresh folder of this run under an explicit NVFOREVER_HOME, every file created new, then
+    // mounted over every other loose layer for this run only, so the mount has authored sets
+    // (nvf_assets pbr_field/reflect.rs `seed_mount_pack`). No mods folder is written.
+    let mount_pack: Option<PathBuf> = if nvf_assets::mount_pack_requested() {
+        match nvf_assets::seed_mount_pack() {
+            Ok((dir, n)) => {
+                eprintln!("pbr mount pack: {n} generated files written under {} (this run's own folder, mounted over every other loose layer)", dir.display());
+                Some(dir)
+            }
+            Err(e) => {
+                eprintln!("pbr mount pack: FAIL {e}");
+                None
+            }
         }
-    }
+    } else {
+        None
+    };
     let opened = world::open_plugins(args.data(), &mods, &args.plugins);
     args.plugins = opened.plugins.iter().map(|p| p.name.clone()).collect();
     // No setting names the code page: the plugins' own text says it (#1443).
@@ -1285,8 +1290,13 @@ fn main() -> AppExit {
     // the layers lowest precedence first (usvfs' merge order), unlike the plugin lookup
     // above, which wants the overwrite folder first.
     let game = match &mo2 {
-        Some(l) => GameData::open_for_plugins_layered(args.data(), &l.mod_roots(), &args.plugins, &args.nif_schema),
-        None => GameData::open_for_plugins_in(args.data(), mods.first().map(|p| p.as_path()), &args.plugins, &args.nif_schema),
+        Some(l) => {
+            // The mount pack's folder (test aid) as the highest layer, for this run only.
+            let mut roots = l.mod_roots();
+            roots.extend(mount_pack.iter().cloned());
+            GameData::open_for_plugins_layered(args.data(), &roots, &args.plugins, &args.nif_schema)
+        }
+        None => GameData::open_for_plugins_in_over(args.data(), mods.first().map(|p| p.as_path()), mount_pack.as_deref(), &args.plugins, &args.nif_schema),
     };
     let game = match game {
         Ok(g) => g,
