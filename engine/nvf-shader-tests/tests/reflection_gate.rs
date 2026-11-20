@@ -11,7 +11,7 @@
 mod support;
 use support::{Compiled, Compiler};
 
-/// Whether the module's fragment entry point reads the global at `group`, `binding`.
+/// Whether Naga reports static fragment usage of the global at `group`, `binding`.
 fn fragment_reads(compiled: &Compiled, group: u32, binding: u32) -> bool {
     let Some((handle, _)) = compiled
         .module
@@ -124,19 +124,31 @@ fn the_opted_in_fragment_asks_whether_the_view_has_its_own_cube() {
 
 #[test]
 fn a_refracting_nif_main_pass_with_the_opt_in_composes_with_the_gated_transmitted_light() {
-    // NIF refraction sets specular transmission, so its main pass compiles the transmitted
-    // environment block under the opt-in (lights/reflection_gate.rs, fourth edit: no cube
-    // lookup at weight 0). It composes, plain and alpha-tested; REFRACT returns before any
-    // lighting, so the fragment reads no cube.
+    // NIF refraction returns its screen sample before lighting. Naga counts cube
+    // references in the lighting code that follows, so test composition and the
+    // screen binding here. The opaque variants above check cube isolation.
+    const VIEW_TRANSMISSION: (u32, u32) = (0, 24);
     let mut compiler = Compiler::with_reflection_gate();
-    let refract = ["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "REFRACT", "STANDARD_MATERIAL_SPECULAR_TRANSMISSION", "STANDARD_MATERIAL_DIFFUSE_OR_SPECULAR_TRANSMISSION"];
-    let refract_cut = ["ENVIRONMENT_MAP", "NVF_PBR_REFLECT", "REFRACT", "STANDARD_MATERIAL_SPECULAR_TRANSMISSION", "STANDARD_MATERIAL_DIFFUSE_OR_SPECULAR_TRANSMISSION", "MAY_DISCARD"];
-    for extra in [&refract[..], &refract_cut[..]] {
+    let transmission = [
+        "ENVIRONMENT_MAP",
+        "VIEW_TRANSMISSION_TEXTURE",
+        "STANDARD_MATERIAL_SPECULAR_TRANSMISSION",
+        "STANDARD_MATERIAL_DIFFUSE_OR_SPECULAR_TRANSMISSION",
+    ];
+    let mut refract = transmission.to_vec();
+    refract.extend(["NVF_PBR_REFLECT", "REFRACT"]);
+    let mut refract_cut = refract.clone();
+    refract_cut.push("MAY_DISCARD");
+    for extra in [&refract, &refract_cut] {
         let compiled = compiler.compile("nvf_assets/nif_material.wesl", extra);
-        assert!(compiled.module.entry_points.iter().any(|e| e.stage == naga::ShaderStage::Fragment), "{extra:?}: a fragment entry point");
-        assert!(!fragment_reads(&compiled, SPECULAR_CUBE.0, SPECULAR_CUBE.1), "{extra:?}: refraction returns before lighting");
+        assert!(
+            fragment_reads(&compiled, VIEW_TRANSMISSION.0, VIEW_TRANSMISSION.1),
+            "{extra:?}: the fragment uses the view transmission texture",
+        );
     }
-    // Bevy's own fragment with transmission and a cube, without the opt-in: no cube read.
-    let compiled = compiler.compile("bevy_pbr/render/pbr.wesl", &["ENVIRONMENT_MAP", "STANDARD_MATERIAL_SPECULAR_TRANSMISSION", "STANDARD_MATERIAL_DIFFUSE_OR_SPECULAR_TRANSMISSION"]);
+    // Bevy's standard transmissive fragment still uses the screen texture with
+    // the reflection opt-in absent, and its lighting does not read the cube.
+    let compiled = compiler.compile("bevy_pbr/render/pbr.wesl", &transmission);
+    assert!(fragment_reads(&compiled, VIEW_TRANSMISSION.0, VIEW_TRANSMISSION.1));
     assert!(!fragment_reads(&compiled, SPECULAR_CUBE.0, SPECULAR_CUBE.1));
 }
