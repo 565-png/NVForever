@@ -250,7 +250,7 @@ fn attach(
     mut parts: ResMut<ActorParts>,
     mut models: ModelCtx,
     mut stats: ResMut<BodyStats>,
-    mut own_attacks: Local<Option<std::sync::Arc<std::sync::OnceLock<HashSet<String>>>>>,
+    mut own_attacks: Local<Option<std::sync::Arc<OwnAttacks>>>,
     mut stances_asked: Local<HashSet<(String, &'static str)>>,
     mut fresh: Query<Fresh, Unchecked>,
 ) {
@@ -265,12 +265,17 @@ fn attach(
     // is done (a start's first frames) gets its arms the frame it is.
     let on_read_thread = crate::stream_pace::on_read_threads();
     let own = own_attacks.get_or_insert_with(|| {
-        let listed = std::sync::Arc::new(std::sync::OnceLock::new());
+        let listed = std::sync::Arc::new(OwnAttacks::default());
         if on_read_thread {
             let (data, out) = ((*models.data).clone(), listed.clone());
             nvf_assets::read_pool::read_pool()
                 .spawn(async move {
-                    let _ = out.set(own_attack_folders(&data.vfs));
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| own_attack_folders(&data.vfs))) {
+                        Ok(folders) => {
+                            let _ = out.folders.set(folders);
+                        }
+                        Err(_) => out.failed.store(true, std::sync::atomic::Ordering::Relaxed),
+                    }
                 })
                 .detach();
         }
@@ -279,11 +284,12 @@ fn attach(
     if fresh.is_empty() {
         return;
     }
-    if !on_read_thread {
-        // As before: listed in the frame of the first creature that needs it.
-        own.get_or_init(|| own_attack_folders(&models.data.vfs));
+    if !on_read_thread || own.failed.load(std::sync::atomic::Ordering::Relaxed) {
+        // As before: listed in the frame of the first creature that needs it; also when the
+        // read thread's listing panicked, so creatures still get their body weapons.
+        own.folders.get_or_init(|| own_attack_folders(&models.data.vfs));
     }
-    let Some(own_folders) = own.get() else { return };
+    let Some(own_folders) = own.folders.get() else { return };
     let mut ctx = ActorCtx { cache: &mut parts, models: &mut models };
     for (e, rig, held, own_stance, player) in &mut fresh {
         // A weapon in hand is `outfits::arm_creatures`'.
@@ -451,6 +457,14 @@ fn switch(
         body.since = Some(now);
         take_up(&mut commands, e, rig, &mut player, &mut body, to, drawn);
     }
+}
+
+/// [`own_attack_folders`]' list, filled by a read thread; `failed` when that listing
+/// panicked, and the frame's thread lists the folders itself.
+#[derive(Default)]
+struct OwnAttacks {
+    folders: std::sync::OnceLock<HashSet<String>>,
+    failed: std::sync::atomic::AtomicBool,
 }
 
 /// The folder of a skeleton path (`creatures\mistergutsy\skeleton.nif` →

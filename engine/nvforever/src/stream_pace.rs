@@ -27,8 +27,9 @@
 //! after it used to take their own in full all the same. Now all of them together get
 //! [`FRAME_SHARE`] of the frame's own length: a job is given what is left of that, or its
 //! own budget if that is less, and never under [`LEAST_SLICE`] of its own, so one that
-//! runs late in the frame still moves every frame. At 30 fps the share is larger than the
-//! budgets' sum and changes nothing.
+//! runs late in the frame still moves every frame. The allowance applies only above the
+//! reference rate (while the budgets are scaled): at 60 fps half the frame (8.3 ms) is less
+//! than the budgets' sum (13 ms), so at 60 fps or less every job keeps its whole budget.
 //!
 //! `NVF_STREAM_PACE=0` keeps the budgets as they were at every frame rate, to compare;
 //! `NVF_STREAM_PACE=scale` follows the frame rate without the shared allowance.
@@ -174,7 +175,15 @@ impl StreamPace {
     /// do not apply there, and its frames say nothing of the frame rate).
     pub fn frame(&mut self, frame: f32, held: bool) {
         let spent = Duration::from_nanos(self.spent.swap(0, Ordering::Relaxed)).as_secs_f32();
-        if held || !(frame > 0.0 && frame <= LONGEST_FRAME) {
+        if held {
+            // Behind a loading screen the jobs get their whole budgets, not the gameplay
+            // frames' scale and allowance from before it; the median is kept for after.
+            self.held_back.store(false, Ordering::Relaxed);
+            self.scale = 1.0;
+            self.allowance = None;
+            return;
+        }
+        if !(frame > 0.0 && frame <= LONGEST_FRAME) {
             self.held_back.store(false, Ordering::Relaxed);
             return;
         }
@@ -186,7 +195,9 @@ impl StreamPace {
         let known = self.filled >= WINDOW / 2;
         let own = self.median();
         self.scale = if self.mode != Mode::Off && known { scale_for(own) } else { 1.0 };
-        self.allowance = (self.mode == Mode::Shared && known).then(|| Duration::from_secs_f32(own * self.share));
+        // Only above the reference rate: at 60 fps half the frame (8.3 ms) is less than the
+        // budgets' sum (13 ms) and would hold jobs back that were whole before.
+        self.allowance = (self.mode == Mode::Shared && known && self.scale < 1.0).then(|| Duration::from_secs_f32(own * self.share));
         self.frames += 1;
         self.scaled += u64::from(self.scale < 1.0);
         self.scale_sum += f64::from(self.scale);
@@ -312,9 +323,15 @@ mod tests {
         let before = pace.scale();
         for _ in 0..WINDOW {
             pace.frame(0.3, false);
-            pace.frame(0.02, true);
             pace.frame(0.0, false);
         }
+        assert_eq!(pace.scale(), before);
+        // Behind a loading screen the budgets are whole; the median is kept for after it.
+        for _ in 0..WINDOW {
+            pace.frame(0.02, true);
+            assert_eq!(pace.scale(), 1.0);
+        }
+        pace.frame(1.0 / 150.0, false);
         assert_eq!(pace.scale(), before);
         // One slow frame among fast ones does not move the median either.
         pace.frame(0.05, false);
@@ -347,15 +364,22 @@ mod tests {
     }
 
     #[test]
-    fn at_thirty_frames_a_second_the_share_changes_nothing() {
-        let mut pace = StreamPace::new(Mode::Shared);
-        settled(&mut pace, 1.0 / 30.0);
-        // Every time budget spent in full (13 ms) is still inside half the frame (16.7 ms).
-        for budget in [2, 3, 4, 4] {
-            assert_eq!(pace.time(Duration::from_millis(budget)), Duration::from_millis(budget));
-            pace.spent(Duration::from_millis(budget));
+    fn at_sixty_frames_a_second_or_less_the_share_changes_nothing() {
+        for fps in [60.0, 45.0, 30.0] {
+            let mut pace = StreamPace::new(Mode::Shared);
+            settled(&mut pace, 1.0 / fps);
+            // Every time budget spent in full (13 ms, more than half a 60 fps frame), and a
+            // job that ran over its own, still leave the next jobs theirs whole.
+            for budget in [2, 3, 4, 4] {
+                assert_eq!(pace.time(Duration::from_millis(budget)), Duration::from_millis(budget), "{fps} fps");
+                pace.spent(Duration::from_millis(budget));
+            }
+            pace.spent(Duration::from_millis(10));
+            assert_eq!(pace.time(Duration::from_millis(4)), Duration::from_millis(4), "{fps} fps");
+            assert_eq!(pace.count(24), 24, "{fps} fps");
+            pace.frame(1.0 / fps, false);
+            assert!(pace.summary().ends_with("a job held to the frame's allowance in 0"), "{fps} fps: {}", pace.summary());
         }
-        assert_eq!(pace.count(24), 24);
     }
 
     #[test]

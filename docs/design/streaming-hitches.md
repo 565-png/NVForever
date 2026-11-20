@@ -463,7 +463,8 @@ over 7.3 ms led more than a handful of them.
   to a quarter (240 fps), and a count never under 1. The frame's length is the median of
   the last 64 frames, each less the streaming work its jobs reported, so a stretch of
   crossings does not raise its own budgets; frames behind a loading screen and frames over
-  100 ms are left out, and the budgets are whole until 32 frames are in. A machine at
+  100 ms are left out, the budgets are whole behind a loading screen (no scale, no
+  allowance; the median is kept for after it), and whole until 32 frames are in. A machine at
   150 fps does the streaming work of one at 60 fps a second, in slices 0.4 times the size.
   Scaled: `world.rs` `SPAWN_BUDGET`, `TAKE_IN_BUDGET`, `DESPAWN_PER_FRAME`; `readahead.rs`
   `PREPARE_BUDGET`; `lod.rs` `REBUILD_BUDGET_MS`; `water.rs` `SURFACE_READS_PER_FRAME`;
@@ -492,8 +493,10 @@ over 7.3 ms led more than a handful of them.
   below take these on.
 - **The jobs share the frame** (`stream_pace.rs` `FRAME_SHARE`, `LEAST_SLICE`) [design]. A
   job that ran over its budget on one piece used to leave the jobs after it their own in
-  full. All of them together now get half the frame's own length (3.3 ms at 150 fps,
-  8.3 ms at 60 fps, more than the budgets' sum at 30 fps): a job is given what is left of
+  full. Above 60 fps (while the budgets are scaled) all of them together now get half the
+  frame's own length (3.3 ms at 150 fps); at 60 fps or less there is no allowance, since
+  half a 60 fps frame (8.3 ms) is less than the budgets' sum (13 ms) and would hold jobs
+  back that were whole before (#3132 review). A job is given what is left of
   that or its own budget, whichever is less, and never under a quarter of its own, so a
   job that runs late in the frame still moves every frame; a count is cut to a quarter (at
   least 1) once nothing is left. The jobs report their time as they finish
@@ -598,10 +601,15 @@ Three pieces of streaming work only read records and files, and ran on the main 
   Explained and removed in §3.6.
 - [observed] The gecko 00157B3E south-west of Goodsprings (`VSpawnTier2GeckoMed`) jumps an
   obstacle once or twice in every run; in some it is asked to jump every other frame for
-  about 4 s without leaving the ground (`residents.rs` `hop_or_obstacle`: 46 to 87 "jumps
-  an obstacle" lines). That happened in 1 of 10 runs before §3.4 and in 6 of 16 since: the
-  cells come in a few frames later, and when the gecko is given its body there seems to
-  decide it [hypothesis]. The retry is the walkers' own; nothing here changes it.
+  about 4 s without leaving the ground (`residents.rs` `hop_or_obstacle`: 13 to 78 "jumps
+  an obstacle" lines). Counted again over every run's log in `target/stress` (#3132
+  review): 4 of 15 runs without the cell start in steps (the first, 52 lines, on
+  2026-11-19 at 23:18 UTC, before any change of this section was in) and 13 of 30 with it;
+  the earlier "1 of 10 against 6 of 16" counted fewer runs. Fisher's exact test gives
+  p = 0.34: no evidence that §3.4 changed it. Runs of the same build differ (the `x*` and
+  `h-*` series: 1 to 53 lines), so when the gecko is given its body against when its cell's
+  collision comes in seems to decide it [hypothesis, not checked in a capture]. The retry
+  is the walkers' own; nothing here changes it.
 
 ## 3.6 The stall of 17 to 21 ms: Windows' heap gives memory back under its lock (2026-11-20, d637f7446)
 
