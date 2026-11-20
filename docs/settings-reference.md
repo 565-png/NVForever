@@ -1187,9 +1187,9 @@ stretches drift downstream. Vanilla leaves the switch off. Enhanced turns it on.
 
 ### `authored-reflections`: Reflections on authored materials
 
-- On the page: On: metal and glossy surfaces from a texture pack's material maps reflect
-  the sky, or the room indoors. Needs such a pack and Authored materials on. Takes effect
-  at the next start.
+- On the page: On: surfaces with a texture pack's material maps reflect the sky outdoors and
+  the cell's ambient colours indoors. Needs such a pack and Authored materials on. Takes
+  effect at the next start.
 - In full: [design, #2981] Surfaces shaded from an authored set reflect a small cube of the
   world camera's surroundings, blurred by their roughness, and the `_orm`'s metallic channel
   takes effect: outdoors the sky as drawn, sunlit ground and a broad glow toward
