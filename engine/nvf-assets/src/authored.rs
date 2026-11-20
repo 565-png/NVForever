@@ -49,6 +49,10 @@ pub struct AuthoredSet {
     pub normal: Option<Handle<Image>>,
     /// The scalar file's values (all `None` without one).
     pub scalars: Scalars,
+    /// The base colour gain of the set's metals ([`set_metal_gain`]: the run's override, the
+    /// scalar file's `metal_gain`, or its default), carried to the shader by
+    /// `NifSurface::metal_gain` ([`apply`]).
+    pub metal_gain: f32,
 }
 
 /// The files [`find`] and the decoders already warned about (one warning per file).
@@ -124,7 +128,8 @@ pub(crate) fn find(data: &GameData, enabled: bool, key: &str, memo: &Memo, mut l
         h
     });
     let scalars = found.path(Member::Scalars).map(|path| data.pbr_scalars(&path)).unwrap_or_default();
-    Some(AuthoredSet { stem: found.stem, orm, normal, scalars })
+    let metal_gain = set_metal_gain(&scalars, false, metal_gain_override());
+    Some(AuthoredSet { stem: found.stem, orm, normal, scalars, metal_gain })
 }
 
 /// The value of `NifSurface::emissive_rule.w` that marks a material shaded from an authored
@@ -210,48 +215,60 @@ pub fn metallic_debug() -> bool {
     })
 }
 
-/// The environment variable of the metal lift experiment ([`metal_lift`]).
-pub const METAL_LIFT_ENV: &str = "NVF_PBR_METAL_LIFT";
-/// The gains the experiment takes ([`parse_metal_lift`]).
-pub const METAL_LIFT_RANGE: std::ops::RangeInclusive<f32> = 1.0..=40.0;
+/// The environment variable of the metal gain override ([`metal_gain_override`]).
+pub const METAL_GAIN_ENV: &str = "NVF_PBR_METAL_GAIN";
 
-/// The value of [`METAL_LIFT_ENV`] as a gain: `Ok(None)` for no value (or an empty one),
-/// `Ok(Some(g))` for a number in [`METAL_LIFT_RANGE`], `Err` with the reason otherwise.
-pub fn parse_metal_lift(text: Option<&str>) -> Result<Option<f32>, String> {
+/// The value of [`METAL_GAIN_ENV`] as a gain: `Ok(None)` for no value (or an empty one),
+/// `Ok(Some(g))` for a number in the scalar file's range (`fnv_pbr::METAL_GAIN_RANGE`, 1 to
+/// 40), `Err` with the reason otherwise.
+pub fn parse_metal_gain(text: Option<&str>) -> Result<Option<f32>, String> {
+    let range = fnv_pbr::METAL_GAIN_RANGE;
     let Some(t) = text.map(str::trim).filter(|t| !t.is_empty()) else { return Ok(None) };
     match t.parse::<f32>() {
-        Ok(g) if METAL_LIFT_RANGE.contains(&g) => Ok(Some(g)),
-        Ok(g) => Err(format!("{METAL_LIFT_ENV}={g} is outside {}..{}", METAL_LIFT_RANGE.start(), METAL_LIFT_RANGE.end())),
-        Err(_) => Err(format!("{METAL_LIFT_ENV}={t} is not a number")),
+        Ok(g) if range.contains(&g) => Ok(Some(g)),
+        Ok(g) => Err(format!("{METAL_GAIN_ENV}={g} is outside {} to {}", range.start(), range.end())),
+        Err(_) => Err(format!("{METAL_GAIN_ENV}={t} is not a number")),
     }
 }
 
-/// The metal lift experiment (a development switch about metal base colour, off by
-/// default; `NVF_PBR_METAL_LIFT=<gain>`, 1.0 to 40.0, read once at the start) [design]: in a
-/// view with a reflection cube, an authored material's base colour used for lighting becomes
-/// mix(base, min(base x gain, 1), metallic), metallic the effective one, so a metal's
-/// reflection is tinted by a brighter colour than the game's diffuse (nif_material.wesl,
-/// `NVF_PBR_METAL_LIFT`; reflections must be on). A value that is no number or out of range
-/// is warned about once (the value is read once) and the experiment stays off.
-pub fn metal_lift() -> Option<f32> {
-    static LIFT: OnceLock<Option<f32>> = OnceLock::new();
-    *LIFT.get_or_init(|| match parse_metal_lift(std::env::var(METAL_LIFT_ENV).ok().as_deref()) {
+/// The metal gain override (a tuning aid, off by default; `NVF_PBR_METAL_GAIN=<gain>`, 1 to
+/// 40, read once at the start, NifMaterialPlugin): every set's metal gain
+/// ([`AuthoredSet::metal_gain`]) is this value for the run, whatever its scalar file or
+/// `_albedo` says, so a gain can be judged by picture [design]. A value that is no number or
+/// out of range is warned about once and the sets keep their own gains. Not a
+/// `NVF_PLAY_TEST_*` aid: it does not make a run unattended.
+pub fn metal_gain_override() -> Option<f32> {
+    static GAIN: OnceLock<Option<f32>> = OnceLock::new();
+    *GAIN.get_or_init(|| match parse_metal_gain(std::env::var(METAL_GAIN_ENV).ok().as_deref()) {
         Ok(Some(g)) => {
-            info!("authored materials: metal lift experiment ({METAL_LIFT_ENV}={g}): with reflections on, an authored metal's base colour is lifted by {g} where the view has a reflection cube");
+            info!("authored materials: metal gain override ({METAL_GAIN_ENV}={g}): every authored set's metal gain is {g} for this run");
             Some(g)
         }
         Ok(None) => None,
         Err(reason) => {
-            warn!("authored materials: {reason}; the metal lift experiment stays off");
+            warn!("authored materials: {reason}; each set keeps its own metal gain");
             None
         }
     })
 }
 
-/// The gain as the shader's valued def (`NVF_PBR_METAL_LIFT_E3`, `constants::` in WESL):
-/// thousandths, rounded.
-pub fn metal_lift_e3(gain: f32) -> u32 {
-    (gain * 1000.0).round() as u32
+/// A set's metal gain: `over` (the run's override, [`metal_gain_override`]) when given, else
+/// the scalar file's `metal_gain`, else its default by whether an `_albedo` is drawn
+/// (`albedo`: 1, real reflectances) or the game's diffuse (12) [design].
+pub fn set_metal_gain(scalars: &Scalars, albedo: bool, over: Option<f32>) -> f32 {
+    over.unwrap_or_else(|| scalars.metal_gain_or_default(albedo))
+}
+
+/// The base colour an authored metal is lit with in a view with a reflection cube: the CPU
+/// mirror of nif_material.wesl's `nvf_metal_base` (tests compare the two by their rules):
+/// mix(base, lifted, metallic), lifted = base x min(gain, 1 / brightest channel), never below
+/// base. One gain on all three channels, limited so the brightest channel reaches 1, keeps
+/// the hue (the experiment before it clipped each channel at 1, which shifted bright texels
+/// towards white) [design].
+pub fn lifted_base(base: Vec3, gain: f32, metallic: f32) -> Vec3 {
+    let brightest = base.x.max(base.y).max(base.z.max(1e-4));
+    let lifted = base * gain.min(1.0 / brightest).max(1.0);
+    base.lerp(lifted, metallic)
 }
 
 /// The environment variable that picks a channel view ([`PbrView`]).
@@ -349,8 +366,9 @@ pub fn view() -> PbrView {
 /// map (one image in both slots), no specular mask, the scalars' roughness scale and
 /// reflectance (their defaults without a file), [`authored_metallic`], the set's `_n` when it
 /// has one and the drawn mesh has tangents (else the game's normal map, its alpha no longer a
-/// mask), and the mark ([`AUTHORED_MARK`]). Everything else (base colour, alpha, glow,
-/// decal, the extension's other values) stays. Whether the set's `_n` was applied.
+/// mask), the mark ([`AUTHORED_MARK`]) and the set's metal gain (`NifSurface::metal_gain`).
+/// Everything else (base colour, alpha, glow, decal, the extension's other values) stays.
+/// Whether the set's `_n` was applied.
 pub fn apply(material: &mut crate::NifMaterial, set: &AuthoredSet, legacy: &LegacyLook) -> bool {
     let b = &mut material.base;
     b.metallic_roughness_texture = Some(set.orm.clone());
@@ -371,6 +389,7 @@ pub fn apply(material: &mut crate::NifMaterial, set: &AuthoredSet, legacy: &Lega
     let applied = normal.is_some();
     b.normal_map_texture = normal.or_else(|| legacy.normal.clone());
     material.extension.emissive_rule.w = AUTHORED_MARK;
+    material.extension.metal_gain = set.metal_gain;
     applied
 }
 
@@ -386,6 +405,7 @@ pub fn restore(material: &mut crate::NifMaterial, legacy: &LegacyLook) {
     b.metallic = legacy.metallic;
     b.specular_tint = legacy.specular_tint;
     material.extension.emissive_rule.w = 0.0;
+    material.extension.metal_gain = 0.0;
 }
 
 /// A script's change of a shape's glossiness (nvforever `nif_mirror.rs`, the material
@@ -455,7 +475,7 @@ pub fn make_legacy(material: &mut crate::NifMaterial) -> bool {
 
 /// Clear every authored map from an unlit copy (the Pip-Boy's glare and menus copies,
 /// nvforever `pipboy_arm.rs`): the ORM in both slots, the depth map (Bevy applies parallax
-/// before its unlit test), the mark and the legacy look, so nothing of a set reaches it
+/// before its unlit test), the mark, the metal gain and the legacy look, so nothing of a set reaches it
 /// whatever its source wore [design, a second guard beside the `textures\pipboy3000\`
 /// exclusion].
 pub fn clear_for_unlit_copy(material: &mut crate::NifMaterial) {
@@ -463,6 +483,7 @@ pub fn clear_for_unlit_copy(material: &mut crate::NifMaterial) {
     material.base.occlusion_texture = None;
     material.base.depth_map = None;
     material.extension.emissive_rule.w = 0.0;
+    material.extension.metal_gain = 0.0;
     material.extension.legacy = None;
 }
 
