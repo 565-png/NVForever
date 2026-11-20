@@ -400,10 +400,11 @@ struct Args {
     /// shadow_thin.rs); 0, the default, lets everything cast as far as the shadows reach.
     #[arg(long, default_value_t = shadow_thin::DEFAULT_RATIO)]
     shadow_thin: f32,
-    /// Placed lights (lamps, fires, spot lights) cast shadows within the shadow distance
+    /// ALC shadows (All Lights Cast): placed lights (lamps, fires, spot lights), muzzle
+    /// flashes and explosions cast shadows within the shadow distance
     /// (light_shadows.rs): `--light-shadows=performance` draws their maps less often, a
     /// bare `--light-shadows` or `=quality` the default one, `=off` none (the default).
-    /// Once any setting is saved, NVForever.ini's Lamp shadows row wins over this flag.
+    /// Once any setting is saved, NVForever.ini's ALC shadows row wins over this flag.
     #[arg(long, value_enum, num_args = 0..=1, default_missing_value = "quality", require_equals = true)]
     light_shadows: Option<light_shadows::LightShadowMode>,
     /// Samples per pixel for anti-aliasing: 1 (off), 2, 4 or 8. The cut-out edges of
@@ -1733,7 +1734,7 @@ fn main() -> AppExit {
     .add_plugins(sun_visibility::SunVisibilityPlugin)
     // The ambient occlusion's shader for the lighting (imported only under its def).
     .add_plugins(ssao_lighting::SsaoLightingPlugin)
-    // Shadows of placed lights, the Lamp shadows row (off by default).
+    // Shadows of placed lights, the ALC shadows row (off by default).
     .add_plugins(light_shadows::LightShadowsPlugin(args.light_shadows.unwrap_or(light_shadows::LightShadowMode::Off)))
     .add_plugins(light_shadow_detail::LightShadowDetailPlugin)
     .add_plugins(mesh_terrain_blend::MeshTerrainBlendPlugin)

@@ -523,7 +523,7 @@ fn flash(
         if let Some(l) = light.filter(|l| l.radius > 0.0) {
             let color = crate::lights::display_color(l.color.map(|b| b as f32 / 255.0));
             let intensity = crate::lights::lumens(l.fade.max(0.0), crate::sky::light_unit());
-            // It casts lamp shadows when the Lamp shadows row is on (`crate::light_shadows`);
+            // It casts lamp shadows when the ALC shadows row is on (`crate::light_shadows`);
             // the flash's own shapes are `NotShadowCaster` (`spawn_effect`).
             commands.entity(holder).with_child((
                 PointLight { color, intensity, range: l.radius, shadow_maps_enabled: false, ..default() },
@@ -846,7 +846,7 @@ fn explosions(
                 FadingLight { full: intensity, age: 0.0 },
                 Transform::from_translation(Vec3::from_array(b.point) + Vec3::Z * 32.0),
                 ChildOf(world_root),
-                // Lamp shadows (`crate::light_shadows`); its model's shapes cast none.
+                // ALC shadows (`crate::light_shadows`); its model's shapes cast none.
                 ShadowSource(SourceKind::Explosion),
             ));
         }
