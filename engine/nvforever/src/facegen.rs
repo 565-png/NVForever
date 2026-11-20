@@ -71,9 +71,10 @@ pub struct FaceGenCache {
     pub offsets_ahead: usize,
     pub offsets_ahead_used: usize,
     pub morphed_shapes: usize,
-    /// Face offset images made.
+    /// Face offset images made for a drawn NPC (on the main thread, or ahead and taken).
     pub faces_tinted: usize,
-    /// Body and hand skin offset images made (the race's body and hand `.egt`).
+    /// Body and hand skin offset images made for a drawn NPC (the race's body and hand
+    /// `.egt`), likewise.
     pub skins_tinted: usize,
     /// Materials given an offset image.
     pub shapes_tinted: usize,
@@ -234,6 +235,7 @@ impl FaceGenCache {
         // Made ahead: the NPC's material holds it from here on.
         if let Some((image, _)) = self.ahead.remove(&key) {
             self.offsets_ahead_used += 1;
+            *(if skin { &mut self.skins_tinted } else { &mut self.faces_tinted }) += 1;
             return Some(image);
         }
         if let Some(image) = self.made.get(&key).and_then(|id| ctx.models.images.get_strong_handle(*id)) {
@@ -274,7 +276,7 @@ impl FaceGenCache {
 
     /// An offset image made ahead on a worker thread ([`make_offset`]), at game time
     /// `now`: held for its NPC ([`AHEAD_KEEP_SECS`]).
-    pub fn offer_offset(&mut self, images: &mut Assets<Image>, key: OffsetKey, image: Result<Image, String>, skin: bool, now: f64) {
+    pub fn offer_offset(&mut self, images: &mut Assets<Image>, key: OffsetKey, image: Result<Image, String>, now: f64) {
         if self.offset_ready(images, &key) {
             return;
         }
@@ -285,7 +287,6 @@ impl FaceGenCache {
                 self.made.insert(key.clone(), image.id());
                 self.ahead.insert(key, (image, now));
                 self.offsets_ahead += 1;
-                *(if skin { &mut self.skins_tinted } else { &mut self.faces_tinted }) += 1;
             }
             Err(_) => {
                 self.ahead_failed.insert(key);
@@ -370,11 +371,11 @@ mod tests {
         assert_eq!(key.fgts(), vec![0.5, -1.0]);
         assert!(!cache.offset_ready(&images, &key));
         let egt = Egt { rows: 2, columns: 2, symmetric: 1, asymmetric: 0, basis_version: 0, modes: vec![(1.0, [vec![1, 2, 3, 4], vec![0; 4], vec![-1; 4]])] };
-        cache.offer_offset(&mut images, key.clone(), make_offset(&egt, &key.fgts()), false, 10.0);
+        cache.offer_offset(&mut images, key.clone(), make_offset(&egt, &key.fgts()), 10.0);
         assert!(cache.offset_ready(&images, &key));
-        assert_eq!((cache.offsets_ahead, cache.faces_tinted, cache.skins_tinted), (1, 1, 0));
+        assert_eq!((cache.offsets_ahead, cache.faces_tinted, cache.skins_tinted), (1, 0, 0), "textured counts the images drawn, not made ahead");
         // Offered again (a second read-ahead of the same NPC): not made twice.
-        cache.offer_offset(&mut images, key.clone(), make_offset(&egt, &key.fgts()), false, 11.0);
+        cache.offer_offset(&mut images, key.clone(), make_offset(&egt, &key.fgts()), 11.0);
         assert_eq!(cache.offsets_ahead, 1);
         cache.expire_ahead(10.0 + AHEAD_KEEP_SECS - 1.0);
         assert!(cache.ahead.contains_key(&key), "kept while its NPC may still come");
@@ -382,7 +383,7 @@ mod tests {
         assert!(!cache.ahead.contains_key(&key), "let go once its NPC did not come");
         // A broken file: nothing to wait for (drawing it makes it again and says why).
         let broken = OffsetKey::new("broken.egt".into(), &[1.0]);
-        cache.offer_offset(&mut images, broken.clone(), Err("bad".into()), true, 12.0);
+        cache.offer_offset(&mut images, broken.clone(), Err("bad".into()), 12.0);
         assert!(cache.offset_ready(&images, &broken));
         // A missing `.egt`: no offset to make.
         let absent = OffsetKey::new("absent.egt".into(), &[1.0]);
