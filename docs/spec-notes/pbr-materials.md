@@ -286,7 +286,8 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   scalars are ignored. The first-person rule of "Layout" holds: a `1stperson` texture's own
   height-only set wins, and the plain texture's set is not used behind it.
 - [design] **Which shapes.** Those that may take a set at all (above), and of them only
-  shapes that are **opaque** (no alpha test, no blend, no blended cut-out, no hair),
+  shapes that are **opaque** (no alpha test, no blend, no blended cut-out, no hair; an
+  alpha test is allowed under the development switch `NVF_PBR_PARALLAX_MASK`, below),
   **single-sided**, **not decals**, with texture coordinates and **tangents on the drawn
   mesh**. Tangents are made for a shape whose first need for them is its `_p`; a copy of a
   drawn mesh (an actor part's kept mesh) and a swap onto a drawn mesh use the tangents it has
@@ -302,7 +303,8 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
 - [design] **How it is drawn.** As Bevy's parallax: `StandardMaterial::depth_map` = the
   `_p`, `parallax_depth_scale` = `parallax_depth` (default 0.03), the occlusion method (a march
   through layers, then one interpolation), at most **8 layers** (`MAX_PARALLAX_LAYERS`;
-  Bevy's default is 16). A depth of 0 means no height map: the `_p` is not even loaded. The
+  Bevy's default is 16); the development switches below change the method and the layers
+  for a run. A depth of 0 means no height map: the `_p` is not even loaded. The
   base colour, alpha, glow, ORM and the forward-sampled normal are read at the shifted
   coordinates; the geometry, its depth and its shadow do not move.
 - [design] **Height, not depth.** The file stores height (white high); Bevy's march reads
@@ -320,13 +322,46 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   file's own format (`BC5_SNORM`, `DXT3`). Sizes still differ: the validator refuses a file
   off the 4-texel grid, while the engine decodes an allowed format off the grid on the CPU
   and draws it.
+- [design] **Development switches** (aids for choosing the method, the layers and the
+  alpha-tested rule by picture and by frame time without a rebuild; off by default, read once
+  at the start, a line in the log when one is set; text that is garbage or out of range is
+  refused with one warning and the default is kept) [documented: `authored.rs`
+  `parallax_layers`, `parallax_method`, `parallax_mask`, `parse_parallax_*`]:
+  - `NVF_PBR_PARALLAX_LAYERS=<n>`, a whole number from 2 to 64: the most layers the march
+    takes, in place of 8. At a head-on view the march still takes one layer (Bevy mixes the
+    count from the most down to 1 by the view's steepness).
+  - `NVF_PBR_PARALLAX_METHOD=occlusion | relief:<steps>`, steps from 1 to 8: Bevy's
+    `ParallaxMappingMethod`. `occlusion` (the default) reads once more after the march and
+    interpolates between the last two layers; `relief:<steps>` instead runs a binary search
+    between them, halving the step `steps` times, one read each (vendored
+    `parallax_mapping.wesl` `parallaxed_uv`). Relief is a pipeline variant
+    (`RELIEF_MAPPING`, Bevy's `StandardMaterialKey`), so its materials get their own
+    pipelines.
+  - `NVF_PBR_PARALLAX_MASK=1`: alpha-tested shapes (`AlphaMode::Mask`) may take a height
+    map as opaque ones do (they gain tangents for it the same way); blended shapes stay
+    refused. Every depth-only pass reads the cut-out's alpha at the **unshifted**
+    coordinates: the NIF depth and motion prepass (`nif_prepass.wesl` `test_fragment`), Bevy's
+    own prepass fragment (`prepass_sample_color_and_alpha_discard`) and the shadow passes;
+    none of them can march, since a depth-only prepass carries no normal or tangent
+    (vendored `prepass/io.wesl`: `world_normal`, `world_tangent` only with a normal or deferred
+    prepass). The main pass, which samples the base colour at the shifted coordinates, would
+    test the shifted texel's alpha and cut a different outline; with a depth prepass it tests
+    depth for equality (`nif_material.rs` `depth_equal`), so a fragment the prepass kept and
+    the main pass cut would leave a hole showing the clear colour, and one the prepass cut is
+    never drawn. Under the switch the main pass therefore reads the alpha again at the
+    unshifted coordinates (material × vertex × texel, as the prepass does) and tests that
+    (nif_material.wesl, shader def `NVF_PBR_PARALLAX_MASK`): every pass cuts the same
+    outline, and the colour, normal and ORM inside it are the shifted texels'. The outline
+    does not move with the relief: near the cut, the shifted colour may come from texels the
+    cut leaves transparent (drawn opaque). A multisampled view whose prepass writes the soft
+    edge (`PREPASS_COVERAGE`) does no alpha test in the main pass at all and agrees already.
 - Checking it: `NVF_PBR_VIEW=height` draws the height as stored (white high, the original
   height, not the inverted depth), read at the unshifted coordinates, and dark blue on shapes
   without a depth map. The exit summary line adds the builds that applied a height-only
   set's height map, the builds that applied any height map, the swaps to a loaded height-only
   set (a match with a depth of 0 or a `_p` that did not load counts as a swap to the legacy
   look) and of them those that put its map on, the height maps not put on at a build or swap
-  by reason, `_p` files that did not load or were refused (signed or in no height map's
+  by reason (alpha-tested and blended counted apart), `_p` files that did not load or were refused (signed or in no height map's
   format), and later copies that dropped one.
   The smoke scenario `pbr-authored-field-height` (the same field, `NVF_PLAY_TEST_PBR_FIELD=1`)
   draws two more panels tilted 50 degrees about Y: `height` (a height-only set whose `_p` is
@@ -366,7 +401,8 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   turning it for back faces and divides by `|Vt.z|`.
 - **Cut-outs and blends** are left out: the depth prepass, the shadow passes and the holes
   test read alpha at the unshifted coordinates, so a cut-out's edge would not follow the
-  shifted texels. A fading or holed copy therefore loses its relief while it fades.
+  shifted texels. A fading or holed copy therefore loses its relief while it fades. Cut-outs
+  may take one under `NVF_PBR_PARALLAX_MASK` (above), their edge kept unshifted in every pass.
 - The occlusion debug view rereads the ORM at the unshifted coordinates; the FaceGen tint,
   the Pip-Boy screen and the holes test also read at unshifted coordinates (none of them
   takes a height map today).

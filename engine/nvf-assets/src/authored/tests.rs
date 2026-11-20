@@ -420,7 +420,8 @@ fn the_summary_line_names_every_count() {
         (&s.swaps_height_applied, 20),
         (&s.height_built, 10),
         (&s.height_only_built, 11),
-        (&s.height_not_opaque, 12),
+        (&s.height_alpha_tested, 12),
+        (&s.height_blended, 21),
         (&s.height_double_sided, 13),
         (&s.height_decal, 14),
         (&s.height_no_tangents, 15),
@@ -436,7 +437,7 @@ fn the_summary_line_names_every_count() {
     s.stems.lock().unwrap().extend(["a".to_string(), "b".to_string()]);
     assert_eq!(
         s.line(),
-        "3 material builds applied an ORM set (2 distinct ORM set stems at build), 11 a height-only set's height map; builds without one: 5 not eligible, 1 on excluded textures; 2 ORM load failures at build or swap; 4 applied without their _n (no tangents); 6 role copies made legacy; 24 retexture calls (7 to an ORM set, 9 to a loaded height-only set (20 with its height map applied), 8 to the legacy look); height maps: 10 material builds applied one; not put on at build or swap: 12 not opaque, 13 double-sided, 14 decals, 15 without tangents, 16 unlit, refracting or holed; 17 _p not loaded, 18 _p refused (signed or in no height map's format); 19 later copies dropped one"
+        "3 material builds applied an ORM set (2 distinct ORM set stems at build), 11 a height-only set's height map; builds without one: 5 not eligible, 1 on excluded textures; 2 ORM load failures at build or swap; 4 applied without their _n (no tangents); 6 role copies made legacy; 24 retexture calls (7 to an ORM set, 9 to a loaded height-only set (20 with its height map applied), 8 to the legacy look); height maps: 10 material builds applied one; not put on at build or swap: 12 alpha-tested, 21 blended, 13 double-sided, 14 decals, 15 without tangents, 16 unlit, refracting or holed; 17 _p not loaded, 18 _p refused (signed or in no height map's format); 19 later copies dropped one"
     );
 }
 
@@ -520,4 +521,82 @@ fn retexturing_moves_height_maps_with_the_sets() {
     let (mut skin, _) = shape_material(&props(r"walls\stone.dds"), &mut triangle(), &mut cache, &pack.data, &mut images, None);
     assert!(skin.base.depth_map.is_some() && !is_authored(&skin));
     assert!(make_legacy(&mut skin) && skin.base.depth_map.is_none());
+}
+
+/// The layer switch (`NVF_PBR_PARALLAX_LAYERS`): whole numbers 2 to 64; anything else is refused.
+#[test]
+fn the_layer_switch_takes_whole_numbers_from_2_to_64() {
+    assert_eq!(parse_parallax_layers("2"), Ok(2.0));
+    assert_eq!(parse_parallax_layers(" 16 "), Ok(16.0));
+    assert_eq!(parse_parallax_layers("64"), Ok(64.0));
+    for bad in ["1", "0", "65", "-4", "8.5", "eight", ""] {
+        assert!(parse_parallax_layers(bad).is_err(), "{bad:?}");
+    }
+    assert!(parse_parallax_layers("65").unwrap_err().contains("outside 2 to 64"));
+}
+
+/// The method switch (`NVF_PBR_PARALLAX_METHOD`): `occlusion` or `relief:<1..8>`, any case.
+#[test]
+fn the_method_switch_takes_occlusion_or_relief_with_its_steps() {
+    assert_eq!(parse_parallax_method("occlusion"), Ok(ParallaxMappingMethod::Occlusion));
+    assert_eq!(parse_parallax_method(" Occlusion "), Ok(ParallaxMappingMethod::Occlusion));
+    assert_eq!(parse_parallax_method("relief:1"), Ok(ParallaxMappingMethod::Relief { max_steps: 1 }));
+    assert_eq!(parse_parallax_method("RELIEF:8"), Ok(ParallaxMappingMethod::Relief { max_steps: 8 }));
+    for bad in ["relief", "relief:0", "relief:9", "relief:x", "relief5", "steep", ""] {
+        assert!(parse_parallax_method(bad).is_err(), "{bad:?}");
+    }
+    assert_eq!(parallax_method_name(ParallaxMappingMethod::Relief { max_steps: 5 }), "relief:5");
+    assert_eq!(parallax_method_name(PARALLAX_METHOD), "occlusion");
+}
+
+/// The alpha-tested switch (`NVF_PBR_PARALLAX_MASK`): `1` on, `0` off, nothing else.
+#[test]
+fn the_mask_switch_takes_1_or_0() {
+    assert_eq!(parse_parallax_mask("1"), Ok(true));
+    assert_eq!(parse_parallax_mask(" 0 "), Ok(false));
+    for bad in ["yes", "true", "2", ""] {
+        assert!(parse_parallax_mask(bad).is_err(), "{bad:?}");
+    }
+}
+
+/// A switch's text: unset or empty keeps the default quietly; a taken value is logged as
+/// information (but for a value marked quiet); garbage and out-of-range text keep the
+/// default with a warning naming the variable and the text. Without the variables the run's
+/// values are the defaults, which the material tests pin ([`MAX_PARALLAX_LAYERS`],
+/// [`PARALLAX_METHOD`], the mask off).
+#[test]
+fn a_switch_logs_what_it_took_or_refused_and_keeps_the_default_otherwise() {
+    let layers = |text: Option<&str>| switch_value(PARALLAX_LAYERS_ENV, text, MAX_PARALLAX_LAYERS, parse_parallax_layers, |n| format!("{n} layers"), |_| false);
+    assert_eq!(layers(None), (MAX_PARALLAX_LAYERS, SwitchLog::Quiet));
+    assert_eq!(layers(Some("  ")), (MAX_PARALLAX_LAYERS, SwitchLog::Quiet));
+    assert_eq!(layers(Some("16")), (16.0, SwitchLog::Taken("authored materials: NVF_PBR_PARALLAX_LAYERS=16: 16 layers".into())));
+    for bad in ["99", "lots"] {
+        let (v, log) = layers(Some(bad));
+        assert_eq!(v, MAX_PARALLAX_LAYERS, "{bad}");
+        assert!(matches!(&log, SwitchLog::Refused(l) if l.starts_with(&format!("authored materials: NVF_PBR_PARALLAX_LAYERS={bad} ")) && l.ends_with("; the default is kept")), "{bad}: {log:?}");
+    }
+    let method = |text: Option<&str>| switch_value(PARALLAX_METHOD_ENV, text, PARALLAX_METHOD, parse_parallax_method, parallax_method_name, |_| false);
+    assert_eq!(method(Some("relief:3")).0, ParallaxMappingMethod::Relief { max_steps: 3 });
+    assert!(matches!(method(Some("relief:12")), (ParallaxMappingMethod::Occlusion, SwitchLog::Refused(_))));
+    let mask = |text: Option<&str>| switch_value(PARALLAX_MASK_ENV, text, false, parse_parallax_mask, |_| "on".to_string(), |on| !on);
+    assert_eq!(mask(Some("0")), (false, SwitchLog::Quiet));
+    assert!(matches!(mask(Some("1")), (true, SwitchLog::Taken(_))));
+    assert!(matches!(mask(Some("on")), (false, SwitchLog::Refused(_))));
+    if [PARALLAX_LAYERS_ENV, PARALLAX_METHOD_ENV, PARALLAX_MASK_ENV].iter().all(|v| std::env::var_os(v).is_none()) {
+        assert_eq!((parallax_layers(), parallax_method(), parallax_mask()), (MAX_PARALLAX_LAYERS, PARALLAX_METHOD, false));
+    }
+}
+
+/// Which alpha modes may take a height map: opaque always; alpha-tested only under the
+/// switch; blends never. A refusal says which kind it was.
+#[test]
+fn alpha_tested_and_blended_shapes_are_refused_apart() {
+    for mask in [false, true] {
+        assert_eq!(height_alpha(AlphaMode::Opaque, mask), Ok(()));
+        for blended in [AlphaMode::Blend, AlphaMode::Premultiplied, AlphaMode::AlphaToCoverage, AlphaMode::Add, AlphaMode::Multiply] {
+            assert_eq!(height_alpha(blended, mask), Err(HeightSkip::Blended), "{blended:?} mask={mask}");
+        }
+    }
+    assert_eq!(height_alpha(AlphaMode::Mask(0.5), false), Err(HeightSkip::AlphaTested));
+    assert_eq!(height_alpha(AlphaMode::Mask(0.5), true), Ok(()));
 }

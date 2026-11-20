@@ -307,24 +307,27 @@ fn an_authored_height_map_comes_off_with_the_set() {
 }
 
 /// Shapes the height map may not draw on keep the rest of the set and gain no tangents
-/// for it: alpha-tested, blended, double-sided, decals; a copy of a drawn mesh without
-/// tangents.
+/// for it: alpha-tested (without the alpha-tested switch), blended, double-sided, decals,
+/// each refused for its own reason; a copy of a drawn mesh without tangents.
 #[test]
 fn a_height_map_needs_an_opaque_single_sided_non_decal_shape_with_tangents() {
     let mut scratch = Assets::<Image>::default();
     let mut s = set(&mut scratch, false, Scalars::default());
     s.height = Some(height(&mut scratch, 0.03));
     let bare = || Props { textures: vec![r"walls\brick.dds".into()], ..Default::default() };
-    for (why, props) in [
+    use crate::authored::HeightSkip;
+    // Without NVF_PBR_PARALLAX_MASK (the default): an alpha-tested shape is refused too.
+    for (why, props, skip) in [
         // NiAlphaProperty 0x12EC: tested, not blended; 0x10ED: blended, not tested.
-        ("alpha tested", Props { alpha: Some((0x12EC, 127)), ..bare() }),
-        ("blended", Props { alpha: Some((0x10ED, 0)), ..bare() }),
-        ("double-sided", Props { double_sided: true, ..bare() }),
-        ("decal", Props { decal: true, ..bare() }),
+        ("alpha tested", Props { alpha: Some((0x12EC, 127)), ..bare() }, HeightSkip::AlphaTested),
+        ("blended", Props { alpha: Some((0x10ED, 0)), ..bare() }, HeightSkip::Blended),
+        ("double-sided", Props { double_sided: true, ..bare() }, HeightSkip::DoubleSided),
+        ("decal", Props { decal: true, ..bare() }, HeightSkip::Decal),
     ] {
         let mut source = SetTextures::new(Some((KEY, s.clone())));
         let mut mesh = triangle();
         let (m, _) = shape_material_with(&props, &mut mesh, &mut source);
+        assert_eq!(crate::authored::height_gate(&m, true), Err(skip), "{why}: refused for its reason");
         assert!(m.base.depth_map.is_none(), "{why}");
         assert!(m.base.metallic_roughness_texture.is_some(), "{why}: the rest of the set applies");
         assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_none(), "{why}: no tangents made for a height map it cannot draw");

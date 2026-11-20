@@ -117,6 +117,160 @@ pub const PARALLAX_METHOD: ParallaxMappingMethod = ParallaxMappingMethod::Occlus
 /// [design, the review's starting point; no frame-time budget is measured for it].
 pub const MAX_PARALLAX_LAYERS: f32 = 8.0;
 
+/// The environment variable of the layer switch ([`parallax_layers`]).
+pub const PARALLAX_LAYERS_ENV: &str = "NVF_PBR_PARALLAX_LAYERS";
+
+/// The environment variable of the method switch ([`parallax_method`]).
+pub const PARALLAX_METHOD_ENV: &str = "NVF_PBR_PARALLAX_METHOD";
+
+/// The environment variable of the alpha-tested switch ([`parallax_mask`]).
+pub const PARALLAX_MASK_ENV: &str = "NVF_PBR_PARALLAX_MASK";
+
+/// The layer counts the layer switch takes.
+pub const PARALLAX_LAYERS_RANGE: std::ops::RangeInclusive<u32> = 2..=64;
+
+/// The relief steps the method switch takes (`relief:<steps>`).
+pub const RELIEF_STEPS_RANGE: std::ops::RangeInclusive<u32> = 1..=8;
+
+/// The layer switch's text (`NVF_PBR_PARALLAX_LAYERS`) as a layer count: a whole number in
+/// [`PARALLAX_LAYERS_RANGE`]; why not otherwise.
+pub fn parse_parallax_layers(text: &str) -> Result<f32, String> {
+    let t = text.trim();
+    let n: u32 = t.parse().map_err(|_| format!("is no whole number of layers ({} to {})", PARALLAX_LAYERS_RANGE.start(), PARALLAX_LAYERS_RANGE.end()))?;
+    if !PARALLAX_LAYERS_RANGE.contains(&n) {
+        return Err(format!("is outside {} to {} layers", PARALLAX_LAYERS_RANGE.start(), PARALLAX_LAYERS_RANGE.end()));
+    }
+    Ok(n as f32)
+}
+
+/// The method switch's text (`NVF_PBR_PARALLAX_METHOD`, any case): `occlusion` (Bevy's
+/// occlusion method: one more read and an interpolation after the march) or
+/// `relief:<steps>` (Bevy's relief method: after the march, a binary search between the last
+/// two layers of `steps` halvings, one read each; vendored `parallax_mapping.wesl`
+/// `parallaxed_uv`, `RELIEF_MAPPING`), the steps in [`RELIEF_STEPS_RANGE`]; why not otherwise.
+pub fn parse_parallax_method(text: &str) -> Result<ParallaxMappingMethod, String> {
+    let t = text.trim().to_ascii_lowercase();
+    let range = format!("relief:{} to relief:{}", RELIEF_STEPS_RANGE.start(), RELIEF_STEPS_RANGE.end());
+    if t == "occlusion" {
+        return Ok(ParallaxMappingMethod::Occlusion);
+    }
+    let Some(steps) = t.strip_prefix("relief") else {
+        return Err(format!("is neither occlusion nor {range}"));
+    };
+    let Some(steps) = steps.strip_prefix(':') else {
+        return Err(format!("names no relief steps ({range})"));
+    };
+    let n: u32 = steps.trim().parse().map_err(|_| format!("names no whole number of relief steps ({range})"))?;
+    if !RELIEF_STEPS_RANGE.contains(&n) {
+        return Err(format!("is outside {range}"));
+    }
+    Ok(ParallaxMappingMethod::Relief { max_steps: n })
+}
+
+/// The alpha-tested switch's text (`NVF_PBR_PARALLAX_MASK`): `1` on, `0` off; why not
+/// otherwise.
+pub fn parse_parallax_mask(text: &str) -> Result<bool, String> {
+    match text.trim() {
+        "1" => Ok(true),
+        "0" => Ok(false),
+        _ => Err("is neither 1 nor 0".to_string()),
+    }
+}
+
+/// A method as the switch spells it (`occlusion`, `relief:5`).
+pub fn parallax_method_name(method: ParallaxMappingMethod) -> String {
+    match method {
+        ParallaxMappingMethod::Occlusion => "occlusion".to_string(),
+        ParallaxMappingMethod::Relief { max_steps } => format!("relief:{max_steps}"),
+    }
+}
+
+/// What a development switch's text makes of its value ([`switch_value`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum SwitchLog {
+    /// Unset or empty: the default, nothing logged.
+    Quiet,
+    /// Set and taken: the line to log as information.
+    Taken(String),
+    /// Refused (garbage or out of range): the warning; the default is kept.
+    Refused(String),
+}
+
+/// A development switch's value from its variable `name`'s text (`None`: unset), parsed by
+/// `parse`, and what to log: `said` describes a taken value, `quiet` says a taken value that
+/// needs no line (the mask switch's `0`). Refused text keeps `default`.
+pub fn switch_value<T: Copy>(
+    name: &str,
+    text: Option<&str>,
+    default: T,
+    parse: impl Fn(&str) -> Result<T, String>,
+    said: impl Fn(T) -> String,
+    quiet: impl Fn(T) -> bool,
+) -> (T, SwitchLog) {
+    let Some(text) = text.filter(|t| !t.trim().is_empty()) else { return (default, SwitchLog::Quiet) };
+    match parse(text) {
+        Ok(v) if quiet(v) => (v, SwitchLog::Quiet),
+        Ok(v) => (v, SwitchLog::Taken(format!("authored materials: {name}={}: {}", text.trim(), said(v)))),
+        Err(why) => (default, SwitchLog::Refused(format!("authored materials: {name}={text} {why}; the default is kept"))),
+    }
+}
+
+/// Read a development switch from the environment ([`switch_value`]) and log its line.
+fn read_switch<T: Copy>(name: &str, default: T, parse: impl Fn(&str) -> Result<T, String>, said: impl Fn(T) -> String, quiet: impl Fn(T) -> bool) -> T {
+    let text = std::env::var_os(name).map(|t| t.to_string_lossy().into_owned());
+    let (value, log) = switch_value(name, text.as_deref(), default, parse, said, quiet);
+    match log {
+        SwitchLog::Quiet => {}
+        SwitchLog::Taken(line) => info!("{line}"),
+        SwitchLog::Refused(line) => warn!("{line}"),
+    }
+    value
+}
+
+/// The most layers a set's height map is marched with this run: [`MAX_PARALLAX_LAYERS`], or
+/// the layer switch's count (`NVF_PBR_PARALLAX_LAYERS=<2..64>`, read once at the start; a
+/// development aid for comparing pictures and frame times without a rebuild) [design].
+pub fn parallax_layers() -> f32 {
+    static V: OnceLock<f32> = OnceLock::new();
+    *V.get_or_init(|| {
+        read_switch(PARALLAX_LAYERS_ENV, MAX_PARALLAX_LAYERS, parse_parallax_layers, |n| format!("height maps are marched with at most {n} layers (default {MAX_PARALLAX_LAYERS})"), |_| false)
+    })
+}
+
+/// The method a set's height map is drawn with this run: [`PARALLAX_METHOD`], or the method
+/// switch's (`NVF_PBR_PARALLAX_METHOD=occlusion|relief:<1..8>`, read once at the start; a
+/// development aid like [`parallax_layers`]) [design].
+pub fn parallax_method() -> ParallaxMappingMethod {
+    static V: OnceLock<ParallaxMappingMethod> = OnceLock::new();
+    *V.get_or_init(|| {
+        read_switch(
+            PARALLAX_METHOD_ENV,
+            PARALLAX_METHOD,
+            parse_parallax_method,
+            |m| format!("height maps are drawn with the {} method (default {})", parallax_method_name(m), parallax_method_name(PARALLAX_METHOD)),
+            |_| false,
+        )
+    })
+}
+
+/// Whether alpha-tested shapes may take a height map this run (the alpha-tested switch,
+/// `NVF_PBR_PARALLAX_MASK=1`, read once at the start; off by default, a development aid):
+/// [`height_alpha`]. Their cut is tested at the unshifted coordinates in every pass, the main
+/// pass included (nif_material.wesl `NVF_PBR_PARALLAX_MASK`), so it agrees with the depth-only
+/// passes; the colour inside it is the shifted texel's [design].
+pub fn parallax_mask() -> bool {
+    static V: OnceLock<bool> = OnceLock::new();
+    *V.get_or_init(|| {
+        read_switch(
+            PARALLAX_MASK_ENV,
+            false,
+            parse_parallax_mask,
+            |_| "alpha-tested shapes may take a height map; their cut stays at the unshifted coordinates in every pass".to_string(),
+            |on| !on,
+        )
+    })
+}
+
 /// The parallax fields of a material, as Bevy's standard material has them: the depth map,
 /// its depth, the method and the most layers. What a set's `_p` puts on a material
 /// ([`Parallax::height`]) and what the legacy look keeps to put back ([`LegacyLook::parallax`]).
@@ -137,9 +291,10 @@ impl Default for Parallax {
 
 impl Parallax {
     /// A set's height map: `image` (the `_p`, linear) as the depth map at `depth_scale` UV
-    /// units, [`PARALLAX_METHOD`], [`MAX_PARALLAX_LAYERS`].
+    /// units, the run's method and layers ([`parallax_method`], [`parallax_layers`]:
+    /// [`PARALLAX_METHOD`], [`MAX_PARALLAX_LAYERS`] unless a development switch is set).
     pub fn height(image: Handle<Image>, depth_scale: f32) -> Parallax {
-        Parallax { depth_map: Some(image), depth_scale, method: PARALLAX_METHOD, max_layers: MAX_PARALLAX_LAYERS }
+        Parallax { depth_map: Some(image), depth_scale, method: parallax_method(), max_layers: parallax_layers() }
     }
 
     /// The fields as `material` has them.
@@ -577,8 +732,11 @@ pub fn restore(material: &mut crate::NifMaterial, legacy: &LegacyLook) {
 /// Why a set's height map is not drawn on a material ([`height_gate`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeightSkip {
-    /// Alpha-tested or blended (cut-outs, fades, holes made it `Mask`).
-    NotOpaque,
+    /// Alpha-tested (`AlphaMode::Mask`: cut-outs), without the alpha-tested switch
+    /// ([`parallax_mask`]).
+    AlphaTested,
+    /// Any other alpha mode but opaque (blends, fades, blended cut-outs, hair).
+    Blended,
     DoubleSided,
     Decal,
     /// The drawn mesh has no tangents (a copy of a drawn mesh, a swap onto one).
@@ -587,19 +745,34 @@ pub enum HeightSkip {
     Other,
 }
 
+/// Whether a shape drawn with `alpha_mode` may take a height map, `mask` being the run's
+/// alpha-tested switch ([`parallax_mask`]): opaque always, alpha-tested (`Mask`) only with
+/// the switch, any other mode never ([`height_gate`]).
+pub fn height_alpha(alpha_mode: AlphaMode, mask: bool) -> Result<(), HeightSkip> {
+    match alpha_mode {
+        AlphaMode::Opaque => Ok(()),
+        AlphaMode::Mask(_) if mask => Ok(()),
+        AlphaMode::Mask(_) => Err(HeightSkip::AlphaTested),
+        _ => Err(HeightSkip::Blended),
+    }
+}
+
 /// Whether `material` may draw a height map now, its drawn mesh having tangents (`tangents`):
-/// opaque, single-sided, not a decal, lit, not refracting, without holes [design, the stage 4
-/// review A3]. Why: the depth prepass, the shadow passes and the holes test read alpha at the
-/// unshifted texture coordinates, so a cut-out's or a blend's coverage would not follow the
-/// shifted texels; the march takes the incoming tangent frame without turning it for back
-/// faces; decals already lean on a depth bias. Asked when a material is built, when a swap
-/// puts a set on it ([`retexture`]) and when a copy changes how it draws ([`recheck_height`]).
+/// opaque (or alpha-tested under the alpha-tested switch: [`height_alpha`]), single-sided,
+/// not a decal, lit, not refracting, without holes [design, the stage 4 review A3]. Why: the
+/// depth prepass, the shadow passes and the holes test read alpha at the unshifted texture
+/// coordinates, so a cut-out's or a blend's coverage would not follow the shifted texels (the
+/// switch keeps an alpha-tested shape's cut at the unshifted coordinates in the main pass too,
+/// nif_material.wesl `NVF_PBR_PARALLAX_MASK`; a blend has no such test to move); the march
+/// takes the incoming tangent frame without turning it for back faces; decals already lean
+/// on a depth bias. Asked when a material is built, when a swap puts a set on it
+/// ([`retexture`]) and when a copy changes how it draws ([`recheck_height`]).
 pub fn height_gate(material: &crate::NifMaterial, tangents: bool) -> Result<(), HeightSkip> {
     let (b, e) = (&material.base, &material.extension);
     if b.unlit || e.refract || (e.holes.x >= 0.0 && e.holes.x < 255.0) {
         Err(HeightSkip::Other)
-    } else if !matches!(b.alpha_mode, AlphaMode::Opaque) {
-        Err(HeightSkip::NotOpaque)
+    } else if let Err(why) = height_alpha(b.alpha_mode, parallax_mask()) {
+        Err(why)
     } else if b.double_sided {
         Err(HeightSkip::DoubleSided)
     } else if e.decal {
@@ -624,7 +797,8 @@ pub fn apply_height(material: &mut crate::NifMaterial, height: &Parallax, legacy
         }
         Err(why) => {
             Stats::add(match why {
-                HeightSkip::NotOpaque => &stats().height_not_opaque,
+                HeightSkip::AlphaTested => &stats().height_alpha_tested,
+                HeightSkip::Blended => &stats().height_blended,
                 HeightSkip::DoubleSided => &stats().height_double_sided,
                 HeightSkip::Decal => &stats().height_decal,
                 HeightSkip::NoTangents => &stats().height_no_tangents,
@@ -859,7 +1033,8 @@ pub struct Stats {
     pub height_built: AtomicU64,
     pub height_only_built: AtomicU64,
     /// Height maps a build or a swap did not put on, by [`HeightSkip`] reason.
-    pub height_not_opaque: AtomicU64,
+    pub height_alpha_tested: AtomicU64,
+    pub height_blended: AtomicU64,
     pub height_double_sided: AtomicU64,
     pub height_decal: AtomicU64,
     pub height_no_tangents: AtomicU64,
@@ -885,7 +1060,7 @@ impl Stats {
     /// The summary line (without its prefix).
     pub fn line(&self) -> String {
         format!(
-            "{} material builds applied an ORM set ({} distinct ORM set stems at build), {} a height-only set's height map; builds without one: {} not eligible, {} on excluded textures; {} ORM load failures at build or swap; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to an ORM set, {} to a loaded height-only set ({} with its height map applied), {} to the legacy look); height maps: {} material builds applied one; not put on at build or swap: {} not opaque, {} double-sided, {} decals, {} without tangents, {} unlit, refracting or holed; {} _p not loaded, {} _p refused (signed or in no height map's format); {} later copies dropped one",
+            "{} material builds applied an ORM set ({} distinct ORM set stems at build), {} a height-only set's height map; builds without one: {} not eligible, {} on excluded textures; {} ORM load failures at build or swap; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to an ORM set, {} to a loaded height-only set ({} with its height map applied), {} to the legacy look); height maps: {} material builds applied one; not put on at build or swap: {} alpha-tested, {} blended, {} double-sided, {} decals, {} without tangents, {} unlit, refracting or holed; {} _p not loaded, {} _p refused (signed or in no height map's format); {} later copies dropped one",
             Self::get(&self.built),
             self.stems.lock().expect("authored stats").len(),
             Self::get(&self.height_only_built),
@@ -900,7 +1075,8 @@ impl Stats {
             Self::get(&self.swaps_height_applied),
             Self::get(&self.swaps_legacy),
             Self::get(&self.height_built),
-            Self::get(&self.height_not_opaque),
+            Self::get(&self.height_alpha_tested),
+            Self::get(&self.height_blended),
             Self::get(&self.height_double_sided),
             Self::get(&self.height_decal),
             Self::get(&self.height_no_tangents),

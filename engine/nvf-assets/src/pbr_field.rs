@@ -475,11 +475,14 @@ fn make_scene(world: &mut World, data: &GameData, on: bool) -> Result<Scene, Str
 
 /// The height panel's and its control's materials: on, the height panel carries the
 /// height-only set's `_p` as its depth map (BC4 unsigned, or R8 without BC support) at
-/// [`HEIGHT_DEPTH`] with the authored method and layers, no authored mark, tangents on its
+/// [`HEIGHT_DEPTH`] with the run's method and layers (the authored defaults unless a
+/// development switch is set), no authored mark, tangents on its
 /// drawn mesh, and differs from the control in nothing else but its diffuse; off, neither has
 /// a depth map and they differ only in their diffuse. The note for the log line.
 fn check_height_panels(height: &NifMaterial, control: &NifMaterial, on: bool, size: impl Fn(&Option<Handle<Image>>) -> Option<(UVec2, TextureFormat)>) -> Result<String, String> {
-    use crate::authored::{Parallax, MAX_PARALLAX_LAYERS, PARALLAX_METHOD};
+    // The run's method and layers: the defaults unless a development switch is set
+    // (crate::authored::parallax_method, parallax_layers).
+    use crate::authored::{parallax_layers, parallax_method, parallax_method_name, Parallax};
     let without = |m: &NifMaterial| {
         let mut b = m.base.clone();
         b.base_color_texture = None;
@@ -500,15 +503,17 @@ fn check_height_panels(height: &NifMaterial, control: &NifMaterial, on: bool, si
     let b = &height.base;
     if !format.is_some_and(|(side, f)| side == UVec2::splat(HEIGHT_SIDE) && want.contains(&f))
         || b.parallax_depth_scale != HEIGHT_DEPTH
-        || b.parallax_mapping_method != PARALLAX_METHOD
-        || b.max_parallax_layer_count != MAX_PARALLAX_LAYERS
+        || b.parallax_mapping_method != parallax_method()
+        || b.max_parallax_layer_count != parallax_layers()
         || !height.extension.legacy.as_ref().is_some_and(|l| l.tangents)
     {
         return Err(format!("height panel: expected the _p ({HEIGHT_SIDE}x{HEIGHT_SIDE}, unsigned) at depth {HEIGHT_DEPTH} with tangents, got {format:?}, depth {}, {:?}, {} layers", b.parallax_depth_scale, b.parallax_mapping_method, b.max_parallax_layer_count));
     }
     Ok(format!(
-        "the height-only set's _p ({:?}) at depth {HEIGHT_DEPTH}, occlusion, {MAX_PARALLAX_LAYERS} layers, on height; none on its control; predicted low-band shift {:+.2} px",
+        "the height-only set's _p ({:?}) at depth {HEIGHT_DEPTH}, {}, {} layers, on height; none on its control; predicted low-band shift {:+.2} px",
         format.map(|f| f.1),
+        parallax_method_name(parallax_method()),
+        parallax_layers(),
         predicted_low_shift()
     ))
 }

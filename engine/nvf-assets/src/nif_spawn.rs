@@ -955,10 +955,13 @@ fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl Text
     let found = key.filter(|_| key_ok).and_then(|k| textures.pbr_set(&k));
     let authored = found.as_ref().and_then(crate::authored::PbrSet::authored);
     let height = found.as_ref().and_then(crate::authored::PbrSet::height);
-    // A height map is drawn only on an opaque, single-sided, non-decal shape
-    // (`crate::authored::height_gate`, asked again of the built material): only such a
-    // shape gains tangents for one.
-    let height_wanted = height.is_some() && matches!(alpha_mode, AlphaMode::Opaque) && !props.double_sided && !props.decal;
+    // A height map is drawn only on an opaque (or, under the alpha-tested switch, an
+    // alpha-tested), single-sided, non-decal shape (`crate::authored::height_gate`, asked
+    // again of the built material): only such a shape gains tangents for one.
+    let height_wanted = height.is_some()
+        && crate::authored::height_alpha(alpha_mode, crate::authored::parallax_mask()).is_ok()
+        && !props.double_sided
+        && !props.decal;
     // The final normal is chosen before the tangents are settled: a set's `_n` or `_p` on a
     // shape without a normal map needs tangents on the drawn mesh, made here; a copy of a
     // drawn mesh (`keep_tangents`) gains none, so its `_n` and `_p` apply only if it has them.

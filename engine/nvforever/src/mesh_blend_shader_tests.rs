@@ -601,8 +601,9 @@ fn window(s: &str, at: usize) -> &str {
 /// #2981: the NIF forward shader with the authored materials' debug defs.
 ///
 /// What it proves: with each `NVF_PBR_VIEW` mode's defs (the height view included), with
-/// `NVF_PBR_METALLIC`, with the relief parallax key on a mapped variant, and with a
-/// view and metallic together, the shader composes and naga validates it, bindless or not,
+/// `NVF_PBR_METALLIC`, with the alpha-tested parallax switch's `NVF_PBR_PARALLAX_MASK` (alone,
+/// with the height view, and with the relief key on a mapped variant), with the relief
+/// parallax key on a mapped variant, and with a view and metallic together, the shader composes and naga validates it, bindless or not,
 /// ordinary or blend type, with and without UVs (`VERTEX_UVS`) and a normal map
 /// (`STANDARD_MATERIAL_NORMAL_MAP`); each such variant declares something the off variant
 /// does not. With none of those defs, the composed shader declares exactly what the same
@@ -643,6 +644,10 @@ fn nif_forward_composes_with_the_authored_debug_defs_and_is_unchanged_without_th
                 let mut sets: Vec<&[&str]> = nvf_assets::authored::PbrView::ALL.iter().map(|v| v.shader_defs()).collect();
                 sets.push(&["NVF_PBR_METALLIC"]);
                 sets.push(&["NVF_PBR_VIEW", "NVF_PBR_VIEW_OCCLUSION", "NVF_PBR_METALLIC"]);
+                // The alpha-tested parallax switch's def (nvf-assets authored.rs `parallax_mask`),
+                // alone and with the height view, which imports a flag of the same module.
+                sets.push(&[nvf_assets::nif_material::PARALLAX_MASK_DEF]);
+                sets.push(&[nvf_assets::nif_material::PARALLAX_MASK_DEF, "NVF_PBR_VIEW", "NVF_PBR_VIEW_HEIGHT"]);
                 for set in sets {
                     let mut defs = base.clone();
                     defs.extend(set.iter().map(|d| ShaderDefVal::from(*d)));
@@ -660,7 +665,7 @@ fn nif_forward_composes_with_the_authored_debug_defs_and_is_unchanged_without_th
                     if !bindless {
                         assert!(texture_bindings(&composed).contains(&(3, 11)), "{key}: the march reads the depth map (binding 11)");
                     }
-                    for extra in [&["RELIEF_MAPPING"][..], &["RELIEF_MAPPING", "NVF_PBR_VIEW", "NVF_PBR_VIEW_HEIGHT"]] {
+                    for extra in [&["RELIEF_MAPPING"][..], &["RELIEF_MAPPING", "NVF_PBR_VIEW", "NVF_PBR_VIEW_HEIGHT"], &["RELIEF_MAPPING", nvf_assets::nif_material::PARALLAX_MASK_DEF]] {
                         let mut defs = base.clone();
                         defs.extend(extra.iter().map(|d| ShaderDefVal::from(*d)));
                         assert!(declaration_difference(&declarations(&compose(&modules, entry, &defs)), &off).is_some(), "{key} {extra:?}: the relief key changes no declaration");
