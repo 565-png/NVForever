@@ -270,9 +270,11 @@ fn height_map(found: &Found, scalars: &Scalars, memo: &Memo, load: &mut impl FnM
         memo.warn_once(&path, || format!("authored materials: {path} could not be loaded; no height map is drawn from it"));
         return None;
     };
-    if format.is_some_and(signed_format) {
+    if !height_format_ok(format) {
         Stats::add(&stats().height_signed);
-        memo.warn_once(&path, || format!("authored materials: {path} is signed BC4; a height map is unsigned (0 low, 1 high), so it is not drawn (export it as BC4_UNORM)"));
+        let shown = format.map_or("an unknown format".to_string(), |f| format!("{f:?}"));
+        let why = if format.is_some_and(signed_format) { "is signed BC4" } else { "is not in an unsigned height format" };
+        memo.warn_once(&path, || format!("authored materials: {path} {why} ({shown}); a height map is unsigned (0 low, 1 high), so it is not drawn (export it as BC4_UNORM)"));
         return None;
     }
     Some(Parallax::height(image, depth))
@@ -284,6 +286,17 @@ fn height_map(found: &Found, scalars: &Scalars, memo: &Memo, load: &mut impl FnM
 /// format's rule: docs/spec-notes/pbr-materials.md "Compression and sizes"].
 pub fn signed_format(format: TextureFormat) -> bool {
     matches!(format, TextureFormat::Bc4RSnorm | TextureFormat::R8Snorm | TextureFormat::Bc5RgSnorm | TextureFormat::Rg8Snorm)
+}
+
+/// Whether a loaded `_p` went up in a format a height map takes: the unsigned linear forms
+/// the format allows (BC4 unsigned, BC1, BC3) and their decoded fallbacks (`R8Unorm`,
+/// `Rgba8Unorm`). Anything else, a signed format or a format the caller could not tell
+/// (`None`), is refused rather than accepted by default [design, review of 2026-11-20].
+pub fn height_format_ok(format: Option<TextureFormat>) -> bool {
+    matches!(
+        format,
+        Some(TextureFormat::Bc4RUnorm | TextureFormat::R8Unorm | TextureFormat::Bc1RgbaUnorm | TextureFormat::Bc3RgbaUnorm | TextureFormat::Rgba8Unorm)
+    )
 }
 
 /// The value of `NifSurface::emissive_rule.w` that marks a material shaded from an authored
@@ -489,7 +502,7 @@ pub fn apply(material: &mut crate::NifMaterial, set: &AuthoredSet, legacy: &Lega
 }
 
 /// Put the legacy look back on `material` (the inverse of [`apply`], and of
-/// [`apply_height`]: the parallax fields go back too).
+/// [`apply_height`]: the parallax fields go back too where a height overlay is on).
 pub fn restore(material: &mut crate::NifMaterial, legacy: &LegacyLook) {
     let b = &mut material.base;
     b.metallic_roughness_texture = None;
@@ -500,8 +513,8 @@ pub fn restore(material: &mut crate::NifMaterial, legacy: &LegacyLook) {
     b.reflectance = legacy.reflectance;
     b.metallic = legacy.metallic;
     b.specular_tint = legacy.specular_tint;
-    legacy.parallax.put(b);
     material.extension.emissive_rule.w = 0.0;
+    remove_height(material, legacy);
 }
 
 /// Why a set's height map is not drawn on a material ([`height_gate`]).
@@ -549,6 +562,7 @@ pub fn apply_height(material: &mut crate::NifMaterial, height: &Parallax, legacy
     match height_gate(material, legacy.tangents) {
         Ok(()) => {
             height.put(&mut material.base);
+            material.extension.height_overlay = true;
             Ok(())
         }
         Err(why) => {
@@ -564,10 +578,20 @@ pub fn apply_height(material: &mut crate::NifMaterial, height: &Parallax, legacy
     }
 }
 
-/// Whether a set's height map is on `material`: its depth map is not the legacy look's
-/// (tracked apart from [`is_authored`]: a height-only set leaves the mark clear).
-pub fn height_on(material: &crate::NifMaterial, legacy: &LegacyLook) -> bool {
-    material.base.depth_map.is_some() && material.base.depth_map != legacy.parallax.depth_map
+/// Whether a set's height map is on `material` (`NifSurface::height_overlay`, set by
+/// [`apply_height`]; tracked apart from [`is_authored`]: a height-only set leaves the mark
+/// clear).
+pub fn height_on(material: &crate::NifMaterial) -> bool {
+    material.extension.height_overlay
+}
+
+/// Take a height overlay off `material`: the legacy look's parallax fields back, the overlay
+/// mark cleared. Nothing changes on a material without one.
+fn remove_height(material: &mut crate::NifMaterial, legacy: &LegacyLook) {
+    if material.extension.height_overlay {
+        legacy.parallax.put(&mut material.base);
+        material.extension.height_overlay = false;
+    }
 }
 
 /// Take whatever set is on `material` off: the authored fields and the height map
@@ -576,22 +600,24 @@ pub fn height_on(material: &crate::NifMaterial, legacy: &LegacyLook) -> bool {
 pub fn take_off(material: &mut crate::NifMaterial, legacy: &LegacyLook) {
     if is_authored(material) {
         restore(material, legacy);
-    } else if height_on(material, legacy) {
-        legacy.parallax.put(&mut material.base);
+    } else {
+        remove_height(material, legacy);
     }
 }
 
 /// A copy of a material whose drawing changed after it was made (an effect shader's holes
 /// making an opaque copy `Mask(0)`, a fade making it `Blend`: nvforever `effect_shaders.rs`,
-/// nvf-play `fade.rs`): if it carries a depth map that [`height_gate`] no longer allows, the
-/// depth map comes off and the legacy look's other parallax fields go back. Whether it took
-/// one off.
+/// nvf-play `fade.rs`; a cloak's refracting copy: `nif_spawn::refraction_material`): if it
+/// carries a height overlay that [`height_gate`] no longer allows, the overlay comes off (the
+/// depth map cleared, the legacy look's other parallax fields back). A material without an
+/// overlay is left as it is. Whether it took one off.
 pub fn recheck_height(material: &mut crate::NifMaterial) -> bool {
-    if material.base.depth_map.is_none() || height_gate(material, true).is_ok() {
+    if !material.extension.height_overlay || height_gate(material, true).is_ok() {
         return false;
     }
     let baseline = material.extension.legacy.as_ref().map(|l| l.parallax.clone()).unwrap_or_default();
     Parallax { depth_map: None, ..baseline }.put(&mut material.base);
+    material.extension.height_overlay = false;
     Stats::add(&stats().height_dropped);
     true
 }
@@ -656,15 +682,22 @@ pub fn make_legacy(material: &mut crate::NifMaterial) -> bool {
 }
 
 /// Clear every authored map from an unlit copy (the Pip-Boy's glare and menus copies,
-/// nvforever `pipboy_arm.rs`): the ORM in both slots, the depth map (Bevy applies parallax
-/// before its unlit test) with the legacy look's other parallax fields put back, the mark and
-/// the legacy look, so nothing of a set reaches it whatever its source wore [design, a second
+/// nvforever `pipboy_arm.rs`, the terminal's glass and glare): the ORM in both slots, the
+/// depth map (Bevy applies parallax before its unlit test; a height overlay's other parallax
+/// fields go back to the legacy look's), the mark and the legacy look, so nothing of a set reaches it whatever its source wore [design, a second
 /// guard beside the `textures\pipboy3000\` exclusion].
 pub fn clear_for_unlit_copy(material: &mut crate::NifMaterial) {
     material.base.metallic_roughness_texture = None;
     material.base.occlusion_texture = None;
-    let baseline = material.extension.legacy.take().map(|l| l.parallax).unwrap_or_default();
-    Parallax { depth_map: None, ..baseline }.put(&mut material.base);
+    // A height overlay of this module's: its settings back to the legacy look's (or Bevy's
+    // defaults without one); any other parallax settings are the copy's own and stay.
+    let legacy = material.extension.legacy.take();
+    if material.extension.height_overlay {
+        let baseline = legacy.map(|l| l.parallax).unwrap_or_default();
+        baseline.put(&mut material.base);
+        material.extension.height_overlay = false;
+    }
+    material.base.depth_map = None;
     material.extension.emissive_rule.w = 0.0;
 }
 
@@ -716,8 +749,10 @@ pub fn retexture(
             Retextured::Authored
         }
         Some(PbrSet::HeightOnly(set)) => {
-            let _ = apply_height(material, &set.height, &legacy);
             Stats::add(&stats().swaps_height);
+            if apply_height(material, &set.height, &legacy).is_ok() {
+                Stats::add(&stats().swaps_height_applied);
+            }
             Retextured::HeightOnly
         }
         None => {
@@ -732,7 +767,8 @@ pub fn retexture(
 /// atomics; a set of stems only where a set is applied.
 #[derive(Default)]
 pub struct Stats {
-    /// Material builds that applied a set (`nif_spawn::shape_material`).
+    /// Material builds that applied an ORM set (`nif_spawn::shape_material`; height-only sets
+    /// are counted in `height_only_built`).
     pub built: AtomicU64,
     /// Shapes the run's setting would serve that may take no set (unlit, refracting, hair,
     /// skin, additive or multiplied, no UVs, particles, landscape LOD).
@@ -750,8 +786,10 @@ pub struct Stats {
     /// put back the legacy look (cached swaps do not call it again).
     pub swaps_authored: AtomicU64,
     pub swaps_legacy: AtomicU64,
-    /// [`retexture`] calls that put a height-only set on.
+    /// [`retexture`] calls whose new diffuse matched a height-only set, and of them those that
+    /// put its height map on ([`height_gate`] passed).
     pub swaps_height: AtomicU64,
+    pub swaps_height_applied: AtomicU64,
     /// Material builds that put a height map on (`nif_spawn::shape_material`), and of them
     /// those from a height-only set.
     pub height_built: AtomicU64,
@@ -764,7 +802,7 @@ pub struct Stats {
     pub height_other: AtomicU64,
     /// Sets whose `_p` did not load (the rest of an authored set still applies).
     pub height_failed: AtomicU64,
-    /// Sets whose `_p` is signed BC4, refused ([`signed_format`]).
+    /// Sets whose `_p` is signed or in no unsigned height format, refused ([`height_format_ok`]).
     pub height_signed: AtomicU64,
     /// Later copies that dropped a height map ([`recheck_height`]).
     pub height_dropped: AtomicU64,
@@ -783,9 +821,10 @@ impl Stats {
     /// The summary line (without its prefix).
     pub fn line(&self) -> String {
         format!(
-            "{} material builds applied a set ({} distinct set stems at build); builds without one: {} not eligible, {} on excluded textures, {} whose _orm did not load; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to a set, {} to a height-only set, {} to the legacy look); height maps: {} material builds applied one ({} from height-only sets); not put on at build or swap: {} not opaque, {} double-sided, {} decals, {} without tangents, {} unlit, refracting or holed; {} _p not loaded, {} signed _p refused; {} later copies dropped one",
+            "{} material builds applied an ORM set ({} distinct ORM set stems at build), {} a height-only set's height map; builds without one: {} not eligible, {} on excluded textures, {} whose _orm did not load; {} applied without their _n (no tangents); {} role copies made legacy; {} retexture calls ({} to an ORM set, {} matched a height-only set ({} with its height map applied), {} to the legacy look); height maps: {} material builds applied one; not put on at build or swap: {} not opaque, {} double-sided, {} decals, {} without tangents, {} unlit, refracting or holed; {} _p not loaded, {} _p refused (signed or not an unsigned format); {} later copies dropped one",
             Self::get(&self.built),
             self.stems.lock().expect("authored stats").len(),
+            Self::get(&self.height_only_built),
             Self::get(&self.not_eligible),
             Self::get(&self.excluded_texture),
             Self::get(&self.orm_failed),
@@ -794,9 +833,9 @@ impl Stats {
             Self::get(&self.swaps_authored) + Self::get(&self.swaps_height) + Self::get(&self.swaps_legacy),
             Self::get(&self.swaps_authored),
             Self::get(&self.swaps_height),
+            Self::get(&self.swaps_height_applied),
             Self::get(&self.swaps_legacy),
             Self::get(&self.height_built),
-            Self::get(&self.height_only_built),
             Self::get(&self.height_not_opaque),
             Self::get(&self.height_double_sided),
             Self::get(&self.height_decal),

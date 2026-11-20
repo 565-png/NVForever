@@ -277,12 +277,13 @@ fn a_height_only_set_adds_its_height_map_to_the_game_material_only() {
         assert!(m.base.metallic_roughness_texture.is_none() && m.base.occlusion_texture.is_none());
         let legacy = m.extension.legacy.clone().unwrap();
         assert_eq!(legacy.parallax, Parallax::default(), "the baseline has no depth map");
-        assert!(legacy.tangents && crate::authored::height_on(&m, &legacy));
+        assert!(legacy.tangents && crate::authored::height_on(&m));
         // Off, and on without the set: the same game material, without the height map.
         source.set = None;
         let (no_set, _) = shape_material_with(&props, &mut triangle(), &mut source);
         let mut stripped = m.clone();
         Parallax::default().put(&mut stripped.base);
+        stripped.extension.height_overlay = false;
         assert_eq!(drawn(&stripped), drawn(&no_set), "{props:?}: the height map is the only difference");
     }
 }
@@ -362,4 +363,41 @@ fn copies_that_stop_being_eligible_drop_the_height_map() {
     let mut unlit = m.clone();
     crate::authored::clear_for_unlit_copy(&mut unlit);
     assert_eq!(Parallax::of(&unlit.base), Parallax::default(), "an unlit copy: no depth map, the baseline's settings");
+}
+
+/// #2981 review H3: a cloak's refracting copy (`refraction_material`, the shared step of the
+/// player's and actors' see-through copies) drops a height overlay; a refracting copy of a
+/// material without one is left as it was.
+#[test]
+fn a_refracting_copy_drops_the_height_map() {
+    let mut scratch = Assets::<Image>::default();
+    let h = height(&mut scratch, 0.05);
+    let mut source = SetTextures::with(Some((KEY, PbrSet::HeightOnly(crate::authored::HeightSet { stem: r"textures\pbr\walls\brick".into(), height: h }))));
+    let (m, _) = shape_material_with(&wall(), &mut triangle(), &mut source);
+    assert!(crate::authored::height_on(&m) && m.base.depth_map.is_some());
+    let mut cloak = m.clone();
+    refraction_material(&mut cloak, 0.2, 0.0);
+    assert!(cloak.extension.refract && cloak.base.depth_map.is_none() && !crate::authored::height_on(&cloak));
+    assert_eq!(Parallax::of(&cloak.base), Parallax::default(), "the legacy look's parallax settings back");
+    source.set = None;
+    let (plain, _) = shape_material_with(&wall(), &mut triangle(), &mut source);
+    let mut plain_cloak = plain.clone();
+    refraction_material(&mut plain_cloak, 0.2, 0.0);
+    assert_eq!(Parallax::of(&plain_cloak.base), Parallax::of(&plain.base));
+}
+
+/// #2981 review H5: the unlit cleanup touches the parallax settings only where this module
+/// put a height overlay on; a copy's own settings without one stay (only the depth map goes,
+/// as in stage 3).
+#[test]
+fn the_unlit_cleanup_leaves_parallax_settings_it_did_not_put_on() {
+    let mut own = crate::nif_material::nif_material(StandardMaterial { parallax_depth_scale: 0.2, max_parallax_layer_count: 32.0, ..default() });
+    crate::authored::clear_for_unlit_copy(&mut own);
+    assert_eq!((own.base.parallax_depth_scale, own.base.max_parallax_layer_count, own.base.depth_map.is_none()), (0.2, 32.0, true));
+    // Restoring a material without an overlay changes no parallax field either.
+    let look = LegacyLook { normal: None, specular: None, roughness: 0.5, reflectance: 0.5, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, parallax: Parallax::default() };
+    let mut authored = own.clone();
+    authored.extension.emissive_rule.w = AUTHORED_MARK;
+    crate::authored::restore(&mut authored, &look);
+    assert_eq!((authored.base.parallax_depth_scale, authored.base.max_parallax_layer_count), (0.2, 32.0));
 }

@@ -252,7 +252,8 @@ beyond the field test below):
   a metal's ambient highlight, a preview of a later metallic stage [design].
 - On the app's exit the log has one line `authored materials summary: ...` (or
   `authored materials summary: off (setting)`): counts of build events, not of visible
-  shapes: material builds that applied a set, the distinct set stems seen at those builds,
+  shapes: material builds that applied an ORM set, the distinct ORM set stems seen at those
+  builds (on the stage 4 branch also the builds that applied a height-only set's height map),
   builds that skipped a set and why, role copies made legacy, and calls of `retexture`
   [documented: `authored.rs` `Stats`, `report`]. Rebuilt or discarded materials count again.
 
@@ -275,10 +276,13 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   mesh**. Tangents are made for a shape whose first need for them is its `_p`; a copy of a
   drawn mesh (an actor part's kept mesh) and a swap onto a drawn mesh use the tangents it has
   (recorded in the legacy look), and draw no height map without them. Copies that stop
-  qualifying drop it: an effect shader's holes (which make an opaque copy `Mask(0)`) and the
-  fades' blended copies (nvforever `effect_shaders.rs`, nvf-play `fade.rs`); unlit copies
-  (Pip-Boy, terminal) and shapes made the game's own for a role found later (skin, face,
-  hair model) drop it with the rest of the set. A mount with only height-only sets still runs
+  qualifying drop it: an effect shader's holes (which make an opaque copy `Mask(0)`), the
+  fades' blended copies (nvforever `effect_shaders.rs`, nvf-play `fade.rs`) and a cloak's
+  refracting copy (`nif_spawn::refraction_material`, used by nvforever `stealth_field.rs`
+  for the player and actors alike); unlit copies (Pip-Boy, terminal glass and glare) and
+  shapes made the game's own for a role found later (skin, face, hair model) drop it with
+  the rest of the set. The engine tracks the overlay on the material
+  (`NifSurface::height_overlay`) and touches the parallax fields only where it put one on. A mount with only height-only sets still runs
   the actors' role exclusions (`mount_has_sets` counts every active set).
 - [design] **How it is drawn.** As Bevy's parallax: `StandardMaterial::depth_map` = the
   `_p`, `parallax_depth_scale` = `parallax_depth` (default 0.03), the occlusion method (a march
@@ -292,12 +296,16 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   bindless and its ordinary sample, `1 - r`; engine/vendor/README.md). No other material in
   the engine sets a depth map.
 - [design] **Signed `_p` is refused** (one warning per file; an authored set keeps its other
-  maps), as `fnvtool pbr check` refuses it ("Compression and sizes").
+  maps), as `fnvtool pbr check` refuses it ("Compression and sizes"); so is a `_p` that went up
+  in any format other than the unsigned ones a height map takes (BC4 unsigned, BC1, BC3 and
+  their decoded `R8Unorm`/`Rgba8Unorm`), or whose format the engine could not tell.
 - Checking it: `NVF_PBR_VIEW=height` draws the height as stored (white high, the original
   height, not the inverted depth), read at the unshifted coordinates, and dark blue on shapes
-  without a depth map. The exit summary line adds the builds that applied a height map (and
-  how many from height-only sets), the height maps not put on at a build or swap by reason,
-  `_p` files that did not load or were refused as signed, and later copies that dropped one.
+  without a depth map. The exit summary line adds the builds that applied a height-only
+  set's height map, the builds that applied any height map, the swaps that matched a
+  height-only set and of them those that put its map on, the height maps not put on at a
+  build or swap by reason, `_p` files that did not load or were refused (signed or not an
+  unsigned format), and later copies that dropped one.
   The smoke scenario `pbr-authored-field-height` (the same field, `NVF_PLAY_TEST_PBR_FIELD=1`)
   draws two more panels tilted 50 degrees about Y: `height` (a height-only set whose `_p` is
   high above and low below, depth 0.1) and its control without one; it measures a narrow
@@ -340,6 +348,12 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
 - The occlusion debug view rereads the ORM at the unshifted coordinates; the FaceGen tint,
   the Pip-Boy screen and the holes test also read at unshifted coordinates (none of them
   takes a height map today).
+- **Unmeasured:** the cost on a close first-person weapon and on grazing, screen-filling
+  surfaces, and whether 8 layers look as good as Bevy's 16 (no comparison has been made).
+- **What the field proves:** the signed displacement of two flat height bands (the low band
+  moves by the predicted amount the predicted way, the high band stays). It does not test
+  the march on varying heights (slopes, steps inside the band, self-occlusion), where an
+  implementation that only got the two flat ends right would still pass.
 
 ### Known limits (stage 3)
 

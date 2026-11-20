@@ -549,6 +549,11 @@ pub struct NifSurface {
     /// kept for shapes that may take one, so a change of diffuse can apply the new one's set
     /// or go back; `None` for every other material. CPU only.
     pub legacy: Option<crate::authored::LegacyLook>,
+    /// An authored height map (#2981 stage 4) is on the material: `crate::authored` put its
+    /// depth map and parallax settings over the legacy look's (`apply_height`), and takes
+    /// them off only while this is set. Tracked explicitly, not by comparing handles, so a
+    /// baseline depth map of the game's own (#2979) would never be mistaken for one. CPU only.
+    pub height_overlay: bool,
 }
 
 /// The values of a [`NifSurface`] the shaders read (`nif_surface_bindings.wesl`, shared
@@ -654,6 +659,7 @@ impl Default for NifSurface {
             terrain_repeat: 0.0,
             anti_tiling: false,
             legacy: None,
+            height_overlay: false,
         }
     }
 }

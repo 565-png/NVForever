@@ -33418,7 +33418,7 @@ expect = [
   { text = "pbr field: first rendered readback PASS", count = 1 },
   { text = "pbr field: second rendered readback PASS", count = 1 },
   { text = "pbr field: occlusion alone darkens, the two-channel normal matches the three-channel reference, the normal shows PASS", count = 1 },
-  { re = 'authored materials summary: [1-9]\d* material builds applied a set \([1-9]\d* distinct set stems at build\)', count = 1, label = "the exit summary counts the field's authored material builds" },
+  { re = 'authored materials summary: [1-9]\d* material builds applied an ORM set \([1-9]\d* distinct ORM set stems at build\)', count = 1, label = "the exit summary counts the field's authored (ORM) material builds" },
 ]
 order = [["pbr field: first rendered readback PASS", "pbr field: second rendered readback PASS", "pbr field: occlusion alone darkens, the two-channel normal matches the three-channel reference, the normal shows PASS"]]
 forbid = [
@@ -33474,7 +33474,7 @@ expect = [
   { re = 'pbr field height: readback \d PASS', count = 2, label = "both readbacks' height panels pass" },
   { text = "pbr field: second rendered readback PASS", count = 1 },
   { text = "pbr field height: the height map moves the low band's stripe the predicted way and leaves the high band's in place PASS", count = 1 },
-  { re = 'height maps: [1-9]\d* material builds applied one \([1-9]\d* from height-only sets\)', count = 1, label = "the exit summary counts the height panel's build" },
+  { re = 'authored materials summary: .*, [1-9]\d* a height-only set.s height map;.*height maps: [1-9]\d* material builds applied one;', count = 1, label = "the exit summary counts the height panel's height-only build and its height map" },
 ]
 order = [["pbr field: second rendered readback PASS", "pbr field height: the height map moves the low band's stripe the predicted way and leaves the high band's in place PASS"]]
 forbid = [

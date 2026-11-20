@@ -1123,6 +1123,10 @@ pub fn refraction_material(material: &mut NifMaterial, strength: f32, fire_perio
     material.extension.fire_period = fire_period;
     material.extension.refract = true;
     material.extension.depth_write = false;
+    // #2981: a refracting copy (a cloak's: nvforever `stealth_field.rs`, player and actors
+    // alike) draws no authored height map: the shader samples the standard material, with
+    // the march, before its refraction return.
+    crate::authored::recheck_height(material);
 }
 
 pub(crate) fn build_mesh(data: &Struct) -> Option<(Mesh, usize)> {
