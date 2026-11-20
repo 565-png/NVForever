@@ -554,6 +554,10 @@ pub struct NifSurface {
     /// kept for shapes that may take one, so a change of diffuse can apply the new one's set
     /// or go back; `None` for every other material. CPU only.
     pub legacy: Option<crate::authored::LegacyLook>,
+    /// The authored set's `_albedo` this material draws as its base colour texture in place of
+    /// the game's diffuse (#2981, `crate::authored::apply`), so a restore, a swap or an unlit
+    /// copy can tell it from a texture a caller put there; `None` otherwise. CPU only.
+    pub authored_albedo: Option<Handle<Image>>,
 }
 
 /// The values of a [`NifSurface`] the shaders read (`nif_surface_bindings.wesl`, shared
@@ -661,6 +665,7 @@ impl Default for NifSurface {
             anti_tiling: false,
             metal_gain: 0.0,
             legacy: None,
+            authored_albedo: None,
         }
     }
 }
