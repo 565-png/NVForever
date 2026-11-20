@@ -766,6 +766,11 @@ struct Pilot {
     /// Where the player last stood when a path was found from there: put back there when
     /// it ends up on a scrap of navmesh that leads nowhere (`Walk::stranded`).
     walked_from: Option<Place>,
+    /// For a `package` step gone along with: the space the player stood in on the last
+    /// frame, and the actors' space a script moved the player out of while it stood
+    /// beside them (MQ08's capture fades out and wakes the player in Raven Rock).
+    pkg_was_in: Option<Space>,
+    scene_left: Option<Space>,
     still: (f64, [f32; 3]),
     /// An attacker being fought before the step goes on, since when, and when the
     /// attackers are looked for next.
@@ -852,6 +857,8 @@ impl Pilot {
             mark: 0,
             step_lines: 0,
             walked_from: None,
+            pkg_was_in: None,
+            scene_left: None,
             still: (0.0, [0.0; 3]),
             defend: None,
             defend_from: 0.0,
@@ -3712,8 +3719,26 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                 p.applier = applier;
                 return Some(r.and_then(|r| r.err()));
             }
+            // A script that moves the player out of the actors' space while it stands by
+            // them (not a door it walks through) has taken it on in the scene: the walks
+            // left behind can no longer be watched, and walking back is no player's way.
+            // The guards' MovetoPosition in MQ08 runs on in Vault 87 while the capture
+            // wakes the player in Raven Rock behind a level 255 door (Finding the Garden
+            // of Eden, round 8, 2026-11-20).
+            let here = space_of(h.location);
+            if p.pkg_was_in == Some(place.space) && here != place.space && !matches!(p.phase, Phase::Walk(_)) {
+                p.scene_left = Some(place.space);
+            }
+            p.pkg_was_in = Some(here);
+            if p.scene_left == Some(place.space) && here != place.space {
+                info!("pilot: step {}: a script moved the player away from {actor}: its {package} is left to the AI", p.i);
+                p.headless("package (a script moved the player away)");
+                (h.intent.forward, h.intent.right) = (0.0, 0.0);
+                p.phase = Phase::Begin;
+                return Some(None);
+            }
             let mut phase = std::mem::replace(&mut p.phase, Phase::Begin);
-            let away = space_of(h.location) != place.space || hdist(h.feet(), place.pos) > PACKAGE_FOLLOW_NEAR * 1.5;
+            let away = here != place.space || hdist(h.feet(), place.pos) > PACKAGE_FOLLOW_NEAR * 1.5;
             match &mut phase {
                 Phase::Walk(w) => {
                     if !matches!(walk(p, w, h), Walked::Going) {
@@ -3782,8 +3807,23 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
             if !(op.starts_with("get_") || op == "note" || op == "start_stopwatch" || op == "query") {
                 p.headless(&op);
             }
+            // A chain's damage to the player stands in for a fall or a fight a player
+            // takes (Wasteland Survival Guide's serious injury, MS03b3): the pilot's god
+            // mode, which keeps scripts from hurting the player (#2792), is lifted for that
+            // step alone, or the injury never comes (round 8, 2026-11-20: Health 205 before
+            // and after).
+            let hurts = matches!(&a, Action::DamageAv { of, .. } if of.as_deref().is_none_or(|o| o.eq_ignore_ascii_case("player")));
+            if hurts && nvf_play::combat::god_mode() {
+                info!("pilot: step {}: god mode lifted for the chain's damage to the player", p.i);
+            }
             let mut applier = std::mem::take(&mut p.applier);
-            let r = h.game(|g| runner::apply_now(g, &mut applier, &a));
+            let r = h.game(|g| {
+                let god = g.toggles.god_mode;
+                g.toggles.god_mode &= !hurts;
+                let r = runner::apply_now(g, &mut applier, &a);
+                g.toggles.god_mode = god;
+                r
+            });
             p.applier = applier;
             match r {
                 None => Some(Some("the scripts are not running".into())),
