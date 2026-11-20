@@ -76,5 +76,6 @@ gpu-allocator = { path = "vendor/gpu-allocator" }
 bevy_pbr = { path = "vendor/bevy_pbr" }
 bevy_post_process = { path = "vendor/bevy_post_process" }
 bevy_render = { path = "vendor/bevy_render" }
+bevy_shader = { path = "vendor/bevy_shader" }
 wgpu-hal = { path = "vendor/wgpu-hal" }
 naga = { path = "vendor/naga" }

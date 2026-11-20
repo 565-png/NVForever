@@ -102,6 +102,8 @@ mod lips;
 mod memory_budget;
 mod gpu_poll;
 mod pipeline_gate;
+mod pipeline_disk_cache;
+mod pipeline_prewarm;
 mod lockpick_view;
 mod roulette_view;
 mod blackjack_view;
@@ -1721,6 +1723,8 @@ fn main() -> AppExit {
     // Defaults snapshots this command-line/default choice before apply_stored reads the INI.
     .add_plugins(frame_gen::FrameGenPlugin(args.frame_generation.unwrap_or_default()))
     .add_plugins(blit_warm::BlitWarmPlugin)
+    // The driver's pipeline cache kept on disk (pipeline_disk_cache.rs).
+    .add_plugins(pipeline_disk_cache::PipelineDiskCachePlugin)
     // Lights clustered on the CPU, Bevy's own fallback: its GPU clustering made about six
     // new GPU buffers a frame (10,235 in 30 s at night against 4,060 on the CPU), GPU
     // memory made and freed every frame behind the night stalls (#897; wgpu trace,
@@ -1914,6 +1918,8 @@ fn main() -> AppExit {
         app.add_plugins(nvf_play::PlayPlugin(data))
             .add_systems(Update, (worldspace::switch, world::travel, world::cell_image_space, world::cell_lighting).chain().after(nvf_play::PlaySet::Input).before(world::stream).before(sky::weather_region))
             .add_plugins(pipeline_gate::PipelineGatePlugin)
+            // Meshes drawn unculled under the loading screen (pipeline_prewarm.rs).
+            .add_plugins(pipeline_prewarm::PipelinePrewarmPlugin)
             .add_systems(Update, world::loading_gate.after(world::stream))
             .configure_sets(Update, nvf_play::PlaySet::Physics.before(world::stream));
         // Animation groups scripts play on objects (object_anims.rs).
