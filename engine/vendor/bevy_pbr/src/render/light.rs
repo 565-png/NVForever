@@ -458,7 +458,7 @@ pub fn extract_lights(
     nvf_light_views: Query<&PointAndSpotLightViewEntities>,
 ) {
     // NVForever light view counts: the system's time.
-    let nvf_start = std::time::Instant::now();
+    let nvf_start = nvf_counting().then(std::time::Instant::now);
     let mapper = &visibility_extraction_system_param.mapper;
 
     // NOTE: These shadow map resources are extracted here as they are used here too so this avoids
@@ -500,9 +500,15 @@ pub fn extract_lights(
                 // observer `remove_point_and_spot_light_view_entities`. Upstream removed only
                 // `ExtractedPointLight`, so `prepare_lights`, which despawns the views of a
                 // light no longer shadowed, never saw the light again and its views kept
-                // running the Core3d schedule every frame while it was hidden.
-                nvf_count_hidden_views(&nvf_light_views, render_entity);
-                entity_commands.remove::<(ExtractedPointLight, PointAndSpotLightViewEntities)>();
+                // running the Core3d schedule every frame while it was hidden. Only while
+                // the game's hold is active (`HoldLightShadowMaps::active`, as last frame's
+                // `prepare_lights` saw it); otherwise upstream's.
+                if nvf_counting() {
+                    nvf_count_hidden_views(&nvf_light_views, render_entity);
+                    entity_commands.remove::<(ExtractedPointLight, PointAndSpotLightViewEntities)>();
+                } else {
+                    entity_commands.remove::<ExtractedPointLight>();
+                }
             }
             continue;
         }
@@ -635,8 +641,12 @@ pub fn extract_lights(
         if !view_visibility.get() {
             if let Ok(mut entity_commands) = commands.get_entity(render_entity) {
                 // NVForever hidden light views: as for the point lights above.
-                nvf_count_hidden_views(&nvf_light_views, render_entity);
-                entity_commands.remove::<(ExtractedPointLight, PointAndSpotLightViewEntities)>();
+                if nvf_counting() {
+                    nvf_count_hidden_views(&nvf_light_views, render_entity);
+                    entity_commands.remove::<(ExtractedPointLight, PointAndSpotLightViewEntities)>();
+                } else {
+                    entity_commands.remove::<ExtractedPointLight>();
+                }
             }
             continue;
         }
@@ -973,7 +983,9 @@ pub fn extract_lights(
         )>();
     }
     // NVForever light view counts.
-    nvf_time(NVF_EXTRACT, nvf_start.elapsed());
+    if let Some(start) = nvf_start {
+        nvf_time(NVF_EXTRACT, start.elapsed());
+    }
 }
 
 #[derive(Component, Default, Deref, DerefMut)]
@@ -1151,7 +1163,7 @@ pub fn prepare_lights(
     ),
     // NVForever held shadow maps: the hold, and the directional shadow texture of the last
     // frame (see where the texture is taken below).
-    (mut hold_directional, mut last_directional_texture, nvf_outdoor_sun, hold_lights, mut nvf_light_record, mut nvf_last_point_texture, mut nvf_view_cache, mut nvf_parked): (
+    (mut hold_directional, mut last_directional_texture, nvf_outdoor_sun, hold_lights, mut nvf_light_record, mut nvf_last_point_texture, mut nvf_view_cache, mut nvf_parked, mut nvf_was_on): (
         Option<ResMut<HoldDirectionalShadowMaps>>,
         Local<Option<TextureId>>,
         // NVForever sun visibility: the light marked as the outdoor sun.
@@ -1166,10 +1178,31 @@ pub fn prepare_lights(
         Local<NvfShadowViewCache>,
         // NVForever kept shadow phases: the views of the lights the game holds.
         Option<ResMut<NvfParkedShadowViews>>,
+        // NVForever held light shadow maps: whether the hold was active last frame.
+        Local<bool>,
     ),
 ) {
+    // NVForever held light shadow maps: the hold counts only while the game marks it
+    // `active` (its ALC shadows row on). Without it every NVForever path of the point and
+    // spot lights below is upstream's: no slots, no held faces, no static cache, no kept
+    // phases, no cached shadow views and no counts. When it switches either way, every
+    // light's shadow views are made again and what the layers held is forgotten.
+    let hold_lights = hold_lights.filter(|hold| hold.active);
+    let nvf_on = hold_lights.is_some();
+    let nvf_switched = *nvf_was_on != nvf_on;
+    *nvf_was_on = nvf_on;
+    NVF_COUNTING.store(nvf_on, core::sync::atomic::Ordering::Relaxed);
+    if nvf_switched {
+        *nvf_light_record = NvfLightShadowRecord::default();
+        *nvf_view_cache = NvfShadowViewCache::default();
+    }
+    if let Some(parked) = nvf_parked.as_deref_mut() {
+        parked.active = nvf_on && nvf_keep_shadow_phases_on();
+    }
+    // NVForever cached shadow views: only with the hold (and not under the measuring aid).
+    let nvf_view_cache_on = nvf_on && nvf_shadow_view_cache_on();
     // NVForever light view counts: the system's time and its stretches.
-    let nvf_start = std::time::Instant::now();
+    let nvf_start = nvf_counting().then(std::time::Instant::now);
     let mut nvf_lap = NvfLap::start();
     let views_iter = views.iter();
     let views_count = views_iter.len();
@@ -1796,8 +1829,9 @@ pub fn prepare_lights(
     // while the texture is the same, instead of made anew every frame (and every frame a
     // light's views are made again); an attachment kept is set to clear again each frame.
     let nvf_cache = &mut *nvf_view_cache;
-    if !nvf_shadow_view_cache_on() {
-        // The measuring aid: every view made anew each frame, as upstream.
+    if !nvf_view_cache_on {
+        // Without the hold, or with the measuring aid: every view made anew each frame, as
+        // upstream.
         *nvf_cache = NvfShadowViewCache::default();
     }
     if nvf_cache.point_texture != Some(nvf_point_texture_id) {
@@ -1940,8 +1974,9 @@ pub fn prepare_lights(
         let nvf_source = nvf_view_source(light, light_render_layers);
         let nvf_remake = point_and_spot_light_view_entities.0.is_empty()
             || nvf_views_stale
+            || nvf_switched
             || (changed_point_lights.get(*light_entity).is_ok()
-                && (!nvf_shadow_view_cache_on()
+                && (!nvf_view_cache_on
                     || nvf_light_record.made_from.get(light_entity) != Some(&nvf_source)));
         if !point_and_spot_light_view_entities.0.is_empty()
             && !nvf_remake
@@ -2019,6 +2054,14 @@ pub fn prepare_lights(
                 gpu_preprocessing_support.max_supported_mode,
                 nvf_cube_of.get(light_entity).copied(),
             );
+        }
+
+        // NVForever static shadow cache: when the hold switches, no face keeps the cache's
+        // attachment (the hold below gives it back to the faces it still composites).
+        if nvf_switched {
+            for &view in point_and_spot_light_view_entities.0.iter() {
+                commands.entity(view).remove::<NvfStaticShadowFace>();
+            }
         }
 
         // NVForever held light shadow maps: a face the game holds, whose layer still holds
@@ -2171,8 +2214,9 @@ pub fn prepare_lights(
         let nvf_source = nvf_view_source(light, light_render_layers);
         let nvf_remake = point_and_spot_light_view_entities.0.is_empty()
             || nvf_views_stale
+            || nvf_switched
             || (changed_point_lights.get(*light_entity).is_ok()
-                && (!nvf_shadow_view_cache_on()
+                && (!nvf_view_cache_on
                     || nvf_light_record.made_from.get(light_entity) != Some(&nvf_source)));
         if !point_and_spot_light_view_entities.0.is_empty()
             && !nvf_remake
@@ -2694,7 +2738,9 @@ pub fn prepare_lights(
     specialized_shadow_material_pipeline_cache.retain(|entity, _| nvf_kept(entity));
     // NVForever light view counts.
     nvf_lap.lap(NVF_SWEEP);
-    nvf_time(NVF_PREPARE, nvf_start.elapsed());
+    if let Some(start) = nvf_start {
+        nvf_time(NVF_PREPARE, start.elapsed());
+    }
 }
 
 /// Creates six point shadow maps for a `RetainedViewEntity` identified by the `light_main_entity`
@@ -3103,7 +3149,7 @@ pub(crate) fn specialize_shadows(
             // missed its light's visible-list changes of those frames, so every visible entity
             // is looked at (the specialized ones are skipped below), as when the view is new.
             let view = extracted_view_light.retained_view_entity;
-            let resumed = nvf_parked.is_some()
+            let resumed = nvf_parked.as_deref().is_some_and(|parked| parked.active)
                 && !nvf_live_before.contains(&view)
                 && !dirty_specializations.must_wipe_specializations_for_view(view);
             nvf_items.clear();
@@ -3230,7 +3276,7 @@ pub(crate) fn specialize_shadows(
         // kept views keep their pending queues and pipelines like the live ones.
         nvf_live_before.clear();
         nvf_live_before.extend(view_light_entities.iter().map(|(_, view)| view.retained_view_entity));
-        if let Some(parked) = nvf_parked.as_deref() {
+        if let Some(parked) = nvf_parked.as_deref().filter(|parked| parked.active) {
             let (changed, removed) = (
                 &dirty_specializations.changed_renderables,
                 &dirty_specializations.removed_renderables,
@@ -3348,6 +3394,9 @@ pub fn queue_shadows(
     mut nvf_items: Local<Vec<(Entity, MainEntity)>>,
 ) {
     let (mut nvf_resynced, mut nvf_rebinned) = (0u64, 0u64);
+    // NVForever kept shadow phases: only while the game's hold keeps them.
+    let nvf_parked = nvf_parked.filter(|parked| parked.active);
+    let nvf_guard = nvf_parked.is_some();
     for (light_entity, extracted_view_light, view_light_render_layers) in &view_light_entities {
         let Some(shadow_phase) =
             shadow_render_phases.get_mut(&extracted_view_light.retained_view_entity)
@@ -3479,8 +3528,10 @@ pub fn queue_shadows(
                 slabs: mesh_slabs,
             };
 
-            // NVForever kept shadow phases: never binned twice (a panic upstream).
+            // NVForever kept shadow phases: never binned twice (a panic upstream); without
+            // kept phases upstream's `add`.
             nvf_rebinned += u64::from(nvf_add_once(
+                nvf_guard,
                 shadow_phase,
                 batch_set_key,
                 ShadowBinKey {
@@ -3720,8 +3771,15 @@ impl bevy_render::extract_resource::ExtractResource<RenderApp> for HoldDirection
 /// the moving ones for `on_static`). A face in `on_static` whose cache layer does not hold a
 /// static map this light drew into this cache texture is drawn as any other (counted as a
 /// miss). Faces in neither are drawn as before.
+///
+/// All of it only while `active` (the game sets it while its ALC shadows row is on): an
+/// inactive hold, as no hold, leaves every point and spot light path upstream's (slots,
+/// held faces, the static cache, kept phases, cached shadow views, the hidden lights' views,
+/// the counts); the shaders' slot and fade bits are then 0, upstream's index and full
+/// strength.
 #[derive(Resource, Clone, Default, Debug)]
 pub struct HoldLightShadowMaps {
+    pub active: bool,
     pub held: EntityHashMap<u8>,
     pub slots: EntityHashMap<u32>,
     pub point_capacity: u32,
@@ -3953,6 +4011,10 @@ pub fn nvf_keep_shadow_phases_on() -> bool {
 pub struct NvfParkedShadowViews {
     pub views: HashSet<RetainedViewEntity>,
     pub resumed: HashSet<RetainedViewEntity>,
+    /// Set by `prepare_lights` each frame: the game's hold is active and phases are kept
+    /// (`nvf_keep_shadow_phases_on`). Off, `specialize_shadows` and `queue_shadows` do as
+    /// upstream (no resumed views, no kept views, binning as upstream's `add`).
+    pub active: bool,
 }
 
 /// NVForever kept shadow phases: whether the main entity is in the visible list (by main
@@ -3983,10 +4045,12 @@ pub fn nvf_resync_kept_phase<BPI: BinnedPhaseItem>(
     dropped
 }
 
-/// NVForever kept shadow phases: bins an entity as [`BinnedRenderPhase::add`] does, but one
-/// already binned is taken out of its bin first instead of the add's panic ("Binning main
-/// entity … when it was already binned"). Returns whether it was binned already.
+/// NVForever kept shadow phases: bins an entity as [`BinnedRenderPhase::add`] does, but with
+/// `guard` one already binned is taken out of its bin first instead of the add's panic
+/// ("Binning main entity … when it was already binned"). Returns whether it was binned
+/// already (always false without `guard`: upstream's add).
 pub fn nvf_add_once<BPI: BinnedPhaseItem>(
+    guard: bool,
     phase: &mut BinnedRenderPhase<BPI>,
     batch_set_key: BPI::BatchSetKey,
     bin_key: BPI::BinKey,
@@ -3994,7 +4058,7 @@ pub fn nvf_add_once<BPI: BinnedPhaseItem>(
     input_uniform_index: InputUniformIndex,
     phase_type: BinnedRenderPhaseType,
 ) -> bool {
-    let binned = phase.nvf_is_binned(entities.1);
+    let binned = guard && phase.nvf_is_binned(entities.1);
     if binned {
         phase.remove(entities.1);
     }
@@ -4090,26 +4154,37 @@ pub fn nvf_take_light_view_counts() -> NvfLightViewCounts {
     }
 }
 
+/// NVForever light view counts: on while the game's hold is active (set by `prepare_lights`
+/// each frame); off, nothing is counted or timed.
+static NVF_COUNTING: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+fn nvf_counting() -> bool {
+    NVF_COUNTING.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 /// NVForever light view counts: `n` more of event `event`.
 fn nvf_event(event: usize, n: u64) {
-    if n > 0 {
+    if n > 0 && nvf_counting() {
         NVF_EVENT[event].fetch_add(n, core::sync::atomic::Ordering::Relaxed);
     }
 }
 
-/// NVForever light view counts: a stopwatch over consecutive sections.
-struct NvfLap(std::time::Instant);
+/// NVForever light view counts: a stopwatch over consecutive sections (none while nothing
+/// is counted).
+struct NvfLap(Option<std::time::Instant>);
 
 impl NvfLap {
     fn start() -> Self {
-        Self(std::time::Instant::now())
+        Self(nvf_counting().then(std::time::Instant::now))
     }
 
     /// Add the time since the last lap (or the start) to `section`.
     fn lap(&mut self, section: usize) {
-        let now = std::time::Instant::now();
-        nvf_time(section, now - self.0);
-        self.0 = now;
+        if let Some(last) = self.0 {
+            let now = std::time::Instant::now();
+            nvf_time(section, now - last);
+            self.0 = Some(now);
+        }
     }
 }
 
@@ -4132,6 +4207,9 @@ fn nvf_count_hidden_views(views: &Query<&PointAndSpotLightViewEntities>, light: 
 /// those that run (render world, once the views of the frame are made: `RenderSystems::Prepare`).
 pub fn nvf_count_light_views(views: Query<(&LightEntity, Has<RootNonCameraView>)>) {
     use core::sync::atomic::Ordering::Relaxed;
+    if !nvf_counting() {
+        return;
+    }
     let (mut alive, mut run) = (0u64, 0u64);
     for (light, root) in &views {
         if matches!(light, LightEntity::Point { .. } | LightEntity::Spot { .. }) {

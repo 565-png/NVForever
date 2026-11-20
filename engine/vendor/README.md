@@ -274,9 +274,21 @@ shadows, nvforever light_shadows.rs, docs/design/graphics-enhanced.md §3.17), m
 - `src/volumetric_fog/volumetric_fog.wesl`: `fetch_spot_shadow_without_normal` takes its
   layer from `nvf_spot_shadow_layer` too (no fade: fog is not faded).
 
-Without the resource nothing changes. Measured before it (2026-11-18, RTX 5090, 1280 × 720,
-the Prospector Saloon): every shadowed point light cost about 1 ms of frame time, six
-Core3d schedule runs a frame.
+Without the resource, or with it inactive, nothing changes. `HoldLightShadowMaps::active`
+is the gate: the game sets it only while its ALC shadows row is on (nvforever
+light_shadows.rs, [design, #3077 review]); while it is false, `prepare_lights` takes the hold
+as absent, so no light gets a slot, a held face, the static cache or a fade, and these paths
+all run as upstream's: the hidden light views below, the cached shadow views, the kept shadow
+phases (`NvfParkedShadowViews::active` false: `specialize_shadows` and `queue_shadows`
+specialize and bin as upstream, `nvf_add_once` is upstream's `add`) and the light view
+counts (no atomics touched, no clock read). When it switches either way, every light's
+shadow views are made again and the record of what each layer held is dropped, so no view
+keeps a slot's layer or a static-cache attachment it no longer has. What stays compiled in
+either way: the shaders' lookups of bits 16..31 (all 0 without the hold: upstream's index,
+full strength) and the shadow textures taken earlier in `prepare_lights` (the same
+descriptors as upstream's while nothing is held). Measured before it (2026-11-18, RTX
+5090, 1280 × 720, the Prospector Saloon): every shadowed point light cost about 1 ms of
+frame time, six Core3d schedule runs a frame.
 
 Two more for the ALC shadows' (once Lamp shadows) performance pass (2026-11-18, docs/design/graphics-enhanced.md
 §3.17 "Performance pass"):
@@ -294,8 +306,11 @@ Two more for the ALC shadows' (once Lamp shadows) performance pass (2026-11-18, 
   off again, so a lamp hidden by a turn of the camera in the frame after its maps were drawn
   left its views running until it was seen again [hypothesis, from the code; the summary's
   `despawned with their light hidden` count shows how often it happens]. Its regression
-  tests are not ported (the engine workspace does not run the vendored crates' tests). Drop
-  this with the first Bevy release that has #26480.
+  tests are not ported (the engine workspace does not run the vendored crates' tests). Only
+  while the hold is active (as last frame's `prepare_lights` saw it): with the ALC shadows
+  row Off it is upstream's two lines. It helps any shadowed light, so it could be made
+  unconditional on the maintainer's word. Drop this with the first Bevy release that has
+  #26480.
 - **Light view counts** (`NVForever light view counts`, `src/render/light.rs` and
   `src/lib.rs`): `nvf_count_light_views` (render world, `RenderSystems::Prepare`, after
   `prepare_lights`) counts the point and spot light shadow views alive and those with a
@@ -522,8 +537,10 @@ screen: nvforever light_shadows.rs `shown_unseen`, docs/design/graphics-enhanced
   visible lights), and drops a light no camera sees from the render world, so a light's
   shadow maps cannot be drawn before it comes into view.
 
-Bevy inserts no such resource; without it, or empty, nothing changes. Upstream has no way to
-draw an unseen light's shadow maps ahead of time; drop this if it gains one.
+Bevy inserts no such resource; without it, or empty, nothing changes. With the ALC shadows
+row Off both resources stay empty (the game's systems that fill them do not run, after
+emptying them once when the row is switched off), so the culling is upstream's. Upstream has
+no way to draw an unseen light's shadow maps ahead of time; drop this if it gains one.
 
 ## bevy_render 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 

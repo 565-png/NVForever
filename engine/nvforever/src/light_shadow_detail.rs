@@ -1,5 +1,5 @@
 //! Soft edges and contact shadows for the lamp shadows (`light_shadows.rs`; the settings
-//! row Lamp shadows; docs/design/graphics-enhanced.md §3.17 "Soft edges and contact
+//! row ALC shadows; docs/design/graphics-enhanced.md §3.17 "Soft edges and contact
 //! shadows"). Both only on Quality [engineering choice: each costs per pixel and per
 //! light; Performance keeps the hard edges of the camera's shadow filter].
 //!
@@ -99,7 +99,10 @@ impl Plugin for LightShadowDetailPlugin {
             (soften, contact)
                 .after(TransformSystems::Propagate)
                 .before(VisibilitySystems::VisibilityPropagate)
-                .before(SimulationLightSystems::AssignLightsToClusters),
+                .before(SimulationLightSystems::AssignLightsToClusters)
+                // With the row Off nothing of the ALC shadows runs; for a few frames after
+                // it is switched off these give the soft edges and contact shadows back.
+                .run_if(crate::light_shadows::live),
         );
     }
 }

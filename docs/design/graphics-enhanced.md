@@ -2154,6 +2154,24 @@ offers Off, Performance or Quality, as the Sun shadows row does
 2026-11-18: "look how sun shadows are calculated and do the same", "use the same
 performance optimizations also for the lamp shadows").
 
+**With the row Off.** Nothing of the ALC shadows runs and the renderer's paths are
+upstream's [design, #3077 review: "gate what you can behind the row"]. The game's systems
+(`shadow_lights`, `classify_casters`, `watch_map_textures`, `skip_fixtures`, the caster grid,
+soft edges and contact shadows) have the run condition `light_shadows::live`: they run while
+the row is on and for 3 frames after it is switched off (or from the start with it off),
+which is enough to switch every lamp's maps off, give back the soft edges, the contact
+shadows, the casters' lists and the point lights' cube side, and hand the renderer an
+inactive hold. The vendored bevy_pbr takes an inactive `HoldLightShadowMaps` (`active`
+false) as no hold, so every patched point and spot light path is upstream's: no slots, no
+held faces, no static cache, no kept phases, no cached shadow views (the sun's cascades'
+included), the hidden lights' views as upstream, no counts or timers
+(engine/vendor/README.md). Switched on again, every shape not yet marked dynamic is looked
+at once (shapes spawned while it was off), and every light's shadow views are made again.
+What stays in every build: the shaders' slot and fade bits (0 with the row Off: upstream's
+layer, full strength) and Bevy's `experimental_pbr_pcss` feature, a compile-time switch
+whose PCSS path a light takes only with soft shadows, which only the ALC shadows give
+(docs/design/dependencies.md).
+
 **First version (dropped the same day).** It used a budget of the 2, 4 or 8 lights that
 scored highest on brightness × (range / distance)². A playtest [design, #3074]: "The shadows pop in
 only when you are very close". Among the saloon's 24 lights, a lamp across the room cast

@@ -158,7 +158,10 @@ impl Plugin for LightShadowCastersPlugin {
                 .after(crate::light_shadows::ChooseLamps)
                 .after(TransformSystems::Propagate)
                 .after(VisibilitySystems::CalculateBounds)
-                .before(SimulationLightSystems::CheckLightVisibility),
+                .before(SimulationLightSystems::CheckLightVisibility)
+                // With the row Off it does not run (after it is switched off, it empties
+                // the candidates once: bevy_light then culls as upstream).
+                .run_if(crate::light_shadows::live),
         );
     }
 }

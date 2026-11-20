@@ -178,7 +178,7 @@ pub enum LightShadowMode {
 /// The row's choices, in the order the page and the INI keep them (the Sun shadows row's).
 pub const CHOICES: [&str; 3] = ["Off", "Performance", "Quality"];
 
-/// The Lamp shadows row's choice: an index into [`CHOICES`] (0: off).
+/// The ALC shadows row's choice: an index into [`CHOICES`] (0: off).
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LightShadows {
     pub choice: usize,
@@ -579,6 +579,9 @@ struct LampShadowState {
     pass: Pass,
     /// What the lamps drew under the loading screen that is up ([`predrawing`]).
     predraw: Predraw,
+    /// The point lights' cube side before a mode set its own, given back when the row is
+    /// switched off.
+    cube_before: Option<usize>,
 }
 
 /// The lamps' pre-draw under one loading screen.
@@ -661,18 +664,45 @@ fn distance_fade_on() -> bool {
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ChooseLamps;
 
+/// How many frames the ALC shadows' systems still run after the row is switched off (or
+/// from the start with it off): enough for [`shadow_lights`] to switch every light's maps
+/// off and give the renderer an inactive hold, and for the soft edges, contact shadows and
+/// caster candidates to be given back, whatever order they run in.
+pub const WIND_DOWN_FRAMES: u8 = 3;
+
+/// Frames since [`shadow_lights`] last ran with the row on (saturating at
+/// [`WIND_DOWN_FRAMES`]); see [`live`].
+#[derive(Resource, Default, Debug)]
+pub struct LightShadowsIdle {
+    frames: u8,
+}
+
+/// Whether the ALC shadows' systems run this frame: with the row on, and for
+/// [`WIND_DOWN_FRAMES`] frames after it is off. With the row Off none of them runs (their
+/// run condition only), and the renderer's hold is inactive, upstream's paths
+/// (bevy_pbr `HoldLightShadowMaps::active`).
+pub fn live(settings: Res<LightShadows>, idle: Res<LightShadowsIdle>) -> bool {
+    runs(settings.choice, idle.frames)
+}
+
+/// [`live`] for a row choice and the idle frames.
+pub fn runs(choice: usize, idle_frames: u8) -> bool {
+    choice != 0 || idle_frames < WIND_DOWN_FRAMES
+}
+
 pub struct LightShadowsPlugin(pub LightShadowMode);
 
 impl Plugin for LightShadowsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(LightShadows::of(self.0))
             .init_resource::<LampShadowState>()
+            .init_resource::<LightShadowsIdle>()
             .init_resource::<MapTextureInputs>()
             .init_resource::<HoldLightShadowMaps>()
             .init_resource::<NvfShadowLightsShown>()
             .add_plugins(ExtractResourcePlugin::<HoldLightShadowMaps>::default())
-            .add_systems(PostUpdate, watch_map_textures.before(shadow_lights))
-            .add_systems(PostUpdate, classify_casters.before(shadow_lights))
+            .add_systems(PostUpdate, watch_map_textures.before(shadow_lights).run_if(live))
+            .add_systems(PostUpdate, classify_casters.before(shadow_lights).run_if(live))
             .add_systems(
                 PostUpdate,
                 // Before Bevy resets this frame's view visibility, so the lights' and the
@@ -685,9 +715,10 @@ impl Plugin for LightShadowsPlugin {
                     .after(VisibilitySystems::UpdateFrusta)
                     .before(VisibilitySystems::VisibilityPropagate)
                     .before(SimulationLightSystems::AssignLightsToClusters)
-                    .before(SimulationLightSystems::UpdateLightFrusta),
+                    .before(SimulationLightSystems::UpdateLightFrusta)
+                    .run_if(live),
             )
-            .add_systems(PostUpdate, skip_fixtures.after(SimulationLightSystems::CheckLightVisibility))
+            .add_systems(PostUpdate, skip_fixtures.after(SimulationLightSystems::CheckLightVisibility).run_if(live))
             .add_plugins(crate::light_shadow_casters::LightShadowCastersPlugin);
     }
 }
@@ -1280,26 +1311,43 @@ fn body_layers() -> RenderLayers {
 /// player's body's (its layers), and every shape under an actor's or creature's rig (its
 /// weapons, hat, eyes: they follow the skeleton), found from a new shape up its ancestors
 /// and from a new rig down its descendants. Any other shape becomes dynamic in
-/// [`shadow_lights`] once it moves ([`shape_change`]). Runs whatever the mode, so a shape
-/// spawned while the lamp shadows are off is classified when they are switched on.
+/// [`shadow_lights`] once it moves ([`shape_change`]). It runs only while the row is on
+/// ([`live`]), so when the row is switched on every shape and rig not yet dynamic is looked
+/// at once (the shapes spawned while it was off).
+#[allow(clippy::too_many_arguments)]
 fn classify_casters(
     mut commands: Commands,
+    settings: Res<LightShadows>,
     new: Query<NewShapes, NewShapesFilter>,
+    every: Query<NewShapes, (With<Mesh3d>, Without<ShadowDynamic>)>,
     rigs: Query<Entity, NewRigs>,
     rigged: Query<(), Rigs>,
     parents: Query<&ChildOf>,
     children: Query<&Children>,
     shapes: Query<(), (With<Mesh3d>, Without<ShadowDynamic>)>,
 ) {
+    if settings.choice == 0 {
+        return;
+    }
+    // Switched on (or the game started with it on): every shape, not only the new ones.
+    let all = settings.is_changed();
     let body = body_layers();
     let mut marked = EntityHashSet::default();
-    for (e, skinned, layers) in &new {
+    let mut look = |(e, skinned, layers): (Entity, bool, Option<&RenderLayers>)| {
         if skinned || layers.is_some_and(|l| l.intersects(&body)) || parents.iter_ancestors(e).any(|a| rigged.contains(a)) {
             marked.insert(e);
         }
+    };
+    if all {
+        every.iter().for_each(&mut look);
+    } else {
+        new.iter().for_each(&mut look);
     }
-    for rig in &rigs {
-        marked.extend(children.iter_descendants(rig).filter(|d| shapes.contains(*d)));
+    // A new rig's shapes (the whole pass above already found every shape under a rig).
+    if !all {
+        for rig in &rigs {
+            marked.extend(children.iter_descendants(rig).filter(|d| shapes.contains(*d)));
+        }
     }
     for e in marked {
         commands.entity(e).try_insert(ShadowDynamic);
@@ -1320,6 +1368,16 @@ struct Lamp {
     map_scale: f32,
 }
 
+/// What [`shadow_lights`] hands on: the renderer's hold, the loading screen's wait, the
+/// lights shown to Bevy's culling and the idle frames ([`live`]); and the textures' inputs.
+type Outputs<'w> = (
+    ResMut<'w, HoldLightShadowMaps>,
+    Res<'w, MapTextureInputs>,
+    Option<ResMut<'w, nvf_play::loading::Loading>>,
+    ResMut<'w, NvfShadowLightsShown>,
+    ResMut<'w, LightShadowsIdle>,
+);
+
 /// Choose the lights that cast, mark what changed in their maps, choose which draw this
 /// frame, and set them up for Bevy and the patched renderer.
 #[allow(clippy::too_many_arguments)]
@@ -1331,7 +1389,7 @@ fn shadow_lights(
     directional: Option<Res<DirectionalLightShadowMap>>,
     mut cube: ResMut<PointLightShadowMap>,
     mut state: ResMut<LampShadowState>,
-    (mut out, inputs, mut loading, mut shown): (ResMut<HoldLightShadowMaps>, Res<MapTextureInputs>, Option<ResMut<nvf_play::loading::Loading>>, ResMut<NvfShadowLightsShown>),
+    (mut out, inputs, mut loading, mut shown, mut idle): Outputs,
     camera: Query<(&GlobalTransform, Option<&Frustum>), crate::fly::WorldCamera>,
     mut lights: Query<Placed, Casters>,
     moved: Query<MovedCasters, MovedFilter>,
@@ -1399,6 +1457,12 @@ fn shadow_lights(
     };
     if tune.is_some() {
         let side = cube_side(directional.as_ref().map_or(2048, |d| d.size));
+        state.cube_before.get_or_insert(cube.size);
+        if cube.size != side {
+            cube.size = side;
+        }
+    } else if let Some(side) = state.cube_before.take() {
+        // Off: Bevy's cube side as it was.
         if cube.size != side {
             cube.size = side;
         }
@@ -1924,7 +1988,13 @@ fn shadow_lights(
     // distance.
     out.fade.clear();
     out.fade.extend(state.lamps.iter().map(|(e, s)| (*e, s.fade * s.far_fade)).filter(|(_, f)| *f < 1.0));
+    // The renderer holds the lamps only while a mode is on; off, its point and spot light
+    // paths are upstream's (bevy_pbr `HoldLightShadowMaps::active`).
+    if out.active != tune.is_some() {
+        out.active = tune.is_some();
+    }
     removed.clear();
+    idle.frames = if tune.is_some() { 0 } else { idle.frames.saturating_add(1).min(WIND_DOWN_FRAMES) };
 
     let now = (settings.choice, points, spots);
     if *logged != Some(now) {
@@ -2106,6 +2176,45 @@ fn skip_fixtures(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_systems_run_with_the_row_on_and_for_the_wind_down_after_it() {
+        assert!(runs(1, WIND_DOWN_FRAMES));
+        assert!(runs(2, WIND_DOWN_FRAMES));
+        assert!(runs(0, 0));
+        assert!(runs(0, WIND_DOWN_FRAMES - 1));
+        assert!(!runs(0, WIND_DOWN_FRAMES));
+    }
+
+    /// The row Off from the start, switched on, switched off again: the systems stop after
+    /// the wind-down, and the renderer's hold is active only while the row is on.
+    #[test]
+    fn with_the_row_off_nothing_runs_and_the_hold_is_inactive() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<PointLightShadowMap>()
+            .add_plugins(LightShadowsPlugin(LightShadowMode::Off));
+        let side = app.world().resource::<PointLightShadowMap>().size;
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<LightShadowsIdle>().frames, WIND_DOWN_FRAMES);
+        assert!(!app.world().resource::<HoldLightShadowMaps>().active);
+
+        app.world_mut().insert_resource(LightShadows::of(LightShadowMode::Quality));
+        app.update();
+        assert_eq!(app.world().resource::<LightShadowsIdle>().frames, 0);
+        assert!(app.world().resource::<HoldLightShadowMaps>().active);
+
+        app.world_mut().insert_resource(LightShadows::of(LightShadowMode::Off));
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<LightShadowsIdle>().frames, WIND_DOWN_FRAMES);
+        assert!(!app.world().resource::<HoldLightShadowMaps>().active);
+        // Bevy's cube side given back.
+        assert_eq!(app.world().resource::<PointLightShadowMap>().size, side);
+    }
 
     #[test]
     fn the_choices_are_the_sun_shadows_rows_and_each_on_choice_is_tuned() {
@@ -2652,7 +2761,7 @@ mod tests {
         };
         let bin = || ShadowBinKey { asset_id: AssetId::<Mesh>::default().untyped() };
         let add = |phase: &mut bevy::render::render_phase::BinnedRenderPhase<Shadow>, e: MainEntity, i: u32| {
-            nvf_add_once(phase, key(), bin(), (Entity::PLACEHOLDER, e), InputUniformIndex(i), BinnedRenderPhaseType::MultidrawableMesh)
+            nvf_add_once(true, phase, key(), bin(), (Entity::PLACEHOLDER, e), InputUniformIndex(i), BinnedRenderPhaseType::MultidrawableMesh)
         };
         for (i, e) in [a, b, c].into_iter().enumerate() {
             assert!(!add(phase, e, i as u32), "binned once");
