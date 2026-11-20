@@ -33,7 +33,6 @@
 
 use bevy::mesh::{Mesh, VertexAttributeValues};
 use bevy::prelude::*;
-use fnv_nif::Struct;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
@@ -47,7 +46,18 @@ pub enum Tangents<'a> {
     Keep,
     /// Those stored in the shape-data block (module notes) when usable and the test aid
     /// allows them, generated otherwise.
-    Stored(&'a Struct),
+    Stored(&'a StoredArrays),
+}
+
+/// The tangent arrays a shape-data block stores, one vector per vertex each, as
+/// `fnv_nif::scene::mesh_data` decodes them (`crate::nif_spawn::build_mesh` hands them on);
+/// empty when the block stores none.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StoredArrays {
+    /// The file's "Tangents" (along increasing v, module notes).
+    pub tangents: Vec<[f32; 3]>,
+    /// The file's "Bitangents" (along increasing u).
+    pub bitangents: Vec<[f32; 3]>,
 }
 
 impl Tangents<'_> {
@@ -87,7 +97,7 @@ impl Tangents<'_> {
 pub enum Unusable {
     /// The block stores none (or the mesh has no normals).
     Absent,
-    /// An array's length is not three floats per vertex.
+    /// An array's length is not one vector per vertex.
     Count,
     /// A used vertex has a value that is not finite.
     NotFinite,
@@ -134,10 +144,13 @@ pub struct Stored {
     pub open_signs: usize,
 }
 
-/// Bevy tangents for `mesh` from the arrays stored in its shape-data block `data`
+/// Bevy tangents for `mesh` from the arrays stored in its shape-data block
 /// ([`from_stored`] over the mesh's normals and the vertices its triangles use).
-pub fn for_mesh(data: &Struct, mesh: &Mesh) -> Result<Stored, Unusable> {
-    let (Some(tangents), Some(bitangents)) = (data.floats("tangents"), data.floats("bitangents")) else { return Err(Unusable::Absent) };
+pub fn for_mesh(stored: &StoredArrays, mesh: &Mesh) -> Result<Stored, Unusable> {
+    if stored.tangents.is_empty() || stored.bitangents.is_empty() {
+        return Err(Unusable::Absent);
+    }
+    let (tangents, bitangents) = (stored.tangents.as_flattened(), stored.bitangents.as_flattened());
     let Some(VertexAttributeValues::Float32x3(normals)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL) else { return Err(Unusable::Absent) };
     let mut used = vec![false; normals.len()];
     if let Some(indices) = mesh.indices() {
@@ -234,7 +247,6 @@ mod tests {
     use super::*;
     use bevy::asset::RenderAssetUsages;
     use bevy::mesh::{Indices, PrimitiveTopology};
-    use fnv_nif::Value;
 
     /// A quad in the XY plane facing +Z, its texture's u along +X and v along -Y (the
     /// image's rows down the screen) or, `mirrored`, along +Y.
@@ -281,8 +293,8 @@ mod tests {
         t.clone()
     }
 
-    fn data(tangents: Vec<f32>, bitangents: Vec<f32>) -> Struct {
-        Struct { fields: vec![("tangents".into(), Value::FloatList { dim: 3, data: tangents }), ("bitangents".into(), Value::FloatList { dim: 3, data: bitangents })] }
+    fn data(tangents: Vec<f32>, bitangents: Vec<f32>) -> StoredArrays {
+        StoredArrays { tangents: tangents.as_chunks::<3>().0.to_vec(), bitangents: bitangents.as_chunks::<3>().0.to_vec() }
     }
 
     fn assert_close(ours: &[[f32; 4]], theirs: &[[f32; 4]]) {
@@ -361,10 +373,10 @@ mod tests {
         let mesh = quad(false);
         let want = generated(mesh.clone());
         let mut none = mesh.clone();
-        assert!(Tangents::Stored(&Struct::default()).add(&mut none, true));
+        assert!(Tangents::Stored(&StoredArrays::default()).add(&mut none, true));
         let Some(VertexAttributeValues::Float32x4(got)) = none.attribute(Mesh::ATTRIBUTE_TANGENT) else { panic!() };
         assert_close(got, &want);
-        assert_eq!(for_mesh(&Struct::default(), &mesh), Err(Unusable::Absent));
+        assert_eq!(for_mesh(&StoredArrays::default(), &mesh), Err(Unusable::Absent));
         let (t, b) = stored_like_the_files(&mesh);
         assert_eq!(for_mesh(&data(t[..9].to_vec(), b.clone()), &mesh), Err(Unusable::Count));
         let mut broken = mesh.clone();
@@ -396,6 +408,32 @@ mod tests {
         assert!(Tangents::Stored(&data(t, b)).add(&mut aid, false));
         let Some(VertexAttributeValues::Float32x4(got)) = aid.attribute(Mesh::ATTRIBUTE_TANGENT) else { panic!() };
         assert_close(got, &generated(mesh));
+    }
+
+    /// `build_mesh` hands on the arrays the shape-data block's decoding (`mesh_data`)
+    /// already read, so they are not read from the block a second time.
+    #[test]
+    fn the_mesh_comes_with_the_blocks_decoded_arrays() {
+        use fnv_nif::{Struct, Value};
+        let list = |data: Vec<f32>| Value::FloatList { dim: 3, data };
+        let block = |stored: bool| {
+            let mut fields = vec![
+                ("vertices".into(), list(vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0])),
+                ("normals".into(), list(vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0])),
+                ("triangles".into(), Value::IntList(vec![0, 1, 2])),
+            ];
+            if stored {
+                fields.push(("tangents".into(), list(vec![0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0])));
+                fields.push(("bitangents".into(), list(vec![1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0])));
+            }
+            Struct { fields }
+        };
+        let (mesh, _, stored) = crate::nif_spawn::build_mesh(&block(true)).unwrap();
+        assert_eq!(stored, StoredArrays { tangents: vec![[0.0, 1.0, 0.0]; 3], bitangents: vec![[1.0, 0.0, 0.0]; 3] });
+        assert_eq!(for_mesh(&stored, &mesh).unwrap().tangents, vec![[1.0, 0.0, 0.0, -1.0]; 3]);
+        let (mesh, _, none) = crate::nif_spawn::build_mesh(&block(false)).unwrap();
+        assert_eq!(none, StoredArrays::default());
+        assert_eq!(for_mesh(&none, &mesh), Err(Unusable::Absent));
     }
 
     #[test]

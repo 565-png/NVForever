@@ -14,7 +14,7 @@ use crate::anim_play::{Clip, MaterialTarget, MaterialTrack, OwnCycle, Playing};
 use crate::material_anim::{MaterialSlot, RigMaterials};
 use crate::data::GameData;
 use crate::nif_material::NifMaterial;
-use crate::nif_spawn::{affine, build_mesh, is_editor_marker, shaded_model, shape_material_tangents, shape_props, shape_skin, to_bevy, StoreTextures, TextureSource};
+use crate::nif_spawn::{affine, build_mesh, is_editor_marker, shaded_model, shape_material_with, shape_props, shape_skin, to_bevy, StoreTextures, TextureSource};
 use crate::texture::{worker_texture, TextureCache, TextureSnapshot, TextureUsage, WorkerTextures};
 use bevy::asset::AssetHandleProvider;
 use bevy::image::CompressedImageFormats;
@@ -1824,7 +1824,7 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
             first_textures += props.use_first_person_textures(|p| game.vfs.exists(p));
             first_worn += props.first_person_texture_count();
         }
-        let Some((mut mesh, tris)) = build_mesh(data) else { continue };
+        let Some((mut mesh, tris, stored)) = build_mesh(data) else { continue };
         let managed_morph = managed_morphs.get(&o.block).filter(|m| m.num_vertices() == mesh.count_vertices()).cloned();
         if managed_morph.is_some() {
             // [design, #2685] Keep the source available for private rig mesh copies.
@@ -1844,7 +1844,7 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
             })
         });
         // The normal map's tangents: those the file stores (crate::tangents).
-        let (material, _missing) = shape_material_tangents(&props, &mut mesh, sink, crate::tangents::Tangents::Stored(data));
+        let (material, _missing) = shape_material_with(&props, &mut mesh, sink, crate::tangents::Tangents::Stored(&stored));
         if let Some(VertexAttributeValues::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
             for v in p {
                 let q = (out.root * t).transform_point3(Vec3::from_array(*v));
@@ -2103,6 +2103,7 @@ mod tests {
 mod bc5_model_tests {
     use super::*;
     use crate::nif_spawn::shape_material_with;
+    use crate::tangents::Tangents;
     use crate::texture::bc5_tests::{OwnedData, triangle};
     use bevy::render::render_resource::TextureFormat;
 
@@ -2126,7 +2127,7 @@ mod bc5_model_tests {
         };
         let mut props = crate::nif_spawn::Props::default();
         props.textures = vec!["old.dds".into(), "signed.dds".into()];
-        let worker_material = shape_material_with(&props, &mut triangle(), &mut deferred).0;
+        let worker_material = shape_material_with(&props, &mut triangle(), &mut deferred, Tangents::Generate).0;
         let worker_normal = worker_material.base.normal_map_texture.as_ref().unwrap().clone();
         assert!(deferred.lacks_alpha(&worker_normal));
         let worker_linear = deferred.texture("signed.dds", false).unwrap();
@@ -2139,7 +2140,7 @@ mod bc5_model_tests {
                 textures: StoreTextures { textures: &mut cache, data: &owned.data, images: &mut images, formats: None },
                 meshes: &mut meshes, materials: &mut materials, bindposes: &mut bindposes, morphs: &mut morphs,
             };
-            shape_material_with(&props, &mut triangle(), &mut stores).0
+            shape_material_with(&props, &mut triangle(), &mut stores, Tangents::Generate).0
         };
         assert_eq!(main_material.base.normal_map_texture.as_ref(), Some(&worker_normal));
         assert_eq!(main_material.base.base_color_texture, worker_material.base.base_color_texture);
