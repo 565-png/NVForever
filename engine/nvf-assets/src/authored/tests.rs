@@ -536,10 +536,13 @@ fn a_swap_draws_the_new_sets_albedo_or_the_new_diffuse() {
     let legacy = m.extension.legacy.clone().unwrap();
     restore(&mut m, &legacy);
     assert_eq!(m.base.base_color_texture, painted_diffuse);
-    // A copy whose caller did not replace the texture (still the old _albedo): the old
-    // diffuse is kept as the legacy one, and the next set without an `_albedo` shows it.
-    let mut stale = painted.clone();
-    assert_eq!(retexture(&mut stale, r"walls\brick.dds", &mut cache, &pack.data, &mut images, None), Retextured::Authored);
-    assert_eq!(stale.base.base_color_texture, painted.extension.legacy.as_ref().unwrap().diffuse);
-    assert_eq!(stale.extension.legacy, painted.extension.legacy);
+    // SwapTexture can explicitly name the albedo file already on the material. The cache
+    // gives the same handle, now as the replacement diffuse.
+    let mut direct = painted.clone();
+    let (r, diffuse) = swap(&mut direct, r"textures\pbr\walls\painted_albedo.dds");
+    assert_eq!(r, Retextured::Legacy);
+    assert_eq!(diffuse.as_ref(), Some(&albedo));
+    assert_eq!(direct.base.base_color_texture, diffuse);
+    assert_eq!(direct.extension.legacy.as_ref().unwrap().diffuse, diffuse);
+    assert!(direct.extension.authored_albedo.is_none());
 }

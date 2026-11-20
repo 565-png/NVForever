@@ -33459,7 +33459,7 @@ name = "pbr-reflect-field"
 source = "[design, #2981] docs/spec-notes/pbr-materials.md \"Reflections on authored materials\": generated authored sets on the real material path under a fixed asymmetric reflection cube; engineering comparator policy set from reasoning, not original-game pixels"
 areas = ["renderer", "textures", "nif"]
 paths = ["engine/nvf-assets/src/reflection_cube.rs", "engine/nvf-assets/src/reflection_cube/", "engine/nvf-assets/src/pbr_field.rs", "engine/nvf-assets/src/pbr_field/reflect.rs", "engine/nvf-assets/src/pbr_field/reflect/", "engine/nvf-assets/src/authored.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/", "engine/vendor/bevy_pbr/src/render/pbr_functions.wesl", "engine/vendor/bevy_pbr/src/light_probe/"]
-env = { NVF_PLAY_TEST_PBR_REFLECT_FIELD = "1", NVFOREVER_HOME = "pbr-field-home", NVF_PLAY_TEST_GOD = "1" }
+env = { NVF_PLAY_TEST_PBR_REFLECT_FIELD = "1", NVFOREVER_HOME = "pbr-field-home", NVF_PLAY_TEST_GOD = "1", NVF_PBR_METAL_GAIN = "" }
 # The Authored materials row pinned on, as in pbr-authored-field (the two share a home), and with it
 # Reflections on authored materials.
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--graphics-only", "authored-materials,authored-reflections"]
@@ -33490,7 +33490,7 @@ name = "pbr-reflect-field-off"
 source = "[design, #2981] docs/spec-notes/pbr-materials.md \"Reflections on authored materials\": the row off, a reflection cube on a camera changes no panel (the reflection gate keeps it from every shader that did not opt in)"
 areas = ["renderer", "textures", "nif"]
 paths = ["engine/nvf-assets/src/reflection_cube.rs", "engine/nvf-assets/src/reflection_cube/", "engine/nvf-assets/src/pbr_field/reflect.rs", "engine/nvf-assets/src/pbr_field/reflect/", "engine/nvf-assets/src/authored.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/", "engine/vendor/bevy_pbr/src/render/pbr_functions.wesl", "engine/vendor/bevy_pbr/src/light_probe/"]
-env = { NVF_PLAY_TEST_PBR_REFLECT_FIELD = "1", NVFOREVER_HOME = "pbr-field-home", NVF_PLAY_TEST_GOD = "1" }
+env = { NVF_PLAY_TEST_PBR_REFLECT_FIELD = "1", NVFOREVER_HOME = "pbr-field-home", NVF_PLAY_TEST_GOD = "1", NVF_PBR_METAL_GAIN = "" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--graphics-only", "authored-materials,no-authored-reflections"]
 run_seconds = 30
 timeout = 180

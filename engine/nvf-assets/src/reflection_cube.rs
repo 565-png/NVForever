@@ -280,13 +280,15 @@ struct Upload<K = TextureId> {
     /// under the same handle (a new texture, empty), the retained levels are written again,
     /// though no new fill came (a static room may never fill again).
     written_to: Option<K>,
+    /// The last incompatible GPU texture reported while waiting for a writable target.
+    last_rejected: Option<K>,
     uploaded: Arc<AtomicU64>,
 }
 
 // Not derived: a derive would ask `K: Default`, which `TextureId` is not.
 impl<K> Default for Upload<K> {
     fn default() -> Self {
-        Upload { seen: 0, levels: Arc::default(), pending: false, written_to: None, uploaded: Arc::default() }
+        Upload { seen: 0, levels: Arc::default(), pending: false, written_to: None, last_rejected: None, uploaded: Arc::default() }
     }
 }
 
@@ -301,25 +303,38 @@ impl<K: Copy + PartialEq> Upload<K> {
         }
     }
 
-    /// The levels to write now into `texture` (`None` while the texture does not exist yet:
-    /// they stay pending): the newest received when they are not written yet, or the retained
-    /// ones again when the texture is not the one they were written into. Levels of the wrong
-    /// sizes are dropped.
-    fn take(&mut self, texture: Option<K>) -> Option<Arc<Vec<Vec<u8>>>> {
-        let texture = texture?;
-        let replaced = self.written_to.is_some_and(|t| t != texture);
-        if !self.pending && !replaced {
+    /// The levels to write now into `texture`, or none while it is absent. A missing or
+    /// replaced texture invalidates its upload and queues the retained levels again.
+    /// Levels of the wrong sizes are dropped; valid levels stay pending until written.
+    fn levels_to_write(&mut self, texture: Option<K>) -> Option<Arc<Vec<Vec<u8>>>> {
+        if self.written_to.is_some() && self.written_to != texture {
+            self.written_to = None;
+            self.uploaded.store(0, Ordering::Release);
+            self.pending = true;
+        }
+        texture?;
+        if !self.pending {
             return None;
         }
-        self.pending = false;
-        self.written_to = None;
         let sizes_ok = self.levels.len() == SPECULAR_LEVELS as usize && self.levels.iter().enumerate().all(|(l, b)| b.len() == level_bytes(l as u32));
-        sizes_ok.then(|| self.levels.clone())
+        if sizes_ok {
+            Some(self.levels.clone())
+        } else {
+            self.pending = false;
+            None
+        }
+    }
+
+    /// Report an incompatible target once while waiting for a valid one.
+    fn reject(&mut self, texture: K) -> bool {
+        self.last_rejected.replace(texture) != Some(texture)
     }
 
     /// The held generation is in `texture`, for [`ReflectionCube::ready`].
     fn written(&mut self, texture: K) {
+        self.pending = false;
         self.written_to = Some(texture);
+        self.last_rejected = None;
         self.uploaded.store(self.seen, Ordering::Release);
     }
 }
@@ -339,16 +354,19 @@ fn extract_cubes(cubes: Extract<Query<&ReflectionCube>>, mut uploads: ResMut<Cub
 /// the frame draws (the queue's writes go ahead of the frame's command buffers): one write
 /// per level covering the six layers. The image asset is never changed after it is made, but
 /// should its GPU texture be made again under the same handle, the retained levels are
-/// written into the new one ([`Upload::take`] compares the texture's id). A texture of another shape than
-/// [`ReflectionCube::new`] makes is left alone, with an error.
+/// written into the new one ([`Upload::levels_to_write`] compares the texture's id). A texture
+/// of another shape than [`ReflectionCube::new`] makes is left alone, with an error.
 fn write_cubes(mut uploads: ResMut<CubeUploads>, images: Res<RenderAssets<GpuImage>>, queue: Res<RenderQueue>) {
     for (id, upload) in uploads.0.iter_mut() {
         let gpu = images.get(*id);
-        let Some(levels) = upload.take(gpu.map(|g| g.texture.id())) else { continue };
+        let Some(levels) = upload.levels_to_write(gpu.map(|g| g.texture.id())) else { continue };
         let Some(gpu) = gpu else { continue };
+        let texture = gpu.texture.id();
         let d = &gpu.texture_descriptor;
         if d.mip_level_count != SPECULAR_LEVELS || d.size != (Extent3d { width: SPECULAR_SIDE, height: SPECULAR_SIDE, depth_or_array_layers: 6 }) || d.format != FORMAT {
-            error!("reflection cube: the specular texture is {:?} with {} levels, not the cube this module makes; not written", d.size, d.mip_level_count);
+            if upload.reject(texture) {
+                error!("reflection cube: the specular texture is {:?} with {} levels, not the cube this module makes; not written", d.size, d.mip_level_count);
+            }
             continue;
         }
         for (level, bytes) in levels.iter().enumerate() {
@@ -362,7 +380,7 @@ fn write_cubes(mut uploads: ResMut<CubeUploads>, images: Res<RenderAssets<GpuIma
                 Extent3d { width: side, height: side, depth_or_array_layers: 6 },
             );
         }
-        upload.written(gpu.texture.id());
+        upload.written(texture);
     }
 }
 

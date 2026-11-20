@@ -546,11 +546,10 @@ pub enum Retextured {
 /// where it has no `_n` or the drawn mesh has no tangents, its `_albedo` in place of the new
 /// diffuse where it has one), or, without one, the legacy look is put back if a set was on
 /// it. Always from the legacy look, never from what the copy wore: a copy of a material that
-/// wore another diffuse's set takes none of it. Every caller puts the new game diffuse on the
-/// copy before this call; it becomes the legacy look's diffuse ([`LegacyLook::diffuse`]), so
-/// a later restore gives the new texture back, not the old one (a copy still drawing the old
-/// set's `_albedo`, not replaced by its caller, keeps the old diffuse). Only the set's
-/// fields change; tint, animation, fade and every other value stay.
+/// wore another diffuse's set takes none of it. The caller must put the replacement diffuse
+/// on the copy before this call. It becomes the legacy look's diffuse ([`LegacyLook::diffuse`])
+/// even when it happens to be the previous set's `_albedo` image. Only the set's fields change;
+/// tint, animation, fade and every other value stay.
 pub fn retexture(
     material: &mut crate::NifMaterial,
     texture: &str,
@@ -562,7 +561,7 @@ pub fn retexture(
     use crate::nif_spawn::TextureSource;
     let Some(mut legacy) = material.extension.legacy.clone() else { return Retextured::Untouched };
     let shown = material.base.base_color_texture.clone();
-    if shown.is_some() && shown != material.extension.authored_albedo && shown != legacy.diffuse {
+    if shown != legacy.diffuse {
         legacy.diffuse = shown;
         material.extension.legacy = Some(legacy.clone());
     }
