@@ -428,9 +428,9 @@ pub struct ActorStats {
 
 /// Take back what worker threads made for actors: parts read ahead
 /// (`ActorParts::take_fetched`).
-pub fn take_background_work(parts: Option<ResMut<nvf_assets::actor::ActorParts>>, textures: Option<ResMut<nvf_assets::TextureCache>>, time: Res<Time>) {
-    if let (Some(mut parts), Some(mut textures)) = (parts, textures) {
-        parts.take_fetched(&mut textures, time.elapsed_secs_f64());
+pub fn take_background_work(parts: Option<ResMut<nvf_assets::actor::ActorParts>>, mut models: nvf_assets::model::ModelCtx, time: Res<Time>) {
+    if let Some(mut parts) = parts {
+        parts.take_fetched(&mut models, time.elapsed_secs_f64());
     }
 }
 
