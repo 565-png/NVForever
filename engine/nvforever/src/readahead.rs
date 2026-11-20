@@ -607,6 +607,7 @@ pub fn read_ahead(
     // Outdoors, once the start's cells are in.
     let centre = streamer.centre.filter(|_| streamer.interior.is_none() && streamer.settled);
     if centre.is_some() && centre != ahead.centre {
+        let _span = info_span!("readahead::list_ring").entered();
         let cells = ring(centre.unwrap_or_default(), streamer.radius);
         let mut listed = HashSet::new();
         for &g in &cells {
@@ -688,6 +689,7 @@ pub fn read_ahead(
         let Some(job) = ahead.jobs.pop_front() else { break };
         match job {
             Job::Actor { reference, base, creature } => {
+                let _span = info_span!("readahead::plan").entered();
                 let shared = sim.as_deref().map(|s| &s.world);
                 let equipment_world = residents.as_deref().map_or(shared, |r| r.prefetch_world(reference, shared));
                 let Some(mut plan) = actor_plan(aw, equipment_world, reference, base, creature) else { continue };
@@ -696,6 +698,7 @@ pub fn read_ahead(
             Job::Prepare(path, skel) => match ctx.cache.part_state(&path) {
                 PartState::Reading => ahead.jobs.push_back(Job::Prepare(path, skel)),
                 PartState::Read => {
+                    let _span = info_span!("readahead::prepare").entered();
                     ahead.queued.remove(&path);
                     ahead.parts_prepared += 1;
                     if skel {

@@ -51,6 +51,15 @@ const WINDOW: usize = 64;
 /// [design] A longer frame is a stall or a load, not a frame rate: left out of the median.
 const LONGEST_FRAME: f32 = 0.1;
 
+/// Whether the streaming work that only reads records runs on read threads: a cell's
+/// grass (placing, merged meshes), the distant trees' lists, the body weapons' folder list
+/// (docs/design/streaming-hitches.md §3.5). `NVF_STREAM_ON_READ_THREADS=0`: on the frame's
+/// thread as before, to compare.
+pub fn on_read_threads() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("NVF_STREAM_ON_READ_THREADS").is_ok_and(|v| v.trim() == "0"))
+}
+
 /// The scale for a frame of `own` seconds without its streaming work.
 pub fn scale_for(own: f32) -> f32 {
     (own / REFERENCE_FRAME).clamp(LEAST_SCALE, 1.0)
@@ -88,6 +97,8 @@ pub struct StreamPace {
     /// A job was given less than its own budget this frame.
     held_back: AtomicBool,
     capped: u64,
+    /// The share of a frame's own length the jobs get together ([`FRAME_SHARE`]).
+    share: f32,
     /// The recent frames' lengths less their streaming work, seconds (a ring).
     own: [f32; WINDOW],
     next: usize,
@@ -101,12 +112,19 @@ pub struct StreamPace {
 }
 
 impl Default for StreamPace {
-    fn default() -> Self { Self::new(Mode::parse(std::env::var("NVF_STREAM_PACE").ok().as_deref())) }
+    fn default() -> Self {
+        let mut pace = Self::new(Mode::parse(std::env::var("NVF_STREAM_PACE").ok().as_deref()));
+        // `NVF_STREAM_FRAME_SHARE=<0.1 to 1>`: another share than [`FRAME_SHARE`], to compare.
+        if let Some(share) = std::env::var("NVF_STREAM_FRAME_SHARE").ok().and_then(|v| v.trim().parse::<f32>().ok()).filter(|s| (0.1..=1.0).contains(s)) {
+            pace.share = share;
+        }
+        pace
+    }
 }
 
 impl StreamPace {
     pub fn new(mode: Mode) -> Self {
-        Self { mode, scale: 1.0, allowance: None, held_back: AtomicBool::new(false), capped: 0, own: [0.0; WINDOW], next: 0, filled: 0, spent: AtomicU64::new(0), frames: 0, scaled: 0, scale_sum: 0.0, least: 1.0 }
+        Self { mode, scale: 1.0, share: FRAME_SHARE, allowance: None, held_back: AtomicBool::new(false), capped: 0, own: [0.0; WINDOW], next: 0, filled: 0, spent: AtomicU64::new(0), frames: 0, scaled: 0, scale_sum: 0.0, least: 1.0 }
     }
 
     /// What is left of the frame's shared allowance (`None`: there is none).
@@ -168,7 +186,7 @@ impl StreamPace {
         let known = self.filled >= WINDOW / 2;
         let own = self.median();
         self.scale = if self.mode != Mode::Off && known { scale_for(own) } else { 1.0 };
-        self.allowance = (self.mode == Mode::Shared && known).then(|| Duration::from_secs_f32(own * FRAME_SHARE));
+        self.allowance = (self.mode == Mode::Shared && known).then(|| Duration::from_secs_f32(own * self.share));
         self.frames += 1;
         self.scaled += u64::from(self.scale < 1.0);
         self.scale_sum += f64::from(self.scale);

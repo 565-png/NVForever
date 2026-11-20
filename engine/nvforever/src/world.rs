@@ -447,16 +447,20 @@ pub fn stream(
         let t0 = std::time::Instant::now();
         let s = &mut *streamer;
         // What is left of its start first (terrain quadrants, grass), then its references.
-        let started = sp.start(&mut commands, &world, &mut models, &mut terrain, &mut grass, || budgeted && std::time::Instant::now() >= deadline);
-        let _span = info_span!("world::cell_refs").entered();
-        while started && sp.next < sp.refs.len() && !(budgeted && std::time::Instant::now() >= deadline) {
-            let r = sp.refs[sp.next];
-            sp.next += 1;
-            spawn_ref(&mut commands, &world, sp.entity, sp.origin, r, &mut models, &mut water, &mut trees, &mut emittance, &mut actors, s);
+        let started = sp.start(&mut commands, &world, &mut models, &mut terrain, &mut grass, budgeted, || budgeted && std::time::Instant::now() >= deadline);
+        {
+            let _span = info_span!("world::cell_refs").entered();
+            while started && sp.next < sp.refs.len() && !(budgeted && std::time::Instant::now() >= deadline) {
+                let r = sp.refs[sp.next];
+                sp.next += 1;
+                spawn_ref(&mut commands, &world, sp.entity, sp.origin, r, &mut models, &mut water, &mut trees, &mut emittance, &mut actors, s);
+            }
         }
+        // All in but its grass, still on a read thread: the cell waits for it.
+        let done = started && sp.next >= sp.refs.len() && sp.grown(&mut commands, &mut grass, &mut models);
         sp.ms += t0.elapsed().as_secs_f64() * 1000.0;
         sp.frames += 1;
-        if !started || sp.next < sp.refs.len() {
+        if !done {
             streamer.spawning.insert(c, sp);
         } else {
             finish_cell(&mut commands, &mut streamer, c, sp, fading);
@@ -497,16 +501,19 @@ pub fn stream(
             begin_cell(&mut commands, &world, CellKey::Exterior(c), prep, tile, &mut models, &mut terrain, &mut water, budgeted, s)
         };
         commands.entity(root).add_child(e);
-        let mut sp = CellSpawn { entity: e, refs, next: 0, origin, ms: 0.0, frames: 1, start };
-        let started = sp.start(&mut commands, &world, &mut models, &mut terrain, &mut grass, || budgeted && std::time::Instant::now() >= deadline);
-        let _span = info_span!("world::cell_refs").entered();
-        while started && sp.next < sp.refs.len() && !(budgeted && std::time::Instant::now() >= deadline) {
-            let r = sp.refs[sp.next];
-            sp.next += 1;
-            spawn_ref(&mut commands, &world, e, origin, r, &mut models, &mut water, &mut trees, &mut emittance, &mut actors, s);
+        let mut sp = CellSpawn { entity: e, refs, next: 0, origin, ms: 0.0, frames: 1, start, grass: None };
+        let started = sp.start(&mut commands, &world, &mut models, &mut terrain, &mut grass, budgeted, || budgeted && std::time::Instant::now() >= deadline);
+        {
+            let _span = info_span!("world::cell_refs").entered();
+            while started && sp.next < sp.refs.len() && !(budgeted && std::time::Instant::now() >= deadline) {
+                let r = sp.refs[sp.next];
+                sp.next += 1;
+                spawn_ref(&mut commands, &world, e, origin, r, &mut models, &mut water, &mut trees, &mut emittance, &mut actors, s);
+            }
         }
+        let done = started && sp.next >= sp.refs.len() && sp.grown(&mut commands, &mut grass, &mut models);
         sp.ms = t0.elapsed().as_secs_f64() * 1000.0;
-        if !started || sp.next < sp.refs.len() {
+        if !done {
             streamer.spawning.insert(c, sp);
         } else {
             finish_cell(&mut commands, &mut streamer, c, sp, fading);
@@ -581,6 +588,9 @@ pub struct CellSpawn {
     frames: u32,
     /// What is left of its start (terrain, grass) before its references.
     start: Option<CellStart>,
+    /// Its grass being grown on a read thread (grass.rs `GrassCtx::begin`); the cell is
+    /// shown once it is in ([`CellSpawn::grown`]), so the grass appears with it.
+    grass: Option<crate::grass::GrassGrowth>,
 }
 
 /// [design] What is left of a cell's start before its references are spawned
@@ -606,8 +616,10 @@ impl std::fmt::Debug for CellStart {
 }
 
 impl CellStart {
-    /// Take the next step; `None` when the start is done.
-    fn step(self, commands: &mut Commands, cell: Entity, world: &WorldData, models: &mut ModelCtx, terrain: &mut TerrainMaterials, grass: &mut crate::grass::GrassCtx) -> Option<Self> {
+    /// Take the next step; `None` when the start is done. With `growth` the grass is grown
+    /// on a read thread and left there to be taken in ([`CellSpawn::grown`]); without, it
+    /// is grown here.
+    fn step(self, commands: &mut Commands, cell: Entity, world: &WorldData, models: &mut ModelCtx, terrain: &mut TerrainMaterials, grass: &mut crate::grass::GrassCtx, growth: Option<&mut Option<crate::grass::GrassGrowth>>) -> Option<Self> {
         match self {
             Self::Terrain { mut spawn, land_id, water } => {
                 let _span = info_span!("world::cell_terrain").entered();
@@ -621,7 +633,10 @@ impl CellStart {
             }
             Self::Grass { land, surface, land_id, grid, water } => {
                 let _span = info_span!("world::cell_grass").entered();
-                grass.spawn(commands, cell, world, land_id, &land, &surface, grid, water, models);
+                match growth {
+                    Some(growth) => *growth = grass.begin(commands, cell, world, land_id, *land, *surface, grid, water, models),
+                    None => grass.spawn(commands, cell, world, land_id, &land, &surface, grid, water, models),
+                }
                 None
             }
         }
@@ -637,17 +652,38 @@ fn start_in_steps() -> bool {
 
 impl CellSpawn {
     /// The cell's start, as far as `stop` allows (asked before each step); `true` when it
-    /// is done and the references can follow.
-    fn start(&mut self, commands: &mut Commands, world: &WorldData, models: &mut ModelCtx, terrain: &mut TerrainMaterials, grass: &mut crate::grass::GrassCtx, stop: impl Fn() -> bool) -> bool {
+    /// is done and the references can follow. `over_frames`: the cell is spawned over
+    /// frames (hidden meanwhile), so its grass can be grown on a read thread; a cell
+    /// loaded whole grows it here.
+    #[allow(clippy::too_many_arguments)]
+    fn start(&mut self, commands: &mut Commands, world: &WorldData, models: &mut ModelCtx, terrain: &mut TerrainMaterials, grass: &mut crate::grass::GrassCtx, over_frames: bool, stop: impl Fn() -> bool) -> bool {
         let steps = start_in_steps();
+        let apart = over_frames && crate::stream_pace::on_read_threads();
         while let Some(start) = self.start.take() {
             if steps && stop() {
                 self.start = Some(start);
                 return false;
             }
-            self.start = start.step(commands, self.entity, world, models, terrain, grass);
+            self.start = start.step(commands, self.entity, world, models, terrain, grass, apart.then_some(&mut self.grass));
         }
         true
+    }
+
+    /// Whether the cell's grass is in: taken in now if the read thread is done with it
+    /// (`true` also when none is being grown).
+    fn grown(&mut self, commands: &mut Commands, grass: &mut crate::grass::GrassCtx, models: &mut ModelCtx) -> bool {
+        let Some(mut growth) = self.grass.take() else { return true };
+        match growth.ready() {
+            Some(grown) => {
+                let _span = info_span!("world::cell_grass").entered();
+                grass.finish(commands, self.entity, growth.grid, grown, models);
+                true
+            }
+            None => {
+                self.grass = Some(growth);
+                false
+            }
+        }
     }
 }
 
@@ -1332,8 +1368,8 @@ fn load_cell(
 ) -> Entity {
     let tile = terrain.settings.tile;
     let (cell_e, refs, origin, start) = begin_cell(commands, world, key, None, tile, models, terrain, water, false, streamer);
-    let mut sp = CellSpawn { entity: cell_e, refs, next: 0, origin, ms: 0.0, frames: 1, start };
-    sp.start(commands, world, models, terrain, grass, || false);
+    let mut sp = CellSpawn { entity: cell_e, refs, next: 0, origin, ms: 0.0, frames: 1, start, grass: None };
+    sp.start(commands, world, models, terrain, grass, false, || false);
     for r in sp.refs {
         spawn_ref(commands, world, cell_e, origin, r, models, water, trees, emittance, actors, streamer);
     }

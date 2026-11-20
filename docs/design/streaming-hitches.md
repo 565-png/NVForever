@@ -543,7 +543,64 @@ high].
 - **Left.** Residents drawn (`residents::drive`, up to 9 ms; #3101), a creature's first
   body weapons (15 to 18 ms once or twice a tour), one actor read-ahead piece of 20 ms.
   Grass placement and its merged meshes are still made on the main thread, now in a step
-  of their own.
+  of their own. §3.5 takes the body weapons and the grass on.
+
+## 3.5 Grass, distant trees' lists and body weapons' clips on read threads (2026-11-20, 4c390c686)
+
+Three pieces of streaming work only read records and files, and ran on the main thread.
+
+- **Grass** (`grass.rs` `GrassCtx::begin`, `GrassSeed::grow`, `finish`; `world.rs`
+  `CellSpawn::grown`) [design]. A cell's plants are placed and their meshes merged, by
+  quadrant and type, on the read pool. The main thread does what needs it: the grass types
+  of the landscape's textures and their models (both kept after their first use), then the
+  meshes into the store and the entities. A cell spawned over frames is shown once its
+  grass is in, so the grass comes with the cell as before; a cell loaded whole (the
+  start's square, behind a loading screen) and a cell owed its grass (`grow_owed`) grow it
+  on the main thread as before. Both ways run the same `GrassSeed::grow`.
+- **Distant trees** (`treelod.rs` `trees_of`, `READS_IN_FLIGHT`) [design]. The TREE
+  references of each cell in reach were read from the cell's records in the frame its
+  cards were built, 24 cells a frame. They are read on the read pool, at most 48 cells at
+  once, nearest first; the cards of a cell are built when its list is in.
+- **Body weapons** (`body_weapons.rs` `attach`) [design]. The folders with a creature's
+  own attack clips are listed once, by a look through every file's path; and the stance of
+  each body weapon is read from its clip files the first time a skeleton takes it. Both
+  ran in the frame the first such creature was drawn (the read-ahead warms the stances of
+  creatures in its ring, not of the start's cells). The list is made on a read thread from
+  the system's first frame, a stance not loaded yet is read on a read thread
+  (`Anims::stance_loaded`), and the creature gets its arms the frame both are in.
+- `NVF_STREAM_ON_READ_THREADS=0` runs all three on the main thread as before, to compare.
+- **Measured** [observed 2026-11-20: §3.2's tour, machine and INI, `profile` builds of
+  this change on 4c390c686 (which has #3101 and #3071), three runs each, no other build or
+  game running; the first two rows in turn on one build, the last two in turn on a build
+  with the stances read on a read thread too]:
+
+  | | frames of 20 ms or more | 1 % low | worst frame |
+  |---|---|---|---|
+  | on the main thread | 23, 15, 22 | 17.6, 17.4, 18.0 ms | 62, 56, 50 ms |
+  | on read threads, the stances still read in the frame | 18, 14, 17 | 16.7, 17.0, 17.5 ms | 47, 47, 49 ms |
+  | on read threads | 19, 17, 34 | 17.1, 16.5, 18.3 ms | 39, 40, 41 ms |
+  | and the frame share a third (`NVF_STREAM_FRAME_SHARE=0.33`) | 18, 17, 23 | 17.0, 17.1, 17.5 ms | 40, 40, 49 ms |
+
+  Longest in a slow frame: `body_weapons::attach` 30 to 38 ms, then 0.1 to 0.2 ms;
+  `treelod::update_distant_trees` 1.6 to 2.9 ms, then 0.1 ms; `world::cell_grass` 1.1 to
+  1.5 ms, then 0.1 to 0.2 ms (1.1 ms once, a grass type's model made). 224 cells loaded in
+  every run, none waited for its read-ahead; they spread over about 440 frames instead of
+  407. The run of 34 had slower frames throughout (mean 8.38 ms against 8.2 ms) and one of
+  the stalls below. A third of a frame for the jobs together (§3.3) measured the same as a
+  half, so the half stays.
+- [observed, not explained] About once a run a frame is held 17 to 21 ms in whatever
+  system is running, on the main thread and often the render thread in the same frame:
+  `readahead::list_ring` (1.2 to 2.0 ms in every other slow frame) at 16.5 and 17.2 ms,
+  `readahead::plan` at 18.4 ms, `world::cell_terrain` at 20.3 ms with `queue_submit` at
+  17.7 ms, and earlier `lod::update_lod`, `range::check_visibility_ranges`,
+  `locomotion::drive` and `profile::report` at 19 to 20 ms. It comes with the aid on and
+  off. The "actor read-ahead piece of 20 ms" of §3.4 is this, not the read-ahead's work.
+- [observed] The gecko 00157B3E south-west of Goodsprings (`VSpawnTier2GeckoMed`) jumps an
+  obstacle once or twice in every run; in some it is asked to jump every other frame for
+  about 4 s without leaving the ground (`residents.rs` `hop_or_obstacle`: 46 to 87 "jumps
+  an obstacle" lines). That happened in 1 of 10 runs before §3.4 and in 6 of 16 since: the
+  cells come in a few frames later, and when the gecko is given its body there seems to
+  decide it [hypothesis]. The retry is the walkers' own; nothing here changes it.
 
 ## 4. Combat and interiors (2026-10-23, 5022d345)
 
