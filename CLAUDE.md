@@ -108,10 +108,7 @@ python tools/smoke run --exe <engine target>/release/nvforever.exe --data <Data>
   would run; `check` judges the saved logs again after you edit a scenario; `--no-merge`
   runs scenarios one by one. While fixing: `--failed` reruns only the last run's FAILs,
   `--fail-fast` starts no launch after the first FAIL (a full run before the push still).
-  `--size WxH` (e.g. `3840x2160`) runs every nvforever launch in that window size (it
-  replaces a scenario's `--size`); `--extra-args "--graphics enhanced"` adds arguments to
-  every nvforever launch (not fnvtool); `plan` shows both, the summary and summary.json
-  record them. Environment instead of arguments: `NVF_EXE`, `NVF_DATA`,
+  Environment instead of arguments: `NVF_EXE`, `NVF_DATA`,
   `NVF_FNVTOOL`, `NVF_SMOKE_LOCKS` (other machines), `NVF_OBSERVER_SAMPLES` (the AI observer
   captures).
 - **Stop only your own runner, by the PID you started.** Never stop processes by a
