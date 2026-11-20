@@ -156,8 +156,10 @@ and it is a good brief for any assistant.
 
 The settings page has one system for its rows (tabs, categories, lists for 7 or fewer
 values, greyed rows, Title Case on the page): `docs/design/settings-page.md` §0 says how to
-add or change one. A new row needs its place in `engine/nvf-play/src/settings_layout.rs`
-`SECTIONS`; the tests fail until it has one.
+add or change one. A new row needs its place in `crates/nvf-settings-layout/src/lib.rs`
+`SECTIONS` (shared with the launcher; the engine's `settings_layout.rs` re-exports it) and a
+line under the same tab and category in `docs/settings-reference.md`; the tests fail until it
+has one.
 
 ## Licence
 
