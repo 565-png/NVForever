@@ -309,17 +309,22 @@ impl Faded {
 ///
 /// A texture swap (`crate::texture_swap`) matches and copies this material, so it does not
 /// bake a fade's alpha into a material that stays [design]. How the two see-through copies
-/// hand the mesh back when both run is not changed here.
+/// hand the mesh back when both run is not changed here, and two sequences still give the
+/// swap a wrong source (neither system keeps the mesh's own handle apart from its copies):
+/// the alpha outliving a fade with no second fade running (a removed copy: no swap), and
+/// the alpha released while a fade that started second still runs (the fade's original is
+/// the alpha's copy).
 pub(crate) fn persistent_material(drawn: &Handle<NifMaterial>, drawing: Option<&nvf_assets::nif_material::MaterialOverride>, faded: Option<&Faded>, fading: Option<&nvf_play::fade::Fading>, live: impl Fn(AssetId<NifMaterial>) -> bool) -> Handle<NifMaterial> {
     match (faded, fading) {
         // The alpha copied this fade's copy, or the copy of an earlier fade that removed it
         // at its end while the alpha stayed on: the fade under way holds the mesh's own.
         (Some(a), Some(f)) if a.original.id() == f.copy().id() || !live(a.original.id()) => f.original().clone(),
-        (Some(a), _) if live(a.original.id()) => a.original.clone(),
+        // The alpha's stored original, also when no fade runs and a fade that ended removed
+        // it: the swap then finds nothing to copy and is not made, as before #2981. What the
+        // mesh wears then may be the alpha's cached copy, which must not become the source.
+        (Some(a), _) => a.original.clone(),
         (None, Some(f)) => f.original().clone(),
-        // No fade, and no alpha whose original still exists: the mesh wears its own (a fade
-        // that ended gave it back).
-        _ => nvf_assets::nif_material::plain_material(drawn, drawing).clone(),
+        (None, None) => nvf_assets::nif_material::plain_material(drawn, drawing).clone(),
     }
 }
 

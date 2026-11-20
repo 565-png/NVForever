@@ -141,7 +141,7 @@ A TOML file of plain keys, all optional:
 | Key | Meaning | Range | Default |
 |---|---|---|---|
 | `parallax_depth` | depth of the height map's darkest point below the surface, in UV units (planned, stage 4) | 0 to 0.25 | the engine's own depth |
-| `roughness_scale` | multiplies the ORM's roughness; the product is then clamped to 0.089..1 when drawn (below) | 0 to 2 | 1.0 |
+| `roughness_scale` | multiplies the ORM's roughness; the product is held to 0..1 when drawn, and to 0.089..1 for the highlight's shape (below) | 0 to 2 | 1.0 |
 | `reflectance` | the highlight strength of non-metals; F0 = 0.16 x reflectance² (0 to 16 %) | 0 to 1 | 0.5 (F0 4 %) |
 
 ```toml
@@ -185,12 +185,17 @@ Maps tuned for other renderers need these notes:
   lamps (`display_shader.rs`, `diffuse_occlusion`).
 - The highlight is GGX with the Fresnel factor held at F0 in world views (no brightening at
   grazing angles; `FRESNEL_EDIT`, `engine/nvforever/src/lights.rs`).
-- Roughness is perceptual: the ORM's green is multiplied by `roughness_scale`. For the
-  highlight's shape that product is clamped to 0.089..1 and then squared (Bevy's
+- Roughness is perceptual: the ORM's green is multiplied by `roughness_scale`, and the
+  surface shader holds the product to 0..1 right after sampling
+  (`engine/nvf-assets/src/nif_material.wesl`): a scale above 1 on a rough texel passed 1,
+  and the environment term's lookup (`F_AB`, `pbr_functions.wesl`), which takes the value
+  as it is, then left its range. [observed: 2026-11-20, the set `offrmfloor01` in the Vault
+  21 gift shop with its roughness scaled 2 and more drew white patches before the cap and
+  none after, pictures at scales 2, 2.5 and 3.] For the highlight's shape the product is
+  further raised to at least 0.089 and then squared (Bevy's
   `perceptualRoughnessToRoughness`, `engine/vendor/bevy_pbr/src/render/pbr_lighting.wesl`),
-  so a product below 0.089 draws a highlight as narrow as 0.089's; the environment
-  term's lookup (`F_AB`, `pbr_functions.wesl`) takes the product unclamped. A raw green
-  below 0.089 can still end above the floor with a scale above 1.
+  so a product below 0.089 draws a highlight as narrow as 0.089's. A raw green below 0.089
+  can still end above that floor with a scale above 1.
 - **Metallic** will be read but **held at 0** in version 1: with no reflection source in the
   engine, a metal would draw black except for lamp highlights. Until a later version adds
   one, a metal surface draws as a dielectric of its diffuse colour with the authored
@@ -295,7 +300,12 @@ What holds for a texture swap while the shape fades, and what does not:
   the test has no model-backed unnamed shape]. When the actor's alpha outlasts one fade and
   a second fade runs, the alpha's stored original is the first fade's removed copy; the
   swap then takes the second fade's original [documented: test
-  `a_swap_during_a_second_fade_under_one_actor_alpha_copies_the_mesh_own_material`].
+  `a_swap_during_a_second_fade_under_one_actor_alpha_copies_the_mesh_own_material`]. Two
+  sequences still give the swap a wrong source [hypothesis, from the source; neither system
+  keeps the mesh's own handle apart from its copies]: the alpha outliving a fade with no
+  second fade running (its stored original is a removed copy, so the swap is not made), and
+  the alpha released while a fade that started second still runs (the fade's original is
+  the alpha's copy, so the swapped material is see-through). Both go with the issue below.
 - **Not changed, and not whole: how the two see-through copies hand the mesh back.** With
   no swap, two orders leave the mesh wrong after both have ended: the actor's alpha started
   first and released first (the fade's end puts the alpha's copy back, the mesh stays
