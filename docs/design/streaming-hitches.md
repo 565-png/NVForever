@@ -595,12 +595,58 @@ Three pieces of streaming work only read records and files, and ran on the main 
   17.7 ms, and earlier `lod::update_lod`, `range::check_visibility_ranges`,
   `locomotion::drive` and `profile::report` at 19 to 20 ms. It comes with the aid on and
   off. The "actor read-ahead piece of 20 ms" of §3.4 is this, not the read-ahead's work.
+  Explained and removed in §3.6.
 - [observed] The gecko 00157B3E south-west of Goodsprings (`VSpawnTier2GeckoMed`) jumps an
   obstacle once or twice in every run; in some it is asked to jump every other frame for
   about 4 s without leaving the ground (`residents.rs` `hop_or_obstacle`: 46 to 87 "jumps
   an obstacle" lines). That happened in 1 of 10 runs before §3.4 and in 6 of 16 since: the
   cells come in a few frames later, and when the gecko is given its body there seems to
   decide it [hypothesis]. The retry is the walkers' own; nothing here changes it.
+
+## 3.6 The stall of 17 to 21 ms: Windows' heap gives memory back under its lock (2026-11-20, d637f7446)
+
+The stall §3.5 left unexplained, on the same machine and settings.
+
+- [observed] It follows the place, not the clock: none with the player standing still;
+  with the tour at half speed (`dwell 2`) it moved from 8 s to 16 s after the first step,
+  the same step of the route. It stayed with sound off, terrain shadows off, cloud shadows
+  off, mesh blend off, the read pool at below-normal priority, the log written straight to
+  a file instead of a pipe, and the game on all 32 logical processors
+  (`--cpu-cache-placement off`): not the processors, not the log, not one feature.
+- [observed] What the threads were doing in the slow frame (a watcher thread suspending
+  each thread and walking its stack every millisecond once the frame was 12 ms old; the
+  allocator timing every call): one thread is inside `NtFreeVirtualMemory`, called by
+  `RtlFreeHeap`, for the whole 17 to 21 ms and on the processor all that time; five to
+  seven others, the main thread among them, wait for the heap's critical section in
+  `RtlAllocateHeap`, `RtlFreeHeap` or `RtlReAllocateHeap` for as long (requests of 224
+  bytes to 131 KB). The block freed is ordinary: a terrain mesh's attribute of 96 KB, on
+  the main thread (`terrain::quadrant_draws`) in one run, on a read thread (the cells
+  left behind, #3082) in another. Over that one call the process's committed memory fell
+  by about 135 MB (5,567 to 5,431 MB, about 7.5 MB a millisecond).
+- So the default heap (the NT heap) keeps freed memory until some free tips it over, then
+  hands it back to the system in one go while holding the heap's lock; every thread that
+  allocates or frees meanwhile waits [hypothesis for the heap's rule: its code was not
+  read; the stacks, the waits and the committed memory are observed]. Which thread makes
+  that free is chance: freeing the cells left behind a piece at a time on a thread of
+  their own (each piece under 0.7 ms) moved the stall to another thread's free and
+  changed nothing else, so that was not kept.
+- The fix: the executable's manifest asks for the segment heap (`heapType`
+  `SegmentHeap`, `engine/nvforever/build.rs`) [documented: Microsoft Learn, "Application
+  manifests", `heapType`: Windows 10 version 2004 and later; an older Windows ignores
+  the element]. No dependency, no code. Three profiled tours each way, taken in turn
+  (Goodsprings-Primm, `--step 1024`, 157 s, 224 cells):
+
+  | | stall of 30 ms or more after the start | cells' main-thread time | 1 % low | frame mean | private bytes, mean |
+  |---|---|---|---|---|---|
+  | NT heap | 38, 33, 41 ms (one a run) | 394, 390, 393 ms | 16.8, 17.1, 17.0 ms | 8.21, 8.26, 8.23 ms | 6,064, 5,863, 5,789 MB |
+  | segment heap | none (longest 24 ms) | 284, 291, 286 ms | 16.4, 16.3, 16.7 ms | 8.17, 8.16, 8.17 ms | 5,955, 5,799, 5,790 MB |
+
+  With the allocator timed in a 45 s run on the segment heap, no heap call of the main
+  thread took 1 ms; the slowest anywhere was a 19.5 MB `realloc` on a read thread (2.9 ms).
+  The frame that stays longest in every run, either heap, is the first one of play
+  (`script::run_scripts` 12 to 15 ms, 33 to 39 ms the frame): not streaming.
+- Not measured: Windows 10 before 2004 (the element is ignored there, so the NT heap and
+  the stall stay), a long session's memory on the segment heap, other machines.
 
 ## 4. Combat and interiors (2026-10-23, 5022d345)
 
