@@ -660,10 +660,23 @@ pub fn lacks_alpha(image: &Image) -> bool {
     format_lacks_alpha(image.texture_descriptor.format)
 }
 
-/// [`lacks_alpha`] by the texture's format.
+/// [`lacks_alpha`] by the texture's format: the one- and two-channel formats (BC4, BC5,
+/// and their CPU fallbacks R8 and RG8) and BC1.
 pub fn format_lacks_alpha(format: bevy::render::render_resource::TextureFormat) -> bool {
     use bevy::render::render_resource::TextureFormat;
-    matches!(format, TextureFormat::Bc1RgbaUnorm | TextureFormat::Bc1RgbaUnormSrgb | TextureFormat::Bc5RgUnorm | TextureFormat::Bc5RgSnorm | TextureFormat::Rg8Unorm | TextureFormat::Rg8Snorm)
+    matches!(
+        format,
+        TextureFormat::Bc1RgbaUnorm
+            | TextureFormat::Bc1RgbaUnormSrgb
+            | TextureFormat::Bc4RUnorm
+            | TextureFormat::Bc4RSnorm
+            | TextureFormat::Bc5RgUnorm
+            | TextureFormat::Bc5RgSnorm
+            | TextureFormat::R8Unorm
+            | TextureFormat::R8Snorm
+            | TextureFormat::Rg8Unorm
+            | TextureFormat::Rg8Snorm
+    )
 }
 
 /// The falloff to draw a shape's material with. Falloff scales alpha, so only blended
