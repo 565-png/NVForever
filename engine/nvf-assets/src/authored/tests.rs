@@ -148,7 +148,7 @@ fn the_synchronous_source_loads_a_set_by_its_exact_member_paths() {
     let stone_height = stone.height().cloned().expect("its height map");
     assert_eq!(
         (stone.stem(), stone_height.depth_scale, stone_height.method, stone_height.max_layers),
-        (r"textures\pbr\walls\stone", fnv_pbr::DEFAULT_PARALLAX_DEPTH, PARALLAX_METHOD, MAX_PARALLAX_LAYERS)
+        (r"textures\pbr\walls\stone", fnv_pbr::DEFAULT_PARALLAX_DEPTH, parallax_method(), parallax_layers())
     );
     // An authored set with `_p` and a depth in its scalar file.
     let relief = authored(source.pbr_set(&source.resolve("walls/relief.dds"))).expect("authored set with _p");
@@ -578,9 +578,8 @@ fn the_mask_switch_takes_1_or_0() {
 
 /// A switch's text: unset or empty keeps the default quietly; a taken value is logged as
 /// information (but for a value marked quiet); garbage and out-of-range text keep the
-/// default with a warning naming the variable and the text. Without the variables the run's
-/// values are the defaults, which the material tests pin ([`MAX_PARALLAX_LAYERS`],
-/// [`PARALLAX_METHOD`], the mask off).
+/// default with a warning naming the variable and the text. Without the variables, the
+/// process-wide switches must use the defaults.
 #[test]
 fn a_switch_logs_what_it_took_or_refused_and_keeps_the_default_otherwise() {
     let layers = |text: Option<&str>| switch_value(PARALLAX_LAYERS_ENV, text, MAX_PARALLAX_LAYERS, parse_parallax_layers, |n| format!("{n} layers"), |_| false);

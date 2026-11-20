@@ -272,7 +272,6 @@ fn a_height_only_set_adds_its_height_map_to_the_game_material_only() {
         let (m, _) = shape_material_with(&props, &mut mesh, &mut source);
         assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some(), "{props:?}: tangents on the drawn mesh");
         assert_eq!(Parallax::of(&m.base), h, "{props:?}");
-        assert_eq!((m.base.max_parallax_layer_count, m.base.parallax_mapping_method), (crate::authored::MAX_PARALLAX_LAYERS, crate::authored::PARALLAX_METHOD));
         assert_ne!(m.extension.emissive_rule.w, AUTHORED_MARK, "the mark stays clear: scripted gloss still applies");
         assert!(m.base.metallic_roughness_texture.is_none() && m.base.occlusion_texture.is_none());
         let legacy = m.extension.legacy.clone().unwrap();
@@ -306,31 +305,30 @@ fn an_authored_height_map_comes_off_with_the_set() {
     assert_eq!(drawn(&off), drawn(&m), "depth map, depth, method and layers back too");
 }
 
-/// Shapes the height map may not draw on keep the rest of the set and gain no tangents
-/// for it: alpha-tested (without the alpha-tested switch), blended, double-sided, decals,
-/// each refused for its own reason; a copy of a drawn mesh without tangents.
+/// The alpha-tested switch controls cutouts. Blends, double-sided shapes, decals, and copies
+/// of meshes without tangents cannot take the height map; they keep the rest of the set.
 #[test]
-fn a_height_map_needs_an_opaque_single_sided_non_decal_shape_with_tangents() {
+fn height_map_eligibility_honours_the_mask_switch_and_shape_constraints() {
     let mut scratch = Assets::<Image>::default();
     let mut s = set(&mut scratch, false, Scalars::default());
     s.height = Some(height(&mut scratch, 0.03));
     let bare = || Props { textures: vec![r"walls\brick.dds".into()], ..Default::default() };
     use crate::authored::HeightSkip;
-    // Without NVF_PBR_PARALLAX_MASK (the default): an alpha-tested shape is refused too.
-    for (why, props, skip) in [
+    let masked = crate::authored::parallax_mask();
+    for (why, props, eligibility) in [
         // NiAlphaProperty 0x12EC: tested, not blended; 0x10ED: blended, not tested.
-        ("alpha tested", Props { alpha: Some((0x12EC, 127)), ..bare() }, HeightSkip::AlphaTested),
-        ("blended", Props { alpha: Some((0x10ED, 0)), ..bare() }, HeightSkip::Blended),
-        ("double-sided", Props { double_sided: true, ..bare() }, HeightSkip::DoubleSided),
-        ("decal", Props { decal: true, ..bare() }, HeightSkip::Decal),
+        ("alpha tested", Props { alpha: Some((0x12EC, 127)), ..bare() }, if masked { Ok(()) } else { Err(HeightSkip::AlphaTested) }),
+        ("blended", Props { alpha: Some((0x10ED, 0)), ..bare() }, Err(HeightSkip::Blended)),
+        ("double-sided", Props { double_sided: true, ..bare() }, Err(HeightSkip::DoubleSided)),
+        ("decal", Props { decal: true, ..bare() }, Err(HeightSkip::Decal)),
     ] {
         let mut source = SetTextures::new(Some((KEY, s.clone())));
         let mut mesh = triangle();
         let (m, _) = shape_material_with(&props, &mut mesh, &mut source);
-        assert_eq!(crate::authored::height_gate(&m, true), Err(skip), "{why}: refused for its reason");
-        assert!(m.base.depth_map.is_none(), "{why}");
+        assert_eq!(crate::authored::height_gate(&m, true), eligibility, "{why}: eligibility matches the draw");
+        assert_eq!(m.base.depth_map.is_some(), eligibility.is_ok(), "{why}: only eligible shapes take the height map");
         assert!(m.base.metallic_roughness_texture.is_some(), "{why}: the rest of the set applies");
-        assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_none(), "{why}: no tangents made for a height map it cannot draw");
+        assert_eq!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some(), eligibility.is_ok(), "{why}: tangents are made for an eligible height map");
     }
     let mut source = SetTextures::new(Some((KEY, s.clone())));
     let mut copy = triangle();

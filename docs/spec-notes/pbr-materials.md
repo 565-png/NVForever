@@ -403,9 +403,11 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   verdict. [observed, field only, on `b4660af00`, the main session's first GPU run with the
   setting on: high +0.00 px, low −9.76 px against −9.81; stripe centres 64.00/54.24 (height)
   and 64.00/64.00 (control); the sRGB 230 stripe then read 255 and failed the clip check, so
-  the stripe and ground were darkened to sRGB 180 on 90, not yet run again; that run used
-  the depth 0.1 and the occlusion method of then.] The thresholds are an engineering policy
-  set from that readback with margins; the field has not been run at depth 0.08 with relief.
+  the stripe and ground were darkened to sRGB 180 on 90; that run used depth 0.1 and
+  occlusion mapping.] [observed, two readbacks at `ca0e10c9e` with depth 0.08 and four
+  relief steps after eight layers: high +0.13 px, low ?7.86 px against ?7.84; the control
+  stayed centred at 64.00/64.00 and both readbacks passed.] The thresholds are an
+  engineering policy set from the first readback with margins.
 
 ### Height maps: guidance for pack authors (stage 4)
 
@@ -416,8 +418,8 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
 - **An atlas sheet** (one texture holding several pieces, each mesh using its own island)
   takes a height map only with **padding between the islands**, and the filler around an
   island must **never drop to height 0**: extend each island's edge height outwards into
-  the filler. The march shifts the coordinates by up to `parallax_depth` and can cross an
-  island's border; what it reads there is the filler, so a filler at 0 draws as a deep
+  the filler. The shift grows at grazing view angles and can exceed `parallax_depth`. It
+  can cross an island's border and read the filler. A filler at 0 draws as a deep
   trench at the piece's edge. [observed: with `NVF_PBR_PARALLAX_MASK=1`, a street's
   alpha-tested sidewalk pieces drawn from an atlas sheet showed thin dark lines across a
   slab and broken pixels at a piece's end; the relief itself looked right. That is the

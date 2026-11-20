@@ -2065,9 +2065,9 @@ particles, hair, skin and FaceGen heads, landscape LOD and the Pip-Boy's and int
 textures never do; without an `_n` (or tangents on the drawn mesh) the game's own normal map
 stays, its alpha no longer a highlight mask (docs/spec-notes/pbr-materials.md). On the
 experimental height branch (stage 4) a set's `_p` (or a height-only set) is drawn as Bevy's
-occlusion parallax, depth 0.03 unless the set's scalars say otherwise, at most 8 layers, on
-opaque, single-sided, non-decal shapes with tangents; its cost (a march of up to 8 depth reads
-per fragment, every read at the top mip level) is not yet measured. [design]
+relief mapping, depth 0.03 unless the set's scalars say otherwise, on opaque, single-sided,
+non-decal shapes with tangents. By default it marches up to eight layers and refines the
+intersection with four additional steps. Each height sample reads the top mip. [design]
 
 ## 4. Tried and dropped
 

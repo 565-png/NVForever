@@ -1426,6 +1426,8 @@ impl ModelCtx<'_> {
             data: (*self.data).clone(),
             providers,
             cached,
+            // The producer cache also owns this pool's authored DDS source metadata.
+            // A snapshot hit reuses it without decoding or re-reading the DDS.
             workers: self.textures.workers.clone(),
             bc_supported: self.formats.as_deref().is_none_or(|f| f.0.contains(CompressedImageFormats::BC)),
             unmasked: HashMap::new(),
@@ -2224,5 +2226,48 @@ mod bc5_model_tests {
         assert_eq!(deferred.pbr_set(&key), Some(found));
         assert_eq!(deferred.pbr_set(&stone_key), Some(stone));
         assert!(deferred.workers.entries_len() == 0, "a snapshot hit decodes nothing");
+    }
+
+    #[test]
+    fn shared_texture_snapshot_preserves_cpu_decoded_height_validation() {
+        use crate::release::{ImageHints, KeepLimits, Unused};
+
+        let pack = crate::authored::tests::Pack::new();
+        let mut cache = TextureCache::default();
+        let mut images = Assets::<Image>::default();
+        let mut deferred = Deferred {
+            data: pack.data.clone(),
+            providers: Providers {
+                meshes: Assets::<Mesh>::default().get_handle_provider(),
+                materials: Assets::<NifMaterial>::default().get_handle_provider(),
+                bindposes: Assets::<SkinnedMeshInverseBindposes>::default().get_handle_provider(),
+                images: images.get_handle_provider(),
+            },
+            cached: Arc::new(TextureSnapshot::new()),
+            workers: cache.workers.clone(),
+            bc_supported: false,
+            unmasked: HashMap::new(),
+            out: DeferredAssets::default(),
+        };
+        let aligned = deferred.resolve("walls/stone.dds");
+        let off_grid = deferred.resolve("walls/oddbc4.dds");
+        let expected = deferred.pbr_set(&aligned).expect("aligned unsigned BC4 is valid on the CPU path");
+        assert!(deferred.pbr_set(&off_grid).is_none(), "off-grid unsigned BC4 is refused");
+        assert_eq!(cache.take_workers(&mut images, 1.0), 2);
+
+        let snapshot = cache.snapshot(&images);
+        for path in [r"textures\pbr\walls\stone_p.dds", r"textures\pbr\walls\oddbc4_p.dds"] {
+            let (_, format, _) = &snapshot[&(path.to_string(), TextureUsage::Linear)];
+            assert_eq!(*format, TextureFormat::R8Unorm, "both files take the CPU fallback");
+        }
+        deferred.cached = Arc::new(snapshot);
+
+        // Retire the published worker entries, leaving only the snapshot and the shared
+        // source metadata. The decoded format alone cannot distinguish the two files.
+        cache.release(&mut Unused::default(), &ImageHints::default(), 32.0, KeepLimits::default());
+        assert_eq!(deferred.workers.entries_len(), 0);
+        assert_eq!(deferred.pbr_set(&aligned), Some(expected));
+        assert!(deferred.pbr_set(&off_grid).is_none(), "the cached size still rejects off-grid BC4");
+        assert_eq!(deferred.workers.entries_len(), 0, "snapshot hits decode nothing");
     }
 }
