@@ -15374,7 +15374,7 @@ name = "actor-read-ahead"
 source = "docs/design/streaming-hitches.md §2: the actors of the ring of cells just outside the loaded grid are read and prepared ahead, so they are drawn at once when they come into range"
 note = "the camera flies north into Goodsprings from four cells south; the town's residents are listed in the ring before their cells load"
 areas = ["actors", "residents"]
-paths = ["engine/nvforever/src/readahead.rs", "engine/nvforever/src/nav.rs", "engine/nvf-assets/src/actor.rs"]
+paths = ["engine/nvforever/src/readahead.rs", "engine/nvforever/src/nav.rs", "engine/nvf-assets/src/actor.rs", "engine/nvforever/src/facegen.rs"]
 args = ["--cell", "Goodsprings", "--pos=-67900,-14984,9000", "--npc-packages", "all", "--hour", "12", "--auto-fly", "700"]
 run_seconds = 35
 expect = [
@@ -15382,6 +15382,8 @@ expect = [
   { re = 'actor read-ahead summary: .* (?P<n>\d+) prepared ahead', range = [5, 5000], label = "parts prepared ahead" },
   { re = 'actor read-ahead summary: .* (?P<n>\d+) ready at once', range = [5, 5000], label = "residents drawn at once when they came into range" },
   { re = 'actor read-ahead summary: .* (?P<n>\d+) skeletons. clip sets loaded ahead', range = [1, 1000], label = "clip sets loaded ahead on a worker thread" },
+  { re = 'FaceGen: .*\((?P<n>\d+) offsets made ahead on a worker thread', range = [1, 5000], label = "the residents' FaceGen offset images made ahead on a worker thread (#3057)" },
+  { re = 'FaceGen: .*offsets made ahead on a worker thread, (?P<n>\d+) of them drawn', range = [1, 5000], label = "residents drawn with offset images made ahead" },
 ]
 
 [[scenario]]

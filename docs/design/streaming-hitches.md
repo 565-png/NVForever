@@ -98,9 +98,19 @@ uGridsToLoad=5).
   KF files on a worker thread through `ClipReader` (`nvf_assets::actor::ClipSource`: the
   loaders in `locomotion.rs` and `weapons.rs` read clips through it). `Anims` does not
   hold its lock while loading, so drawing an actor never waits for a worker; both may
-  load a set once and the first kept wins [engineering choice]. A weapon's `UPB` node
-  strings are cached (`ModelCtx::node_strings`) instead of reading the model again for
-  every NPC holding it.
+  load a set once and the first kept wins [engineering choice]. A held weapon's `UPB`
+  node strings and the place of its `ProjectileNode` (the muzzle) are read with its part
+  on the worker thread (`PreparedPart::upb`, `PreparedPart::muzzle`, #3057), as a
+  creature's projectile nodes already were (#1429). Before, the muzzle was found by
+  preparing the weapon's whole file again as a static model on the main thread
+  (`ModelCtx::model`): 28-30 ms of the frame an armed NPC was drawn in, and again for
+  the next NPC holding that weapon once the release sweep had dropped the unused model
+  [observed 2026-11-20, `profile hitch` spans, `actor::arm`, South Vegas ruins tour].
+  Once an NPC's `.egt` files are read, its FaceGen offset images (the face's, the
+  body's and the hands', §3) are made on a worker thread too (`Job::Offset`,
+  `facegen::make_offset`) and held for it for 30 s (`FaceGenCache::offer_offset`); in
+  play the NPC waits for them as for its parts. Made when it was drawn, they cost 6.5-7
+  ms of that frame (`actor::face_tint`) [observed, same runs].
 - **Idle clips** (`idles.rs`, #1429). An idle asked for whose KF file is not loaded yet
   waits for it to be read on a worker thread (`ActorCtx::clip_ready`), for at most
   `CLIP_WAIT` (0.5 s), after which it is read in the frame it starts; a collection's next
@@ -110,9 +120,28 @@ uGridsToLoad=5).
   the longest wait, those read late).
 
   An actor walking into the loaded cells, or a cell of them loading, then finds its
-  parts, skeleton and clips ready: what is left on the frame it is drawn is resolving it,
-  the per-NPC FaceGen shape (`FaceGenCache::morph`) and tint offsets (§3), retextured
-  materials (`ActorCtx::material_with_texture`) and the entities. Parts prepared ahead and
+  parts, skeleton, clips and FaceGen offsets ready: what is left on the frame it is drawn
+  is resolving it, the per-NPC FaceGen shape (`FaceGenCache::morph`), retextured
+  materials (`ActorCtx::material_with_texture`) and the entities.
+
+  South Vegas ruins tour (#3057: Poseidon gas station, both ruins entrances, New Vegas
+  Steel, the Camp McCarran gate and back, `--step 512`, two laps, the owner's
+  NVForever.ini, i7-7700HQ and GTX 1050), main at 36d97f158 against this change
+  [observed 2026-11-20, target/stress/tour/svruins-*, private]:
+
+  | | main | this change |
+  |---|---|---|
+  | actors drawn, their time (`stress actors:`) | 131 in 728 ms | 130 in 115 ms |
+  | most drawing actors in one frame | 43.8 ms | 6.0 ms |
+  | frames that drew actors: mean, worst | 45.8 ms, 436 ms | 29.9 ms, 63 ms |
+  | profile build, seen frames over 45 ms | 125 | 93 |
+  | `ai::spawn_actor` in them: total, most in one | 548 ms, 39.3 ms | 37 ms, 4.6 ms |
+
+  The frames over 45 ms left are physics with 25-30 actors loaded (`player::step`, up to
+  29 ms), Bevy's mesh allocator (`allocate_and_free_meshes`, up to 40 ms) and
+  `world::stream`. Every run of that day on that machine, main's too, also had frames of
+  about 500 ms waiting on the present (`present_frames`, `window::prepare_windows`) with
+  nothing loading in them; they are left out of the counts above. Parts prepared ahead and
   not used go after the caches' minute (`nvf_assets::release`): a player standing still at
   the edge of a ring has its actors read again when they come.
 
@@ -190,7 +219,8 @@ uGridsToLoad=5).
 
 - Done: the FaceGen tint is added in the face and skin shader (`nvf-assets`
   `nif_material.rs`, "FaceGen tint"; `nvforever/src/facegen.rs`). Per NPC only the
-  `.egt` offset image is made, on the main thread when the NPC's parts are put together:
+  `.egt` offset image is made (on a worker thread by the read-ahead since #3057, §2; on
+  the main thread when the NPC's parts are put together for one not read ahead):
   the face's 256 × 256 and the body's and hands' 32 × 32, as 16-bit floats (512 KB and
   8 KB), in place of a 1024² face and a 512² body copy with mipmaps (about 5.6 MB and
   1.4 MB). The shader adds the offset, upsampled bilinearly and flipped vertically, to the

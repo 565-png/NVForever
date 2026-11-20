@@ -6,7 +6,9 @@
 //! resolved and their parts, skeleton and weapon model read and parsed on a worker thread
 //! (`ActorCtx::parts_ready`). What has been read is then prepared on this thread (meshes,
 //! materials, textures) within [`PREPARE_BUDGET`] a frame, the NPCs' FaceGen `.egm` and
-//! `.egt` files read on a worker thread, and once a skeleton is prepared the clip sets and weapon stance its actor needs
+//! `.egt` files read on a worker thread and, once read, the NPC's FaceGen offset images
+//! (face, body and hand tint, `facegen::make_offset`) made there too (#3057), and once a
+//! skeleton is prepared the clip sets and weapon stance its actor needs
 //! are loaded from their KF files on a worker thread (`actors::Anims::warm`). So an actor
 //! walking into the loaded cells, or a cell of them loading, finds what it is drawn from
 //! ready and is drawn at once without reading or preparing it in that frame [engineering
@@ -99,6 +101,9 @@ pub struct Plan {
     pub facegen: Vec<String>,
     /// Parts morphed by FaceGen; prepared shape names may add fallback EGMs.
     pub morphs: Vec<String>,
+    /// An NPC's FaceGen offset images (as `actors::part_uses` asks `FaceGenCache` for
+    /// them: the face's, then the body's and the hands'), with whether each is a skin's.
+    pub offsets: Vec<(crate::facegen::OffsetKey, bool)>,
     /// A creature's body weapons' stances (`body_weapons::attach`), sorted.
     pub arms: Vec<&'static str>,
     /// Textures its materials take beyond its parts' own (`actors::part_uses`): a part's
@@ -141,7 +146,7 @@ fn plan_wearing(world: &ActorWorld, sim: Option<&fnv_sim::World<'_>>, equipment:
     if creature {
         let c = world.resolve_creature(base, reference).ok()?;
         let arms = body_arms(world, sim, reference);
-        Some(Plan { parts: c.parts.iter().map(|p| p.model.clone()).collect(), skeleton: c.skeleton, body: Body::Male, prefix: None, arms, facegen: Vec::new(), morphs: Vec::new(), textures: Vec::new() })
+        Some(Plan { parts: c.parts.iter().map(|p| p.model.clone()).collect(), skeleton: c.skeleton, body: Body::Male, prefix: None, arms, facegen: Vec::new(), morphs: Vec::new(), offsets: Vec::new(), textures: Vec::new() })
     } else {
         let a = crate::outfits::appearance(world, base, reference, equipment.as_ref()).ok()?;
         let w = a.weapon.and_then(|id| world.actors.weapons.get(&id)).filter(|_| world.weapon_mode != crate::weapons::WeaponMode::None);
@@ -157,12 +162,35 @@ fn plan_wearing(world: &ActorWorld, sim: Option<&fnv_sim::World<'_>>, equipment:
             let body_egt = a.body_egt.clone();
             facegen.extend(body_egt.iter().flat_map(|e| [Some(e.clone()), fnv_actor::resolve::hand_egt(e, true)]).flatten());
         }
-        let morphs = if world.facegen_enabled && a.shape_facegen(world.race_facegen).is_some() { a.parts.iter().map(|p| p.model.clone()).collect() } else { Vec::new() };
+        let shaped = world.facegen_enabled && a.shape_facegen(world.race_facegen).is_some();
+        let morphs = if shaped { a.parts.iter().map(|p| p.model.clone()).collect() } else { Vec::new() };
+        let offsets = a.skin_fgts(world.race_facegen).filter(|_| world.facegen_enabled).map_or_else(Vec::new, |fgts| offset_keys(&a, shaped, &fgts));
         let mut textures: Vec<String> = a.parts.iter().filter_map(|p| p.texture.clone()).chain(a.body_texture.clone()).chain(a.hand_texture.clone()).collect();
         textures.sort();
         textures.dedup();
-        Some(Plan { parts, skeleton: a.skeleton, body, prefix: Some(held.unwrap_or(AnimType::HandToHand).prefix()), arms: Vec::new(), facegen, morphs, textures })
+        Some(Plan { parts, skeleton: a.skeleton, body, prefix: Some(held.unwrap_or(AnimType::HandToHand).prefix()), arms: Vec::new(), facegen, morphs, offsets, textures })
     }
+}
+
+/// The FaceGen offset images NPC appearance `a` is drawn with for its texture
+/// coefficients `fgts`, as `actors::part_uses` asks for them (same `.egt` paths): the
+/// face's when its shape is morphed too (`shaped`), the body's and the hands' when the
+/// race has a body `.egt` and the skin texture. Each with whether it is a skin's.
+fn offset_keys(a: &fnv_actor::resolve::Appearance, shaped: bool, fgts: &[f64]) -> Vec<(crate::facegen::OffsetKey, bool)> {
+    use crate::facegen::{sibling, OffsetKey};
+    let mut keys = Vec::new();
+    if shaped {
+        keys.extend(a.parts.iter().filter(|p| p.role == "head:head").map(|p| (OffsetKey::new(sibling(&p.model, "egt"), fgts), false)));
+    }
+    if let Some(body_egt) = a.body_egt.as_deref() {
+        let hand_egt = fnv_actor::resolve::hand_egt(body_egt, true);
+        for (texture, egt) in [(&a.body_texture, Some(body_egt.to_string())), (&a.hand_texture, hand_egt)] {
+            if let (Some(_), Some(egt)) = (texture, egt) {
+                keys.push((OffsetKey::new(egt, fgts), true));
+            }
+        }
+    }
+    keys
 }
 
 /// Whether actor `reference` can be drawn from its current complete plan: models read
@@ -213,6 +241,9 @@ enum Job {
     /// of it needs on a worker thread (`actors::Anims::warm`), with its body weapons'
     /// stances and its skeleton's ragdoll widths (`limbs::BoneRadii`).
     Anims { skeleton: String, body: Body, creature: bool, prefix: Option<&'static str>, arms: Vec<&'static str> },
+    /// Once its `.egt` has been read, make this FaceGen offset image (a skin's with
+    /// `true`) on a worker thread (`facegen::make_offset`, #3057).
+    Offset(crate::facegen::OffsetKey, bool),
 }
 
 #[derive(Resource, Default)]
@@ -245,6 +276,11 @@ pub struct ReadAhead {
     /// FaceGen files being read on a worker thread, and how many were read.
     facegen: Vec<(String, Task<crate::facegen::FaceGenFile>)>,
     facegen_read: usize,
+    /// FaceGen offset images queued to make (not twice), and those being made on a worker
+    /// thread (a skin's with `true`). Making one on the main thread when the NPC was drawn
+    /// cost 6.5-7 ms of that frame [observed 2026-11-20, `actor::face_tint` spans, #3057].
+    offsets_queued: HashSet<crate::facegen::OffsetKey>,
+    offsets: Vec<(crate::facegen::OffsetKey, bool, Task<Result<Image, String>>)>,
     /// The simulation's equipment of the actors waiting to be drawn ([`ready_to_draw`]).
     equipment: crate::outfits::EquipmentCache,
     /// What actors waiting to be drawn asked for since the last [`read_ahead`]: parts,
@@ -298,16 +334,20 @@ impl ReadAhead {
     fn drop_exterior_work(&mut self) -> usize {
         let before = self.jobs.len();
         let (wanted, anims_wanted) = (&self.wanted, &self.anims_wanted);
-        let (queued, anims_queued) = (&mut self.queued, &mut self.anims_queued);
+        let (queued, anims_queued, offsets_queued) = (&mut self.queued, &mut self.anims_queued, &mut self.offsets_queued);
         self.jobs.retain(|j| {
             let keep = match j {
-                Job::Actor { .. } => false,
+                // An actor waiting to be drawn asks for its offsets again every frame.
+                Job::Actor { .. } | Job::Offset(..) => false,
                 Job::Prepare(path, _) | Job::FaceGen(path) => wanted.contains(path),
                 Job::Anims { skeleton, body, prefix, arms, .. } => anims_wanted.contains(&(skeleton.clone(), *body, *prefix, arms.clone())),
             };
             if !keep {
                 match j {
                     Job::Actor { .. } => {}
+                    Job::Offset(key, _) => {
+                        offsets_queued.remove(key);
+                    }
                     Job::Prepare(path, _) | Job::FaceGen(path) => {
                         queued.remove(path);
                     }
@@ -357,10 +397,22 @@ impl ReadAhead {
                 }
             }
         }
+        // Its FaceGen offset images, made on a worker thread once their `.egt` is read.
+        // Behind a loading screen the frame is not seen: made in the frame it is drawn.
+        let mut offsets_ready = true;
+        for (key, skin) in &plan.offsets {
+            if cache.offset_ready(&ctx.models.images, key) {
+                continue;
+            }
+            offsets_ready &= self.unseen;
+            if self.offsets_queued.insert(key.clone()) {
+                self.jobs.push_back(Job::Offset(key.clone(), *skin));
+            }
+        }
         let ready = self.queue_plan(plan, creature, world.pose == ActorPose::Idle,
             world.anims.loaded(&plan.skeleton, plan.body, plan.prefix, &plan.arms),
             |p| ctx.cache.part_state(p), |p| cache.has(p));
-        read && textures && morphs_ready && ready
+        read && textures && morphs_ready && offsets_ready && ready
     }
 
     /// Queue missing work once and check the whole plan. Separated from asset access
@@ -428,6 +480,7 @@ pub fn read_ahead(
     radii: Option<Res<crate::limbs::BoneRadii>>,
     mut parts: ResMut<ActorParts>,
     mut models: ModelCtx,
+    time: Res<Time>,
 ) {
     let unseen = loading.as_deref().is_some_and(|l| l.unseen_frames());
     if ahead.unseen != unseen {
@@ -506,6 +559,22 @@ pub fn read_ahead(
             ahead.queued.remove(&path);
         }
     }
+    // FaceGen offset images made: into the store, held for their NPC (#3057).
+    {
+        let now = time.elapsed_secs_f64();
+        let mut cache = aw.facegen.lock().expect("facegen cache");
+        let images = &mut models.images;
+        let queued = &mut ahead.offsets_queued;
+        ahead.offsets.retain_mut(|(key, skin, task)| match check_ready(task) {
+            Some(image) => {
+                cache.offer_offset(images, key.clone(), image, *skin, now);
+                queued.remove(key);
+                false
+            }
+            None => true,
+        });
+        cache.expire_ahead(now);
+    }
     ahead.collect_anims();
     if ahead.jobs.is_empty() {
         return;
@@ -547,6 +616,27 @@ pub fn read_ahead(
                 let (data, job) = ((*ctx.models.data).clone(), path.clone());
                 let task = nvf_assets::read_pool::read_pool().spawn(async move { crate::facegen::read_file(&data, &job) });
                 ahead.facegen.push((path, task));
+            }
+            Job::Offset(key, skin) => {
+                let cache = aw.facegen.lock().expect("facegen cache");
+                if cache.offset_ready(&ctx.models.images, &key) {
+                    ahead.offsets_queued.remove(&key);
+                } else if let Some(egt) = cache.egt_read(&key.egt) {
+                    let fgts = key.fgts();
+                    let task = nvf_assets::read_pool::read_pool().spawn(async move {
+                        // A broken file counts as no image (made again when drawn, which says why).
+                        nvf_assets::guard::guarded(|| crate::facegen::make_offset(&egt, &fgts))
+                    });
+                    ahead.offsets.push((key, skin, task));
+                } else if ahead.queued.contains(&key.egt) {
+                    // Its `.egt` is still being read.
+                    ahead.jobs.push_back(Job::Offset(key, skin));
+                } else {
+                    // Its `.egt` was not asked for (dropped going indoors): ask again.
+                    ahead.queued.insert(key.egt.clone());
+                    ahead.jobs.push_back(Job::FaceGen(key.egt.clone()));
+                    ahead.jobs.push_back(Job::Offset(key, skin));
+                }
             }
             Job::Anims { skeleton, body, creature, prefix, arms } => match ctx.cache.part_state(&skeleton) {
                 PartState::Reading | PartState::Read => ahead.jobs.push_back(Job::Anims { skeleton, body, creature, prefix, arms }),
@@ -708,7 +798,7 @@ mod tests {
     #[test]
     fn refreshed_plan_waits_for_new_models_stance_and_facegen() {
         let old = Plan { parts: vec!["bare.nif".into()], skeleton: "skeleton.nif".into(),
-            body: Body::Male, prefix: Some("h2h"), arms: vec![], facegen: vec!["bare.egm".into()], morphs: vec![], textures: vec![] };
+            body: Body::Male, prefix: Some("h2h"), arms: vec![], facegen: vec!["bare.egm".into()], morphs: vec![], offsets: vec![], textures: vec![] };
         let new = Plan { parts: vec!["armour.nif".into(), "rifle.nif".into()], prefix: Some("2hr"),
             facegen: vec!["armour.egm".into(), "head.egt".into()], ..old.clone() };
         let mut ahead = ReadAhead::default();
@@ -731,7 +821,7 @@ mod tests {
     #[test]
     fn going_indoors_drops_the_rings_work_but_not_a_waiting_actors() {
         let ring = Plan { parts: vec!["Outside.nif".into()], skeleton: "outside_skel.nif".into(),
-            body: Body::Male, prefix: Some("h2h"), arms: vec![], facegen: vec!["outside.egm".into()], morphs: vec![], textures: vec![] };
+            body: Body::Male, prefix: Some("h2h"), arms: vec![], facegen: vec!["outside.egm".into()], morphs: vec![], offsets: vec![], textures: vec![] };
         let waiting = Plan { parts: vec!["inside.nif".into()], skeleton: "inside_skel.nif".into(),
             prefix: Some("2hr"), facegen: vec!["inside.egm".into()], ..ring.clone() };
         let mut ahead = ReadAhead::default();
@@ -745,7 +835,7 @@ mod tests {
         assert!(ahead.jobs.iter().all(|j| match j {
             Job::Prepare(p, _) | Job::FaceGen(p) => p.contains("inside"),
             Job::Anims { skeleton, .. } => skeleton.contains("inside"),
-            Job::Actor { .. } => false,
+            Job::Actor { .. } | Job::Offset(..) => false,
         }));
         assert!(!ahead.queued.iter().any(|p| p.contains("outside")));
         assert!(ahead.anims_queued.iter().all(|k| k.0.contains("inside")));
@@ -755,9 +845,20 @@ mod tests {
     }
 
     #[test]
+    fn going_indoors_drops_offset_jobs_so_a_waiting_npc_queues_them_again() {
+        let key = crate::facegen::OffsetKey::new("head.egt".into(), &[1.0]);
+        let mut ahead = ReadAhead::default();
+        ahead.offsets_queued.insert(key.clone());
+        ahead.jobs.push_back(Job::Offset(key.clone(), false));
+        assert_eq!(ahead.drop_exterior_work(), 1);
+        assert!(ahead.jobs.is_empty());
+        assert!(!ahead.offsets_queued.contains(&key), "not stranded as queued with no job");
+    }
+
+    #[test]
     fn a_creature_waits_for_its_body_weapons_stances() {
         let bare = Plan { parts: vec!["body.nif".into()], skeleton: "creatures\\robot\\skeleton.nif".into(),
-            body: Body::Male, prefix: None, arms: vec![], facegen: vec![], morphs: vec![], textures: vec![] };
+            body: Body::Male, prefix: None, arms: vec![], facegen: vec![], morphs: vec![], offsets: vec![], textures: vec![] };
         let armed = Plan { arms: vec!["1gt", "2hr"], ..bare.clone() };
         let mut ahead = ReadAhead::default();
         assert!(ahead.queue_plan(&bare, true, true, true, |_| PartState::Prepared, |_| true));
@@ -769,7 +870,7 @@ mod tests {
     #[test]
     fn in_play_an_actor_waits_for_its_parts_to_be_prepared() {
         let plan = Plan { parts: vec!["armour.nif".into()], skeleton: "skeleton.nif".into(),
-            body: Body::Male, prefix: None, arms: vec![], facegen: vec![], morphs: vec![], textures: vec![] };
+            body: Body::Male, prefix: None, arms: vec![], facegen: vec![], morphs: vec![], offsets: vec![], textures: vec![] };
         let mut ahead = ReadAhead::default();
         // Read but not prepared: not drawn in a frame that is seen, and queued to prepare.
         assert!(!ahead.queue_plan(&plan, false, false, true, |_| PartState::Read, |_| true));

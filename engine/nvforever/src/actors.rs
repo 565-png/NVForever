@@ -991,7 +991,8 @@ pub(crate) fn arm_weapon(
         return None;
     };
     let path = fnv_actor::resolve::mesh_path(model);
-    let bones = ctx.models.node_strings(&path, "UPB");
+    // The bones its parts hang from, read with the part on its worker thread (#3057).
+    let bones = part.upb.clone();
     let held: Vec<&nvf_assets::anim_play::Clip> = [fnv_actor::weapon::EquipClip::Aim, fnv_actor::weapon::EquipClip::Equip].iter().filter_map(|c| stance.clips.get(c)).map(|c| &*c.clip).collect();
     let shapes = crate::weapons::spawn_model(commands, spawned, skel, stance.weapon_node, &part, &bones, &stance.holstered_off, &held);
     for &e in &shapes.all {
@@ -1000,10 +1001,8 @@ pub(crate) fn arm_weapon(
             commands.entity(e).insert(crate::weapons::HeldWeapon { reference, weapon });
         }
     }
-    // Where its shots leave (`npc_combat`): the model's `ProjectileNode`.
-    if let Some(pm) = ctx.models.model(&path) {
-        crate::weapons::spawn_muzzle(commands, spawned, stance.weapon_node, &pm, reference);
-    }
+    // Where its shots leave (`npc_combat`): the part's `ProjectileNode`.
+    crate::weapons::spawn_muzzle(commands, spawned, stance.weapon_node, &part, reference);
     let skel_parent = skel.parents[stance.weapon_node].unwrap_or(0);
     let mut hold = WeaponHold::new(stance, world.weapon_mode == WeaponMode::Drawn, skel_parent);
     if !shapes.back.is_empty() || !shapes.gun.is_empty() {

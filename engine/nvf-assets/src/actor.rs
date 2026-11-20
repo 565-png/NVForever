@@ -171,12 +171,24 @@ pub struct PreparedPart {
     /// (#1429: 23.8 ms in one frame for one creature [observed 2026-11-07, Sierra Madre
     /// lobby]).
     pub projectile_nodes: Vec<(String, Affine3A)>,
+    /// Where a held weapon's shots leave: the first node named as in [`MUZZLE_NODES`],
+    /// in the part's space, root transform included (as nvforever `weapons::spawn_muzzle`
+    /// placed it from the file prepared again as a model). Read here, on the part's
+    /// worker thread, for the same reason as `projectile_nodes` (#3057: 28-30 ms of the
+    /// frame an armed NPC was drawn in [observed 2026-11-20, `profile hitch` spans]).
+    pub muzzle: Option<Affine3A>,
+    /// The `UPB` string of each node that has one, by node name: the bone a weapon's
+    /// part hangs from (nvforever `weapons::spawn_model`). Read here for the same reason.
+    pub upb: Arc<HashMap<String, String>>,
     /// No shape is skinned and the file has controllers of its own (not driven by a
     /// sequence) that move a node, drive a material or show and hide a node: a creature
     /// draws such a part as a model playing them on its bone, not as still shapes
     /// (nvforever `actors::spawn_creature`).
     pub plays_itself: bool,
 }
+
+/// The nodes a held weapon's shots leave from, by either of their names (animation.md §9.9).
+pub const MUZZLE_NODES: [&str; 2] = ["ProjectileNode", "##ProjectileNode"];
 
 /// Whether a node is named as a projectile node (`ProjectileNode…`, WEAP NNAM).
 pub fn is_projectile_node(name: &str) -> bool {
@@ -948,6 +960,21 @@ fn prepare_part_into(sink: &mut impl ModelSink, path: &str, nif: Nif, failures: 
             out.projectile_nodes.push((name.to_string(), local));
         }
     }
+    let muzzle_named = |n: &str| MUZZLE_NODES.iter().any(|m| n.eq_ignore_ascii_case(m));
+    if objects.iter().any(|o| o.is_node && o.name.as_deref().is_some_and(muzzle_named)) {
+        let (nodes, _) = crate::model::model_nodes(&objects);
+        out.muzzle = crate::model::node_path(&nodes, &MUZZLE_NODES).map(|path| path.iter().fold(out.root, |m, &j| m * nodes[j].local));
+    }
+    let mut upb = HashMap::new();
+    for o in objects.iter().filter(|o| o.is_node) {
+        let (Some(name), Some(Ok(node))) = (&o.name, dec.blocks.get(o.block)) else { continue };
+        for &e in node.refs("extra_data").unwrap_or_default() {
+            if let Some(x) = dec.get(e).filter(|x| x.text("name").is_some_and(|n| n.eq_ignore_ascii_case("UPB"))) {
+                upb.extend(x.text("string_data").map(|s| (name.clone(), s.to_string())));
+            }
+        }
+    }
+    out.upb = Arc::new(upb);
     let order = fnv_nif::scene::geometry_order(&objects);
     for o in objects.iter().filter(|o| !o.is_node) {
         // Below the root; the root's own transform is `out.root` (see `rigid_local`).
