@@ -227,6 +227,10 @@ pub fn ready_to_draw(world: &ActorWorld, sim: Option<&fnv_sim::World<'_>>, ctx: 
     ready
 }
 
+/// A FaceGen offset image being made on a worker thread: what it is made of, whether it
+/// is a skin's, and the task.
+type OffsetTask = (crate::facegen::OffsetKey, bool, Task<Result<Image, String>>);
+
 /// One piece of read-ahead work, done within the frame's budget.
 type AnimsKey = (String, Body, Option<&'static str>, Vec<&'static str>);
 
@@ -280,7 +284,7 @@ pub struct ReadAhead {
     /// thread (a skin's with `true`). Making one on the main thread when the NPC was drawn
     /// cost 6.5-7 ms of that frame [observed 2026-11-20, `actor::face_tint` spans, #3057].
     offsets_queued: HashSet<crate::facegen::OffsetKey>,
-    offsets: Vec<(crate::facegen::OffsetKey, bool, Task<Result<Image, String>>)>,
+    offsets: Vec<OffsetTask>,
     /// The simulation's equipment of the actors waiting to be drawn ([`ready_to_draw`]).
     equipment: crate::outfits::EquipmentCache,
     /// What actors waiting to be drawn asked for since the last [`read_ahead`]: parts,
