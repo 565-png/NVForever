@@ -914,7 +914,7 @@ fn a_scripted_tint_stays_drawn_after_a_swap_to_another_authored_set() {
     assert_eq!(app.world().resource::<Assets<NifMaterial>>().get(&private).unwrap().base.specular_tint, red);
     {
         let mut swaps = app.world_mut().resource_mut::<Swaps>();
-        swaps.0.by_ref.insert(FormId(reference.0), vec![("concreteflatshape".into(), "textures\swapped\card.dds".into())]);
+        swaps.0.by_ref.insert(FormId(reference.0), vec![("concreteflatshape".into(), r"textures\swapped\card.dds".into())]);
         swaps.0.generation += 1;
     }
     app.update();

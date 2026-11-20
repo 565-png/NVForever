@@ -81,9 +81,8 @@ impl Fades {
 
 /// On a mesh drawn see-through for a fade: its own material, and the copy drawn. Another
 /// system that changes the mesh's own material while it fades (SwapTexture,
-/// nvforever `texture_swap.rs`), or gives it back its own under an actor's alpha that ends
-/// (nvforever `effect_shaders.rs`, whose copy this fade may have copied), gives the mesh
-/// that material and takes this away ([`Fading::copy`] to drop): the next step copies it.
+/// nvforever `texture_swap.rs`) gives the mesh the new one and takes this away
+/// ([`Fading::copy`] to drop): the next step copies the new material.
 #[derive(Component)]
 pub struct Fading {
     original: Handle<NifMaterial>,
