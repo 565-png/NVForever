@@ -692,11 +692,11 @@ pub(super) fn fixture() -> Vec<(&'static str, Vec<u8>)> {
     ]
 }
 
-/// The test aid that puts the field's generated files ([`fixture`]) into the game's own mount
-/// before it is opened, so the mount has authored sets and the world camera gets its
-/// reflection cube (nvforever reflection_sky.rs; the scenario `authored-reflections-sky`).
-/// Nothing the game draws uses the files' textures: they only make the mount's index count
-/// authored sets [engineering policy: no game-derived file, no game folder written].
+/// The test aid that adds the field's generated files ([`fixture`]) to the game's own mount,
+/// so the mount has authored sets and the world camera gets its reflection cube (nvforever
+/// reflection_sky.rs; the scenarios `authored-reflections-sky` and `-off`). Nothing the game
+/// draws uses the files' textures: they only make the mount's index count authored sets
+/// [engineering policy: no game-derived file, no game folder written].
 pub const MOUNT_PACK_ENV: &str = "NVF_PLAY_TEST_PBR_MOUNT_PACK";
 
 /// Whether [`MOUNT_PACK_ENV`] asks for the mount pack (`=1`).
@@ -704,21 +704,51 @@ pub fn mount_pack_requested() -> bool {
     std::env::var_os(MOUNT_PACK_ENV).is_some_and(|v| v == "1")
 }
 
-/// Write [`fixture`]'s files under `mods` (NVForever's own mods folder of an explicitly chosen
-/// home, `NVFOREVER_HOME`; refused without one, so a player's home is never written), loose
-/// files the mount layers over the game's Data. Files already there are written again. The
-/// number of files written.
-pub fn seed_mount_pack(mods: &Path) -> Result<usize, String> {
-    if std::env::var_os("NVFOREVER_HOME").is_none() {
-        return Err(format!("{MOUNT_PACK_ENV}=1 needs an explicit NVFOREVER_HOME"));
+/// The home the mount pack may write under: `NVFOREVER_HOME` when it is set and not empty
+/// (`fnv_install` takes an empty value for unset, the player's default home), else a refusal.
+pub fn mount_pack_home(value: Option<std::ffi::OsString>) -> Result<PathBuf, String> {
+    match value.filter(|v| !v.is_empty()) {
+        Some(home) => Ok(PathBuf::from(home)),
+        None => Err(format!("{MOUNT_PACK_ENV}=1 needs an explicit, non-empty NVFOREVER_HOME")),
     }
+}
+
+/// Write [`fixture`]'s files into a fresh folder of this run under the explicit home
+/// ([`mount_pack_home`]): `<home>\pbr-mount-pack\run-<stamp>-<process>-<n>`, reserved by
+/// creating it (never an existing folder), every file created new (`create_new`), so no file
+/// that existed before is opened for writing. On any failure the run's own folder is removed
+/// again and nothing is mounted. The caller mounts the folder over every other loose layer
+/// for this run only (`GameData::open_for_plugins_in_over`); no mods folder is written. The
+/// folder and the number of files written.
+pub fn seed_mount_pack() -> Result<(PathBuf, usize), String> {
+    let home = mount_pack_home(std::env::var_os("NVFOREVER_HOME"))?;
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| format!("clock: {e}"))?.as_nanos();
+    seed_mount_pack_in(&home, stamp, std::process::id())
+}
+
+pub(super) fn seed_mount_pack_in(home: &Path, stamp: u128, process: u32) -> Result<(PathBuf, usize), String> {
+    let dir = new_output_in(home, "pbr-mount-pack", stamp, process).map_err(|e| format!("fresh fixture folder under {}: {e}", home.display()))?;
+    let written = write_pack(&dir);
+    match written {
+        Ok(n) => Ok((dir, n)),
+        Err(e) => {
+            // The folder is this run's own (just reserved): nothing else is in it.
+            let _ = std::fs::remove_dir_all(&dir);
+            Err(format!("{}: {e}; nothing mounted", dir.display()))
+        }
+    }
+}
+
+/// [`fixture`]'s files under `out`, a folder of the caller's own: every folder made inside it,
+/// every file created new.
+fn write_pack(out: &Path) -> std::io::Result<usize> {
     let files = fixture();
     for (rel, bytes) in &files {
-        let path = mods.join(rel);
+        let path = out.join(rel);
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            std::fs::create_dir_all(dir)?;
         }
-        std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        create_file(&path, bytes)?;
     }
     Ok(files.len())
 }

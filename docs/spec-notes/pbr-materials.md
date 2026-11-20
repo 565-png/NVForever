@@ -465,8 +465,11 @@ it acts only with Authored materials on, and changes no picture without a pack.
   panel. The
   world camera's cube never replaces the field's: the field's cameras are its own.
   `authored-reflections-sky` and `authored-reflections-off` (the test aid
-  `NVF_PLAY_TEST_PBR_MOUNT_PACK=1` puts the field's generated sets into the run's own mods
-  folder, so the mount has authored sets): with the setting on, the world camera's cube is
+  `NVF_PLAY_TEST_PBR_MOUNT_PACK=1` writes the field's generated sets into a fresh folder of
+  the run under an explicit, non-empty `NVFOREVER_HOME` (`pbr-mount-packun-*`, every file
+  created new, the folder removed again on a failure) and mounts it over every other loose
+  layer for that run only, so the mount has authored sets; no mods folder is written
+  [documented: `pbr_field/reflect.rs` `seed_mount_pack`, `fnv_vfs::Vfs::add_loose_root`]): with the setting on, the world camera's cube is
   filled from Goodsprings' sky and attached; off, none is made. Log lines only.
 - **Composition.** `engine/nvf-shader-tests/tests/reflection_gate.rs` composes the patched
   `pbr_functions` for the NIF fragment with and without the opt-in and for Bevy's own

@@ -234,3 +234,38 @@ fn the_comparator_refuses_a_missing_lift_a_hue_shift_and_an_ignored_albedo() {
     assert!(chroma_between([10.0, 20.0, 30.0], [20.0, 40.0, 60.0]) < 1e-12);
     assert!(chroma_between([10.0, 20.0, 30.0], [30.0, 20.0, 10.0]) > 0.2);
 }
+
+/// The mount pack's home: an explicit, non-empty `NVFOREVER_HOME` only (empty means the
+/// player's default home to fnv-install).
+#[test]
+fn the_mount_pack_needs_an_explicit_home() {
+    assert!(mount_pack_home(None).is_err());
+    assert!(mount_pack_home(Some("".into())).is_err());
+    assert_eq!(mount_pack_home(Some("pbr-reflect-home".into())), Ok(PathBuf::from("pbr-reflect-home")));
+}
+
+/// The mount pack writes only into a fresh folder of its own: a second run gets another one,
+/// and files already in the home (its mods folder included) are never touched.
+#[test]
+fn the_mount_pack_writes_only_a_fresh_folder_of_its_own() {
+    let home = std::env::temp_dir().join(format!("nvf-mount-pack-{}-{}", std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    let mine = home.join("mods").join("textures").join("pbr").join("reflect");
+    fs::create_dir_all(&mine).unwrap();
+    fs::write(mine.join("metal20_orm.dds"), b"the player's own").unwrap();
+    let (first, n) = seed_mount_pack_in(&home, 7, 1).unwrap();
+    let (second, _) = seed_mount_pack_in(&home, 7, 1).unwrap();
+    assert_ne!(first, second, "a new folder per run");
+    assert!(first.starts_with(home.join("pbr-mount-pack")));
+    assert_eq!(n, fixture().len());
+    for (rel, bytes) in fixture() {
+        assert_eq!(fs::read(first.join(rel)).unwrap(), bytes, "{rel}");
+    }
+    assert_eq!(fs::read(mine.join("metal20_orm.dds")).unwrap(), b"the player's own", "the home's files untouched");
+    // A file in the way inside a fresh folder cannot happen, but write_pack refuses one.
+    let taken = home.join("taken");
+    fs::create_dir_all(taken.join("textures").join("reflect")).unwrap();
+    fs::write(taken.join(fixture()[0].0), b"there before").unwrap();
+    assert!(write_pack(&taken).is_err());
+    assert_eq!(fs::read(taken.join(fixture()[0].0)).unwrap(), b"there before", "never truncated");
+    let _ = fs::remove_dir_all(&home);
+}
