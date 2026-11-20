@@ -242,9 +242,10 @@ beyond the field test below):
   dark 38, reference 67, flat 103; off, plain, lit, dark and flat 103, reference 60.] The
   comparator's thresholds were set from those readbacks with margins [engineering policy:
   occlusion at least 15, lit and reference within 3, reference at least 15 darker than flat
-  (on) or plain (off), the off panels within 2]. The main session reports both scenarios
-  passing with those thresholds as of head `bebd7841a`; a run of `pbr-authored-field` and
-  `pbr-authored-field-off` at the head that carries the final review's fixes is owed.
+  (on) or plain (off), the off panels within 2]. [observed: the main session's smoke run
+  at `c512cd3c8`, the head with the final review's fixes bar the last change to the swap's
+  source lookup: `pbr-authored-field` and `pbr-authored-field-off` pass with those
+  thresholds, and `rorschach-cards`.]
 - Calibration aids, off by default, read at the start [documented: `authored.rs` `PbrView`,
   `metallic_debug`; `engine/nvf-assets/src/nif_material.wesl`]: `NVF_PBR_VIEW` =
   `roughness`, `metallic`, `occlusion`, `normal` or `authored` draws that input in place of
@@ -286,21 +287,28 @@ What holds for a texture swap while the shape fades, and what does not:
   see-through copy. The swap matches and copies the mesh's own material beneath both
   (`engine/nvforever/src/effect_shaders.rs` `persistent_material`, `texture_swap.rs`), so
   the swapped material carries the new diffuse with the mesh's own alpha, blend mode and
-  depth write, and an unnamed shape is still matched by its model's material, in both start
-  orders [documented: test `texture_swap.rs`
+  depth write, in both start orders [documented: test `texture_swap.rs`
   `a_swap_under_both_fades_copies_the_mesh_own_material_in_either_start_order`, through
-  `Swapping::sync`, the fade's step and `AlphaDrawing::sync` on a named shape; not seen in
-  the game].
+  `Swapping::sync`, the fade's step and `AlphaDrawing::sync` on a named shape, with the
+  fade stepped before the actor's alpha in that fixture; not seen in the game]. An unnamed
+  shape is matched by the same handle, its model's material [hypothesis, from the source:
+  the test has no model-backed unnamed shape]. When the actor's alpha outlasts one fade and
+  a second fade runs, the alpha's stored original is the first fade's removed copy; the
+  swap then takes the second fade's original [documented: test
+  `a_swap_during_a_second_fade_under_one_actor_alpha_copies_the_mesh_own_material`].
 - **Not changed, and not whole: how the two see-through copies hand the mesh back.** With
   no swap, two orders leave the mesh wrong after both have ended: the actor's alpha started
   first and released first (the fade's end puts the alpha's copy back, the mesh stays
   see-through), and the fade started first and ended first (the alpha's release puts back
   the fade's copy, which the fade removed). The other two orders, and all four after a swap,
   end on the mesh's own or swapped material, opaque [documented: the same test's `HELD`
-  list, each change in its own update]. While both run the drawn opacity is the one of
-  whichever copy the mesh wears, not the product of the two, and two ends in one update are
-  not covered by the test [hypothesis, from reading `fade.rs` `step` and `effect_shaders.rs`
-  `AlphaDrawing::sync`: their order there is not fixed]. This predates stage 3 and needs one
+  list, each change in its own update, in the fixture's order of the two systems]. While
+  both run the two factors are not consistently composed: a fade that starts under the
+  actor's alpha multiplies the alpha copy's opacity, but an alpha that starts or changes
+  under a fade replaces what is drawn. The game declares no order between the fade's step
+  and the actor's alpha, and two ends in one update are not covered by the test
+  [hypothesis, from reading `fade.rs` `step` and `effect_shaders.rs` `AlphaDrawing::sync`].
+  This predates stage 3 and needs one
   owner of the drawn material (base opacity x actor alpha x fade); it is left for its own
   issue.
 
