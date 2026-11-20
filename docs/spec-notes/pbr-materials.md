@@ -407,6 +407,31 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   the depth 0.1 and the occlusion method of then.] The thresholds are an engineering policy
   set from that readback with margins; the field has not been run at depth 0.08 with relief.
 
+### Height maps: guidance for pack authors (stage 4)
+
+[design, from the main session's pictures of 2026-11-20 named below]
+
+- **Height maps are for tiling surfaces**: floors, walls, paving, where the texture repeats
+  across the shape and every shifted read lands on more of the same texture.
+- **An atlas sheet** (one texture holding several pieces, each mesh using its own island)
+  takes a height map only with **padding between the islands**, and the filler around an
+  island must **never drop to height 0**: extend each island's edge height outwards into
+  the filler. The march shifts the coordinates by up to `parallax_depth` and can cross an
+  island's border; what it reads there is the filler, so a filler at 0 draws as a deep
+  trench at the piece's edge. [observed: with `NVF_PBR_PARALLAX_MASK=1`, a street's
+  alpha-tested sidewalk pieces drawn from an atlas sheet showed thin dark lines across a
+  slab and broken pixels at a piece's end; the relief itself looked right. That is the
+  sheet's missing padding, not the alpha test.]
+- **Depth**: start low. On a 512 floor map with nearly two levels (patches missing from
+  tiles), 0.015 looked convincing and 0.03 (the default) showed the method's limits only at
+  low angles; 0.06 drew stair-step bands (occlusion) or vertical streaks on the patch walls
+  (relief) [observed: set `offrmfloor01`, 2026-11-20], hence the bound of 0.08. Gentle
+  slopes take a deeper relief than walls between two flat levels; a map with near-vertical
+  walls stretches a few texels over the whole wall at any depth.
+- **Alpha-tested shapes** take no height map by default (`NVF_PBR_PARALLAX_MASK=1` is a
+  development switch); blended, double-sided and decal shapes never do. A `_p` for a
+  texture used only by such shapes is loaded for nothing.
+
 ### Known limits (stage 4)
 
 [documented: the files named; none measured]
@@ -430,7 +455,12 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
 - **Cut-outs and blends** are left out: the depth prepass, the shadow passes and the holes
   test read alpha at the unshifted coordinates, so a cut-out's edge would not follow the
   shifted texels. A fading or holed copy therefore loses its relief while it fades. Cut-outs
-  may take one under `NVF_PBR_PARALLAX_MASK` (above), their edge kept unshifted in every pass.
+  may take one under `NVF_PBR_PARALLAX_MASK` (above), their edge kept unshifted in every pass;
+  the switch stays off by default [design: under it a street's 79 sidewalk builds took their
+  height map and looked right but for an atlas sheet's filler (guidance above), and the
+  outline that does not move with the relief has not been judged on more shapes].
+- **Atlas sheets without padding** read their filler at an island's border (guidance
+  above); nothing in the engine detects or guards against it.
 - The occlusion debug view rereads the ORM at the unshifted coordinates; the FaceGen tint,
   the Pip-Boy screen and the holes test also read at unshifted coordinates (none of them
   takes a height map today).
