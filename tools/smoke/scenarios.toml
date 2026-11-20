@@ -138,15 +138,16 @@ expect = [
 name = "pbr-selftest"
 kind = "tool"
 source = "[design] docs/spec-notes/pbr-materials.md (NVForever's own pack format, #2981); DDS headers [documented] MS DDS_HEADER / DDS_HEADER_DXT10. Files built in memory by fnvtool, no game data."
-note = "fnvtool pbr selftest builds a clean set (DX10 BC7 _orm, BC5_UNORM _n of another size, BC4_UNORM _p, a scalar file) and seven broken files in memory, runs the pbr check validator on them and passes only when exactly the seven expected findings are raised and the clean set reads as its three formats."
+note = "fnvtool pbr selftest builds a clean set (DX10 BC7 _orm, BC5_UNORM _n of another size, BC4_UNORM _p, BC7_UNORM_SRGB _albedo, a scalar file) and seven broken files in memory, runs the pbr check validator on them and passes only when exactly the seven expected findings are raised (no sRGB warning on the colour _albedo) and the clean set reads as its four formats."
 areas = ["graphics"]
 paths = ["crates/fnv-pbr/", "crates/fnv-dds/", "crates/fnvtool/src/pbr_cmd.rs", "crates/fnvtool/src/pbr_check.rs"]
 commands = [["pbr", "selftest"]]
 expect = [
-  { json = "selftest.verdict", schema = "fnv.pbr.check/1", equals = "pbr selftest: PASS (3 formats, 7 expected findings)", count = 1 },
+  { json = "selftest.verdict", schema = "fnv.pbr.check/1", equals = "pbr selftest: PASS (4 formats, 7 expected findings)", count = 1 },
   { json = "selftest.formats.*", schema = "fnv.pbr.check/1", equals = "BC7_UNORM", count = 1 },
   { json = "selftest.formats.*", schema = "fnv.pbr.check/1", equals = "BC5_UNORM", count = 1 },
   { json = "selftest.formats.*", schema = "fnv.pbr.check/1", equals = "BC4_UNORM", count = 1 },
+  { json = "selftest.formats.*", schema = "fnv.pbr.check/1", equals = "BC7_UNORM_SRGB", count = 1 },
   { json = "selftest.pass", schema = "fnv.pbr.check/1", equals = true, count = 1 },
   { json = "selftest.missing.#", schema = "fnv.pbr.check/1", equals = 0, count = 1 },
   { json = "selftest.unexpected.#", schema = "fnv.pbr.check/1", equals = 0, count = 1 },
