@@ -2,7 +2,7 @@
 //! references; unload cells that fall out of range.
 
 use crate::fade::CellFade;
-use crate::terrain::{prepare_terrain, spawn_terrain, TerrainCtx, TerrainMaterials, TerrainPrep};
+use crate::terrain::{prepare_terrain, TerrainCtx, TerrainMaterials, TerrainPrep};
 use crate::water::{cell_water_center, water_material, WaterCtx};
 use bevy::math::Affine3A;
 use bevy::prelude::*;
@@ -412,7 +412,10 @@ pub fn stream(
     // Read ahead the cells up to one step beyond the loaded ones (worker threads).
     let now = time.elapsed_secs_f64();
     let tile = terrain.settings.tile;
-    read_ahead(&world, &mut streamer, centre, r + 1, tile, &mut models);
+    {
+        let _span = info_span!("world::cell_read_ahead").entered();
+        read_ahead(&world, &mut streamer, centre, r + 1, tile, &mut models);
+    }
 
     // Before the start square is in (or behind a loading screen) cells are drawn whole in
     // the frame they load, as before; after it, over frames within a time budget, hidden
@@ -429,14 +432,17 @@ pub fn stream(
         let Some(mut sp) = streamer.spawning.remove(&c) else { continue };
         let t0 = std::time::Instant::now();
         let s = &mut *streamer;
-        while sp.next < sp.refs.len() && !(budgeted && std::time::Instant::now() >= deadline) {
+        // What is left of its start first (terrain quadrants, grass), then its references.
+        let started = sp.start(&mut commands, &world, &mut models, &mut terrain, &mut grass, || budgeted && std::time::Instant::now() >= deadline);
+        let _span = info_span!("world::cell_refs").entered();
+        while started && sp.next < sp.refs.len() && !(budgeted && std::time::Instant::now() >= deadline) {
             let r = sp.refs[sp.next];
             sp.next += 1;
             spawn_ref(&mut commands, &world, sp.entity, sp.origin, r, &mut models, &mut water, &mut trees, &mut emittance, &mut actors, s);
         }
         sp.ms += t0.elapsed().as_secs_f64() * 1000.0;
         sp.frames += 1;
-        if sp.next < sp.refs.len() {
+        if !started || sp.next < sp.refs.len() {
             streamer.spawning.insert(c, sp);
         } else {
             finish_cell(&mut commands, &mut streamer, c, sp, fading);
@@ -468,16 +474,21 @@ pub fn stream(
         let t0 = std::time::Instant::now();
         let prep = streamer.ahead.listed.remove(&c).and_then(|a| a.terrain);
         let s = &mut *streamer;
-        let (e, refs, origin) = begin_cell(&mut commands, &world, CellKey::Exterior(c), prep, tile, &mut models, &mut terrain, &mut water, &mut grass, budgeted, s);
+        let (e, refs, origin, start) = {
+            let _span = info_span!("world::cell_start").entered();
+            begin_cell(&mut commands, &world, CellKey::Exterior(c), prep, tile, &mut models, &mut terrain, &mut water, budgeted, s)
+        };
         commands.entity(root).add_child(e);
-        let mut sp = CellSpawn { entity: e, refs, next: 0, origin, ms: 0.0, frames: 1 };
-        while sp.next < sp.refs.len() && !(budgeted && std::time::Instant::now() >= deadline) {
+        let mut sp = CellSpawn { entity: e, refs, next: 0, origin, ms: 0.0, frames: 1, start };
+        let started = sp.start(&mut commands, &world, &mut models, &mut terrain, &mut grass, || budgeted && std::time::Instant::now() >= deadline);
+        let _span = info_span!("world::cell_refs").entered();
+        while started && sp.next < sp.refs.len() && !(budgeted && std::time::Instant::now() >= deadline) {
             let r = sp.refs[sp.next];
             sp.next += 1;
             spawn_ref(&mut commands, &world, e, origin, r, &mut models, &mut water, &mut trees, &mut emittance, &mut actors, s);
         }
         sp.ms = t0.elapsed().as_secs_f64() * 1000.0;
-        if sp.next < sp.refs.len() {
+        if !started || sp.next < sp.refs.len() {
             streamer.spawning.insert(c, sp);
         } else {
             finish_cell(&mut commands, &mut streamer, c, sp, fading);
@@ -524,6 +535,76 @@ pub struct CellSpawn {
     /// Main-thread time spent on it so far, and the frames it took.
     ms: f64,
     frames: u32,
+    /// What is left of its start (terrain, grass) before its references.
+    start: Option<CellStart>,
+}
+
+/// [design] What is left of a cell's start before its references are spawned
+/// (docs/design/streaming-hitches.md §3.4). A cell's terrain and grass used to be spawned in
+/// one piece when the cell was begun, whatever was left of the frame's spawn budget (up to
+/// 4.6 ms against a budget of 1.5 ms at 120 fps [observed 2026-11-20]). They are steps now:
+/// each of the terrain's four quadrants, then the grass, and [`stream`] stops between two of
+/// them when its budget is spent. The cell is hidden until its last reference is in, so a
+/// cell part-way through its start is not seen; a cell loaded whole (the start's square,
+/// behind a loading screen) takes every step at once, as before.
+enum CellStart {
+    Terrain { spawn: Box<crate::terrain::TerrainSpawn>, land_id: u32, water: Option<f32> },
+    Grass { land: Box<fnv_world::land::Land>, surface: Box<fnv_world::land_surface::Surface>, land_id: u32, grid: (i32, i32), water: Option<f32> },
+}
+
+impl std::fmt::Debug for CellStart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Terrain { .. } => "CellStart::Terrain",
+            Self::Grass { .. } => "CellStart::Grass",
+        })
+    }
+}
+
+impl CellStart {
+    /// Take the next step; `None` when the start is done.
+    fn step(self, commands: &mut Commands, cell: Entity, world: &WorldData, models: &mut ModelCtx, terrain: &mut TerrainMaterials, grass: &mut crate::grass::GrassCtx) -> Option<Self> {
+        match self {
+            Self::Terrain { mut spawn, land_id, water } => {
+                let _span = info_span!("world::cell_terrain").entered();
+                let tm = &mut TerrainCtx { tm: terrain, assets: models };
+                if !spawn.step(commands, cell, world, tm) {
+                    return Some(Self::Terrain { spawn, land_id, water });
+                }
+                let grid = spawn.grid();
+                let (land, surface) = spawn.finish(commands, cell, tm);
+                Some(Self::Grass { land: Box::new(land), surface: Box::new(surface), land_id, grid, water })
+            }
+            Self::Grass { land, surface, land_id, grid, water } => {
+                let _span = info_span!("world::cell_grass").entered();
+                grass.spawn(commands, cell, world, land_id, &land, &surface, grid, water, models);
+                None
+            }
+        }
+    }
+}
+
+/// Whether a cell's start is taken in steps (`NVF_CELL_START_STEPS=0`: whole, in the frame
+/// the cell is begun, as before; to compare).
+fn start_in_steps() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("NVF_CELL_START_STEPS").is_ok_and(|v| v.trim() == "0"))
+}
+
+impl CellSpawn {
+    /// The cell's start, as far as `stop` allows (asked before each step); `true` when it
+    /// is done and the references can follow.
+    fn start(&mut self, commands: &mut Commands, world: &WorldData, models: &mut ModelCtx, terrain: &mut TerrainMaterials, grass: &mut crate::grass::GrassCtx, stop: impl Fn() -> bool) -> bool {
+        let steps = start_in_steps();
+        while let Some(start) = self.start.take() {
+            if steps && stop() {
+                self.start = Some(start);
+                return false;
+            }
+            self.start = start.step(commands, self.entity, world, models, terrain, grass);
+        }
+        true
+    }
 }
 
 /// The cell `c` is all in: shown, loaded, faded in.
@@ -1106,16 +1187,19 @@ fn load_cell(
     streamer: &mut Streamer,
 ) -> Entity {
     let tile = terrain.settings.tile;
-    let (cell_e, refs, origin) = begin_cell(commands, world, key, None, tile, models, terrain, water, grass, false, streamer);
-    for r in refs {
+    let (cell_e, refs, origin, start) = begin_cell(commands, world, key, None, tile, models, terrain, water, false, streamer);
+    let mut sp = CellSpawn { entity: cell_e, refs, next: 0, origin, ms: 0.0, frames: 1, start };
+    sp.start(commands, world, models, terrain, grass, || false);
+    for r in sp.refs {
         spawn_ref(commands, world, cell_e, origin, r, models, water, trees, emittance, actors, streamer);
     }
     cell_e
 }
 
-/// Spawn a cell's entity with its landscape (from `prep`, read ahead, or read here),
-/// grass and water; returns it with the references to spawn into it and its origin (game
-/// space). `hidden`: spawned hidden, to be shown when its references are all in.
+/// Spawn a cell's entity with its water and begin its landscape (from `prep`, read ahead,
+/// or read here); returns it with the references to spawn into it, its origin (game space)
+/// and what is left of its start: the terrain's quadrants and the grass ([`CellStart`]).
+/// `hidden`: spawned hidden, to be shown when its references are all in.
 #[allow(clippy::too_many_arguments)]
 fn begin_cell(
     commands: &mut Commands,
@@ -1126,10 +1210,9 @@ fn begin_cell(
     models: &mut ModelCtx,
     terrain: &mut TerrainMaterials,
     water: &mut WaterCtx,
-    grass: &mut crate::grass::GrassCtx,
     hidden: bool,
     streamer: &mut Streamer,
-) -> (Entity, Vec<u32>, Vec3) {
+) -> (Entity, Vec<u32>, Vec3, Option<CellStart>) {
     let stats = &mut streamer.stats;
     stats.cell_starts += 1;
     let (origin, cell, name) = match key {
@@ -1147,16 +1230,20 @@ fn begin_cell(
         CellKey::Interior(id) => RenderCell::Interior(id),
     });
     let mut refs: Vec<u32> = cell.map(|c| c.refs.clone()).unwrap_or_default();
+    let mut start = None;
     if let CellKey::Exterior(g) = key {
         if let Some((c, land_id)) = cell.and_then(|c| Some((c, c.land?))) {
-            let prep = prep.or_else(|| prepare_terrain(world.lo, world.schema, land_id, g, tile, world.land_ids(g), nvf_play::smooth_terrain::spec(), crate::terrain_lod::first_draw()));
+            let prep = prep.or_else(|| {
+                let _span = info_span!("world::cell_terrain_unprepared").entered();
+                prepare_terrain(world.lo, world.schema, land_id, g, tile, world.land_ids(g), nvf_play::smooth_terrain::spec(), crate::terrain_lod::first_draw())
+            });
             if let Some(prep) = prep {
-                let (land, surface) = spawn_terrain(commands, cell_e, world, prep, &mut TerrainCtx { tm: terrain, assets: models });
-                // Grass grows on the landscape's textures (grass.rs); the water surface
-                // is the one drawn below (`spawn_water`).
+                // Grass grows on the landscape's textures (grass.rs), once the terrain is
+                // in; the water surface is the one drawn below (`spawn_water`).
                 let ws = world.index.worldspaces.get(&world.world);
                 let water = c.has_water().then(|| c.water_surface(ws.and_then(|w| w.default_water_height))).flatten();
-                grass.spawn(commands, cell_e, world, land_id, &land, &surface, g, water, models);
+                let spawn = crate::terrain::TerrainSpawn::begin(world, prep, &mut TerrainCtx { tm: terrain, assets: models });
+                start = Some(CellStart::Terrain { spawn: Box::new(spawn), land_id, water });
             }
         }
         if let Some(p) = world.persistent_by_grid.get(&g) {
@@ -1166,7 +1253,7 @@ fn begin_cell(
     if let Some(c) = cell {
         spawn_water(commands, cell_e, world, c, models, water, stats);
     }
-    (cell_e, refs, origin)
+    (cell_e, refs, origin, start)
 }
 
 /// Spawn reference `r` into the cell `cell_e` whose origin is `origin` (game space).

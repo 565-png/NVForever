@@ -428,8 +428,62 @@ over 7.3 ms led more than a handful of them.
   build's on that machine 6.6 ms.
 - **Left.** In the 39 the jobs run over their smaller budgets on single pieces that are
   not split: a cell's start in `world::stream` (terrain, grass; up to 5 ms), one tree LOD
-  step (up to 5 ms), one LOD rebuild (up to 4 ms), a physics cell (2 ms). Next: split
-  those, or let a job that runs late in the frame see what the others already spent.
+  step (up to 5 ms), one LOD rebuild (up to 4 ms), a physics cell (2 ms). The two points
+  below take these on.
+- **The jobs share the frame** (`stream_pace.rs` `FRAME_SHARE`, `LEAST_SLICE`) [design]. A
+  job that ran over its budget on one piece used to leave the jobs after it their own in
+  full. All of them together now get half the frame's own length (3.3 ms at 150 fps,
+  8.3 ms at 60 fps, more than the budgets' sum at 30 fps): a job is given what is left of
+  that or its own budget, whichever is less, and never under a quarter of its own, so a
+  job that runs late in the frame still moves every frame; a count is cut to a quarter (at
+  least 1) once nothing is left. The jobs report their time as they finish
+  (`StreamPace::spent`, `spending`), which is also what the frame's own length is taken
+  without. `NVF_STREAM_PACE=scale` follows the frame rate without the shared allowance;
+  the summary line counts the frames in which a job was held to it. Measured with §3.4.
+
+## 3.4 A cell's start in steps (2026-11-20, 36d97f158)
+
+`world::stream` spawned a cell's terrain and grass in one piece when the cell was begun,
+whatever was left of the frame's spawn budget: `world::cell_start` 1.9 ms on average in the
+slow frames and up to 4.6 ms, of it the terrain 1.2 ms (up to 4.2) and the grass 0.7 ms
+(up to 1.7), against a spawn budget of 1.5 ms at that frame rate [observed 2026-11-20,
+spans added inside `world::stream`: `world::cell_start`, `cell_terrain`, `cell_grass`,
+`cell_refs`, `cell_read_ahead`; that run had another build beside it, so the times are
+high].
+
+- **Done** [design] (`world.rs` `CellStart`, `terrain.rs` `TerrainSpawn`). The start is
+  steps: each of the terrain's four quadrants, then the grass, then the references as
+  before, and `stream` stops between two steps when its budget is spent. A cell is hidden
+  until its last reference is in, so one part-way through its start is not seen; a cell
+  loaded whole (the start's square, behind a loading screen, an interior) takes every step
+  at once. What is spawned is the same: `spawn_terrain_with` is `TerrainSpawn` begun,
+  stepped to the end and finished. `NVF_CELL_START_STEPS=0` takes the start whole in the
+  frame the cell is begun, to compare.
+- **Measured** [observed 2026-11-20: §3.2's tour, machine and INI, one `profile` build,
+  the aids choosing what is on; three runs each in turn, no other build or game running,
+  a fourth of the last after one of its runs came out slow]:
+
+  | frames of 20 ms or more (of about 17,000) | runs | median |
+  |---|---|---|
+  | budgets follow the frame rate (§3.3) | 49, 47, 43 | 47 |
+  | and the jobs share the frame | 39, 39, 39 | 39 |
+  | and a cell's start in steps | 20, 21, 34, 34 | 27.5 |
+
+  1 % low (medians): 18.7, 18.4, 18.2 ms. In every run the 224 cells loaded with none
+  waiting for its read-ahead and none drawn before it; they spread over about 365 frames
+  without the steps and about 405 with them. `world::stream`'s longest span in a slow
+  frame: 6.1 to 6.9 ms, then 3.0 to 3.9 ms with the steps. The two runs of 34 were slower
+  frames throughout (mean 8.5 and 8.7 ms against 8.3 ms in the other eight), with something
+  else on the machine the check for builds and games did not see; each is still under
+  every run without the steps.
+- [observed, not explained] The residents' exit line counted 1 to 3 jumps over an obstacle
+  in ten of these and the earlier runs, 23 in one run without the steps and 46 and 87 in
+  two with them (a resident caught at an obstacle). It comes without the steps too; whether
+  the steps make it likelier was not looked into.
+- **Left.** Residents drawn (`residents::drive`, up to 9 ms; #3101), a creature's first
+  body weapons (15 to 18 ms once or twice a tour), one actor read-ahead piece of 20 ms.
+  Grass placement and its merged meshes are still made on the main thread, now in a step
+  of their own.
 
 ## 4. Combat and interiors (2026-10-23, 5022d345)
 
