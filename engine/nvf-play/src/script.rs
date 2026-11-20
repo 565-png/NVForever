@@ -2032,7 +2032,7 @@ pub(crate) fn run_scripts(
     mut hud: ResMut<ScriptHud>,
     mut corner: ResMut<crate::corner_messages::CornerMessages>,
     mut quest_lines: ResMut<crate::quest_messages::QuestMessages>,
-    (mut changed, mut fades, mut repose): (MessageWriter<RefChanged>, MessageWriter<crate::fade::RefFade>, MessageWriter<crate::RefRepose>),
+    (mut changed, mut fades, mut repose, mut script_sounds): (MessageWriter<RefChanged>, MessageWriter<crate::fade::RefFade>, MessageWriter<crate::RefRepose>, Option<ResMut<crate::sfx::ScriptSounds>>),
     mut travel: MessageWriter<TravelRequest>,
     mut open: MessageWriter<OpenContainer>,
     mut used: MessageReader<ItemUsed>,
@@ -2534,6 +2534,11 @@ pub(crate) fn run_scripts(
             }
             ScriptEffect::OpenContainer(c) => {
                 open.write(OpenContainer { container: c });
+            }
+            ScriptEffect::ItemAddedSound(item) => {
+                if let Some(s) = script_sounds.as_deref_mut() {
+                    s.items_added.push(item);
+                }
             }
             ScriptEffect::Notify(mut note) => {
                 // The player string codes (`&PCName;`) as they read now; ShowMessage's
