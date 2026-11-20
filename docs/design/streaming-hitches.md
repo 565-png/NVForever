@@ -318,6 +318,56 @@ evening and night, the tours start at noon) [observed, target/stress/tour/*, pri
   - Why material writes stall for 100-500 ms at all (slab growth and reallocation is the
     likeliest) and the 400-430 ms `window::prepare_windows` waits.
 
+## 3.2 Cell crossings with mesh blend on: the material slabs (2026-11-20, 1bf3270a6)
+
+With "Blend meshes into ground" on, every outdoor cell crossing republishes the blend
+surface and each blended shape's material clone is made again for it
+(graphics-enhanced.md §3.14). Since #2956 at most 64 clones a frame are made
+(`mesh_terrain_blend.rs` `CLONE_WORK_PER_FRAME`), which turned one 50-120 ms frame a
+crossing into a run of slower ones.
+
+- **Measured** [observed 2026-11-20: `tools/stress run tour --towns Goodsprings Primm
+  --step 1024`, a player's NVForever.ini (Very High, mesh blend on, DLSS Quality at
+  3840x2160), `--features nvforever/profile`, `NVF_PLAY_TEST_PROFILE_HITCH_MS=20`, Ryzen 9
+  9950X3D and RTX 5090; target/stress/tour/*, private]. Of about 16,600 frames (mean
+  8.5 ms), 113 took 20 ms or more with mesh blend on and 61 with it off; with it on the
+  render app was the longer side of 50 of them and `prepare_erased_assets` the largest
+  span of 54 (up to 28 ms), with it off of none.
+- **Why** [documented: bevy_render 0.20.1 `material_bind_groups.rs`
+  `MaterialBindGroupBindlessAllocator::allocate_unprepared`, `MaterialBindlessSlab::
+  check_allocation`, `insert_resources`, `free`]. A bindless material is offered to every
+  slab of its type in turn, and each slab looks up every resource the material binds
+  before answering. A resource the slab lacks was counted once for each of the material's
+  indices that bind it, but given back once, when its last reference went. A blend clone
+  binds 421 resources, the fallback image at every unused palette index among them
+  (nvf-assets `nif_surface_blend.rs`), so the first clone into a slab nearly filled its
+  count of 512 and every clone that came and went left the count higher. [observed, spans
+  and a count added for the measurement] The `NifSurfaceBlend` slabs went from 6 to 82
+  during the tour, and the allocation was 1,365 of the 1,730 ms `prepare_erased_assets`
+  took in the slow frames. The count grows for the whole session, so does the cost of each
+  new material. An ordinary material that binds one sampler at several indices drifts the
+  same way, more slowly [hypothesis: not measured].
+- **Done** (vendored bevy_render, engine/vendor/README.md "Slab accounting"): a resource
+  takes one slot however many indices bind it, and a slab that cannot take a material
+  answers at the first resource that does not fit. Same tour, the two changes behind a
+  switch in one build, one run each [observed]:
+
+  | | before | after |
+  |---|---|---|
+  | `NifSurfaceBlend` slabs | 6 rising to 82 | 1 |
+  | frames of 20 ms or more | 176 of 16,433 | 79 of 16,961 |
+  | of them, the render app the longer side | 108 | 0 |
+  | `prepare_erased_assets`, longest in a slow frame | 33.0 ms | 4.4 ms |
+  | mean / 1 % low | 8.62 / 25.5 ms | 8.36 / 22.5 ms |
+
+  (That build's spans made "before" slower than the 113 above.) What leads the 79 left:
+  `readahead::read_ahead` (30, up to 17 ms), `world::stream` (20, up to 27 ms),
+  `residents::drive`, `body_weapons::attach` (2, up to 36 ms), `limbs::rig_limbs`: §2 and
+  §3 above.
+- Not done: the clones are still made again at every crossing. Binding what a publication
+  changes (origin, coverage, the two atlases, the palette) once for all clones would end
+  that; with the slabs fixed it no longer shows among the slow frames' largest spans.
+
 ## 4. Combat and interiors (2026-10-23, 5022d345)
 
 Measured the same way (xperf CPU sampling; `tools/stress run battle`, standing in five
