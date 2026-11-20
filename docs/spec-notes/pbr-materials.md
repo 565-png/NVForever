@@ -256,8 +256,9 @@ beyond the field test below):
 - On the app's exit the log has one line `authored materials summary: ...` (or
   `authored materials summary: off (setting)`): counts of build events, not of visible
   shapes: material builds that applied a set, the distinct set stems seen at those builds,
-  builds that skipped a set and why, `_orm` load failures (at a build or a swap alike), role
-  copies made legacy, and calls of `retexture` [documented: `authored.rs` `Stats`, `report`].
+  builds that skipped a set for one of the recorded reasons (other misses are not counted),
+  `_orm` load failures (at a build or a swap alike), role copies made legacy, and calls of
+  `retexture` on a shape with a saved legacy look [documented: `authored.rs` `Stats`, `report`].
   Rebuilt or discarded materials count again.
 
 ### Known limits (stage 3)
@@ -278,23 +279,30 @@ are not fixed:
   matches once the mirror replaced it, so its old diffuse stays drawn with its authored
   fields (set, mark, metallic). This predates stage 3 (`texture_swap.rs`, `nif_mirror.rs`).
 
-What holds for a texture swap while the shape fades, and its remaining gap:
+What holds for a texture swap while the shape fades, and what does not:
 
-- **SetActorAlpha and a fade on one mesh.** Whichever started second copied what the mesh
-  wore then, so its stored original can be the other's see-through copy. The swap matches
-  and copies the mesh's own material beneath both
-  (`engine/nvforever/src/effect_shaders.rs` `persistent_material`, `texture_swap.rs`), the
-  actor's alpha copies that material too rather than a fade's copy, and releasing the alpha
-  while a fade runs drops the fade's copy so its next step copies the mesh's own material.
-  Ending the two in either order then leaves the mesh's own material, or the swapped one,
-  opaque (test `texture_swap.rs`
-  `both_fades_in_either_start_and_release_order_give_back_the_own_or_swapped_material_opaque`,
-  through the production systems, not yet run in the game).
-- **Gap:** when a fade ends while the actor's alpha stays on and the fade's original is the
-  mesh's own material (the fade started first, or a swap was made), the mesh is drawn opaque
-  until the actor's alpha changes or is released; the alpha's see-through copy is not put
-  back [documented: `engine/nvf-play/src/fade.rs` `step`, `effect_shaders.rs`
-  `AlphaDrawing::sync`].
+- **SetActorAlpha and a fade on one mesh, then a swap.** Whichever of the two started
+  second copied what the mesh wore then, so its stored original can be the other's
+  see-through copy. The swap matches and copies the mesh's own material beneath both
+  (`engine/nvforever/src/effect_shaders.rs` `persistent_material`, `texture_swap.rs`), so
+  the swapped material carries the new diffuse with the mesh's own alpha, blend mode and
+  depth write, and an unnamed shape is still matched by its model's material, in both start
+  orders [documented: test `texture_swap.rs`
+  `a_swap_under_both_fades_copies_the_mesh_own_material_in_either_start_order`, through
+  `Swapping::sync`, the fade's step and `AlphaDrawing::sync` on a named shape; not seen in
+  the game].
+- **Not changed, and not whole: how the two see-through copies hand the mesh back.** With
+  no swap, two orders leave the mesh wrong after both have ended: the actor's alpha started
+  first and released first (the fade's end puts the alpha's copy back, the mesh stays
+  see-through), and the fade started first and ended first (the alpha's release puts back
+  the fade's copy, which the fade removed). The other two orders, and all four after a swap,
+  end on the mesh's own or swapped material, opaque [documented: the same test's `HELD`
+  list, each change in its own update]. While both run the drawn opacity is the one of
+  whichever copy the mesh wears, not the product of the two, and two ends in one update are
+  not covered by the test [hypothesis, from reading `fade.rs` `step` and `effect_shaders.rs`
+  `AlphaDrawing::sync`: their order there is not fixed]. This predates stage 3 and needs one
+  owner of the drawn material (base opacity x actor alpha x fade); it is left for its own
+  issue.
 
 ## Load order: per file, so ship complete sets
 
