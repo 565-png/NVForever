@@ -65,9 +65,13 @@ remain [hypothesis] until an interactive-desktop multi-rule capture runs.
   reader obtains a file before its accepted-size check; this is not a pre-read
   allocation cap.
 
-The literal `string` trait, default/missing outputs, native predicate behavior outside
-this subset, case normalization, provider version and native encoding remain
-unqualified. They explicitly refuse. No provider presence/version is advertised.
+`ysi_filename` handles only the `"filename"` trait on `ySIGetTrait` (case-insensitive):
+missing/default outputs, unsupported potentially winning predicates, conflicting
+priority/icon ties, invalid/empty receivers, and non-item forms explicitly refuse
+rather than inventing native defaults. Other traits on `ySIGetTrait` — including
+in-memory `"tag"` and `"icon"` (paired with `ySISetTrait`) as well as unhandled
+traits such as `"string"` — remain on the existing `crates/fnv-game/src/nvse_small.rs`
+handler (returning `""` when unset). No provider presence/version is advertised.
 This does **not** repair JAM sorting or establish full ySI/JAM compatibility. A
 configuration with unresolved potentially winning predicates cannot claim a filename
 merely because a lower supported rule exists. No original JSON, icons, scripts or
@@ -79,50 +83,36 @@ private paths are included.
 an inline expression when given a string variable
 ([String Variable](https://geckwiki.com/index.php?title=String_Variable),
 [Inline Expression](https://geckwiki.com/index.php?title=Inline_Expression)).
-The source-to-UI controls use `SetUIString "path" (icon)`; the additional
-`SetUIStringAlt ("path") $icon` route mirrors the original JAM icon writer's
-argument shape with independently authored paths and values [observed: original
-JAM4.6 script workload only, not original-game execution]. A bare variable token
-on the legacy call retains its existing literal-text meaning. Compiler, VM and UI
-string-argument behavior are unchanged by the fixture correction.
+The source-to-UI controls exercise `SetUIString "path" (icon)`, `SetUIStringAlt ("path") $icon`,
+and the legacy bare-token convention `SetUIString "path" icon` with independently
+authored paths and values. Compiler, VM and UI string-argument behavior are unchanged.
 
 ## Authored controls
 
-Nine source controls are in the dedicated `ysi_filename_source` test target,
-isolated because the existing file roots are process-wide. They cover inventory,
-array-element and placed receivers; source-to-existing UI filename assignment;
-multiple files and priority/ties; unknown higher/lower/decisively-false rules;
-unsupported traits/invalid receivers/missing icons; Game save/restore cache lifetime
-with retained inventory; comments versus generic strict JSON; resource bounds and
-malformed input; and authored/script-set/cleared quest flags through source and save.
-The fixtures contain independently authored configuration, items and menu XML.
+Eleven source controls live in the dedicated `ysi_filename_source` test target
+(`crates/fnv-game/tests/ysi_filename_source.rs`), isolated because the existing
+file-reader roots are process-wide. They use independently authored configuration,
+items, and menu XML to cover:
 
-Historical public source `6edb715d` executed all nine controls once: seven passed and
-two failed at their first UI filename reread. Both failing callers passed bare
-`icon` to legacy SetUIString and stored that literal token. Later assertions in
-those tests were not reached. The corrected callers use `(icon)`, preserving all
-expected filenames, receiver, inventory and save assertions. The first consumer
-control also retains the bare-token behavior and exercises explicit Alt/string
-conversion. Public source `eaff6072`, executed as merge `353657d7` with the same
-tree, then passed all nine controls once. Hosted core tests passed 3,463 with five
-ignored; engine tests passed 3,409 with three ignored; both strict Clippy checks
-and all seven required checks passed. These results qualify that exact source
-and the existing UI trait consumer, not texture loading or rendering.
+1. Explicit item, array-element, and placed-reference receivers feeding `SetUIString`
+   / `SetUIStringAlt` UI image filename traits without mutating inventory or world state.
+2. Multi-file priority resolution and explicit refusal on equal-priority distinct-tag ties.
+3. Unknown higher-priority predicates refusing, while lower or decisively-false
+   rules with unknown predicates do not block a certain winner.
+4. Invalid/empty receivers, non-item forms, and missing icons refusing without
+   side effects, while preserving existing in-memory `ySISetTrait`/`ySIGetTrait`
+   `"tag"` and `"icon"` behavior (also covered by `small_libs`).
+5. `Game` save/restore snapshot lifetime (session cache stays stable until restore,
+   which creates a fresh cache while retaining inventory).
+6. Local commented/trailing-comma JSON parsing preserving quoted content while
+   leaving generic `ReadFromJSON` strict.
+7. File-count cap (32 files) and malformed/unterminated comment refusal.
+8. Authored, script-set, and script-cleared `questItem` flags through source and save.
+9. `questItem` false-rule disqualification vs possible/malformed `questItem` refusal.
+10. Aggregate 4 MiB accepted-byte bound (exact limit accepted across two files;
+    +1 byte refused without UI/world side effects; retained error snapshot vs fresh `Game`).
+11. Aggregate 20,000 valid-rule bound (exact limit reaches final winner including
+    icon rule; +1 valid rule refused without UI/world side effects).
 
-Two additional source-to-UI controls exercise the aggregate 4 MiB accepted-byte
-bound and the aggregate 20,000 valid-rule bound. Each accepts the exact limit across
-two valid JSON files, refuses one additional byte or valid rule before UI/world
-changes, and checks retained success/error session snapshots versus a fresh Game.
-The rule control selects the final matching rule, including a separately counted
-icon rule, so it cannot pass by parsing only an initial subset. Public source `fe5cd2f0`, executed as merge `3286e5c8` with the same tree,
-passed all eleven controls exactly once, including both aggregate-cap cases.
-Core tests passed 3,465 with five ignored; engine tests passed 3,409 with three
-ignored. Both strict Clippy checks and all seven required checks passed. The
-earlier nine-case result remains scoped to its own revision. This later
-documentation-only successor changes no Rust, fixture, registry or Cargo bytes
-and has no additional runtime result. These are source/UI-trait consumer checks,
-not texture decoding, GPU, original native or installed-mod acceptance.
-
-The fixture-identical pre-quest comparator `76e26d14` remains **UNRUN**, as do the
-earlier queued `253`/`5e3` inputs; no baseline/candidate outcome is inferred. Native/provider/default/order/timing behavior, GPU texture loading
-and complete installed ySI/JAM acceptance remain unqualified.
+These are source and UI-trait consumer checks, not texture decoding, GPU rendering,
+multi-rule native parity, or complete installed ySI/JAM acceptance.
