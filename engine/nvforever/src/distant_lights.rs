@@ -337,7 +337,7 @@ fn base_kind(lo: &LoadOrder, schema: &EsmSchema, base: u32) -> BaseKind {
                 _ => return BaseKind::Other,
             };
             // A model the renderer never draws (an editor marker) gives no glow.
-            b.world_model_path().filter(|m| !crate::world::marker_model(b.form_id, m)).map_or(BaseKind::Other, |m| BaseKind::Static(m, kind))
+            b.world_model_path().filter(|m| !crate::world::is_drawn_marker(b.form_id, m)).map_or(BaseKind::Other, |m| BaseKind::Static(m, kind))
         }
         _ => BaseKind::Other,
     }

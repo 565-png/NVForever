@@ -10,6 +10,7 @@ mod bc5_field;
 pub mod camera_shot;
 pub mod data;
 pub mod guard;
+pub mod load_times;
 pub mod material_anim;
 pub mod model;
 pub mod model_glow;
