@@ -1040,8 +1040,8 @@ mod tests {
         let r = p.step(&mut ui, &[menu], &at(220.0, 140.0), &no_measure);
         assert!(!r.over_by_key, "pure pointer highlight move is not a key navigation");
         assert_eq!(p.over, Some(cancel));
-        // A same-frame pointer move onto Cancel paired with a pad press that does not
-        // move off Cancel must not claim over_by_key.
+        // A same-frame pointer move from Cancel onto Ok paired with Ok's xdown
+        // navigates Ok -> Cancel by pad, so over_by_key is true.
         let r = p.step(&mut ui, &[menu], &Input { pads: vec!["xdown".into()], ..at(120.0, 115.0) }, &no_measure);
         assert_eq!(r.over, Some((Some(cancel), Some(cancel))));
         assert!(r.over_by_key, "xdown moved Ok -> Cancel after pointer moved Cancel -> Ok");
