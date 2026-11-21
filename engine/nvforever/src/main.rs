@@ -1082,7 +1082,10 @@ fn main() -> AppExit {
     // On a processor with L3 domains of different sizes, the game's threads on the largest
     // (cpu_placement.rs): before any thread pool or other thread starts, so all of them
     // start there. Logged once the log is up.
-    let cpu_placed = cpu_placement::place(args.cpu_cache_placement);
+    let mut cpu_placed = cpu_placement::place(args.cpu_cache_placement);
+    // Rayon's global pool (the load-time data building) with the same budget, before its
+    // first use (#3148).
+    cpu_placed.size_rayon();
     if args.explore {
         eprintln!("explore: the free-camera explorer (--explore)");
     }
