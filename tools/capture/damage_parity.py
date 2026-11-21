@@ -22,8 +22,9 @@ How a hit is read:
   GetHitExtendedFlag). A sample whose Health is below the one before it is a hit; its
   row has both the health lost and JIP's figure. The shots are `player.FireWeapon` with
   the equipped weapon, as in the dismember_odds campaign (TapControl does nothing in an
-  unfocused game) [hypothesis: FireWeapon's damage is a normal shot's; a row that fits
-  no skill and condition says otherwise].
+  unfocused game). FireWeapon's damage is a normal shot's [observed 2026-11-21: on the
+  unarmoured wastelander's torso the 9mm pistol did its base damage × (0.5 + 0.5 ×
+  skill / 100), at Guns 65 and at Guns 50].
 - NVForever: the player's own shots (`NVF_PLAY_TEST_LOOK` at the same heights, then
   `NVF_PLAY_TEST_CONTROL` fire, no spread);
   each hit is the log line `combat: hit <target> on <part> for <dealt> (DT <dt>), health
@@ -59,10 +60,11 @@ CAMPAIGN = os.path.join(HERE, "observe", "damage_parity.campaign.json")
 PLACE_EVERY = 10     # the placing script's period
 FIRE_EVERY = 40      # one shot per this many loops: time for the projectile to land
 IDLE_CYCLES = 2      # fire cycles after a target's last shot before it is removed
-# Frames a second assumed when turning loops into the session's game hours: the
-# every-loop sampling slows the game [observed 2026-10-25, dismember_odds: its sessions
-# of 0.15 to 0.3 game hours]; a low guess only makes the session longer than needed.
-ASSUMED_FPS = 20.0
+# Game loops a second assumed when turning loops into the session's game hours
+# [observed 2026-11-21, the first pistol9mm session: 20,218 loops in 3.3 game hours at
+# timescale 30, 51 a second, beside four NVForever smoke games]; a low guess only makes
+# the session longer than needed.
+ASSUMED_FPS = 50.0
 TIMESCALE = 30.0
 
 # NVForever's side: seconds on the world aids' clock.
@@ -137,12 +139,28 @@ def session_hours(m):
 def place_script(m):
     """Every PLACE_EVERY loops: remove dead, finished and left-over targets; set up a
     newly placed one (restrained, its back to the player, 300 units north, Health high
-    enough to take every shot); place the next record when none is left.
+    enough to take every shot); turn a creature's or robot's AI off on the runs after
+    that, so it stands still [owner 2026-11-21: "toggle the ai when spawning the
+    creatures ... make them static"; observed the same day: with the AI turned off in
+    the run that moves it, a sentry bot, a deathclaw and a cazador stayed where
+    PlaceAtMe had put them, 700 to 3,000 units off]; place the next record when none is
+    left. People keep their AI, restrained: with it off, the shots after the first hit
+    at each aim height mostly missed them (11 of 24 shots landed on four people, against
+    every shot at the unarmed wastelander with its AI on) [observed 2026-11-21;
+    hypothesis: the hit leaves a body that no longer animates out of place].
 
     Actor values used as variables (as dismember_odds does): the player's Variable07 is
     the number of targets placed; a target's Variable01 is 0 new, 1 set up, then one more
     each fire cycle (shot j leaves when it reads 2 + j); Variable06 its number (1 first),
-    Variable03 and Variable04 its two aim heights, Variable05 its shots."""
+    Variable03 and Variable04 its two aim heights, Variable05 its shots. No variable is
+    called rW: a script declaring `ref rW` did not compile, the same script with another
+    name did [observed 2026-11-21].
+
+    A person's weapon is taken away, whichever it holds, every time the script runs: a
+    restrained person holds a drawn rifle across the chest and the shots aimed at the
+    torso hit the weapon instead (hit location 14, no health lost) [observed 2026-11-21,
+    the first pistol9mm session: powder ganger, fiend, NCR trooper and veteran ranger].
+    Creatures and robots keep theirs (it is part of the body)."""
     setup, place = [], []
     for k, t in enumerate(m["targets"]):
         aims = t["aims"]
@@ -162,10 +180,15 @@ def place_script(m):
              "      elseif rA.GetAV Variable06 != fK", "        let fD := 1",
              f"      elseif fV > fS + {1 + IDLE_CYCLES}", "        let fD := 1",
              "      endif",
-             "      if fD", "        rA.Disable", "        rA.MarkForDelete", "      else", "        let fL := fL + 1", "      endif",
+             "      if fD", "        rA.Disable", "        rA.MarkForDelete", "      else", "        let fL := fL + 1",
+             "        if rA.GetIsCreature",
+             "          if fV >= 1", "            if fV <= 2", "              rA.SetActorsAI 0", "            endif", "          endif",
+             "        else", "          let rGun := rA.GetEquippedObject 5",
+             "          if rGun", "            rA.RemoveItem rGun 1 1", "          endif", "        endif",
+             "      endif",
              "    endif", "  endif", "  let rA := GetNextRef", "loop",
              "if fL == 0"] + place + ["  endif", f"  if fK < {len(m['targets'])}", "    player.SetAV Variable07 (fK + 1)", "  endif", "endif"]
-    return {"decls": ["ref rA", "float fL", "float fV", "float fK", "float fD", "float fS"],
+    return {"decls": ["ref rA", "ref rGun", "float fL", "float fV", "float fK", "float fD", "float fS"],
             "names": [t["base"] for t in m["targets"]], "lines": lines}
 
 
@@ -202,11 +225,12 @@ def fire_script(weapon):
 
 
 def ready_script():
-    """Standing, weapon out, and healed instead of god mode (`tgm` is a toggle: a second
-    session of one game load would turn it off again)."""
+    """Standing, weapon out and mended (every shot wears it [observed 2026-11-21: 99.3 to
+    88.7 over one session's shots]), and healed instead of god mode (`tgm` is a toggle: a
+    second session of one game load would turn it off again)."""
     return {"lines": ["if player.IsSneaking != 0", "  TogglePlayerSneaking 0", "endif",
                       "if player.IsWeaponOut == 0", "  player.SetWeaponOut 1", "endif",
-                      "player.RestoreAV Health 1000"]}
+                      "player.SetWeaponHealthPerc 100", "player.RestoreAV Health 1000"]}
 
 
 def campaign(m):
@@ -218,8 +242,17 @@ def campaign(m):
                     "player.SetAngle Z 0", "player.SetAV Variable07 0",
                     ["player.AddItem {0} 1", w["weapon"]], ["player.AddItem {0} 400", w["ammo"]],
                     ["player.EquipItem {0}", w["weapon"]], ["player.EquipItem {0}", w["ammo"]],
-                    "player.SetWeaponHealthPerc 100"]
-        do_first += [f"player.SetAV {name} {value:g}" for name, value in sh["values"].items()]
+                    "player.SetWeaponHealthPerc 100",
+                    # no spread, as NVForever's run has none (NVF_PLAY_TEST_NO_SPREAD): the
+                    # weapon record as the running game holds it, nothing on disk
+                    # [observed 2026-11-21: with its spread a 9mm pistol missed one shot
+                    # in four at a head 300 units away]
+                    ["SetWeaponMinSpread 0 {0}", w["weapon"]], ["SetWeaponSpread 0 {0}", w["weapon"]]]
+        # SetAV sets the base value; ForceAV, after every SetAV (Luck is part of a skill),
+        # makes the value read the one meant whatever the save's character has on top
+        # [observed 2026-11-21: Guns read 65 after SetAV alone and the hits were a skill
+        # of 65's; 48 with ForceAV before Luck was set]
+        do_first += [f"player.{verb} {name} {value:g}" for verb in ("SetAV", "ForceAV") for name, value in sh["values"].items()]
         do_first += [["player.RemovePerk {0}", p] for p in sh.get("remove_perks") or []]
         sessions.append({
             "name": w["key"], "hours": session_hours(m),
@@ -271,7 +304,7 @@ def original_rows(m, sources):
                 continue
             parts = [[tuple(x) for x in p] for p in ob["fields"].get("parts", [])]
             head_names = [h[0] for h in ob["fields"].get("header", [])]
-            last = {}   # actor id -> (health, hits so far)
+            last = {}   # actor id -> (base, cycle count, health) of its sample before
             setup = None
             for s in ob["samples"]:
                 head = dict(zip(head_names, s.get("header") or []))
@@ -285,25 +318,33 @@ def original_rows(m, sources):
                         continue
                     rec = observe.decode_subject(raw, parts, mods)
                     target = bases.get(fid(rec.get("base")))
-                    aid, hp = raw[0].split("|")[0], rec.get("health")
-                    if target is None or hp is None:
+                    aid, hp, cycle = raw[0].split("|")[0], rec.get("health"), rec.get("cycle")
+                    if target is None or hp is None or not isinstance(cycle, (int, float)):
                         continue
                     if rec.get("dead") == 1:
                         last.pop(aid, None)
                         continue
-                    before = last.get(aid)
-                    if before is not None and hp < before - 1e-6:
+                    # a removed target's FormID goes to a later one [observed 2026-11-21:
+                    # three FormIDs served 14 targets]: another base or a cycle count
+                    # that fell is a new actor, and its Health is not the old one's
+                    was = last.get(aid)
+                    before = was[2] if was is not None and was[0] == rec.get("base") and was[1] <= cycle else None
+                    last[aid] = (rec.get("base"), cycle, hp)
+                    # no shot has left before the count reads 3
+                    # ... and a fall below 0.1 is not a shot [observed 2026-11-21: a powder
+                    # ganger's Health fell 0.01 to 0.03 every other loop for 60 loops
+                    # after it was set to 5,000; the smallest hit seen was 0.6]
+                    if before is not None and cycle >= 3 and hp < before - 0.1:
                         # shot j left when the cycle count read 2 + j and was then raised
-                        shot = int(rec["cycle"]) - 3 if isinstance(rec.get("cycle"), (int, float)) else None
+                        shot = int(cycle) - 3
                         aims = target["aims"]
-                        aim = None if shot is None else aims[min(max(shot, 0) // m["hits"], len(aims) - 1)]["name"]
+                        aim = aims[min(shot // m["hits"], len(aims) - 1)]["name"]
                         rows.append({"side": "original", "weapon": weapon, "target": target["key"], "aim": aim, "shot": shot,
                                      "damage": rec.get("hit_hp"), "health_lost": round(before - hp, 4),
                                      "health_before": before, "health_after": hp, "location": rec.get("hloc"),
                                      "critical": rec.get("hit_crit") == 1, "sneak": rec.get("hit_sneak") == 1,
                                      "explosion": rec.get("hit_expl") == 1, "limb": rec.get("hit_limb"),
                                      "dt": rec.get("dt"), "dr": rec.get("dr"), "level": rec.get("level")})
-                    last[aid] = hp
     return {"format": ROWS_FORMAT, "side": "original", "setups": setups, "rows": rows}
 
 

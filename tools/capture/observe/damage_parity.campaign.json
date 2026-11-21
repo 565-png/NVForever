@@ -115,7 +115,7 @@
  "sessions": [
   {
    "name": "pistol9mm",
-   "hours": 3.3,
+   "hours": 1.4,
    "console_first": [
     "CloseAllMenus",
     "player.SetLevel 50"
@@ -147,11 +147,24 @@
      "0x0008ED03"
     ],
     "player.SetWeaponHealthPerc 100",
+    [
+     "SetWeaponMinSpread 0 {0}",
+     "0x000E3778"
+    ],
+    [
+     "SetWeaponSpread 0 {0}",
+     "0x000E3778"
+    ],
     "player.SetAV Guns 50",
     "player.SetAV EnergyWeapons 50",
     "player.SetAV Explosives 50",
     "player.SetAV Strength 5",
     "player.SetAV Luck 5",
+    "player.ForceAV Guns 50",
+    "player.ForceAV EnergyWeapons 50",
+    "player.ForceAV Explosives 50",
+    "player.ForceAV Strength 5",
+    "player.ForceAV Luck 5",
     [
      "player.RemovePerk {0}",
      "0x00094EBA"
@@ -169,6 +182,7 @@
        "if player.IsWeaponOut == 0",
        "  player.SetWeaponOut 1",
        "endif",
+       "player.SetWeaponHealthPerc 100",
        "player.RestoreAV Health 1000"
       ]
      }
@@ -179,6 +193,7 @@
      "script": {
       "decls": [
        "ref rA",
+       "ref rGun",
        "float fL",
        "float fV",
        "float fK",
@@ -256,24 +271,24 @@
        "          rA.SetAV Variable04 70",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 10",
-       "          rA.SetAV Variable03 60",
-       "          rA.SetAV Variable04 60",
+       "          rA.SetAV Variable03 50",
+       "          rA.SetAV Variable04 50",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 11",
        "          rA.SetAV Variable03 100",
        "          rA.SetAV Variable04 100",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 12",
-       "          rA.SetAV Variable03 80",
-       "          rA.SetAV Variable04 80",
+       "          rA.SetAV Variable03 65",
+       "          rA.SetAV Variable04 65",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 13",
-       "          rA.SetAV Variable03 90",
-       "          rA.SetAV Variable04 90",
-       "          rA.SetAV Variable05 4",
-       "        elseif fK == 14",
        "          rA.SetAV Variable03 110",
        "          rA.SetAV Variable04 110",
+       "          rA.SetAV Variable05 4",
+       "        elseif fK == 14",
+       "          rA.SetAV Variable03 120",
+       "          rA.SetAV Variable04 120",
        "          rA.SetAV Variable05 4",
        "        endif",
        "        rA.SetAV Variable01 1",
@@ -287,6 +302,18 @@
        "        rA.MarkForDelete",
        "      else",
        "        let fL := fL + 1",
+       "        if rA.GetIsCreature",
+       "          if fV >= 1",
+       "            if fV <= 2",
+       "              rA.SetActorsAI 0",
+       "            endif",
+       "          endif",
+       "        else",
+       "          let rGun := rA.GetEquippedObject 5",
+       "          if rGun",
+       "            rA.RemoveItem rGun 1 1",
+       "          endif",
+       "        endif",
        "      endif",
        "    endif",
        "  endif",
@@ -420,7 +447,7 @@
   },
   {
    "name": "varmint",
-   "hours": 3.3,
+   "hours": 1.4,
    "console_first": [
     "CloseAllMenus",
     "player.SetLevel 50"
@@ -452,11 +479,24 @@
      "0x00004240"
     ],
     "player.SetWeaponHealthPerc 100",
+    [
+     "SetWeaponMinSpread 0 {0}",
+     "0x0007EA24"
+    ],
+    [
+     "SetWeaponSpread 0 {0}",
+     "0x0007EA24"
+    ],
     "player.SetAV Guns 50",
     "player.SetAV EnergyWeapons 50",
     "player.SetAV Explosives 50",
     "player.SetAV Strength 5",
     "player.SetAV Luck 5",
+    "player.ForceAV Guns 50",
+    "player.ForceAV EnergyWeapons 50",
+    "player.ForceAV Explosives 50",
+    "player.ForceAV Strength 5",
+    "player.ForceAV Luck 5",
     [
      "player.RemovePerk {0}",
      "0x00094EBA"
@@ -474,6 +514,7 @@
        "if player.IsWeaponOut == 0",
        "  player.SetWeaponOut 1",
        "endif",
+       "player.SetWeaponHealthPerc 100",
        "player.RestoreAV Health 1000"
       ]
      }
@@ -484,6 +525,7 @@
      "script": {
       "decls": [
        "ref rA",
+       "ref rGun",
        "float fL",
        "float fV",
        "float fK",
@@ -561,24 +603,24 @@
        "          rA.SetAV Variable04 70",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 10",
-       "          rA.SetAV Variable03 60",
-       "          rA.SetAV Variable04 60",
+       "          rA.SetAV Variable03 50",
+       "          rA.SetAV Variable04 50",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 11",
        "          rA.SetAV Variable03 100",
        "          rA.SetAV Variable04 100",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 12",
-       "          rA.SetAV Variable03 80",
-       "          rA.SetAV Variable04 80",
+       "          rA.SetAV Variable03 65",
+       "          rA.SetAV Variable04 65",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 13",
-       "          rA.SetAV Variable03 90",
-       "          rA.SetAV Variable04 90",
-       "          rA.SetAV Variable05 4",
-       "        elseif fK == 14",
        "          rA.SetAV Variable03 110",
        "          rA.SetAV Variable04 110",
+       "          rA.SetAV Variable05 4",
+       "        elseif fK == 14",
+       "          rA.SetAV Variable03 120",
+       "          rA.SetAV Variable04 120",
        "          rA.SetAV Variable05 4",
        "        endif",
        "        rA.SetAV Variable01 1",
@@ -592,6 +634,18 @@
        "        rA.MarkForDelete",
        "      else",
        "        let fL := fL + 1",
+       "        if rA.GetIsCreature",
+       "          if fV >= 1",
+       "            if fV <= 2",
+       "              rA.SetActorsAI 0",
+       "            endif",
+       "          endif",
+       "        else",
+       "          let rGun := rA.GetEquippedObject 5",
+       "          if rGun",
+       "            rA.RemoveItem rGun 1 1",
+       "          endif",
+       "        endif",
        "      endif",
        "    endif",
        "  endif",
@@ -725,7 +779,7 @@
   },
   {
    "name": "magnum357",
-   "hours": 3.3,
+   "hours": 1.4,
    "console_first": [
     "CloseAllMenus",
     "player.SetLevel 50"
@@ -757,11 +811,24 @@
      "0x0008ED02"
     ],
     "player.SetWeaponHealthPerc 100",
+    [
+     "SetWeaponMinSpread 0 {0}",
+     "0x0008F216"
+    ],
+    [
+     "SetWeaponSpread 0 {0}",
+     "0x0008F216"
+    ],
     "player.SetAV Guns 50",
     "player.SetAV EnergyWeapons 50",
     "player.SetAV Explosives 50",
     "player.SetAV Strength 5",
     "player.SetAV Luck 5",
+    "player.ForceAV Guns 50",
+    "player.ForceAV EnergyWeapons 50",
+    "player.ForceAV Explosives 50",
+    "player.ForceAV Strength 5",
+    "player.ForceAV Luck 5",
     [
      "player.RemovePerk {0}",
      "0x00094EBA"
@@ -779,6 +846,7 @@
        "if player.IsWeaponOut == 0",
        "  player.SetWeaponOut 1",
        "endif",
+       "player.SetWeaponHealthPerc 100",
        "player.RestoreAV Health 1000"
       ]
      }
@@ -789,6 +857,7 @@
      "script": {
       "decls": [
        "ref rA",
+       "ref rGun",
        "float fL",
        "float fV",
        "float fK",
@@ -866,24 +935,24 @@
        "          rA.SetAV Variable04 70",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 10",
-       "          rA.SetAV Variable03 60",
-       "          rA.SetAV Variable04 60",
+       "          rA.SetAV Variable03 50",
+       "          rA.SetAV Variable04 50",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 11",
        "          rA.SetAV Variable03 100",
        "          rA.SetAV Variable04 100",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 12",
-       "          rA.SetAV Variable03 80",
-       "          rA.SetAV Variable04 80",
+       "          rA.SetAV Variable03 65",
+       "          rA.SetAV Variable04 65",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 13",
-       "          rA.SetAV Variable03 90",
-       "          rA.SetAV Variable04 90",
-       "          rA.SetAV Variable05 4",
-       "        elseif fK == 14",
        "          rA.SetAV Variable03 110",
        "          rA.SetAV Variable04 110",
+       "          rA.SetAV Variable05 4",
+       "        elseif fK == 14",
+       "          rA.SetAV Variable03 120",
+       "          rA.SetAV Variable04 120",
        "          rA.SetAV Variable05 4",
        "        endif",
        "        rA.SetAV Variable01 1",
@@ -897,6 +966,18 @@
        "        rA.MarkForDelete",
        "      else",
        "        let fL := fL + 1",
+       "        if rA.GetIsCreature",
+       "          if fV >= 1",
+       "            if fV <= 2",
+       "              rA.SetActorsAI 0",
+       "            endif",
+       "          endif",
+       "        else",
+       "          let rGun := rA.GetEquippedObject 5",
+       "          if rGun",
+       "            rA.RemoveItem rGun 1 1",
+       "          endif",
+       "        endif",
        "      endif",
        "    endif",
        "  endif",
@@ -1030,7 +1111,7 @@
   },
   {
    "name": "huntrifle",
-   "hours": 3.3,
+   "hours": 1.4,
    "console_first": [
     "CloseAllMenus",
     "player.SetLevel 50"
@@ -1062,11 +1143,24 @@
      "0x0006B53C"
     ],
     "player.SetWeaponHealthPerc 100",
+    [
+     "SetWeaponMinSpread 0 {0}",
+     "0x00004333"
+    ],
+    [
+     "SetWeaponSpread 0 {0}",
+     "0x00004333"
+    ],
     "player.SetAV Guns 50",
     "player.SetAV EnergyWeapons 50",
     "player.SetAV Explosives 50",
     "player.SetAV Strength 5",
     "player.SetAV Luck 5",
+    "player.ForceAV Guns 50",
+    "player.ForceAV EnergyWeapons 50",
+    "player.ForceAV Explosives 50",
+    "player.ForceAV Strength 5",
+    "player.ForceAV Luck 5",
     [
      "player.RemovePerk {0}",
      "0x00094EBA"
@@ -1084,6 +1178,7 @@
        "if player.IsWeaponOut == 0",
        "  player.SetWeaponOut 1",
        "endif",
+       "player.SetWeaponHealthPerc 100",
        "player.RestoreAV Health 1000"
       ]
      }
@@ -1094,6 +1189,7 @@
      "script": {
       "decls": [
        "ref rA",
+       "ref rGun",
        "float fL",
        "float fV",
        "float fK",
@@ -1171,24 +1267,24 @@
        "          rA.SetAV Variable04 70",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 10",
-       "          rA.SetAV Variable03 60",
-       "          rA.SetAV Variable04 60",
+       "          rA.SetAV Variable03 50",
+       "          rA.SetAV Variable04 50",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 11",
        "          rA.SetAV Variable03 100",
        "          rA.SetAV Variable04 100",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 12",
-       "          rA.SetAV Variable03 80",
-       "          rA.SetAV Variable04 80",
+       "          rA.SetAV Variable03 65",
+       "          rA.SetAV Variable04 65",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 13",
-       "          rA.SetAV Variable03 90",
-       "          rA.SetAV Variable04 90",
-       "          rA.SetAV Variable05 4",
-       "        elseif fK == 14",
        "          rA.SetAV Variable03 110",
        "          rA.SetAV Variable04 110",
+       "          rA.SetAV Variable05 4",
+       "        elseif fK == 14",
+       "          rA.SetAV Variable03 120",
+       "          rA.SetAV Variable04 120",
        "          rA.SetAV Variable05 4",
        "        endif",
        "        rA.SetAV Variable01 1",
@@ -1202,6 +1298,18 @@
        "        rA.MarkForDelete",
        "      else",
        "        let fL := fL + 1",
+       "        if rA.GetIsCreature",
+       "          if fV >= 1",
+       "            if fV <= 2",
+       "              rA.SetActorsAI 0",
+       "            endif",
+       "          endif",
+       "        else",
+       "          let rGun := rA.GetEquippedObject 5",
+       "          if rGun",
+       "            rA.RemoveItem rGun 1 1",
+       "          endif",
+       "        endif",
        "      endif",
        "    endif",
        "  endif",
@@ -1335,7 +1443,7 @@
   },
   {
    "name": "huntrifle_ap",
-   "hours": 3.3,
+   "hours": 1.4,
    "console_first": [
     "CloseAllMenus",
     "player.SetLevel 50"
@@ -1367,11 +1475,24 @@
      "0x0013E442"
     ],
     "player.SetWeaponHealthPerc 100",
+    [
+     "SetWeaponMinSpread 0 {0}",
+     "0x00004333"
+    ],
+    [
+     "SetWeaponSpread 0 {0}",
+     "0x00004333"
+    ],
     "player.SetAV Guns 50",
     "player.SetAV EnergyWeapons 50",
     "player.SetAV Explosives 50",
     "player.SetAV Strength 5",
     "player.SetAV Luck 5",
+    "player.ForceAV Guns 50",
+    "player.ForceAV EnergyWeapons 50",
+    "player.ForceAV Explosives 50",
+    "player.ForceAV Strength 5",
+    "player.ForceAV Luck 5",
     [
      "player.RemovePerk {0}",
      "0x00094EBA"
@@ -1389,6 +1510,7 @@
        "if player.IsWeaponOut == 0",
        "  player.SetWeaponOut 1",
        "endif",
+       "player.SetWeaponHealthPerc 100",
        "player.RestoreAV Health 1000"
       ]
      }
@@ -1399,6 +1521,7 @@
      "script": {
       "decls": [
        "ref rA",
+       "ref rGun",
        "float fL",
        "float fV",
        "float fK",
@@ -1476,24 +1599,24 @@
        "          rA.SetAV Variable04 70",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 10",
-       "          rA.SetAV Variable03 60",
-       "          rA.SetAV Variable04 60",
+       "          rA.SetAV Variable03 50",
+       "          rA.SetAV Variable04 50",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 11",
        "          rA.SetAV Variable03 100",
        "          rA.SetAV Variable04 100",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 12",
-       "          rA.SetAV Variable03 80",
-       "          rA.SetAV Variable04 80",
+       "          rA.SetAV Variable03 65",
+       "          rA.SetAV Variable04 65",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 13",
-       "          rA.SetAV Variable03 90",
-       "          rA.SetAV Variable04 90",
-       "          rA.SetAV Variable05 4",
-       "        elseif fK == 14",
        "          rA.SetAV Variable03 110",
        "          rA.SetAV Variable04 110",
+       "          rA.SetAV Variable05 4",
+       "        elseif fK == 14",
+       "          rA.SetAV Variable03 120",
+       "          rA.SetAV Variable04 120",
        "          rA.SetAV Variable05 4",
        "        endif",
        "        rA.SetAV Variable01 1",
@@ -1507,6 +1630,18 @@
        "        rA.MarkForDelete",
        "      else",
        "        let fL := fL + 1",
+       "        if rA.GetIsCreature",
+       "          if fV >= 1",
+       "            if fV <= 2",
+       "              rA.SetActorsAI 0",
+       "            endif",
+       "          endif",
+       "        else",
+       "          let rGun := rA.GetEquippedObject 5",
+       "          if rGun",
+       "            rA.RemoveItem rGun 1 1",
+       "          endif",
+       "        endif",
        "      endif",
        "    endif",
        "  endif",
@@ -1640,7 +1775,7 @@
   },
   {
    "name": "huntrifle_hp",
-   "hours": 3.3,
+   "hours": 1.4,
    "console_first": [
     "CloseAllMenus",
     "player.SetLevel 50"
@@ -1672,11 +1807,24 @@
      "0x0013E443"
     ],
     "player.SetWeaponHealthPerc 100",
+    [
+     "SetWeaponMinSpread 0 {0}",
+     "0x00004333"
+    ],
+    [
+     "SetWeaponSpread 0 {0}",
+     "0x00004333"
+    ],
     "player.SetAV Guns 50",
     "player.SetAV EnergyWeapons 50",
     "player.SetAV Explosives 50",
     "player.SetAV Strength 5",
     "player.SetAV Luck 5",
+    "player.ForceAV Guns 50",
+    "player.ForceAV EnergyWeapons 50",
+    "player.ForceAV Explosives 50",
+    "player.ForceAV Strength 5",
+    "player.ForceAV Luck 5",
     [
      "player.RemovePerk {0}",
      "0x00094EBA"
@@ -1694,6 +1842,7 @@
        "if player.IsWeaponOut == 0",
        "  player.SetWeaponOut 1",
        "endif",
+       "player.SetWeaponHealthPerc 100",
        "player.RestoreAV Health 1000"
       ]
      }
@@ -1704,6 +1853,7 @@
      "script": {
       "decls": [
        "ref rA",
+       "ref rGun",
        "float fL",
        "float fV",
        "float fK",
@@ -1781,24 +1931,24 @@
        "          rA.SetAV Variable04 70",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 10",
-       "          rA.SetAV Variable03 60",
-       "          rA.SetAV Variable04 60",
+       "          rA.SetAV Variable03 50",
+       "          rA.SetAV Variable04 50",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 11",
        "          rA.SetAV Variable03 100",
        "          rA.SetAV Variable04 100",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 12",
-       "          rA.SetAV Variable03 80",
-       "          rA.SetAV Variable04 80",
+       "          rA.SetAV Variable03 65",
+       "          rA.SetAV Variable04 65",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 13",
-       "          rA.SetAV Variable03 90",
-       "          rA.SetAV Variable04 90",
-       "          rA.SetAV Variable05 4",
-       "        elseif fK == 14",
        "          rA.SetAV Variable03 110",
        "          rA.SetAV Variable04 110",
+       "          rA.SetAV Variable05 4",
+       "        elseif fK == 14",
+       "          rA.SetAV Variable03 120",
+       "          rA.SetAV Variable04 120",
        "          rA.SetAV Variable05 4",
        "        endif",
        "        rA.SetAV Variable01 1",
@@ -1812,6 +1962,18 @@
        "        rA.MarkForDelete",
        "      else",
        "        let fL := fL + 1",
+       "        if rA.GetIsCreature",
+       "          if fV >= 1",
+       "            if fV <= 2",
+       "              rA.SetActorsAI 0",
+       "            endif",
+       "          endif",
+       "        else",
+       "          let rGun := rA.GetEquippedObject 5",
+       "          if rGun",
+       "            rA.RemoveItem rGun 1 1",
+       "          endif",
+       "        endif",
        "      endif",
        "    endif",
        "  endif",
@@ -1945,7 +2107,7 @@
   },
   {
    "name": "antimateriel",
-   "hours": 3.3,
+   "hours": 1.4,
    "console_first": [
     "CloseAllMenus",
     "player.SetLevel 50"
@@ -1977,11 +2139,24 @@
      "0x0008ECFF"
     ],
     "player.SetWeaponHealthPerc 100",
+    [
+     "SetWeaponMinSpread 0 {0}",
+     "0x0008F21C"
+    ],
+    [
+     "SetWeaponSpread 0 {0}",
+     "0x0008F21C"
+    ],
     "player.SetAV Guns 50",
     "player.SetAV EnergyWeapons 50",
     "player.SetAV Explosives 50",
     "player.SetAV Strength 5",
     "player.SetAV Luck 5",
+    "player.ForceAV Guns 50",
+    "player.ForceAV EnergyWeapons 50",
+    "player.ForceAV Explosives 50",
+    "player.ForceAV Strength 5",
+    "player.ForceAV Luck 5",
     [
      "player.RemovePerk {0}",
      "0x00094EBA"
@@ -1999,6 +2174,7 @@
        "if player.IsWeaponOut == 0",
        "  player.SetWeaponOut 1",
        "endif",
+       "player.SetWeaponHealthPerc 100",
        "player.RestoreAV Health 1000"
       ]
      }
@@ -2009,6 +2185,7 @@
      "script": {
       "decls": [
        "ref rA",
+       "ref rGun",
        "float fL",
        "float fV",
        "float fK",
@@ -2086,24 +2263,24 @@
        "          rA.SetAV Variable04 70",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 10",
-       "          rA.SetAV Variable03 60",
-       "          rA.SetAV Variable04 60",
+       "          rA.SetAV Variable03 50",
+       "          rA.SetAV Variable04 50",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 11",
        "          rA.SetAV Variable03 100",
        "          rA.SetAV Variable04 100",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 12",
-       "          rA.SetAV Variable03 80",
-       "          rA.SetAV Variable04 80",
+       "          rA.SetAV Variable03 65",
+       "          rA.SetAV Variable04 65",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 13",
-       "          rA.SetAV Variable03 90",
-       "          rA.SetAV Variable04 90",
-       "          rA.SetAV Variable05 4",
-       "        elseif fK == 14",
        "          rA.SetAV Variable03 110",
        "          rA.SetAV Variable04 110",
+       "          rA.SetAV Variable05 4",
+       "        elseif fK == 14",
+       "          rA.SetAV Variable03 120",
+       "          rA.SetAV Variable04 120",
        "          rA.SetAV Variable05 4",
        "        endif",
        "        rA.SetAV Variable01 1",
@@ -2117,6 +2294,18 @@
        "        rA.MarkForDelete",
        "      else",
        "        let fL := fL + 1",
+       "        if rA.GetIsCreature",
+       "          if fV >= 1",
+       "            if fV <= 2",
+       "              rA.SetActorsAI 0",
+       "            endif",
+       "          endif",
+       "        else",
+       "          let rGun := rA.GetEquippedObject 5",
+       "          if rGun",
+       "            rA.RemoveItem rGun 1 1",
+       "          endif",
+       "        endif",
        "      endif",
        "    endif",
        "  endif",
@@ -2250,7 +2439,7 @@
   },
   {
    "name": "huntshotgun",
-   "hours": 3.3,
+   "hours": 1.4,
    "console_first": [
     "CloseAllMenus",
     "player.SetLevel 50"
@@ -2282,11 +2471,24 @@
      "0x0008ECF5"
     ],
     "player.SetWeaponHealthPerc 100",
+    [
+     "SetWeaponMinSpread 0 {0}",
+     "0x0008ED0B"
+    ],
+    [
+     "SetWeaponSpread 0 {0}",
+     "0x0008ED0B"
+    ],
     "player.SetAV Guns 50",
     "player.SetAV EnergyWeapons 50",
     "player.SetAV Explosives 50",
     "player.SetAV Strength 5",
     "player.SetAV Luck 5",
+    "player.ForceAV Guns 50",
+    "player.ForceAV EnergyWeapons 50",
+    "player.ForceAV Explosives 50",
+    "player.ForceAV Strength 5",
+    "player.ForceAV Luck 5",
     [
      "player.RemovePerk {0}",
      "0x00094EBA"
@@ -2304,6 +2506,7 @@
        "if player.IsWeaponOut == 0",
        "  player.SetWeaponOut 1",
        "endif",
+       "player.SetWeaponHealthPerc 100",
        "player.RestoreAV Health 1000"
       ]
      }
@@ -2314,6 +2517,7 @@
      "script": {
       "decls": [
        "ref rA",
+       "ref rGun",
        "float fL",
        "float fV",
        "float fK",
@@ -2391,24 +2595,24 @@
        "          rA.SetAV Variable04 70",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 10",
-       "          rA.SetAV Variable03 60",
-       "          rA.SetAV Variable04 60",
+       "          rA.SetAV Variable03 50",
+       "          rA.SetAV Variable04 50",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 11",
        "          rA.SetAV Variable03 100",
        "          rA.SetAV Variable04 100",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 12",
-       "          rA.SetAV Variable03 80",
-       "          rA.SetAV Variable04 80",
+       "          rA.SetAV Variable03 65",
+       "          rA.SetAV Variable04 65",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 13",
-       "          rA.SetAV Variable03 90",
-       "          rA.SetAV Variable04 90",
-       "          rA.SetAV Variable05 4",
-       "        elseif fK == 14",
        "          rA.SetAV Variable03 110",
        "          rA.SetAV Variable04 110",
+       "          rA.SetAV Variable05 4",
+       "        elseif fK == 14",
+       "          rA.SetAV Variable03 120",
+       "          rA.SetAV Variable04 120",
        "          rA.SetAV Variable05 4",
        "        endif",
        "        rA.SetAV Variable01 1",
@@ -2422,6 +2626,18 @@
        "        rA.MarkForDelete",
        "      else",
        "        let fL := fL + 1",
+       "        if rA.GetIsCreature",
+       "          if fV >= 1",
+       "            if fV <= 2",
+       "              rA.SetActorsAI 0",
+       "            endif",
+       "          endif",
+       "        else",
+       "          let rGun := rA.GetEquippedObject 5",
+       "          if rGun",
+       "            rA.RemoveItem rGun 1 1",
+       "          endif",
+       "        endif",
        "      endif",
        "    endif",
        "  endif",
@@ -2555,7 +2771,7 @@
   },
   {
    "name": "laser",
-   "hours": 3.3,
+   "hours": 1.4,
    "console_first": [
     "CloseAllMenus",
     "player.SetLevel 50"
@@ -2587,11 +2803,24 @@
      "0x00004485"
     ],
     "player.SetWeaponHealthPerc 100",
+    [
+     "SetWeaponMinSpread 0 {0}",
+     "0x00004336"
+    ],
+    [
+     "SetWeaponSpread 0 {0}",
+     "0x00004336"
+    ],
     "player.SetAV Guns 50",
     "player.SetAV EnergyWeapons 50",
     "player.SetAV Explosives 50",
     "player.SetAV Strength 5",
     "player.SetAV Luck 5",
+    "player.ForceAV Guns 50",
+    "player.ForceAV EnergyWeapons 50",
+    "player.ForceAV Explosives 50",
+    "player.ForceAV Strength 5",
+    "player.ForceAV Luck 5",
     [
      "player.RemovePerk {0}",
      "0x00094EBA"
@@ -2609,6 +2838,7 @@
        "if player.IsWeaponOut == 0",
        "  player.SetWeaponOut 1",
        "endif",
+       "player.SetWeaponHealthPerc 100",
        "player.RestoreAV Health 1000"
       ]
      }
@@ -2619,6 +2849,7 @@
      "script": {
       "decls": [
        "ref rA",
+       "ref rGun",
        "float fL",
        "float fV",
        "float fK",
@@ -2696,24 +2927,24 @@
        "          rA.SetAV Variable04 70",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 10",
-       "          rA.SetAV Variable03 60",
-       "          rA.SetAV Variable04 60",
+       "          rA.SetAV Variable03 50",
+       "          rA.SetAV Variable04 50",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 11",
        "          rA.SetAV Variable03 100",
        "          rA.SetAV Variable04 100",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 12",
-       "          rA.SetAV Variable03 80",
-       "          rA.SetAV Variable04 80",
+       "          rA.SetAV Variable03 65",
+       "          rA.SetAV Variable04 65",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 13",
-       "          rA.SetAV Variable03 90",
-       "          rA.SetAV Variable04 90",
-       "          rA.SetAV Variable05 4",
-       "        elseif fK == 14",
        "          rA.SetAV Variable03 110",
        "          rA.SetAV Variable04 110",
+       "          rA.SetAV Variable05 4",
+       "        elseif fK == 14",
+       "          rA.SetAV Variable03 120",
+       "          rA.SetAV Variable04 120",
        "          rA.SetAV Variable05 4",
        "        endif",
        "        rA.SetAV Variable01 1",
@@ -2727,6 +2958,18 @@
        "        rA.MarkForDelete",
        "      else",
        "        let fL := fL + 1",
+       "        if rA.GetIsCreature",
+       "          if fV >= 1",
+       "            if fV <= 2",
+       "              rA.SetActorsAI 0",
+       "            endif",
+       "          endif",
+       "        else",
+       "          let rGun := rA.GetEquippedObject 5",
+       "          if rGun",
+       "            rA.RemoveItem rGun 1 1",
+       "          endif",
+       "        endif",
        "      endif",
        "    endif",
        "  endif",
@@ -2860,7 +3103,7 @@
   },
   {
    "name": "plasma",
-   "hours": 3.3,
+   "hours": 1.4,
    "console_first": [
     "CloseAllMenus",
     "player.SetLevel 50"
@@ -2892,11 +3135,24 @@
      "0x00004485"
     ],
     "player.SetWeaponHealthPerc 100",
+    [
+     "SetWeaponMinSpread 0 {0}",
+     "0x00004344"
+    ],
+    [
+     "SetWeaponSpread 0 {0}",
+     "0x00004344"
+    ],
     "player.SetAV Guns 50",
     "player.SetAV EnergyWeapons 50",
     "player.SetAV Explosives 50",
     "player.SetAV Strength 5",
     "player.SetAV Luck 5",
+    "player.ForceAV Guns 50",
+    "player.ForceAV EnergyWeapons 50",
+    "player.ForceAV Explosives 50",
+    "player.ForceAV Strength 5",
+    "player.ForceAV Luck 5",
     [
      "player.RemovePerk {0}",
      "0x00094EBA"
@@ -2914,6 +3170,7 @@
        "if player.IsWeaponOut == 0",
        "  player.SetWeaponOut 1",
        "endif",
+       "player.SetWeaponHealthPerc 100",
        "player.RestoreAV Health 1000"
       ]
      }
@@ -2924,6 +3181,7 @@
      "script": {
       "decls": [
        "ref rA",
+       "ref rGun",
        "float fL",
        "float fV",
        "float fK",
@@ -3001,24 +3259,24 @@
        "          rA.SetAV Variable04 70",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 10",
-       "          rA.SetAV Variable03 60",
-       "          rA.SetAV Variable04 60",
+       "          rA.SetAV Variable03 50",
+       "          rA.SetAV Variable04 50",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 11",
        "          rA.SetAV Variable03 100",
        "          rA.SetAV Variable04 100",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 12",
-       "          rA.SetAV Variable03 80",
-       "          rA.SetAV Variable04 80",
+       "          rA.SetAV Variable03 65",
+       "          rA.SetAV Variable04 65",
        "          rA.SetAV Variable05 4",
        "        elseif fK == 13",
-       "          rA.SetAV Variable03 90",
-       "          rA.SetAV Variable04 90",
-       "          rA.SetAV Variable05 4",
-       "        elseif fK == 14",
        "          rA.SetAV Variable03 110",
        "          rA.SetAV Variable04 110",
+       "          rA.SetAV Variable05 4",
+       "        elseif fK == 14",
+       "          rA.SetAV Variable03 120",
+       "          rA.SetAV Variable04 120",
        "          rA.SetAV Variable05 4",
        "        endif",
        "        rA.SetAV Variable01 1",
@@ -3032,6 +3290,18 @@
        "        rA.MarkForDelete",
        "      else",
        "        let fL := fL + 1",
+       "        if rA.GetIsCreature",
+       "          if fV >= 1",
+       "            if fV <= 2",
+       "              rA.SetActorsAI 0",
+       "            endif",
+       "          endif",
+       "        else",
+       "          let rGun := rA.GetEquippedObject 5",
+       "          if rGun",
+       "            rA.RemoveItem rGun 1 1",
+       "          endif",
+       "        endif",
        "      endif",
        "    endif",
        "  endif",
