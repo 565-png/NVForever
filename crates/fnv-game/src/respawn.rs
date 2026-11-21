@@ -61,7 +61,9 @@ impl Game<'_> {
     /// Whether the actor reference `r` respawns: its base has the flag Respawn, or its
     /// template does with the template flag "Base Data" (module notes).
     pub fn respawns(&self, r: FormId) -> bool {
-        base_of(self, r).and_then(|b| self.template_source(b, r, |d| d.template_base)).is_some_and(|(_, d)| d.respawn)
+        base_of(self, r)
+            .and_then(|b| self.template_source(b, r, |d| d.template_base))
+            .is_some_and(|(id, d)| self.acbs_flag(id, d, crate::actor_values::acbs::RESPAWN, |d| d.respawn))
     }
 
     /// Whether `cell`'s encounter zone currently has "Never Resets", accounting for

@@ -702,8 +702,8 @@ One instance per scripted reference (its base form's `SCRI`; for an actor whose 
 the template flag "Script", its template's, through a leveled list the reference's pick
 [documented: GECK wiki Template Data, "Use Script: Uses the Script of the ActorBase"]. An
 actor scripted only through its template gets the lifecycle blocks OnLoad and OnReset
-and the blocks sent to it alone, not GameMode or the other per-frame blocks [design,
-until checked against the original]; which pick it is decides at each run whether a
+through the lifecycle index [design, #3228]. Existing per-frame and directed events
+continue to read the script through `Game::ref_script`. The current pick decides which
 script runs, and a reset whose new pick runs another script starts a fresh instance,
 `GameData::script_through_template`, dead-on-spawn.md §4.1, #3228), per running quest's script,
 and per scripted item in an inventory (holder, item). Instances are created on first use

@@ -165,20 +165,17 @@ What the records hold [observed: `fnvtool esm decode`, FalloutNV.esm]:
   placeholder alive so has it dead and destroyed at once [design; hypothesis: the
   original runs OnLoad when a reference's 3D loads, a loaded save's too]. References
   scripted by their own base get no OnLoad on a load, as before.
-- **Not the per-frame blocks** [design]: an actor scripted only through its template
-  runs no GameMode, MenuMode or far-frame block (`Game::template_only`), moved ones
-  included, until running a list pick's per-frame
-  script is checked against the original. The wiki's "Use Script" (Template Data: "Uses
-  the Script of the ActorBase") is the reason a later change may widen it. The blocks
-  the engine sends to one reference (OnDeath, OnStartCombat, OnHit …) already read the
-  template's script (`Game::ref_script`).
+- **Per-frame blocks** [design, #3228]: the template index schedules OnLoad and
+  OnReset. Moved actors keep their usual GameMode, MenuMode and eligible far-frame
+  runs (`Game::active_refs`, `Game::run_far_frame`). The blocks sent to one reference
+  (OnDeath, OnStartCombat, OnHit …) already read the template script (`Game::ref_script`).
 - How far the rule reaches [observed: data test
   `spawn_placeholders::the_camp_golf_herd_runs_its_placeholder_script`, FalloutNV.esm
   alone]: 1,359 references are indexed through a template only (7,597 by their own
   base), 1,157 of them whose chain may give `OblivionSpawnTestScript`; the rest may give
   17 other scripts, six of them with an OnLoad block (`VHDLegionaryScript` 32
   references, `VBSRefugeeSCRIPT` 11, `CrNightkinSCRIPT` 4, `SlaveScript` 2,
-  `VVault21FluffNPCSelf01` 1) and three with a GameMode block that does not run
+  `VVault21FluffNPCSelf01` 1) and three with a GameMode block
   (`vGlowingOneSCRIPT` 81, `CrNightkinSCRIPT` 4, `GunRunnerGuardScript` 3). At Camp Golf
   the herd's spawns 0x00168D45, 47, 4C, 4D, 4F and 50 pick the placeholder (the pick is
   seeded by the reference and every entry is level 1, so a new game and a reset pick the

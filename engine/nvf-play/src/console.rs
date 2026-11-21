@@ -50,7 +50,8 @@
 //! Log: `console: > <line>` and `console: <reply line>` for each line. Test aid
 //! `NVF_PLAY_TEST_CONSOLE=<seconds>:<line>[;<seconds>:<line>…]` opens the console and runs
 //! the line at that time (a `;` not followed by `<seconds>:` stays in the line, so a line
-//! can hold several statements) (on the world aids' clock, `crate::pause::WorldAidClock`: with
+//! can hold several statements; one line a frame, and none while the script frame has not
+//! yet answered the last, so a line never runs ahead of the one before it, #3274) (on the world aids' clock, `crate::pause::WorldAidClock`: with
 //! `NVF_PLAY_AIDS_FROM_SCRIPTS=1` the lines wait for the scripts to run); the line `click <x> <y>` clicks at that
 //! fraction of the window (0..1 from the top left), `wheel <steps>` turns the wheel (up
 //! positive), `close` closes the console.
@@ -564,10 +565,19 @@ fn typing(
     let mut wheel_steps = 0i32;
     // A world aid (`crate::pause::WorldAidClock`): with NVF_PLAY_AIDS_FROM_SCRIPTS it
     // waits for the scripts, which most lines need.
+    // One line a frame, and only once the script frame has answered the last one sent
+    // (#3274: `prid` then `damageobject` 0.2 s later ran the second before the first had
+    // selected its reference when that frame was slow).
     let now = time.world_secs();
-    while aid.0.first().is_some_and(|(t, _)| now.is_some_and(|now| *t <= now)) {
-        let (_, line) = aid.0.remove(0);
-        info!("test aid NVF_PLAY_TEST_CONSOLE: {line}");
+    let answering = script.as_deref().is_some_and(|st| !st.console.is_empty() || !st.console_out.is_empty());
+    if !answering && aid.0.first().is_some_and(|(t, _)| now.is_some_and(|now| *t <= now)) {
+        let (t, line) = aid.0.remove(0);
+        let late = now.map_or(0.0, |now| now - t);
+        if late > 0.1 {
+            info!("test aid NVF_PLAY_TEST_CONSOLE: {line} ({late:.2} s late: the last line was still being answered)");
+        } else {
+            info!("test aid NVF_PLAY_TEST_CONSOLE: {line}");
+        }
         submit.push(line);
     }
     for k in typed.iter().filter(|k| k.state.is_pressed()) {

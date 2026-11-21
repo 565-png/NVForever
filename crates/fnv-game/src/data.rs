@@ -829,6 +829,47 @@ impl ActorDef {
     pub fn keeps_out_of_water(&self) -> bool {
         (self.walks || self.flies) && !self.swims
     }
+
+    /// Reconstruct the parsed `ACBS` flag bits from this `ActorDef` (used when a
+    /// synthetic fixture populates `GameData::actors` without raw `record_fields`).
+    pub(crate) fn authored_acbs_flags(&self) -> u32 {
+        use crate::actor_values::acbs;
+        let npc = &self.sig == b"NPC_";
+        let crea = &self.sig == b"CREA";
+        let mut bits = 0u32;
+        let mut set = |on: bool, bit: u32| {
+            if on {
+                bits |= 1 << bit;
+            }
+        };
+        set(npc && self.female, acbs::FEMALE);
+        set(self.essential, acbs::ESSENTIAL);
+        set(self.respawn, acbs::RESPAWN);
+        set(npc && self.autocalc, acbs::AUTOCALC);
+        set(crea && self.swims, acbs::SWIMS);
+        set(crea && self.flies, acbs::FLIES);
+        set(crea && self.walks, acbs::WALKS);
+        set(self.pc_level_mult, acbs::PC_LEVEL_MULT);
+        set(self.no_low_level, acbs::NO_LOW_LEVEL);
+        set(self.no_blood_spray, acbs::NO_BLOOD_SPRAY);
+        set(self.no_blood_decal, acbs::NO_BLOOD_DECAL);
+        set(crea && self.no_head, acbs::NO_HEAD);
+        set(crea && self.no_right_arm, acbs::NO_RIGHT_ARM);
+        set(crea && self.no_left_arm, acbs::NO_LEFT_ARM);
+        set(crea && self.no_combat_in_water, acbs::NO_COMBAT_IN_WATER);
+        set(self.no_vats_melee, acbs::NO_VATS_MELEE);
+        set(crea && self.allow_pc_dialogue, acbs::ALLOW_PC_DIALOGUE);
+        set(crea && self.cant_open_doors, acbs::CANT_OPEN_DOORS);
+        set(crea && self.immobile, acbs::IMMOBILE);
+        set(npc && self.autocalc_service, acbs::AUTOCALC_SERVICE);
+        set(self.no_knockdowns, acbs::NO_KNOCKDOWNS);
+        set(self.not_pushable, acbs::NOT_PUSHABLE);
+        set(crea && self.allow_pickpocket, acbs::ALLOW_PICKPOCKET);
+        set(crea && self.is_ghost, acbs::IS_GHOST);
+        set(self.no_head_track, acbs::NO_HEAD_TRACK);
+        set(crea && self.invulnerable, acbs::INVULNERABLE);
+        bits
+    }
 }
 
 #[cfg(test)]
@@ -1028,8 +1069,8 @@ pub struct GameData {
     pub scripted_by_cell: BTreeMap<FormId, Vec<FormId>>,
     /// Placed actors whose base has no script of its own but may run one through its
     /// template chain (template flag "Script", any leveled pick), by cell, in FormID
-    /// order ([`GameData::script_through_template`]). They get the lifecycle blocks
-    /// (OnLoad, OnReset), not the per-frame ones (docs/spec-notes/scripts.md §7.1).
+    /// order ([`GameData::script_through_template`]). The lifecycle scheduler reads this
+    /// index for OnLoad and OnReset (docs/spec-notes/scripts.md §7.1).
     pub template_scripted_by_cell: BTreeMap<FormId, Vec<FormId>>,
     /// REPU DATA: the reputation's scale (maximum fame or infamy).
     pub reputations: HashMap<FormId, f32>,

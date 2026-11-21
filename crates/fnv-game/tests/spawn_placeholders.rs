@@ -233,7 +233,7 @@ fn a_script_from_the_template_chain_is_indexed() {
     assert_eq!(g.ref_script(FormId(PLAIN_SPAWN_REF)), None);
 }
 
-/// Scripted only through the template: OnLoad runs, GameMode does not [design].
+/// The template index schedules OnLoad for a placed actor before it moves.
 #[test]
 fn template_scripted_actors_get_on_load_but_not_game_mode() {
     let f = fixture();
@@ -318,10 +318,9 @@ fn a_restored_live_placeholder_is_killed_at_the_first_frame() {
     assert_eq!(local(&back, MIXED_REF, 1), 5.0, "the living mixed spawn ran its OnLoad again, unchanged");
 }
 
-/// An actor scripted only through its template that walked (listed as moved, which the
-/// per-frame scheduler also reads) still gets no GameMode block, nor a far frame.
+/// The per-frame scheduler still runs the template script for a moved actor.
 #[test]
-fn a_template_scripted_actor_that_moved_gets_no_game_mode() {
+fn a_template_scripted_actor_that_moved_keeps_game_mode() {
     let f = fixture();
     let mut g = game(&f);
     g.new_game();
@@ -331,9 +330,7 @@ fn a_template_scripted_actor_that_moved_gets_no_game_mode() {
     assert!(g.template_only(FormId(MIXED_REF)));
     assert!(!g.template_only(FormId(OWN_SCRIPTED_REF)));
     g.frames(3);
-    assert_eq!(local(&g, MIXED_REF, 3), 0.0, "its GameMode block does not run");
-    g.player_entered(Some(FormId(CELL_B)));
-    assert!(!g.run_far_frame(FormId(MIXED_REF)), "no far frame either");
+    assert_eq!(local(&g, MIXED_REF, 3), 1.0, "its GameMode block still runs after moving");
 }
 
 /// A placeholder an older build left alive and walking, saved in another loaded cell than

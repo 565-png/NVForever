@@ -915,6 +915,10 @@ pub struct PlayerState {
     /// a script clears them [design].
     #[serde(skip_serializing_if = "BTreeSet::is_empty", default)]
     pub enemy_of_script: BTreeSet<FormId>,
+    /// Factions the player has been expelled from (SetPCExpelled / GetPCExpelled)
+    /// [documented: GECK wiki SetPCExpelled, GetPCExpelled].
+    #[serde(skip_serializing_if = "BTreeSet::is_empty", default)]
+    pub expelled_from: BTreeSet<FormId>,
     /// SetInCharGen.
     #[serde(skip_serializing_if = "std::ops::Not::not", default)]
     pub in_chargen: bool,
@@ -2432,6 +2436,9 @@ pub struct Session {
     kept_calls: Vec<crate::delayed::Delayed>,
     /// The form lists' ListAddForm/ListRemove… edits (`Game::list_edits`), issue #2944.
     list_edits: std::collections::HashMap<FormId, Vec<FormId>>,
+    /// Session-only perk definition edits (`Lu3State::perk_edits`: entries, `SetPerkLevel`,
+    /// `SetPerkFlag`, `LNSetIsPlayable`).
+    perk_edits: std::collections::HashMap<FormId, crate::data::PerkDef>,
     /// Session-only authored package overrides (`Game::package_overrides` for forms in
     /// `GameData::package_defs`: SetPackageFlag, SetPackageLocationRadius,
     /// SetPackageTargetDistance, etc.).
@@ -3860,7 +3867,7 @@ impl<'a> Game<'a> {
             .map(|(&id, &def)| (id, def.clone()))
             .collect();
         self.package_overrides.retain(|id, _| !self.data.package_defs.contains_key(id));
-        Session { handlers, main_loop, main_loop_registrars, jip_seq, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits), package_overrides }
+        Session { handlers, main_loop, main_loop_registrars, jip_seq, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits), perk_edits: std::mem::take(&mut self.lu3.perk_edits), package_overrides }
     }
 
     /// Take over what lasts for the session ([`Game::take_session`]).
@@ -3881,6 +3888,7 @@ impl<'a> Game<'a> {
         self.save_files = s.save_files;
         self.put_kept_calls(s.kept_calls);
         self.list_edits = s.list_edits;
+        self.lu3.perk_edits = s.perk_edits;
         for (id, def) in s.package_overrides {
             self.change_package(id, |d| *d = def);
         }
@@ -5503,10 +5511,6 @@ impl<'a> Game<'a> {
         if self.cell_of(actor).is_none_or(|c| self.loaded_cells.contains(&c)) || self.world.peek(actor).is_some_and(|s| s.deleted()) {
             return false;
         }
-        // Scripted only through its template: no per-frame block (#3228).
-        if self.template_only(actor) {
-            return false;
-        }
         let Some(script) = self.ref_script(actor) else { return false };
         if !self.data.script(script).is_some_and(|u| u.tests_away_from_player()) {
             return false;
@@ -5522,20 +5526,14 @@ impl<'a> Game<'a> {
     /// export: object scripts run even for disabled references; observed: capture job
     /// `od_09a_disabled_ref_script`, a disabled skull's timer kept falling]. OnLoad at a cell
     /// load runs for disabled references too (`Game::set_loaded`).
-    ///
-    /// Actors scripted only through their template are left out, moved ones included:
-    /// they get the lifecycle blocks alone ([`Game::template_only`]) [design, #3228].
     fn active_refs(&self) -> Vec<FormId> {
-        let mut refs = self.scripted_refs_in(&self.loaded_cells);
-        refs.retain(|&r| !self.template_only(r));
-        refs
+        self.scripted_refs_in(&self.loaded_cells)
     }
 
     /// Whether `r` is an actor scripted only through its template: its base has no script
     /// of its own and takes the script from a template (template flag "Script") or is a
-    /// leveled list placed directly. Such an actor gets OnLoad, OnReset and the blocks
-    /// sent to it alone, not GameMode, MenuMode or a far frame (docs/spec-notes/scripts.md
-    /// §7.1) [design, #3228].
+    /// leveled list placed directly. Used to find moved actors for OnLoad when restoring
+    /// a save (docs/spec-notes/scripts.md §7.1) [design, #3228].
     pub fn template_only(&self, r: FormId) -> bool {
         let Some(base) = self.world.peek(r).map(|s| s.base).or_else(|| self.world.placed.get(r).map(|p| p.base)) else { return false };
         if self.data.script_of_base(base).is_some() {
@@ -5561,8 +5559,8 @@ impl<'a> Game<'a> {
 
     /// Actors placed in `cell` that are scripted only through their template
     /// ([`crate::data::GameData::template_scripted_by_cell`]), still there and not
-    /// deleted, in FormID order: they get the lifecycle blocks OnLoad and OnReset, not
-    /// the per-frame ones (docs/spec-notes/scripts.md §7.1) [design].
+    /// deleted, in FormID order. This index schedules OnLoad and OnReset
+    /// (docs/spec-notes/scripts.md §7.1) [design].
     pub(crate) fn template_scripted_in(&self, cell: FormId) -> Vec<FormId> {
         self.data
             .template_scripted_by_cell
