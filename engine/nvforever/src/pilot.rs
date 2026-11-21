@@ -2328,6 +2328,11 @@ fn threat(g: &Game, friend: Option<FormId>, feet: [f32; 3], given_up: &[FormId])
         .iter()
         .filter(|(a, _)| **a != FormId::PLAYER_REF && Some(**a) != friend && !given_up.contains(a) && !g.is_dead(**a) && g.awareness.state(**a) == fnv_game::awareness::State::Combat)
         .filter(|(_, w)| w.combat_target().is_some_and(|(t, _)| t == FormId::PLAYER_REF || Some(t) == friend))
+        // Not one running away on a Flee package: a player does not shoot a man who runs.
+        // Mr. Soren's line starts combat with the player and his flee package; shot, his
+        // OnHit turned the Van Graffs hostile and failed Birds of a Feather (round 13
+        // [observed]).
+        .filter(|(a, _)| !g.extra.get(a).and_then(|e| e.current_package).and_then(|pk| g.package_def(&pk)).is_some_and(|d| d.ty == fnv_game::package::PackageType::FleeNotCombat))
         .filter_map(|(a, _)| where_is(g, *a).map(|(cell, pos)| (*a, cell, pos)))
         .filter(|(_, _, pos)| hdist(*pos, feet) < THREAT_RANGE)
         .min_by(|a, b| hdist(a.2, feet).total_cmp(&hdist(b.2, feet)))
@@ -4451,9 +4456,14 @@ fn shoot_object(p: &mut Pilot, h: &mut Hands, name: &str, weapon: &str, a: &Acti
     (h.intent.forward, h.intent.right) = (0.0, 0.0);
     h.control.weapon_out = true;
     let cross: Option<Crosshair> = h.control.crosshair;
-    (h.player.heading, h.player.pitch) = Crosshair::aim_at(cross.as_ref(), eye, [pos[0], pos[1], pos[2] + 20.0]);
+    // At the middle of its collision, as a player aims at what is drawn; its origin can
+    // lie off it (Classic Inspiration's camera targets: a thin wall ~97 units off the
+    // origin, and no photo ever landed, round 13 [observed]). Without collision, just
+    // above the origin.
+    let aim = h.phys.world.ref_collision_middle(s.target.0).unwrap_or([pos[0], pos[1], pos[2] + 20.0]);
+    (h.player.heading, h.player.pitch) = Crosshair::aim_at(cross.as_ref(), eye, aim);
     let since = *s.firing.get_or_insert_with(|| {
-        info!("pilot: step {}: fires {weapon} at {name} from {:.0} units", p.i, hdist(eye, pos));
+        info!("pilot: step {}: fires {weapon} at {name} from {:.0} units (aimed at ({:.0}, {:.0}, {:.0}))", p.i, hdist(eye, pos), aim[0], aim[1], aim[2]);
         p.now
     });
     // A moment to turn onto it, then the trigger held (an automatic weapon fires on).
@@ -4639,6 +4649,13 @@ fn drive(
             }
         }
         let errors = h.game(|g| runner::apply_given_entries(g, &given)).unwrap_or_default();
+        // A chain played in Hardcore (its top-level `hardcore`, as the headless run's
+        // SimConfig takes it): turned on as a player turns it on. Left off, Boulder City's
+        // Hardcore chain played a normal game (round 13 [observed]).
+        if p.chain_raw["hardcore"].as_bool() == Some(true) {
+            h.game(|g| g.set_hardcore(true));
+            info!("pilot: chain {}: Hardcore mode on", p.chain);
+        }
         // In a campaign a line said in an earlier chain is said (ghost-town-gunfight opens
         // with the line intro ends on): the count is taken once, at the first chain.
         if !p.campaign || p.chains_done == 0 {
