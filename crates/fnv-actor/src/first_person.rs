@@ -129,14 +129,16 @@ pub fn shape_shows(show: Option<Show>, name: Option<&str>) -> bool {
 /// has no first-person model of its own, only a male and a female biped model
 /// [documented: GECK wiki ArmorAddon; `schemas/fnv/objects.json` ARMA], so its biped
 /// model is the one worn, a `…1st.nif` beside it taking its place as for any hand part
-/// ([`appearance`]; none of the fist weapons' addon models has one [observed: archive
-/// listings]). In FalloutNV.esm and the add-ons 21 weapons have a BIPL and no MODL, all
-/// hand-to-hand weapons whose only drawn model is a Right Hand addon (the Bladed
-/// Gauntlet's `ARMABladedGuantlet`, the brass and spiked knuckles, the deathclaw, mantis
-/// and yao guai gauntlets, Old World Blues' gloves, …) [observed: the records]; with the
-/// weapon's addons left off, the first-person view drew nothing of them (#3226,
-/// [observed: a player's log]). [hypothesis: the original draws the addon on the
-/// first-person arms, as it does on the third-person body.] A weapon with a model of its
+/// ([`appearance`]; none of the fist weapons' addon models has one [documented: asset
+/// inspection, archive listings]). In FalloutNV.esm and the add-ons 21 weapons have a
+/// BIPL and no MODL, all hand-to-hand weapons whose only model besides the ground object
+/// is a Right Hand addon (the Bladed Gauntlet's `ARMABladedGuantlet`, the brass and
+/// spiked knuckles, the deathclaw, mantis and yao guai gauntlets, Old World Blues'
+/// gloves, …) [documented: record decode]. With the weapon's addons left off, the
+/// first-person view drew nothing of the Bladed Gauntlet (#3226, [observed: a player's
+/// log]); the others have the same record shape [hypothesis: the same happened to
+/// them]. [hypothesis: the original draws the addon on the first-person arms, as it does
+/// on the third-person body.] A weapon with a model of its
 /// own (the power fist's `PowerFistRigid.NIF`, the boxing gloves, the Shishkebab) keeps
 /// the bare hand under that model in first person, as before [hypothesis].
 pub fn wears_weapon_addons(w: &Weapon) -> bool {

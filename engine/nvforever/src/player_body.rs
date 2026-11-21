@@ -780,6 +780,9 @@ struct Rig {
     sight_relief: Option<f32>,
     /// Third person: the entities drawn for the body's parts.
     drawn: Vec<Drawn>,
+    /// The forms of the appearance's parts with at least one shape spawned (a part
+    /// whose model did not load has none), in the parts' order.
+    spawned_forms: Vec<FormId>,
     /// First person: whether the rig is shown (last applied).
     shown: Option<bool>,
     /// Third person: what of the rig the camera sees (last applied).
@@ -1004,7 +1007,7 @@ struct Body {
     third: Rig,
     first: Option<Rig>,
     /// The armour addons (ARMO and WEAP BIPL members, by Editor ID) the first-person rig
-    /// wears, for the log.
+    /// wears and drew a shape of, for the log.
     first_addons: Vec<String>,
 }
 
@@ -1290,7 +1293,7 @@ impl PlayerBody {
                 weapon_model: None, weapon_emitter: None, weapon_parts: Vec::new(),
                 idle_logged: false, sights_turned: None, muzzle: None, muzzle_entity: None,
                 casing: None, casing_entity: None, sighting: None, scope_eye: None, sight_relief: None,
-                use_lens: false, drawn: Vec::new(), shown: Some(false), seen: None,
+                use_lens: false, drawn: Vec::new(), spawned_forms: Vec::new(), shown: Some(false), seen: None,
                 furniture: None, since_attack: f32::INFINITY, attack_loop: None,
                 wound_up: None, wound_hit: None, sighting2: None, attack_eject: None, ejected: false, carry: None,
             }
@@ -1971,10 +1974,6 @@ fn build(commands: &mut Commands, parent: Entity, world: &ActorWorld, ctx: &mut 
     let first_worn = first_person::first_person_worn(&world.actors, worn);
     let first_a = if first_worn.len() == worn.len() { None } else { Some(world.resolve_as(FormId::PLAYER_BASE.0, FormId::PLAYER_REF.0, Some(&first_worn), look)?) };
     let (fa, shows) = first_person::appearance(&world.actors, first_a.as_ref().unwrap_or(&a), |p| vfs.exists(p));
-    let first_addons = first_person::worn_addons(&world.actors, &first_worn, &fa)
-        .into_iter()
-        .map(|x| world.actors.armors.get(&x).and_then(|x| x.edid.clone()).unwrap_or_else(|| x.to_string()))
-        .collect();
     let first = match build_rig(commands, parent, world, ctx, &fa, View::First, Some(&shows)) {
         Ok(r) => Some(r),
         Err(e) => {
@@ -1982,6 +1981,14 @@ fn build(commands: &mut Commands, parent: Entity, world: &ActorWorld, ctx: &mut 
             None
         }
     };
+    // Of those, the ones the built rig drew a shape of (none without a rig).
+    let first_addons = first.as_ref().map_or_else(Vec::new, |r| {
+        first_person::worn_addons(&world.actors, &first_worn, &fa)
+            .into_iter()
+            .filter(|x| r.spawned_forms.contains(x))
+            .map(|x| world.actors.armors.get(&x).and_then(|x| x.edid.clone()).unwrap_or_else(|| x.to_string()))
+            .collect()
+    });
     Ok(Body { worn: worn.to_vec(), look: look.cloned(), change: world.change(FormId::PLAYER_REF.0), female: a.female, scale, third, first, first_addons })
 }
 
@@ -2041,6 +2048,7 @@ fn build_rig(commands: &mut Commands, parent: Entity, world: &ActorWorld, ctx: &
     let hide: Vec<bool> = uses.iter().map(|(i, _)| head_part(*i)).collect();
     // Third person: per part, how the first-person rig shows it.
     let arms: Vec<Option<Show>> = uses.iter().map(|(i, _)| (view == View::Third).then(|| first_person::show(&world.actors, &a.parts[*i])).flatten()).collect();
+    let part_index: Vec<usize> = uses.iter().map(|(i, _)| *i).collect();
     let mut uses: Vec<PartUse> = uses.into_iter().map(|(_, u)| u).collect();
     if view == View::First {
         // The arms take no shadow from the unseen body they are in the middle of.
@@ -2061,6 +2069,13 @@ fn build_rig(commands: &mut Commands, parent: Entity, world: &ActorWorld, ctx: &
     let drawn = (spawned.drawn.iter().zip(&spawned.part_of).zip(&spawned.shape_of))
         .map(|((&entity, &p), &s)| Drawn { entity, head: hide[p], arm: shape_shows(arms[p], uses[p].part.shapes[s].name.as_deref()) })
         .collect();
+    let mut spawned_forms: Vec<FormId> = Vec::new();
+    for &p in &spawned.part_of {
+        let form = a.parts[part_index[p]].form;
+        if !spawned_forms.contains(&form) {
+            spawned_forms.push(form);
+        }
+    }
     if view == View::First {
         // The arms rig casts no shadow on the world: the third-person body casts the
         // player's.
@@ -2121,6 +2136,7 @@ fn build_rig(commands: &mut Commands, parent: Entity, world: &ActorWorld, ctx: &
         use_lens: false,
         sight_relief: None,
         drawn,
+        spawned_forms,
         shown: None,
         seen: None,
         furniture: None,

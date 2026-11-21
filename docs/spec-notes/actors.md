@@ -2387,12 +2387,15 @@ Per prefix (length of equip / unequip in seconds; where the weapon hangs, §9.2)
   Gun Runners' Arsenal's unique one), Honest Hearts' three yao guai gauntlets, Old World
   Blues' five gloves (`NVDLC03WeapGlovesScientist`, …) and the Securitrons'
   `WeapNVSecuritronPowerFist`; their MOD4 is a ground object, so the addon is the only
-  model drawn of them [observed: the records; `fnvtool nif decode`]. An ARMA has a male
-  and a female biped model and no first-person one [documented: GECK wiki ArmorAddon;
+  model they name besides it [documented: record decode of the ten plugins; asset
+  inspection of `bladedguantlet.nif`, `fnvtool nif decode`]. An ARMA has a male and a
+  female biped model and no first-person one [documented: GECK wiki ArmorAddon;
   `schemas/fnv/objects.json` ARMA], and none of these addon models has a `…1st.nif`
-  beside it [observed: archive listings]. A player's log showed the gauntlet on the
-  third-person body and on neither the first-person arms nor in the hand there (#3226,
-  [observed]). Rule (`fnv_actor::first_person::wears_weapon_addons`,
+  beside it [documented: asset inspection, archive listings]. For the Bladed Gauntlet a
+  player's log showed the addon on the third-person body and on neither the
+  first-person arms nor in the hand there (#3226, [observed]); the other 20 have the
+  same record shape, so the same rule applies to them [hypothesis: drawn the same, not
+  seen running]. Rule (`fnv_actor::first_person::wears_weapon_addons`,
   `first_person_worn`): the first-person arms wear a held weapon's addons when the
   weapon has no model for that view (`Weapon::model_for` with no mods: no WNAM, no
   MODL), with the third-person body's slot rules (the race's right hand and an outfit's
