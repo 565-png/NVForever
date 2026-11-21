@@ -958,6 +958,8 @@ pub const NEEDS: &[(&str, &str, &str)] = &[
     // #3014: the distant objects stand where the distant LOD's blocks leave gaps.
     ("distant-objects", "distant-lod", "Needs Distant terrain and objects."),
     ("tree-distance", "distant-lod", "Needs Distant terrain and objects."),
+    // #2981: the reflections act only on authored materials, so the row greys while they are off.
+    ("authored-reflections", "authored-materials", "Needs Authored materials."),
     ("fps-counter-fps", "fps-counter", "Needs the Frame Rate Counter."),
     ("fps-counter-graph", "fps-counter", "Needs the Frame Rate Counter."),
     ("fps-counter-split", "fps-counter", "Needs the Frame Rate Counter."),
