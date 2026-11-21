@@ -155,7 +155,7 @@ fn index_states_and_counts() {
     assert!(!index.is_empty());
     assert_eq!(
         index.summary(),
-        "authored materials: 3 sets under textures\\pbr\\ (2 with _orm, 1 height only; files: 2 _orm, 2 _n, 2 _p, 2 .toml, 1 _albedo), 3 incomplete sets and 2 unmatched files ignored"
+        "authored materials: 3 sets under textures\\pbr\\ (2 with _orm, 1 height only; files: 2 _orm, 2 _n, 2 _p, 2 .toml, 1 _albedo reserved), 3 incomplete sets and 2 unmatched files ignored"
     );
 }
 
@@ -182,7 +182,7 @@ fn lookup_finds_active_sets_only() {
     // A `.tga` diffuse shares the extension-less stem.
     assert_eq!(index.lookup(r"textures\walls\a.tga").map(|f| f.stem), Some(p(r"walls\a")));
     assert_eq!(index.lookup(r"textures\walls\c.dds").map(|f| f.state()), Some(SetState::HeightOnly));
-    // `_n`, `.toml` or `_albedo` alone: nothing.
+    // `_n`, `.toml` or the reserved `_albedo` alone: nothing.
     assert_eq!(index.lookup(r"textures\walls\d.dds"), None);
     assert_eq!(index.lookup(r"textures\walls\f.dds"), None);
     assert_eq!(index.lookup(r"textures\walls\none.dds"), None);
@@ -271,17 +271,13 @@ fn scalars_not_toml_are_ignored() {
 }
 
 #[test]
-fn scalars_metal_gain_reads_clamps_and_defaults_by_albedo() {
+fn scalars_metal_gain_reads_clamps_and_defaults() {
     let f = parse_scalars(b"metal_gain = 6\n");
     assert_eq!((f.scalars.metal_gain, f.warnings.len()), (Some(6.0), 0));
-    // Set in the file: the file's, with or without `_albedo`.
-    assert_eq!(f.scalars.metal_gain_or_default(false), 6.0);
-    assert_eq!(f.scalars.metal_gain_or_default(true), 6.0);
-    // Unset: 12 for the game's diffuse, 1 for an `_albedo` (real reflectances).
-    let none = Scalars::default();
-    assert_eq!(none.metal_gain_or_default(false), DEFAULT_METAL_GAIN);
-    assert_eq!(none.metal_gain_or_default(true), DEFAULT_METAL_GAIN_WITH_ALBEDO);
-    assert_eq!((DEFAULT_METAL_GAIN, DEFAULT_METAL_GAIN_WITH_ALBEDO), (12.0, 1.0));
+    // Set in the file: the file's; unset: 12.
+    assert_eq!(f.scalars.metal_gain_or_default(), 6.0);
+    assert_eq!(Scalars::default().metal_gain_or_default(), DEFAULT_METAL_GAIN);
+    assert_eq!(DEFAULT_METAL_GAIN, 12.0);
     assert!(METAL_GAIN_RANGE.contains(&DEFAULT_METAL_GAIN));
     // Out of range: clamped with a warning; the ends are inside.
     let low = parse_scalars(b"metal_gain = 0.5\n");
@@ -297,19 +293,4 @@ fn scalars_metal_gain_reads_clamps_and_defaults_by_albedo() {
     let word = parse_scalars(b"metal_gain = \"steel\"\n");
     assert_eq!(word.scalars.metal_gain, None);
     assert_eq!(word.warnings, ["`metal_gain` is a string, not a number: ignored"]);
-}
-
-#[test]
-fn an_albedo_is_a_member_of_an_authored_set_only() {
-    let index = PbrIndex::build([p(r"walls\a_orm.dds"), p(r"walls\a_albedo.dds"), p(r"walls\b_albedo.dds"), p(r"walls\c_p.dds"), p(r"walls\c_albedo.dds")]);
-    let a = index.lookup(r"textures\walls\a.dds").unwrap();
-    assert_eq!(a.state(), SetState::Authored);
-    assert_eq!(a.path(Member::Albedo), Some(p(r"walls\a_albedo.dds")));
-    // Without `_orm` (or `_p`): no set, as for a lone `_n`.
-    assert_eq!(index.lookup(r"textures\walls\b.dds"), None);
-    assert_eq!(index.get(&p(r"walls\b")).map(|f| f.state()), Some(SetState::Incomplete));
-    // With `_p` only the set is height only: the `_albedo` is listed but changes nothing
-    // (an authored set alone draws it).
-    assert_eq!(index.lookup(r"textures\walls\c.dds").map(|f| f.state()), Some(SetState::HeightOnly));
-    assert_eq!(index.counts().albedo, 3);
 }

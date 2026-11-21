@@ -29,14 +29,10 @@ pub const DEFAULT_ROUGHNESS_SCALE: f32 = 1.0;
 /// `reflectance` when the file does not set it (F0 = 4 %).
 pub const DEFAULT_REFLECTANCE: f32 = 0.5;
 
-/// `metal_gain` when the file does not set it and the set has no `_albedo` [design: the
-/// main session's pictures of 2026-11-20, a steel weapon (the first-person minigun at noon:
-/// near black at 1, dark bronze at 6, worn steel at 12, brighter steel at 20 to 30)].
+/// `metal_gain` when the file does not set it [design, owner 2026-11-21, #3237: the
+/// pictures of 2026-11-20, a steel weapon (the first-person minigun at noon: near black at
+/// 1, dark bronze at 6, worn steel at 12, brighter steel at 20 to 30)].
 pub const DEFAULT_METAL_GAIN: f32 = 12.0;
-
-/// `metal_gain` when the file does not set it and the set has an `_albedo`, whose colours are
-/// real reflectances already [design].
-pub const DEFAULT_METAL_GAIN_WITH_ALBEDO: f32 = 1.0;
 
 /// The values a scalar file sets; `None` for a key it leaves out (or gave a value that was
 /// ignored). An unset `parallax_depth` keeps the engine's own depth.
@@ -57,10 +53,9 @@ impl Scalars {
         self.reflectance.unwrap_or(DEFAULT_REFLECTANCE)
     }
 
-    /// The set's metal gain: the file's, else [`DEFAULT_METAL_GAIN_WITH_ALBEDO`] for a set with
-    /// an `_albedo` (`has_albedo`), else [`DEFAULT_METAL_GAIN`].
-    pub fn metal_gain_or_default(&self, has_albedo: bool) -> f32 {
-        self.metal_gain.unwrap_or(if has_albedo { DEFAULT_METAL_GAIN_WITH_ALBEDO } else { DEFAULT_METAL_GAIN })
+    /// The set's metal gain: the file's, else [`DEFAULT_METAL_GAIN`].
+    pub fn metal_gain_or_default(&self) -> f32 {
+        self.metal_gain.unwrap_or(DEFAULT_METAL_GAIN)
     }
 }
 

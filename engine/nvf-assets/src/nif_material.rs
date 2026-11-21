@@ -554,10 +554,6 @@ pub struct NifSurface {
     /// kept for shapes that may take one, so a change of diffuse can apply the new one's set
     /// or go back; `None` for every other material. CPU only.
     pub legacy: Option<crate::authored::LegacyLook>,
-    /// The authored set's `_albedo` this material draws as its base colour texture in place of
-    /// the game's diffuse (#2981, `crate::authored::apply`), so a restore, a swap or an unlit
-    /// copy can tell it from a texture a caller put there; `None` otherwise. CPU only.
-    pub authored_albedo: Option<Handle<Image>>,
     /// Window environment map (`nif_spawn::window_env`; docs/spec-notes/nif.md §6 "Window
     /// glass and environment maps"): x the scale of the reflection (0: none), y 1 when
     /// [`env_mask`](Self::env_mask) is set; z, w unused. The reflection, the cube read in
@@ -682,7 +678,6 @@ impl Default for NifSurface {
             anti_tiling: false,
             metal_gain: 0.0,
             legacy: None,
-            authored_albedo: None,
             env: Vec4::ZERO,
             env_cube: None,
             env_mask: None,

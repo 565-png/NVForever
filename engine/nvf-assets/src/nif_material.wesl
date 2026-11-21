@@ -122,8 +122,8 @@ import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_mate
 // (#2981, nvf-assets authored.rs `lifted_base` is its CPU mirror): mix(base, lifted,
 // metallic), lifted = base x min(gain, 1 / brightest channel), never below base: one gain on
 // all three channels, limited so the brightest reaches 1, so the hue is kept. The game's
-// diffuse is a painted colour far darker than a metal's reflectance; gain 1 (a set with an
-// `_albedo`) leaves the base as it is.
+// diffuse is a painted colour far darker than a metal's reflectance; gain 1 leaves the base
+// as it is.
 @if(NVF_PBR_REFLECT && ENVIRONMENT_MAP && !PREPASS_PIPELINE) fn nvf_metal_base(base: vec3<f32>, gain: f32, metallic: f32) -> vec3<f32> {
     let brightest = max(max(base.r, base.g), max(base.b, 1e-4));
     let lifted = base * max(min(gain, 1.0 / brightest), 1.0);

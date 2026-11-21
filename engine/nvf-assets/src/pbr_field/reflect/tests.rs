@@ -118,7 +118,7 @@ fn expected_b() -> [[f64; 3]; PANELS.len()] {
 
 /// The expected shape of camera A's readback with the switch on (module constants' notes):
 /// metals at F_ab sums of about 0.89, 0.73 and 0.51 times the cube's level colours; the bronze
-/// at gain 1 (and its `_albedo` twin) and lifted 2.49 times.
+/// at gain 1 and lifted 2.49 times.
 fn expected_a() -> [[f64; 3]; PANELS.len()] {
     let metal = |d: Vec3, level: f32, fab: f32| {
         let s = level / (SPECULAR_LEVELS - 1) as f32;
@@ -134,7 +134,6 @@ fn expected_a() -> [[f64; 3]; PANELS.len()] {
     a[ROUGHNESS[2]] = metal(Vec3::Z, 4.5, 0.51);
     a[DIELECTRIC] = [84.0, 84.0, 87.0];
     a[LIFT1] = [16.7, 12.5, 17.7];
-    a[PAINTED] = a[LIFT1];
     a[LIFT] = a[LIFT1].map(|v| v * 2.49);
     a
 }
@@ -204,10 +203,10 @@ fn the_aid_owns_its_layer() {
     assert!(![29, 30, 31].contains(&LAYER), "apart from the culling, PBR and BC5 field layers");
 }
 
-/// Row three (metal base colour): the lift must brighten the bronze, keep its hue, and the
-/// `_albedo` must draw as the bronze, on camera A; on camera B the bronze panels agree.
+/// Row three (metal base colour): the lift must brighten the bronze and keep its hue, on
+/// camera A; on camera B the bronze panels agree.
 #[test]
-fn the_comparator_refuses_a_missing_lift_a_hue_shift_and_an_ignored_albedo() {
+fn the_comparator_refuses_a_missing_lift_and_a_hue_shift() {
     let b = measure(&frame(&expected_b())).unwrap();
     let a = measure(&frame(&expected_a())).unwrap();
     judge(&a, &b, true).unwrap_or_else(|e| panic!("{e}: {}", describe(&a, &b)));
@@ -220,13 +219,9 @@ fn the_comparator_refuses_a_missing_lift_a_hue_shift_and_an_ignored_albedo() {
     let mut clipped = expected_a();
     clipped[LIFT] = [41.9, 41.9, 88.4];
     assert!(judge(&measure(&frame(&clipped)).unwrap(), &b, true).err().is_some_and(|e| e.contains("moved the hue")));
-    // The `_albedo` ignored: the white diffuse draws as the white metal at roughness 0.5.
-    let mut ignored = expected_a();
-    ignored[PAINTED] = ignored[ROUGHNESS[1]];
-    assert!(judge(&measure(&frame(&ignored)).unwrap(), &b, true).err().is_some_and(|e| e.contains("albedo differs")));
-    // Camera B: the `_albedo` not drawn without a cube either (the albedo panel white).
+    // Camera B: a bronze panel drawn white (its diffuse lost without a cube).
     let mut b_white = expected_b();
-    b_white[PAINTED] = grey(83.0);
+    b_white[LIFT1] = grey(83.0);
     let b_white = measure(&frame(&b_white)).unwrap();
     assert!(judge(&a, &b_white, true).err().is_some_and(|e| e.contains("bronze panels differ")));
     assert!(judge(&measure(&frame(&expected_b())).unwrap(), &b_white, false).is_err(), "the switch-off run judges camera B's bronze too");

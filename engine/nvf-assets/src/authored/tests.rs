@@ -51,17 +51,6 @@ impl Pack {
             // `_orm` alone.
             ("textures/walls/nonormal.dds", dxt1.clone()),
             ("textures/pbr/walls/nonormal_orm.dds", dx10(98, 4, 4, &[0; 16])),
-            // A set with an `_albedo` (BC7, read as sRGB colour) and no scalar file.
-            ("textures/walls/painted.dds", dxt1.clone()),
-            ("textures/pbr/walls/painted_orm.dds", dx10(98, 4, 4, &[0; 16])),
-            ("textures/pbr/walls/painted_albedo.dds", dx10(98, 4, 4, &[0; 16])),
-            // An `_albedo` that is no DDS file: the game's diffuse stays.
-            ("textures/walls/smudged.dds", dxt1.clone()),
-            ("textures/pbr/walls/smudged_orm.dds", dx10(98, 4, 4, &[0; 16])),
-            ("textures/pbr/walls/smudged_albedo.dds", b"not a dds".to_vec()),
-            // An `_albedo` without `_orm`: no set.
-            ("textures/walls/lonely.dds", dxt1.clone()),
-            ("textures/pbr/walls/lonely_albedo.dds", dx10(98, 4, 4, &[0; 16])),
             // A set whose scalar file sets its metal gain.
             ("textures/walls/steel.dds", dxt1.clone()),
             ("textures/pbr/walls/steel_orm.dds", dx10(98, 4, 4, &[0; 16])),
@@ -113,7 +102,7 @@ fn the_synchronous_source_loads_a_set_by_its_exact_member_paths() {
     assert_eq!(set.stem, r"textures\pbr\walls\brick");
     assert_eq!(set.scalars, Scalars { parallax_depth: None, roughness_scale: Some(0.5), reflectance: Some(0.25), metal_gain: None });
     if std::env::var_os(METAL_GAIN_ENV).is_none() {
-        assert_eq!(set.metal_gain, fnv_pbr::DEFAULT_METAL_GAIN, "no _albedo, no metal_gain: the default for the game's diffuse");
+        assert_eq!(set.metal_gain, fnv_pbr::DEFAULT_METAL_GAIN, "no metal_gain: the default");
     }
     let normal = set.normal.clone().expect("_n");
     let none = source.authored(&source.resolve("walls/nonormal.dds")).expect("set without _n");
@@ -380,17 +369,15 @@ fn the_metal_gain_override_takes_a_gain_from_one_to_forty() {
     }
 }
 
-/// A set's gain: the override over the file over the default by `_albedo`.
+/// A set's gain: the override over the file over the default (12).
 #[test]
-fn a_sets_metal_gain_is_the_override_the_file_or_the_default_by_albedo() {
+fn a_sets_metal_gain_is_the_override_the_file_or_the_default() {
     let none = Scalars::default();
     let six = Scalars { metal_gain: Some(6.0), ..Scalars::default() };
-    assert_eq!(set_metal_gain(&none, false, None), 12.0, "the game's diffuse");
-    assert_eq!(set_metal_gain(&none, true, None), 1.0, "an _albedo holds real reflectances");
-    assert_eq!(set_metal_gain(&six, false, None), 6.0);
-    assert_eq!(set_metal_gain(&six, true, None), 6.0, "the file wins over the _albedo default");
-    assert_eq!(set_metal_gain(&six, true, Some(20.0)), 20.0, "the run's override wins over everything");
-    assert_eq!(set_metal_gain(&none, false, Some(1.0)), 1.0);
+    assert_eq!(set_metal_gain(&none, None), 12.0, "the default");
+    assert_eq!(set_metal_gain(&six, None), 6.0, "the file wins over the default");
+    assert_eq!(set_metal_gain(&six, Some(20.0)), 20.0, "the run's override wins over everything");
+    assert_eq!(set_metal_gain(&none, Some(1.0)), 1.0);
 }
 
 /// The CPU mirror of the shader's lift (nif_material.wesl `nvf_metal_base`): one gain on all
@@ -470,79 +457,4 @@ fn the_metal_gain_lane_follows_the_set_on_the_material() {
     let mut unlit = steel.clone();
     clear_for_unlit_copy(&mut unlit);
     assert_eq!(lane(&unlit), (0.0, 0.0));
-}
-
-/// `_albedo`: loaded by its exact path in the colour role (sRGB), the gain's default 1 with it
-/// and 12 when it does not load (warned once, the game's diffuse stays); alone it is no set.
-#[test]
-fn an_albedo_loads_as_colour_and_sets_the_gain_default() {
-    let pack = Pack::new();
-    let mut cache = TextureCache::default();
-    let mut images = Assets::<Image>::default();
-    let mut source = StoreTextures { textures: &mut cache, data: &pack.data, images: &mut images, formats: None };
-    let painted = source.authored(&source.resolve("walls/painted.dds")).expect("painted set");
-    let smudged = source.authored(&source.resolve("walls/smudged.dds")).expect("smudged set: its _orm loads");
-    assert!(source.authored(&source.resolve("walls/lonely.dds")).is_none(), "an _albedo without _orm is no set");
-    let brick = source.authored(&source.resolve("walls/brick.dds")).unwrap();
-    assert!(brick.albedo.is_none());
-    let albedo = painted.albedo.clone().expect("_albedo loaded");
-    assert!(smudged.albedo.is_none(), "an _albedo that does not load leaves the diffuse");
-    if std::env::var_os(METAL_GAIN_ENV).is_none() {
-        assert_eq!((painted.metal_gain, smudged.metal_gain, brick.metal_gain), (1.0, 12.0, 12.0));
-    }
-    let warned = cache.workers.authored.warned.lock().unwrap().clone();
-    assert_eq!(images.get(&albedo).unwrap().texture_descriptor.format, TextureFormat::Bc7RgbaUnormSrgb, "colour, as the game's diffuse");
-    assert!(warned.contains(r"textures\pbr\walls\smudged_albedo.dds"), "{warned:?}");
-    assert!(!warned.contains(r"textures\pbr\walls\painted_albedo.dds"), "no sRGB warning for a colour member");
-}
-
-/// Swaps with `_albedo` (`retexture`, the callers putting the new game diffuse on first): to a
-/// set with one, its `_albedo`; to a set without, the new diffuse; to no set, the new diffuse
-/// and the legacy look; restore gives back the diffuse of the texture shown last.
-#[test]
-fn a_swap_draws_the_new_sets_albedo_or_the_new_diffuse() {
-    use crate::nif_spawn::{shape_material, Props};
-    use crate::texture::bc5_tests::triangle;
-    let pack = Pack::new();
-    let mut cache = TextureCache::default();
-    let mut images = Assets::<Image>::default();
-    let props = |t: &str| {
-        let mut p = Props::default();
-        p.textures = vec![t.into()];
-        p
-    };
-    let (plain, _) = shape_material(&props(r"walls\plain.dds"), &mut triangle(), &mut cache, &pack.data, &mut images, None);
-    let (painted, _) = shape_material(&props(r"walls\painted.dds"), &mut triangle(), &mut cache, &pack.data, &mut images, None);
-    let albedo = painted.extension.authored_albedo.clone().expect("built with the _albedo");
-    assert_eq!(painted.base.base_color_texture.as_ref(), Some(&albedo));
-    // What a caller does: the new game diffuse on the copy, then the rule.
-    let mut swap = |m: &mut crate::NifMaterial, t: &str| {
-        m.base.base_color_texture = cache.get(t, true, &pack.data, &mut images, None);
-        let shown = m.base.base_color_texture.clone();
-        (retexture(m, t, &mut cache, &pack.data, &mut images, None), shown)
-    };
-    let mut m = plain.clone();
-    let (r, _) = swap(&mut m, r"walls\painted.dds");
-    assert_eq!((r, m.base.base_color_texture.as_ref()), (Retextured::Authored, Some(&albedo)), "the new set's _albedo");
-    let (r, brick_diffuse) = swap(&mut m, r"walls\brick.dds");
-    assert_eq!((r, m.base.base_color_texture.clone()), (Retextured::Authored, brick_diffuse.clone()), "a set without one: the new diffuse");
-    assert!(m.extension.authored_albedo.is_none());
-    swap(&mut m, r"walls\painted.dds");
-    let (r, plain_diffuse) = swap(&mut m, r"walls\plain.dds");
-    assert_eq!((r, m.base.base_color_texture.clone()), (Retextured::Legacy, plain_diffuse.clone()), "no set: the new diffuse");
-    // The legacy look follows the diffuse shown last; restore gives that one back.
-    let (_, painted_diffuse) = swap(&mut m, r"walls\painted.dds");
-    assert_eq!(m.extension.legacy.as_ref().unwrap().diffuse, painted_diffuse);
-    let legacy = m.extension.legacy.clone().unwrap();
-    restore(&mut m, &legacy);
-    assert_eq!(m.base.base_color_texture, painted_diffuse);
-    // SwapTexture can explicitly name the albedo file already on the material. The cache
-    // gives the same handle, now as the replacement diffuse.
-    let mut direct = painted.clone();
-    let (r, diffuse) = swap(&mut direct, r"textures\pbr\walls\painted_albedo.dds");
-    assert_eq!(r, Retextured::Legacy);
-    assert_eq!(diffuse.as_ref(), Some(&albedo));
-    assert_eq!(direct.base.base_color_texture, diffuse);
-    assert_eq!(direct.extension.legacy.as_ref().unwrap().diffuse, diffuse);
-    assert!(direct.extension.authored_albedo.is_none());
 }

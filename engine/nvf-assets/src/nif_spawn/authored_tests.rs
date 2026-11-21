@@ -63,7 +63,7 @@ impl TextureSource for SetTextures {
 const KEY: &str = r"textures\walls\brick.dds";
 
 fn set(images: &mut Assets<Image>, normal: bool, scalars: Scalars) -> AuthoredSet {
-    AuthoredSet { stem: r"textures\pbr\walls\brick".into(), orm: images.add(Image::default()), normal: normal.then(|| images.add(Image::default())), albedo: None, scalars, metal_gain: 7.0 }
+    AuthoredSet { stem: r"textures\pbr\walls\brick".into(), orm: images.add(Image::default()), normal: normal.then(|| images.add(Image::default())), scalars, metal_gain: 7.0 }
 }
 
 /// A lit, masked, glossy shape with the game's diffuse and normal map.
@@ -101,7 +101,7 @@ fn an_authored_set_fills_its_fields_over_the_legacy_ones() {
     assert_eq!(m.extension.metal_gain, s.metal_gain, "the set's metal gain in its lane");
     assert_eq!(
         m.extension.legacy,
-        Some(LegacyLook { diffuse: Some(diffuse.clone()), normal: Some(game_normal.clone()), specular: Some(game_normal), roughness: gloss_roughness(50.0), reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, scripted_tint: None })
+        Some(LegacyLook { normal: Some(game_normal.clone()), specular: Some(game_normal), roughness: gloss_roughness(50.0), reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, scripted_tint: None })
     );
 }
 
@@ -247,36 +247,4 @@ fn the_real_source_applies_sets_and_falls_back_to_legacy() {
         assert!(m.base.metallic_roughness_texture.is_none() && m.extension.emissive_rule.w == 0.0, "{name}");
         assert_eq!(m.base.reflectance, 0.3, "{name}: the legacy value");
     }
-}
-
-/// A set with an `_albedo`: drawn as the base colour texture in place of the game's diffuse,
-/// which the legacy look keeps; restore gives the diffuse back, and the material then draws as
-/// one built without the set.
-#[test]
-fn an_albedo_replaces_the_diffuse_and_restore_gives_it_back() {
-    let mut scratch = Assets::<Image>::default();
-    let mut s = set(&mut scratch, false, Scalars::default());
-    let albedo = scratch.add(Image::default());
-    s.albedo = Some(albedo.clone());
-    let mut source = SetTextures::new(Some((KEY, s.clone())));
-    let (m, _) = shape_material_with(&wall(), &mut triangle(), &mut source, Tangents::Generate);
-    let diffuse = source.handle(r"walls\brick.dds");
-    assert_eq!(m.base.base_color_texture.as_ref(), Some(&albedo), "the _albedo is the base colour texture");
-    assert_eq!(m.extension.authored_albedo.as_ref(), Some(&albedo));
-    assert_eq!(m.extension.legacy.as_ref().and_then(|l| l.diffuse.as_ref()), Some(&diffuse), "the legacy look keeps the game's diffuse");
-    assert_eq!(m.base.base_color, Color::srgba(1.0, 1.0, 1.0, 1.0), "the base colour factor (alpha included) stays");
-    let mut restored = m.clone();
-    crate::authored::restore(&mut restored, m.extension.legacy.as_ref().unwrap());
-    assert_eq!(restored.base.base_color_texture.as_ref(), Some(&diffuse));
-    assert!(restored.extension.authored_albedo.is_none());
-    // An unlit copy draws the game's diffuse, not the set's colours; a picture its caller put
-    // on it stays.
-    let mut unlit = m.clone();
-    crate::authored::clear_for_unlit_copy(&mut unlit);
-    assert_eq!((unlit.base.base_color_texture.as_ref(), unlit.extension.authored_albedo.as_ref()), (Some(&diffuse), None));
-    let picture = scratch.add(Image::default());
-    let mut screen = m.clone();
-    screen.base.base_color_texture = Some(picture.clone());
-    crate::authored::clear_for_unlit_copy(&mut screen);
-    assert_eq!(screen.base.base_color_texture.as_ref(), Some(&picture));
 }

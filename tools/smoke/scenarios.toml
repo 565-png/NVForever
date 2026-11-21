@@ -138,16 +138,15 @@ expect = [
 name = "pbr-selftest"
 kind = "tool"
 source = "[design] docs/spec-notes/pbr-materials.md (NVForever's own pack format, #2981); DDS headers [documented] MS DDS_HEADER / DDS_HEADER_DXT10. Files built in memory by fnvtool, no game data."
-note = "fnvtool pbr selftest builds a clean set (DX10 BC7 _orm, BC5_UNORM _n of another size, BC4_UNORM _p, BC7_UNORM_SRGB _albedo, a scalar file) and seven broken files in memory, runs the pbr check validator on them and passes only when exactly the seven expected findings are raised (no sRGB warning on the colour _albedo) and the clean set reads as its four formats."
+note = "fnvtool pbr selftest builds a clean set (DX10 BC7 _orm, BC5_UNORM _n of another size, BC4_UNORM _p, a scalar file) and seven broken files in memory, runs the pbr check validator on them and passes only when exactly the seven expected findings are raised and the clean set reads as its three formats."
 areas = ["graphics"]
 paths = ["crates/fnv-pbr/", "crates/fnv-dds/", "crates/fnvtool/src/pbr_cmd.rs", "crates/fnvtool/src/pbr_check.rs"]
 commands = [["pbr", "selftest"]]
 expect = [
-  { json = "selftest.verdict", schema = "fnv.pbr.check/1", equals = "pbr selftest: PASS (4 formats, 7 expected findings)", count = 1 },
+  { json = "selftest.verdict", schema = "fnv.pbr.check/1", equals = "pbr selftest: PASS (3 formats, 7 expected findings)", count = 1 },
   { json = "selftest.formats.*", schema = "fnv.pbr.check/1", equals = "BC7_UNORM", count = 1 },
   { json = "selftest.formats.*", schema = "fnv.pbr.check/1", equals = "BC5_UNORM", count = 1 },
   { json = "selftest.formats.*", schema = "fnv.pbr.check/1", equals = "BC4_UNORM", count = 1 },
-  { json = "selftest.formats.*", schema = "fnv.pbr.check/1", equals = "BC7_UNORM_SRGB", count = 1 },
   { json = "selftest.pass", schema = "fnv.pbr.check/1", equals = true, count = 1 },
   { json = "selftest.missing.#", schema = "fnv.pbr.check/1", equals = 0, count = 1 },
   { json = "selftest.unexpected.#", schema = "fnv.pbr.check/1", equals = 0, count = 1 },
@@ -33977,7 +33976,7 @@ expect = [
   "authored materials: on",
   { text = "authored reflections: on (", count = 1 },
   { text = "lights: reflection gate installed", count = 1 },
-  { text = "pbr reflect field: actual NIF material source, 13 panels (metal20+X, …), switch on, gate Installed", count = 1 },
+  { text = "pbr reflect field: actual NIF material source, 12 panels (metal20+X, …), switch on, gate Installed", count = 1 },
   { text = "pbr reflect field: camera A's cube attached (switch on)", count = 1 },
   { re = 'pbr reflect field: readback \d A \[metal20\+X=', count = 2, label = "each readback logs both cameras' panel means and the judged quantities" },
   { text = "pbr reflect field: first rendered readback PASS", count = 1 },
@@ -33990,8 +33989,8 @@ forbid = [
   { re = 'reflection gate.*(not found|not installed)' },
   { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
 ]
-note = "The reflections' fixed-cube field (the Reflections on authored materials row pinned on; the field's own cameras, not the world camera, whose cube is authored-reflections-sky's). Thirteen panels (rows one and two white diffuse; row three the metal base colour: a dark bronze diffuse at the default metal gain 12, the same at metal_gain = 1, and a white diffuse whose set's _albedo is the bronze), two cameras of one pose (Bevy's default exposure, MSAA 4x, world-view ambient 0.6 with negative alpha, no sun): camera A carries a reflection cube with a different linear colour per world face (+X red, -X cyan, +Y green, -Y magenta, +Z blue, -Z yellow; each level mixed towards their grey mean by level/5), camera B none. Judged on camera A: the five tilted smooth metals (roughness 0.2) show the face their reflection points at (+X, -X, +Y, -Y, +Z: face orientation and Bevy's z flip), the head-on metals at roughness 0.2/0.5/0.9 lie nearer the neutral mean in chromaticity as roughness rises (the level rule), the smooth one clearly blue; the legacy and zero-reflectance controls equal camera B's; the dielectric does not darken; the lifted bronze is at least 1.6 times as bright as the gain-1 bronze (about 2.5 expected: the gain limited to 1/0.40 by the bronze's red) with the same chromaticity (within 0.04), and the _albedo panel equals the gain-1 bronze. On camera B every white panel is the same white under the ambient (metallic held at 0 without a cube) and the three bronze panels the same bronze. THE THRESHOLDS (the row-three ones too, #2981 metal base colour) (pbr_field/reflect.rs) ARE SET FROM REASONING, NOT FROM READBACKS: the main session must confirm them against the first real readbacks, and compare this run's camera B means (the readback line, B [...]) with pbr-reflect-field-off's, panel for panel: they should be equal. Each run reserves a new run-* child under pbr-field-home/pbr-reflect-field-output with both cameras' readbacks (.rgba, .ppm) and the comparator reports."
-manual = "Open readback-2-a.ppm: top row red, cyan, green, magenta, blue panels (tilted); middle row a duller blue, an almost grey panel, then three white-grey panels; bottom row a dull bronze-tinted blue panel, a darker one of the same tint, and a third equal to the darker one. readback-2-b.ppm: ten identical grey panels in the top two rows, three identical bronze ones below."
+note = "The reflections' fixed-cube field (the Reflections on authored materials row pinned on; the field's own cameras, not the world camera, whose cube is authored-reflections-sky's). Twelve panels (rows one and two white diffuse; row three the metal base colour: a dark bronze diffuse at the default metal gain 12 and the same at metal_gain = 1), two cameras of one pose (Bevy's default exposure, MSAA 4x, world-view ambient 0.6 with negative alpha, no sun): camera A carries a reflection cube with a different linear colour per world face (+X red, -X cyan, +Y green, -Y magenta, +Z blue, -Z yellow; each level mixed towards their grey mean by level/5), camera B none. Judged on camera A: the five tilted smooth metals (roughness 0.2) show the face their reflection points at (+X, -X, +Y, -Y, +Z: face orientation and Bevy's z flip), the head-on metals at roughness 0.2/0.5/0.9 lie nearer the neutral mean in chromaticity as roughness rises (the level rule), the smooth one clearly blue; the legacy and zero-reflectance controls equal camera B's; the dielectric does not darken; the lifted bronze is at least 1.6 times as bright as the gain-1 bronze (about 2.5 expected: the gain limited to 1/0.40 by the bronze's red) with the same chromaticity (within 0.04). On camera B every white panel is the same white under the ambient (metallic held at 0 without a cube) and the two bronze panels the same bronze. THE THRESHOLDS (the row-three ones too, #2981 metal base colour) (pbr_field/reflect.rs) ARE SET FROM REASONING, NOT FROM READBACKS: the main session must confirm them against the first real readbacks, and compare this run's camera B means (the readback line, B [...]) with pbr-reflect-field-off's, panel for panel: they should be equal. Each run reserves a new run-* child under pbr-field-home/pbr-reflect-field-output with both cameras' readbacks (.rgba, .ppm) and the comparator reports."
+manual = "Open readback-2-a.ppm: top row red, cyan, green, magenta, blue panels (tilted); middle row a duller blue, an almost grey panel, then three white-grey panels; bottom row a dull bronze-tinted blue panel and a darker one of the same tint. readback-2-b.ppm: ten identical grey panels in the top two rows, two identical bronze ones below."
 
 [[scenario]]
 name = "pbr-reflect-field-off"
@@ -34006,7 +34005,7 @@ expect = [
   "authored materials: on",
   { text = "authored reflections: off (setting)", count = 1 },
   { text = "lights: reflection gate installed", count = 1 },
-  { text = "pbr reflect field: actual NIF material source, 13 panels (metal20+X, …), switch off, gate Installed", count = 1 },
+  { text = "pbr reflect field: actual NIF material source, 12 panels (metal20+X, …), switch off, gate Installed", count = 1 },
   { text = "pbr reflect field: camera A's cube attached (switch off)", count = 1 },
   { re = 'pbr reflect field: readback \d A \[metal20\+X=', count = 2, label = "each readback logs both cameras' panel means with the switch off" },
   { re = "pbr reflect field: first rendered readback PASS", count = 1, label = "first readback with the switch off" },
