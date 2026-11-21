@@ -562,6 +562,8 @@ struct Args {
     /// water-reflections, water-effects, terrain-height-blend, terrain-anti-tiling, cloud-shadows, terrain-shadows, heat-haze, desert-haze, and
     /// mesh-terrain-blend, which no look turns on) and choices (fxaa, smaa or taa instead of --msaa;
     /// shadow-filter-hardware or shadow-filter-temporal), for comparing them one at a time.
+    /// The switches on in vanilla are left on unless named off: no-glow, no-eye-adaptation,
+    /// no-neon-glow, no-water-mirror, no-authored-materials.
     #[arg(long, value_delimiter = ',', conflicts_with = "graphics")]
     graphics_only: Option<Vec<String>>,
     /// Ambient occlusion on at this level whatever the look (--graphics, --graphics-only)
@@ -1062,6 +1064,15 @@ fn parse_smoothing(value: &str) -> Result<nvf_play::smooth_terrain::Smoothing, S
 #[global_allocator]
 static ALLOCATOR: crash::SaysWhenEmpty = crash::SaysWhenEmpty;
 
+/// The Mod Organizer 2 folders this run reads, for the reports' redaction (#3152): the
+/// `--mo2` instance (or the one that started this process) with its mods and overwrite
+/// folders.
+fn report_mo2_folders(args: &Args) -> Vec<(std::path::PathBuf, &'static str)> {
+    let Some(instance) = args.mo2.clone().or_else(fnv_install::mo2::instance_dir) else { return Vec::new() };
+    let layout = fnv_install::mo2::Layout::open(&instance, args.profile.as_deref()).ok();
+    reports::mo2_folders(&instance, layout.as_ref())
+}
+
 fn main() -> AppExit {
     // Started as this run's exit watcher (exit_watch.rs): wait for the game's process, no game.
     if exit_watch::run_if_watcher() {
@@ -1083,7 +1094,10 @@ fn main() -> AppExit {
     // On a processor with L3 domains of different sizes, the game's threads on the largest
     // (cpu_placement.rs): before any thread pool or other thread starts, so all of them
     // start there. Logged once the log is up.
-    let cpu_placed = cpu_placement::place(args.cpu_cache_placement);
+    let mut cpu_placed = cpu_placement::place(args.cpu_cache_placement);
+    // Rayon's global pool (the load-time data building) with the same budget, before its
+    // first use (#3148).
+    cpu_placed.size_rayon();
     if args.explore {
         eprintln!("explore: the free-camera explorer (--explore)");
     }
@@ -1136,6 +1150,27 @@ fn main() -> AppExit {
         },
         None => None,
     };
+    // `--mo2` phase 2b: the profile's own saves and INI files. MO2's `settings.ini` keeps
+    // `LocalSaves` (saves in `<profile>/saves`, which MO2 maps over the game's own folder)
+    // and `LocalSettings` (the profile's copies of `Fallout.ini`/`FalloutPrefs.ini`);
+    // `initweaks.ini` holds the enabled mods' INI tweaks above them
+    // (docs/spec-notes/mod-organizer-profile.md).
+    let saves_dir = mo2.as_ref().and_then(|l| l.saves_dir());
+    if let Some(l) = &mo2 {
+        let inis = l.ini_texts();
+        if inis.is_empty() {
+            eprintln!("settings: the Mod Organizer 2 profile keeps no INI files; NVForever's own settings are used");
+        } else {
+            let names: Vec<String> = inis.iter().map(|(p, _)| p.file_name().unwrap_or_default().to_string_lossy().into_owned()).collect();
+            eprintln!("settings: INI text from the Mod Organizer 2 profile, lowest precedence first: {}", names.join(", "));
+            // The extender's INI functions read it (`nvf_play::script::set_ini_texts`).
+            nvf_play::script::set_ini_texts(inis.into_iter().map(|(_, t)| t).collect());
+        }
+        match &saves_dir {
+            Some(d) => eprintln!("saves: --load reads the Mod Organizer 2 profile's own folder ({}); NVForever's saves go to its own folder", d.display()),
+            None => eprintln!("saves: the profile keeps no local saves; --load uses NVForever's saves folder"),
+        }
+    }
     if let Some(l) = &mo2 {
         let (archives, listed) = match l.profile_archives() {
             Some((list, _)) => {
@@ -1228,7 +1263,7 @@ fn main() -> AppExit {
         eprintln!("load: {why}; opening the main menu");
     }
     let pending = match args.load.clone() {
-        Some(name) => match start_from_save(&name, &opened, &mut args) {
+        Some(name) => match start_from_save(&name, &opened, &mut args, saves_dir.as_deref()) {
             Ok(p) => Some(p),
             Err(why) => {
                 eprintln!("load: {why}; opening the main menu");
@@ -1241,18 +1276,23 @@ fn main() -> AppExit {
         None => None,
     };
     // NVForever.ini's `[Archive] SArchiveList`, in place of the shipped base list (#1142).
-    if let Some((list, from)) = nvf_play::game_start::archive_list_for_run() {
-        if fnv_vfs::set_archive_list(list.clone()).is_ok() {
-            if std::env::var(fnv_vfs::ARCHIVE_ORDER_ENV).is_ok_and(|v| !v.trim().is_empty()) {
-                eprintln!("vfs: SArchiveList from {from} not used: {} sets the whole order", fnv_vfs::ARCHIVE_ORDER_ENV);
-            } else {
-                eprintln!("vfs: SArchiveList from {from}: {}", list.join(", "));
-                // A name not in Data (a typo) is left out of the order: say so.
-                let present: Vec<String> = std::fs::read_dir(args.data())
-                    .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().to_ascii_lowercase()).collect())
-                    .unwrap_or_default();
-                for a in list.iter().filter(|a| !present.contains(&a.to_ascii_lowercase())) {
-                    eprintln!("vfs: warning: SArchiveList names {a}, which is not in {}: left out", args.data().display());
+    // Under `--mo2` the profile's list decides instead (below), so the INI's is not read at
+    // all: the VFS takes one list per run, and setting this one first would drop the
+    // profile's without a word (owner report 2026-11-18).
+    if mo2.is_none() {
+        if let Some((list, from)) = nvf_play::game_start::archive_list_for_run() {
+            if fnv_vfs::set_archive_list(list.clone()).is_ok() {
+                if std::env::var(fnv_vfs::ARCHIVE_ORDER_ENV).is_ok_and(|v| !v.trim().is_empty()) {
+                    eprintln!("vfs: SArchiveList from {from} not used: {} sets the whole order", fnv_vfs::ARCHIVE_ORDER_ENV);
+                } else {
+                    eprintln!("vfs: SArchiveList from {from}: {}", list.join(", "));
+                    // A name not in Data (a typo) is left out of the order: say so.
+                    let present: Vec<String> = std::fs::read_dir(args.data())
+                        .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().to_ascii_lowercase()).collect())
+                        .unwrap_or_default();
+                    for a in list.iter().filter(|a| !present.contains(&a.to_ascii_lowercase())) {
+                        eprintln!("vfs: warning: SArchiveList names {a}, which is not in {}: left out", args.data().display());
+                    }
                 }
             }
         }
@@ -1273,7 +1313,13 @@ fn main() -> AppExit {
                     }
                 }
             }
-            None => eprintln!("setup: the Mod Organizer 2 profile names no archive list; using the shipped default"),
+            None => {
+                if nvf_play::game_start::archive_list_for_run().is_some() {
+                    eprintln!("setup: the Mod Organizer 2 profile names no archive list; NVForever.ini's SArchiveList is not used under --mo2, so the shipped default is used");
+                } else {
+                    eprintln!("setup: the Mod Organizer 2 profile names no archive list; using the shipped default");
+                }
+            }
         }
     }
     // The archives beside a plugin in the mods folder are mounted with it. The VFS takes
@@ -1637,6 +1683,12 @@ fn main() -> AppExit {
     // `fix_smooth_terrain`), still before the first cell.
     nvf_play::smooth_terrain::set_setting(if args.no_smooth_terrain { nvf_play::smooth_terrain::Smoothing::Off } else { args.smooth_terrain.unwrap_or(nvf_play::smooth_terrain::Smoothing::DEFAULT) });
     nvf_play::smooth_terrain::fix();
+    // Authored materials (#2981): the run's state, fixed before the first material is made
+    // (the command line's, then the INI's saved row by its precedence), so cached models
+    // never mix the two; the page's row changes the next start's.
+    let authored = settings::authored_after_ini(graphics.authored_materials, play.is_some().then(|| settings::given_switches(&args, &command_line())).as_ref());
+    nvf_assets::authored::set_enabled(authored);
+    app.add_systems(Startup, move || info!("authored materials: {}", if authored { "on (sets under textures\\pbr\\ are used where a pack has them)" } else { "off (setting)" }));
     let start_upscaler = {
         let given = play.is_some().then(|| settings::given_switches(&args, &command_line()));
         let ini = given.as_ref().and_then(|_| settings::settings_text_at_start()).map(|text| settings::UpscalerIni::read(&text));
@@ -1885,7 +1937,7 @@ fn main() -> AppExit {
     .add_systems(Startup, (crash::report_start, report_archives))
     .add_systems(Startup, move || cpu_placed.report())
     .add_plugins(start_times::StartTimesPlugin)
-    .add_plugins(reports::ReportsPlugin { plugins: args.plugins.clone(), data: args.data().to_path_buf(), mo2: fnv_install::mo2::usvfs_loaded(), handoff: args.handoff.is_some(), start_kind: if args.load.is_some() { "save_load" } else { "new_game" } })
+    .add_plugins(reports::ReportsPlugin { plugins: args.plugins.clone(), data: args.data().to_path_buf(), mo2: fnv_install::mo2::usvfs_loaded(), mo2_folders: report_mo2_folders(&args), handoff: args.handoff.is_some(), start_kind: if args.load.is_some() { "save_load" } else { "new_game" } })
     .add_systems(Last, (crash::note_place, crash::test_device_lost, events_log::note_context, stray_commands::report))
     // After Bevy's window-closed exit, which writes AppExit in Last too: before it, closing
     // the window left no clean-exit line and the run was reported as a native crash (#2203).
@@ -1933,6 +1985,9 @@ fn main() -> AppExit {
         // Streaming follows the camera, which the player systems move: stream after them.
         // The loading screen sends the travel in the Input set and reads in `Last` whether
         // the renderer is done: both this frame.
+        // `--mo2` does not replace `SaveConfig`: the profile's `saves` folder is read for
+        // `--load` only (`start_from_save`), and every save NVForever makes goes to its own
+        // home folder, never into MO2's (maintainer decision 2026-11-18; #1526 phase 2b).
         app.add_plugins(nvf_play::PlayPlugin(data))
             .add_systems(Update, (worldspace::switch, world::travel, world::cell_image_space, world::cell_lighting).chain().after(nvf_play::PlaySet::Input).before(world::stream).before(sky::weather_region))
             .add_plugins(pipeline_gate::PipelineGatePlugin)
@@ -2305,8 +2360,16 @@ fn main() -> AppExit {
 /// `--load <name>`: read the save in full for the plugins opened and start at its place
 /// (the world, cell, position, view, hour and weather of `args`); why not, when it cannot
 /// be loaded.
-fn start_from_save(name: &str, opened: &world::OpenedPlugins, args: &mut Args) -> Result<nvf_play::save::PendingLoad, String> {
-    let path = nvf_play::save::SaveConfig::default().path_of(name)?;
+fn start_from_save(name: &str, opened: &world::OpenedPlugins, args: &mut Args, saves: Option<&std::path::Path>) -> Result<nvf_play::save::PendingLoad, String> {
+    // `--mo2` with the profile's own saves: a bare name is looked up in the profile's
+    // folder for reading only (main, `saves_dir`); a path is used as given. Writes always
+    // use NVForever's own folder: this config is never put in the app (maintainer decision
+    // 2026-11-18).
+    let cfg = match saves {
+        Some(d) => nvf_play::save::SaveConfig::with_dir(Some(d.to_path_buf())),
+        None => nvf_play::save::SaveConfig::default(),
+    };
+    let path = cfg.path_of(name)?;
     let plugins: Vec<fnv_save::PluginEntry> = opened.plugins.iter().map(|p| fnv_save::PluginEntry { name: p.name.clone(), size: p.file_size }).collect();
     let (mut header, body, order) = nvf_play::save::read_for_load(&path, &plugins).map_err(|e| format!("--load {name}: {e}"))?;
     // A save made with another load order: the place's FormIDs move to the current one; a
