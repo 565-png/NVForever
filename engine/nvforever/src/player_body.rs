@@ -1300,6 +1300,7 @@ impl PlayerBody {
                 worn: Vec::new(), look: None, change: fnv_actor::Change::default(),
                 female: false, scale: 1.0, third: rig(third, View::Third),
                 first: first.map(|r| rig(r, View::First)),
+                first_addons: Vec::new(),
             }),
             ..Self::default()
         }
