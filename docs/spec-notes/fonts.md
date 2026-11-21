@@ -94,6 +94,7 @@ Russian install showed is in "Seen in a Russian install" below.
 
 **Simplified Chinese.** Microsoft assigns 936 to its simplified Chinese code page and
 54936 to GB18030 [documented: [Microsoft code page identifiers](https://learn.microsoft.com/en-us/windows/win32/intl/code-page-identifiers)].
+Some Simplified Chinese translation plugins use GBK for their text [hypothesis].
 NVForever accepts `936`, `gbk` and `gb18030` for one setting. It uses the GB18030
 codec for ASCII, GBK double-byte characters and GB18030 four-byte characters. Invalid
 sequences decode with a replacement character [design].
