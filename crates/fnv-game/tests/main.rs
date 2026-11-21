@@ -46,6 +46,7 @@ mod extender_conditions;
 mod factions;
 mod fixtures_data;
 mod first_person_menu_clock;
+mod friend_hit_condition;
 mod functions;
 mod game_clock;
 mod title_menu_group;
