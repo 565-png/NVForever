@@ -336,7 +336,7 @@ def nvf_plan(m, w):
     for target in m["targets"]:
         r = ref_of(target)
         script += [f"{t:g}:call:player:PlaceAtMe:{target['base']}:1:{dist}:0",
-                   f"{t + 1:g}:call:{r}:SetRestrained:1", f"{t + 1:g}:set_av:{r}:Health:{m['target_health']}",
+                   f"{t + 1:g}:call:{r}:SetRestrained:1", f"{t + 1:g}:call:{r}:SetActorsAI:0", f"{t + 1:g}:set_av:{r}:Health:{m['target_health']}",
                    f"{t + 1:g}:moveto:{r}:player:0:{dist}:0", f"{t + 1.2:g}:call:{r}:SetAngle:z:0",
                    # a `damage` of 0 logs the value as it stands (`call:` takes no actor value name)
                    f"{t + 2:g}:damage:{r}:DamageThreshold:0", f"{t + 2.2:g}:damage:{r}:DamageResist:0"]
@@ -437,7 +437,9 @@ def nvf_rows_of(m, weapon, lines):
                          "shot": None, "damage": dealt, "health_lost": dealt, "health_before": round(after + dealt, 4),
                          "health_after": after, "location": h["part"], "critical": bool(h["crit"]),
                          "sneak": "sneak" in (h["crit"] or ""), "explosion": False, "limb": None,
-                         "dt": got.get("DamageThreshold"), "dr": got.get("DamageResist"), "hit_dt": float(h["dt"]),
+                         # the hit's own DT: what the worn armour and the actor value give together, as
+                         # the original's GetAV DamageThreshold reads [observed: combat-rules.md §18]
+                         "dt": float(h["dt"]), "dt_value": got.get("DamageThreshold"), "dr": got.get("DamageResist"),
                          "level": got.get("level"), "immune": bool(h["immune"])})
     return rows
 

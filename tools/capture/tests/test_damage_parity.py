@@ -146,9 +146,9 @@ class NVForever(unittest.TestCase):
         self.assertEqual(env["NVF_PLAY_TEST_EQUIP"], "000E3778")
         look = [x.split(":") for x in env["NVF_PLAY_TEST_LOOK"].split(",")]
         self.assertEqual(len(look), shots)
-        # the wastelander: torso below the eye, head above it
-        self.assertLess(float(look[0][2]), 0)
-        self.assertGreater(float(look[m["hits"]][2]), 0)
+        # the wastelander: the torso well below the eye, the head about level with it
+        self.assertLess(float(look[0][2]), -3)
+        self.assertLess(abs(float(look[m["hits"]][2])), 2)
         self.assertEqual({x[1] for x in look}, {"0"})
 
     def test_the_scenarios_file_is_one_the_smoke_runner_loads(self):

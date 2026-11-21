@@ -2,7 +2,7 @@
  "format": "nvf.damage.matrix/1",
  "name": "damage_parity",
  "issue": 3163,
- "note": "One hit at a time with one weapon on one actor record, at the same spot in the original and in NVForever (tools/capture/damage_parity.py; docs: tools/capture/README.md). FormIDs are FalloutNV.esm's [observed: fnvtool esm inventory]. The aim heights `z` are units above the target's feet: 85 and 120 for people as the dismember_odds campaign aimed [observed 2026-10-25]; the creatures' are guesses to tune on the first run [hypothesis]. A row is judged by where the hit landed, not by where it was aimed. `nvf_kill`: the radscorpions placed in the runway's cell and the cells east, west and north of it [observed: fnvtool world refs], dead in the save `nvfairport`; NVForever's run starts from the data, so it kills them first. `eye`: the original's muzzle height standing [observed 2026-10-25, dismember_odds]; `nvf_eye`: NVForever's eye height (engine/nvf-play/src/player.rs EYE_HEIGHT).",
+ "note": "One hit at a time with one weapon on one actor record, at the same spot in the original and in NVForever (tools/capture/damage_parity.py; docs: tools/capture/README.md). FormIDs are FalloutNV.esm's [observed: fnvtool esm inventory]. The aim heights `z` are units above the target's feet: 85 and 120 for people as the dismember_odds campaign aimed [observed 2026-10-25]; the creatures' are guesses to tune on the first run [hypothesis]. A row is judged by where the hit landed, not by where it was aimed. `nvf_kill`: the radscorpions placed in the runway's cell and the cells east, west and north of it [observed: fnvtool world refs], dead in the save `nvfairport`; NVForever's run starts from the data, so it kills them first. `eye`: the original's muzzle height standing [observed 2026-10-25, dismember_odds]; `nvf_eye`: the height NVForever's first-person shots leave from, standing [observed 2026-11-21: with 121, aims 112 to 124 above a wastelander's feet all landed on the head and 85 on the torso; with 112 the head aim went over it].",
  "save": "nvfairport",
  "place": {
   "marker": "0x0013DA13",
@@ -16,7 +16,7 @@
   "values": {"Guns": 50, "EnergyWeapons": 50, "Explosives": 50, "Strength": 5, "Luck": 5},
   "remove_perks": ["0x00094EBA"],
   "eye": 120,
-  "nvf_eye": 112
+  "nvf_eye": 121
  },
  "hits": 4,
  "target_health": 5000,
