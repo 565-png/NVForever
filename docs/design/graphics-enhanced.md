@@ -611,6 +611,15 @@ over the frames instead of by alpha to coverage.
   and its depth prepass texture can disagree; the passes that bind the depth (ambient
   occlusion, sun shafts, TAA, the image-space blur) now go by the texture's own sample count
   and skip that frame (before, a validation error ended the run).
+- Switching TAA off while the game runs (another anti-aliasing choice, or a temporal upscaler
+  taking over, which turns native TAA off) [design, #2955]: the camera keeps its render-world
+  view, and Bevy's sync takes only the TAA marker off it, so the pass's own state on that view
+  (its pipeline, history pair and uniform) is dropped in the same frame and the history with
+  it, and the pass runs only on a view that carries the marker this frame (log: `taa: off for
+  a view: its pass state and history dropped`). Before, the pass went on blending the history
+  frozen at the switch into every frame (a faint still picture over the view under FSR or DLSS
+  until a load). Turned on again, the history starts over on the first frame (`taa: on for a
+  view: its history starts over`).
 - Looks [observed 2026-10-12, Goodsprings noon, standing, and walking while turning 40 degrees a
   second]: edges as smooth as MSAA 4x standing still, plants' cut-outs smoother; textures a
   little softer standing still and clearly softer while the view moves (the usual TAA trade);

@@ -24,6 +24,14 @@ Design and measurements: [fsr-upscaling](../design/fsr-upscaling.md).
 - [engineering choice] Water, refraction and blended particles keep their depth and blend
   behaviour. A mask made from the opaque-only and the final HDR colour lowers FSR's
   accumulation where those surfaces change the image.
+- [design] An effective temporal upscaler (FSR or DLSS) replaces native TAA, and TAA leaves
+  nothing behind when it is turned off while the game runs: no TAA pass runs on a view that no
+  longer carries the TAA marker, and the TAA pass state and history on that view are dropped
+  the same frame (#2955; `taa.rs` `drop_stale`). Bevy removes only the extracted marker from
+  the render-world entity, which lives on [documented: bevy_extract 0.20.1
+  `sync_component.rs`, the removal observer removes `SyncComponent::Target`, by default the
+  component itself]. A requested upscaler that does not take effect leaves native TAA on
+  (`upscaler::effective_temporal`). TAA turned on again starts its history over.
 - [engineering choice] Vulkan only to begin with. Other backends keep native rendering.
   No frame generation.
 
