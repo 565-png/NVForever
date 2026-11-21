@@ -526,7 +526,13 @@ python tools/smoke run --scenarios <dir>/damage-parity.toml --all --no-merge --o
 python tools/capture/damage_parity.py nvforever <dir>/logs -o <dir>/nvforever.rows.json
 
 python tools/capture/damage_parity.py compare C:/fnv-private/capture/observe/damage_parity/original.rows.json <dir>/nvforever.rows.json --text
+python tools/capture/damage_parity.py rule <dir>/nvforever.rows.json
 ```
+- `rule` judges one side's rows alone, each hit by its own DT and DR, against the rule
+  measured in the original (docs/spec-notes/damage-armour.md) with the weapons' `figures`
+  of the matrix, and lists the body part multiplier each part showed. It is the check
+  to trust where `compare` says "the target's dt differs": leveled outfits dress the same
+  record differently from one spawn to the next, in both games.
 - The original's shots are `player.FireWeapon` with the equipped weapon and its hits are
   read every game loop (Health, and the last hit as JIP LN NVSE reports it: the campaign
   needs JIP installed); NVForever's are the player's own shots and its `combat: hit` log

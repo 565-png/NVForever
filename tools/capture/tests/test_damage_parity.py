@@ -230,5 +230,51 @@ class Compare(unittest.TestCase):
             self.assertEqual(dp.main(["compare", a, os.path.join(d, "missing.json")]), 1)
 
 
+class Rule(unittest.TestCase):
+    """The measured rule (docs/spec-notes/damage-armour.md) on rows of either side."""
+
+    def rows(self, side, items):
+        return {"format": dp.ROWS_FORMAT, "side": side, "setups": [],
+                "rows": [{"side": side, "weapon": w, "target": "t", "aim": "torso", "damage": dmg, "critical": crit, "sneak": False,
+                          "explosion": False, "location": loc, "dt": dt, "dr": dr} for w, dmg, crit, loc, dt, dr in items]}
+
+    def test_the_original_s_rows_carry_the_dt_before_the_ammunition(self):
+        m = dp.load_matrix()
+        doc = dp.rule_check(m, self.rows("original", [
+            ("pistol9mm", 8.0, False, 0.0, 4.0, 0.0),          # 12 - 4
+            ("pistol9mm", 4.8, False, 1.0, 11.0, 0.0),         # the floor's 2.4, the head's x2
+            ("pistol9mm", 2.4, False, 0.0, 21.0, 30.0),        # DR does not cut the floor
+            ("huntrifle_hp", 7.8, False, 0.0, 25.0, 0.0),      # a fifth of 39, not of 68.25
+            ("huntrifle_hp", 61.075, True, 0.0, 24.0, 30.0),   # (91 x 1.75 - 72) x 0.7
+            ("huntshotgun", 16.0, True, 0.0, 5.0, 0.0),        # (7.5 + 10) x 1.2 - 5
+            ("plasma", 9.275, False, 0.0, 24.0, 30.0),         # (35.25 - 22) x 0.7
+            ("pistol9mm", 13.5, False, 1.0, 11.0, 0.0),        # the part's x2 before DT: not the rule
+        ]))
+        self.assertEqual((doc["fits"], len(doc["misfits"])), (7, 1))
+        self.assertEqual(doc["misfits"][0]["rule"], 2.4)
+        self.assertEqual(doc["parts"]["t / 1.0"], {"2": 1})
+
+    def test_nvforever_s_rows_carry_the_hit_s_own_dt_rounded(self):
+        m = dp.load_matrix()
+        doc = dp.rule_check(m, self.rows("nvforever", [
+            ("huntrifle_hp", 23.2, False, "Torso", 45.0, 0.0),  # 68.25 - 45: the DT is after the ammunition's x3
+            ("magnum357", 9.0, False, "Torso", 10.0, 0.0),      # a DT of 10.5 printed as 10
+            ("magnum357", 28.5, False, "Head", 10.0, 0.0),      # 19.5 x 2 - 10.5
+        ]))
+        self.assertEqual((doc["fits"], [x["damage"] for x in doc["misfits"]]), (2, [28.5]))
+
+    def test_the_command_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            a = os.path.join(d, "o.json")
+            with open(a, "w") as f:
+                json.dump(self.rows("original", [("pistol9mm", 13.5, False, 1.0, 11.0, 0.0)]), f)
+            self.assertEqual(dp.main(["rule", a, "-o", os.path.join(d, "r.json")]), 0)
+            self.assertEqual(dp.main(["rule", a, "-o", os.path.join(d, "r.json"), "--fail-on-misfit"]), 2)
+
+    def test_every_weapon_has_its_figures(self):
+        for w in dp.load_matrix()["weapons"]:
+            self.assertGreater(w["figures"]["damage"], 0, w["key"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -81,6 +81,18 @@ ABS_TOL = 0.06
 REL_TOL = 0.005
 
 
+# The `rule` check: the body part multipliers the matrix's records showed in the original
+# (the head's 2, the sentry bot's shielded part's 0.25, every other part 1) [observed
+# 2026-11-21]; a hit on a part of another multiplier shows as a misfit to look at. And
+# how far NVForever's log rounds: its hit line prints the damage to one decimal and the
+# DT to a whole number.
+PART_MULTS = [1.0, 2.0, 0.25]
+RULE_TOL = 0.011
+NVF_DAMAGE_ROUND = 0.05
+NVF_DT_ROUND = 0.5
+RULE_FORMAT = "nvf.damage.rule/1"
+
+
 class InputError(Exception):
     pass
 
@@ -341,14 +353,16 @@ def nvf_plan(m, w):
                    # a `damage` of 0 logs the value as it stands (`call:` takes no actor value name)
                    f"{t + 2:g}:damage:{r}:DamageThreshold:0", f"{t + 2.2:g}:damage:{r}:DamageResist:0"]
         t += NVF_SETUP
+        # a slow action (a bolt to work) names its own seconds between shots: `nvf_shot`
+        every = w.get("nvf_shot", NVF_SHOT)
         for g, aim in enumerate(target["aims"]):
             script.append(f"{t:g}:call:{r}:{NVF_MARKS[g]}")
             for i in range(m["hits"]):
-                at = t + 0.5 + i * NVF_SHOT
+                at = t + 0.5 + i * every
                 # `fire` presses Use, the second lets it go: one shot of a weapon that is not automatic
                 look.append(f"{at:g}:0:{pitch_of(m, aim['z']):.2f}")
                 control += [f"{at + 0.3:g}:fire", f"{at + 0.45:g}:fire"]
-            t += 0.5 + m["hits"] * NVF_SHOT
+            t += 0.5 + m["hits"] * every
             control.append(f"{t:g}:reload")
             t += NVF_RELOAD
         script.append(f"{t:g}:call:{r}:Disable")
@@ -538,6 +552,65 @@ def compare_text(doc):
     return "\n".join(out)
 
 
+# --------------------------------------------------------------------------- rule
+
+def ammo_dt(w, dt):
+    """The target's DT after the ammunition's DT Mod (`ammo_dt`: ["multiply", 3])."""
+    op, value = w["figures"].get("ammo_dt", ["subtract", 0])
+    return dt * value if op == "multiply" else max(dt - value, 0.0)
+
+
+def rule_damage(w, critical, dt, dr):
+    """What docs/spec-notes/damage-armour.md's rule makes of one hit before the body
+    part's multiplier; `dt` is after the ammunition's DT Mod, `dr` in percent."""
+    f = w["figures"]
+    before = f["damage"] + (f["crit"] if critical else 0.0)
+    return max((before * f.get("ammo_damage", 1.0) - dt) * (1.0 - dr / 100.0), 0.2 * before)
+
+
+def rule_check(m, doc):
+    """Every row of one side against the rule: whether its damage is the rule's figure for
+    its own DT and DR times one of PART_MULTS, and which multiplier each body part showed.
+    The original's rows carry the target's DT before the ammunition; NVForever's the hit's
+    own DT, after it and rounded."""
+    if doc.get("format") != ROWS_FORMAT:
+        raise InputError(f"not a {ROWS_FORMAT} document")
+    weapons = {w["key"]: w for w in m["weapons"]}
+    nvf = doc.get("side") == "nvforever"
+    fits, misfits, parts = 0, [], {}
+    for r in doc["rows"]:
+        w = weapons.get(r["weapon"])
+        if w is None or "figures" not in w or r.get("sneak") or r.get("explosion") or not isinstance(r.get("damage"), (int, float)):
+            continue
+        dt, dr = r.get("dt") or 0.0, r.get("dr") or 0.0
+        if nvf:
+            low = rule_damage(w, r["critical"], dt + NVF_DT_ROUND, dr)
+            high = rule_damage(w, r["critical"], max(dt - NVF_DT_ROUND, 0.0), dr)
+            tol = NVF_DAMAGE_ROUND + RULE_TOL
+        else:
+            low = high = rule_damage(w, r["critical"], ammo_dt(w, dt), dr)
+            tol = RULE_TOL
+        found = next((k for k in PART_MULTS if low * k - tol - 0.0005 * high * k <= r["damage"] <= high * k + tol + 0.0005 * high * k), None)
+        if found is None:
+            misfits.append({"weapon": r["weapon"], "target": r["target"], "aim": r["aim"], "location": r.get("location"), "critical": r["critical"],
+                            "dt": dt, "dr": dr, "damage": r["damage"], "rule": round(low, 3) if low == high else [round(low, 3), round(high, 3)]})
+        else:
+            fits += 1
+            seen = parts.setdefault(f"{r['target']} / {r.get('location')}", {})
+            seen[f"{found:g}"] = seen.get(f"{found:g}", 0) + 1
+    return {"format": RULE_FORMAT, "matrix": m["name"], "side": doc.get("side"), "fits": fits, "misfits": misfits, "parts": parts}
+
+
+def rule_text(doc):
+    out = [f"{doc['side']}: {doc['fits']} hits fit the rule, {len(doc['misfits'])} do not"]
+    for x in doc["misfits"]:
+        out.append(f"  {x['weapon']:14} {x['target']:16} {x['aim']:6} on {x['location']}: {x['damage']:g}{' critical' if x['critical'] else ''}, "
+                   f"DT {x['dt']:g} DR {x['dr']:g}, the rule gives {x['rule']} before the part")
+    out.append("part multipliers seen (target / where: multiplier x hits):")
+    out += [f"  {k}: " + ", ".join(f"{mult} x {n}" for mult, n in sorted(v.items())) for k, v in sorted(doc["parts"].items())]
+    return "\n".join(out)
+
+
 # --------------------------------------------------------------------------- command line
 
 def write(doc, path, text=None):
@@ -574,6 +647,11 @@ def main(argv=None):
     q.add_argument("-o", "--out")
     q.add_argument("--text", action="store_true")
     q.add_argument("--fail-on-diff", action="store_true")
+    q = sub.add_parser("rule", help="judge one side's rows, each by its own DT and DR, against the measured rule")
+    q.add_argument("rows")
+    q.add_argument("-o", "--out")
+    q.add_argument("--text", action="store_true")
+    q.add_argument("--fail-on-misfit", action="store_true")
     a = p.parse_args(argv)
     try:
         m = load_matrix(a.matrix)
@@ -589,6 +667,14 @@ def main(argv=None):
             write(None, a.out, scenarios_toml(m))
         elif a.cmd == "nvforever":
             write(nvforever_rows(m, a.folder), a.out)
+        elif a.cmd == "rule":
+            doc = rule_check(m, read_json(a.rows))
+            if a.out:
+                write(doc, a.out)
+            if a.text or not a.out:
+                print(rule_text(doc))
+            if a.fail_on_misfit and doc["misfits"]:
+                return 2
         else:
             doc = compare(m, read_json(a.original), read_json(a.nvforever))
             if a.out:
