@@ -113,6 +113,9 @@ pub fn follow_water(lo: &mut Locomotion, swims: bool, rests: bool, was_resting: 
     if !lo.set_swimming(want) {
         return if want { WaterChange::NoClips } else { WaterChange::None };
     }
+    // A change of set by the bed rest: a creature's walk waits for its fade's end
+    // (`Locomotion::bed_fade`).
+    lo.bed_fade = rests || was_resting;
     match (want, rests || was_resting) {
         (true, false) => WaterChange::Swims,
         (false, false) => WaterChange::Leaves,

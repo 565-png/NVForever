@@ -498,6 +498,10 @@ pub struct Locomotion {
     clipless_logged: u8,
     /// Whether "actor base layer fault" was logged for this actor ([`Locomotion::base_fault`], once).
     baseless_logged: bool,
+    /// The set fading out is one the bed rest changed from (`swimming.rs`: between the
+    /// swimming and standing sets of an actor on the bed): while it fades, a creature
+    /// does not set off at once ([`Locomotion::step`]). Cleared when that fade ends.
+    pub bed_fade: bool,
 }
 
 /// [design, #2352] The creature set's pose-only idle below movement, stance, aim,
@@ -547,7 +551,7 @@ fn under_clip(idle: &BoundClip) -> BoundClip {
 
 impl Locomotion {
     pub fn new(set: Arc<ClipSet>, phase: f32) -> Locomotion {
-        Locomotion { stand: set.clone(), set, blend: Blend::new(Move::Idle, phase), prev_set: None, velocity: [0.0; 2], turn: 0.0, hold: false, sneak: None, hurt: None, hurt_alert: None, sneaking: false, limping: false, swim: None, swimming: false, alert: None, alerted: false, pace: 1.0, gait_speed: 0.0, in_air: false, jump: Default::default(), armed: None, armed_on: false, armed_logged: Vec::new(), idle_under: false, under: Under::default(), clipless_logged: 0, baseless_logged: false }
+        Locomotion { stand: set.clone(), set, blend: Blend::new(Move::Idle, phase), prev_set: None, velocity: [0.0; 2], turn: 0.0, hold: false, sneak: None, hurt: None, hurt_alert: None, sneaking: false, limping: false, swim: None, swimming: false, alert: None, alerted: false, pace: 1.0, gait_speed: 0.0, in_air: false, jump: Default::default(), armed: None, armed_on: false, armed_logged: Vec::new(), idle_under: false, under: Under::default(), clipless_logged: 0, baseless_logged: false, bed_fade: false }
     }
 
     /// The standing set now (kNVSE's SetActorAnimationPath swaps it, anim_paths.rs).
@@ -742,14 +746,16 @@ impl Locomotion {
         if self.blend.prev.is_none() {
             self.prev_set = None;
         }
+        self.bed_fade &= self.prev_set.is_some();
         let before = self.blend.cur.mv;
-        // While another set's pose fades out, a creature does not set off at once
-        // (`Blend::set_off_at_once`): that would start the walk from the clip fading in
-        // and drop the other set's, still showing, in one frame; the walk waits for the
-        // fade's end (a blend time) [design, #2980: a lakelurk setting off from the bed
-        // part way through its swimming idle's fade into the standing one].
+        // While the bed rest's change of set fades (`bed_fade`), a creature does not set
+        // off at once (`Blend::set_off_at_once`): that would start the walk from the clip
+        // fading in and drop the other set's, still showing, in one frame; the walk waits
+        // for the fade's end (a blend time) [design, #2980: a lakelurk setting off from
+        // the bed part way through its swimming idle's fade into the standing one]. Other
+        // changes of set set off at once as before.
         let at_once = self.blend.set_off_at_once;
-        self.blend.set_off_at_once = at_once && self.prev_set.is_none();
+        self.blend.set_off_at_once = at_once && !self.bed_fade;
         self.blend.step(choice, dt, |m| set.info(m));
         self.blend.set_off_at_once = at_once;
         let dir = fnv_actor::jump::dir_index(fnv_actor::jump::jump_dir(self.velocity));
@@ -760,6 +766,7 @@ impl Locomotion {
         if self.blend.prev.is_none() || self.blend.cur.mv != before {
             self.prev_set = None;
         }
+        self.bed_fade &= self.prev_set.is_some();
         // The idle's own phase: the blend's while the idle plays, else running on.
         if self.blend.cur.mv == Move::Idle {
             self.under.phase = self.blend.cur.phase;
@@ -1643,6 +1650,37 @@ mod tests {
         lo.layers(&mut player);
         player.layers[0].as_mut().expect("idle").weight = f32::NAN;
         assert_eq!(lo.base_fault(&player).as_deref(), Some("its Idle clip in its standing set has weight NaN and phase 0; nothing on layer 1"));
+    }
+
+    #[test]
+    fn a_creature_sets_off_at_once_within_a_change_of_set_except_the_bed_rest() {
+        // Limping (any change of set but the bed rest's): the walk starts at once, part
+        // way through the fade from the standing idle into the limping one, as on main.
+        let (stand, hurt) = (set(), set());
+        let start = |bed: bool| {
+            let mut lo = Locomotion::new(stand.clone(), 0.0);
+            lo.hurt = Some(hurt.clone());
+            lo.blend.set_off_at_once = true;
+            assert!(lo.set_limping(true));
+            lo.bed_fade = bed;
+            lo.step(1.0 / 60.0);
+            assert!(lo.blend.prev.is_some() && lo.prev_set.is_some(), "the change of set fades");
+            lo.velocity = [0.0, 85.26];
+            lo.step(1.0 / 60.0);
+            lo
+        };
+        let lo = start(false);
+        assert_eq!(lo.blend.cur.mv, Move::Forward, "set off at once");
+        assert!(!lo.bed_fade);
+        // The bed rest's change of set: the walk waits for the fade's end.
+        let mut lo = start(true);
+        assert_eq!(lo.blend.cur.mv, Move::Idle, "waits");
+        assert!(lo.bed_fade);
+        for _ in 0..30 {
+            lo.step(1.0 / 60.0);
+        }
+        assert_eq!(lo.blend.cur.mv, Move::Forward);
+        assert!(!lo.bed_fade, "cleared once that fade ended");
     }
 
     #[test]

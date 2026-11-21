@@ -2494,7 +2494,8 @@ character swims with its feet within 2 units of the support under them
 `STAND_SPEED`, no walk or run playing) and with its stop faded into the swimming idle,
 plays its standing clips; setting off, it walks on its standing walk until that has faded
 in and then changes to the swimming walk, so no clip still showing is cut off (and while
-another set's pose fades out a creature's walk waits for the fade's end); moving, it swims
+such a change of set fades a creature's walk waits for the fade's end; other changes of
+set start it at once as before); moving, it swims
 on its swimming clips as before
 (`engine/nvforever/src/swimming.rs`, `rests_now`) [design]. "Swimming is when your feet do
 not touch solid ground" [documented: GECK wiki fSwimRadiationDamageMult]; how the original
