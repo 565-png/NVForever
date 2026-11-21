@@ -3423,7 +3423,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-21 (a lakelurk standing on a deep lake bed, #2980)
 
-250. **How does a creature that swims stand on a lake bed deeper than it is tall?**
+265. **How does a creature that swims stand on a lake bed deeper than it is tall?**
      (P3; #2980, physics.md §6.6 "Actors standing on the bed".) Ours since #2980: an
      actor whose character swims (on the ground with its feet 115 or more under the
      surface; only an actor on its way has a character, not one that stands idle or

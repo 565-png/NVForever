@@ -2499,7 +2499,7 @@ set start it at once as before); moving, it swims
 on its swimming clips as before
 (`engine/nvforever/src/swimming.rs`, `rests_now`) [design]. "Swimming is when your feet do
 not touch solid ground" [documented: GECK wiki fSwimRadiationDamageMult]; how the original
-poses such an actor is observer check 250 [hypothesis]. Smoke `lakelurk-idle-pose` (idle,
+poses such an actor is observer check 265 [hypothesis]. Smoke `lakelurk-idle-pose` (idle,
 no character) and `lakelurk-rests-on-bed` (following the player in, with one; it depends
 on a lakelurk standing still while it keeps its character, so its checks are marked
 known failing until a run shows one).

@@ -27,7 +27,7 @@
 //!   idle until it fought) [hypothesis]; the pose watch below and the base layer
 //!   warning (`locomotion.rs`) are there to tell. "Swimming is when your feet do not
 //!   touch solid ground" [documented: GECK wiki fSwimRadiationDamageMult]; whether the
-//!   original stands such an actor on the bed is observer check 250 [hypothesis]. It
+//!   original stands such an actor on the bed is observer check 265 [hypothesis]. It
 //!   comes to rest only once its stop has faded into the swimming idle, and sets off on
 //!   its standing walk before it changes to the swimming walk, so no clip still showing
 //!   is cut off ([`rests_now`]) [design]. Moving, it swims on its swimming clips as before, so
