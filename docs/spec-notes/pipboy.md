@@ -664,8 +664,12 @@ is the top left 85 × 92 of `head.dds`) [observed].
   temporary modifiers, less damage), which holds the worn apparel's enchantments in the
   temporary pool [documented: GECK wiki ActorValue; aid-items.md §13; #2495], skills kept to
   0–100; "(+)" or "(-)" when it differs from the permanent value [observed: "34 (+)";
-  hypothesis: "(-)"]. Perks: the player's perks, playable and not hidden by PERK DATA
-  [hypothesis: its bytes as trait, minimum level, ranks, playable, hidden], traits
+  hypothesis: "(-)"]. Perks: the player's perks that are not Hidden by PERK DATA
+  [hypothesis: its bytes as trait, minimum level, ranks, playable, hidden; documented: GECK
+  wiki Category:Perk, Hidden "does not show up in the user interface", Playable only that
+  the level-up menu offers it]. Perks that are not Playable (challenge perks such as Lord
+  Death, implants, companion and quest perks: 62 of FalloutNV.esm's 176 [observed: #3118])
+  are listed [hypothesis: as the original does; capture a non-Playable perk's row], traits
   included [hypothesis], in name order, the rank as the number when the perk has more
   than one [hypothesis].
   - Names, descriptions and pictures: AVIF FULL, DESC, ICON (the record of code c is
