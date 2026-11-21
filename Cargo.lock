@@ -1179,6 +1179,7 @@ dependencies = [
  "fnv-world",
  "jiff",
  "png",
+ "proptest",
  "qrcodegen",
  "rand_chacha",
  "rand_core 0.9.5",
