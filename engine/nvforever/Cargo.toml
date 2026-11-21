@@ -1,6 +1,6 @@
 [package]
 name = "nvforever"
-description = "NVForever: the game. At milestone M3 a free-camera explorer of the world (terrain and objects)"
+description = "NVForever: the game, playing Fallout: New Vegas from the player's own install"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
