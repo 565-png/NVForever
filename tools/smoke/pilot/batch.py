@@ -50,6 +50,7 @@ WEIGHTS = {
     "target_unreachable": 20,
     "never_came": 20,
     "chain_abandoned": 20,
+    "player_died": 20,
     "pilot_held": 20,
     "could_not_target": 10,
     "line_not_said": 8,
@@ -240,7 +241,7 @@ def summarise(results: list[dict]) -> list[dict]:
             "headless": rep.get("headless", {}),
             "seconds": r.get("seconds"),
             "error": r.get("error"),
-            "first": [f"{f['kind']} (step {f.get('step')}): {f.get('text', '')[:200]}" for f in findings if f["kind"] in ("no_way_out", "unreachable", "target_unreachable", "never_came", "chain_abandoned", "pilot_held")][:3],
+            "first": [f"{f['kind']} (step {f.get('step')}): {f.get('text', '')[:200]}" for f in findings if f["kind"] in ("no_way_out", "unreachable", "target_unreachable", "never_came", "chain_abandoned", "player_died", "pilot_held")][:3],
         })
     rows.sort(key=lambda x: (-x["weight"], x["chain"]))
     return rows

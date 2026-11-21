@@ -232,7 +232,8 @@
 //! **Limits.** No step lasts longer than [`STEP_SECS`]: it is given up with a
 //! `step_timed_out` finding and the chain goes on. A chain with [`FAILED_IN_A_ROW`]
 //! failed steps one after the other is abandoned (`chain_abandoned`): what is left of it
-//! would only fail the same way; a campaign goes on with the next chain. The pilot's
+//! would only fail the same way; a campaign goes on with the next chain. So is a chain
+//! whose player dies (`player_died`): a player would load a save there. The pilot's
 //! clock runs only while it can act (in play, in a conversation, in a menu the scripts
 //! opened); when it has not been able to for [`HELD_SECS`] s of real time (a menu of the
 //! engine's own, a loading screen that does not end), the run ends with a `pilot_held`
@@ -1402,7 +1403,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
         // is moved to the navmesh's nearest point within GOAL_SNAP, as the start is, and
         // planned again.
         let found = match found {
-            Err(fnv_nav::PathError::NoTriangle { which, .. }) if which == "goal" => match nav.graph.nearest(w.goal.space, w.goal.pos, GOAL_SNAP) {
+            Err(fnv_nav::PathError::NoTriangle { which: "goal", .. }) => match nav.graph.nearest(w.goal.space, w.goal.pos, GOAL_SNAP) {
                 Some((_, on)) => {
                     info!("pilot: step {}: no navmesh under the goal ({:.0}, {:.0}, {:.0}): it moves {:.0} units to the nearest point on it", p.i, w.goal.pos[0], w.goal.pos[1], w.goal.pos[2], hdist(on, w.goal.pos).hypot(on[2] - w.goal.pos[2]));
                     w.goal.pos = on;
@@ -2332,10 +2333,17 @@ fn threat(g: &Game, friend: Option<FormId>, feet: [f32; 3], given_up: &[FormId])
         // Mr. Soren's line starts combat with the player and his flee package; shot, his
         // OnHit turned the Van Graffs hostile and failed Birds of a Feather (round 13
         // [observed]).
-        .filter(|(a, _)| !g.extra.get(a).and_then(|e| e.current_package).and_then(|pk| g.package_def(&pk)).is_some_and(|d| d.ty == fnv_game::package::PackageType::FleeNotCombat))
+        .filter(|(a, _)| !fleeing(g, **a))
         .filter_map(|(a, _)| where_is(g, *a).map(|(cell, pos)| (*a, cell, pos)))
         .filter(|(_, _, pos)| hdist(*pos, feet) < THREAT_RANGE)
         .min_by(|a, b| hdist(a.2, feet).total_cmp(&hdist(b.2, feet)))
+}
+
+/// Whether actor `a` is running away: on a Flee Not Combat package, or fleeing in its
+/// fight (a Cowardly actor flees at once: Mr. Soren, whose `StartCombat player` is his way
+/// out, was shot before his flee package came, round 16 [observed]).
+fn fleeing(g: &Game, a: FormId) -> bool {
+    g.awareness.tactics.flights.contains_key(&a) || g.extra.get(&a).and_then(|e| e.current_package).and_then(|pk| g.package_def(&pk)).is_some_and(|d| d.ty == fnv_game::package::PackageType::FleeNotCombat)
 }
 
 /// Answer the level-up menu for the player: the level's skill points spent one at a time
@@ -2418,26 +2426,34 @@ fn keep_weapon(p: &mut Pilot, h: &mut Hands, fighting_for: f64) {
     }
 }
 
-/// The first actor a shot from `eye` to `at` would meet, when it is not `target`: someone
+/// The actors a shot from `eye` to `at` would meet before `target`, nearest first: those
 /// standing in the line of fire. Walls are `combat_tactics::shot_clear`'s.
-fn person_in_the_way(phys: &mut PhysState, eye: [f32; 3], at: [f32; 3], target: FormId) -> Option<u32> {
+fn people_in_the_way(phys: &mut PhysState, eye: [f32; 3], at: [f32; 3], target: FormId) -> Vec<u32> {
     use fnv_phys::world::{Filter, Owner};
     let d = [at[0] - eye[0], at[1] - eye[1], at[2] - eye[2]];
     let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
     if len < 1.0 {
-        return None;
+        return Vec::new();
     }
     let mut filter = Filter::default();
     filter.exclude_layers.insert(fnv_phys::layers::TRIGGER);
     filter.exclude_layers.insert(fnv_phys::layers::INVISIBLE_WALL);
     let hits = phys.ray_all(eye, [d[0] / len, d[1] / len, d[2] / len], len, filter);
-    // The first actor along the line, nearest first: the target itself, or someone else.
-    let first = hits.iter().find_map(|h| match h.owner {
+    // The actors along the line, nearest first, up to the target itself.
+    let mut out: Vec<u32> = Vec::new();
+    for id in hits.iter().filter_map(|h| match h.owner {
         Owner::Actor { form_id, .. } => Some(form_id),
         Owner::Character { id } => Some(id),
         _ => None,
-    })?;
-    (first != target.0).then_some(first)
+    }) {
+        if id == target.0 {
+            break;
+        }
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    out
 }
 
 /// One frame of shooting at an actor: nearer while it is out of range, the view on its
@@ -2502,7 +2518,12 @@ fn engage(p: &mut Pilot, h: &mut Hands, name: &str, f: &mut Fight, w: &mut Walk)
             // Someone between the player and its target: no shot; a step to the side to
             // get a line past them (the side changes every second).
             let hostile = |h: &mut Hands, who: u32| h.game(|g| g.awareness.state(FormId(who)) == fnv_game::awareness::State::Combat).unwrap_or(false);
-            if let Some(who) = at.and_then(|at| person_in_the_way(h.phys, eye, at, target)).filter(|w| !hostile(h, *w)) {
+            // A body on the ground is shot past, as a player aims past it: a dead
+            // Fiend in the line held the shot for a whole fight (Bleed Me Dry, round 16
+            // [observed]).
+            let between = at.map(|at| people_in_the_way(h.phys, eye, at, target)).unwrap_or_default();
+            let first = between.into_iter().find(|w| h.game(|g| !g.is_dead(FormId(*w))).unwrap_or(true));
+            if let Some(who) = first.filter(|w| !hostile(h, *w)) {
                 h.control.trigger = false;
                 let side = if (p.now as i64) % 2 == 0 { 1.0 } else { -1.0 };
                 h.intent.right = side;
@@ -3944,7 +3965,13 @@ fn find_item(g: &Game, item: FormId, feet: [f32; 3]) -> Option<(FormId, Option<F
     for placed in g.world.placed.refs.values().filter(|pl| pl.base == item && g.world.peek(pl.id).is_none() && there(pl.id)) {
         found.push((hdist(placed.pos, feet), placed.id, placed.cell, placed.pos, true));
     }
-    found.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // On the player's side of the two wastelands first: the x/y distance means nothing
+    // across them (Legion's and Bitter Springs' doctor's bag was fetched from the Capital
+    // Wasteland, and no travel brought the player back, rounds 13 and 15 [observed]). A
+    // cell's side is that of the plugin that defines it, as for worldspaces.
+    let side = |cell: Option<FormId>| cell.is_some_and(|c| capital_side(g, c.0));
+    let mine = side(g.world.peek(FormId::PLAYER_REF).and_then(|s| s.cell));
+    found.sort_by(|a, b| (side(a.2) != mine).cmp(&(side(b.2) != mine)).then(a.0.total_cmp(&b.0)));
     found.first().map(|&(_, r, cell, pos, lies)| (r, cell, pos, lies))
 }
 
@@ -4622,6 +4649,16 @@ fn drive(
         object_hits: combat.as_deref().map(|c| &c.player_object_hits),
         dt,
     };
+    // A dead player plays no more of the chain: a player would load a save here. Played
+    // on, every later step stalled with the movement locked (Dead Money's collar, round 15
+    // [observed]); the death is the finding.
+    if p.given_applied && p.i < p.actions.len() && h.game(|g| g.is_dead(FormId::PLAYER_REF)) == Some(true) {
+        let left = p.actions.len() - p.i;
+        p.finding("player_died", format!("the player died at step {} of chain {}: the {left} steps left of it are not played (a player loads a save here)", p.i, p.chain));
+        p.i = p.actions.len();
+        (p.phase, p.part, p.step_from) = (Phase::Begin, 0, p.now);
+        return;
+    }
     if !p.given_applied {
         p.given_applied = true;
         if let Some(order) = h.game(|g| g.data.load_order.clone()) {
@@ -4772,6 +4809,13 @@ fn drive(
         if let Some((mut f, mut w)) = p.defend.take() {
             let who = f.target;
             let dead = h.game(|g| g.is_dead(who)) == Some(true);
+            // One that turns to run is let go, as a player lets a fleeing man go.
+            if !dead && h.game(|g| fleeing(g, who)) == Some(true) {
+                info!("pilot: step {}: the attacker {who} runs away: let go", p.i);
+                h.control.trigger = false;
+                p.given_up.push(who);
+                return;
+            }
             if dead || p.now - p.defend_from > DEFEND_SECS {
                 h.control.trigger = false;
                 if dead {
