@@ -4913,9 +4913,41 @@ fn drive(
         (Some(m), _) => p.menu_since = Some((m, p.now)),
         (None, _) => p.menu_since = None,
     }
+    // A speaker that sets the collar counting down is switched off first, as a player
+    // does when the collar beeps (Dead Money); before a fight too: the collar kills in
+    // 10 s, and fighting Dean in the Tampico the player died of it (round 27 [observed]).
+    if *state.get() == PlayState::Playing && p.errand.is_none() && p.now >= p.speaker_check {
+        p.speaker_check = p.now + 1.0;
+        if p.speakers.is_none() {
+            p.speakers = h.game(|g| speakers(g));
+        }
+        let feet = h.feet();
+        let list = p.speakers.clone().unwrap_or_default();
+        let beeping = h.game(|g| beeping_speaker(g, &list, feet)).flatten();
+        let fixed = beeping.filter(|s| h.game(|g| g.extra.get(s).is_some_and(|e| e.destroyed)) == Some(true));
+        if let Some(speaker) = fixed {
+            // One no player can switch off: out of its range, once a while.
+            let now = p.now;
+            p.away_from.retain(|(_, t)| now - *t < AWAY_AGAIN_SECS);
+            if !p.away_from.iter().any(|(s, _)| *s == speaker) {
+                info!("pilot: step {}: the collar beeps near speaker {speaker}, which no player can switch off: the player walks out of its range", p.i);
+                p.away_from.push((speaker, now));
+                p.errands.push_front(Errand::Away(speaker));
+                p.defend = None;
+            }
+        } else if let Some(speaker) = beeping {
+            if !p.errands.iter().any(|e| matches!(e, Errand::Silence(s) if *s == speaker)) {
+                info!("pilot: step {}: the collar beeps near speaker {speaker}: switched off before the step goes on", p.i);
+                p.errands.push_front(Errand::Silence(speaker));
+                p.defend = None;
+            }
+        }
+    }
     // Something attacks the player or the actor it is with: fought first (module notes).
     if *state.get() == PlayState::Playing && !matches!(p.phase, Phase::Fight(..) | Phase::Shoot(..)) {
-        if p.defend.is_none() && p.now >= p.threat_check {
+        // Not while the collar's errand is in hand or waiting: it comes first.
+        let collar = p.errands.iter().chain(p.errand.as_ref().map(|e| &e.0)).any(|e| matches!(e, Errand::Silence(_) | Errand::Away(_)));
+        if p.defend.is_none() && !collar && p.now >= p.threat_check {
             p.threat_check = p.now + 0.5;
             let friend = match &p.phase {
                 Phase::Walk(w) => w.target,
@@ -4980,33 +5012,6 @@ fn drive(
                 p.step_from += dt as f64;
                 p.still.0 += dt as f64;
                 return;
-            }
-        }
-    }
-    // A speaker that sets the collar counting down is switched off first, as a player
-    // does when the collar beeps (Dead Money).
-    if *state.get() == PlayState::Playing && p.defend.is_none() && p.errand.is_none() && p.now >= p.speaker_check {
-        p.speaker_check = p.now + 1.0;
-        if p.speakers.is_none() {
-            p.speakers = h.game(|g| speakers(g));
-        }
-        let feet = h.feet();
-        let list = p.speakers.clone().unwrap_or_default();
-        let beeping = h.game(|g| beeping_speaker(g, &list, feet)).flatten();
-        let fixed = beeping.filter(|s| h.game(|g| g.extra.get(s).is_some_and(|e| e.destroyed)) == Some(true));
-        if let Some(speaker) = fixed {
-            // One no player can switch off: out of its range, once a while.
-            let now = p.now;
-            p.away_from.retain(|(_, t)| now - *t < AWAY_AGAIN_SECS);
-            if !p.away_from.iter().any(|(s, _)| *s == speaker) {
-                info!("pilot: step {}: the collar beeps near speaker {speaker}, which no player can switch off: the player walks out of its range", p.i);
-                p.away_from.push((speaker, now));
-                p.errands.push_front(Errand::Away(speaker));
-            }
-        } else if let Some(speaker) = beeping {
-            if !p.errands.iter().any(|e| matches!(e, Errand::Silence(s) if *s == speaker)) {
-                info!("pilot: step {}: the collar beeps near speaker {speaker}: switched off before the step goes on", p.i);
-                p.errands.push_front(Errand::Silence(speaker));
             }
         }
     }

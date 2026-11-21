@@ -87,7 +87,7 @@
     {"op": "choose", "topic": "NVDLC01DogDialogueNVDLC01DogTopic051", "label": "Dog in the kitchen: the fight"},
     {"op": "wait_talk"},
     {"op": "advance_seconds", "seconds": 1},
-    {"op": "get_quest", "quest": "NVDLC01MQ03a", "fields": ["done.50"], "label": "Put the Beast Down 50 (Dog fights; the stage is not read: Dog may already be dead in the fight he starts, stage 60, and a milestone read waits for the headless value while his collar's 10 s run, round 23 [observed])"},
+    {"op": "note", "text": "No read of stage 50 here: Dog's fight is short, and in the game any wait in his cell after his death runs out his collar's 10 s (a read of done.50 waited 21 s and the player died, round 27 [observed]). Stage 60 is read outside the kitchen."},
     {"op": "note", "text": "The fight (stand-in: kill, the player as killer). With the three gas valves shut Dog's death does not set off the collars; the quest script (NVDLC01MQ03aSCRIPT) sees stage 50 done and Dog dead and sets 60."},
     {"op": "kill", "actor": "NVDLC01DogREF", "killer": "player"},
     {"op": "note", "text": "Dog dead in the kitchen, his collar's death timer runs while the player stays in his cell (SCPT 0x01006E92: NVDLC01DeathTimer, then Dean, Christine and the player die) [observed: round 21, the player died at step 62]. The kitchen back door opens from inside only with the maintenance pass Dog carries (SCPT 0x01010DD8: the pass and nGasTraps 3); the player takes it from his body (looting stand-in) and leaves at once."},
