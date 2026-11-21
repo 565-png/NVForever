@@ -151,17 +151,21 @@ or floor near them. Cause: the shot's impact went to the actor's body only (§4;
   hits), is too far off or out of view, or over a cap of combat actors. Distinct from
   the decals of a limb severed or blown apart (dismemberment.md; §5).
 - **Ours** (`nvf_play::combat::world_blood` and `splatter_impact`, sent from the shot's
-  impact in `fly`): a shot (not a melee blow [design]) on an actor rolls its own random
-  numbers against the chance unless:
+  impact in `fly`, whether or not the weapon's impact data set names an impact for the
+  actor): a shot (not a melee blow [design]) on an actor rolls its own random numbers
+  against the chance unless:
+  - the shot is harmless (a scripted Do No Damage shot, #2433);
   - the actor's own blood decal is suppressed for this hit: flagged No Blood Decal
-    (actor-flags.md §2) or stopped by the Armor Prevents Blood Decals tweak (the impact's
-    `no_decal`). The limits of §4 (three alive, one each 0.3 s) are not suppression: a
-    torso hit within the body decal's 0.3 s still splatters;
+    (actor-flags.md §2) or stopped by the Armor Prevents Blood Decals tweak (read from the actor
+    and the tweak, not from the weapon's impact). The limits of §4 (three alive, one each 0.3 s) are not suppression: a
+    follow-up torso shot within the body decal's 0.3 s remains eligible to roll;
   - the hit is on the held weapon or a gore piece, whatever the tweaks;
   - the actor's Impact Material Type is not organic (organic, organic bug, organic glow)
     [design]: a robot's oil is not built;
-  - the struck body part (its BPTD part; a hit on the whole volume, without posed parts,
-    reads the first part [design]) has no blood spurt / decal impact data set (the
+  - the struck body part (its BPTD part, from the actor's published posed parts; a hit on
+    the whole volume of an actor with published parts reads the first part [design]; an
+    actor without published parts, one whose skeleton gives no limb chains, gets none)
+    has no blood spurt / decal impact data set (the
     severable one, else the explodable [hypothesis: observer check 251]) [documented:
     GECK wiki Body Part]. Its impact for the actor's material is the splatter, not the
     weapon's impact data set's, whose organic slot can hold another effect (a flamer's
@@ -181,7 +185,8 @@ or floor near them. Cause: the shot's impact went to the actor's body only (§4;
   will lay blood on the environment"]. The log says the chance and the setting's value at
   the first roll (`combat: blood on the world behind shot actors: chance ...`).
 - Not built: the power-armour, distance, view and combat-actor-cap exceptions; melee;
-  robots.
+  robots; actors without published body parts (their BPTD is not looked up apart from
+  the posed colliders).
 - Log: `decals: <IPCT> splatters blood (<TXST>) on the world behind a shot actor at ...`
   for the first; at exit `combat summary: blood on the world: <n> shots on actors rolled,
   <w> won the roll, <s> met a wall or floor` and `decals: blood on the world behind shot

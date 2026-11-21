@@ -2692,15 +2692,10 @@ fn impact_for(s: &Sfx, script: Option<&ScriptState>, sim: &SimState, weapon: For
 }
 
 /// Show an impact (the renderer's model and debris, `ImpactFx`) and play its sounds there.
-/// Gives the impact as sent, with the struck actor's No Blood flags.
-fn show_impact(s: &Sfx, script: Option<&ScriptState>, sim: &SimState, mut fx: ImpactFx, sounds: &mut MessageWriter<PlaySound>, impacts: &mut MessageWriter<ImpactFx>) -> ImpactFx {
-    // The base from the simulation: the game's world is not attached outside its turn.
-    if let (Some(a), Some(rt)) = (fx.actor, script.and_then(|s| s.rt.as_ref())) {
-        if let Some(b) = sim.base_of(a) {
-            let (seed, at) = sim.pick(&rt.game, FormId(a));
-            let (spray, decal) = rt.game.runtime_template_source(b, seed, at, |d| d.template_model).map_or((false, false), |(_, d)| (d.no_blood_spray, d.no_blood_decal));
-            (fx.no_spray, fx.no_decal) = (fx.no_spray || spray, fx.no_decal || decal);
-        }
+fn show_impact(s: &Sfx, script: Option<&ScriptState>, sim: &SimState, mut fx: ImpactFx, sounds: &mut MessageWriter<PlaySound>, impacts: &mut MessageWriter<ImpactFx>) {
+    if let Some(a) = fx.actor {
+        let (spray, decal) = blood_flags(script, sim, a);
+        (fx.no_spray, fx.no_decal) = (fx.no_spray || spray, fx.no_decal || decal);
     }
     impacts.write(fx);
     if let Some(i) = s.forms.impacts.get(&fx.impact) {
@@ -2708,7 +2703,15 @@ fn show_impact(s: &Sfx, script: Option<&ScriptState>, sim: &SimState, mut fx: Im
             sounds.write(PlaySound { sound, at: Some(fx.point) });
         }
     }
-    fx
+}
+
+/// Whether actor `a` is flagged No Blood Spray and No Blood Decal (its Model/Animation
+/// source's flags, docs/spec-notes/actor-flags.md §2); neither without a runtime.
+fn blood_flags(script: Option<&ScriptState>, sim: &SimState, a: u32) -> (bool, bool) {
+    // The base from the simulation: the game's world is not attached outside its turn.
+    let (Some(rt), Some(b)) = (script.and_then(|s| s.rt.as_ref()), sim.base_of(a)) else { return (false, false) };
+    let (seed, at) = sim.pick(&rt.game, FormId(a));
+    rt.game.runtime_template_source(b, seed, at, |d| d.template_model).map_or((false, false), |(_, d)| (d.no_blood_spray, d.no_blood_decal))
 }
 
 /// How far from where a shot met an actor its blood can land on the world, units
@@ -6010,26 +6013,29 @@ fn fly(
                 impact_for(s, script.as_deref(), &sim, id, p.actor, p.material)
             };
             if let Some(impact) = impact {
-                let sent = show_impact(s, script.as_deref(), &sim, ImpactFx { impact, shooter, point: p.point, normal: p.normal, dir: p.dir, actor: struck, no_spray: on_weapon, no_decal: stopped || on_weapon, splatter: false }, &mut effects.0, &mut effects.1);
-                // Blood on the wall or floor behind or below an organic actor
-                // ([`world_blood`]): the struck part's blood impact (a whole-volume hit
-                // reads the first part [design]); none where the actor's own blood decal
-                // is suppressed (`no_decal`: No Blood Decal, the armour tweak).
-                let body = bp.clone().or_else(|| p.actor.and_then(|a| body_part(c, &parts, a, Some(0))));
-                if let Some(blood) = splatter_impact(&s.forms, p.part, body.as_ref(), material).filter(|_| p.actor.is_some() && !sent.no_decal) {
-                    let setting = sim.world.setting_f32("fCombatEnvironmentBloodChance");
-                    let chance = blood_chance(setting);
-                    if !c.blood_chance_logged {
-                        c.blood_chance_logged = true;
-                        info!("combat: blood on the world behind shot actors: chance {chance:.2} (fCombatEnvironmentBloodChance {}), within {WORLD_BLOOD_REACH:.0} units along the shot, else below", setting.map_or("not set".to_string(), |v| format!("{v}")));
-                    }
-                    let roll = c.blood_rng.next_f32();
-                    stats.blood_rolls += 1;
-                    stats.blood_won += u32::from(roll < chance);
-                    if let Some(fx) = world_blood(&sent, blood, roll, chance, |from, d, reach| world_surface(&mut phys, from, d, reach)) {
-                        stats.blood_sent += 1;
-                        effects.1.write(fx);
-                    }
+                show_impact(s, script.as_deref(), &sim, ImpactFx { impact, shooter, point: p.point, normal: p.normal, dir: p.dir, actor: struck, no_spray: on_weapon, no_decal: stopped || on_weapon, splatter: false }, &mut effects.0, &mut effects.1);
+            }
+            // Blood on the wall or floor behind or below an organic actor ([`world_blood`]),
+            // whatever the weapon's own impact: the struck part's blood impact (a hit on
+            // the whole volume of an actor with published parts reads the first part
+            // [design]); none for a harmless shot, nor where the actor's own blood decal
+            // is suppressed (No Blood Decal, the armour tweak).
+            let no_decal = stopped || struck.is_some_and(|r| blood_flags(script.as_deref(), &sim, r).1);
+            let body = bp.clone().or_else(|| p.actor.and_then(|a| body_part(c, &parts, a, Some(0))));
+            if let Some(blood) = splatter_impact(&s.forms, p.part, body.as_ref(), material).filter(|_| p.actor.is_some() && !p.by.harmless && !no_decal) {
+                let setting = sim.world.setting_f32("fCombatEnvironmentBloodChance");
+                let chance = blood_chance(setting);
+                if !c.blood_chance_logged {
+                    c.blood_chance_logged = true;
+                    info!("combat: blood on the world behind shot actors: chance {chance:.2} (fCombatEnvironmentBloodChance {}), within {WORLD_BLOOD_REACH:.0} units along the shot, else below", setting.map_or("not set".to_string(), |v| format!("{v}")));
+                }
+                let roll = c.blood_rng.next_f32();
+                stats.blood_rolls += 1;
+                stats.blood_won += u32::from(roll < chance);
+                let hit = ImpactFx { impact: blood, shooter, point: p.point, normal: p.normal, dir: p.dir, actor: struck, no_spray: false, no_decal, splatter: false };
+                if let Some(fx) = world_blood(&hit, blood, roll, chance, |from, d, reach| world_surface(&mut phys, from, d, reach)) {
+                    stats.blood_sent += 1;
+                    effects.1.write(fx);
                 }
             }
             let hit = p.actor.map(|a| a as u32).or(p.object.map(|o| o as u32));

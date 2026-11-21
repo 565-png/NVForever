@@ -18,12 +18,13 @@ const BLOOD: FormId = FormId(0xb21);
 const BODY: FormId = FormId(0xb30);
 
 /// One NPC shot on the target over flat ground, the target's body part data giving
-/// `blood_set` (or none); every impact sent.
-fn shoot(blood_set: Option<FormId>) -> (Vec<ImpactFx>, u32) {
+/// `blood_set` (or none), the weapon with its impact data set or without one; every
+/// impact sent.
+fn shoot(blood_set: Option<FormId>, weapon_set: bool) -> (Vec<ImpactFx>, u32) {
     let mut a = app();
     let organic = IMPACT_MATERIALS.iter().position(|m| *m == "organic").unwrap();
     let mut forms = FxForms::default();
-    forms.weapons.insert(GUN, WeaponFx { impact_dataset: Some(WEAPON_SET), ..Default::default() });
+    forms.weapons.insert(GUN, WeaponFx { impact_dataset: weapon_set.then_some(WEAPON_SET), ..Default::default() });
     // The weapon's organic slot holds a scorch (as a flamer's does), the body part's set
     // the blood.
     for (set, impact) in [(WEAPON_SET, SCORCH), (BLOOD_SET, BLOOD)] {
@@ -65,7 +66,7 @@ fn shoot(blood_set: Option<FormId>) -> (Vec<ImpactFx>, u32) {
 
 #[test]
 fn a_shot_through_fly_splatters_the_parts_blood_on_the_floor() {
-    let (impacts, sent) = shoot(Some(BLOOD_SET));
+    let (impacts, sent) = shoot(Some(BLOOD_SET), true);
     // The actor's own impact: the weapon's organic slot.
     let on_actor: Vec<&ImpactFx> = impacts.iter().filter(|i| i.actor == Some(TARGET.0)).collect();
     assert_eq!(on_actor.len(), 1);
@@ -84,8 +85,18 @@ fn a_shot_through_fly_splatters_the_parts_blood_on_the_floor() {
 
 #[test]
 fn no_blood_impact_on_the_part_leaves_no_splatter_not_the_weapons_scorch() {
-    let (impacts, sent) = shoot(None);
+    let (impacts, sent) = shoot(None, true);
     assert!(impacts.iter().any(|i| i.actor == Some(TARGET.0)), "the hit's own impact is sent");
     assert!(!impacts.iter().any(|i| i.splatter), "{impacts:?}");
     assert_eq!(sent, 0);
+}
+
+#[test]
+fn a_weapon_without_an_impact_data_set_still_splatters_the_parts_blood() {
+    let (impacts, sent) = shoot(Some(BLOOD_SET), false);
+    assert!(!impacts.iter().any(|i| i.actor == Some(TARGET.0)), "no impact of the weapon's own");
+    let splatters: Vec<&ImpactFx> = impacts.iter().filter(|i| i.splatter).collect();
+    assert_eq!(splatters.len(), 1, "{impacts:?}");
+    assert_eq!(splatters[0].impact, BLOOD);
+    assert_eq!(sent, 1);
 }

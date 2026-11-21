@@ -628,6 +628,12 @@ mod tests {
     }
 
     fn emit_decal(world: &mut World, normal: Option<&str>, no_specular: bool) -> StandardMaterial {
+        emit(world, normal, no_specular, false)
+    }
+
+    /// One impact through `place`; `splatter`: a blood splatter on the world behind a shot
+    /// actor (nvf_play::combat::world_blood), decal only.
+    fn emit(world: &mut World, normal: Option<&str>, no_specular: bool, splatter: bool) -> StandardMaterial {
         use bevy::ecs::system::RunSystemOnce;
         use fnv_combat::fx::{DecalData, Impact, TextureSet};
         let set = FormId(0x101);
@@ -639,7 +645,7 @@ mod tests {
         let before = world.resource::<Decals>().placed;
         let mut hits = world.resource_mut::<Messages<ImpactFx>>();
         hits.clear();
-        hits.write(ImpactFx { impact, shooter: FormId(0), point: [5.0, 6.0, 7.0], normal: [0.0, 0.0, 1.0], dir: [0.0, 0.0, -1.0], actor: None, no_spray: false, no_decal: false, splatter: false });
+        hits.write(ImpactFx { impact, shooter: FormId(0), point: [5.0, 6.0, 7.0], normal: [0.0, 0.0, 1.0], dir: [0.0, 0.0, -1.0], actor: None, no_spray: splatter, no_decal: false, splatter });
         world.run_system_once(place).unwrap();
         assert_eq!(world.resource::<Decals>().placed, before + 1, "actual impact producer must create the recipient");
         let entity = world.resource::<Decals>().live.back().unwrap().entity;
@@ -649,6 +655,28 @@ mod tests {
         let material = world.resource::<Assets<ForwardDecalMaterial<StandardMaterial>>>().get(handle).unwrap();
         assert_eq!(material.extension.depth_fade_factor, 9.0);
         material.base.clone()
+    }
+
+    #[test]
+    fn a_blood_splatter_is_placed_as_a_world_decal() {
+        let (_inputs, mut world) = bc5_fixture::inputs();
+        world.insert_resource(owned_sfx());
+        world.init_resource::<Decals>();
+        world.init_resource::<Messages<ImpactFx>>();
+        world.init_resource::<Assets<ForwardDecalMaterial<StandardMaterial>>>();
+        let root = world.spawn((WorldRoot, GlobalTransform::IDENTITY)).id();
+        // `emit` asserts the ForwardDecal entity, its place and depth.
+        let material = emit(&mut world, Some("old.dds"), false, true);
+        assert!(material.base_color_texture.is_some());
+        let st = world.resource::<Decals>();
+        assert_eq!((st.splatters, st.splatters_placed, st.on_actors), (1, 1, 0));
+        let live = st.live.back().unwrap();
+        assert_eq!(live.actor, None);
+        assert_eq!(world.get::<ChildOf>(live.entity).unwrap().parent(), root);
+        // A plain impact is not counted as one.
+        emit(&mut world, Some("old.dds"), false, false);
+        let st = world.resource::<Decals>();
+        assert_eq!((st.splatters, st.splatters_placed, st.placed), (1, 1, 2));
     }
 
     #[test]
