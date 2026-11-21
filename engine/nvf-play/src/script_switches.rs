@@ -45,6 +45,10 @@ pub struct ScriptSwitchesPlugin;
 impl Plugin for ScriptSwitchesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ScriptSwitches>().add_systems(Update, sync.after(crate::PlaySet::Scripts).before(crate::PlaySet::Ui));
+        #[cfg(target_os = "windows")]
+        app.init_resource::<crate::script_cursor::CursorRequests>()
+            .add_systems(PreUpdate, crate::script_cursor::refresh.before(bevy::input::InputSystems).before(crate::script_input::ScriptInputSet))
+            .add_systems(PostUpdate, crate::script_cursor::guard);
     }
 }
 
@@ -59,14 +63,23 @@ fn category_index(c: SoundCategory) -> usize {
     }
 }
 
-fn sync(
+// On Windows the cursor parameters (commands, requests, page) make 8 arguments; elsewhere
+// 5. CI's clippy runs on Linux, so only a Windows build saw the lint.
+#[cfg_attr(target_os = "windows", allow(clippy::too_many_arguments))]
+pub(crate) fn sync(
     mut script: Option<ResMut<ScriptState>>,
     mut switches: ResMut<ScriptSwitches>,
     volumes: Option<Res<SoundVolumes>>,
     target: Option<Res<crate::hud_target::HudTarget>>,
-    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    #[cfg(not(target_os = "windows"))] mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    #[cfg(target_os = "windows")] mut windows: Query<(Entity, &mut Window, Option<&mut bevy::winit::CursorPositionRequest>), With<PrimaryWindow>>,
+    #[cfg(target_os = "windows")] mut commands: Commands,
+    #[cfg(target_os = "windows")] mut requests: ResMut<crate::script_cursor::CursorRequests>,
+    #[cfg(target_os = "windows")] page: Option<Res<crate::tiles::mods::ModsPage>>,
 ) {
     let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
+    #[cfg(target_os = "windows")]
+    let cursor_context = crate::script_cursor::Context::of(&rt.game, page.as_deref());
     let j = &mut rt.game.other.jip9;
     let now = ScriptSwitches { hud_cursor: j.hud_cursor, mouse_axes: j.mouse_axes, vanity_wheel: j.vanity_wheel, camera_collision: j.camera_collision };
     if *switches != now {
@@ -115,17 +128,36 @@ fn sync(
         }
     }
     j.enemy_target = target.and_then(|t| t.0.as_ref().map(|h| FormId(h.form_id)));
+    #[cfg(target_os = "windows")]
+    {
+        let Ok((entity, window, receipt)) = windows.single_mut() else {
+            requests.no_window(j, &mut commands);
+            return;
+        };
+        j.window = Some((f64::from(window.width()), f64::from(window.height())));
+        requests.sync(j, cursor_context, entity, &window, receipt.map(|r| r.into_inner()), &mut commands);
+        j.cursor_px = window.cursor_position().map(|p| (f64::from(p.x), f64::from(p.y)));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
     let Ok(mut window) = windows.single_mut() else { return };
     let size = (f64::from(window.width()), f64::from(window.height()));
     j.window = Some(size);
+    let start_menu_warp = std::mem::take(&mut j.cursor_warp_start_menu);
     if let Some((x, y, xml)) = j.cursor_warp.take() {
         // XML units are the interface's 960-high frame (`crate::tiles::input::to_units`).
         let per = size.1.max(1.0) / 960.0;
-        let (px, py) = if xml { (x * per, y * per) } else { (x, y) };
+        let (mut px, mut py) = if xml { (x * per, y * per) } else { (x, y) };
+        if xml && start_menu_warp {
+            let at = crate::interface::to_menu_frame(Vec2::new(px as f32, py as f32), Vec2::new(size.0 as f32, size.1 as f32), crate::interface::MIDDLE);
+            px = f64::from(at.x);
+            py = f64::from(at.y);
+        }
         let at = Vec2::new(px.clamp(0.0, size.0) as f32, py.clamp(0.0, size.1) as f32);
         window.set_cursor_position(Some(at));
     }
     j.cursor_px = window.cursor_position().map(|p| (f64::from(p.x), f64::from(p.y)));
+    }
 }
 
 #[cfg(test)]

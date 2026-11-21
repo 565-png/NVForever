@@ -343,6 +343,27 @@ impl Game<'_> {
         out
     }
 
+    /// The base effects of an ingestible shown by their name alone
+    /// ([`crate::data::MagicEffectDef::shows_name`]) whose conditions pass for `actor` now,
+    /// once each in the order the item names them: for the item's EFFECTS figure beside
+    /// [`Game::aid_preview`]'s values (#3119) [hypothesis: the original lists the name;
+    /// its layout is not captured].
+    pub fn aid_preview_names(&mut self, actor: FormId, item: FormId) -> Vec<FormId> {
+        let data = self.data;
+        let Some(items) = data.effect_items.get(&item) else { return Vec::new() };
+        let mut out: Vec<FormId> = Vec::new();
+        for (index, e) in items.iter().enumerate() {
+            if out.contains(&e.effect) || !data.magic_effects.get(&e.effect).is_some_and(|m| m.shows_name()) {
+                continue;
+            }
+            let label = format!("{} effect {index} (preview)", data.name(item));
+            if self.conditions_pass(&e.conditions, Some(actor), Some(actor), &label) {
+                out.push(e.effect);
+            }
+        }
+        out
+    }
+
     /// An actor uses an ingestible (the caller has taken it from the inventory): its
     /// effects apply with the item's potency, its usage monitor counts the use, and the
     /// addiction roll is made. docs/spec-notes/aid-items.md §4–§5.
@@ -391,6 +412,10 @@ impl Game<'_> {
         let usage = has_monitor.then(|| self.spell_usage(actor, item));
         let threshold = self.aid_setting("fAddictionUsageMonitorThreshold");
         let mut chance = addiction_chance(&def, usage, threshold);
+        // The player's tweak: only the player gets addicted [design: docs/design/tweaks.md].
+        if self.tweaks.no_npc_addiction && actor != FormId::PLAYER_REF {
+            chance = 0.0;
+        }
         // "Addiction Chance accounts for the Modify Addiction Chance Perk Entry Point"
         // [documented: GECK wiki Addiction Formula].
         if chance > 0.0 {
@@ -422,7 +447,12 @@ impl Game<'_> {
             return false;
         }
         e.spells.push(spell);
+        // Conditions may read actor values, which sync listed abilities. The new
+        // spell is already listed but has no ActiveEffect until admission completes.
+        let syncing = self.syncing_effects;
+        self.syncing_effects = true;
         self.apply_magic_item(actor, spell, None, true);
+        self.syncing_effects = syncing;
         true
     }
 

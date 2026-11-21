@@ -272,7 +272,27 @@ pub(crate) fn disable_ref(g: &mut Game, r: FormId) {
 
 pub fn get_destruction_stage(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
     let r = ctx.subject()?;
-    Ok(Value::Num(destruction_stage(g, r) as f64))
+    Ok(Value::Num(script_destruction_stage(g, r) as f64))
+}
+
+/// What GetDestructionStage gives: the stage reached counted from 1 (DSTD index + 1), 0
+/// when damaged above every stage, −1 without destruction data or damage [documented −1:
+/// GECK wiki GetDestructionStage, "the current Damage Stage"; hypothesis for the counting,
+/// #3053: the masters' scripts compare it with values only a count from 1 reaches, Zeta's
+/// generator core (eight stages, index 0-7) disabling itself at 7, its Destroy stage, and
+/// testing 8; Point Lookout's Brain (seven stages) bursting at 7; DLC04DarMuckBubble (two
+/// stages) testing `>= 2`. The stage's own DSTD damage-stage field fits every case found too;
+/// observer check 247 tells them apart]. The rules' own stage numbers stay indices
+/// ([`destruction_stage`]), as OnDestructionStageChange's parameter is index + 1 already.
+pub fn script_destruction_stage(g: &Game, r: FormId) -> i32 {
+    let Some(def) = base_of(g, r).and_then(|b| g.destruction(b)) else { return -1 };
+    let Some(d) = g.extra.get(&r).and_then(|e| e.damage) else { return -1 };
+    let reached = if def.health <= 0 {
+        def.stages.iter().map(|s| i32::from(s.index)).max()
+    } else {
+        def.stages.iter().filter(|s| crate::combat::destruction_threshold_reached(d, def.health as f64, s.health_percent)).map(|s| i32::from(s.index)).max()
+    };
+    reached.map_or(0, |i| i + 1)
 }
 
 /// Health, stages and the destroyed state back to their defaults [documented: catalogue
@@ -381,10 +401,8 @@ pub fn get_lock_level(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, Strin
         let l = if super::refs::in_loaded_cell(g, r) { crate::terminal::lock_level(g, r) } else { 0 };
         return Ok(Value::Num(l as f64));
     }
-    let own = g.world.get(r).map_err(|e| e.to_string())?.lock.map(|l| l.level);
-    let door = g.world.placed.get(r).and_then(|p| p.teleport.as_ref()).map(|t| t.door);
-    let other = door.and_then(|d| g.world.get(d).ok()).and_then(|s| s.lock.map(|l| l.level));
-    let l = own.or(other).unwrap_or(0);
+    g.world.get(r).map_err(|e| e.to_string())?;
+    let l = g.world.lock_of(r).map_or(0, |l| l.level);
     Ok(Value::Num(l as f64))
 }
 
@@ -466,7 +484,9 @@ pub fn set_broadcast_state(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, S
 /// activator's own) [documented: catalogue summary].
 pub fn set_talking_activator_actor(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let r = ctx.subject()?;
-    g.extra.entry(r).or_default().talking_actor = a.opt_form(0);
+    let e = g.extra.entry(r).or_default();
+    e.talking_actor = a.opt_form(0);
+    e.talking_actor_set = true;
     none()
 }
 

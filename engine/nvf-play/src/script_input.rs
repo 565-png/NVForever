@@ -14,12 +14,17 @@ use fnv_game::script_input::MOUSE_BASE;
 
 pub struct ScriptInputPlugin;
 
+/// Physical script input observes acknowledged cursor state before callbacks.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ScriptInputSet;
+
 impl Plugin for ScriptInputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ScriptBlocked>()
             .add_message::<MouseWheel>()
+            .configure_sets(PreUpdate, ScriptInputSet.after(bevy::input::InputSystems))
             // [design, #2200] Scripts see consumed switching presses as absent too.
-            .add_systems(PreUpdate, script_input.after(bevy::input::InputSystems).after(crate::pad::device::automatic))
+            .add_systems(PreUpdate, script_input.in_set(ScriptInputSet).after(crate::pad::device::automatic).after(crate::pad::update_stick_buttons))
             // The player's state the scripts read (sights up, for the HUD bars' aiming
             // condition) is handed over after combat has updated it this frame and before
             // the scripts run [design]. `tell_magazine` keeps its own place: it also
@@ -80,6 +85,8 @@ fn script_input(
     primary: Query<Entity, With<PrimaryWindow>>,
     mut blocked: ResMut<ScriptBlocked>,
     switching: Option<Res<crate::pad::SwitchingInput>>,
+    pads: crate::pad::ActionPads,
+    sticks: Option<Res<crate::pad::StickButtons>>,
     mut tapped: Local<Vec<u16>>,
     mut script_held: Local<Vec<u16>>,
 ) {
@@ -130,6 +137,18 @@ fn script_input(
             (bind.key.and_then(key_code), bind.mouse.and_then(mouse_code))
         }).collect();
     }
+    // Before taps/holds below alter engine keys: use the published input snapshot,
+    // selected device and the same controller binding reader as ControlInput.
+    // DisableControl blocks gameplay, not these documented event transitions.
+    input.event_controls = bindings.as_deref().map(|b| {
+        let controller = b.device == crate::bindings::InputDevice::Controller;
+        let keys = !controller || crate::bindings::keys_with_pad();
+        GAME_CONTROLS.iter().take(fnv_game::script_input::CONTROLS).enumerate().fold(0, |mask, (c, (control, _, _))| {
+            let keyboard = keys && input.bindings.get(c).is_some_and(|(k, m)| [*k, *m].into_iter().flatten().any(|code| input.held.contains(&code)));
+            let pad = controller && crate::bindings::pad_binding_held(b.pad(*control), &pads, sticks.as_deref());
+            mask | (u32::from(keyboard || pad) << c)
+        })
+    });
     let codes = input.blocked();
     blocked.keys = codes.iter().filter(|&&c| c < MOUSE_BASE).filter_map(|&c| dik_key(c as u8)).collect();
     blocked.mouse = codes.iter().filter_map(|&c| mouse_of(c)).collect();
@@ -262,14 +281,16 @@ const PAD_BITS: [(GamepadButton, u32); 14] = [
     (GamepadButton::North, 0x8000),
 ];
 
-/// Tell the scripts the player's auto-move and aiming and the first connected pad
-/// (GetAutoMove, GetPCUsingScope/IronSights, the controller functions), and whether the
-/// sights are up (`Combat::player_sights_up`: not while blocking with a melee weapon or
-/// while a reload holds them down), for SUP's HUD bars' aiming condition.
+/// Tell the scripts the player's auto-move, aiming, kill-camera state, and the first
+/// connected pad (GetAutoMove, GetPCUsingScope/IronSights, IsInKillCam, the controller
+/// functions), and whether the sights are up (`Combat::player_sights_up`: not while
+/// blocking with a melee weapon or while a reload holds them down), for SUP's HUD bars'
+/// aiming condition.
 fn tell_player_state(
     control: Option<Res<crate::control::PlayerControl>>,
     combat: Option<Res<crate::combat::Combat>>,
     anim: Option<Res<crate::combat::WeaponAnim>>,
+    kill_cam: Option<Res<crate::kill_cam::KillCam>>,
     pads: crate::pad::ActionPads,
     mut script: Option<ResMut<crate::script::ScriptState>>,
 ) {
@@ -283,6 +304,7 @@ fn tell_player_state(
             _ => false,
         };
     }
+    told.kill_cam = kill_cam.is_some_and(|k| k.kill_playing());
     let pad = &mut told.pad;
     match pads.iter().next() {
         Some(g) => {
@@ -330,3 +352,55 @@ fn mod_file_roots(data: Option<Res<nvf_assets::GameData>>, mut done: Local<bool>
 #[cfg(test)]
 #[path = "script_input_wheel_tests.rs"]
 mod wheel_tests;
+
+#[cfg(test)]
+#[path = "script_input_mcm_page_tests.rs"]
+mod mcm_page_tests;
+
+#[cfg(test)]
+mod kill_cam_state_tests {
+    use super::*;
+    use crate::kill_cam::KillCam;
+    use crate::script::ScriptState;
+    use fnv_game::game::RunCtx;
+    use fnv_script::vm::XVal;
+
+    fn is_in_kill_cam(app: &mut App) -> XVal {
+        let mut state = app.world_mut().resource_mut::<ScriptState>();
+        let game = &mut state.rt.as_mut().unwrap().game;
+        fnv_game::nvse::call(game, &RunCtx::default(), "isinkillcam", None, &[])
+            .expect("IsInKillCam handler")
+            .expect("IsInKillCam result")
+    }
+
+    #[test]
+    fn tell_player_state_tracks_kill_cam_and_excludes_classic_attack_cam() {
+        let mut app = App::new();
+        app.insert_resource(ScriptState::over_no_plugins())
+            .init_resource::<KillCam>()
+            .add_systems(Update, tell_player_state);
+
+        // Inactive by default.
+        app.update();
+        assert_eq!(is_in_kill_cam(&mut app), XVal::Num(0.0));
+
+        // Active kill camera reports 1.
+        app.insert_resource(KillCam::test_with_kill_show());
+        app.update();
+        assert_eq!(is_in_kill_cam(&mut app), XVal::Num(1.0));
+
+        // Classic VATS attack camera (non-kill) reports 0.
+        app.insert_resource(KillCam::test_with_attack_show());
+        app.update();
+        assert_eq!(is_in_kill_cam(&mut app), XVal::Num(0.0));
+
+        // Back to active kill camera, then removed resource resets to 0 (no stale true).
+        app.insert_resource(KillCam::test_with_kill_show());
+        app.update();
+        assert_eq!(is_in_kill_cam(&mut app), XVal::Num(1.0));
+
+        app.world_mut().remove_resource::<KillCam>();
+        app.update();
+        assert_eq!(is_in_kill_cam(&mut app), XVal::Num(0.0));
+    }
+}

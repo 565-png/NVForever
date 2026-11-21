@@ -29,6 +29,10 @@ use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+/// The Editor ID of the speech challenge's failure topic (DIAL 0x000000FD in both masters)
+/// [documented: GECK wiki Topics Tab; observed: FalloutNV.esm, Fallout3.esm].
+pub const SPEECH_CHALLENGE_FAILURE: &str = "SpeechChallengeFailure";
+
 /// How far from the player a StartConversation speaker may be and still talk at once,
 /// game units ([`Game::walk_up_greet`]) [design: twice the AI's standard talk distance].
 pub const WALK_UP_REACH: f32 = 300.0;
@@ -323,7 +327,8 @@ impl<'a> Game<'a> {
     ///   the line's, with the speaker as subject and the listener as target
     ///   [hypothesis: the page does not say on whom];
     /// - the line's conditions pass with the speaker as subject and the listener as
-    ///   target [documented: Category:Conditions, Run On].
+    ///   target [documented: Category:Conditions, Run On]. A talking activator as the
+    ///   listener is its talking actor here ([`Game::conditions_target`]).
     pub fn can_say(&mut self, speaker: FormId, listener: Option<FormId>, info: FormId) -> bool {
         self.can_say_as(speaker, listener, info, Says::Actor)
     }
@@ -365,6 +370,7 @@ impl<'a> Game<'a> {
         let data = self.data;
         let dv = self.dialogue_view();
         let Some(def) = dv.info(&info) else { return Err(Blocked::NotALine) };
+        let listener = listener.map(|l| self.conditions_target(l));
         if def.say_once && self.said_once(info) {
             return Err(Blocked::SaidOnce);
         }
@@ -510,6 +516,9 @@ impl<'a> Game<'a> {
     #[allow(clippy::too_many_arguments)]
     fn select_among_but(&mut self, speaker: FormId, listener: Option<FormId>, lines: &[FormId], keep: &impl Fn(&InfoDef) -> bool, lead_only: bool, says: Says, stale: &BTreeSet<FormId>) -> Option<FormId> {
         let dv = self.dialogue_view();
+        // Once for all the lines: a talking activator listens as its talking actor
+        // ([`Game::line_verdict`], [`Game::conditions_target`]).
+        let listener = listener.map(|l| self.conditions_target(l));
         let kept = |i: &FormId| !(lead_only && dv.is_follow_up(i)) && dv.info(i).is_some_and(keep);
         let mut at = 0;
         while at < lines.len() {
@@ -714,6 +723,9 @@ impl<'a> Game<'a> {
         }
         self.dialogue_serial = self.dialogue_serial.wrapping_add(1);
         self.dialogue = Some(Conversation { actor, through, line: None, choices: Vec::new(), topic_list: false, lines: 0, then: None, ending: false });
+        // [design, #2724] Opening by any route fulfils this actor's pending walk-up;
+        // consume it before the first line's scripts can run (`Game::speak`).
+        self.walk_up_greets.remove(&actor);
         self.extra.entry(actor).or_default().talked_to_pc = true;
         self.emit(EventKind::DialogueStarted { actor, topic });
         self.speak(actor, topic, info);
@@ -750,6 +762,7 @@ impl<'a> Game<'a> {
         if def.has(info_flag::RUN_IMMEDIATELY) {
             self.run_line_result(actor, def, true);
         }
+        self.jip_dialog_topic(actor, topic, info);
     }
 
     fn emit_response(&mut self, actor: FormId, def: &InfoDef, info: FormId, position: usize) {
@@ -784,6 +797,9 @@ impl<'a> Game<'a> {
     /// over the line ends ([`Game::finish_line`]). An actor that died, was disabled or
     /// deleted ends the conversation [hypothesis].
     pub(crate) fn update_dialogue(&mut self, dt: f64) {
+        /// What is left of a response the No Auto Continue Dialog tweak holds: next to
+        /// nothing, so a click ends it at once.
+        const HELD_RESPONSE: f64 = 1e-6;
         let Some(c) = self.dialogue.as_ref() else { return };
         let actor = c.actor;
         if !self.present(c.through.unwrap_or(actor)) || self.extra.get(&actor).is_some_and(|e| e.dead) {
@@ -795,6 +811,15 @@ impl<'a> Game<'a> {
         let Some(def) = dv.info(&line.info) else { return };
         let order = def.response_order();
         line.remaining -= dt;
+        // The player's tweak: a response that has run out waits for the player's click
+        // (`Game::skip_response`, which calls with no time passing) [design: docs/design/tweaks.md].
+        if self.tweaks.no_auto_continue_dialogue && dt > 0.0 && line.remaining <= 1e-9 {
+            line.remaining = HELD_RESPONSE;
+            if let Some(c) = self.dialogue.as_mut() {
+                c.line = Some(line);
+            }
+            return;
+        }
         while line.remaining <= 1e-9 {
             line.response += 1;
             match order.get(line.response) {
@@ -1044,6 +1069,11 @@ impl<'a> Game<'a> {
         let dv = self.dialogue_view();
         let priority = |t: &FormId| dv.topic(t).map_or(50.0, |d| d.priority);
         let mut links = self.links_after(topic, def);
+        // The speech challenge's failure topic is what the actor says when a challenge
+        // fails [documented: GECK wiki Topics Tab, SpeechChallengeFailure], not a choice
+        // for the player: its lines' Link From names the challenge it answers, and offered
+        // through it the list showed its Editor ID (Megaton's Lucas Simms in TTW, #3024).
+        links.retain(|l| l.from.is_none() || !dv.topic(&l.topic).and_then(|d| d.edid.as_deref()).is_some_and(|e| e.eq_ignore_ascii_case(SPEECH_CHALLENGE_FAILURE)));
         if !def.choices.is_empty() {
             links.sort_by(|a, b| priority(&b.topic).total_cmp(&priority(&a.topic)));
             let out = self.offer(actor, &links);
@@ -1559,11 +1589,12 @@ impl<'a> Game<'a> {
             self.talking_through = None;
             if let Some(f) = follow {
                 let topic = dv.info(&f).and_then(|d| d.topic).unwrap_or(FormId(0));
-                self.say_line(talker, Some(to), topic, f, next);
+                // Said through the activator from the start, so it cuts a line the
+                // activator is saying (`Game::say_line_through`, #2768).
+                self.say_line_through(talker, Some(to), topic, f, next, via);
                 self.set_line_look(talker, said.look);
                 if let Some(s) = self.speech.iter_mut().find(|s| s.speaker == talker && s.info == f) {
                     s.earlier_topics = earlier;
-                    s.through = via;
                 }
                 return;
             }
@@ -1587,11 +1618,10 @@ impl<'a> Game<'a> {
                 1 => linked[0],
                 n => linked[self.rng.next_u32() as usize % n],
             };
-            self.say_line(who, Some(to), topic, info, next);
+            self.say_line_through(who, Some(to), topic, info, next, through);
             self.set_line_look(who, said.look);
             if let Some(s) = self.speech.iter_mut().find(|s| s.speaker == who && s.info == info) {
                 s.earlier_topics = earlier;
-                s.through = through;
             }
             return;
         }

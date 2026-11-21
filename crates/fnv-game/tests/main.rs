@@ -9,6 +9,7 @@
 //! `[[test]]`; `every_test_file_is_built` fails until it is in one of them.
 
 mod common;
+mod string_settings;
 #[path = "common/digest.rs"]
 mod digest;
 
@@ -28,19 +29,29 @@ mod combat_transitions;
 mod companion_wheel;
 mod container_sound_getters;
 mod crime;
+mod critical_player_state;
 mod csty_session;
 mod crippled_limbs_data;
 mod dead_on_spawn;
 mod death_items;
+mod destruction_stage_blocks;
 mod dialogue_data;
 mod dialogue;
 mod difficulty;
 mod effect_updates;
 mod experience;
+mod player_source_commands;
+mod pipboy_mode;
 mod extender_conditions;
 mod factions;
+mod fixtures_data;
+mod first_person_menu_clock;
+mod friend_hit_condition;
 mod functions;
 mod game_clock;
+mod title_menu_group;
+mod jip_remove_filters;
+mod key_button_events;
 mod hit_effects_data;
 mod hit_effects;
 mod idles_holstered;
@@ -49,6 +60,8 @@ mod item_ref_health;
 mod jg_nif;
 mod jg10;
 mod jg3;
+mod jip_main_loop_zero;
+mod jlm_dropped_refs;
 mod jg4;
 mod jg5;
 mod jg6;
@@ -63,9 +76,11 @@ mod jip7;
 mod jip8;
 mod jip9;
 mod knockdowns;
+mod lighting_session;
 mod lutana;
 mod nellis_hangar_doors;
 mod nif_player_models;
+mod model_has_block;
 mod lutana2;
 mod lutana3;
 mod magic_archetypes;
@@ -79,16 +94,20 @@ mod packages;
 mod perk_combat;
 mod perk_talk;
 mod pp;
+mod quest_marker_data;
 mod radiation;
 mod radio_data;
 mod respawn;
 mod save_pairs;
 mod script_events;
 mod script_stack;
+mod short_hex_receivers;
 mod showoff3;
 mod set_class;
 mod showoff4;
 mod showoff5;
+mod softlock;
+mod source_metadata;
 mod step_budget;
 mod sup1;
 mod sup4;
@@ -138,3 +157,9 @@ fn every_test_file_is_built() {
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
+
+mod callable_identity;
+mod em_clearance;
+mod is_in_kill_cam;
+mod preactivation_events;
+mod preactivation_mutation;

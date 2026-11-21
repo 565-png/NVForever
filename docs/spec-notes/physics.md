@@ -554,6 +554,69 @@ for the same spot within 0.3 units, simulation.md §5) it came to rest on the gr
 8692.71, 30.9 lower. Repeated runs came to rest within 0.1 units of each other (the steps
 are fixed, but how many run per frame depends on frame times).
 
+**Sinking through the terrain (#2753: the corpses' cause found, the weapons' open).** Players' logs show weapons dropped by dying
+NPCs and corpses at rest on the terrain in exteriors going through it, the same creatures at
+the same spots on many installs [observed: player reports, build 0.7.0, issue #2753]; the
+safety nets (`dropped 0x… fell through the world`, 10,000 units under the drop point, and
+the ragdoll's `fell through at`, 150 under the terrain under its first bone) put them back.
+Synthetic fnv-phys experiments did not reproduce it (square reloads, waking, the contact
+shell, characters, slow motion, shots, blasts). Diagnostic lines (`engine/nvf-play`
+`phys/sinking.rs` [design, #2753]): `dropped 0x… woke after resting S s … touching …` when a
+resting drop moves again, with what its colliders touch; `dropped 0x… sank: …` and `ragdoll:
+actor … sank: bone …` once, the first frame a body's centre is more than 20 units under the
+terrain at its own x, y, with its speed, its rest or settle state, every collider a ray finds
+straight down there (whether the terrain collider is in place where the surface says) and,
+for a drop, what it touches. A ragdoll `fell through` line with no `sank` line before it is
+the guard's reading on a slope (it measures under the first bone), not a body under the
+ground. Smoke probes `sinking-drop-*-spot` and `sinking-corpse-*-spot` run at the reported
+spots.
+
+What the probes found [observed: smoke runs of 241f1581d, 2026-11-18, logs in the session's
+notes]:
+
+- **The corpses** of the reports (Bighorner 001710BB, Radscorpion 0015A0C4, Mole rat
+  00161732) are leveled spawns (`VSpawnTier2BigHornerMed75` …) whose leveled choice in those
+  runs was the invisible `nvvoid` placeholder (scale 0.1, no shapes; actors.md §10): with
+  Health 0 a new game lays it out dead (dead-on-spawn.md) where its reference is placed,
+  and its two-body ragdoll starts when the cell loads. 001710BB's root started about 3 units
+  under the terrain and fell straight down (0.2 s later 20 under at 158 units/s, then caught
+  152 under the terrain, the reports' figure); 0015A0C4's started 360 under (the reports'
+  355), where a terrain-layer rock (001613EC) stands 49 over the heightfield; 001710B3 nearby
+  did as 001710BB. A body whose centre starts under the two-sided terrain mesh is pushed
+  down and falls through it. Players see nothing of these (the model has no shapes); the
+  fall-through warnings and the lifts were all there was.
+- **The dropped weapons** did not reproduce: the settler of the drop probes held its weapon
+  holstered (SetRestrained, no combat), so it dropped nothing (combat.rs `death_drops` takes
+  the weapon in the hand); the player's own drops came to rest. An NPC's death drop is
+  placed 50 units in front of it and 30 over its feet (`fnv_sim::world::DROP_AHEAD`,
+  `DROP_ABOVE`): on a slope rising more than 0.6 ahead of it, or under feet drawn below the
+  surface, it starts in the ground, and the reports' weapons first sank slowly (8 to 24
+  units/s) and then fell, as a body pushed out downwards does [hypothesis].
+
+So [design, #2753]:
+
+- A ragdoll about to start with a body's centre under the terrain at its own x, y is lifted
+  whole until every such centre is 5 units over what stands there: the first collision a ray
+  finds coming down from 100 units over the terrain, so a rock or foundation on the terrain
+  rather than the heightfield inside it (`ragdoll: actor … starts with bone … under the
+  terrain: lifted N units onto …`). It is left as it is when anything other than the terrain
+  lies within 100 units under any such body or under its lowest body (a floor built below
+  the surface, a tunnel). A saved pose (`XRGD`, or where it lay before) is lifted only past
+  20 units under, since it was authored on the stored ground and the smoothed terrain
+  (#2149) lies up to 8 units off it; lifted, it starts awake and comes down, instead of
+  hovering at rest.
+- A dropped item whose centre of mass starts under the terrain at its own x, y, with nothing
+  other than the terrain under it, is lifted onto the contact shell of what stands there
+  (`collision of dropped 0x… started with its centre … under the terrain …: lifted … onto …`).
+  One at rest on a slope has its centre over the terrain, however low its downhill end
+  reaches, so the reloads of its cell leave it alone.
+- The safety nets stay. The drop probes were set up again (the settler fights the player,
+  its weapon drawn, and dies about 2 s later on the spot); a fifth runs at the shotgun's spot
+  (WastelandNVmini, 10798, 17343, flat at z 9920). Their lift line is marked known failing
+  until a run shows it: the weapons' cause stays a hypothesis until then.
+- Whether a shapeless `nvvoid` placeholder laid out dead should get a ragdoll at all is a
+  question for the owner (owner-review.md).
+
 ### 4.3.1 Clutter at cell load: asleep, jointed objects held (`engine/nvf-play`, 2026-10-11)
 
 **The playtest.** Loading Chet's store (GSGeneralStore) threw the shelves' items about
@@ -1197,6 +1260,31 @@ sleeping"). Two causes, both in how rapier picks a contact's points.
   that span the most of such a face (or, for a contact outside them, the most with the
   corner nearest it). Test `a_stone_on_a_table_top_of_many_corners_rests_on_it`.
   **`NVF_PHYS_HULL_FACES=0`** (a test aid, read once) builds parry's plain hull.
+- **Creased ground (#2663)**: rapier merges the contacts of one pair whose normals lie
+  within about 5° into one cluster and solves it with one normal [documented: rapier3d
+  0.36.1 `contact_clustering.rs`, `COS_MERGE_ANGLE` 0.996; `contact_clustering` on by
+  default]. LAND's heights come in 8-unit steps over 128 units (world.md §3), so two
+  neighbouring terrain triangles often meet at 3.6°; a flat body lying across them got
+  one normal for both, tipped one way, then the other (two tilts about 0.4° apart), its
+  farthest point moving at 10-27 units/s and its centre creeping about 0.3 units/s, and
+  never slept, on the stored landscape and the smoothed one alike [observed: issue #2663].
+  The contact skin, the prediction distance, `FIX_INTERNAL_EDGES`, contact recycling,
+  solver iterations, friction and restitution made no real difference; clustering off
+  for the whole world rests them, but changes the contacts of every compound and
+  triangle-mesh pair and rapier has no per-pair switch [observed: issue #2663]. Instead
+  placed dynamic bodies (references' bodies, not ragdolls, gore, characters or bodies
+  the wind blows) sleep once their farthest point moves slower than
+  **`PLACED_SLEEP_SPEED` = 21 units/s** for 0.5 s, three times rapier's 7 [design,
+  #2663]. It changes only when such a body may sleep, not how it moves awake; a body
+  sliding or rolling slower than that for half a second stops a little sooner, and one
+  asleep wakes as before when struck, pushed, grabbed or touched by a moving body. Tests
+  `placed_clutter_on_creased_ground_falls_asleep` (64 drops each of a garment, a folded
+  cloth, a box and a stone on a stepped and a smoothed hill, 60 and 160 Hz: all asleep on
+  the ground after 12 s; with rapier's threshold 3-8 of the 256 stayed awake in each
+  set-up, creeping at 0.2-4 units/s [observed: that set-up, 2026-11-17]) and
+  `a_ball_rolling_slowly_stays_awake` (started at 40 and at 21 units/s, still rolling 3 s
+  later; the slower one's centre rolls under 21, its top at twice that, and rapier
+  measures the farthest point).
 - **Measured** [observed: a probe of `fnvtool phys cell`, not committed, 2026-11-13:
   every dynamic reference of the cell added awake where it is placed, 20 s of settling,
   then a kick from below at 400 units/s and 20 s more; bodies awake at the end of each,
@@ -1334,7 +1422,8 @@ it adds:
 
 Engineering choices, not game values: mouse look 0.0025 rad per mouse count, pitch
 limited to ±89°; physics loads the 3×3 exterior cells around the player (one more ring
-before unloading) or the one interior, at most one cell per frame, the player's own cell
+before unloading) or the one interior, each exterior square with the references placed in
+other squares whose bounds reach into it (below), at most one cell per frame, the player's own cell
 first, and the character waits while its cell is not loaded; the start drops the
 character on whatever a downward ray from the start eye finds (outdoors from far above if
 nothing; indoors the start moves to a door arrival, §6.7), on the hit's contact shell (§6.2); `Travel` puts the character where the arrival rule of
@@ -1352,6 +1441,25 @@ Goodsprings' 3×3 that gives 839
 references with collision against `fnvtool phys cell`'s 849 [observed: `nvforever --play`
 debug log: 18 references not in the world, the 8 that `fnvtool` also counts as Initially
 Disabled and 10 that the simulation disables through their enable parents].
+
+An exterior square holds the references its cell record lists, the worldspace's persistent
+references standing in it, and the references placed in another square whose bounds reach
+into it: the base record's OBND box, scaled, turned by the reference's rotation and moved
+to its position, against the 4,096-unit grid (`fnv_world::reach`, built once per
+worldspace, used by `fnvtool phys cell` too) [design, #2795]. HeliosPowerPlant (REFR
+0x000B0A0E, placed in square 5,-1) is HELIOS One's front plaza down to y -8801, in square
+5,-3; with only the references placed in the 3×3 a player in 5,-3 stood on the terrain
+under the plaza (z 5435-5464 against the plaza's 5476) [observed: `fnvtool phys cell`
+rays at radius 1 and 2, #2795]. A reference held by several loaded squares is in the world
+once, added with the first and removed with the last. That a base's OBND covers its
+model's collision is [hypothesis] (true of HeliosPowerPlant [observed: #2795]). Every
+square a box covers lists the reference, with a cell record there or not (physics loads
+squares without one too); nothing is cut. A box reaching more than 32 squares from its
+own (more likely a broken record: the largest buildings reach two or three) is kept as
+a rectangle the squares check by containment, and logged as a warning naming the
+reference and its squares [design, #2795]. The index's
+build time and size are logged (`physics: worldspace …: N references reach beyond their own
+square`) and not measured yet [hypothesis: well under a second for WastelandNV].
 
 Seen in NVForever, not in the game [observed]: walking east into the rock 0x000EDE82
 (layer Terrain) at about (-31043, -18055) the capsule jittered in place (about 85 units/s
@@ -2525,9 +2633,9 @@ rule above would replace it (left to the Layer 5 owner).
 
 ### 6.8 Actors in the player's way (`engine/nvf-play`, `blocking.rs`)
 
-How the game keeps characters apart is not captured [hypothesis: every actor has a
-character controller of its own on the Char Controller layer, 30; nothing here depends
-on it]. What the engine does is [design]:
+The original's collision shape is unseen [hypothesis: every actor has a character
+controller of its own on the Char Controller layer, 30; nothing here depends on it].
+Large-creature spacing is measured below (#2535). What the engine does is [design]:
 
 - Each frame, every drawn, living actor has a **block** where its body is now: the line
   on the ground under its torso's bones (pelvis to neck, from the posed skeleton that
@@ -2567,6 +2675,82 @@ on it]. What the engine does is [design]:
   walk took the standing player with him at his own speed, from 3.5 units away, all
   the way to the saloon door [observed: `--play --npc-packages EasyPeteRef --hour 12`
   with the player put on his way, 163 units, rapier 0.36.0].
+
+**Walking creatures' widths (#2535).** [hypothesis: fits the observed spacing; the
+original's shape was not seen] A creature with a skeleton `BSBound` extra named
+`BBX` blocks other walking actors and the player with a circle of radius at least
+its BBX half-width x × Base Scale × reference scale. The existing character radius
+wins when larger; NPC_ people and creatures without BBX keep their existing radii.
+The radius is used for both the walker and its block, including carried lunges and
+steps while the player is on furniture or has collision off [design: `player.rs`,
+`blocking::walking_radius`]. It changes neither the world capsule nor navmesh paths:
+larger world capsules would not fit the doors and paths actors walk [design:
+`phys::npc_params`]. `actor_block_radii` is refreshed beside `actor_heights` from
+visible living creature roots; their transforms already include both scales
+[design: `actors::spawn_creature`, `hitvol::sync_volumes`].
+
+[design: `residents::think`, `hitvol::sync_volumes`, #2535] A stopped fighter
+loses its walking character. Its standing block keeps the scaled BBX circle at
+the creature root's feet when wider than the existing drawn block, including
+while an attack holds the block in place. This preserves both creatures' widths
+when either stops to fight; the posed torso's narrower block cannot replace one
+side of the pair. Standing pushes and attack anchoring retain their existing rules.
+
+[observed: the main session's runs of NVForever, 2026-11-15, reproduction on
+Searchlight Airport's runway: the Radscorpion + Giant Radscorpion pair against
+a god-mode player who backs away from 16 s to 28 s; pair distance read once
+a second; three runs of upstream main 99faa23b7 and six of this branch]
+Standing and fighting, the pair stays 66–84 units apart on upstream main and
+113 on this branch (the designed sum). Chasing, both builds stay mostly
+62–64 units apart. On this branch, in four of six runs one reading late in
+the chase, as the pair comes back to a stop, fell to 7–39 units for about a
+second. Upstream main showed no such dip in its runs.
+[design, #2535] The widened block keeps standing creatures apart but not
+moving ones, and the change from walking to standing can let one creature
+pass briefly into the other. Both are left for the follow-up on the character
+controller's movement path.
+
+[observed: FalloutNV.esm and Fallout - Meshes.bsa, fnvtool esm decode / nif decode,
+main session 2026-11-15] The radscorpion skeleton's BBX centre is (0, 0, 30.21),
+half sizes (70.56, 125.84, 30.21). Other skeleton half sizes: `characters\_male`
+(23.10, 17.64, 66.22), centre (0, 0, 66.22); deathclaw (50.00, 95.14, 76.18);
+dog (29.56, 62.75, 35.51); brahmin (40, 80, 40). The pair in combat-rules.md §10
+has base scales 0.6 and 1.0, giving radii 42.336 and 70.56, sum 112.896 (about
+113). Before #2535 NVForever's pair settled only 62–84 units centre to centre,
+despite drawn widths 85/141 [observed: main session's measured Searchlight runway
+run on 63db0209c, 2026-11-15].
+
+[observed: capture run15b_b2, 2026-11-15; xNVSE 6.4.9, JIP LN 57.30] The same
+pair against a standing god-mode player on Searchlight Airport's runway, sampled
+at 30 Hz for 17 s: while both were within 300 units of the player (452 samples),
+GetDistance between them had median 131, tenth percentile 93, ninetieth 283 and
+minimum 32 briefly. This measures spacing, not a rigid non-overlap invariant.
+
+[design: `npc_combat::creature_spacing`, `Fighters::lunge_room`, `attack_anims::carry`]
+Combat body gaps and lunge stopping use the walking block's radius too. Creature
+reach remains centre to centre, (RNAM + body reach) × scale: for this pair,
+(64 + 124) × 0.6 = 112.8 and × 1.0 = 188, beyond their respective blocks plus
+the player's radius (64.336/92.56). People count melee reach beyond body radii.
+[design: `npc_combat::CombatBodies`, `use_weapon::melee_range`, #2535] Ordinary
+combat and scripted melee share the body lookup. When either participant has
+a widened block, combat also supplies the other participant's ordinary character
+block if absent from the drawn list. Both attack directions therefore have a body
+gap and summed radii, including a walking humanoid against a walking or standing
+creature. Widened eligibility uses the published BBX width against the character's
+capsule radius (or `phys::npc_params` from its height once the character is removed),
+so stopping does not remove the ordinary walker's body gap.
+Pairs without a widened participant keep the existing drawn-block lookup.
+[design: `nvf_play::combat::PhysView::melee_targets_near`,
+`fnv_combat::projectile::swing_reaching`, #2535] The player's ground-reach fallback
+uses max(24, the target's published scaled BBX radius) in place of the fixed
+24-unit target margin. The player's own capsule radius remains part of its reach.
+Thus a short weapon still reaches a low creature at its widened blocking stop,
+looking level or down; ordinary targets keep their existing reach. The same
+per-target margin expands candidate lookup, and the obstruction rays still must
+meet the target first.
+The separate navmesh `fnv_ai::Ai::keep_apart` still uses 18 per actor; it does
+not read these blocks. The original's transient overlap, unseen shape, extra
+attack pause and backing-away cadence remain open in observer check 244.
 
 **Pushing** (2026-10-10, owner request: "the player or npc moving needs to be able to
 push another actor if they are stood still"). What the game does when one character
@@ -2931,7 +3115,10 @@ into the lift with the opposite sign; the prediction is the vertical speed on th
 filtered over 0.2 s, each sample kept within 0.4 × the distance walked of the prediction,
 so a step does not feed it and is not overshot. A change of the drawn ground is taken in
 whole. The lift goes back to 0 as a critically damped spring, ω = 8/s for a small lift
-and stiffer the larger it is (ω × (1 + |lift| / 6)), at most 24 units either way; a
+and stiffer the larger it is (ω × (1 + |lift| / 6)), at most 48 units either way (24,
+the step height, until 2026-11-17: a 27-unit let-down off a road piece's edge after a
+crouched jump, on top of 12 still being eased, went past it and the view dropped the
+excess in one frame; `step_lift::MAX_LIFT`); a
 change over 48 units in a step (a placement), the air and swimming take nothing in and
 restart the prediction from 0. The feet, the capsule, the reference's position and every
 query stay where the controller has them; the player's body, its first- and third-person

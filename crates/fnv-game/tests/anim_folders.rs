@@ -60,8 +60,15 @@ fn fixture() -> Fixture {
 
 /// The Data folder: `meshes\AnimGroupOverride` with the JSON files and their folders,
 /// spelled in mixed case as mods spell them, plus an empty, a broken and a JSON file
-/// naming a folder that is not there (all left out).
+/// naming a folder that is not there (all left out). Written once for the process: the
+/// tests run side by side, and one rewriting a JSON file while another read the folder
+/// made that file look empty or broken to the reader (#3172).
 fn files() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(write_files);
+}
+
+fn write_files() {
     use fnv_game::mod_files::{set_roots, Roots};
     let dir = std::env::temp_dir().join(format!("nvf-anim-folders-{}", std::process::id()));
     let ago = dir.join("Meshes/AnimGroupOverride");
@@ -175,7 +182,8 @@ fn weapon_paths_follow_the_weapon_in_hand() {
 }
 
 /// PlayAnimationPath's sequences finish by themselves; ActivateAnim's stay until a script
-/// takes them back [documented: ActivateAnim, "adds a sequence to the active ones"]. Both
+/// takes them back [documented: ActivateAnim, "The animation will overlay any other
+/// animations playing on the actor"; DeactivateAnim deactivates it]. Both
 /// are requests in `AnimPaths::sequences`, which the renderer layers on the actor.
 #[test]
 fn activate_anim_sequences_stay_until_taken_back() {

@@ -753,7 +753,7 @@ fn write_rows(ui: &mut Ui, rows: &[MadeRow], data: &[Row]) {
         let number = row.value.clone().filter(|_| !matches!(row.key, RowKey::Perk(_)));
         ui.write_changed(made.tile, "user1", number.map_or(Value::Num(-1.0), Value::Str));
         ui.write_changed(made.tile, "user0", flag(row.mark.is_some()));
-        ui.write_changed(made.tile, "user2", Value::Str(row.mark.unwrap_or_default().to_string()));
+        ui.write_changed(made.tile, "user2", Value::Str(row.mark.clone().unwrap_or_default()));
     }
 }
 
@@ -1298,7 +1298,7 @@ impl PageFonts for FontKit<'_> {
 /// zoom changed on the same file writes the sizes again [design: as
 /// `tile-repair-menu-1468:engine/nvf-play/src/tiles/repair_menu.rs::write_file_sizes`]. A picture
 /// of an atlas has no file of its own.
-fn write_file_sizes(ui: &mut Ui, menu: TileId, done: &mut HashMap<TileId, (String, f64)>, texels: &mut HashMap<String, Option<(f64, f64)>>, fonts: &mut dyn PageFonts) {
+pub(super) fn write_file_sizes(ui: &mut Ui, menu: TileId, done: &mut HashMap<TileId, (String, f64)>, texels: &mut HashMap<String, Option<(f64, f64)>>, fonts: &mut dyn PageFonts) {
     let mut due = Vec::new();
     let mut stack = vec![menu];
     while let Some(t) = stack.pop() {
@@ -1311,7 +1311,7 @@ fn write_file_sizes(ui: &mut Ui, menu: TileId, done: &mut HashMap<TileId, (Strin
             continue;
         }
         let name = tile.get("filename").map(|v| v.text().trim().to_string()).unwrap_or_default();
-        if name.is_empty() {
+        if name.is_empty() || super::runtime_images::is_runtime(&name) {
             continue;
         }
         let zoom = tile.get("zoom").filter(|v| !matches!(v, Value::Sym(_))).map_or(100.0, Value::num);
@@ -1453,6 +1453,10 @@ pub(crate) fn page(ui: &mut Ui, snap: &Snapshot, view: &mut StatsView, tab: usiz
         }
         // On every drawn frame, so a window injected or enabled later crops too.
         fnv_ui::input::mark_clip_windows(ui, p.menu);
+        list::unclip_row_children(ui, list, w.rows.iter().map(|r| r.tile));
+        if let Some(other) = other {
+            list::unclip_row_children(ui, other, w.other_rows.iter().map(|r| r.tile));
+        }
     }
     write_scroll(ui, p.bar, view.desc);
     // The model's first row over the file's own count of the clicks, as the description's.
@@ -2140,7 +2144,7 @@ mod tests {
     }
 
     fn rows() -> Vec<Row> {
-        (0..7).map(|i| Row { key: RowKey::Av(i), name: format!("Stat {i}"), value: Some((i + 1).to_string()), mark: None, description: "one|two".into(), icon: Some(format!("pics\\{i}.dds")), badge: None }).collect()
+        (0..7).map(|i| Row { key: RowKey::Av(i), name: format!("Stat {i}"), value: Some((i + 1).to_string()), mark: None, description: "one|two".into(), icon: Some(format!("pics\\{i}.dds")), badge: None, bold: false }).collect()
     }
 
     fn skills() -> Vec<Row> {
@@ -2259,7 +2263,7 @@ mod tests {
         let mut s = snap();
         s.special[0].value = Some("--".into());
         s.special[1].value = None;
-        s.special[2].mark = Some("(+)");
+        s.special[2].mark = Some("(+)".into());
         run(&mut ui, &s, &mut v, true, &mut t).unwrap();
         let made = t.written.rows.clone();
         assert_eq!(text(&ui, made[0].tile, "user1"), "--", "a numeric write would lose it");
@@ -3244,6 +3248,36 @@ mod tests {
         ui.set_trait(p.desc_rect, "y", Value::Num(100.0));
         ui.update();
         assert!(run(&mut ui, &snap(), &mut v, true, &mut t).is_ok());
+        ui.set_trait(p.list(), "width", Value::Num(15.0));
+        ui.update();
+        assert!(run(&mut ui, &snap(), &mut v, true, &mut t).unwrap_err().contains("row 0 does not fit"));
+    }
+
+    /// A list row with `<clips>1</clips>` inside a `<clipwindow>1</clipwindow>` list opts
+    /// into the list's window rather than self-clipping its own text children (`list_box_template.xml`,
+    /// [documented: GECK wiki `clipwindow`]): a text vertical alignment offset exceeding
+    /// `_VerticalSpacing` stays inside the list window instead of failing with `row 0 does not fit`,
+    /// while narrowing the list window itself still rejects the page.
+    #[test]
+    fn a_clipped_list_row_with_vertical_text_offset_uses_the_lists_clipwindow() {
+        let with_offset = |x: &str| {
+            x.replace(
+                r#"<hotrect name="TestRow"><target>&true;</target>"#,
+                r#"<hotrect name="TestRow"><target>&true;</target><clips>&true;</clips>"#,
+            )
+            .replace(
+                r#"<text name="ListItemText"><string>Row</string></text>"#,
+                r#"<text name="ListItemText"><y>14</y><string>Row</string></text>"#,
+            )
+        };
+        let (mut ui, mut v, mut t) = (tree_changed(with_offset), view(), StatsTiles::default());
+        run(&mut ui, &snap(), &mut v, true, &mut t).expect("row text inside list clipwindow should be admitted");
+        let p = paths(&ui, PAGE, None).unwrap();
+        let row0_text = t.written.rows[0].text;
+        let piece = t.pieces.iter().find(|piece| piece.tile == row0_text).expect("row 0 text piece");
+        let clip = piece.clip.expect("list clipwindow clip");
+        assert!(clip.height > ROW, "clip should come from the list window ({}), not the {ROW}-unit row box", clip.height);
+        // Narrowing the list container itself still clips row 0 and refuses the page.
         ui.set_trait(p.list(), "width", Value::Num(15.0));
         ui.update();
         assert!(run(&mut ui, &snap(), &mut v, true, &mut t).unwrap_err().contains("row 0 does not fit"));

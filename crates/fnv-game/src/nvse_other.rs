@@ -45,6 +45,8 @@ pub(crate) fn objective_teleport_links(g: &mut Game, flat: bool) -> XVal {
 /// "changes are NOT savebaked" [documented]; the rest [hypothesis]).
 #[derive(Debug, Default)]
 pub struct OtherState {
+    /// Bounded SetMaxAniso request; last call wins until the renderer consumes it. Not saved.
+    pub(crate) texture_filter_level: Option<u16>,
     /// The immutable placed-door graph, built lazily; run-time lock state is read
     /// for every route. Not persisted or rebuilt on each minimap callback.
     pub objective_doors: Option<crate::quest_targets::DoorGraph>,
@@ -209,11 +211,16 @@ fn alt_groups(ex: bool, args: &[XVal], dflt: [bool; 7], short: [bool; 7]) -> [bo
 
 impl<'a> Game<'a> {
     /// Change a package for the session: a copy of its definition, changed, takes its
-    /// place for every reader (`Game::package_def`).
+    /// place for every reader (`Game::package_def`). A change that leaves the definition
+    /// as it is makes no copy: the copies live for the session (readers hold `&'a`), and a
+    /// mod's main-loop script may call a setter with the same values every frame (#3150).
     pub(crate) fn change_package(&mut self, p: FormId, change: impl FnOnce(&mut crate::package::PackageDef)) {
         let Some(def) = self.package_def(&p) else { return };
         let mut new = def.clone();
         change(&mut new);
+        if new == *def {
+            return;
+        }
         let leaked: &'a crate::package::PackageDef = Box::leak(Box::new(new));
         self.package_overrides.insert(p, leaked);
     }
@@ -310,6 +317,18 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
     let base = |g: &Game, f: FormId| crate::functions::base_of(g, f).unwrap_or(f);
     let zero = XVal::Num(0.0);
     let v = match name {
+        // The receiver is the target; player perception and self-pairs do not count.
+        // Read the existing measured cache, without another sensing pass or expiry rule
+        // (actor-behaviour.md §2.4). Missing/nonactor zero is a selected portable
+        // convention matching neighboring queries; native invalid behavior is unknown.
+        "isactordetected" => {
+            let target = subject.filter(|&r| g.def_following(r, |_| false).is_some()
+                || matches!(g.data.sig(base(g, r)), Some(sig) if sig == *b"NPC_" || sig == *b"CREA"));
+            yes(target.is_some_and(|target| target != FormId::PLAYER_REF
+                && g.detection.pairs.iter().any(|(&(detector, seen), (d, _))|
+                    seen == target && detector != target && detector != FormId::PLAYER_REF
+                        && d.band == crate::detection::Band::Detected)))
+        }
         // Four-character record signature, separate from GetObjectType's numeric
         // result (docs/spec-notes/form-type-source-call.md).
         "getisformtype" => {
@@ -634,19 +653,12 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // [documented: GetOpenKey; SetOpenKey] the key of a lockable reference.
         "getopenkey" => {
             let r = subject.unwrap_or(FormId(0));
-            let key = match g.world.peek(r) {
-                Some(s) => s.lock.and_then(|l| l.key),
-                None => g.world.placed.get(r).and_then(|p| p.lock).and_then(|l| l.key),
-            };
+            let key = g.world.lock_of(r).and_then(|l| l.key);
             XVal::Ref(key.map_or(0, |k| k.0))
         }
         "setopenkey" => {
             let (Some(r), Some(k)) = (subject, form(args, 0)) else { return Some(Ok(zero)) };
-            if let Ok(s) = g.world.get(r) {
-                // A reference without a lock gets an open one with the key [hypothesis].
-                let lock = s.lock.get_or_insert(fnv_sim::world::LockState { level: 0, key: None, locked: false });
-                lock.key = Some(k);
-            }
+            let _ = g.world.set_open_key(r, k);
             zero
         }
         // Packages [documented: AddPackageAt `package [index, -1 the end] [actor]`, the

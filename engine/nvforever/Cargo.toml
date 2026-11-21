@@ -1,6 +1,6 @@
 [package]
 name = "nvforever"
-description = "NVForever: the game. At milestone M3 a free-camera explorer of the world (terrain and objects)"
+description = "NVForever: the game, playing Fallout: New Vegas from the player's own install"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,6 +16,8 @@ fnv-dds.workspace = true
 fnv-vfs.workspace = true
 fnv-install.workspace = true
 fnv-util.workspace = true
+# The DLSS download, its checks and the DLSS folder, shared with the launcher (#2765).
+nvf-dlss-files.workspace = true
 fnv-save.workspace = true
 texpresso.workspace = true
 fnv-spt.workspace = true
@@ -40,6 +42,7 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 png = "0.18"
+rayon = "1"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 # Only for the window icon type (window_icon.rs); the version Bevy already uses.
 winit = { version = "0.30", default-features = false }
@@ -92,6 +95,11 @@ libc = "0.2"
 [build-dependencies]
 # The program icon in the Windows executable (build.rs); MIT.
 winresource = "0.1"
+
+[dev-dependencies]
+# [design, #2403] Exercise the real reports system with synthetic UI navigation states.
+# [design, #2652] Authored-plugin runtimes for the Use Weapon shooter tests.
+nvf-play = { workspace = true, features = ["test-support", "report-test-support"] }
 
 [features]
 default = ["intro-video"]

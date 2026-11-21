@@ -15,10 +15,9 @@ use crate::material_anim::{MaterialSlot, RigMaterials};
 use crate::data::GameData;
 use crate::nif_material::NifMaterial;
 use crate::nif_spawn::{affine, build_mesh, is_editor_marker, shaded_model, shape_material_with, shape_props, shape_skin, to_bevy, StoreTextures, TextureSource};
-use crate::texture::{worker_texture, TextureCache, TextureSnapshot, WorkerTextures};
+use crate::texture::{worker_texture, worker_texture_exact, TextureCache, TextureSnapshot, TextureUsage, WorkerTextures};
 use bevy::asset::AssetHandleProvider;
 use bevy::image::CompressedImageFormats;
-use bevy::render::render_resource::TextureFormat;
 use bevy::tasks::{futures::check_ready, Task};
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::DynamicSkinnedMeshBounds;
@@ -35,6 +34,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub use fnv_world::alt_textures::AltTexture;
+mod attachment;
+pub use attachment::ModelObject;
 
 #[derive(Debug, Clone)]
 pub struct PreparedShape {
@@ -70,6 +71,9 @@ pub struct PreparedShape {
 
 #[derive(Debug, Clone, Default)]
 pub struct PreparedModel {
+    /// Source graph for `model_for_attachment`, from that same cached decode.
+    /// Ordinary/streamed models leave this empty.
+    pub objects: Vec<ModelObject>,
     pub shapes: Vec<PreparedShape>,
     /// The root node's own transform. A placed reference's transform replaces it, so
     /// world references draw shapes at `reference ∘ shape.transform`; geometry drawn
@@ -165,6 +169,82 @@ pub fn damage_stages_of(nodes: &[ModelNode], i: usize) -> Option<(i32, i32)> {
     out
 }
 
+/// A `NiBillboardNode` drawn as an entity of its own: its billboard mode and its rotation
+/// in the file. nvforever turns it towards the camera each frame (`world::face_camera`,
+/// docs/spec-notes/billboard-nodes.md): the glow cards of placed torches and fires, and
+/// those of the effect models.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Billboard {
+    pub mode: u16,
+    pub bind: Quat,
+}
+
+/// The nearest billboard node at or above node `n` of `nodes` (`None`: under none, or
+/// the root itself).
+pub fn billboard_above(nodes: &[ModelNode], n: Option<usize>) -> Option<usize> {
+    let mut at = n;
+    while let Some(i) = at {
+        if nodes[i].billboard.is_some() {
+            return Some(i);
+        }
+        at = nodes[i].parent;
+    }
+    None
+}
+
+/// Node `n`'s transform from the model's root (the root's own excluded, as in
+/// [`PreparedShape::transform`]); `None`: the root, the identity.
+pub fn node_from_root(nodes: &[ModelNode], n: Option<usize>) -> Affine3A {
+    let mut m = Affine3A::IDENTITY;
+    let mut at = n;
+    while let Some(i) = at {
+        m = nodes[i].local * m;
+        at = nodes[i].parent;
+    }
+    m
+}
+
+/// The billboard nodes of a model drawn with its shapes baked (a placed model with no
+/// node hierarchy of its own: render streaming's static path, a reference enabled by
+/// script): each shape below a billboard node goes under an entity for that node, which
+/// carries [`Billboard`] and so can turn, instead of being baked in the file's pose
+/// (#2549). One per reference; a node's entity is made when a shape first needs it. A
+/// billboard node below another is turned alone, the outer one staying baked.
+#[derive(Default)]
+pub struct BakedBillboards {
+    made: HashMap<usize, Entity>,
+}
+
+impl BakedBillboards {
+    /// Where shape `s` of `model`, placed by `rt` under `parent`, goes: `None` when it is
+    /// under no billboard node (baked as before, `rt ∘ s.transform`); else the billboard
+    /// node's entity (made the first time, under a holder at `rt ∘` the node's parent from
+    /// the root) and the shape's transform below it. `tag` goes on the holder when it is
+    /// made: render streaming's static path gives it the reference's `RefVisual`, so that
+    /// what moves or redraws a reference by its drawn children of the cell (nvf-play
+    /// moved.rs `follow`, destroyed.rs `swap_models`) takes the billboard's shapes along.
+    pub fn place<B: Bundle>(&mut self, commands: &mut Commands, parent: Entity, model: &PreparedModel, rt: Affine3A, s: &PreparedShape, tag: B) -> Option<(Entity, Affine3A)> {
+        let b = billboard_above(&model.nodes, s.node)?;
+        let node = &model.nodes[b];
+        let e = *self.made.entry(b).or_insert_with(|| {
+            let above = rt * node_from_root(&model.nodes, node.parent);
+            let holder = commands.spawn((Transform::from_matrix(Mat4::from(above)), Visibility::Inherited, tag, ChildOf(parent))).id();
+            let t = Transform::from_matrix(Mat4::from(node.local));
+            commands.spawn((t, Visibility::Inherited, Billboard { mode: node.billboard.unwrap_or(0), bind: t.rotation }, ChildOf(holder))).id()
+        });
+        Some((e, node_from_root(&model.nodes, Some(b)).inverse() * s.transform))
+    }
+
+    /// How many billboard nodes were made.
+    pub fn len(&self) -> usize {
+        self.made.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.made.is_empty()
+    }
+}
+
 /// Where a light model's light sits, as a transform from the model's root: its node
 /// named `AttachLight` (or `AttachLight<n>`), with the nodes above it
 /// (docs/spec-notes/model-lights.md §4). `None`: no such node.
@@ -233,6 +313,8 @@ pub struct RigNode {
     /// Local transform in NIF (game) space.
     pub local: Transform,
     pub hidden: bool,
+    /// A `NiBillboardNode`: its billboard mode; spawned with a [`Billboard`].
+    pub billboard: Option<u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +333,8 @@ pub struct RigShape {
     pub refraction: f32,
     /// A clip of the rig drives the shape's material.
     pub animated: bool,
+    /// [design, #2685] Manager morphs bound by sequence name, sampled per instance.
+    pub morph: Option<Arc<crate::morph::SequenceMorph>>,
 }
 
 impl RigShape {
@@ -345,6 +429,15 @@ impl Rig {
         phase: f32,
         clip: Option<&Clip>,
     ) -> (Entity, Vec<Entity>, HashMap<String, Entity>) {
+        let (root, drawn, names, _) = self.spawn_indexed(commands, parent, transform, source, phase, clip);
+        (root, drawn, names)
+    }
+
+    /// The existing rig producer plus its exact node vector, independent of names.
+    pub fn spawn_indexed(
+        &self, commands: &mut Commands, parent: Entity, transform: Transform,
+        source: &str, phase: f32, clip: Option<&Clip>,
+    ) -> (Entity, Vec<Entity>, HashMap<String, Entity>, Vec<Entity>) {
         let entities: Vec<Entity> = self
             .nodes
             .iter()
@@ -352,7 +445,11 @@ impl Rig {
             .map(|(i, n)| {
                 let local = if i == 0 { transform } else { n.local };
                 let vis = if n.hidden { Visibility::Hidden } else { Visibility::Inherited };
-                commands.spawn((local, vis)).id()
+                let mut e = commands.spawn((local, vis));
+                if let Some(mode) = n.billboard.filter(|_| i > 0) {
+                    e.insert(Billboard { mode, bind: local.rotation });
+                }
+                e.id()
             })
             .collect();
         commands.entity(parent).add_child(entities[0]);
@@ -364,6 +461,9 @@ impl Rig {
             let e = entities[s.node];
             let mut cmd = commands.entity(e);
             cmd.insert((Mesh3d(s.mesh.clone()), MeshMaterial3d(s.material.clone())));
+            if let Some(morph) = &s.morph {
+                cmd.insert(crate::morph::PlayingMorph::new(entities[0], morph.clone()));
+            }
             if let Some((binds, joints)) = &s.skin {
                 let joints = joints.iter().map(|&j| entities[j]).collect();
                 cmd.insert((SkinnedMesh { inverse_bindposes: binds.clone(), joints }, DynamicSkinnedMeshBounds));
@@ -385,7 +485,7 @@ impl Rig {
             let idle = Arc::new(clip.map(|c| c.materials.clone()).unwrap_or_default());
             commands.entity(entities[0]).insert(RigMaterials { slots, idle, dark: false, fade: 1.0 });
         }
-        (entities[0], drawn, by_name)
+        (entities[0], drawn, by_name, entities)
     }
 }
 
@@ -573,27 +673,21 @@ fn material_tracks_of_own(file: &NifFile, dec: &Decoded, inactive: bool) -> Vec<
 }
 
 /// The vertex morphs a model plays by shape block (docs/spec-notes/vertex-morphs.md §3):
-/// `NiGeomMorpherController`s that run by themselves (Active, not manager controlled)
-/// or that the file's `Idle` (else `SpecialIdle`) sequence drives, whose shape moves,
-/// with relative targets whose morph 0 has the shape's vertex count. A clamped one whose
+/// `NiGeomMorpherController`s that run by themselves (Active, not manager controlled),
+/// whose shape moves, with relative targets whose morph 0 has the shape's vertex count.
+/// A clamped one whose
 /// weights end where they start is played looping: the NCR, Nevada and Followers flags
 /// (clamped, -2 s to 22.8 or 34.7 s, every weight back at its start value at the stop
 /// time [observed: `examples/morph_survey.rs`]) are cycles meant to repeat
 /// [hypothesis]; other clamped ones are left out [hypothesis: they play once when
 /// something starts them (the tripwire's snap, the dart gun's band, an explosion's
 /// splash); on a world object's clock they would have ended before anyone sees them].
-fn shape_morphs(file: &NifFile, dec: &Decoded, seqs: &[fnv_nif::anim::Sequence], name_of: impl Fn(usize) -> Option<String>) -> HashMap<usize, GeomMorpher> {
-    let named = |s: &&fnv_nif::anim::Sequence, want: &str| s.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(want));
-    let idle: Vec<&fnv_nif::anim::Sequence> = seqs.iter().filter(|s| named(s, "idle")).chain(seqs.iter().filter(|s| named(s, "specialidle"))).collect();
+fn shape_morphs(file: &NifFile, dec: &Decoded) -> HashMap<usize, GeomMorpher> {
     let mut out = HashMap::new();
     for mut g in geom_morphers(file, dec) {
         let Ok(target) = usize::try_from(g.target) else { continue };
         if !g.is_free() {
-            // Manager controlled: fed by the idle sequence, if it drives this shape.
-            let Some(name) = name_of(target).filter(|_| g.flags & 0x20 != 0) else { continue };
-            if !idle.iter().any(|s| g.take_sequence(s, &name) > 0) {
-                continue;
-            }
+            continue;
         }
         let n = g.num_vertices;
         if (g.flags >> 1) & 3 == 2 {
@@ -946,7 +1040,7 @@ fn model_in_use(m: &Arc<PreparedModel>) -> bool {
 }
 
 /// The asset stores [`prepare_into`] puts a model's meshes, materials and skins into.
-trait ModelSink: TextureSource {
+pub(crate) trait ModelSink: TextureSource {
     fn data(&self) -> &GameData;
     fn mesh(&mut self, mesh: Mesh) -> Handle<Mesh>;
     fn material(&mut self, material: NifMaterial) -> Handle<NifMaterial>;
@@ -956,7 +1050,7 @@ trait ModelSink: TextureSource {
 }
 
 /// The main thread's asset stores.
-struct Stores<'a> {
+pub(crate) struct Stores<'a> {
     textures: StoreTextures<'a>,
     meshes: &'a mut Assets<Mesh>,
     materials: &'a mut Assets<NifMaterial>,
@@ -968,11 +1062,23 @@ impl TextureSource for Stores<'_> {
     fn texture(&mut self, raw_path: &str, srgb: bool) -> Option<Handle<Image>> {
         self.textures.texture(raw_path, srgb)
     }
+    fn normal(&mut self, raw_path: &str) -> Option<(Handle<Image>, bool)> {
+        self.textures.normal(raw_path)
+    }
     fn lacks_alpha(&self, h: &Handle<Image>) -> bool {
         self.textures.lacks_alpha(h)
     }
     fn alpha_is_mask(&self, raw_path: &str) -> bool {
         self.textures.alpha_is_mask(raw_path)
+    }
+    fn resolve(&self, raw_path: &str) -> String {
+        self.textures.resolve(raw_path)
+    }
+    fn authored(&mut self, resolved_diffuse: &str) -> Option<crate::authored::AuthoredSet> {
+        self.textures.authored(resolved_diffuse)
+    }
+    fn authored_on(&self) -> bool {
+        self.textures.authored_on()
     }
 }
 
@@ -998,13 +1104,13 @@ impl ModelSink for Stores<'_> {
 /// kept until the main thread puts them in ([`ModelCtx::take_fetched`]). Textures come
 /// from the cache's list as it was when the work was sent, or are decoded here
 /// (`texture::worker_texture`).
-struct Deferred {
+pub(crate) struct Deferred {
     data: GameData,
     providers: Providers,
     cached: Arc<TextureSnapshot>,
     workers: Arc<WorkerTextures>,
     bc_supported: bool,
-    formats: HashMap<AssetId<Image>, TextureFormat>,
+    unmasked: HashMap<AssetId<Image>, bool>,
     out: DeferredAssets,
 }
 
@@ -1017,9 +1123,16 @@ struct Providers {
     images: AssetHandleProvider,
 }
 
+impl Deferred {
+    /// What it made, for [`ModelCtx::put_in`].
+    pub(crate) fn into_assets(self) -> DeferredAssets {
+        self.out
+    }
+}
+
 /// What a worker made for one model, by the handles it reserved.
 #[derive(Default)]
-struct DeferredAssets {
+pub(crate) struct DeferredAssets {
     meshes: Vec<(Handle<Mesh>, Mesh)>,
     materials: Vec<(Handle<NifMaterial>, NifMaterial)>,
     bindposes: Vec<(Handle<SkinnedMeshInverseBindposes>, SkinnedMeshInverseBindposes)>,
@@ -1028,15 +1141,35 @@ struct DeferredAssets {
 
 impl TextureSource for Deferred {
     fn texture(&mut self, raw_path: &str, srgb: bool) -> Option<Handle<Image>> {
-        let (h, format) = worker_texture(raw_path, srgb, &self.data, &self.cached, &self.workers, &self.providers.images, self.bc_supported)?;
-        self.formats.insert(h.id(), format);
+        let usage = if srgb { TextureUsage::Color } else { TextureUsage::Linear };
+        let (h, _, unmasked) = worker_texture(raw_path, usage, &self.data, &self.cached, &self.workers, &self.providers.images, self.bc_supported)?;
+        self.unmasked.insert(h.id(), unmasked);
         Some(h)
     }
+    fn normal(&mut self, raw_path: &str) -> Option<(Handle<Image>, bool)> {
+        let (h, _, unmasked) = worker_texture(raw_path, TextureUsage::Normal, &self.data, &self.cached, &self.workers, &self.providers.images, self.bc_supported)?;
+        self.unmasked.insert(h.id(), unmasked);
+        Some((h, unmasked))
+    }
     fn lacks_alpha(&self, h: &Handle<Image>) -> bool {
-        self.formats.get(&h.id()).is_some_and(|&f| crate::nif_spawn::format_lacks_alpha(f))
+        self.unmasked.get(&h.id()).copied().unwrap_or(false)
     }
     fn alpha_is_mask(&self, raw_path: &str) -> bool {
         self.workers.alpha_is_mask(raw_path, &self.data)
+    }
+    fn resolve(&self, raw_path: &str) -> String {
+        crate::texture::resolved_path(raw_path, |p| self.data.vfs.exists(p))
+    }
+    fn authored_on(&self) -> bool {
+        crate::authored::enabled()
+    }
+    fn authored(&mut self, resolved_diffuse: &str) -> Option<crate::authored::AuthoredSet> {
+        let (data, cached, workers, images, bc, unmasked) = (&self.data, &self.cached, &self.workers, &self.providers.images, self.bc_supported, &mut self.unmasked);
+        crate::authored::find(data, crate::authored::enabled(), resolved_diffuse, &workers.authored, |path, usage| {
+            let (h, _, no_alpha) = worker_texture_exact(path, usage, data, cached, workers, images, bc)?;
+            unmasked.insert(h.id(), no_alpha);
+            Some(h)
+        })
     }
 }
 
@@ -1062,6 +1195,12 @@ impl ModelSink for Deferred {
     fn morph(&mut self, mesh: AssetId<Mesh>, morph: Arc<crate::morph::ShapeMorph>) {
         self.out.morphs.push((mesh, morph));
     }
+}
+
+/// Whether a model is landscape LOD (`meshes\landscape\lod\`: the LOD chunks and object
+/// blocks nvforever's lod.rs draws), which takes no authored set (#2981).
+pub(crate) fn is_lod_model(path: &str) -> bool {
+    fnv_vfs::normalize(path).starts_with("meshes\\landscape\\lod\\")
 }
 
 /// A model prepared on a worker thread, waiting for the main thread.
@@ -1137,6 +1276,26 @@ impl ModelCtx<'_> {
     /// The prepared model at `path` (loaded on first use).
     pub fn model(&mut self, path: &str) -> Option<Arc<PreparedModel>> {
         self.load(path, false)
+    }
+
+    /// Attachment variant: capture node/property identities in the same decode as
+    /// geometry. Stored in the ordinary model cache/sweeper under its own key, so
+    /// ordinary world streaming does not retain an unused second scene graph.
+    pub fn model_for_attachment(&mut self, path: &str) -> Option<Arc<PreparedModel>> {
+        let path = fnv_vfs::normalize(path);
+        let key = format!("{}|attachment", model_key(&path, false, false, &[]));
+        if let Some(model) = self.cache.map.get(&key) { return model.clone(); }
+        let mut stores = Stores {
+            textures: StoreTextures { textures: &mut self.textures, data: &self.data, images: &mut self.images, formats: self.formats.as_deref() },
+            meshes: &mut self.meshes, materials: &mut self.materials,
+            bindposes: &mut self.bindposes, morphs: &mut self.cache.morphs,
+        };
+        let model = match crate::guard::guarded(|| prepare_unguarded(&mut stores, &path, false, false, &[], true, None)) {
+            Ok(model) => Some(Arc::new(model)),
+            Err(error) => { crate::guard::failed(&mut self.cache.failures, "model", format!("{key}: {error}")); None }
+        };
+        self.cache.map.insert(key, model.clone());
+        model
     }
 
     /// Like [`Self::model`], also keeping a CPU copy of every shape's mesh (for code that
@@ -1254,20 +1413,69 @@ impl ModelCtx<'_> {
             *shared = Some((self.texture_snapshot(), providers));
         }
         let (cached, providers) = shared.clone().expect("made above");
-        let mut sink = Deferred {
-            data: (*self.data).clone(),
-            providers,
-            cached,
-            workers: self.textures.workers.clone(),
-            bc_supported: self.formats.as_deref().is_none_or(|f| f.0.contains(CompressedImageFormats::BC)),
-            formats: HashMap::new(),
-            out: DeferredAssets::default(),
-        };
+        let mut sink = self.deferred_with(cached, providers);
         let task = crate::read_pool::read_pool().spawn(async move {
             let m = prepare_into(&mut sink, &path, keep_cpu, false, &swaps);
             (m, sink.out)
         });
         self.cache.fetching.insert(key, task);
+    }
+
+    fn deferred_with(&self, cached: Arc<TextureSnapshot>, providers: Providers) -> Deferred {
+        Deferred {
+            data: (*self.data).clone(),
+            providers,
+            cached,
+            workers: self.textures.workers.clone(),
+            bc_supported: self.formats.as_deref().is_none_or(|f| f.0.contains(CompressedImageFormats::BC)),
+            unmasked: HashMap::new(),
+            out: DeferredAssets::default(),
+        }
+    }
+
+    /// A sink for preparing on a worker thread (an actor part, `actor::ActorCtx::parts_ready`):
+    /// handles reserved from these stores, textures from the cache's list or decoded there.
+    /// Its assets go in with [`Self::put_in`].
+    pub(crate) fn deferred(&mut self) -> Deferred {
+        let providers = Providers {
+            meshes: self.meshes.get_handle_provider(),
+            materials: self.materials.get_handle_provider(),
+            bindposes: self.bindposes.get_handle_provider(),
+            images: self.images.get_handle_provider(),
+        };
+        let cached = self.texture_snapshot();
+        self.deferred_with(cached, providers)
+    }
+
+    /// The main thread's stores as a sink (an actor part prepared here).
+    pub(crate) fn stores(&mut self) -> Stores<'_> {
+        Stores {
+            textures: StoreTextures { textures: &mut self.textures, data: &self.data, images: &mut self.images, formats: self.formats.as_deref() },
+            meshes: &mut self.meshes, materials: &mut self.materials,
+            bindposes: &mut self.bindposes, morphs: &mut self.cache.morphs,
+        }
+    }
+
+    /// Put what a worker's sink made into the stores: the textures every worker decoded so
+    /// far, then the sink's meshes, materials, skins and morphs under their reserved handles.
+    pub(crate) fn put_in(&mut self, out: DeferredAssets, now: f64) {
+        self.textures.take_workers(&mut self.images, now);
+        self.insert_deferred(out);
+    }
+
+    fn insert_deferred(&mut self, out: DeferredAssets) {
+        for (h, mesh) in out.meshes {
+            let _ = self.meshes.insert(h.id(), mesh);
+        }
+        for (h, material) in out.materials {
+            let _ = self.materials.insert(h.id(), material);
+        }
+        for (h, binds) in out.bindposes {
+            let _ = self.bindposes.insert(h.id(), binds);
+        }
+        for (id, morph) in out.morphs {
+            self.cache.morphs.add(id, morph);
+        }
     }
 
     /// The texture cache's list for workers: the last copy while it is unchanged and a
@@ -1317,18 +1525,7 @@ impl ModelCtx<'_> {
         if let Some(m) = self.cache.map.get(&key) {
             return m.clone();
         }
-        for (h, mesh) in out.meshes {
-            let _ = self.meshes.insert(h.id(), mesh);
-        }
-        for (h, material) in out.materials {
-            let _ = self.materials.insert(h.id(), material);
-        }
-        for (h, binds) in out.bindposes {
-            let _ = self.bindposes.insert(h.id(), binds);
-        }
-        for (id, morph) in out.morphs {
-            self.cache.morphs.add(id, morph);
-        }
+        self.insert_deferred(out);
         let m = match m {
             Ok(m) => Some(Arc::new(m)),
             Err(e) => {
@@ -1338,6 +1535,25 @@ impl ModelCtx<'_> {
         };
         self.cache.map.insert(key, m.clone());
         m
+    }
+
+    /// [design, #2685] An ANIO model prepared for the named idle's external tracks.
+    /// Its separate cache entry preserves ordinary placed-model preparation.
+    pub fn model_for_idle(&mut self, path: &str, idle: u32, clip: &Clip) -> Option<Arc<PreparedModel>> {
+        let path = fnv_vfs::normalize(path);
+        let key = format!("{path}|actor-idle-{idle:08x}");
+        if let Some(model) = self.cache.map.get(&key) {
+            return model.clone();
+        }
+        let mut stores = Stores {
+            textures: StoreTextures { textures: &mut self.textures, data: &self.data, images: &mut self.images, formats: self.formats.as_deref() },
+            meshes: &mut self.meshes, materials: &mut self.materials,
+            bindposes: &mut self.bindposes, morphs: &mut self.cache.morphs,
+        };
+        let model = crate::guard::guarded(|| prepare_unguarded(&mut stores, &path, false, false, &[], false, Some(clip)))
+            .map(Arc::new).map_err(|e| warn!("anim object: {path}: {e}")).ok();
+        self.cache.map.insert(key, model.clone());
+        model
     }
 
     fn prepare(&mut self, path: &str, keep_cpu: bool, first_person: bool, swaps: &[AltTexture]) -> Result<PreparedModel, String> {
@@ -1356,10 +1572,10 @@ impl ModelCtx<'_> {
 /// thread ([`Stores`]) or on a worker thread ([`Deferred`]).
 /// A panic while preparing is that model's failure, not the game's (guard.rs).
 fn prepare_into(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, first_person: bool, swaps: &[AltTexture]) -> Result<PreparedModel, String> {
-    crate::guard::guarded(|| prepare_unguarded(sink, path, keep_cpu, first_person, swaps))
+    crate::guard::guarded(|| prepare_unguarded(sink, path, keep_cpu, first_person, swaps, false, None))
 }
 
-fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, first_person: bool, swaps: &[AltTexture]) -> Result<PreparedModel, String> {
+fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, first_person: bool, swaps: &[AltTexture], attachments: bool, external: Option<&Clip>) -> Result<PreparedModel, String> {
     let game = sink.data().clone();
     let bytes = game.read(path).ok_or("not in any archive")?;
     let schema = game.schema.clone();
@@ -1373,6 +1589,7 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
     };
 
     let mut out = PreparedModel::default();
+    let mut shape_objects = HashMap::new();
     let (mut nodes, node_index) = model_nodes(&objects);
     for (block, i) in &node_index {
         if nodes[*i].billboard.is_some() {
@@ -1405,6 +1622,8 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
     // and hides one of its nodes, or drives its light.
     let moves = |c: &Clip| {
         c.tracks.iter().any(|(n, _)| has(n)) || c.materials.iter().any(|m| has(&m.shape)) || c.visibility.iter().any(|(n, ..)| has(n)) || c.lights.iter().any(|l| has_light(&l.light))
+            // [design, #2685] Morph-only groups also need a rig and a Playing clock.
+            || seqs.iter().filter(|s| s.name.as_deref() == Some(&c.name)).any(|s| s.tracks.iter().any(|t| t.controller_type.as_deref() == Some("NiGeomMorpherController") && t.node_name.as_deref().is_some_and(has)))
     };
     let named = |want: &str| {
         seqs.iter().filter(|s| s.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(want))).map(Clip::from_sequence).find(&moves)
@@ -1439,23 +1658,33 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
     }
     // A broken file's clips (NaN keys, timing out of range) are dropped, the model
     // standing still instead.
-    let idle = idle.and_then(|c| playable(path, c));
+    let mut idle = idle.and_then(|c| playable(path, c));
     let effect = effect.and_then(|c| playable(path, c));
     if let Some(c) = idle.as_ref().filter(|c| !c.visibility.is_empty()) {
         info!("{path}: its {} sequence shows and hides {} node(s)", c.name, c.visibility.len());
     }
-    // Vertex morphs that run by themselves, or with the Idle (else SpecialIdle)
-    // sequence, by shape block (docs/spec-notes/vertex-morphs.md §3).
-    let morph_of = shape_morphs(&file, &dec, &seqs, |b| by_block.get(&b).and_then(|o| o.name.clone()));
+    // [design, #2685] Free morphs keep their shared clock; manager morphs use the rig.
+    let morph_of = shape_morphs(&file, &dec);
+    let managed_morphs: HashMap<_, _> = geom_morphers(&file, &dec).into_iter().filter_map(|g| {
+        let target = usize::try_from(g.target).ok()?;
+        let name = by_block.get(&target)?.name.as_deref()?;
+        let morph = crate::morph::SequenceMorph::bind(&g, &seqs, name)?;
+        Some((target, Arc::new(morph)))
+    }).collect();
     // A door's Open and Close, when both move nodes of this file.
     let mut door = named("open").zip(named("close")).and_then(|(open, close)| Some(DoorClips { open: playable(path, open)?, close: playable(path, close)? }));
     // Every named sequence that animates this file (scripts' PlayGroup).
     let mut groups: Vec<Clip> = seqs.iter().filter(|s| s.name.is_some()).map(Clip::from_sequence).filter(&moves).filter_map(|c| playable(path, c)).collect();
+    // [design, #2685] Prepare external idle targets before choosing material features
+    // and rig nodes, including models whose own controllers only blend KF values.
+    if let Some(clip) = external {
+        idle = Some(clip.clone());
+        groups.push(clip.clone());
+    }
     // Shapes that wear a driven shape's material or texturing property are driven with it
     // (`material_sharers`, `texturing_sharers`).
     let sharers = material_sharers(&file, &dec);
     let texturing = texturing_sharers(&file, &dec);
-    let mut idle = idle;
     let mut effect = effect;
     if !sharers.is_empty() || !texturing.is_empty() {
         let names: HashMap<String, String> = objects.iter().filter_map(|o| o.name.clone()).map(|n| (n.to_ascii_lowercase(), n)).collect();
@@ -1540,6 +1769,7 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
                     parent: o.parent.and_then(|p| index.get(&p).copied()),
                     local: if k == 0 { Transform::IDENTITY } else { to_bevy(&o.transform) },
                     hidden: k > 0 && hidden_self(*b),
+                    billboard: node_index.get(b).and_then(|&i| out.nodes[i].billboard),
                 }
             })
             .collect();
@@ -1610,6 +1840,9 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
         let Some(data) = shape.block_ref("data").and_then(|r| dec.get(r)) else { continue };
         let mut props = shape_props(&file, &dec, o, &by_block);
         let shape_name = o.name.clone().unwrap_or_default();
+        // Object LOD (the landscape's LOD chunks and blocks, nvforever lod.rs) takes no
+        // authored set (#2981): its atlases are not the textures a pack's sets name.
+        props.no_authored = is_lod_model(path);
         props.animated_emissive = emissive_shapes.contains(&shape_name);
         props.animated_alpha = alpha_shapes.contains(&shape_name);
         if props.is_helper(shaded) {
@@ -1627,7 +1860,12 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
             first_textures += props.use_first_person_textures(|p| game.vfs.exists(p));
             first_worn += props.first_person_texture_count();
         }
-        let Some((mut mesh, tris)) = build_mesh(data) else { continue };
+        let Some((mut mesh, tris, stored)) = build_mesh(data) else { continue };
+        let managed_morph = managed_morphs.get(&o.block).filter(|m| m.num_vertices() == mesh.count_vertices()).cloned();
+        if managed_morph.is_some() {
+            // [design, #2685] Keep the source available for private rig mesh copies.
+            mesh.asset_usage = RenderAssetUsages::all();
+        }
         // A morphing shape: its mesh stays readable in the main world so that
         // `morph::play_vertex_morphs` can rewrite its vertices.
         let morph = morph_of.get(&o.block).filter(|g| g.num_vertices == mesh.count_vertices()).map(|g| {
@@ -1641,7 +1879,8 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
                 cycle: OwnCycle { start: g.start_time, stop: g.stop_time, frequency: g.frequency.max(1e-6), phase: g.phase, cycle_type: (g.flags >> 1) & 3 },
             })
         });
-        let (material, _missing) = shape_material_with(&props, &mut mesh, sink);
+        // The normal map's tangents: those the file stores (crate::tangents).
+        let (material, _missing) = shape_material_with(&props, &mut mesh, sink, crate::tangents::Tangents::Stored(&stored));
         if material.extension.env.x > 0.0 {
             let over = if matches!(material.base.alpha_mode, AlphaMode::Premultiplied) { "over the blend" } else { "added" };
             env_how = format!("{}, scale {:.2}, {over}", props.textures.get(4).map_or("-", String::as_str), material.extension.env.x);
@@ -1697,13 +1936,14 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
                 let animated = animated_shapes.contains(&shape_name);
                 let (e, m) = props.emissive_parts();
                 let look = (shape_name.clone(), e, m, props.alpha_part());
-                r.shapes.push(RigShape { node, mesh, material: material.clone(), skin, look, refraction: props.refraction_part(), animated });
+                r.shapes.push(RigShape { node, mesh, material: material.clone(), skin, look, refraction: props.refraction_part(), animated, morph: managed_morph });
             }
         }
         // A shape only a visibility track shows is the rig's alone.
         if hidden {
             continue;
         }
+        if attachments { shape_objects.insert(o.block, out.shapes.len()); }
         out.shapes.push(PreparedShape {
             cpu,
             segments,
@@ -1734,6 +1974,7 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
     if !swaps.is_empty() {
         info!("{path}: texture swap: {} entr(ies), {} shape(s) retextured: {}", swaps.len(), swapped.len(), swapped.join(", "));
     }
+    if attachments { out.objects = attachment::objects(&objects, &dec, &shape_objects, rig.as_ref().map(|(_, index)| index)); }
     out.rig = rig.map(|(r, _)| r);
     Ok(out)
 }
@@ -1898,5 +2139,95 @@ mod tests {
         assert_eq!(node_path(&nodes, &["##catch"]), Some(vec![1, 2]));
         assert_eq!(node_path(&nodes, &["Clip", "##Clip"]), Some(vec![0]));
         assert_eq!(node_path(&nodes, &["ProjectileNode"]), None);
+    }
+}
+
+
+#[cfg(test)]
+mod bc5_model_tests {
+    use super::*;
+    use crate::nif_spawn::shape_material_with;
+    use crate::tangents::Tangents;
+    use crate::texture::bc5_tests::{OwnedData, triangle};
+    use bevy::render::render_resource::TextureFormat;
+
+    #[test]
+    fn deferred_and_store_model_sinks_select_the_same_normal_role() {
+        let owned = OwnedData::new();
+        let mut cache = TextureCache::default();
+        let mut images = Assets::default();
+        let mut meshes = Assets::<Mesh>::default();
+        let mut materials = Assets::<NifMaterial>::default();
+        let mut bindposes = Assets::<SkinnedMeshInverseBindposes>::default();
+        let mut morphs = crate::morph::MorphMeshes::default();
+        let mut deferred = Deferred {
+            data: owned.data.clone(),
+            providers: Providers {
+                meshes: meshes.get_handle_provider(), materials: materials.get_handle_provider(),
+                bindposes: bindposes.get_handle_provider(), images: images.get_handle_provider(),
+            },
+            cached: Arc::new(TextureSnapshot::new()), workers: cache.workers.clone(), bc_supported: true,
+            unmasked: HashMap::new(), out: DeferredAssets::default(),
+        };
+        let mut props = crate::nif_spawn::Props::default();
+        props.textures = vec!["old.dds".into(), "signed.dds".into()];
+        let worker_material = shape_material_with(&props, &mut triangle(), &mut deferred, Tangents::Generate).0;
+        let worker_normal = worker_material.base.normal_map_texture.as_ref().unwrap().clone();
+        assert!(deferred.lacks_alpha(&worker_normal));
+        let worker_linear = deferred.texture("signed.dds", false).unwrap();
+        assert_ne!(worker_normal, worker_linear);
+        assert_eq!(cache.take_workers(&mut images, 1.0), 3);
+        assert_eq!(images.get(&worker_normal).unwrap().texture_descriptor.format, TextureFormat::Rgba8Unorm);
+        assert_eq!(images.get(&worker_linear).unwrap().texture_descriptor.format, TextureFormat::Bc5RgSnorm);
+        let main_material = {
+            let mut stores = Stores {
+                textures: StoreTextures { textures: &mut cache, data: &owned.data, images: &mut images, formats: None },
+                meshes: &mut meshes, materials: &mut materials, bindposes: &mut bindposes, morphs: &mut morphs,
+            };
+            shape_material_with(&props, &mut triangle(), &mut stores, Tangents::Generate).0
+        };
+        assert_eq!(main_material.base.normal_map_texture.as_ref(), Some(&worker_normal));
+        assert_eq!(main_material.base.base_color_texture, worker_material.base.base_color_texture);
+        let snapshot = cache.snapshot(&images);
+        assert!(snapshot[&("textures\\signed.dds".into(), TextureUsage::Normal)].2);
+        deferred.cached = Arc::new(snapshot);
+        deferred.workers = Arc::new(WorkerTextures::default());
+        assert_eq!(deferred.normal("signed.dds"), Some((worker_normal, true)));
+        assert_eq!(cache.take_workers(&mut images, 2.0), 0);
+    }
+
+    /// The worker source finds an authored set (#2981) as the main thread does: the members
+    /// by their exact paths in their roles, decoded once, the main thread adopting the
+    /// worker's handles, a later snapshot answering without a decode.
+    #[test]
+    fn deferred_and_store_sources_find_the_same_authored_set() {
+        let pack = crate::authored::tests::Pack::new();
+        let mut cache = TextureCache::default();
+        let mut images = Assets::<Image>::default();
+        let (meshes, materials, bindposes) = (Assets::<Mesh>::default(), Assets::<NifMaterial>::default(), Assets::<SkinnedMeshInverseBindposes>::default());
+        let mut deferred = Deferred {
+            data: pack.data.clone(),
+            providers: Providers {
+                meshes: meshes.get_handle_provider(), materials: materials.get_handle_provider(),
+                bindposes: bindposes.get_handle_provider(), images: images.get_handle_provider(),
+            },
+            cached: Arc::new(TextureSnapshot::new()), workers: cache.workers.clone(), bc_supported: true,
+            unmasked: HashMap::new(), out: DeferredAssets::default(),
+        };
+        let key = deferred.resolve("walls/brick.dds");
+        let set = deferred.authored(&key).expect("authored set on the worker");
+        let normal = set.normal.clone().expect("_n");
+        assert!(deferred.lacks_alpha(&normal), "two channels hold no mask");
+        assert_eq!(set.scalars.roughness_scale, Some(0.5));
+        assert!(deferred.authored(&deferred.resolve("walls/stone.dds")).is_none());
+        assert_eq!(cache.take_workers(&mut images, 1.0), 2, "_orm and _n, once each");
+        assert_eq!(images.get(&set.orm).unwrap().texture_descriptor.format, TextureFormat::Bc7RgbaUnorm);
+        assert_eq!(images.get(&normal).unwrap().texture_descriptor.format, TextureFormat::Bc5RgUnorm);
+        let main = StoreTextures { textures: &mut cache, data: &pack.data, images: &mut images, formats: None }.authored(&key);
+        assert_eq!(main.as_ref(), Some(&set), "the main thread adopts the worker's handles");
+        deferred.cached = Arc::new(cache.snapshot(&images));
+        deferred.workers = Arc::new(WorkerTextures::default());
+        assert_eq!(deferred.authored(&key), Some(set));
+        assert!(deferred.workers.entries_len() == 0, "a snapshot hit decodes nothing");
     }
 }

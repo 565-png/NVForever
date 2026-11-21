@@ -112,14 +112,17 @@ pub struct LodSettings {
     /// `[TerrainManager] fSplitDistanceMult`: coarser chunks split while the camera is
     /// nearer than this × their side.
     pub split: f32,
-    /// `[TerrainManager] fTreeLoadDistance`: distant tree billboards within (treelod.rs);
-    /// 0 draws none.
+    /// `[TerrainManager] fTreeLoadDistance`: distant tree billboards within at the start
+    /// (treelod.rs; the Tree distance slider then sets a part of `far`, #3016); 0 draws none.
     pub trees: f32,
 }
 
+/// [`LodSettings::far`]'s default (`--lod-distance`).
+pub const DEFAULT_FAR: f32 = 125_000.0;
+
 impl Default for LodSettings {
     fn default() -> LodSettings {
-        LodSettings { far: 125_000.0, near: 50_000.0, split: 1.5, trees: 40_000.0 }
+        LodSettings { far: DEFAULT_FAR, near: 50_000.0, split: 1.5, trees: 40_000.0 }
     }
 }
 
@@ -174,7 +177,8 @@ fn align(c: i32, o: i32, l: i32) -> i32 {
 /// (bytes 12–15, two i16 [observed: WastelandNV -64, -64; FreesideWorld -10, -8;
 /// FreesideNorthWorld -9, -7; world.md §7]); (0, 0) without the file.
 pub fn grid_origin(game: &nvf_assets::GameData, world: &WorldData) -> Grid {
-    let name = world.index.worldspaces.get(&world.world).and_then(|w| w.edid.clone()).unwrap_or_default().to_ascii_lowercase();
+    // A child with Use LOD Data shows its parent's files (`WorldIndex::lod_world`, #2345).
+    let name = world.index.worldspaces.get(&world.index.lod_world(world.world)).and_then(|w| w.edid.clone()).unwrap_or_default().to_ascii_lowercase();
     game.read(&format!("lodsettings\\{name}.dlodsettings")).as_deref().and_then(settings_origin).unwrap_or((0, 0))
 }
 
@@ -383,7 +387,8 @@ struct GenChunk {
 
 impl LodState {
     pub fn new(world: &WorldData, settings: LodSettings, enabled: bool, gen: Option<GenState>) -> LodState {
-        let name = world.index.worldspaces[&world.world].edid.clone().unwrap_or_default().to_ascii_lowercase();
+        // A child with Use LOD Data shows its parent's files (`WorldIndex::lod_world`, #2345).
+        let name = world.index.worldspaces[&world.index.lod_world(world.world)].edid.clone().unwrap_or_default().to_ascii_lowercase();
         LodState {
             settings,
             radius: (settings.far / (LEVEL as f32 * CELL_SIZE)).ceil().max(0.0) as i32,

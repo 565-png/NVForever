@@ -625,7 +625,14 @@ pub struct RegionDef {
     /// The map block (RDAT type 4, then RDMP), when the region has one: its name and the
     /// header's priority (schema `sky.json` REGN RDMP).
     pub map: Option<(String, u8)>,
+    /// The record's Border Region flag (header bit 6, 0x40) [documented: GECK wiki form
+    /// flags table, "Border Region" at 64]: the player is kept inside its areas
+    /// (`crate::borders`).
+    pub border: bool,
 }
+
+/// REGN record flag Border Region [documented: GECK wiki form flags table, 64].
+pub const BORDER_REGION: u32 = 0x40;
 
 /// A region's weather block [documented: xEdit wbRegionDataEntries type 3; schema
 /// `sky.json` REGN RDAT, RDWT]: its RDAT flags (bit 0 override,
@@ -699,6 +706,9 @@ impl MagicEffectDef {
     /// "FX Persist": the effect shader's persistent part shows while the effect lasts
     /// [documented: xEdit MGEF flags; GECK wiki EffectShader].
     pub const FX_PERSIST: u32 = 1 << 10;
+    /// "Display Name Only": a Script effect, which shows nothing by default, shows its
+    /// name [documented: GECK wiki Base Effect; schema `gameplay.json` MGEF flags bit 13].
+    pub const DISPLAY_NAME_ONLY: u32 = 1 << 13;
     /// "No Death Dispel": the effect goes on after its target dies [documented: xEdit
     /// MGEF flags; hypothesis: without it the effect ends at the death,
     /// docs/spec-notes/hit-effects.md §4].
@@ -706,6 +716,13 @@ impl MagicEffectDef {
 
     pub fn has(&self, flag: u32) -> bool {
         self.flags & flag != 0
+    }
+
+    /// Whether the interface names this effect where it shows no value: a Script effect
+    /// flagged Display Name Only (Psycho's "Damage +25%", Cateye's "Low-Light Vision")
+    /// [documented: GECK wiki Base Effect; #3119].
+    pub fn shows_name(&self) -> bool {
+        self.archetype == ARCHETYPE_SCRIPT && self.has(Self::DISPLAY_NAME_ONLY)
     }
 }
 
@@ -1050,6 +1067,8 @@ pub struct GameData {
     /// FACT XNAM: (other faction, group combat reaction 0 neutral, 1 enemy, 2 ally,
     /// 3 friend).
     pub faction_reactions: HashMap<FormId, Vec<(FormId, i64)>>,
+    /// Directional decoded FACT XNAM disposition modifiers, separate from combat.
+    pub faction_modifiers: HashMap<FormId, Vec<(FormId, i64)>>,
     /// FACT DATA flags as one number: the first byte's bits (1 Hidden from PC, 2 Evil,
     /// 4 Special Combat) and the second's shifted by 8 (256 Track Crime, 512 Allow Sell)
     /// [documented: xEdit wbDefinitionsFNV.pas FACT, schema `gameplay.json`; the numbering
@@ -1086,6 +1105,10 @@ pub struct GameData {
     /// TACT: the record-header flags of every talking activator (radio stations: the
     /// Continuous Broadcast bit, `crate::radio`; docs/spec-notes/radio.md §2).
     pub station_flags: HashMap<FormId, u32>,
+    /// TACT VNAM: each talking activator's voice type [documented: xEdit TACT "Voice
+    /// Type"; schema `placed.json`], for GetIsVoiceType and the voice gate
+    /// (`Game::voice_type_of`; #3060: The Pitt's Ashur intercom, DLC01RaiderMaleColdVoice).
+    pub talking_voices: HashMap<FormId, FormId>,
     /// PERK: perks and traits ([`PerkDef`]).
     pub perks: HashMap<FormId, PerkDef>,
     /// AVIF: the name, short name, description and icon of each actor value
@@ -1515,6 +1538,7 @@ struct Read {
     race_older: Option<FormId>,
     race_younger: Option<FormId>,
     faction: Option<Vec<(FormId, i64)>>,
+    faction_modifiers: Option<Vec<(FormId, i64)>>,
     faction_flags: Option<u16>,
     faction_reputation: Option<FormId>,
     cell: Option<crate::crime::CellDef>,
@@ -1887,6 +1911,20 @@ impl GameData {
         let form_flags: HashMap<FormId, u32> = winners.iter().filter(|(_, _, r)| r.header.flags != 0).map(|&(g, _, r)| (FormId(g), r.header.flags)).collect();
         let record_fields = RecordFields::new(schema, winners.iter().filter(|(_, _, r)| FIELD_SIGS.contains(&r.header.sig)).map(|&(g, _, r)| (FormId(g), r.clone())));
         let station_flags: HashMap<FormId, u32> = winners.iter().filter(|w| &w.2.header.sig == b"TACT").map(|w| (FormId(w.0), w.2.header.flags)).collect();
+        let talking_voices: HashMap<FormId, FormId> = winners
+            .iter()
+            .filter(|w| &w.2.header.sig == b"TACT")
+            .filter_map(|&(g, pi, r)| {
+                let mut local = None;
+                r.visit_subrecords(|sig, data| {
+                    if sig == b"VNAM" && local.is_none() {
+                        local = data.get(0..4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+                    }
+                })
+                .ok()?;
+                Some((FormId(g), FormId(lo.to_global(pi, local.filter(|&l| l != 0)?)?)))
+            })
+            .collect();
         clock.lap("form flags, record field handles");
         let radiation_markers = crate::radiation::markers(refs);
         clock.lap("radiation markers");
@@ -1954,6 +1992,7 @@ impl GameData {
             race_older: HashMap::new(),
             race_younger: HashMap::new(),
             faction_reactions: HashMap::new(),
+            faction_modifiers: HashMap::new(),
             faction_flags: HashMap::new(),
             faction_reputations: HashMap::new(),
             cells: HashMap::new(),
@@ -1967,6 +2006,7 @@ impl GameData {
             idle_children: HashMap::new(),
             image_modifiers: HashMap::new(),
             station_flags,
+            talking_voices,
             perks: HashMap::new(),
             actor_value_infos: HashMap::new(),
             recipes: HashMap::new(),
@@ -2027,11 +2067,11 @@ impl GameData {
         // of a unit only what `source_compile::apply` leaves alone.
         let table = std::mem::take(&mut d.table);
         if long_way {
-            let recompiled = crate::source_compile::compile_picked(lo, &table, &units);
+            let recompiled = crate::source_compile::compile_picked(lo, schema, &table, &units);
             d.source_units.extend(crate::source_compile::apply(&mut units, recompiled, &mut d.issues));
         }
         let recompiled = std::thread::scope(|scope| {
-            let compile = scope.spawn(|| if long_way { crate::source_compile::Recompiled::none() } else { crate::source_compile::compile_picked(lo, &table, &units) });
+            let compile = scope.spawn(|| if long_way { crate::source_compile::Recompiled::none() } else { crate::source_compile::compile_picked(lo, schema, &table, &units) });
             // In form order, as one list read all at once was.
             let mut unit_reads: HashMap<u32, Box<Read>> = unit_reads.into_iter().collect();
             // The reads run a slice at a time inside the loop below: their time is summed here,
@@ -2215,6 +2255,9 @@ impl GameData {
                 }
                 if let Some(v) = r.faction {
                     d.faction_reactions.insert(id, v);
+                }
+                if let Some(v) = r.faction_modifiers {
+                    d.faction_modifiers.insert(id, v);
                 }
                 if let Some(v) = r.destruction {
                     d.destructibles.insert(id, v);
@@ -3499,7 +3542,7 @@ fn read_one(lo: &LoadOrder, schema: &Schema, types: &ParamTypes, g: u32, pi: usi
             });
         }
         b"REGN" => {
-            let mut rg = RegionDef::default();
+            let mut rg = RegionDef { border: r.header.flags & BORDER_REGION != 0, ..Default::default() };
             let num = |v: Option<&Json>| v.and_then(|x| x.as_f64().or_else(|| x.get("value")?.as_f64())).unwrap_or(0.0);
             let mut header: Option<&Json> = None;
             for (s, v) in &decoded {
@@ -3622,6 +3665,11 @@ fn read_one(lo: &LoadOrder, schema: &Schema, types: &ParamTypes, g: u32, pi: usi
             out.race_younger = link(b"YNAM");
         }
         b"FACT" => {
+            out.faction_modifiers = Some(decoded.iter().filter(|(s, _)| *s == b"XNAM").filter_map(|(_, v)| {
+                let v = v.as_ref()?;
+                let f = v.get("faction").and_then(hexid).and_then(map)?;
+                Some((FormId(f), v.get("modifier")?.as_i64()?))
+            }).collect());
             out.faction = Some(
                 decoded
                     .iter()

@@ -36,6 +36,35 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
 
 ## 2. The device
 
+### First-person script animations while the device is open
+
+[reported in NVForever: owner's 060d playtest, 2026-11-17] The device can be invisible with
+holstered hands or no weapon while an opening with a drawn weapon works. The
+engine log records a first-person script animation above the built-in Pip-Boy
+layer during affected openings; a successful menu phase does not establish a
+visible model.
+
+[design] While a Pip-Boy menu holds game time, the player's first-person animation
+clock advances by the script frame's menu time. Explicit sequence samples,
+GetGlobalAnimTime/GetAnimCurrentTime and their setters share that clock. Its
+activation, deactivation, resume and automatic completion use the same clock.
+World time, NPC animations and the player's third-person clock stay held. A
+loading screen and other menus retain their existing clock behavior. The
+first-person sequence's blend also advances under the device menu when the
+virtual world clock is paused; ordinary weapon and locomotion layers keep the
+world clock. The final first-person pose's seam smoothing uses that admitted
+menu time too, so smoothing cannot replace the new sample with its last held
+pose. The preparation consumer takes actual menu-clock progress once; retained
+frame configuration during a skipped runtime tick supplies no new time.
+Closing the device returns to the world clock without a jump.
+
+[documented: GECK wiki GetGlobalAnimTime] The argument chooses first-person
+animation time; the page does not specify menu pause behavior. The menu clock
+mapping above is NVForever behavior, not established native pause parity.
+Authored core and CPU pose regressions exercise this mapping; their execution
+and an installed-profile replay are recorded separately. No model visibility
+override or suppressed readiness warning is part of this change.
+
 - **The clip** [observed]: `pipboy.kf` is one sequence `Pipboy`, 0.7333 s, clamped, with
   text keys `start` 0, `Blend: 8` 0.033, `Hit` 0.333, `end` 0.733. It drives
   `Camera1st` (a small move, no turn) and both arms from the spine out. Measured on the
@@ -469,11 +498,15 @@ it), `engine/nvf-assets/src/texture.rs` (`pc_texture`).
     - **With a controller** the whole column, top to bottom in the original's order: the
       equip action ("Equip A)", "Unequip A)" on what is worn, "Use A)" on aid and books),
       "Drop X)", the repair action ("Repair Y)", "Maintain Y)" at full condition; dim on
-      what nothing repairs: aid, misc, ammo), "Hotkey 1-8)", and on Weapons "Mod LB)" (dim
+      what nothing repairs: aid, misc, ammo), the Hotkey hint, and on Weapons "Mod LB)" (dim
       on a weapon without mod slots) [observed: the original's screenshots on issue #1896,
       taken with a controller connected, 1920 × 1080: Equip (Use on Aid), Drop, Repair,
-      Hot Key, then Mod on Weapons only]. The hotkey keeps "1-8)", no button assigns
-      hotkeys yet [design].
+      Hot Key, then Mod on Weapons only]. [design, #2312; `hotkey_panel.rs`]
+      Hotkey now names RB (R1 with PlayStation labels): it opens the panel for the
+      selected item, D-pad right/down advances and left/up goes back with wrapping,
+      A assigns and B cancels. This selection method is provisional [hypothesis;
+      observer check 211]; Ammo Swap refuses assignment. The word still comes from
+      the load order's `sInventoryHotKey`, else our built-in label.
     - **With the keyboard and mouse** only the repair action ("Repair R)" / "Maintain R)")
       on every tab, dim where it does nothing, and "Mod X)" under it on Weapons [observed
       2026-11-09: the original's InventoryMenu button tiles read with keyboard and mouse
@@ -631,8 +664,12 @@ is the top left 85 × 92 of `head.dds`) [observed].
   temporary modifiers, less damage), which holds the worn apparel's enchantments in the
   temporary pool [documented: GECK wiki ActorValue; aid-items.md §13; #2495], skills kept to
   0–100; "(+)" or "(-)" when it differs from the permanent value [observed: "34 (+)";
-  hypothesis: "(-)"]. Perks: the player's perks, playable and not hidden by PERK DATA
-  [hypothesis: its bytes as trait, minimum level, ranks, playable, hidden], traits
+  hypothesis: "(-)"]. Perks: the player's perks that are not Hidden by PERK DATA
+  [hypothesis: its bytes as trait, minimum level, ranks, playable, hidden; documented: GECK
+  wiki Category:Perk, Hidden "does not show up in the user interface", Playable only that
+  the level-up menu offers it]. Perks that are not Playable (challenge perks such as Lord
+  Death, implants, companion and quest perks: 62 of FalloutNV.esm's 176 [observed: #3118])
+  are listed [hypothesis: as the original does; capture a non-Playable perk's row], traits
   included [hypothesis], in name order, the rank as the number when the perk has more
   than one [hypothesis].
   - Names, descriptions and pictures: AVIF FULL, DESC, ICON (the record of code c is
@@ -1081,9 +1118,9 @@ and the box follow `_CurrentTab` in the file, and a tab's word on its own `strin
 | The rows (`MenuModel`'s player list) | `IM_InventoryListTemplate` rows under `IM_InventoryList`, by `item_menu`: `ListItemText/string` (`look::row_text`), `IM_Template_ItemMarker/visible` (equipped), `_y`, `height`, `_scroll_delta`, the bar's counts, `_highlight_y`, `_selected_height` | As the container's, one side. Folder rows and "Back" are rows like any other. `IM_EquipItemMarker`, the hollow square by the highlighted row, is the file's, from `_EquippableItem` [observed: the capture]. |
 | The selected row's picture, badge, skill | `IM_ItemIcon/filename,visible,x,width,height`; `IM_ItemIconBadge/filename,visible`; `IM_StrReq/string,visible` (the number only) | Hidden with the panel. Ammunition's picture stands at x 410, 350 square, against 450 and 380 [observed: the capture, on ammunition no carried weapon takes; hypothesis: on all]. |
 | The figures (`items::info_of`, no DPS on this page) | `item_card::write` under `IM_ItemInfoRect`, whose `visible` follows having a row [observed: the capture] | The same cards as the container's; `user6` 1 on weapons, 0 on armour; effects on the first free row, one row up on aid, at y 110 under two rows [observed]. `ModInfoOne` to `Three` unwritten (not in `Info`). |
-| The buttons | `visible`: Repair on every tab but inside a Misc folder, `target` while R does something (a spare and something to repair), the file dimming it; Mod on the Weapons tab, `target` with a row; Cancel inside a Misc folder, in Repair's place, sending `Back` there, E or a click; Equip, Drop and Hotkey never [observed: all of it, the capture; the file has those three for a controller, and the hand-built page shows none] | The words are the file's, but Repair's follows the condition, the longer word can be lit: `sMaintainItem`'s text where the load order defines it, else "Upkeep", by `fnv_game::repair::hint`'s rule, on the button's `string`, the file's coming back. With no row it holds on Weapons and Apparel, and is the file's on the others [observed: the capture]. |
+| The buttons | `visible`: Repair on every tab but inside a Misc folder, `target` while R does something (a spare and something to repair), the file dimming it; Mod on the Weapons tab, `target` with a row; Cancel inside a Misc folder, in Repair's place, sending `Back` there, E or a click; Equip, Drop and Hotkey hidden with keyboard/mouse [observed: the capture]. Hotkey shows with Controller and names RB/R1, its target following `hotkeys::can_hold` [design, #2312] | The words are the file's, but Repair's follows the condition, the longer word can be lit: `sMaintainItem`'s text where the load order defines it, else "Upkeep", by `fnv_game::repair::hint`'s rule, on the button's `string`, the file's coming back. With no row it holds on Weapons and Apparel, and is the file's on the others [observed: the capture]. |
 | Root | `_EquippableItem` (a weapon, armour or aid row, not broken [observed: 0 at condition 0]), `_KeyringOpen` (a Misc folder open) | Armour and aid [hypothesis]. |
-| The hotkey panel (`HotkeyHold`, `Hotkeys`) | Nothing of the file's: `hotkey_panel::draw_over_tiles` draws the owner's panel over the page while a key is held, and `IM_ButtonRect` and the picture, badge and skill give way. `IM_HotKeyWheel` stays hidden | [the owner 2026-10-26, and 2026-10-27 for its place]. **A difference**: the capture never saw the file's wheel open, so it is not built here. |
+| The hotkey panel (`HotkeyHold`, `Hotkeys`) | Nothing of the file's: `hotkey_panel::draw_over_tiles` draws the owner's panel over the page while a key is held or the controller modal is open [design, #2312], and `IM_ButtonRect` and the picture, badge and skill give way. `IM_HotKeyWheel` stays hidden | [the owner 2026-10-26, and 2026-10-27 for its place]. **A difference**: the capture never saw the file's wheel open, so it is not built here. |
 | `IM_Background` | hidden in both frames | The shell's background and scanlines, as §5.1.1. |
 | The prompt | nothing in the image: `QuantityMenu` on the window (`menus::quantity_tiled`) | As the container's. |
 | The repair list, the mod menu | not eligible: the hand-built body draws them | Their own files are other work. |
@@ -1099,7 +1136,7 @@ and the box follow `_CurrentTab` in the file, and a tab's word on its own `strin
 | Cards' values, the headline's values, `IM_StrReq` | Figures from the model and record data; "--" for what is unread, as the hand-built page. |
 | `AmmoInfo`'s title | Record data, or armour's class by the model's word (`item_card`, `info_of`), as the container's. |
 | The panel's line | An item's name, or the panel's own words "Empty", "Ammo Swap", "Key 2 is Ammo Swap", "Can't hotkey ..." (`hotkey_panel`), drawn by that module. |
-| `_PCButtonText` | Repair `sPCMenuHintR`, Mod `sPCMenuHintX`, Cancel `sPCMenuHintE` (the strings table or the load order's); with a controller the button's name, and none on Cancel: B closes the Pip-Boy, as on the hand-built page. Equip, Drop and Hotkey: none, as the original's. |
+| `_PCButtonText` | Repair `sPCMenuHintR`, Mod `sPCMenuHintX`, Cancel `sPCMenuHintE` (the strings table or the load order's); with a controller the button's name, and none on Cancel: B closes the Pip-Boy, as on the hand-built page. Equip and Drop: none. Hotkey: the current pad's RB/R1 with Controller, hidden with keyboard/mouse [design, #2312; `inventory_menu::hints_of`]. |
 
 **Input** (`inventory_menu::feed`): the pointer is `PipBoyScreen::pointer`, read and never written;
 nothing else here touches the hand-built pointer [design]. It takes nothing under the prompt, with
@@ -2166,3 +2203,59 @@ still need runtime checks after this review revision.
   `pipboy/items.rs::draw` and `tiles/inventory_menu.rs::describe`; screenshots
   accompany both selections for visual review. Log checks verify card text
   and selection cleanup; layout still needs the runtime screenshots.
+
+
+### Replacement-art density and map-image dimensions
+
+- [design] The hand-built STATS list, karma and reputation panels retain their
+  existing 256-pixel logical image height and zoom. An actually selected own-file
+  replacement with another pixel density uses the same density conversion already
+  used by the fallback paperdoll: logical height divided by selected image height.
+  The displayed geometry and normalized source region stay unchanged. Selected
+  atlas pieces retain their existing texel contract; the size of a shadowed own
+  file is not used. A missing atlas uses the density of its actual own-file fallback.
+- [design] MapMenu publishes own-file image dimensions before evaluating image
+  layout, using the same file-size writer as StatsMenu. This includes zero-size
+  metadata children used by ratio-based map-marker templates. A replacement
+  image's filename or zoom change refreshes its dimensions; cached decoded sizes
+  do not substitute another image's dimensions. Atlas-backed and runtime images
+  retain their existing metadata owners.
+- [hypothesis] These repair two reported Windows QA boundaries: clipped high-
+  resolution skill art when the Stats page falls back to the hand-built view, and
+  ratio-based map markers whose child-image dimensions were never supplied. They
+  do not establish original-game UI parity or repair a tile-page admission failure.
+- [design] Authored CPU controls call the actual fallback page producer through
+  GameData/VFS and inspect its ImageNode geometry/source rectangle, including TGA
+  content under a DDS name, native atlas selection and missing-atlas fallback. A
+  MapMenu page control reads authored DDS files through the same image provider
+  and checks evaluated image dimensions, normalized crop, zoom and emitted pieces
+  across a filename/density change. Execution results belong to their exact tested
+  revision; source authoring alone supplies no runtime or screenshot acceptance.
+
+- [design] The fallback-art controls explicitly choose General's karma or reputation
+  mode instead of inheriting the default view. Positions and layout units stay exact;
+  positive emitted dimensions may differ by at most one representable f32 step when
+  an atlas subrectangle is multiplied back into canvas units. Normalized source
+  regions and the selected atlas rectangle remain independent, unchanged checks.
+
+### List-row `<clips>` under `<clipwindow>` (`StatsMenu`, `InventoryMenu`, `MapMenu`)
+
+- [documented: GECK wiki `clipwindow`] In `list_box.xml` + `list_box_template.xml`,
+  `<clipwindow> 1 </clipwindow>` on a list container defines the clipping window for
+  descendants carrying `<clips> 1 </clips>`. On a list row (`stats_list_template_item`,
+  `IM_InventoryListTemplateRect`, etc.), `<clips> 1 </clips>` opts that row into the
+  list's `<clipwindow>` rather than cropping the row's own text children
+  (`ListItemText`, value/modifier texts) to the row's `<hotrect>` height.
+- [design] Because `fnv_ui::input::clips_children` retains self-clipping for legacy
+  `<clips>` layouts, `tiles::list::unclip_row_children` marks live direct children of a
+  `<clips>` row under a `<clipwindow>` list with `fnv_ui::input::OUTSIDE_CLIP` (the same
+  mechanism `tiles::vats_menu` uses for right-justified queue rows). Both layout and
+  pointer hit-testing then assign `parent.clip_above` — the enclosing list's
+  `<clipwindow>` — to the row's text children. This prevents rows whose `ListItemText`
+  vertical alignment offset exceeds `_VerticalSpacing` from failing `StatsMenu`
+  readiness with `row 0 does not fit` (or `InventoryMenu` / `MapMenu` with `no row shows
+  whole`) while keeping list-window clipping and off-canvas/narrow-window rejections
+  intact.
+- [hypothesis] Original-game clipping of nested grandchildren inside a `<clips>` list
+  row and full installed-profile visual verification remain unqualified without an
+  original-game capture.

@@ -110,7 +110,7 @@ pub fn unhandled_unused(table_json: &serde_json::Value) -> (Vec<String>, Vec<Str
         if f["family"] != "vanilla" || f["script_calls"].as_u64().unwrap_or(0) > 0 {
             continue;
         }
-        if super::lookup_name(name).is_some() || lookup(name).is_some() || ENGINE_WORDS.iter().any(|w| w.eq_ignore_ascii_case(name)) {
+        if super::lookup_name(name).is_some() || lookup(name).is_some() || super::player_source::handles(name) || crate::vats::handles_area_query(name) || ENGINE_WORDS.iter().any(|w| w.eq_ignore_ascii_case(name)) {
             continue;
         }
         let in_console = f["categories"].as_array().into_iter().flatten().any(|c| c == "Console Functions");
@@ -227,10 +227,14 @@ fn quest_targets(g: &mut Game, ctx: &ConsoleCtx) -> Vec<QuestTarget> {
     out
 }
 
-/// The door outdoors into an interior cell a marker stands at, if one leads there: (its
-/// cell, position) (`quest_targets::marker_door`).
-fn door_into(g: &Game, cell: FormId, ignores_locks: bool) -> Option<(FormId, [f32; 3])> {
-    let door = crate::quest_targets::marker_door(&g.world, &g.doors_into(cell), ignores_locks)?;
+/// The door outdoors a marker for a target in an interior cell stands at, if a way leads
+/// there: (its cell, position) (`quest_targets::outdoor_marker_door`: a door straight in,
+/// else the first door outdoors of the way through other interiors, #2458).
+fn door_into(g: &mut Game, cell: FormId, ignores_locks: bool) -> Option<(FormId, [f32; 3])> {
+    let direct = g.doors_into(cell);
+    let refs = g.world.placed;
+    let graph = g.other.objective_doors.get_or_insert_with(|| crate::quest_targets::DoorGraph::build(refs));
+    let door = crate::quest_targets::outdoor_marker_door(&g.world, graph, &direct, cell, ignores_locks)?;
     let d = g.world.placed.get(door)?;
     Some((d.cell?, d.pos))
 }
@@ -624,8 +628,9 @@ fn set_mfg(m: &mut std::collections::BTreeMap<u8, f32>, id: u8, v: f32) {
 /// actor in the loaded area", "Essential actors are put into their usual temporary
 /// unconscious state rather than being killed"; hypothesis: the dead and the disabled are
 /// left alone]. Each death is `Game::kill`'s, as KillActor's.
-pub fn kill_all_actors(g: &mut Game, _ctx: &ConsoleCtx, a: &[String]) -> Result<Vec<String>, String> {
-    let killer = a.first().map(|w| form(g, w)).transpose()?;
+/// Shared loaded-area kill pass used by both console `killall` and source-compiled
+/// `KillAllActors` / `KillAll` calls [documented: GECK wiki KillAllActors].
+pub(crate) fn kill_all_actors_in_loaded(g: &mut Game, killer: Option<FormId>) -> (usize, usize) {
     let placed = g.world.placed;
     let is_actor = |r: &FormId| placed.get(*r).is_some_and(|p| matches!(&p.sig, b"ACHR" | b"ACRE"));
     let mut actors: std::collections::BTreeSet<FormId> = std::collections::BTreeSet::new();
@@ -646,6 +651,12 @@ pub fn kill_all_actors(g: &mut Game, _ctx: &ConsoleCtx, a: &[String]) -> Result<
             killed += 1;
         }
     }
+    (killed, knocked)
+}
+
+pub fn kill_all_actors(g: &mut Game, _ctx: &ConsoleCtx, a: &[String]) -> Result<Vec<String>, String> {
+    let killer = a.first().map(|w| form(g, w)).transpose()?;
+    let (killed, knocked) = kill_all_actors_in_loaded(g, killer);
     Ok(vec![format!("KillAllActors >> {killed} killed, {knocked} essential knocked out")])
 }
 
@@ -1014,7 +1025,7 @@ mod tests {
         let (console, other) = unhandled_unused(&j);
         eprintln!("unhandled console functions: {console:?}
 unhandled other vanilla functions: {other:?}");
-        assert_eq!((console.len(), other.len()), (33, 96), "docs/design/console.md, What the console does not handle, sorts them");
+        assert_eq!((console.len(), other.len()), (33, 89), "docs/design/console.md, What the console does not handle, sorts them");
         // `killall` reaches KillAllActors by its alias.
         assert_eq!(lookup_word(&t, "killall").map(|r| r.0).as_deref(), Some("KillAllActors"));
         assert_eq!(lookup_word(&t, "cam").map(|r| r.0).as_deref(), Some("CloseAllMenus"));
@@ -1023,5 +1034,14 @@ unhandled other vanilla functions: {other:?}");
             let f = t.by_name(alias).and_then(|op| t.get(op)).unwrap_or_else(|| panic!("{alias}"));
             assert!(lookup(&f.name).is_some(), "{alias}");
         }
+    }
+
+    #[test]
+    fn named_area_source_queries_are_handled_but_unknown_vanilla_names_are_not() {
+        let rows = ["GetVATSLeftAreaFree", "getvatsrightareafree", "OwnedUnknownVanillaQuery"]
+            .map(|name| serde_json::json!({"name": name, "family": "vanilla", "script_calls": 0}));
+        let (console, other) = unhandled_unused(&serde_json::json!({"functions": rows}));
+        assert!(console.is_empty());
+        assert_eq!(other, ["OwnedUnknownVanillaQuery"]);
     }
 }

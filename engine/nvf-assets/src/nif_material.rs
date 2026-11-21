@@ -132,6 +132,15 @@
 //! alpha-tested shapes in every shadow cascade above all. The shaders reach the values,
 //! the holes and the FaceGen offset through `nif_surface`, `holes_alpha` and
 //! `facegen_texel` (nif_material.wesl, nif_prepass.wesl), which read either binding.
+//!
+//! Landscape anti-tiling (nvforever `terrain.rs` "Anti-tiling", [design, #2551]): the
+//! landscape's own NIF materials (a quadrant's base where its layers are not folded in, and
+//! the layers drawn blended over it) carry their texture repeat
+//! ([`NifSurface::terrain_repeat`]) and the switch ([`NifSurface::anti_tiling`]). With both,
+//! the main pass gets `TERRAIN_ANTI_TILING` and `TERRAIN_SEPARATE`
+//! (`terrain_sampling::anti_tiling_defs`), and nif_material.wesl sets the surface up with
+//! terrain_pbr.wesl's anti-tiled reads instead of Bevy's `pbr_input_from_standard_material`.
+//! Every other shape (repeat 0) keeps the call there always was.
 
 use bevy::asset::{load_internal_asset, uuid_handle};
 use bevy::mesh::MeshVertexBufferLayoutRef;
@@ -378,6 +387,44 @@ pub fn depth_equal(descriptor: &mut RenderPipelineDescriptor, mesh_key: MeshPipe
     }
 }
 
+/// The shader def under which the lighting takes the ambient occlusion on the ambient light
+/// (nvforever ssao_lighting.rs; bevy_pbr pushes it, for pipelines that write depth, on the
+/// views that have the occlusion's bindings: engine/vendor/README.md).
+pub const AMBIENT_OCCLUSION_DEF: &str = "NVF_AMBIENT_OCCLUSION";
+
+/// A pipeline that must not take the ambient occlusion although bevy_pbr's rule gives it the
+/// def: its surface is not the one the depth prepass holds (water, a refracting shape), so
+/// the texels under it are another surface's (the bed's, the wall's behind), or a material
+/// that chose not to (nvforever grass.rs, tree.rs constants). The view's layout keeps the
+/// bindings; the shader just does not read them.
+pub fn ambient_occlusion_opt_out(descriptor: &mut RenderPipelineDescriptor) {
+    let def = ShaderDefVal::from(AMBIENT_OCCLUSION_DEF);
+    descriptor.vertex.shader_defs.retain(|d| *d != def);
+    if let Some(fragment) = descriptor.fragment.as_mut() {
+        fragment.shader_defs.retain(|d| *d != def);
+    }
+}
+
+/// A main-pass pipeline that takes the ambient occlusion although bevy_pbr's rule (depth
+/// written) leaves it out: a blended surface drawn on the surface the depth prepass holds
+/// (the landscape's blended texture layers), whose crease would otherwise show the base's
+/// occlusion through unoccluded patches. Only on a view that has the bindings (the key's
+/// bit), never in a prepass.
+pub fn ambient_occlusion_opt_in(descriptor: &mut RenderPipelineDescriptor, mesh_key: MeshPipelineKey) {
+    if !mesh_key.contains(MeshPipelineKey::NVF_AMBIENT_OCCLUSION) || descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
+        return;
+    }
+    let def = ShaderDefVal::from(AMBIENT_OCCLUSION_DEF);
+    if let Some(fragment) = descriptor.fragment.as_mut() {
+        if !fragment.shader_defs.contains(&def) {
+            fragment.shader_defs.push(def.clone());
+        }
+    }
+    if !descriptor.vertex.shader_defs.contains(&def) {
+        descriptor.vertex.shader_defs.push(def);
+    }
+}
+
 /// The extension part: the falloff parameters, the alpha cut, the decal switch and the
 /// fragment shader.
 ///
@@ -386,7 +433,7 @@ pub fn depth_equal(descriptor: &mut RenderPipelineDescriptor, mesh_key: MeshPipe
 /// binding 101, index 50 of the extension's index table at binding 100) and the textures
 /// to Bevy's shared texture arrays, so shapes of different materials are drawn in one
 /// batch. Without bindless the values are a uniform at binding 50 and the textures at 51
-/// to 53, Bevy's numbering for extensions.
+/// to 56, Bevy's numbering for extensions.
 ///
 /// A slab holds at most 512 resources (Bevy's own limit on desktop is 2,048): a slab is
 /// sent to the GPU whole when any material in it changes, and animated or hour-driven
@@ -418,8 +465,12 @@ pub struct NifSurface {
     /// negative for down (module notes, "Fire refraction"); 0: it does not move.
     pub fire_period: f32,
     /// Unlit emissive rules: x 1 skips the image-space scale; y holds each light channel
-    /// to that value on the soft path (0: no hold); z, w unused. Zero keeps the default
-    /// [hypothesis, nif.md §6 "Unlit shapes that are pictures, and cut-out signs"].
+    /// to that value on the soft path (0: no hold); z 1: the vertex colours are display
+    /// values, made linear per fragment (`nif_spawn::unlit_vertex_colors`); w 1 marks a lit
+    /// material shaded from an authored set (`crate::authored::AUTHORED_MARK`, #2981), 0
+    /// otherwise.
+    /// Zero keeps the default [hypothesis, nif.md §6 "Unlit shapes that are pictures, and
+    /// cut-out signs"].
     pub emissive_rule: Vec4,
     /// The shape refracts (module notes, "Refraction").
     pub refract: bool,
@@ -489,6 +540,15 @@ pub struct NifSurface {
     /// arrays hold filterable textures, and the offsets are Rgba16Float, which is.
     #[texture(53)]
     pub facegen_offset: Option<Handle<Image>>,
+    /// World units per texture repeat of a landscape material (module notes, "Landscape
+    /// anti-tiling"; set by nvforever `terrain.rs` only); 0 on every other shape.
+    pub terrain_repeat: f32,
+    /// Landscape anti-tiling on (a landscape material only, with a repeat above 0).
+    pub anti_tiling: bool,
+    /// The shape's material without an authored set (#2981, `crate::authored::LegacyLook`),
+    /// kept for shapes that may take one, so a change of diffuse can apply the new one's set
+    /// or go back; `None` for every other material. CPU only.
+    pub legacy: Option<crate::authored::LegacyLook>,
     /// Window environment map (`nif_spawn::window_env`; docs/spec-notes/nif.md §6 "Window
     /// glass and environment maps"): x the scale of the reflection (0: none), y 1 when
     /// [`env_mask`](Self::env_mask) is set; z, w unused. The reflection, the cube read in
@@ -523,6 +583,9 @@ pub struct NifSurfaceUniform {
     /// [`NifSurface::pipboy_a`], [`NifSurface::pipboy_b`].
     pub pipboy_a: Vec4,
     pub pipboy_b: Vec4,
+    /// x [`NifSurface::terrain_repeat`] (0 when it cannot place anti-tiled reads); y, z, w
+    /// unused.
+    pub terrain: Vec4,
     /// [`NifSurface::env`].
     pub env: Vec4,
 }
@@ -536,7 +599,7 @@ pub const REFRACTION_SCREEN: f32 = 0.1;
 
 impl From<&NifSurface> for NifSurfaceUniform {
     fn from(s: &NifSurface) -> Self {
-        NifSurfaceUniform { falloff: s.falloff, alpha_cut: s.alpha_cut, add_whole: s.add_whole, refraction: s.refraction * REFRACTION_SCREEN, fire_period: s.fire_period, emissive_rule: s.emissive_rule, holes: s.holes, holes_edge: s.holes_edge, soft: s.soft, pipboy_a: s.pipboy_a, pipboy_b: s.pipboy_b, env: s.env }
+        NifSurfaceUniform { falloff: s.falloff, alpha_cut: s.alpha_cut, add_whole: s.add_whole, refraction: s.refraction * REFRACTION_SCREEN, fire_period: s.fire_period, emissive_rule: s.emissive_rule, holes: s.holes, holes_edge: s.holes_edge, soft: s.soft, pipboy_a: s.pipboy_a, pipboy_b: s.pipboy_b, terrain: Vec4::new(if crate::terrain_sampling::repeat_valid(s.terrain_repeat) { s.terrain_repeat } else { 0.0 }, 0.0, 0.0, 0.0), env: s.env }
     }
 }
 
@@ -605,6 +668,9 @@ impl Default for NifSurface {
             soft: Vec4::ZERO,
             holes_texture: None,
             facegen_offset: None,
+            terrain_repeat: 0.0,
+            anti_tiling: false,
+            legacy: None,
             env: Vec4::ZERO,
             env_cube: None,
             env_mask: None,
@@ -625,6 +691,12 @@ pub struct NifSurfaceKey {
     pub first_person: bool,
     pub add_linear: bool,
     pub pipboy_screen: bool,
+    /// A landscape material with anti-tiling on and a repeat to place it with.
+    pub anti_tiling: bool,
+    /// A landscape material (a repeat to place it with): its blended texture layers lie on
+    /// the surface the depth prepass holds and take the ambient occlusion
+    /// ([`ambient_occlusion_opt_in`]).
+    pub terrain_layer: bool,
 }
 
 impl From<&NifSurface> for NifSurfaceKey {
@@ -639,6 +711,8 @@ impl From<&NifSurface> for NifSurfaceKey {
             first_person: surface.first_person,
             add_linear: surface.add_linear,
             pipboy_screen: surface.pipboy_screen,
+            anti_tiling: surface.anti_tiling && crate::terrain_sampling::repeat_valid(surface.terrain_repeat),
+            terrain_layer: crate::terrain_sampling::repeat_valid(surface.terrain_repeat),
         }
     }
 }
@@ -689,6 +763,17 @@ impl MaterialExtension for NifSurface {
                 fragment.shader_defs.push("PIPBOY_SCREEN".into());
             }
         }
+        if key.bind_group_data.anti_tiling {
+            crate::terrain_sampling::anti_tiling_defs(descriptor, true);
+        }
+        // The ambient occlusion in the lighting (module notes of nvforever ssao_lighting.rs):
+        // a refracting shape is in no prepass, so the texels under it are the surface behind;
+        // the landscape's blended layers lie on the prepass's surface.
+        if key.bind_group_data.refract {
+            ambient_occlusion_opt_out(descriptor);
+        } else if key.bind_group_data.terrain_layer {
+            ambient_occlusion_opt_in(descriptor, key.mesh_key);
+        }
         if key.bind_group_data.refract {
             refraction_pipeline(descriptor);
         } else if key.bind_group_data.depth_write && !descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
@@ -699,6 +784,17 @@ impl MaterialExtension for NifSurface {
         // A first-person shape writes its own depth, a refracting one is in no prepass.
         if !key.bind_group_data.first_person && !key.bind_group_data.refract {
             depth_equal(descriptor, key.mesh_key);
+        }
+        // A channel view of the authored materials' inputs (crate::authored::PbrView; off
+        // unless NVF_PBR_VIEW is set at the start): the main pass's colour only.
+        // The metallic debug switch (crate::authored::metallic_debug; off unless
+        // NVF_PBR_METALLIC=1 at the start) likewise.
+        let metallic_def: &[&str] = if crate::authored::metallic_debug() { &["NVF_PBR_METALLIC"] } else { &[] };
+        let view_defs = crate::authored::view().shader_defs();
+        if !(view_defs.is_empty() && metallic_def.is_empty()) && !descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.extend(view_defs.iter().chain(metallic_def).map(|d| ShaderDefVal::from(*d)));
+            }
         }
         // StandardMaterial has set the rasteriser's bias from the material's depth bias.
         if let Some(depth_stencil) = descriptor.depth_stencil.as_mut() {
@@ -899,6 +995,22 @@ pub fn add_display(colour: Vec3, alpha: f32, behind: Vec3) -> Vec3 {
     (sum.powf(MULTIPLY_GAMMA) - behind).max(Vec3::ZERO)
 }
 
+/// The light an additive shape adds once fogged, from its colour through the view's fog
+/// (`fogged`) and black through the same fog (`fogged_black`): their difference, never
+/// below 0 (CPU mirror of nif_material.wesl).
+///
+/// Bevy's fogs are colour × k + a fog term that does not depend on the colour, so the
+/// difference is colour × k: fog dims the added light and adds no fog colour of its own,
+/// which the frame behind the shape already holds [hypothesis, docs/spec-notes/nif.md §6
+/// "Fog on added light"]. Fogged as a surface, a texel of black (which adds nothing)
+/// still added the fog colour: the Gomorrah Suites' wall sconces
+/// (`clutter\neoclassical\neoclassicalsconce.nif`, `NeoclassicalSconce:9`, ONE / ONE,
+/// no texture, vertex colour 0.34 at the bowl to black at the rim) were flat boards of
+/// fog colour with hard edges on the wall (#2435).
+pub fn fogged_addition(fogged: Vec3, fogged_black: Vec3) -> Vec3 {
+    (fogged - fogged_black).max(Vec3::ZERO)
+}
+
 /// Power on the alpha in the colour term of unlit alpha-blended shapes
 /// ([`blend_colour_scale`]; nif_material.wesl has the same number) [hypothesis, fitted:
 /// docs/spec-notes/nif.md §6 "Alpha blend of unlit shapes"].
@@ -930,6 +1042,10 @@ impl Plugin for NifMaterialPlugin {
         load_internal_asset!(app, NIF_PREPASS_SHADER, "nif_prepass.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/nif_prepass.wesl"));
         load_internal_asset!(app, COVERAGE_SHADER, "coverage.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/coverage.wesl"));
         load_internal_asset!(app, FIRST_PERSON_DEPTH_SHADER, "first_person_depth.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/first_person_depth.wesl"));
+        // Landscape anti-tiling (terrain_sampling.rs), imported by nvforever's terrain.wesl
+        // and by this crate's nif_material.wesl only with TERRAIN_ANTI_TILING.
+        load_internal_asset!(app, crate::terrain_sampling::SAMPLING_SHADER, "terrain_sampling.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/terrain_sampling.wesl"));
+        load_internal_asset!(app, crate::terrain_sampling::PBR_SHADER, "terrain_pbr.wesl", |s, _| Shader::from_wesl(s, "embedded://nvf_assets/terrain_pbr.wesl"));
         // Every 3D camera gets the view transmission texture, as each one had before Bevy
         // 0.20 made `ScreenSpaceTransmission` opt-in: the refraction here and the water
         // (nvforever water.rs) read it, and their shaders bind it unconditionally.
@@ -937,8 +1053,35 @@ impl Plugin for NifMaterialPlugin {
         app.add_plugins(MaterialPlugin::<NifMaterial>::default())
             .init_resource::<BlendedCutouts>()
             .add_systems(Startup, spawn_transmission_anchor)
-            .add_systems(PostUpdate, (apply_blended_cutouts, see_through_casts_no_shadow));
+            .add_systems(PostUpdate, (apply_blended_cutouts.in_set(BlendedCutoutSystems), see_through_casts_no_shadow.in_set(SeeThroughShadowSystems)));
+        // The authored materials' debug switches are read once, at the start.
+        crate::authored::view();
+        crate::authored::metallic_debug();
+        app.add_systems(Last, crate::authored::report);
+        crate::bc5_field::install(app);
+        crate::pbr_field::install(app);
     }
+}
+
+/// The blended cut-outs' alpha-mode edits ([`BlendedCutouts`]), which change materials in
+/// place under the same handle: systems that copy a material's state run after it
+/// (nvforever mesh_terrain_blend.rs, aid only).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BlendedCutoutSystems;
+
+/// The shadow bookkeeping of see-through shapes ([`SeeThroughNoShadow`]): systems that
+/// replace a mesh's [`NifMaterial`] component run after it, so it has seen the material.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SeeThroughShadowSystems;
+
+/// [`apply_blended_cutouts`] in its set, for tests of other crates' material consumers.
+pub fn blended_cutout_system() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    apply_blended_cutouts.in_set(BlendedCutoutSystems)
+}
+
+/// [`see_through_casts_no_shadow`] in its set, for tests of other crates' material producers.
+pub fn see_through_shadow_system() -> bevy::ecs::schedule::ScheduleConfigs<bevy::ecs::system::ScheduleSystem> {
+    see_through_casts_no_shadow.in_set(SeeThroughShadowSystems)
 }
 
 /// Keeps Bevy's copy of the opaque frame (the view transmission texture) in every 3D
@@ -1124,6 +1267,30 @@ mod tests {
         };
         first_person_depth(&mut shadow, MeshPipelineKey::VIEW_PROJECTION_ORTHOGRAPHIC);
         assert!(shadow.fragment.is_none());
+    }
+
+    /// [design] The ordinary interface (with #2551's `terrain` row and #2462's window
+    /// environment map: the `env` row after it, the cube, its sampler and the mask at
+    /// 54-56): 50..57, table 100, data 101, and ten 16-byte rows (160 bytes). No
+    /// enabled-only resource may enter this type.
+    #[test]
+    fn ordinary_surface_gpu_interface_matches_main() {
+        use bevy::render::render_resource::BindlessResourceType as R;
+        assert_eq!(NifSurfaceUniform::min_size().get(), 160);
+        assert_eq!(NifSurfaceUniform::from(&NifSurface::default()).size().get(), 160);
+        let descriptor = NifSurface::bindless_descriptor().unwrap();
+        assert_eq!(descriptor.index_tables.len(), 1);
+        let table = &descriptor.index_tables[0];
+        assert_eq!((table.indices.start.0, table.indices.end.0, table.binding_number.0), (50, 57, 100));
+        assert_eq!(&descriptor.resources[50..], &[R::DataBuffer, R::Texture2d, R::SamplerFiltering, R::Texture2d, R::TextureCube, R::SamplerFiltering, R::Texture2d]);
+        assert_eq!(descriptor.buffers.len(), 1);
+        assert_eq!((descriptor.buffers[0].binding_number.0, descriptor.buffers[0].bindless_index.0, descriptor.buffers[0].size), (101, 50, Some(160)));
+        // Non-bindless declarations are from this exact derived production type.
+        let source = include_str!("nif_material.rs");
+        let extension = source.split("pub struct NifSurface {").nth(1).unwrap().split("\n}").next().unwrap();
+        assert!(extension.contains("#[texture(51)]") && extension.contains("#[sampler(52)]") && extension.contains("#[texture(53)]"));
+        assert!(extension.contains("#[texture(54, dimension = \"cube\")]") && extension.contains("#[sampler(55)]") && extension.contains("#[texture(56)]"));
+        assert!(!extension.contains("#[texture(57") && !extension.contains("mesh_terrain"));
     }
 
     /// A main-pass pipeline as Bevy hands it to `specialize`: one colour target, depth
@@ -1391,7 +1558,7 @@ mod tests {
         // Only the switches in `NifSurfaceKey` select the pipeline; the falloff and the
         // alpha cut are uniforms.
         let mut surface = NifSurface::default();
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: false, refract: false, hard_edges: false, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: false, refract: false, hard_edges: false, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false, anti_tiling: false, terrain_layer: false });
         assert_eq!(surface.alpha_cut, 0.0);
         assert_eq!(surface.emissive_rule, Vec4::ZERO);
         assert_eq!(NifSurfaceUniform::from(&surface).emissive_rule, Vec4::ZERO);
@@ -1401,19 +1568,40 @@ mod tests {
         assert_eq!(NifSurfaceUniform::from(&surface).emissive_rule, surface.emissive_rule);
         assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey::from(&NifSurface::default()));
         surface.decal = true;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: false, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: false, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false, anti_tiling: false, terrain_layer: false });
         surface.hard_edges = true;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: false, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false, anti_tiling: false, terrain_layer: false });
         surface.shade_light = true;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false, anti_tiling: false, terrain_layer: false });
         // The refraction strength is a uniform; whether the shape refracts is the pipeline's.
         surface.refraction = 0.1;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: false, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false, anti_tiling: false, terrain_layer: false });
         surface.refract = true;
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: true, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: true, hard_edges: true, shade_light: true, facegen: false, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false, anti_tiling: false, terrain_layer: false });
         // A FaceGen offset selects the tinting shader.
         surface.facegen_offset = Some(Handle::default());
-        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: true, hard_edges: true, shade_light: true, facegen: true, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false });
+        assert_eq!(NifSurfaceKey::from(&surface), NifSurfaceKey { decal: true, refract: true, hard_edges: true, shade_light: true, facegen: true, depth_write: false, first_person: false, add_linear: false, pipboy_screen: false, anti_tiling: false, terrain_layer: false });
+    }
+
+    #[test]
+    fn shade_light_relight_takes_off_only_the_directional_shadows() {
+        // The relight in `with_shade_light` must differ from Bevy's lighting in the
+        // directional lights' shadows alone: clearing the receiver bit also dropped the lamps'
+        // shadows and changed the ambient occlusion's factor on lamps, and k multiplied that
+        // into a glow on first-person shapes [observed 2026-11-19].
+        let shader = include_str!("nif_material.wesl").replace("\r\n", "\n");
+        assert!(shader.contains("    unshadowed.flags |= NVF_MESH_FLAGS_NO_DIRECTIONAL_SHADOWS_BIT;\n"));
+        assert!(!shader.contains("unshadowed.flags &= ~MESH_FLAGS_SHADOW_RECEIVER_BIT"));
+        // The vendored bevy_pbr reads the bit in the directional loop only (its shadow-map,
+        // transmitted-lobe and contact-shadow conditions), never in the point or spot loops.
+        let pbr = include_str!("../../vendor/bevy_pbr/src/render/pbr_functions.wesl").replace("\r\n", "\n");
+        let directional = pbr.find("    // directional lights (direct)\n").expect("directional loop");
+        let end = directional + pbr[directional..].find("    // Ambient light (indirect)").expect("after the loop");
+        let at = |s: &str| pbr.match_indices(s).map(|(i, _)| i).collect::<Vec<_>>();
+        let reads = at("(in.flags & NVF_MESH_FLAGS_NO_DIRECTIONAL_SHADOWS_BIT) == 0u");
+        assert_eq!(reads.len(), 3);
+        assert!(reads.iter().all(|&i| directional < i && i < end));
+        assert!(include_str!("../../vendor/bevy_pbr/src/render/mesh_types.wesl").contains("const NVF_MESH_FLAGS_NO_DIRECTIONAL_SHADOWS_BIT: u32 = 1u << 26u;"));
     }
 
     /// First-person depth (module notes): the squeeze keeps the near plane at 1, puts the
@@ -1435,6 +1623,20 @@ mod tests {
         assert!(!NifSurfaceKey::from(&NifSurface::default()).add_linear);
         assert!(include_str!("nif_material.wesl").contains("@if(ADD_LINEAR)"));
         assert!(NifSurfaceKey::from(&NifSurface { pipboy_screen: true, ..default() }).pipboy_screen);
+        // Landscape anti-tiling (#2551): only a landscape material (a repeat above 0) with the
+        // switch on; the repeat reaches the shader, 0 for every other shape.
+        assert!(!NifSurfaceKey::from(&NifSurface::default()).anti_tiling);
+        assert!(!NifSurfaceKey::from(&NifSurface { anti_tiling: true, ..default() }).anti_tiling, "not a landscape material");
+        assert!(!NifSurfaceKey::from(&NifSurface { terrain_repeat: 256.0, ..default() }).anti_tiling, "switch off");
+        assert!(NifSurfaceKey::from(&NifSurface { terrain_repeat: 256.0, anti_tiling: true, ..default() }).anti_tiling);
+        // A landscape material is a terrain layer (its blended layers take the ambient
+        // occlusion), with anti-tiling or without; a repeat it cannot place with is not.
+        assert!(NifSurfaceKey::from(&NifSurface { terrain_repeat: 256.0, ..default() }).terrain_layer);
+        assert!(!NifSurfaceKey::from(&NifSurface::default()).terrain_layer);
+        assert!(!NifSurfaceKey::from(&NifSurface { terrain_repeat: -1.0, ..default() }).terrain_layer);
+        assert_eq!(NifSurfaceUniform::from(&NifSurface { terrain_repeat: 300.0, ..default() }).terrain, Vec4::new(300.0, 0.0, 0.0, 0.0));
+        assert_eq!(NifSurfaceUniform::from(&NifSurface::default()).terrain, Vec4::ZERO);
+        assert_eq!(NifSurfaceUniform::from(&NifSurface { terrain_repeat: -1.0, anti_tiling: true, ..default() }).terrain, Vec4::ZERO);
         assert!(!NifSurfaceKey::from(&NifSurface::default()).pipboy_screen);
         assert!(include_str!("nif_material.wesl").contains("@if(PIPBOY_SCREEN)"));
         assert_eq!(FIRST_PERSON_DEPTH_SHARE, 0.015625);
@@ -1566,6 +1768,31 @@ mod tests {
         assert_eq!(add_display(flash, 1.0, grey(9.0)), Vec3::ZERO);
         // No alpha adds nothing.
         assert!(close(add_display(Vec3::ONE, 0.0, grey(0.2)), Vec3::ZERO));
+    }
+
+    #[test]
+    fn fog_dims_added_light_and_adds_no_fog_colour() {
+        // Bevy's linear fog: mix(colour, fog colour, k) (bevy_pbr render/fog.wesl).
+        let fog = Vec3::new(0.30, 0.18, 0.05);
+        let fogged = |c: Vec3, k: f32| c.lerp(fog, k);
+        let close = |a: Vec3, b: Vec3| (a - b).abs().max_element() < 1e-6;
+        // The Gomorrah sconce's glow card (neoclassicalsconce.nif, NeoclassicalSconce:9):
+        // ONE / ONE, no texture, unlit vertex colour 0.34 (display) at the bowl, black at
+        // the rim. Its black rim adds nothing at any fog; fogged as a surface it added the
+        // fog colour (#2435).
+        for k in [0.0, 0.3, 1.0] {
+            assert!(close(fogged_addition(fogged(Vec3::ZERO, k), fogged(Vec3::ZERO, k)), Vec3::ZERO));
+        }
+        assert!(fogged(Vec3::ZERO, 0.3).max_element() > 0.05);
+        // The bowl's edge: the colour dimmed by the fog, without its colour.
+        let bowl = Vec3::new(0.34, 0.32, 0.27).powf(MULTIPLY_GAMMA);
+        assert!(close(fogged_addition(fogged(bowl, 0.3), fogged(Vec3::ZERO, 0.3)), bowl * 0.7));
+        // No fog: the colour whole. Thick fog: nothing.
+        assert!(close(fogged_addition(fogged(bowl, 0.0), fogged(Vec3::ZERO, 0.0)), bowl));
+        assert!(close(fogged_addition(fogged(bowl, 1.0), fogged(Vec3::ZERO, 1.0)), Vec3::ZERO));
+        // Bevy's atmospheric fog (colour × (1 − e) + fog × i) as well.
+        let atmospheric = |c: Vec3| c * 0.6 + fog * 0.5;
+        assert!(close(fogged_addition(atmospheric(bowl), atmospheric(Vec3::ZERO)), bowl * 0.6));
     }
 
     #[test]
