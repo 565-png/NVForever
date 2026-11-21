@@ -5076,6 +5076,7 @@ impl<'a> Game<'a> {
             self.emit(EventKind::ResultScript { unit: data.unit(u).key(), on: Some(speaker) });
             self.run_result(u, RunCtx { self_ref: Some(speaker), action_ref: None, quest: def.quest });
         }
+        self.jip_dialog_topic(speaker, topic, info);
     }
 
     /// The lines being said outside a conversation move on to their next responses as

@@ -251,6 +251,59 @@ impl Game<'_> {
         self.jip_run("menuclick", hs, None, vec![XVal::Num(menu_id), XVal::Num(id), XVal::Str(name.to_ascii_lowercase())])
     }
 
+    /// SetOnDialogTopicEventHandler's event: `speaker` spoke `info` under `topic`
+    /// (jip-events.md §2, §5). Each matching handler runs newest-first with
+    /// `this = speaker`: a non-wildcard filter matching `info` receives `info`;
+    /// a non-wildcard filter matching `topic` (or an unfiltered / wildcard
+    /// registration) receives `topic` [documented: topic or info; hypothesis:
+    /// unfiltered/wildcard handlers receive the topic].
+    pub(crate) fn jip_dialog_topic(&mut self, speaker: FormId, topic: FormId, info: FormId) -> usize {
+        if self.jip.handlers.is_empty() {
+            return 0;
+        }
+        let info_val = XVal::Ref(info.0);
+        let topic_val = XVal::Ref(topic.0);
+        let mut hs: Vec<(JipAttempt, XVal)> = self
+            .jip
+            .handlers
+            .iter()
+            .filter(|h| h.event == "dialogtopic")
+            .filter_map(|h| {
+                let matched = match h.filters.first() {
+                    None => Some(topic_val.clone()),
+                    Some(f) if self.jip_wildcard(f) => Some(topic_val.clone()),
+                    Some(f) if self.filter_matches(f, &info_val, false) => Some(info_val.clone()),
+                    Some(f) if self.filter_matches(f, &topic_val, false) => Some(topic_val.clone()),
+                    Some(_) => None,
+                };
+                matched.map(|arg| (self.jip.attempt(h), arg))
+            })
+            .collect();
+        if hs.is_empty() {
+            return 0;
+        }
+        hs.sort_by_key(|(a, _)| std::cmp::Reverse(a.handler.seq));
+        let ctx = RunCtx { self_ref: Some(speaker), ..RunCtx::default() };
+        let mut ran = 0;
+        for (attempt, arg) in hs {
+            let h = &attempt.handler;
+            if self.function_arity(&h.func).is_some_and(|n| n < 1) {
+                tracing::info!("jip: a dialogtopic handler takes fewer than the event's 1 values and does not run");
+                continue;
+            }
+            match self.run_function(&h.func, Some(Value::Ref(speaker.0)), vec![arg], None, ctx) {
+                Ok(_) => ran += 1,
+                Err(error) => self.handler_failed_with_registrar(
+                    "JIP dialogtopic handler".into(),
+                    error,
+                    || Some(h.failure_context(Some(speaker), 1)),
+                    attempt.registrar.as_deref(),
+                ),
+            }
+        }
+        ran
+    }
+
     fn jip_run(&mut self, event: &str, mut hs: Vec<JipAttempt>, on: Option<FormId>, args: Vec<XVal>) -> usize {
         hs.sort_by_key(|h| std::cmp::Reverse(h.handler.seq));
         let ctx = RunCtx { self_ref: on, ..RunCtx::default() };

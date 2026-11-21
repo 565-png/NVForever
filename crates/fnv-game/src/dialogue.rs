@@ -758,6 +758,7 @@ impl<'a> Game<'a> {
         if def.has(info_flag::RUN_IMMEDIATELY) {
             self.run_line_result(actor, def, true);
         }
+        self.jip_dialog_topic(actor, topic, info);
     }
 
     fn emit_response(&mut self, actor: FormId, def: &InfoDef, info: FormId, position: usize) {

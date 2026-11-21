@@ -131,6 +131,7 @@ runs only where the game fires it (`Game::jip_event`):
 | controldown, controlup | the existing key-event frame entry point, comparing the selected-device 28-control snapshot; both JIP and colon-name handlers ([contract](control-input-events.md)) | authored engine controls, unrun |
 | crafting | the recipe menu made an item: once per output, with all of it (`Game::item_crafted`) [hypothesis: the page does not say how a recipe made several times is reported] | #1408 |
 | locationdiscover | the engine found a map marker, with the marker reference (`Game::challenge_marker_found`) | #1408 |
+| dialogtopic | a dialogue line is spoken (`dialogue.rs` `speak` and `game.rs` `say_line`), with `this = speaker` and `arg0 = info` when matched by an INFO filter or `topic` when matched by a topic/wildcard filter [documented; hypothesis: unfiltered/wildcard passes topic] | authored controls |
 
 Not fired yet: criticalhit, fireweapon, reloadweapon, animaction, playgroup,
-dialogtopic, fasttravel, pctargetchange, triggerdown/up.
+fasttravel, pctargetchange, triggerdown/up.
