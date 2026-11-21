@@ -167,6 +167,81 @@ impl Game<'_> {
         }
     }
 
+    /// Session `DNAM/flags1` override for a `WEAP` (clone-first, original fallback),
+    /// from `SetWeaponFlag`, `SetWeaponFlags1`, `SetWeaponIsAutomatic`, or
+    /// `LNSetIsPlayable`. Returns `None` for non-weapons, absent edits, or non-finite
+    /// values [design].
+    pub fn weapon_flags1_override(&self, weapon: FormId) -> Option<u8> {
+        let original = self.unclone(weapon);
+        if self.data.sig(original) != Some(*b"WEAP") {
+            return None;
+        }
+        let key = "DNAM/flags1";
+        let value = self.field_overrides.get(&(weapon, key.into()))
+            .or_else(|| self.field_overrides.get(&(original, key.into())))?;
+        match value {
+            XVal::Num(n) if n.is_finite() => Some((n.trunc() as i64 as u64 & 0xFF) as u8),
+            _ => None,
+        }
+    }
+
+    /// Effective `DNAM/flags1` bitmask for a `WEAP` (session override first, else
+    /// authored record; `0` when the weapon has no `DNAM`), or `None` for non-weapons.
+    pub fn weapon_flags1(&self, weapon: FormId) -> Option<u8> {
+        let original = self.unclone(weapon);
+        if self.data.sig(original) != Some(*b"WEAP") {
+            return None;
+        }
+        match field(self, weapon, "DNAM", "flags1") {
+            Some(XVal::Num(n)) if n.is_finite() => Some((n.trunc() as i64 as u64 & 0xFF) as u8),
+            _ => Some(0),
+        }
+    }
+
+    /// Effective weapon `Is Automatic` state (`DNAM/flags1` bit 1), honoring live
+    /// session overrides before `FormStore`.
+    pub fn weapon_is_automatic(&self, weapon: FormId) -> bool {
+        if let Some(flags1) = self.weapon_flags1_override(weapon) {
+            return flags1 & (1 << 1) != 0;
+        }
+        self.world.forms.item(self.unclone(weapon)).and_then(|i| i.weapon_traits.as_ref()).is_some_and(|t| t.automatic)
+    }
+
+    /// Effective weapon `Can't Drop` state (`DNAM/flags1` bit 3), honoring live session
+    /// overrides before `FormStore`.
+    pub fn weapon_cant_drop(&self, weapon: FormId) -> bool {
+        if let Some(flags1) = self.weapon_flags1_override(weapon) {
+            return flags1 & (1 << 3) != 0;
+        }
+        self.world.forms.item(self.unclone(weapon)).is_some_and(|i| i.cant_drop)
+    }
+
+    /// Whether an item form is playable (`IsPlayable` / `LNIsPlayable`): for `WEAP`,
+    /// live `DNAM/flags1` bit 7 (`Non-Playable`) overrides take precedence; for other
+    /// items, `playable_overrides` then `FormStore` [design].
+    pub fn is_item_playable(&self, item: FormId) -> bool {
+        if let Some(flags1) = self.weapon_flags1_override(item) {
+            return flags1 & (1 << 7) == 0;
+        }
+        if let Some(&playable) = self.playable_overrides.get(&item) {
+            return playable;
+        }
+        self.world.forms.item(self.unclone(item)).is_some_and(|i| !i.non_playable)
+    }
+
+    /// Whether an item form is marked non-playable (for inventory/equipment filters
+    /// such as `GetEquippedItems` and `GetAllItemRefs`), honoring live `DNAM/flags1`
+    /// bit 7 and `playable_overrides` while keeping non-item forms `false`.
+    pub fn is_item_non_playable(&self, item: FormId) -> bool {
+        if let Some(flags1) = self.weapon_flags1_override(item) {
+            return flags1 & (1 << 7) != 0;
+        }
+        if let Some(&playable) = self.playable_overrides.get(&item) {
+            return !playable;
+        }
+        self.world.forms.item(self.unclone(item)).is_some_and(|i| i.non_playable)
+    }
+
     /// The weapons whose models scripts changed this session (SetWeaponModel, SetModelPath,
     /// SetWeapon1stPersonModel), for the renderer's record view to draw
     /// (docs/spec-notes/weapon-mods.md §8). Like the critical damage above, the authored

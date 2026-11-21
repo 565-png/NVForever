@@ -821,8 +821,8 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
 /// Whether a form is playable, for the form types LNIsPlayable names; `None` for another
 /// type.
 fn playable(g: &Game, f: FormId) -> Option<bool> {
-    Some(match &g.data.sig(f)? {
-        b"WEAP" | b"ARMO" | b"AMMO" => g.playable_overrides.get(&f).copied().unwrap_or_else(|| g.world.forms.item(f).is_some_and(|i| !i.non_playable)),
+    Some(match &g.data.sig(g.unclone(f))? {
+        b"WEAP" | b"ARMO" | b"AMMO" => g.is_item_playable(f),
         b"RACE" => record_num(g, f, "DATA", "flags").is_some_and(|x| x as u64 & 1 != 0),
         b"HAIR" | b"EYES" => record_num(g, f, "DATA", "").is_some_and(|x| x as u64 & 1 != 0),
         b"PERK" => g.gaps.perk_flags.get(&(f, 1)).copied().unwrap_or_else(|| g.data.perks.get(&f).is_some_and(|p| p.playable)),
@@ -836,8 +836,14 @@ fn set_playable(g: &mut Game, f: FormId, on: bool) {
         let now = x.map_or(0, |x| x as u64);
         (if on { now | 1 } else { now & !1 }) as f64
     };
-    match g.data.sig(f).as_ref() {
-        Some(b"WEAP" | b"ARMO" | b"AMMO") => {
+    match g.data.sig(g.unclone(f)).as_ref() {
+        Some(b"WEAP") => {
+            let now = record_num(g, f, "DNAM", "flags1").map_or(0, |x| x as u64);
+            let new = if on { now & !(1 << 7) } else { now | (1 << 7) };
+            g.field_overrides.insert((f, "DNAM/flags1".into()), XVal::Num(new as f64));
+            g.playable_overrides.remove(&f);
+        }
+        Some(b"ARMO" | b"AMMO") => {
             g.playable_overrides.insert(f, on);
         }
         Some(b"RACE") => {
