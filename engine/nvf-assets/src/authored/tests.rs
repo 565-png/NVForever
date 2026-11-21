@@ -656,3 +656,49 @@ fn the_game_height_line_names_every_count() {
     let off = Stats::default();
     assert_eq!(off.game_line(0.0), format!("off (NVF_GAME_PARALLAX_DEPTH=0) ({shape}); 0 material builds draw a NIF's own height map (texture-set slot 3, shader flag 11), 0 more had it replaced by an authored _p, 0 left it flat (alpha-tested, blended, double-sided, decal, unlit, refracting, a holes effect or without tangents on the drawn mesh), 0 could not load it; 0 later copies dropped one"));
 }
+
+/// #2979 review: the march's step at a grazing view. The divisor stops at
+/// [`PARALLAX_MIN_STEEPNESS`], so a view along the surface gives a finite, bounded shift and
+/// steeper views are as upstream; the vendored shader carries the same clamp (read here).
+#[test]
+fn the_grazing_clamp_bounds_the_parallax_shift() {
+    let d = 0.015;
+    let along = Parallax::full_depth_shift(d, Vec3::new(1.0, 0.0, 0.0));
+    assert!(along.is_finite());
+    assert!((along.x - d / PARALLAX_MIN_STEEPNESS).abs() < 1e-6 && along.y == 0.0, "{along:?}");
+    let grazing = Parallax::full_depth_shift(d, Vec3::new(0.0, (1.0f32 - 0.01).sqrt(), 0.1));
+    assert!((grazing.y + d * (0.99f32).sqrt() / PARALLAX_MIN_STEEPNESS).abs() < 1e-6, "y is flipped and clamped: {grazing:?}");
+    let steep = Parallax::full_depth_shift(d, Vec3::new(0.6, 0.0, 0.8));
+    assert!((steep.x - d * 0.6 / 0.8).abs() < 1e-7, "above the clamp the step is upstream's: {steep:?}");
+    for z in [0.0f32, 0.01, 0.1, 0.15, 0.5, 1.0] {
+        let vt = Vec3::new((1.0 - z * z).sqrt(), 0.0, z);
+        assert!(Parallax::full_depth_shift(d, vt).length() <= d / PARALLAX_MIN_STEEPNESS + 1e-6, "z {z}");
+    }
+    let shader = include_str!("../../../vendor/bevy_pbr/src/render/parallax_mapping.wesl");
+    assert!(shader.contains(&format!("/ max(view_steepness, {PARALLAX_MIN_STEEPNESS});")), "the vendored march clamps at the same steepness");
+}
+
+/// #2979 review: a material made on a copy of a drawn mesh (an actor's texture set, here one
+/// giving a normal map to a shape whose drawn mesh has no tangents) records the drawn mesh's
+/// tangents, so a later swap to a diffuse with a height map puts none on; the same material
+/// built for its own mesh takes it.
+#[test]
+fn a_swap_on_a_copy_of_a_drawn_mesh_uses_the_drawn_meshs_tangents() {
+    use crate::nif_spawn::{shape_material, shape_material_reusing_tangents, Props};
+    use crate::texture::bc5_tests::triangle;
+    let pack = Pack::new();
+    let mut cache = TextureCache::default();
+    let mut images = Assets::<Image>::default();
+    let mut props = Props::default();
+    props.textures = vec![r"walls\plain.dds".into(), r"walls\brick.dds".into()];
+    let mut copy = triangle();
+    let (mut swapped, _) = shape_material_reusing_tangents(&props, &mut copy, &mut cache, &pack.data, &mut images, None);
+    assert!(copy.attribute(Mesh::ATTRIBUTE_TANGENT).is_some(), "the copy gained tangents for the normal map");
+    assert!(!swapped.extension.legacy.as_ref().unwrap().tangents, "the drawn mesh has none");
+    assert_eq!(retexture(&mut swapped, r"walls\stone.dds", &mut cache, &pack.data, &mut images, None), Retextured::HeightOnly);
+    assert!(swapped.base.depth_map.is_none() && !height_on(&swapped), "no height map the GPU would skip");
+    let (mut own, _) = shape_material(&props, &mut triangle(), &mut cache, &pack.data, &mut images, None);
+    assert!(own.extension.legacy.as_ref().unwrap().tangents);
+    assert_eq!(retexture(&mut own, r"walls\stone.dds", &mut cache, &pack.data, &mut images, None), Retextured::HeightOnly);
+    assert!(own.base.depth_map.is_some() && height_on(&own), "its own mesh: the height map goes on");
+}

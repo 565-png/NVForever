@@ -366,7 +366,14 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   made from an actor part's kept mesh for a texture swap or a record's texture set
   (`Tangents::Keep`) takes a height map, the game's or a set's, only when that mesh already
   has tangents, since the actor draws the original mesh and tangents made on the copy never
-  reach it. A shape that may not draw it does not load the file. It applies **whatever the
+  reach it. The legacy look records the drawn mesh's tangents too, so a later swap
+  (`retexture`) puts no `_n` or `_p` on such a copy either. **Known limit:** an actor's armour
+  whose drawn mesh starts without tangents (no normal map in its own file) and gains a
+  slot-3 map only through a record's texture set (TXST TX04) stays flat, as before #2979;
+  drawing it would need the actor to draw the copy with its new tangents. Parallax at
+  grazing views is bounded by the vendored march's grazing clamp (the step's divisor held
+  at a view steepness of at least 0.15; engine/vendor/README.md). A shape whose tangents
+  could not be made, or that may not draw the map, does not load the file. It applies **whatever the
   Authored materials setting**, since it is the game's material, not a set's
   (`authored::apply_game_height`). Precedence: it is put on before the legacy look is taken,
   so it is that look's parallax baseline (`LegacyLook::parallax`); a set's `_p` (authored or

@@ -1163,7 +1163,7 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   (its text gives the counts; the tables stay private)]: 510 shapes in 281 models have a
   slot-3 texture, all 510 set bit 11, no shape sets bit 11 without one, and none sets bit
   28; they use 20 distinct height textures, 397 of the shapes under `meshes\dungeons` and
-  64 under `meshesrchitecture`. One texture replacer sets slot 3 on 2,037 of its 4,970
+  64 under `meshes\architecture`. One texture replacer sets slot 3 on 2,037 of its 4,970
   shapes [observed: the same survey run over that replacer].
   *How the original renders them: not known.* The GECK wiki describes bit 11's effect as
   "pretty weak" unless combined with bit 28 (parallax occlusion), the passes as "the total
@@ -1183,7 +1183,9 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   layers (`relief:4`, 8 layers; their switches). The shapes: by default **opaque only**,
   single-sided, not a decal, lit, not refracting, no effect shader's holes, and with
   tangents on the drawn mesh (an actor's texture-swap copy takes it only when the mesh it
-  draws already has them); alpha-tested shapes draw it too under the development switch
+  draws already has them: armour whose drawn mesh starts without tangents and gains a
+  slot-3 map only through a record's texture set (TXST TX04) stays flat, a known limit);
+  alpha-tested shapes draw it too under the development switch
   `NVF_PBR_PARALLAX_MASK=1` (docs/spec-notes/pbr-materials.md "Height maps").
   `parallax_scale` and `parallax_max_passes` are decoded and not used. An authored `_p`
   for the same diffuse replaces the game's map.

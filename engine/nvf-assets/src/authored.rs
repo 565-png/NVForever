@@ -148,6 +148,12 @@ pub const PARALLAX_MASK_ENV: &str = "NVF_PBR_PARALLAX_MASK";
 /// it for a run.
 pub const GAME_PARALLAX_DEPTH: f32 = 0.015;
 
+/// The least view steepness (|Vt.z|, the cosine of the view's angle to the surface normal)
+/// the parallax march divides by: the vendored `parallax_mapping.wesl` "NVForever grazing
+/// clamp" (engine/vendor/README.md). A shallower view shifts no further than at about 81
+/// degrees, and a view along the surface stays finite [design, #2979].
+pub const PARALLAX_MIN_STEEPNESS: f32 = 0.15;
+
 /// The environment variable of the game depth switch ([`game_parallax_depth`]).
 pub const GAME_PARALLAX_DEPTH_ENV: &str = "NVF_GAME_PARALLAX_DEPTH";
 
@@ -356,6 +362,14 @@ impl Parallax {
     /// [`PARALLAX_METHOD`], [`MAX_PARALLAX_LAYERS`] unless a development switch is set).
     pub fn height(image: Handle<Image>, depth_scale: f32) -> Parallax {
         Parallax { depth_map: Some(image), depth_scale, method: parallax_method(), max_layers: parallax_layers() }
+    }
+
+    /// The march's shift at full depth (layers x step) for a tangent-space view vector `vt`, as
+    /// the vendored `parallax_mapping.wesl` `parallaxed_uv` computes it with its "NVForever
+    /// grazing clamp": `depth_scale x vt.xy x (1, -1) / max(|vt.z|, PARALLAX_MIN_STEEPNESS)`.
+    /// A CPU mirror for tests; the GPU does not call it [design, #2979].
+    pub fn full_depth_shift(depth_scale: f32, vt: Vec3) -> Vec2 {
+        depth_scale * vt.truncate() * Vec2::new(1.0, -1.0) / vt.z.abs().max(PARALLAX_MIN_STEEPNESS)
     }
 
     /// A NIF's own height map (#2979): `image` (texture-set slot 3, linear) at the run's game
@@ -623,8 +637,10 @@ pub struct LegacyLook {
     pub roughness: f32,
     pub reflectance: f32,
     pub metallic: f32,
-    /// The drawn mesh has tangents, so a set's `_n` can be applied to it even where the game
-    /// gives no normal map.
+    /// The drawn mesh has tangents, so a set's `_n` or a height map can be applied to it even
+    /// where the game gives no normal map. Those of the mesh the shape is drawn with: a
+    /// material made on a copy of a drawn mesh (`nif_spawn::Tangents::Keep`, an actor's texture
+    /// swap or texture set) records the drawn mesh's own, not any made on the copy (#2979).
     pub tangents: bool,
     /// The specular tint (Bevy multiplies the reflectance by it): white as built, a script's
     /// specular colour once one is set ([`set_legacy_specular_tint`]).
@@ -915,14 +931,7 @@ pub fn height_gate(material: &crate::NifMaterial, tangents: bool) -> Result<(), 
 /// set leaves the material the game's own, the authored mark clear). Counts a skip by its
 /// reason. Whether it was put on.
 pub fn apply_height(material: &mut crate::NifMaterial, height: &Parallax, legacy: &LegacyLook) -> Result<(), HeightSkip> {
-    apply_height_with(material, height, legacy.tangents)
-}
-
-/// [`apply_height`] with the drawn mesh's tangents given (`tangents`): a material build, which
-/// knows whether its tangents reach the drawn mesh (`nif_spawn::shape_material_with`: not
-/// those made on a copy of a drawn mesh).
-pub fn apply_height_with(material: &mut crate::NifMaterial, height: &Parallax, tangents: bool) -> Result<(), HeightSkip> {
-    match height_gate(material, tangents) {
+    match height_gate(material, legacy.tangents) {
         Ok(()) => {
             height.put(&mut material.base);
             material.extension.height_overlay = true;

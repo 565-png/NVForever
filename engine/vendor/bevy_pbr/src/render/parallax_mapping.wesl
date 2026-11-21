@@ -74,7 +74,13 @@ fn parallaxed_uv(
     // resulting in a singularity.
     let layer_count = mix(max_layer_count, 1.0, view_steepness);
     let layer_depth = 1.0 / layer_count;
-    var delta_uv = depth_scale * layer_depth * Vt.xy * vec2(1.0, -1.0) / view_steepness;
+    // NVForever grazing clamp (#2979): upstream divides by `view_steepness` unbounded, so a
+    // shallow view shifts the samples several texture repeats away and a view along the
+    // surface (|Vt.z| = 0) gives non-finite coordinates. The divisor stops at 0.15 (a view
+    // about 81 degrees from the normal), so the full-depth shift is at most about 6.6 x the
+    // depth scale [design]. Mirrored on the CPU by nvf-assets `authored::Parallax::full_depth_shift`,
+    // whose test reads this line.
+    var delta_uv = depth_scale * layer_depth * Vt.xy * vec2(1.0, -1.0) / max(view_steepness, 0.15);
 
     var current_layer_depth = 0.0;
     var texture_depth = sample_depth_map(uv, material_bind_group_slot);

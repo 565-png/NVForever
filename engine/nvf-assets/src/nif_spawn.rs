@@ -1124,9 +1124,13 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
     // The game's own height map, before the legacy look is taken (it is part of the game's
     // material, so a set taken off later puts it back) and before any set (a set's `_p`
     // replaces it: `crate::authored::apply_height`).
+    // Asked for only once the drawn mesh's tangents are settled: a shape whose tangents could
+    // not be made (or do not reach the drawn mesh) stays flat without loading the file.
+    let drawn_tangents = tangents && height_mesh_ok;
+    let game_drawable = game_height_wanted && drawn_tangents;
     let game_height = game_slot.map(|slot| {
-        let image = if game_height_wanted { textures.texture(slot, false) } else { None };
-        crate::authored::apply_game_height(&mut material, image, game_height_wanted, tangents && height_mesh_ok)
+        let image = if game_drawable { textures.texture(slot, false) } else { None };
+        crate::authored::apply_game_height(&mut material, image, game_drawable, drawn_tangents)
     });
     // The authored set last, over the legacy values chosen above and after the extension's
     // `emissive_rule` is assigned (its w lane carries the mark). Shapes that may take a set
@@ -1138,7 +1142,10 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
             roughness: material.base.perceptual_roughness,
             reflectance: material.base.reflectance,
             metallic: material.base.metallic,
-            tangents,
+            // The drawn mesh's tangents: not those made on a copy of a drawn mesh, so a later
+            // swap (`crate::authored::retexture`) puts no `_n` or `_p` on a mesh that cannot
+            // draw it (#2979 review).
+            tangents: drawn_tangents,
             specular_tint: material.base.specular_tint,
             parallax: crate::authored::Parallax::of(&material.base),
             scripted_tint: None,
@@ -1150,7 +1157,7 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
         // The height map over either kind of set (a height-only set changes nothing else and
         // leaves the mark clear).
         if let Some(height) = height {
-            if crate::authored::apply_height_with(&mut material, height, tangents && height_mesh_ok).is_ok() {
+            if crate::authored::apply_height(&mut material, height, &legacy).is_ok() {
                 crate::authored::note_height_built(authored.is_none());
                 if game_height == Some(crate::authored::GameHeight::Drawn) {
                     crate::authored::note_game_height_replaced();
@@ -2195,6 +2202,24 @@ mod tests {
         let mut source = RecordTextures::default();
         let (m, _) = shape_material_with(&plain, &mut crate::texture::bc5_tests::triangle(), &mut source, Tangents::Generate);
         assert!(!source.asked.iter().any(|(p, _)| p == slots[3]) && m.base.depth_map.is_none(), "unflagged: slot 3 not loaded");
+    }
+
+    /// #2979 review: a flagged shape whose tangents cannot be made (no vertex normals) stays
+    /// flat and never asks for its slot-3 file.
+    #[test]
+    fn a_failed_tangent_build_does_not_load_the_height_map() {
+        if crate::authored::game_parallax_depth() <= 0.0 {
+            return;
+        }
+        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+        let props = Props { textures: vec![r"textures\test\floor.dds".into(), String::new(), String::new(), r"textures\test\floor_p.dds".into()], parallax: true, ..Default::default() };
+        let mut source = RecordTextures::default();
+        let (m, _) = shape_material_with(&props, &mut mesh, &mut source, Tangents::Generate);
+        assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_none(), "no tangents could be made");
+        assert!(m.base.depth_map.is_none());
+        assert!(!source.asked.iter().any(|(p, _)| p.ends_with("floor_p.dds")), "slot 3 not asked for: {:?}", source.asked);
     }
 
     #[test]

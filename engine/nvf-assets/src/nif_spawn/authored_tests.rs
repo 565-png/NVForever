@@ -123,8 +123,10 @@ fn defaults_apply_without_scalars_and_the_game_normal_stays_without_an_n() {
 
 /// A shape without a normal map that gains one from `_n` gets tangents on the mesh being
 /// built, from the caller's tangent source: generated for a new mesh, and for a copy of a
-/// drawn mesh (`Tangents::Keep`) its own when it has them, generated otherwise, as for the
-/// game's own normal map.
+/// drawn mesh (`Tangents::Keep`) its own when it has them. A copy without them still has them
+/// generated (as for the game's own normal map), but they never reach the mesh the actor
+/// draws, so the legacy look records none and the `_n` is not put on (#2979 review: the
+/// same rule as a height map's).
 #[test]
 fn a_first_normal_from_n_brings_tangents_to_the_mesh() {
     let mut scratch = Assets::<Image>::default();
@@ -140,9 +142,9 @@ fn a_first_normal_from_n_brings_tangents_to_the_mesh() {
     let mut copy = triangle();
     let (m, _) = shape_material_with(&bare, &mut copy, &mut source, Tangents::Keep);
     assert!(copy.attribute(Mesh::ATTRIBUTE_TANGENT).is_some(), "a copy without tangents has them generated");
-    assert_eq!(m.base.normal_map_texture, s.normal);
+    assert_eq!(m.base.normal_map_texture, None, "the drawn mesh has no tangents: no _n (the game gives no normal map)");
     assert_eq!(m.base.metallic_roughness_texture.as_ref(), Some(&s.orm));
-    assert!(m.extension.legacy.unwrap().tangents);
+    assert!(!m.extension.legacy.unwrap().tangents, "the drawn mesh's tangents, not the copy's");
     let (m, _) = shape_material_with(&bare, &mut copy, &mut source, Tangents::Keep);
     assert_eq!(m.base.normal_map_texture, s.normal, "a copy that has tangents keeps them and takes the _n");
 }

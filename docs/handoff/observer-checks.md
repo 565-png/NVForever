@@ -3471,19 +3471,25 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 250. **How deep is the original's parallax on shapes with a slot-3 height map, and is it one
      offset or stepped?** (P2; #2979, nif.md §6 "Parallax height maps", pbr-materials.md
-     "The game's own height maps".) Since #2979 a lit shape with BSShaderFlags bit 11 and a
-     slot-3 texture draws it as parallax at 0.015 UV units with relief mapping (8 layers, 4
-     refinement steps), not faded with distance, kept flat on decals, blends, cut-outs and
-     double-sided shapes [hypothesis on all of it]. The GECK wiki calls bit 11 alone "pretty
-     weak" [documented: GECK wiki "NIF Shader Properties"]. In the original, take frames of
-     (a) a McCarran flagstone floor and (b) a rubble pile (one of the seven `_p` texture sets nif.md §6 "Normal maps" lists),
-     each at
-     a steep view (looking almost straight down) and a shallow one (eye height, the surface
-     running away from the camera), close (under 2 m) and far (about 15 m). Compare with
-     NVForever at the same views, once at the default and once with
-     `NVF_GAME_PARALLAX_DEPTH=0` (flat). Read: how far a stone's edge moves between the
-     steep and shallow frames (in texels of the floor texture), whether stones hide the
-     grout behind them at the shallow view (stepped or occlusion mapping) or only slide
-     (a single offset), whether the relief is gone in the far frames (a distance fade), and
-     whether the concrete impact decal shows any relief. The depth switch (0 to 0.08) and
+     "The game's own height maps".) What NVForever implements since #2979 [design]: a lit
+     shape with BSShaderFlags bit 11 and a slot-3 texture draws it as parallax, on by
+     default, at 0.015 UV units, with relief mapping (at most 8 layers, then 4 refinement
+     steps), the step's divisor held at a view steepness of at least 0.15 (about 81 degrees
+     from the normal; the grazing clamp), no fade with distance, and only on opaque,
+     single-sided, non-decal, lit shapes; cut-outs (alpha-tested shapes) stay flat unless
+     the development switch `NVF_PBR_PARALLAX_MASK=1` is set. Whether the original draws
+     them anything like this is the [hypothesis] this check settles; the GECK wiki calls bit
+     11 alone "pretty weak" [documented: GECK wiki "NIF Shader Properties"]. In the
+     original, take frames of (a) a McCarran flagstone floor and (b) a rubble pile (one of
+     the seven `_p` texture sets nif.md §6 "Normal maps" lists), each at a steep view
+     (looking almost straight down), a shallow one (eye height, the surface running away
+     from the camera) and a grazing one (the eye a few centimetres above the floor, looking
+     along it), close (under 2 m) and far (about 15 m). Compare with NVForever at the same
+     views, once at the default and once with `NVF_GAME_PARALLAX_DEPTH=0` (flat). Read: how
+     far a stone's edge moves between the steep and shallow frames (in texels of the floor
+     texture), whether stones hide the grout behind them at the shallow view (stepped or
+     occlusion mapping) or only slide (a single offset), what the grazing view does (the
+     texture smeared, the relief flattened, or nothing odd), whether the relief is gone in
+     the far frames (a distance fade), whether a cut-out with a height map shows relief, and
+     whether the concrete impact decal shows any. The depth switch (0 to 0.08) and
      `NVF_PBR_PARALLAX_METHOD=occlusion|relief:<n>` let the default be fitted to the frames.

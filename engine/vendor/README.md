@@ -290,9 +290,17 @@ inversion sits after the two bindings' samples, so they cannot diverge; the marc
 refinements read only through this function. It changes the convention for every
 `StandardMaterial::depth_map` in the engine: none was set in production before (terrain
 asserts landscape materials have none; the one positive assignment is a Pip-Boy test
-fixture), and the only maps set now are the authored `_p` (nvf-assets `authored.rs`). Keep it
-while NVForever's height maps are heights; drop it if they are ever converted to depth on the
-CPU instead.
+fixture), and the only maps set now are the authored `_p` and the game's own slot-3 height
+maps (#2979; nvf-assets `authored.rs`, `nif_spawn.rs`). Keep it while NVForever's height maps
+are heights; drop it if they are ever converted to depth on the CPU instead.
+
+A third change in the same file (#2979), in `parallaxed_uv`, marked `NVForever grazing
+clamp`: the step's divisor is `max(view_steepness, 0.15)` instead of `view_steepness`, so a
+shallow view no longer throws the samples several texture repeats away and a view along the
+surface no longer gives non-finite coordinates (the full-depth shift stays under about 6.6 x
+the depth scale). The layer count still mixes by the unclamped steepness. nvf-assets
+`authored::Parallax::full_depth_shift` mirrors the step on the CPU and its test checks this line. Drop
+it when upstream bounds the division.
 
 ## bevy_render 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
