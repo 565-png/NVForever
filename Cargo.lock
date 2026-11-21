@@ -1239,6 +1239,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fnv-pbr"
+version = "0.8.1"
+dependencies = [
+ "fnv-vfs",
+ "toml",
+]
+
+[[package]]
 name = "fnv-phys"
 version = "0.8.1"
 dependencies = [
@@ -1374,6 +1382,7 @@ dependencies = [
  "fnv-install",
  "fnv-nav",
  "fnv-nif",
+ "fnv-pbr",
  "fnv-phys",
  "fnv-save",
  "fnv-script",

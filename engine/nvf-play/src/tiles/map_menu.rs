@@ -2442,7 +2442,7 @@ mod tests {
         for (name, size) in [("icon_21.dds", 512), ("icon_22.dds", 1024)] {
             std::fs::write(owned.0.join("textures").join(name), crate::interface::tests::authored_rgba_dds(size, size)).unwrap();
         }
-        let data = nvf_assets::GameData { vfs: Arc::new(fnv_vfs::Vfs::open(&owned.0, &[]).unwrap()), schema: Arc::new(fnv_nif::Schema::default()) };
+        let data = nvf_assets::GameData::new(Arc::new(fnv_vfs::Vfs::open(&owned.0, &[]).unwrap()), Arc::new(fnv_nif::Schema::default()));
         let pictures = crate::interface::Pictures::load(Some(&data));
         let mut fonts = ImageFonts { data, images: Assets::default(), pictures };
         // Independently authored ratio-driven marker: the invisible child requests the
