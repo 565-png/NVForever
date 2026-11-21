@@ -83,6 +83,7 @@
 //!   (`nvf_play::wait`), up to [`WAIT_HOURS`] hours. An actor that has not come by then
 //!   is a `never_came` finding (issue #2445 is one), and the headless MoveTo is done so
 //!   that the chain goes on. A wait the game refuses (enemies near) is tried again.
+//!   A call whose `label` begins `script:` is a script's own MoveTo, done at once.
 //! - **Errands** are what the pilot does of its own accord between a chain's steps: a
 //!   body to search, and a terminal that opens a locked door (an entry whose result
 //!   script names the door: walked to, opened, the entry taken). The step's own time
@@ -1906,6 +1907,12 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
     Walked::Going
 }
 
+/// The steps after this one (past notes) deal with a conversation: a talk begun on the
+/// way to this step's place is theirs to answer.
+fn next_answers_talk(p: &Pilot) -> bool {
+    p.actions.iter().skip(p.i + 1).find(|a| !matches!(a, Action::Note { .. })).is_some_and(|a| matches!(a, Action::WaitTalk { .. } | Action::Choose { .. } | Action::Talk { .. }))
+}
+
 fn walk_to(goal: Place, target: Option<FormId>, radius: f32, now: f64, feet: [f32; 3]) -> Walk {
     Walk { goal, target, radius, follower: None, door_since: None, door_from: feet, seen: (now, feet), replans: 0, cut: false, gapped: false, talking_at_start: None, keep_talk: false, locked_way: false, tried: Vec::new(), skips: 0, awaited: 0, stuck_at: None, poked: Vec::new(), errand: None, side: None, scene_held: 0.0, scene_last: None, told_talking: false, dodge: None, snapped: None, enable_wait: None, owner_wait: None, owner_door: None, reported: now, travel_since: None, stay: false, hold: false, stranded: false }
 }
@@ -2743,13 +2750,16 @@ fn leave_talk(p: &mut Pilot, h: &mut Hands, go_along: bool) -> bool {
             // taken to leave it handed the weapons over outside and set iInGomorrah, so on
             // the way in the guard never greeted and the door's DisablePlayerControls was
             // never undone; "Nevermind, I'll be back." is the one that leaves), then one
-            // that starts no fight and gives no companion an order, then any.
+            // that starts no fight and gives no companion an order, then (no topic list to
+            // leave by Tab) any. Boone's only Goodbye is "Wait here.": taken to leave, he
+            // waited for the rest of Forgot to Remember; Red's "Come on. Follow me." set
+            // her following and Shorty's rescue line changed (round 12 [observed]).
             Some(c) => match c
                 .choices
                 .iter()
                 .position(|x| x.goodbye && !x.darkened && !choice_to_avoid(g, x) && g.data.infos.get(&x.info).is_some_and(|d| d.begin.is_none() && d.end.is_none()))
                 .or_else(|| c.choices.iter().position(|x| x.goodbye && !choice_to_avoid(g, x)))
-                .or_else(|| c.choices.iter().position(|x| x.goodbye))
+                .or_else(|| if c.topic_list { None } else { c.choices.iter().position(|x| x.goodbye) })
             {
                 Some(i) => Way::Goodbye(i),
                 None if c.topic_list => Way::TopicList,
@@ -2950,7 +2960,7 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
             }
             if matches!(p.phase, Phase::Begin) {
                 // The steps after the walk deal with a conversation begun on it?
-                let answered = p.actions.iter().skip(p.i + 1).find(|a| !matches!(a, Action::Note { .. })).is_some_and(|a| matches!(a, Action::WaitTalk { .. } | Action::Choose { .. } | Action::Talk { .. }));
+                let answered = next_answers_talk(p);
                 match h.place_of(to) {
                     Ok((r, place)) => {
                         let mut w = walk_to(place, Some(r), NEAR_MARKER, p.now, h.feet());
@@ -3012,7 +3022,13 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                 match h.place_of(trigger) {
                     Ok((_, place)) => {
                         let mut w = walk_to(place, None, 24.0, p.now, h.feet());
-                        w.keep_talk = true;
+                        // A conversation on the way ends the walk only when the steps
+                        // after it answer one; otherwise it is left as a player leaves it
+                        // and the walk goes on. Ended by the NCR radio operator's talk
+                        // mid-fight, Hidden Valley's self-destruct trigger was counted
+                        // entered and never was: VStoryEventBoS stayed 0 and House's
+                        // dam battle never opened its doors (round 12 [observed]).
+                        w.keep_talk = next_answers_talk(p);
                         p.phase = Phase::Walk(w);
                     }
                     Err(e) => return Some(Some(e)),
@@ -3067,7 +3083,7 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                             // point was put in the worldspace [observed].
                             let space = r.and_then(|r| h.game(|g| where_is(g, r).and_then(|(cell, _)| cell))).flatten().and_then(|c| crate::nav::space_of_cell(h.world, c.0)).unwrap_or_else(|| space_of(h.location));
                             let mut w = walk_to(Place { space, pos: at }, None, 24.0, p.now, feet);
-                            w.keep_talk = true;
+                            w.keep_talk = next_answers_talk(p);
                             (p.part, p.phase) = (2, Phase::Walk(w));
                             None
                         }
@@ -3388,8 +3404,11 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                 };
                 p.still = (p.now, place.pos);
                 p.part = 0;
-                let mut w = walk_to(place, Some(r), NEAR_TARGET, p.now, h.feet());
-                w.keep_talk = true;
+                // A conversation with the speaker ends the walk (the walk's target is
+                // talking); one with anyone else is left as a player leaves it: the
+                // Fort weather station guard's talk ended the walk to House's monitor
+                // 6219 times and the step stalled (legion, round 12 [observed]).
+                let w = walk_to(place, Some(r), NEAR_TARGET, p.now, h.feet());
                 p.phase = Phase::Walk(w);
             }
             let mark = p.mark;
@@ -3487,7 +3506,11 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
         // A console line that moves another actor stands in for its coming of its own
         // accord (Beagle's run back to Primm, Chauncey at 4 pm): the player goes to the
         // place and waits for it there, an hour at a time.
-        Action::Call { line, .. } if p.campaign && line.to_ascii_lowercase().contains(".moveto") && !line.to_ascii_lowercase().starts_with("player") => {
+        // A chain marks a quest script's own MoveTo (its label begins `script:`): done at
+        // once, as the script does it. Christine and Dog reach their Sierra Madre wings by
+        // NVDLC01MQ02 stage 50's MoveTo, not by a walk; waited for, they never came
+        // (round 12 [observed]).
+        Action::Call { line, label } if p.campaign && line.to_ascii_lowercase().contains(".moveto") && !line.to_ascii_lowercase().starts_with("player") && !label.as_deref().is_some_and(|l| l.starts_with("script:")) => {
             let mut words = line.split_whitespace();
             let (Some(who), Some(marker)) = (words.next().and_then(|w| w.split('.').next()).map(str::to_string), words.next().map(str::to_string)) else {
                 info!("pilot: step {}: left to the AI: {line}", p.i);
