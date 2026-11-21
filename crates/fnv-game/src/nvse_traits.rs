@@ -156,9 +156,8 @@ fn rest_float(d: Option<&Json>, i: usize) -> f64 {
 
 /// An image space modifier's trait: its first keyframe of each array [observed:
 /// FadeToBlack9sISFX, the multiply/add pairs 1/0, the tint 255]; the tint (47–50) is
-/// 0–255 alpha included [observed in an installed mod, not the original game: a radiation
-/// controller writes trait 50 as `strength * 255` beside its 0–255 RGB; the original's
-/// units are a hypothesis, image-modifiers.md]; the radial blur centre
+/// 0–255 alpha included [observed: original FNV 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30,
+/// 2026-11-20, image-modifiers.md]; the radial blur centre
 /// from DNAM's floats 49 and 50 after its first two fields [observed: both 0.5; the
 /// offset is a hypothesis]; traits 65–67 0 [hypothesis].
 fn imad_trait(g: &Game, s: FormId, t: i64) -> f64 {
