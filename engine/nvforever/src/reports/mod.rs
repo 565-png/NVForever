@@ -503,7 +503,7 @@ impl Plugin for ReportsPlugin {
                 detectors: Default::default(),
             })
             .add_systems(Startup, (read_gpu, read_window))
-            .add_systems(Update, (collect, track_loads, detect).chain())
+            .add_systems(Update, (collect, track_loads, detect.after(nvf_play::control::enforce_locks)).chain())
             // After Bevy's window-closed exit (AppExit in Last): else a window closed by the
             // player missed the clean end and the run was sent as a native crash (#2203).
             .add_systems(Last, (controls::detect, write_summary.after(bevy::window::ExitSystems)).chain());
@@ -759,12 +759,37 @@ fn refresh_snapshot(
     snapshot::keep(v);
 }
 
+/// Whether the player asks to move and could: playing, a movement key held, and neither a
+/// script's movement lock nor furniture holding them (`held_still`; #3046).
+fn asks_to_move(state: &str, intent: Option<&nvf_play::player::MoveIntent>, held_still: bool) -> bool {
+    state == "playing" && !held_still && intent.is_some_and(|i| i.forward.abs() + i.right.abs() > 0.1)
+}
+
+#[cfg(test)]
+mod stuck_tests {
+    use super::asks_to_move;
+    use nvf_play::player::MoveIntent;
+
+    /// #3046: keys held while a script locks movement (Doc Mitchell's opening) or furniture
+    /// holds the player are not a player stuck; the same keys free are.
+    #[test]
+    fn held_keys_count_only_when_the_player_could_move() {
+        let forward = MoveIntent { forward: 1.0, ..MoveIntent::default() };
+        assert!(asks_to_move("playing", Some(&forward), false));
+        assert!(!asks_to_move("playing", Some(&forward), true), "locked or seated");
+        assert!(!asks_to_move("menu", Some(&forward), false));
+        assert!(!asks_to_move("playing", Some(&MoveIntent::default()), false));
+        assert!(!asks_to_move("playing", None, false));
+    }
+}
+
 /// The anomaly detectors that read the game's state each frame (anomaly.rs), and the ones
 /// the log lines found since the last frame, given where the player is.
 fn detect(
     real: Res<Time<Real>>,
     loading: Option<Res<nvf_play::loading::Loading>>,
     intent: Option<Res<nvf_play::player::MoveIntent>>,
+    (locks, seat): (Option<Res<nvf_play::control::ControlLocks>>, Option<Res<nvf_play::furniture::PlayerSeat>>),
     voice: Option<Res<nvf_play::voice::VoiceState>>,
     memory: Option<Res<crate::memory_budget::MemoryBudget>>,
     mut c: ResMut<Collector>,
@@ -789,7 +814,12 @@ fn detect(
     if ms > anomaly::HITCH_MS && !loading_now && settled && matches!(c.here.state, "playing" | "viewer") {
         c.detectors.fire(&mut c.summary, &c.here, t_s, "hitch", serde_json::json!({ "ms": ms.round() }));
     }
-    let moving = c.here.state == "playing" && intent.as_ref().is_some_and(|i| i.forward.abs() + i.right.abs() > 0.1);
+    // Movement keys held count only when the player could move: not while scripts lock
+    // movement (the opening in Doc Mitchell's house: 3 of 49 installs' only player_stuck,
+    // #3046; controls_locked covers a lock) nor while furniture holds the player. Read after
+    // `enforce_locks`, which strikes a locked movement from the frame's intent.
+    let held_still = locks.as_ref().is_some_and(|l| l.movement) || seat.as_ref().is_some_and(|s| s.hold.is_some());
+    let moving = asks_to_move(c.here.state, intent.as_deref(), held_still);
     c.detectors.check_stuck(&mut c.summary, &c.here, t_s, real.elapsed_secs_f64(), moving);
     if let Some(m) = memory {
         c.detectors.check_memory(&mut c.summary, &c.here, t_s, m.vram_use_mb, m.ram_share);
