@@ -494,9 +494,28 @@ menu's (`dialogue_menu.rs`).
   colour) otherwise; a map marker is a small triangle under the letters, hollow before
   the player has been there (`glow_hud_compass_landmark.dds`) and filled after
   (`…_landmark_discovered.dds`). The sizes and places NVForever uses are fitted to those
-  screenshots: the tick drawn 26 units high with its top 9 below the window's (its bar
-  from under the bracket's line to the strip's), the triangle drawn at 0.6 of its
-  texture with its middle 46.7 down the window.
+  screenshots: the tick drawn 26 units high, the triangle drawn at 0.6 of its texture
+  with its middle 46.7 down the window. Until #3310 the hand-built tick's top stood 9
+  below the window's (its bar from under the bracket's line to the strip's).
+- [#3310: a player's report and screenshot of the hand-built HUD, v0.8.1 at 1920 x 1080,
+  the log's `[UI] TileMenus` without `HUDMainMenu`] The actor ticks stood "slightly
+  lower" than the original's. The original's box puts them higher: the actor group at
+  y 10 of the compass window [observed: §14.4, read from the original], each tick at
+  y -10 in it, 32 x 32 [documented: `hudtemplates.xml`], so the box's top is the
+  window's top, where the tile HUD draws it. [observed: the screenshot, 2.28 pixels a
+  unit from N and NE 292 pixels apart] The hand-built bar fades in over about 18 units
+  and ends solid on the strip's upper line: 22 of the picture's 32 texel rows at
+  26/32 of a unit each. [hypothesis] The tick picture's bar is its top 22 rows (as the
+  corner bars' `hud_tick_mark.dds`'s block, §3; the window's top then lies where the
+  left bracket's line at texels 66-70 puts it, a check), drawn a texel a unit in the
+  original's box: the original's bar ends 22 down the window, about 4 above the strip's
+  upper line (about 26 down on the screenshot) where the hand-built's ended on it.
+  [design] NVForever keeps the fitted 26-unit size and the bar's middle on the bearing
+  and stands the hand-built tick so its bar ends at 22 (`compass::TICK_BAR_END`,
+  `TICK_TOP` 4.125): 4.9 units higher than before, for neutral, hostile and companion
+  ticks alike; the map marker, quest and player icons are unchanged. Observer check 257
+  says where the original's bar ends against the strip's line (test
+  `compass::tests::an_actor_tick_stands_where_the_originals_box_puts_its_bar`).
 - [hypothesis] Which actors: the living NPCs and creatures of the loaded cells within
   Perception × 300 units of the player; which markers: those of the worldspace within
   Perception × 2048, while outdoors. No game setting for these ranges is in the masters.

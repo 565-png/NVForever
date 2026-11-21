@@ -3466,3 +3466,19 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the room side while strafing past, to see whether the streaks move with the view.
      Streaks moving with the view as bright as the frame agree with ours; a pane that is
      only a faint grey film, or nothing, says the reflection is weighted by alpha.
+
+## Added 2026-11-21 (the compass's actor ticks against the strip, #3310)
+
+257. **Where does an actor's tick on the compass end against the strip's line?** (P3;
+     #3310, hud.md §11.) The HUD file's box puts the tick's top at the compass window's
+     top (the group's y 10, read from the original, and the tick's y -10); ours since
+     #3310 draws the 26-unit tick so its solid bar ends 22 units down the window, about 4
+     above the strip's upper line, where it ended on that line before [hypothesis: the
+     picture's bar is its top 22 texel rows, drawn a texel a unit]. Outdoors at
+     1920 x 1080 with a neutral NPC about 300 units ahead (Goodsprings, the settler of
+     §14.5) and a hostile one (a gecko), take one frame each, heading steady: measure the
+     tick's solid end, the top of its fade and the tick's height against the strip's
+     doubled line and the bracket's long line above it, in pixels (1.5 a unit). A bar
+     ending a few pixels above the strip's line agrees; one touching it says the old
+     place was right; a fade and bar together about 33 pixels high (ours 27) say the
+     original draws the picture at its 32 units, larger than our 26.
