@@ -3455,7 +3455,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-21 (a suitcase lying on a bed, #3323)
 
-250. **Is a suitcase lying on a bed the crosshair's target, from every aim at it?** (P3;
+263. **Is a suitcase lying on a bed the crosshair's target, from every aim at it?** (P3;
      #3323, simulation.md §5 crosshair activation.) A player reports the Suitcase
      0x000AFA24 lying on BedQueenRight 0x000D72C7 in BisonSteve02 can be looted in the
      original [reported: the player's issue, not captured]. Ours since #3323: a bed's
