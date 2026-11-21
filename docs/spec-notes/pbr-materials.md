@@ -585,14 +585,27 @@ addition of NVForever's own until observer check 250 answers it [hypothesis: it 
   base's and the layers', diffuse and normal map, is read at the one moved coordinate.
   Flat at the surface rather than mid-height so that the shift falls to nothing as a
   height-mapped layer's share does.
-- [design] **Coverage, once.** The layers' alphas are read once, at the plain coordinate,
-  with the drawn blend's own read (same texture, coordinate and bias), and both the march
-  and the drawn blend weigh the layers by them: a hole in a layer's texture stays where the
-  march saw it (a pixel that starts in a hole of a dirt overlay marches on the gravel under
-  it and is drawn as gravel, not as displaced dirt), and where the shift is nothing the
-  blend is exactly the one without parallax. The cheaper of the two consistent rules (the
-  other, alpha at every march step, would add up to six reads per step); the cost is that a
-  hole's outline does not move with the relief.
+- [design] **Weights, once.** The base's and the layers' weights are worked out once, at the
+  plain coordinate: the ordered shares of painted opacity x each layer's alpha, and with
+  Terrain height blending on its weights from the same texels (its heights and references
+  as its drawn path takes them). Both the march and the drawn blend use them: a hole in a
+  layer's texture stays where the march saw it (a pixel that starts in a hole of a dirt
+  overlay marches on the gravel under it and is drawn as gravel, not as displaced dirt), a
+  layer the height blend leaves out of a pixel does not move what is drawn there, and where
+  the shift is nothing the blend is the one without parallax. The cheaper of the consistent
+  rules (alpha and heights at every march step would add up to twelve reads a step); the
+  cost is that a hole's outline, and where the height blend lets a layer through, do not
+  move with the relief.
+- [design] **Filtering.** Every drawn read (the base's diffuse and normal map, each layer's)
+  is made at the moved coordinate with the plain coordinate's screen gradients (one unturned
+  tap through the anti-tiling helpers, `parallax_tap`), so the mip level and anisotropy do
+  not follow the shift's jumps between neighbouring pixels (which implicit derivatives of the
+  moved coordinate would, at relief and hole edges, even where a pixel's own shift is
+  nothing). The surface is set up as anti-tiling sets it up (terrain_pbr.wesl), the
+  occlusion once the colour is final.
+- [design] **The ray.** The march follows the view's own ray (Bevy's `calculate_view`: one
+  direction in an orthographic view, as the minimap's camera); the fade goes by the
+  distance from the camera.
 - [design] **Edges.** Where the shares and heights agree on both sides of a quadrant edge
   (the painted opacities of one LAND grid, the same textures), the march agrees too: the
   depth sum is the same (each layer brings its own depth, an unpainted layer adds nothing)
@@ -640,12 +653,14 @@ addition of NVForever's own until observer check 250 answers it [hypothesis: it 
   material without a height map keeps its old pipeline with the switch on and is not
   touched when the switch flips, so without a ground pack nothing changes, the mesh terrain
   blend's captures included (smoke `terrain-parallax-no-pack`). With a pack, the flips edit
-  only the materials with height maps, and the mesh terrain blend passes over those edits
-  (`PipelineOnlyEdits`): nothing it captures reads the switch. The switches' systems run
-  before the asset events are sent, so the noted edits meet exactly their own events, and a
-  height-blending or anti-tiling edit of the same material in the same frame still remakes
-  the capture (the test `a_surface_edit_beside_a_parallax_edit_still_remakes_the_capture`).
-- **Not done in stage 1:** a generated-ground field test that judges a readback (shift on a
+  only the materials with height maps, and the mesh terrain blend remakes a capture only
+  when what it is made from changed (terrain_surface.rs `captured_inputs_unchanged`: the
+  bake copies, compared whole, and the detail's resolution): the bake copy drops the
+  switch, so its edits change nothing there, while a height-blending or anti-tiling edit in
+  the same frame, or after a while with the blend off, still remakes it (the tests
+  `the_capture_refresh_compares_its_inputs`,
+  `an_edit_after_a_blend_off_interval_still_remakes_the_capture`).
+- **Not done in stage 1** (owed): a generated-ground field test that judges a readback (shift on a
   tilted view, none head-on, none with the switch off: owed; the PBR field builds its own
   panels, not the landscape, and an aid would have to mount generated `_p` files for a
   landscape texture); the frame-time cost with and without the switch at a ground-heavy and

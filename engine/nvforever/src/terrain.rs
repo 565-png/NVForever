@@ -115,8 +115,8 @@
 //! shape's diffuse finds its set (nvf_assets `TextureCache::authored_height`), and loaded
 //! with the material whenever the run's Authored materials state is on, so the switch flips
 //! the materials in place ([`sync_parallax`]) as height blending does; only materials that
-//! hold a height map are edited, and those edits are noted ([`PipelineOnlyEdits`]) so the
-//! mesh terrain blend does not recapture for them. terrain.wesl marches once over the
+//! hold a height map are edited, and the mesh terrain blend, which compares what its
+//! captures are made from, does not recapture for them (the bake copy drops the switch). terrain.wesl marches once over the
 //! blended depth, each layer's ordered share (painted opacity x the layer texture's alpha)
 //! x its own set's depth x (1 - its height), on one step grid for every quadrant
 //! ([`PARALLAX_SCALE`]), then reads every texture at the one shifted coordinate, the layers
@@ -566,15 +566,10 @@ impl Plugin for TerrainPlugin {
 }
 
 /// The terrain switches' systems: each flips the folded materials in place, all before the
-/// asset events are sent ([`bevy::asset::AssetEventSystems`]), so every edit they make in a
-/// frame is sent that frame together with the frame's other edits of the same material, and
-/// [`PipelineOnlyEdits`]' counts meet exactly the parallax edits' own events when
-/// terrain_surface.rs `refresh_captures` (after the events) reads them: a height-blending
-/// or anti-tiling edit of the same material is never taken for one [design, #3322 review].
+/// asset events are sent ([`bevy::asset::AssetEventSystems`]), so a frame's edits reach the
+/// mesh terrain blend's capture refresh (after the events) that same frame.
 fn add_switch_systems(app: &mut App) {
-    app.init_resource::<PipelineOnlyEdits>()
-        .add_systems(PostUpdate, (sync_height_blend, sync_anti_tiling, sync_parallax).before(bevy::asset::AssetEventSystems))
-        .add_systems(Last, age_pipeline_only_edits);
+    app.add_systems(PostUpdate, (sync_height_blend, sync_anti_tiling, sync_parallax).before(bevy::asset::AssetEventSystems));
 }
 
 /// Whether the settings ask for height blending (module notes); false without the
@@ -614,58 +609,13 @@ fn parallax_wanted(graphics: Option<&crate::graphics::Graphics>) -> bool {
     graphics.is_some_and(|g| g.terrain_parallax)
 }
 
-/// The folded materials [`sync_parallax`] edited for the pipeline alone (their parallax
-/// switch, which neither the bake copy nor the detail of the mesh terrain blend reads), one
-/// count per edit, so terrain_surface.rs `refresh_captures` passes over that many of their
-/// Modified events instead of treating them as surface edits [design, #3322 review]. An
-/// entry lives [`PipelineOnlyEdits::FRAMES`] frames (its events' own lifetime): with the blend
-/// off nothing reads them, and a stale count must not swallow a later real edit.
-#[derive(Resource, Default, Debug)]
-pub struct PipelineOnlyEdits(HashMap<AssetId<TerrainMaterial>, (u32, u8)>);
-
-impl PipelineOnlyEdits {
-    /// The frames an entry is kept: an asset event is read the frame it is sent or the next.
-    pub const FRAMES: u8 = 2;
-
-    /// Note one pipeline-only edit of `id`.
-    pub fn note(&mut self, id: AssetId<TerrainMaterial>) {
-        let e = self.0.entry(id).or_default();
-        *e = (e.0 + 1, 0);
-    }
-
-    /// Whether a Modified event of `id` is one of those edits (then counted off).
-    pub fn take(&mut self, id: AssetId<TerrainMaterial>) -> bool {
-        let Some((n, _)) = self.0.get_mut(&id) else { return false };
-        *n -= 1;
-        if *n == 0 {
-            self.0.remove(&id);
-        }
-        true
-    }
-
-    /// A frame has passed: entries older than [`Self::FRAMES`] dropped.
-    pub fn age(&mut self) {
-        self.0.retain(|_, (_, age)| {
-            *age += 1;
-            *age <= Self::FRAMES
-        });
-    }
-}
-
-fn age_pipeline_only_edits(mut edits: ResMut<PipelineOnlyEdits>) {
-    if !edits.0.is_empty() {
-        edits.age();
-    }
-}
-
 /// Parallax switched on or off: the folded materials that hold a height map flipped in
 /// place (the pipeline follows their key), logged with how many there are, how many hold a
 /// height map and how many changed. A material without one is not touched: its key cannot
 /// change (and an edit would make the mesh terrain blend recapture it for nothing); the
 /// switch it was made with stays recorded, unread. New materials take the setting when
-/// they are made ([`TerrainCtx::folded_material`]). Each edit is noted in
-/// [`PipelineOnlyEdits`].
-pub fn sync_parallax(graphics: Option<Res<crate::graphics::Graphics>>, mut materials: ResMut<Assets<TerrainMaterial>>, mut edits: Option<ResMut<PipelineOnlyEdits>>, mut last: Local<Option<bool>>) {
+/// they are made ([`TerrainCtx::folded_material`]).
+pub fn sync_parallax(graphics: Option<Res<crate::graphics::Graphics>>, mut materials: ResMut<Assets<TerrainMaterial>>, mut last: Local<Option<bool>>) {
     let want = parallax_wanted(graphics.as_deref());
     if *last == Some(want) {
         return;
@@ -674,9 +624,6 @@ pub fn sync_parallax(graphics: Option<Res<crate::graphics::Graphics>>, mut mater
     for id in &stale {
         if let Some(mut m) = materials.get_mut(*id) {
             m.extension.parallax = want;
-            if let Some(edits) = edits.as_deref_mut() {
-                edits.note(*id);
-            }
         }
     }
     if last.is_some() || want {
@@ -2421,7 +2368,6 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(Graphics::preset(Preset::Vanilla));
         app.insert_resource(Assets::<TerrainMaterial>::default());
-        app.init_resource::<PipelineOnlyEdits>();
         app.add_systems(Update, sync_parallax);
         let image = Handle::<Image>::default();
         let mapped = TerrainMaterial { base: StandardMaterial::default(), extension: TerrainLayers { count: 1, tile: 256.0, height0: Some(image), parallax_depths: [0.04; 6], ..default() } };
@@ -2436,8 +2382,6 @@ mod tests {
         app.update();
         assert!(TerrainLayersKey::from(&ext(&app, &a)).parallax, "a material with a height map takes the march");
         assert!(!ext(&app, &b).parallax, "one without is not touched (its key cannot change)");
-        let mut edits = std::mem::take(&mut *app.world_mut().resource_mut::<PipelineOnlyEdits>());
-        assert!(edits.take(a.id()) && !edits.take(a.id()) && !edits.take(b.id()), "one pipeline-only edit noted, for the material edited");
         app.world_mut().resource_mut::<Graphics>().terrain_parallax = false;
         app.update();
         assert!(!TerrainLayersKey::from(&ext(&app, &a)).parallax);
@@ -2445,48 +2389,41 @@ mod tests {
     }
 
     #[test]
-    fn pipeline_only_edits_are_counted_off_and_expire() {
-        let id = AssetId::<TerrainMaterial>::default();
-        let mut e = PipelineOnlyEdits::default();
-        assert!(!e.take(id), "nothing noted: a real edit");
-        e.note(id);
-        e.note(id);
-        assert!(e.take(id) && e.take(id) && !e.take(id), "one per edit");
-        e.note(id);
-        for _ in 0..PipelineOnlyEdits::FRAMES {
-            e.age();
-        }
-        assert!(e.take(id), "kept while its events can still be read");
-        e.note(id);
-        for _ in 0..=PipelineOnlyEdits::FRAMES {
-            e.age();
-        }
-        assert!(!e.take(id), "then dropped, so it cannot swallow a later real edit");
-    }
-
-    #[test]
     fn parallax_moves_every_read_by_one_shift_and_none_head_on() {
         // The shader's text: the coordinate moved once before the surface set-up (never with
         // anti-tiling, whose place is the world's); the march's step proportional to the view
-        // vector's tangent part (none head-on); each layer's depth its own over the common
-        // scale, a missing map and the base adding none; the layers' shares the ordered
-        // shares of opacity x alpha.
+        // vector's tangent part (none head-on), along the view's own ray; each layer's depth
+        // its own over the common scale, a missing map and the base adding none; the weights
+        // worked out once at the plain place and shared by the march and the drawn blend; the
+        // drawn reads at the moved place with the plain place's gradients.
         let terrain = include_str!("terrain.wesl").replace("\r\n", "\n");
         let shift = terrain.find("        in.uv += parallax_shift(").expect("the coordinate moved");
-        assert!(shift < terrain.find("    @if(!TERRAIN_ANTI_TILING) var pbr_input = pbr_input_from_standard_material(in, is_front);").unwrap(), "before the standard set-up reads the base");
+        let setup = terrain.find("    @if(TERRAIN_PARALLAX && !TERRAIN_ANTI_TILING) var pbr_input = terrain_pbr_begin(in, is_front, standard_material(in.instance_index));").expect("parallax's own set-up");
+        assert!(shift < setup, "before the surface set-up reads the base");
+        assert!(terrain.contains("    @if(!TERRAIN_ANTI_TILING && !TERRAIN_PARALLAX) var pbr_input = pbr_input_from_standard_material(in, is_front);"), "Bevy's set-up without it");
         assert!(!terrain.contains("fp.uv +="), "the anti-tiled place is not moved: the two never meet");
         assert!(terrain.contains("    @if(TERRAIN_ANTI_TILING) let fp = terrain_footprint("));
         assert!(terrain.contains("    let delta = values.x * fade * layer_depth * Vt.xy * vec2(1.0, -1.0) / steepness;"));
+        assert!(terrain.contains("    let V = calculate_view(world, view.clip_from_view[3].w == 1.0);"), "the view's own ray (orthographic views too)");
         assert!(terrain.contains("            depth += w[k + 1u] * scale[k] * (1.0 - layer_height(k, instance_index, uv, footprint));"));
         assert!(terrain.contains("    let scale = parallax_scales(instance_index, values.x);"));
-        assert!(terrain.contains("        paint[k] = saturate(opacity[k]) * alpha[k];"));
-        // #3322 review: the alphas the march weighs the layers by are the drawn blend's, read
-        // once at the plain coordinate with the blend's own read.
-        assert!(terrain.contains("            parallax_alpha[k] = layer_diffuse(k, in.instance_index, parallax_plain_uv).a;"));
-        assert!(terrain.contains("                @if(TERRAIN_PARALLAX) let share = saturate(opacity[k]) * parallax_alpha[k];"));
-        assert!(terrain.contains("                @if(TERRAIN_PARALLAX) paint[k] = saturate(opacity[k]) * parallax_alpha[k];"));
-        assert!(terrain.find("            parallax_alpha[k] = layer_diffuse(").unwrap() < shift, "read before the shift"); 
-        assert!(terrain.contains("    let w = terrain_ordered_shares(paint, n);"));
+        // One set of weights, worked out at the plain place before the shift.
+        for line in [
+            "            parallax_texels[k] = layer_diffuse_antitiled(k, in.instance_index, parallax_plain_taps, parallax_plain_fp);",
+            "        parallax_w = terrain_ordered_shares(parallax_paint, parallax_n);",
+            "            parallax_w = terrain_height_weights(parallax_w, parallax_height, parallax_params.x);",
+        ] {
+            assert!(terrain.find(line).unwrap_or_else(|| panic!("{line}")) < shift, "{line}: before the shift");
+        }
+        assert!(terrain.contains("        in.uv += parallax_shift(in.instance_index, in.uv, in.world_position, calculate_tbn_mikktspace(in.world_normal, in.world_tangent), parallax_w, parallax_n, parallax_footprint);"));
+        assert!(terrain.contains("                @if(TERRAIN_PARALLAX) let share = saturate(opacity[k]) * parallax_alpha[k];"), "the ordinary blend by the march's alphas");
+        assert!(terrain.contains("            @if(TERRAIN_PARALLAX) f = parallax_w;"), "the height blend by the march's weights");
+        // The drawn reads: at the moved place with the plain place's gradients, base included.
+        assert!(terrain.contains("            parallax_ddx = parallax_dx * exp2(view.mip_bias);"));
+        assert!(terrain.contains("    @if(TERRAIN_PARALLAX && VERTEX_UVS_A) let parallax_fp = TerrainFootprint((standard_material(in.instance_index).uv_transform * vec3(in.uv, 1.0)).xy, parallax_ddx, parallax_ddy);"));
+        assert!(terrain.contains("        pbr_input.material.base_color = pbr_input.material.base_color * terrain_base_diffuse(in.instance_index, parallax_flags, parallax_taps, parallax_fp);"));
+        assert_eq!(terrain.matches("@if(TERRAIN_PARALLAX) let texel = layer_diffuse_antitiled(k, in.instance_index, parallax_taps, parallax_fp);").count(), 2, "both blend paths");
+        assert!(terrain.contains("    let tap = TerrainTap(uv, mat2x2<f32>(1.0, 0.0, 0.0, 1.0), 1.0);"), "one unturned tap");
         assert!(terrain.contains("@if(TERRAIN_PARALLAX && !TERRAIN_HEIGHT_BLEND) import nvforever::terrain_weights::terrain_ordered_shares;"));
         // The march itself: none head-on, none over flat ground, some when tilted.
         let ridged = |p: Vec2| 0.6 * (0.5 - 0.5 * (p.x * 40.0).sin());
@@ -2497,24 +2434,19 @@ mod tests {
         assert!(parallax_march(&ridged, tilted, 0.04).length() > 0.0, "some when tilted");
     }
 
-    /// #3322 review: flipping the parallax switch edits the folded materials that hold a
-    /// height map for their pipeline alone; with the mesh terrain blend on, those edits'
-    /// Modified events must not remake the captures (nothing they read changed), while a
-    /// real edit of the same material still does.
-    /// #3322 review: through the real schedule (the asset system sending the events, the
-    /// switches before it, the capture refresh after it, as mesh_terrain_blend.rs orders it):
-    /// height blending and parallax flipped in the same frame remake the capture (the
-    /// height-blending edit is a surface edit); parallax alone leaves it as it was.
-    #[test]
-    fn a_surface_edit_beside_a_parallax_edit_still_remakes_the_capture() {
+    /// A world with the mesh terrain blend's capture refresh as it runs in the game (after
+    /// the asset events, only while `BlendOn` says so, as mesh_terrain_blend.rs runs it while
+    /// active), the terrain switches before the events, and one cell captured from a folded
+    /// material that holds a height map. Returns the app, the cell and the material.
+    fn capture_world() -> (App, Entity, Handle<TerrainMaterial>) {
         use bevy::asset::{AssetApp, AssetPlugin};
         use crate::graphics::{Graphics, Preset};
         use crate::terrain_surface::{CaptureDraw, CapturePath, CaptureSource, SurfaceCell};
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Image>().init_asset::<NifMaterial>().init_asset::<TerrainMaterial>()
-            .insert_resource(Graphics::preset(Preset::Vanilla)).insert_resource(TerrainSettings { tile: 256.0 })
-            .add_systems(PostUpdate, crate::terrain_surface::refresh_captures.after(bevy::asset::AssetEventSystems));
+            .insert_resource(Graphics::preset(Preset::Vanilla)).insert_resource(TerrainSettings { tile: 256.0 }).insert_resource(BlendOn(true))
+            .add_systems(PostUpdate, crate::terrain_surface::refresh_captures.after(bevy::asset::AssetEventSystems).run_if(|on: Res<BlendOn>| on.0));
         add_switch_systems(&mut app);
         let diffuse = app.world_mut().resource_mut::<Assets<Image>>().add(Image::default());
         let source = TerrainMaterial { base: surface_material(Some(diffuse.clone()), None), extension: TerrainLayers { count: 1, diffuse0: Some(diffuse.clone()), height0: Some(diffuse.clone()), parallax_depths: [0.04; 6], texture_repeat: 256.0, tile: 256.0, ..default() } };
@@ -2523,66 +2455,71 @@ mod tests {
             world: 0, grid: (0, 0), heights: vec![0.0; SIDE * SIDE], quadrants: vec![], paths: [CapturePath::HeightOnly("not-captured"); 4], content_revision: 0,
             sources: vec![CaptureSource::Folded(folded.clone())], dependencies: default(), detail: default(),
         };
-        cell.capture(0, vec![(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default()), CaptureDraw::Folded(Box::new(source.clone())))], CapturePath::Folded { layers: 1 });
+        cell.capture(0, vec![(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default()), CaptureDraw::Folded(Box::new(source)))], CapturePath::Folded { layers: 1 });
         let entity = app.world_mut().spawn(cell).id();
         // Settle: the material's Added event and the switches' first pass.
         app.update();
         app.update();
-        let mark = |app: &mut App| {
-            let mut cell = app.world_mut().get_mut::<SurfaceCell>(entity).unwrap();
-            let CaptureDraw::Folded(m) = &mut cell.bypass_change_detection().quadrants[0].1 else { panic!("the folded copy") };
-            m.extension.count = 5;
-        };
-        let kept = |app: &App| match &app.world().get::<SurfaceCell>(entity).unwrap().quadrants[0].1 { CaptureDraw::Folded(m) => (m.extension.count, m.extension.height_blend), _ => panic!("the folded copy") };
-        mark(&mut app);
+        (app, entity, folded)
+    }
+
+    #[derive(Resource)]
+    struct BlendOn(bool);
+
+    /// The tick the cell was last changed at: a remade capture moves it.
+    fn cell_changed(app: &App, entity: Entity) -> bevy::ecs::change_detection::Tick {
+        app.world().entity(entity).get_change_ticks::<crate::terrain_surface::SurfaceCell>().unwrap().changed
+    }
+
+    fn kept_height_blend(app: &App, entity: Entity) -> bool {
+        match &app.world().get::<crate::terrain_surface::SurfaceCell>(entity).unwrap().quadrants[0].1 {
+            crate::terrain_surface::CaptureDraw::Folded(m) => m.extension.height_blend,
+            _ => panic!("the folded copy"),
+        }
+    }
+
+    /// #3322 review: the capture refresh compares what a capture is made from, so the
+    /// parallax switch's edits (dropped by the bake copy) leave it alone, and a real edit
+    /// beside one in the same frame still remakes it.
+    #[test]
+    fn the_capture_refresh_compares_its_inputs() {
+        use crate::graphics::Graphics;
+        let (mut app, entity, folded) = capture_world();
+        let before = cell_changed(&app, entity);
+        app.world_mut().resource_mut::<Graphics>().terrain_parallax = true;
+        app.update();
+        app.update();
+        assert!(app.world().resource::<Assets<TerrainMaterial>>().get(&folded).unwrap().extension.parallax, "the material was flipped");
+        assert_eq!(cell_changed(&app, entity), before, "parallax alone: the capture untouched");
         {
             let mut g = app.world_mut().resource_mut::<Graphics>();
             g.terrain_height_blend = true;
-            g.terrain_parallax = true;
+            g.terrain_parallax = false;
         }
         app.update();
         app.update();
-        assert_eq!(kept(&app), (1, true), "the height-blending edit remade the capture though a parallax edit came with it");
-        mark(&mut app);
-        app.world_mut().resource_mut::<Graphics>().terrain_parallax = false;
-        app.update();
-        app.update();
-        assert_eq!(kept(&app).0, 5, "parallax alone: the capture as it was");
-        assert!(!TerrainLayersKey::from(&app.world().resource::<Assets<TerrainMaterial>>().get(&folded).unwrap().extension).parallax);
+        assert!(kept_height_blend(&app, entity), "height blending beside a parallax edit remade the capture");
+        assert_ne!(cell_changed(&app, entity), before);
     }
 
+    /// #3322 review: parallax flipped while the mesh terrain blend is off (its refresh not
+    /// running), for longer than any event lives, then the blend and height blending turned
+    /// on together: the height-blending edit remakes the capture (no remembered edit stands in
+    /// its way).
     #[test]
-    fn the_parallax_switch_leaves_the_mesh_blend_captures_alone() {
-        use bevy::ecs::system::RunSystemOnce;
-        use crate::graphics::{Graphics, Preset};
-        use crate::terrain_surface::{CaptureDraw, CapturePath, CaptureSource, SurfaceCell};
-        let mut app = App::new();
-        app.insert_resource(Graphics::preset(Preset::Vanilla)).init_resource::<PipelineOnlyEdits>()
-            .init_resource::<Assets<Image>>().init_resource::<Assets<NifMaterial>>().init_resource::<Assets<TerrainMaterial>>()
-            .init_resource::<Messages<AssetEvent<NifMaterial>>>().init_resource::<Messages<AssetEvent<TerrainMaterial>>>()
-            .add_systems(Update, sync_parallax);
-        let diffuse = app.world_mut().resource_mut::<Assets<Image>>().add(Image::default());
-        let source = TerrainMaterial { base: surface_material(Some(diffuse.clone()), None), extension: TerrainLayers { count: 1, diffuse0: Some(diffuse.clone()), height0: Some(diffuse.clone()), parallax_depths: [0.04; 6], texture_repeat: 256.0, tile: 256.0, ..default() } };
-        let folded = app.world_mut().resource_mut::<Assets<TerrainMaterial>>().add(source.clone());
-        // The kept copy marked, so a remade one shows.
-        let marked = TerrainMaterial { extension: TerrainLayers { count: 5, ..source.extension.clone() }, ..source.clone() };
-        let mut cell = SurfaceCell {
-            world: 0, grid: (0, 0), heights: vec![0.0; SIDE * SIDE], quadrants: vec![], paths: [CapturePath::HeightOnly("not-captured"); 4], content_revision: 0,
-            sources: vec![CaptureSource::Folded(folded.clone())], dependencies: default(), detail: default(),
-        };
-        cell.capture(0, vec![(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default()), CaptureDraw::Folded(Box::new(marked)))], CapturePath::Folded { layers: 1 });
-        let entity = app.world_mut().spawn(cell).id();
-        let kept_count = |app: &App| match &app.world().get::<SurfaceCell>(entity).unwrap().quadrants[0].1 { CaptureDraw::Folded(m) => m.extension.count, _ => panic!("the folded copy") };
+    fn an_edit_after_a_blend_off_interval_still_remakes_the_capture() {
+        use crate::graphics::Graphics;
+        let (mut app, entity, _) = capture_world();
+        app.world_mut().resource_mut::<BlendOn>().0 = false;
         app.world_mut().resource_mut::<Graphics>().terrain_parallax = true;
+        for _ in 0..5 {
+            app.update();
+        }
+        app.world_mut().resource_mut::<BlendOn>().0 = true;
+        app.world_mut().resource_mut::<Graphics>().terrain_height_blend = true;
         app.update();
-        assert!(app.world().resource::<Assets<TerrainMaterial>>().get(&folded).unwrap().extension.parallax, "the material was flipped");
-        app.world_mut().resource_mut::<Messages<AssetEvent<TerrainMaterial>>>().write(AssetEvent::Modified { id: folded.id() });
-        app.world_mut().run_system_once(crate::terrain_surface::refresh_captures).unwrap();
-        assert_eq!(kept_count(&app), 5, "the switch's edit left the capture as it was");
-        // A real edit of the same material (no pipeline-only edit noted): remade.
-        app.world_mut().resource_mut::<Messages<AssetEvent<TerrainMaterial>>>().write(AssetEvent::Modified { id: folded.id() });
-        app.world_mut().run_system_once(crate::terrain_surface::refresh_captures).unwrap();
-        assert_eq!(kept_count(&app), 1, "a surface edit still remakes the bake copy");
+        app.update();
+        assert!(kept_height_blend(&app, entity), "the height-blending edit reached the capture");
     }
 
     #[test]
@@ -2652,7 +2589,7 @@ mod tests {
         let terrain = include_str!("terrain.wesl");
         assert!(terrain.contains("        @if(!TERRAIN_HEIGHT_BLEND && !TERRAIN_ANTI_TILING) {"));
         assert!(terrain.contains("        @if(TERRAIN_HEIGHT_BLEND && !TERRAIN_ANTI_TILING) {"));
-        assert!(terrain.contains("    @if(!TERRAIN_ANTI_TILING) var pbr_input = pbr_input_from_standard_material(in, is_front);"));
+        assert!(terrain.contains("    @if(!TERRAIN_ANTI_TILING && !TERRAIN_PARALLAX) var pbr_input = pbr_input_from_standard_material(in, is_front);"));
         assert!(terrain.contains("    @if(TERRAIN_ANTI_TILING) var pbr_input = terrain_pbr_begin(in, is_front, standard_material(in.instance_index));"));
         // The anti-tiled walk is the ordered blend's (mirrored in `antitiled_walk` below)
         // and the heights come from its reads.

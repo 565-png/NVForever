@@ -39,8 +39,11 @@
 // texture's alpha, read once at the plain coordinate) x its own set's depth x (1 - its
 // height) on one fixed step grid, the base and a layer without a height map adding no
 // depth, moves the texture coordinate; then every texture (the base's and the layers',
-// diffuse and normal map) is read at the one moved coordinate, and the layers are blended
-// with the alphas read at the plain coordinate, the ones the march weighed them by. Faded out with distance (the material's values), none
+// diffuse and normal map) is read at the one moved coordinate with the plain coordinate's
+// gradients (one unturned tap through the anti-tiling helpers, so filtering does not follow
+// the shift's jumps), and the layers are blended with the weights the march used: the
+// ordered shares of opacity x alpha read at the plain coordinate, or with height blending
+// its weights worked out there. Faded out with distance (the material's values), none
 // on a surface seen head-on. Only the main pass; without it every path above is as it was.
 
 import bevy_pbr::{
@@ -61,6 +64,11 @@ import bevy_pbr::{
 @if(TERRAIN_HEIGHT_BLEND) import bevy_pbr::render::pbr_types::STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT;
 @if(TERRAIN_HEIGHT_BLEND) import nvforever::terrain_weights::{terrain_height, terrain_ordered_shares, terrain_height_weights};
 @if(TERRAIN_PARALLAX && !TERRAIN_HEIGHT_BLEND) import nvforever::terrain_weights::terrain_ordered_shares;
+@if(TERRAIN_PARALLAX) import bevy_pbr::render::pbr_functions::calculate_view;
+@if(TERRAIN_PARALLAX && !TERRAIN_ANTI_TILING) import nvf_assets::terrain_sampling::{TerrainFootprint, TerrainTap, TerrainTaps, terrain_sample_diffuse, terrain_sample_normal, terrain_world_normal};
+@if(TERRAIN_PARALLAX && TERRAIN_ANTI_TILING) import nvf_assets::terrain_sampling::TerrainTap;
+@if(TERRAIN_PARALLAX && !TERRAIN_ANTI_TILING) import nvf_assets::terrain_pbr::{terrain_pbr_begin, terrain_pbr_occlusion, terrain_base_diffuse, terrain_base_normal, terrain_two_component, terrain_flip_y, terrain_back_face};
+@if(TERRAIN_PARALLAX && !TERRAIN_ANTI_TILING && BINDLESS) import nvf_assets::terrain_pbr::{terrain_bindless_diffuse, terrain_bindless_normal};
 @if(TERRAIN_ANTI_TILING) import nvf_assets::terrain_sampling::{TerrainFootprint, TerrainTaps, terrain_sample_diffuse, terrain_sample_normal, terrain_world_normal};
 @if(TERRAIN_ANTI_TILING) import nvf_assets::terrain_pbr::{terrain_footprint, terrain_taps, terrain_pbr_begin, terrain_pbr_occlusion, terrain_base_diffuse, terrain_base_normal, terrain_base_textured, terrain_two_component, terrain_flip_y, terrain_back_face};
 @if(TERRAIN_ANTI_TILING && BINDLESS) import nvf_assets::terrain_pbr::{terrain_bindless_diffuse, terrain_bindless_normal};
@@ -403,22 +411,16 @@ fn layer_normal(k: u32, instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
 // refinement (vendored parallax_mapping.wesl `parallaxed_uv`: the same view vector, frame
 // and signs as on NIF shapes), over the blended depth. None where the march has nothing to
 // move (no depth, faded out, no layer with both a share and a height map) and none
-// head-on (the view vector's tangent part is 0).
-// `alpha`: each layer's diffuse alpha at the plain coordinate, which the drawn blend uses
-// too (fragment()).
-@if(TERRAIN_PARALLAX) fn parallax_shift(instance_index: u32, uv: vec2<f32>, world: vec3<f32>, tbn: mat3x3<f32>, opacity: array<f32, 6>, alpha: array<f32, 6>, n: u32, footprint: f32) -> vec2<f32> {
+// head-on (the view vector's tangent part is 0). `w`: the base's and the layers' weights
+// worked out at the plain coordinate (fragment()), which the drawn blend uses too. The ray
+// is the view's own (Bevy's `calculate_view`: one direction in an orthographic view, as the
+// minimap's); the fade goes by the distance from the camera.
+@if(TERRAIN_PARALLAX) fn parallax_shift(instance_index: u32, uv: vec2<f32>, world: vec4<f32>, tbn: mat3x3<f32>, w: array<f32, 7>, n: u32, footprint: f32) -> vec2<f32> {
     let values = parallax_values(instance_index);
-    let to_camera = view.world_position.xyz - world;
-    let fade = 1.0 - smoothstep(values.z, values.w, length(to_camera));
+    let fade = 1.0 - smoothstep(values.z, values.w, length(view.world_position.xyz - world.xyz));
     if values.x <= 0.0 || fade <= 0.0 {
         return vec2(0.0);
     }
-    // The ordered shares of the painted opacity x the layer's alpha at the plain place.
-    var paint = array<f32, 6>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-    for (var k = 0u; k < n; k += 1u) {
-        paint[k] = saturate(opacity[k]) * alpha[k];
-    }
-    let w = terrain_ordered_shares(paint, n);
     let scale = parallax_scales(instance_index, values.x);
     var relief = false;
     for (var k = 0u; k < n; k += 1u) {
@@ -429,7 +431,7 @@ fn layer_normal(k: u32, instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
     if !relief {
         return vec2(0.0);
     }
-    let V = normalize(to_camera);
+    let V = calculate_view(world, view.clip_from_view[3].w == 1.0);
     // Towards the surface, in the tangent frame.
     let Vt = -vec3(dot(V, tbn[0]), dot(V, tbn[1]), dot(V, tbn[2]));
     let steepness = max(abs(Vt.z), 1e-3);
@@ -452,10 +454,19 @@ fn layer_normal(k: u32, instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
     return mix(shift, previous, weight);
 }
 
+// One unturned read at `uv` through the anti-tiling helpers (one tap of weight 1): with a
+// footprint of the plain coordinate's gradients, a plain read at a moved place whose
+// filtering does not follow the shift's jumps between neighbouring pixels [design, #3322
+// review].
+@if(TERRAIN_PARALLAX) fn parallax_tap(uv: vec2<f32>) -> TerrainTaps {
+    let tap = TerrainTap(uv, mat2x2<f32>(1.0, 0.0, 0.0, 1.0), 1.0);
+    return TerrainTaps(array<TerrainTap, 3>(tap, tap, tap), 1u);
+}
+
 // Anti-tiling's reads of layer `k`: its diffuse texture with the base texture's sampler
 // (as `layer_diffuse`), its normal map decoded by the base material's flags (as the
 // ordinary path's apply_normal_mapping does), at every kept tap (terrain_sampling.wesl).
-@if(TERRAIN_ANTI_TILING) fn layer_diffuse_antitiled(k: u32, instance_index: u32, taps: TerrainTaps, fp: TerrainFootprint) -> vec4<f32> {
+@if(TERRAIN_ANTI_TILING || TERRAIN_PARALLAX) fn layer_diffuse_antitiled(k: u32, instance_index: u32, taps: TerrainTaps, fp: TerrainFootprint) -> vec4<f32> {
     @if(BINDLESS) {
         let slot = material_slot(instance_index);
         let i = terrain_indices[slot];
@@ -477,7 +488,7 @@ fn layer_normal(k: u32, instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
     }
 }
 
-@if(TERRAIN_ANTI_TILING) fn layer_normal_antitiled(k: u32, instance_index: u32, taps: TerrainTaps, fp: TerrainFootprint, two_component: bool, flip_y: bool) -> vec3<f32> {
+@if(TERRAIN_ANTI_TILING || TERRAIN_PARALLAX) fn layer_normal_antitiled(k: u32, instance_index: u32, taps: TerrainTaps, fp: TerrainFootprint, two_component: bool, flip_y: bool) -> vec3<f32> {
     @if(BINDLESS) {
         let slot = material_slot(instance_index);
         let i = terrain_indices[slot];
@@ -510,7 +521,11 @@ fn fragment(
     @if(TERRAIN_ANTI_TILING) let fp = terrain_footprint(in.world_position, layer_repeat(in.instance_index), standard_material(in.instance_index).uv_transform);
     // Parallax's footprint, likewise before any branch: log2 of texture-coordinate units per
     // pixel at the plain coordinate (the one worked out below), with the view's mip bias.
+    // Its gradients, scaled by the mip bias as anti-tiling's (a gradient read takes no bias of
+    // its own), are every later read's.
     @if(TERRAIN_PARALLAX) var parallax_footprint = 0.0;
+    @if(TERRAIN_PARALLAX) var parallax_ddx = vec2(0.0);
+    @if(TERRAIN_PARALLAX) var parallax_ddy = vec2(0.0);
     @if(TERRAIN_PARALLAX) {
         @if(VERTEX_UVS_A) {
             let parallax_tile = layer_tile(in.instance_index);
@@ -519,6 +534,8 @@ fn fragment(
             let parallax_dx = dpdx(parallax_raw_uv);
             let parallax_dy = dpdy(parallax_raw_uv);
             parallax_footprint = 0.5 * log2(max(max(dot(parallax_dx, parallax_dx), dot(parallax_dy, parallax_dy)), 1e-12)) + view.mip_bias;
+            parallax_ddx = parallax_dx * exp2(view.mip_bias);
+            parallax_ddy = parallax_dy * exp2(view.mip_bias);
         }
     }
     @if(TERRAIN_HEIGHT_BLEND && !TERRAIN_ANTI_TILING) var height_dx = vec2(0.0);
@@ -557,26 +574,66 @@ fn fragment(
         opacity[5] = in.uv.y;
         in.uv = (get_local_from_world(in.instance_index) * in.world_position).xy / tile;
     }
-    // Parallax: the coordinate moved before the surface is set up, so the base's read by the
-    // standard set-up and every later read take the moved place (the landscape's texture
-    // transform is the identity, terrain.rs tests). Never with anti-tiling (terrain.rs
+    // Parallax: the coordinate moved before the surface is set up, so the base's read and
+    // every later read take the moved place (the landscape's texture transform is the
+    // identity, terrain.rs tests). Never with anti-tiling (terrain.rs
     // `TerrainLayersKey`), whose reads take their place from the world, not from `in.uv`.
-    // The layers' alphas are read once at the plain place, with the blend's own read
-    // (`layer_diffuse`, the same coordinate and bias), and both the march and the drawn blend
-    // weigh the layers by them: a hole in a layer stays where the march saw it, and with no
+    // The weights are worked out once at the plain place (the layers' alphas read there with
+    // the drawn reads' own gradients; with height blending its weights from those texels),
+    // and both the march and the drawn blend use them: a hole in a layer stays where the march
+    // saw it, a layer the height blend leaves out does not move what is drawn, and with no
     // shift the blend is the one without parallax [design, #3322 review].
     @if(TERRAIN_PARALLAX) var parallax_alpha = array<f32, 6>(1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
+    @if(TERRAIN_PARALLAX) var parallax_w = array<f32, 7>(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     @if(TERRAIN_PARALLAX && VERTEX_UVS_A && VERTEX_TANGENTS) {
         let parallax_n = min(layer_counts(in.instance_index).x, 6u);
-        let parallax_plain_uv = (standard_material(in.instance_index).uv_transform * vec3(in.uv, 1.0)).xy;
+        let parallax_standard = standard_material(in.instance_index);
+        let parallax_plain_uv = (parallax_standard.uv_transform * vec3(in.uv, 1.0)).xy;
+        let parallax_plain_fp = TerrainFootprint(parallax_plain_uv, parallax_ddx, parallax_ddy);
+        let parallax_plain_taps = parallax_tap(parallax_plain_uv);
+        var parallax_texels = array<vec4<f32>, 6>(vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0), vec4(0.0));
+        var parallax_paint = array<f32, 6>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
         for (var k = 0u; k < parallax_n; k += 1u) {
-            parallax_alpha[k] = layer_diffuse(k, in.instance_index, parallax_plain_uv).a;
+            parallax_texels[k] = layer_diffuse_antitiled(k, in.instance_index, parallax_plain_taps, parallax_plain_fp);
+            parallax_alpha[k] = parallax_texels[k].a;
+            parallax_paint[k] = saturate(opacity[k]) * parallax_alpha[k];
         }
-        in.uv += parallax_shift(in.instance_index, in.uv, in.world_position.xyz, calculate_tbn_mikktspace(in.world_normal, in.world_tangent), opacity, parallax_alpha, parallax_n, parallax_footprint);
+        parallax_w = terrain_ordered_shares(parallax_paint, parallax_n);
+        @if(TERRAIN_HEIGHT_BLEND && !TERRAIN_ANTI_TILING) {
+            // Height blending's weights as its drawn path works them out (the same heights and
+            // references), from the plain place's texels.
+            let parallax_params = height_params(in.instance_index);
+            var parallax_height = array<f32, 7>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+            if parallax_w[0] > 0.0 && (parallax_standard.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u {
+                let parallax_base = terrain_base_diffuse(in.instance_index, parallax_standard.flags, parallax_plain_taps, parallax_plain_fp);
+                parallax_height[0] = terrain_height(parallax_base.rgb, base_reference(in.instance_index, parallax_plain_uv, height_dx, height_dy, parallax_params.z), parallax_params.y);
+            }
+            for (var k = 0u; k < parallax_n; k += 1u) {
+                if parallax_w[k + 1u] > 0.0 {
+                    parallax_height[k + 1u] = terrain_height(parallax_texels[k].rgb, layer_reference(k, in.instance_index, parallax_plain_uv, height_dx, height_dy, parallax_params.z), parallax_params.y);
+                }
+            }
+            parallax_w = terrain_height_weights(parallax_w, parallax_height, parallax_params.x);
+        }
+        in.uv += parallax_shift(in.instance_index, in.uv, in.world_position, calculate_tbn_mikktspace(in.world_normal, in.world_tangent), parallax_w, parallax_n, parallax_footprint);
     }
 
-    @if(!TERRAIN_ANTI_TILING) var pbr_input = pbr_input_from_standard_material(in, is_front);
+    @if(!TERRAIN_ANTI_TILING && !TERRAIN_PARALLAX) var pbr_input = pbr_input_from_standard_material(in, is_front);
     @if(TERRAIN_ANTI_TILING) var pbr_input = terrain_pbr_begin(in, is_front, standard_material(in.instance_index));
+    // Parallax: the surface set up as anti-tiling sets it up (terrain_pbr.wesl: no read at the
+    // plain place), the base's diffuse and normal map read at the moved place with the plain
+    // place's gradients, the occlusion once the colour is final (below).
+    @if(TERRAIN_PARALLAX && !TERRAIN_ANTI_TILING) var pbr_input = terrain_pbr_begin(in, is_front, standard_material(in.instance_index));
+    @if(TERRAIN_PARALLAX && !TERRAIN_ANTI_TILING) let parallax_n_pre = pbr_input.N;
+    @if(TERRAIN_PARALLAX && VERTEX_UVS_A) let parallax_fp = TerrainFootprint((standard_material(in.instance_index).uv_transform * vec3(in.uv, 1.0)).xy, parallax_ddx, parallax_ddy);
+    @if(TERRAIN_PARALLAX && VERTEX_UVS_A) let parallax_taps = parallax_tap(parallax_fp.uv);
+    @if(TERRAIN_PARALLAX && !TERRAIN_ANTI_TILING && VERTEX_UVS_A) {
+        let parallax_flags = standard_material(in.instance_index).flags;
+        pbr_input.material.base_color = pbr_input.material.base_color * terrain_base_diffuse(in.instance_index, parallax_flags, parallax_taps, parallax_fp);
+        @if(VERTEX_TANGENTS && STANDARD_MATERIAL_NORMAL_MAP) {
+            pbr_input.N = terrain_world_normal(calculate_tbn_mikktspace(in.world_normal, in.world_tangent), terrain_base_normal(in.instance_index, parallax_flags, parallax_taps, parallax_fp), terrain_back_face(pbr_input, is_front));
+        }
+    }
     let counts = layer_counts(in.instance_index);
     @if(VERTEX_UVS_A) {
         let standard = standard_material(in.instance_index);
@@ -587,12 +644,14 @@ fn fragment(
         @if(VERTEX_TANGENTS) let tbn = calculate_tbn_mikktspace(in.world_normal, in.world_tangent);
         @if(!TERRAIN_HEIGHT_BLEND && !TERRAIN_ANTI_TILING) {
             for (var k = 0u; k < min(counts.x, 6u); k += 1u) {
-                let texel = layer_diffuse(k, in.instance_index, uv);
+                @if(!TERRAIN_PARALLAX) let texel = layer_diffuse(k, in.instance_index, uv);
+                @if(TERRAIN_PARALLAX) let texel = layer_diffuse_antitiled(k, in.instance_index, parallax_taps, parallax_fp);
                 @if(!TERRAIN_PARALLAX) let share = saturate(opacity[k]) * texel.a;
                 @if(TERRAIN_PARALLAX) let share = saturate(opacity[k]) * parallax_alpha[k];
                 var layer_n = plain;
                 @if(VERTEX_TANGENTS) if (counts.y & (1u << k)) != 0u {
-                    layer_n = apply_normal_mapping(standard.flags, tbn, false, is_front, layer_normal(k, in.instance_index, uv));
+                    @if(!TERRAIN_PARALLAX) layer_n = apply_normal_mapping(standard.flags, tbn, false, is_front, layer_normal(k, in.instance_index, uv));
+                    @if(TERRAIN_PARALLAX) layer_n = terrain_world_normal(tbn, layer_normal_antitiled(k, in.instance_index, parallax_taps, parallax_fp, terrain_two_component(standard.flags), terrain_flip_y(standard.flags)), false);
                 }
                 colour = mix(colour, texel.rgb * tint * standard.base_color.rgb, share);
                 normal = mix(normal, layer_n, share);
@@ -610,12 +669,13 @@ fn fragment(
             var paint = array<f32, 6>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
             var layer_n = array<vec3<f32>, 6>(plain, plain, plain, plain, plain, plain);
             for (var k = 0u; k < n; k += 1u) {
-                let texel = layer_diffuse(k, in.instance_index, uv);
+                @if(!TERRAIN_PARALLAX) let texel = layer_diffuse(k, in.instance_index, uv);
+                @if(TERRAIN_PARALLAX) let texel = layer_diffuse_antitiled(k, in.instance_index, parallax_taps, parallax_fp);
                 texels[k] = texel;
                 paint[k] = saturate(opacity[k]) * texel.a;
-                @if(TERRAIN_PARALLAX) paint[k] = saturate(opacity[k]) * parallax_alpha[k];
                 @if(VERTEX_TANGENTS) if (counts.y & (1u << k)) != 0u {
-                    layer_n[k] = apply_normal_mapping(standard.flags, tbn, false, is_front, layer_normal(k, in.instance_index, uv));
+                    @if(!TERRAIN_PARALLAX) layer_n[k] = apply_normal_mapping(standard.flags, tbn, false, is_front, layer_normal(k, in.instance_index, uv));
+                    @if(TERRAIN_PARALLAX) layer_n[k] = terrain_world_normal(tbn, layer_normal_antitiled(k, in.instance_index, parallax_taps, parallax_fp, terrain_two_component(standard.flags), terrain_flip_y(standard.flags)), false);
                 }
             }
             var w = terrain_ordered_shares(paint, n);
@@ -631,6 +691,8 @@ fn fragment(
                 }
             }
             var f = terrain_height_weights(w, height, params.x);
+            // Parallax: the weights the march used, worked out at the plain place.
+            @if(TERRAIN_PARALLAX) f = parallax_w;
             // Colour and normal with the same weights; the normal made unit length once.
             colour = f[0] * colour;
             normal = f[0] * normal;
@@ -719,6 +781,8 @@ fn fragment(
             pbr_input = terrain_pbr_occlusion(pbr_input, n_pre);
         }
     }
+    // Parallax's set-up: the occlusion once the colour is final, as anti-tiling's.
+    @if(TERRAIN_PARALLAX && !TERRAIN_ANTI_TILING) pbr_input = terrain_pbr_occlusion(pbr_input, parallax_n_pre);
     // [design] Surface bake of a folded base (terrain_surface.rs): its unlit colour.
     @if(SURFACE_BAKE) return surface_bake(pbr_input.material.base_color.rgb);
     @if(!SURFACE_BAKE) {

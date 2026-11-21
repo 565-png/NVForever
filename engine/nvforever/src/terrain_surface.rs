@@ -1452,18 +1452,9 @@ pub fn refresh_captures(
     ordinary: Res<Assets<nvf_assets::NifMaterial>>,
     folded_events: Option<Res<Messages<AssetEvent<TerrainMaterial>>>>,
     ordinary_events: Option<Res<Messages<AssetEvent<nvf_assets::NifMaterial>>>>,
-    mut pipeline_only: Option<ResMut<crate::terrain::PipelineOnlyEdits>>,
     mut cursors: Local<CaptureEvents>,
 ) {
-    // #3322 review: the parallax switch's edits change no input of a capture (the bake
-    // copy and the detail never read it): passed over, one event per edit; a material
-    // edited otherwise in the same frame sends its own event and is still refreshed.
-    let mut surface_edit = |event: &AssetEvent<TerrainMaterial>| {
-        let id = modified_asset(event)?;
-        let pipeline = matches!(event, AssetEvent::Modified { .. }) && pipeline_only.as_deref_mut().is_some_and(|p| p.take(id));
-        (!pipeline).then_some(id)
-    };
-    let folded_changed: HashSet<_> = folded_events.as_ref().map(|e| cursors.folded.read(e).filter_map(&mut surface_edit).collect()).unwrap_or_default();
+    let folded_changed: HashSet<_> = folded_events.as_ref().map(|e| cursors.folded.read(e).filter_map(modified_asset).collect()).unwrap_or_default();
     let ordinary_changed: HashSet<_> = ordinary_events.as_ref().map(|e| cursors.ordinary.read(e).filter_map(modified_asset).collect()).unwrap_or_default();
     for mut cell in &mut cells {
         // Component edits/replacement also refresh the derived dependency list. Preserve
@@ -1471,6 +1462,10 @@ pub fn refresh_captures(
         if cell.is_changed() { cell.bypass_change_detection().refresh_dependencies(); }
         let dirty = cell.sources.iter().any(|s| match s { CaptureSource::Folded(h) => folded_changed.contains(&h.id()), CaptureSource::Single(h, _) => ordinary_changed.contains(&h.id()) });
         if !dirty { continue; }
+        // #3322 review: an edit that changes nothing the capture is made from (the terrain
+        // parallax switch: the bake copy drops it, the detail never reads it) leaves the
+        // cell untouched, so the publication is not remade for it.
+        if captured_inputs_unchanged(&cell, &folded, &ordinary) { continue; }
         let sources = cell.sources.clone();
         let mut missing = false;
         for (source, (_, draw)) in sources.iter().zip(&mut cell.quadrants) {
@@ -1517,6 +1512,28 @@ pub fn resolve_detail(base: &DetailBase, overflow: &[Handle<nvf_assets::NifMater
         DetailBase::Single(h) => { let m = ordinary.get(h).ok_or(UNRESOLVED)?; ResolvedDetail::from_materials(&m.base, Some(&m.extension), None, &overflow, layers) }
     }
 }
+/// Whether a cell's capture would come out the same from its source materials as they are
+/// now: every bake copy as it is kept (compared whole, by its debug form: every field, every
+/// texture handle) and every detail's resolution [design, #3322 review: compared inputs, not
+/// remembered edits, so no edit is ever taken for another].
+fn captured_inputs_unchanged(cell: &SurfaceCell, folded: &Assets<TerrainMaterial>, ordinary: &Assets<nvf_assets::NifMaterial>) -> bool {
+    let draws = cell.sources.iter().zip(&cell.quadrants).all(|(source, (_, kept))| {
+        let fresh = match source {
+            CaptureSource::Folded(h) => folded.get(h).map(|m| {
+                let mut m = m.clone();
+                bake_copy(&mut m);
+                CaptureDraw::Folded(Box::new(m))
+            }),
+            CaptureSource::Single(h, layer) => ordinary.get(h).map(|m| CaptureDraw::Single(SurfaceCaptureMaterial::from_source(m, *layer))),
+        };
+        fresh.is_some_and(|f| format!("{f:?}") == format!("{kept:?}"))
+    });
+    draws && cell.detail.iter().all(|d| match d {
+        DetailCapture::Layers(detail) => resolve_detail(&detail.base, &detail.overflow, detail.opacity.len(), folded, ordinary) == detail.resolved,
+        _ => true,
+    })
+}
+
 fn modified_asset<A: Asset>(event: &AssetEvent<A>) -> Option<AssetId<A>> {
     match event { AssetEvent::Modified { id } | AssetEvent::Removed { id } => Some(*id), _ => None }
 }
