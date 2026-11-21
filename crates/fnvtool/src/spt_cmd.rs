@@ -1,6 +1,6 @@
 use crate::source::{process, read_one};
 use crate::SptCmd;
-use fnv_spt::generate::springs_from_stub;
+use fnv_spt::generate::{length_ratio, springs_from_stub, STUB_RATIO};
 use fnv_spt::probe::{shapes, Extents};
 use fnv_spt::{generate, parse_entries, Curve, Payload, Tree};
 use serde_json::{json, Value};
@@ -82,7 +82,8 @@ fn shape_row(path: &str, data: &[u8]) -> Value {
             let curves: serde_json::Map<String, Value> =
                 l.curves.iter().enumerate().map(|(i, c)| ((6000 + i).to_string(), curve(c))).collect();
             json!({"curves": curves, "segments": [l.segments_along, l.segments_around], "first": l.first,
-                   "last": l.last, "frequency": l.frequency, "springs_from_stub": springs_from_stub(&t, i)})
+                   "last": l.last, "frequency": l.frequency, "length_ratio": length_ratio(&t, i),
+                   "springs_from_stub": springs_from_stub(&t, i)})
         })
         .collect();
     let maps: Vec<Value> = t.leaf_maps.iter().map(|m| json!({"size": m.size, "pivot": m.pivot})).collect();
@@ -97,7 +98,8 @@ fn shape_row(path: &str, data: &[u8]) -> Value {
     // smoke expectation (whose paths split at dots).
     let stem = path.rsplit(['\\', '/']).next().unwrap_or(path);
     let stem = stem.rsplit_once('.').map_or(stem, |(s, _)| s).to_ascii_lowercase();
-    json!({"path": path, "tree": stem, "seed": t.seed, "levels": levels, "leaf_maps": maps, "shapes": rows, "error": null})
+    let stubs: Vec<usize> = (0..t.levels.len()).filter(|&i| springs_from_stub(&t, i)).collect();
+    json!({"path": path, "tree": stem, "seed": t.seed, "stub_ratio": STUB_RATIO, "stub_levels": stubs, "levels": levels, "leaf_maps": maps, "shapes": rows, "error": null})
 }
 
 fn shape(archive: &std::path::Path, filter: Option<&str>) -> anyhow::Result<Value> {

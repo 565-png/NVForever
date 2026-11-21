@@ -184,7 +184,8 @@ fn probe_extents_follow_the_renderers_rule() {
 
 #[test]
 fn probe_readings() {
-    use crate::probe::{apply, readings, shapes, Reading};
+    use crate::generate::angle_from_axis;
+    use crate::probe::{angle_readings, apply, build, readings, shapes, Reading};
     let t = flat_bush();
     assert_eq!(apply(&t, Reading::AsIs), t);
     // Three levels: one wood level grows from another (level 1).
@@ -200,29 +201,41 @@ fn probe_readings() {
             Reading::FrequencyOverSpan
         ]
     );
-    let axis = apply(&t, Reading::AngleFromAxis(1));
-    assert_eq!((axis.levels[1].angle().min, axis.levels[1].angle().max), (90.0, 80.0));
-    assert_eq!(axis.levels[0], t.levels[0]);
+    // The angle readings change no parameter, only which levels read from the axis.
+    assert_eq!(apply(&t, Reading::AngleFromAxis(1)), t);
+    assert_eq!(angle_readings(&t, Reading::AsIs), [false, false, false]);
+    assert_eq!(angle_readings(&t, Reading::AngleFromAxis(1)), [false, true, false]);
+    assert_eq!(angle_readings(&t, Reading::AngleFromAxisAllWood), [false, true, false]);
     let span = apply(&t, Reading::FrequencyOverSpan);
     assert!((span.levels[1].frequency - 20.0 * 0.8).abs() < 1e-5);
     let s = shapes(&t);
     assert_eq!(s, shapes(&t), "deterministic");
     assert_eq!(s[0].full.width(), generate(&t).width());
+    assert_eq!(build(&t, Reading::AsIs), generate(&t));
     // Stems 0-10° off the axis instead of off the plane: a column, not a plate.
     assert!(s[1].full.aspect() < 0.7 * s[0].full.aspect(), "{:?} vs {:?}", s[1].full, s[0].full);
     // Fewer children over the 0.2-1.0 span.
     assert!(s[6].leaves < s[0].leaves, "{} vs {}", s[6].leaves, s[0].leaves);
-    // One wood level above the trunk: all wood is that level.
-    assert_eq!(apply(&t, Reading::AngleFromAxisAllWood), axis);
-    // The 0.3 trunk is no shorter than its 0.3-0.4 stems: no stub, the plane reading
-    // already.
+    // The 0.3 trunk is no shorter than its 0.3-0.4 stems: no stub, the plane reading.
     assert!(!springs_from_stub(&t, 1));
-    assert_eq!(apply(&t, Reading::AngleFromPlaneEverywhere), t);
-    // On a stub the generator reads from the axis already: nothing to mirror.
+    assert_eq!(build(&t, Reading::AngleFromPlaneEverywhere), generate(&t));
+    // On a stub the generator reads from the axis already.
     let stub = stub_bush();
-    assert_eq!(apply(&stub, Reading::AngleFromAxis(1)), stub);
-    assert_eq!(apply(&stub, Reading::AngleFromAxisAllWood), stub);
-    assert_ne!(apply(&stub, Reading::AngleFromPlaneEverywhere), stub);
+    assert_eq!(build(&stub, Reading::AngleFromAxis(1)), generate(&stub));
+    assert_ne!(build(&stub, Reading::AngleFromPlaneEverywhere), generate(&stub));
+
+    // Stems at least 0.19 (0.25 ± 0.06) on a 0.1 trunk: under twice the trunk, no stub;
+    // without the spread 2.5 times it. The probe's no-spread reading keeps the tree's
+    // own angle choice, so it shows the spread's effect alone.
+    let mut near = flat_bush();
+    let c = &mut near.levels[0].curves[4];
+    (c.min, c.max) = (0.1, 0.1);
+    let c = &mut near.levels[1].curves[4];
+    (c.min, c.max, c.variance) = (0.25, 0.3, 0.06);
+    assert!(!springs_from_stub(&near, 1));
+    assert!(springs_from_stub(&apply(&near, Reading::NoLengthSpread), 1));
+    assert_eq!(angle_readings(&near, Reading::NoLengthSpread), angle_from_axis(&near));
+    assert_eq!(angle_readings(&near, Reading::NoLengthSpread), [false, false, false]);
 }
 
 /// The made-up bush on a 0.01 stub instead of its 0.3 trunk (#3126: EuonymusBush01's
@@ -239,15 +252,48 @@ fn stub_bush() -> Tree {
 /// at 0-10° stand up instead of lying flat (speedtree.md §7, #3126).
 #[test]
 fn stems_on_a_stub_stand_up() {
-    use crate::probe::{apply, extents, Cards, Reading};
+    use crate::generate::{length_ratio, STUB_RATIO};
+    use crate::probe::{build, extents, Cards, Reading};
     let stub = stub_bush();
     assert!(springs_from_stub(&stub, 1) && !springs_from_stub(&stub, 2) && !springs_from_stub(&stub, 0));
+    assert!((length_ratio(&stub, 1).unwrap() - 30.0).abs() < 1e-3);
     let now = extents(&generate(&stub), Cards::Full);
     // The reading before #3126: the same stems 0-10° off the plane, a flat plate.
-    let before = extents(&generate(&apply(&stub, Reading::AngleFromPlaneEverywhere)), Cards::Full);
+    let before = extents(&build(&stub, Reading::AngleFromPlaneEverywhere), Cards::Full);
     assert!(before.aspect() > 2.0, "{before:?}");
     assert!(now.aspect() < 1.0, "{now:?}");
     // Every branch springs straight up within 10° of the stub's axis.
     let g = generate(&stub);
     assert!(g.leaves.iter().all(|l| l.position[2] > 0.0));
+    // A trunk barely shorter than its stems is no stub: the margin.
+    let mut long = stub.clone();
+    let c = &mut long.levels[0].curves[4];
+    (c.min, c.max) = (0.29, 0.29);
+    assert!(length_ratio(&long, 1).unwrap() < STUB_RATIO && !springs_from_stub(&long, 1));
+}
+
+/// On a stub level with a spread, the axis reading builds the same branches as the
+/// curve mirrored about 90° under the plane reading (the spread taken as 1 − r), which is
+/// what the measured rows of speedtree.md §7 were made with; equal up to rounding (the
+/// angle is worked out in another order).
+#[test]
+fn stub_reading_with_a_spread_matches_the_mirrored_curve() {
+    use crate::generate::generate_with;
+    let mut stub = stub_bush();
+    stub.levels[1].curves[7].variance = 12.0;
+    let mut mirrored = stub.clone();
+    let c = &mut mirrored.levels[1].curves[7];
+    (c.min, c.max) = (90.0 - c.min, 90.0 - c.max);
+    let g = generate(&stub);
+    let same = |a: &Geometry, b: &Geometry| {
+        a.leaves.len() == b.leaves.len()
+            && a.positions.len() == b.positions.len()
+            && a.leaves.iter().zip(&b.leaves).all(|(x, y)| (0..3).all(|k| (x.position[k] - y.position[k]).abs() < 1e-4))
+            && a.positions.iter().zip(&b.positions).all(|(x, y)| (0..3).all(|k| (x[k] - y[k]).abs() < 1e-4))
+    };
+    assert!(same(&g, &generate_with(&mirrored, &[false, false, false])));
+    // The spread is in use: without it the branches differ.
+    let mut still = stub.clone();
+    still.levels[1].curves[7].variance = 0.0;
+    assert!(!same(&g, &generate(&still)));
 }

@@ -3,8 +3,8 @@
 //! measuring rules, and the tree generated under other readings of the level
 //! parameters. Not used by the renderer; `fnvtool spt shape` prints them.
 
-use crate::generate::springs_from_stub;
-use crate::{generate, Geometry, Tree};
+use crate::generate::{angle_from_axis, generate_with};
+use crate::{Geometry, Tree};
 
 /// How leaf cards count towards the extents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,9 +67,10 @@ pub fn extents(g: &Geometry, cards: Cards) -> Extents {
     Extents { x: hi[0] - lo[0], y: hi[1] - lo[1], top }
 }
 
-/// A reading of the level parameters other than the generator's own (speedtree.md §4).
-/// Each is expressed as an edit of the parsed parameters, so the generator itself is
-/// unchanged.
+/// A reading of the level parameters other than the generator's own (speedtree.md §4):
+/// an edit of the parsed parameters ([`apply`]) or another choice of which levels read
+/// their angle from the parent's axis ([`angle_readings`]). The angle choices are taken
+/// from the unedited tree, so an edit of lengths cannot also change them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reading {
     /// The generator's readings as they are.
@@ -106,24 +107,11 @@ impl Reading {
     }
 }
 
-/// The tree's parameters under `reading`.
+/// The tree's parameters under `reading` (unchanged for the angle readings).
 pub fn apply(tree: &Tree, reading: Reading) -> Tree {
     let mut t = tree.clone();
     match reading {
-        Reading::AsIs => {}
-        // A level springing from a stub is read from the axis already; mirroring its
-        // curve would turn it back to the plane reading.
-        Reading::AngleFromAxis(i) => {
-            if !springs_from_stub(tree, i) {
-                mirror_angle(&mut t, i)
-            }
-        }
-        Reading::AngleFromAxisAllWood => {
-            (1..wood_levels(tree)).filter(|&i| !springs_from_stub(tree, i)).for_each(|i| mirror_angle(&mut t, i))
-        }
-        Reading::AngleFromPlaneEverywhere => {
-            (1..wood_levels(tree)).filter(|&i| springs_from_stub(tree, i)).for_each(|i| mirror_angle(&mut t, i))
-        }
+        Reading::AsIs | Reading::AngleFromAxis(_) | Reading::AngleFromAxisAllWood | Reading::AngleFromPlaneEverywhere => {}
         Reading::NoLengthSpread => t.levels.iter_mut().for_each(|lv| lv.curves[4].variance = 0.0),
         Reading::NoBend => t.levels.iter_mut().for_each(|lv| lv.curves[0].variance = 0.0),
         Reading::FrequencyOverSpan => t.levels.iter_mut().for_each(|lv| lv.frequency *= (lv.last - lv.first).abs()),
@@ -136,15 +124,27 @@ fn wood_levels(tree: &Tree) -> usize {
     tree.levels.len().saturating_sub(1)
 }
 
-/// Level i's 6007 angle read the other way: under the plane reading the generator turns
-/// a child 90° − value away from the parent's axis, so with the curve mirrored about 90°
-/// it turns the value itself (the spread is symmetric, so it carries over), and the
-/// other way round for a level springing from a stub.
-fn mirror_angle(t: &mut Tree, i: usize) {
-    if let Some(lv) = t.levels.get_mut(i) {
-        let c = &mut lv.curves[7];
-        (c.min, c.max) = (90.0 - c.min, 90.0 - c.max);
+/// Per level, whether `reading` measures its 6007 angle from the parent's axis: the
+/// generator's choice for the unedited `tree` (`generate::angle_from_axis`), changed only
+/// by the angle readings.
+pub fn angle_readings(tree: &Tree, reading: Reading) -> Vec<bool> {
+    let mut a = angle_from_axis(tree);
+    match reading {
+        Reading::AngleFromAxis(i) => {
+            if let Some(x) = a.get_mut(i) {
+                *x = true;
+            }
+        }
+        Reading::AngleFromAxisAllWood => (1..wood_levels(tree)).for_each(|i| a[i] = true),
+        Reading::AngleFromPlaneEverywhere => a.iter_mut().for_each(|x| *x = false),
+        _ => {}
     }
+    a
+}
+
+/// The tree generated under `reading`.
+pub fn build(tree: &Tree, reading: Reading) -> Geometry {
+    generate_with(&apply(tree, reading), &angle_readings(tree, reading))
 }
 
 /// Every reading worth trying on `tree`: as is, the angle from the axis on each wood
@@ -171,7 +171,7 @@ pub fn shapes(tree: &Tree) -> Vec<Shape> {
     readings(tree)
         .into_iter()
         .map(|reading| {
-            let g = generate(&apply(tree, reading));
+            let g = build(tree, reading);
             Shape {
                 reading,
                 leaves: g.leaves.len(),
