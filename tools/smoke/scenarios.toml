@@ -34273,12 +34273,13 @@ expect = [
 name = "spt-shape"
 kind = "tool"
 source = "docs/spec-notes/speedtree.md §4 (billboard width : height [observed] against the generated trees) and §7 (#3126: EuonymusBush01 generated too wide)"
-note = "fnvtool spt shape generates every base-game tree under the generator's readings and the probe readings (fnv_spt::probe). The as_is row with full cards is what the renderer scales by. Euonymus is marked known_failing until #3126's cause is found; the other two hold the fit the note records. Read the other readings' rows (no expectations) to single out the cause (§7)."
+note = "fnvtool spt shape generates every base-game tree under the generator's readings and the probe readings (fnv_spt::probe). The as_is row with full cards is what the renderer scales by. Since #3126 branches springing from a stub take their angle from the stub's axis (EuonymusBush01 2.19 -> 1.18, measured 2026-11-21 as the probe's angle_from_axis_level_1 row); angle_from_plane_everywhere is the reading before it."
 areas = ["renderer"]
 paths = ["crates/fnv-spt/", "crates/fnvtool/src/spt_cmd.rs"]
 commands = [["spt", "shape", "{data}/Fallout - Meshes.bsa"]]
 expect = [
   { json = "files.?tree=wastelandshrub01.shapes.?reading=as_is.full_cards.aspect", schema = "fnv.spt.shape/1", range = [1.27, 1.61], count = 1, label = "WastelandShrub01 within its recorded error of the billboard's 1.44 (generated 1.28, speedtree.md §4)" },
   { json = "files.?tree=whiteoak01.shapes.?reading=as_is.full_cards.aspect", schema = "fnv.spt.shape/1", range = [0.56, 0.68], count = 1, label = "WhiteOak01 within 10 % of the billboard's 0.62 (generated 0.63, speedtree.md §4)" },
-  { json = "files.?tree=euonymusbush01.shapes.?reading=as_is.full_cards.aspect", schema = "fnv.spt.shape/1", range = [1.17, 1.43], count = 1, label = "EuonymusBush01 within 10 % of the billboard's 1.30", known_failing = "#3126: the generator gives 2.19 (speedtree.md §4); the cause is not found yet (§7)" },
+  { json = "files.?tree=euonymusbush01.shapes.?reading=as_is.full_cards.aspect", schema = "fnv.spt.shape/1", range = [1.17, 1.43], count = 1, label = "EuonymusBush01 within 10 % of the billboard's 1.30 (2.19 before #3126: its stems on a 0.01 stub lay flat)" },
+  { json = "files.?tree=euonymusbush01.shapes.?reading=angle_from_plane_everywhere.full_cards.aspect", schema = "fnv.spt.shape/1", range = [2.0, 2.4], count = 1, label = "the reading before #3126 still gives EuonymusBush01's old 2.19 (the probe reproduces the old generator)" },
 ]

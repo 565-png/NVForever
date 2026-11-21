@@ -92,7 +92,7 @@ one level:
 | 6004 | 0.01-0.8 | branch length, fraction of the tree size, over the position along the parent |
 | 6005 | 0.0009-0.08 | branch base radius, fraction of the tree size, over the position along the parent |
 | 6006 | 0-1 | radius along the branch (taper; 1 at the base, ~0 at the tip in all files) |
-| 6007 | −90 to 90 degrees | angle of the branch out of the plane across its parent, positive towards the parent's tip, over the position along the parent (trunk: −90; leaves: 90) |
+| 6007 | −90 to 90 degrees | angle of the branch out of the plane across its parent, positive towards the parent's tip, over the position along the parent (trunk: −90; leaves: 90); for branches springing from a stub, the angle from the parent's axis instead (§7) |
 
 A curve's value at x: the curve y(x) (a cubic Bézier through the control points, with
 the control handles at each point's tangent × length) scaled to [min, max], plus a
@@ -107,7 +107,7 @@ measured from the plane across the parent, the generated trees come out at
 |---|---|---|
 | WastelandShrub01 | 0.891 : 0.617 = 1.44 | 1.28 |
 | WhiteOak01 | 0.611 : 0.990 = 0.62 | 0.63 |
-| EuonymusBush01 | 0.846 : 0.650 = 1.30 | 2.19 (open question, §7) |
+| EuonymusBush01 | 0.846 : 0.650 = 1.30 | 1.18 (2.19 before the stub reading, §7) |
 
 "Generated" is the generated tree's width (the larger of its x and y spans, leaf cards at
 their full width) over its height (up to the cards' top edges): what the renderer scales
@@ -128,7 +128,8 @@ cards, each a picture of a whole twig cluster).
 `crates/fnv-spt` builds a tree from §3-§4 with its own deterministic random numbers seeded
 by tag 2005: tube branches (segments along and around from 6008/6009, at least 3 sides),
 6012 × length children spread along [6010, 6011] at golden-angle steps around the
-parent, each turned by the 6007 angle and bent randomly by the 6000 variance; leaf
+parent, each turned by the 6007 angle (from the parent's axis when the parent is a stub,
+§7) and bent randomly by the 6000 variance; leaf
 cards at the child positions of the last wood level, a leaf map picked at random per
 card, drawn facing the camera. The tree size is 1; the renderer scales the tree so its
 larger dimension (width or height) equals the TREE record's billboard size (larger of
@@ -203,46 +204,65 @@ distant tree pictures; not applied.
 
 - Meanings of 2001/2003/2006/2007; the remaining curves (6001-6003, 6017).
 - Whether the frequency counts over the whole branch or only [6010, 6011].
-- EuonymusBush01 comes out too wide (§4, #3126; below); WhiteOak01's OBND (1567 high)
-  is twice its billboard (768).
+- Whether the stub reading for EuonymusBush01 (below) is the original's rule or a fit;
+  WhiteOak01's OBND (1567 high) is twice its billboard (768).
 - How SNAM seeds beyond the first are used (WhiteOak01 has five: variants per reference?).
 - Leaf curvature and leaf angles (CNAM), 3000-3010, 9000-9014; whether dimming also
   depends on depth into the crown, not only height; the `.spt` wind section
   (16000s); the wind direction and how the original maps the CNAM speeds.
 - Fronds (13000/14000 sections).
 
-### EuonymusBush01's width (#3126) [hypothesis]
+### EuonymusBush01's width (#3126)
 
-The generated bush is 2.19 times as wide as tall, its billboard 1.30 (§4); in the planters
-of Tenpenny Tower and the Citadel (TTW) it shows as a flat, spread-out crown. This note
-records no level parameters of EuonymusBush01 (only WastelandShrub01's, §4), so the
-cause cannot be read off the generator alone. Candidates, each with what it predicts in
-`fnvtool spt shape` (`fnv_spt::probe`; the readings are edits of the parsed parameters,
-the generator is unchanged):
+The generated bush came out 2.19 times as wide as tall, its billboard 1.30 (§4); in the
+planters of Tenpenny Tower and the Citadel (TTW) it showed as a flat, spread-out crown.
 
-| Candidate | Row / measure that shows it |
-|---|---|
-| Leaf cards large next to the crown: their full width (transparent margins included) widens the tree more than their height raises it | `as_is`, `card_pivots.aspect` near 1.30 while `full_cards.aspect` is 2.19 |
-| One side against the larger side: the billboard is one view, the width the larger of two spans; a crown of few stems is lopsided | `as_is`, `full_cards.x` and `.y` far apart |
-| The 6007 angle of one level measured from the parent's axis, not from the plane across it (for all levels at once it made WastelandShrub01 a column, §4) | `angle_from_axis_level_1`, `angle_from_axis_level_2` |
-| The 6004 length spread (± variance, in tree sizes) letting a few long stems set the width | `no_length_spread` |
-| The 6000 bend | `no_bend` |
-| 6012 counted over [6010, 6011] only (changes density more than shape) | `frequency_over_span` |
+Parameters of the three trees [observed: `fnvtool spt shape` on the test install,
+2026-11-21; lengths in tree sizes, angles in degrees, ± the curve's variance]:
 
-The check, one command with the base game's meshes archive (fnvtool built from the root
-workspace): `fnvtool spt shape "<Data>/Fallout - Meshes.bsa"`, or the smoke scenario
-`spt-shape`. Expected: the `as_is` full-card aspects as in §4 (WastelandShrub01 1.28,
-WhiteOak01 0.63, EuonymusBush01 2.19; other figures mean the generator changed since the
-table). A candidate is supported when its row gives EuonymusBush01 1.17-1.43 (within
-10 % of 1.30) and keeps WastelandShrub01 within 1.27-1.61 and WhiteOak01 within
-0.56-0.68 under the same reading; the generator then takes that reading and the
-scenario's `known_failing` mark goes. If no row does, the next readings need a generator
-change rather than a parameter edit (a child's length as a fraction of its parent's, not
-of the tree; one of the unread curves 6001-6003 pulling branches up or down), and the
-`levels` part of the output (EuonymusBush01's curves, counts and leaf card sizes) belongs
-in §4 beside WastelandShrub01's for comparison.
+| Tree | Trunk (level 0) | Level 1 | Level 2 |
+|---|---|---|---|
+| EuonymusBush01 | 0.01 long, 800 per unit (8 stems over 0-0.8) | 0.1-0.2 long, 10-40° ± 15 (40 at the base falling to 10), bend 40, 35 per unit over 0.2-0.75 | 0.02-0.04 ± 0.03 long, 50-60° ± 15, 400 per unit; cards 0.04-0.05 |
+| WastelandShrub01 | 0.1 long, bend 50, 400 per unit | 0.05-0.12 long, 0-75°, 100 per unit over 0.15-1 | 0.01-0.03 long, 0-45°, 200 per unit; cards 0.09-0.11 |
+| WhiteOak01 | 0.5 ± 0.15 long, 50 per unit over 0.25-0.93 | 0.12-0.18 ± 0.03 long, −10-60° ± 25, 15 per unit over 0.1-0.8 | 0.068-0.101 ± 0.03 long, −10-75° ± 15, 600 per unit; cards 0.08-0.1 |
+
+Width : height under the readings of `fnv_spt::probe` (full cards / card pivots only /
+wood only) [observed: the same run, fnvtool built from 46a60e632, before the change
+below]:
+
+| Reading | EuonymusBush01 | WastelandShrub01 | WhiteOak01 |
+|---|---|---|---|
+| as is (plane reading everywhere) | 2.19 / 2.29 / 2.29 | 1.28 / 1.20 / 1.20 | 0.63 / 0.53 / 0.53 |
+| level 1 angle from the parent's axis | 1.18 / 0.99 / 0.99 | 1.30 / 1.22 / 1.22 | 0.52 / 0.39 / 0.39 |
+| level 2 angle from the parent's axis | 2.10 / 2.29 / 2.29 | 1.30 / 1.20 / 1.20 | 0.70 / 0.59 / 0.59 |
+| no 6004 length spread | 2.34 / 2.52 / 2.52 | 1.28 / 1.20 / 1.20 | 0.63 / 0.54 / 0.54 |
+| no 6000 bend | 2.83 / 2.75 / 2.75 | 1.24 / 1.22 / 1.22 | 0.67 / 0.58 / 0.58 |
+| 6012 over [6010, 6011] only | 1.96 / 2.05 / 2.05 | 1.23 / 1.24 / 1.24 | 0.62 / 0.54 / 0.54 |
+
+What this rules out: the leaf cards (the bush's are small, 0.04-0.05; without them it is
+wider still), one side against the larger side (x and y spans within 4 %), the length
+spread, the bend and the frequency span. Only the level-1 angle moves the bush into the
+billboard's range, and its stems are the case the plane reading fits worst: 10-40° from
+the plane across an upright trunk is a plate of stems; 10-40° from the trunk's axis is a
+vase. Read from the axis on every tree, WhiteOak01 drops to 0.52 [observed, above],
+outside 10 % of its 0.62, while its branches on a 0.5 trunk fit the plane reading
+(0.63).
+
+Reading used [hypothesis: fitted to these three trees]: a level whose parent is shorter
+than the level's shortest branch can be (parent's largest 6004 length plus spread below
+the level's smallest minus spread) springs from a stub, and its 6007 angle is measured
+from the parent's axis; every other level keeps the plane reading. In the base game only
+EuonymusBush01's level 1 qualifies (0.01 trunk, stems from 0.1); WastelandShrub01 (0.1
+trunk, stems from 0.05) and WhiteOak01 do not, so their trees are unchanged. The
+generator takes the spread as 1 − r on such a level, which builds the same branches as
+the measured "level 1 from the axis" row: EuonymusBush01 1.18 (within 10 % of 1.30),
+WastelandShrub01 1.28, WhiteOak01 0.63. The probe's `angle_from_plane_everywhere` gives
+the generator before the change; `fnvtool spt shape` prints `springs_from_stub` per level,
+which shows the trees in other archives (TTW's Fallout 3 trees) the rule touches. To
+confirm against the original: the bush in a Tenpenny Tower planter, the same view in both
+games.
 
 Separate from the aspect: the renderer sets the tree's larger side to the whole BNAM size
 (§5), while the billboards' opaque part covers 0.85-0.99 of the square (§4). If the
 billboard shows the tree at the BNAM size, the original bush is about 0.85 × BNAM wide,
-so even with the right aspect NVForever's would be about 18 % larger [hypothesis].
+so NVForever's would be about 18 % larger [hypothesis].

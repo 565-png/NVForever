@@ -1,4 +1,5 @@
 use super::*;
+use crate::generate::springs_from_stub;
 
 /// Builds a file entry by entry (layouts as in speedtree.md §2).
 #[derive(Default)]
@@ -189,7 +190,15 @@ fn probe_readings() {
     // Three levels: one wood level grows from another (level 1).
     assert_eq!(
         readings(&t),
-        [Reading::AsIs, Reading::AngleFromAxis(1), Reading::NoLengthSpread, Reading::NoBend, Reading::FrequencyOverSpan]
+        [
+            Reading::AsIs,
+            Reading::AngleFromAxis(1),
+            Reading::AngleFromAxisAllWood,
+            Reading::AngleFromPlaneEverywhere,
+            Reading::NoLengthSpread,
+            Reading::NoBend,
+            Reading::FrequencyOverSpan
+        ]
     );
     let axis = apply(&t, Reading::AngleFromAxis(1));
     assert_eq!((axis.levels[1].angle().min, axis.levels[1].angle().max), (90.0, 80.0));
@@ -202,5 +211,43 @@ fn probe_readings() {
     // Stems 0-10° off the axis instead of off the plane: a column, not a plate.
     assert!(s[1].full.aspect() < 0.7 * s[0].full.aspect(), "{:?} vs {:?}", s[1].full, s[0].full);
     // Fewer children over the 0.2-1.0 span.
-    assert!(s[4].leaves < s[0].leaves, "{} vs {}", s[4].leaves, s[0].leaves);
+    assert!(s[6].leaves < s[0].leaves, "{} vs {}", s[6].leaves, s[0].leaves);
+    // One wood level above the trunk: all wood is that level.
+    assert_eq!(apply(&t, Reading::AngleFromAxisAllWood), axis);
+    // The 0.3 trunk is no shorter than its 0.3-0.4 stems: no stub, the plane reading
+    // already.
+    assert!(!springs_from_stub(&t, 1));
+    assert_eq!(apply(&t, Reading::AngleFromPlaneEverywhere), t);
+    // On a stub the generator reads from the axis already: nothing to mirror.
+    let stub = stub_bush();
+    assert_eq!(apply(&stub, Reading::AngleFromAxis(1)), stub);
+    assert_eq!(apply(&stub, Reading::AngleFromAxisAllWood), stub);
+    assert_ne!(apply(&stub, Reading::AngleFromPlaneEverywhere), stub);
+}
+
+/// The made-up bush on a 0.01 stub instead of its 0.3 trunk (#3126: EuonymusBush01's
+/// stems spring from a trunk a tenth of their length).
+fn stub_bush() -> Tree {
+    let mut t = flat_bush();
+    let c = &mut t.levels[0].curves[4];
+    (c.min, c.max) = (0.01, 0.01);
+    t.levels[0].frequency = 800.0;
+    t
+}
+
+/// Branches springing from a stub take their 6007 angle from the stub's axis, so stems
+/// at 0-10° stand up instead of lying flat (speedtree.md §7, #3126).
+#[test]
+fn stems_on_a_stub_stand_up() {
+    use crate::probe::{apply, extents, Cards, Reading};
+    let stub = stub_bush();
+    assert!(springs_from_stub(&stub, 1) && !springs_from_stub(&stub, 2) && !springs_from_stub(&stub, 0));
+    let now = extents(&generate(&stub), Cards::Full);
+    // The reading before #3126: the same stems 0-10° off the plane, a flat plate.
+    let before = extents(&generate(&apply(&stub, Reading::AngleFromPlaneEverywhere)), Cards::Full);
+    assert!(before.aspect() > 2.0, "{before:?}");
+    assert!(now.aspect() < 1.0, "{now:?}");
+    // Every branch springs straight up within 10° of the stub's axis.
+    let g = generate(&stub);
+    assert!(g.leaves.iter().all(|l| l.position[2] > 0.0));
 }

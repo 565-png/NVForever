@@ -382,9 +382,11 @@ Not compared by the lab (no golden).
 `fnvtool spt shape <archive> [--filter text]` → `fnv.spt.shape/1`: `files`, one per `.spt`
 (paths containing the filter text): `path`, `tree` (file name, lower case, no extension),
 `seed`, `levels` (per level: `curves` keyed 6000-6007 as `min`, `max`, `variance`, `y` at
-0, 0.5 and 1; `segments`, `first`, `last`, `frequency`), `leaf_maps` (`size`, `pivot`),
-`shapes`: per reading of `fnv_spt::probe` (`reading`: `as_is`,
-`angle_from_axis_level_<i>`, `no_length_spread`, `no_bend`, `frequency_over_span`) the
+0, 0.5 and 1; `segments`, `first`, `last`, `frequency`, `springs_from_stub`: the level's
+angle is read from the parent's axis), `leaf_maps` (`size`, `pivot`), `shapes`: per
+reading of `fnv_spt::probe` (`reading`: `as_is`, `angle_from_axis_level_<i>`,
+`angle_from_axis_all_wood`, `angle_from_plane_everywhere` (the generator before #3126),
+`no_length_spread`, `no_bend`, `frequency_over_span`) the
 `leaves` and three extents, `full_cards`, `card_pivots` and `wood`, each `x`, `y`, `top`,
 `aspect` (larger span ÷ top). For speedtree.md §7; smoke scenario `spt-shape`.
 

@@ -1,5 +1,6 @@
 use crate::source::{process, read_one};
 use crate::SptCmd;
+use fnv_spt::generate::springs_from_stub;
 use fnv_spt::probe::{shapes, Extents};
 use fnv_spt::{generate, parse_entries, Curve, Payload, Tree};
 use serde_json::{json, Value};
@@ -76,11 +77,12 @@ fn shape_row(path: &str, data: &[u8]) -> Value {
     let levels: Vec<Value> = t
         .levels
         .iter()
-        .map(|l| {
+        .enumerate()
+        .map(|(i, l)| {
             let curves: serde_json::Map<String, Value> =
                 l.curves.iter().enumerate().map(|(i, c)| ((6000 + i).to_string(), curve(c))).collect();
             json!({"curves": curves, "segments": [l.segments_along, l.segments_around], "first": l.first,
-                   "last": l.last, "frequency": l.frequency})
+                   "last": l.last, "frequency": l.frequency, "springs_from_stub": springs_from_stub(&t, i)})
         })
         .collect();
     let maps: Vec<Value> = t.leaf_maps.iter().map(|m| json!({"size": m.size, "pivot": m.pivot})).collect();

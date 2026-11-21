@@ -3,6 +3,7 @@
 //! measuring rules, and the tree generated under other readings of the level
 //! parameters. Not used by the renderer; `fnvtool spt shape` prints them.
 
+use crate::generate::springs_from_stub;
 use crate::{generate, Geometry, Tree};
 
 /// How leaf cards count towards the extents.
@@ -76,6 +77,12 @@ pub enum Reading {
     /// Level i's 6007 angle measured from the parent's axis instead of from the plane
     /// across it (only for that level).
     AngleFromAxis(usize),
+    /// The 6007 angle from the parent's axis on every wood level that grows from another
+    /// (levels 1 to the last wood level), not just one.
+    AngleFromAxisAllWood,
+    /// The 6007 angle from the plane across the parent on every level, branches springing
+    /// from a stub too: the generator's reading before #3126.
+    AngleFromPlaneEverywhere,
     /// No random spread on any level's 6004 length.
     NoLengthSpread,
     /// No random bend (6000 variance) on any level.
@@ -90,6 +97,8 @@ impl Reading {
         match self {
             Reading::AsIs => "as_is".into(),
             Reading::AngleFromAxis(i) => format!("angle_from_axis_level_{i}"),
+            Reading::AngleFromAxisAllWood => "angle_from_axis_all_wood".into(),
+            Reading::AngleFromPlaneEverywhere => "angle_from_plane_everywhere".into(),
             Reading::NoLengthSpread => "no_length_spread".into(),
             Reading::NoBend => "no_bend".into(),
             Reading::FrequencyOverSpan => "frequency_over_span".into(),
@@ -102,14 +111,18 @@ pub fn apply(tree: &Tree, reading: Reading) -> Tree {
     let mut t = tree.clone();
     match reading {
         Reading::AsIs => {}
+        // A level springing from a stub is read from the axis already; mirroring its
+        // curve would turn it back to the plane reading.
         Reading::AngleFromAxis(i) => {
-            if let Some(lv) = t.levels.get_mut(i) {
-                // The generator turns a child 90° − value away from the parent's axis;
-                // with the curve mirrored about 90° it turns the value itself (the
-                // spread is symmetric, so it carries over).
-                let c = &mut lv.curves[7];
-                (c.min, c.max) = (90.0 - c.min, 90.0 - c.max);
+            if !springs_from_stub(tree, i) {
+                mirror_angle(&mut t, i)
             }
+        }
+        Reading::AngleFromAxisAllWood => {
+            (1..wood_levels(tree)).filter(|&i| !springs_from_stub(tree, i)).for_each(|i| mirror_angle(&mut t, i))
+        }
+        Reading::AngleFromPlaneEverywhere => {
+            (1..wood_levels(tree)).filter(|&i| springs_from_stub(tree, i)).for_each(|i| mirror_angle(&mut t, i))
         }
         Reading::NoLengthSpread => t.levels.iter_mut().for_each(|lv| lv.curves[4].variance = 0.0),
         Reading::NoBend => t.levels.iter_mut().for_each(|lv| lv.curves[0].variance = 0.0),
@@ -118,12 +131,28 @@ pub fn apply(tree: &Tree, reading: Reading) -> Tree {
     t
 }
 
+/// Levels that grow wood (all but the leaf level).
+fn wood_levels(tree: &Tree) -> usize {
+    tree.levels.len().saturating_sub(1)
+}
+
+/// Level i's 6007 angle read the other way: under the plane reading the generator turns
+/// a child 90° − value away from the parent's axis, so with the curve mirrored about 90°
+/// it turns the value itself (the spread is symmetric, so it carries over), and the
+/// other way round for a level springing from a stub.
+fn mirror_angle(t: &mut Tree, i: usize) {
+    if let Some(lv) = t.levels.get_mut(i) {
+        let c = &mut lv.curves[7];
+        (c.min, c.max) = (90.0 - c.min, 90.0 - c.max);
+    }
+}
+
 /// Every reading worth trying on `tree`: as is, the angle from the axis on each wood
 /// level that grows from another (not the trunk, not the leaf level), and the rest.
 pub fn readings(tree: &Tree) -> Vec<Reading> {
     let mut out = vec![Reading::AsIs];
-    out.extend((1..tree.levels.len().saturating_sub(1)).map(Reading::AngleFromAxis));
-    out.extend([Reading::NoLengthSpread, Reading::NoBend, Reading::FrequencyOverSpan]);
+    out.extend((1..wood_levels(tree)).map(Reading::AngleFromAxis));
+    out.extend([Reading::AngleFromAxisAllWood, Reading::AngleFromPlaneEverywhere, Reading::NoLengthSpread, Reading::NoBend, Reading::FrequencyOverSpan]);
     out
 }
 

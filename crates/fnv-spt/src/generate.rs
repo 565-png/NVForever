@@ -148,6 +148,7 @@ fn grow(tree: &Tree, li: usize, base: V, dir: V, length: f32, radius: f32, rng: 
     }
     let cl = &tree.levels[child];
     let leafy = child == levels - 1;
+    let from_axis = springs_from_stub(tree, child);
     // Children per unit of length (6012), rounded up or down at random.
     let n = (lv.frequency.max(0.0) * length + rng.f()).floor().min(MAX_CHILDREN) as usize;
     let mut azimuth = rng.f() * std::f32::consts::TAU;
@@ -168,8 +169,16 @@ fn grow(tree: &Tree, li: usize, base: V, dir: V, length: f32, radius: f32, rng: 
         let parent_r = radius * lv.taper().y(t).max(0.0);
         let crad = cl.radius().sample(t, rng.f()).clamp(0.0, parent_r.max(0.0));
         // Measured from the plane across the parent, positive towards its tip
-        // [hypothesis: WhiteOak01's level-1 range −10° to 60° only makes sense so].
-        let angle = std::f32::consts::FRAC_PI_2 - cl.angle().sample(t, rng.f()).to_radians();
+        // [hypothesis: WhiteOak01's level-1 range −10° to 60° only makes sense so]; from
+        // the parent's axis for branches springing from a stub (`springs_from_stub`).
+        let angle = if from_axis {
+            // The spread taken as 1 − r: the same branches as the curve mirrored about
+            // 90° under the plane reading (fnv_spt::probe, the measured rows of
+            // speedtree.md §7).
+            cl.angle().sample(t, 1.0 - rng.f()).to_radians()
+        } else {
+            std::f32::consts::FRAC_PI_2 - cl.angle().sample(t, rng.f()).to_radians()
+        };
         azimuth += GOLDEN + 0.3 * (2.0 * rng.f() - 1.0);
         let axis = rotate(perpendicular(along), along, azimuth);
         let cdir = norm(rotate(along, axis, angle));
@@ -208,6 +217,20 @@ fn tube(lv: &Level, pts: &[V], dirs: &[V], radius: f32, g: &mut Geometry) {
             g.indices.extend([a, b, c, a, c, d]);
         }
     }
+}
+
+/// Whether level `i`'s branches spring from a stub: a parent shorter than the shortest
+/// branch of level i can be (6004 range and spread). Their 6007 angle is then measured
+/// from the parent's axis, not from the plane across it (speedtree.md §4, §7)
+/// [hypothesis: fitted to the three base-game trees' billboards; EuonymusBush01's stems
+/// (10-40°) on a 0.01 trunk stand up only so, while WhiteOak01's branches on its 0.5 trunk
+/// fit the plane reading].
+pub fn springs_from_stub(tree: &Tree, i: usize) -> bool {
+    let (Some(parent), Some(lv)) = (i.checked_sub(1).and_then(|p| tree.levels.get(p)), tree.levels.get(i)) else {
+        return false;
+    };
+    let (p, c) = (parent.length(), lv.length());
+    p.min.max(p.max) + p.variance.abs() < c.min.min(c.max) - c.variance.abs()
 }
 
 /// Point and direction at fraction t of a centre line.
