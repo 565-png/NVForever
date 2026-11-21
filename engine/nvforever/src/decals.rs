@@ -28,6 +28,9 @@
 //!   seconds, no wider than [`ACTOR_MAX_SIDE`] and thin ([`ACTOR_DEPTH`]) so a flat mark
 //!   does not show past a limb's curve. Elsewhere it hangs from the drawn cell it lies
 //!   in, none outside the drawn cells.
+//! - **Blood on the world behind a shot actor** ([`ImpactFx::splatter`], combat's
+//!   `world_blood`, impact-decals.md §4a) is a world decal like a bullet hole's, counted
+//!   on its own in the log.
 //! - **Not kept** (the owner, 2026-10-20: "make sure the scorch marks and bullet holes
 //!   arent persistent i dont want to jam up the engine remembering all these"): decals
 //!   are only drawn entities, never saved nor remembered by a cell; they go with their
@@ -131,6 +134,10 @@ struct Decals {
     /// limits.
     off_body: u32,
     actor_limit: u32,
+    /// Blood splatters on the world behind shot actors ([`ImpactFx::splatter`]): sent, and
+    /// placed.
+    splatters: u32,
+    splatters_placed: u32,
 }
 
 impl Default for Decals {
@@ -154,6 +161,8 @@ impl Default for Decals {
             last_on: HashMap::new(),
             off_body: 0,
             actor_limit: 0,
+            splatters: 0,
+            splatters_placed: 0,
         }
     }
 }
@@ -210,6 +219,7 @@ fn place(
             st.no_decal += 1;
             continue;
         }
+        st.splatters += u32::from(hit.splatter);
         let Some(impact) = sfx.forms.impacts.get(&hit.impact) else { continue };
         let Some((set, data)) = sfx.forms.decal(impact) else { continue };
         let Some(set_id) = impact.texture_set else { continue };
@@ -376,7 +386,21 @@ fn place(
         let entity = commands
             .spawn((ForwardDecal, MeshMaterial3d(material.clone()), place, Visibility::default(), RenderLayers::layer(DECAL_LAYER), Decal { age: 0.0, material }, ChildOf(parent)))
             .id();
-        if st.reported.insert(hit.impact) {
+        if hit.splatter && st.splatters_placed == 0 {
+            info!(
+                "decals: {} splatters blood ({}) on the world behind a shot actor at ({:.0}, {:.0}, {:.0}), facing ({:.2}, {:.2}, {:.2}): side {side:.0}",
+                impact.edid.as_deref().unwrap_or("?"),
+                set.edid.as_deref().unwrap_or("?"),
+                point.x,
+                point.y,
+                point.z,
+                normal_dir.x,
+                normal_dir.y,
+                normal_dir.z
+            );
+        }
+        st.splatters_placed += u32::from(hit.splatter);
+        if !hit.splatter && st.reported.insert(hit.impact) {
             info!(
                 "decals: {} leaves {} ({}) on {}: side {side:.0} of {:.0}-{:.0}, depth {:.0}",
                 impact.edid.as_deref().unwrap_or("?"),
@@ -455,6 +479,9 @@ fn report(mut exit: MessageReader<AppExit>, st: Res<Decals>) {
             "decals: on actors, {} hits whose line met no drawn shape left none, {} were left out by the actor limits ({MAX_PER_ACTOR} alive, one each {ACTOR_GAP} s)",
             st.off_body, st.actor_limit
         );
+    }
+    if exit_seen && st.splatters > 0 {
+        info!("decals: blood on the world behind shot actors: {} splatters sent, {} placed", st.splatters, st.splatters_placed);
     }
     if exit_seen && st.no_decal > 0 {
         info!("decals: {} hits on actors flagged No Blood Decal left none", st.no_decal);
@@ -612,7 +639,7 @@ mod tests {
         let before = world.resource::<Decals>().placed;
         let mut hits = world.resource_mut::<Messages<ImpactFx>>();
         hits.clear();
-        hits.write(ImpactFx { impact, shooter: FormId(0), point: [5.0, 6.0, 7.0], normal: [0.0, 0.0, 1.0], dir: [0.0, 0.0, -1.0], actor: None, no_spray: false, no_decal: false });
+        hits.write(ImpactFx { impact, shooter: FormId(0), point: [5.0, 6.0, 7.0], normal: [0.0, 0.0, 1.0], dir: [0.0, 0.0, -1.0], actor: None, no_spray: false, no_decal: false, splatter: false });
         world.run_system_once(place).unwrap();
         assert_eq!(world.resource::<Decals>().placed, before + 1, "actual impact producer must create the recipient");
         let entity = world.resource::<Decals>().live.back().unwrap().entity;

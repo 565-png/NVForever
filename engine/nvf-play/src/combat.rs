@@ -461,6 +461,10 @@ pub struct ImpactFx {
     /// decal, is not shown ([`show_impact`], docs/spec-notes/actor-flags.md §2).
     pub no_spray: bool,
     pub no_decal: bool,
+    /// Decal only: the blood a shot on an actor leaves on a wall or the floor behind or
+    /// below it ([`world_blood`], docs/spec-notes/impact-decals.md §4a). It shows no
+    /// model, plays no sound and is heard by no one (its `shooter` is no one).
+    pub splatter: bool,
 }
 
 /// An explosion went off: its EXPL and where.
@@ -963,6 +967,12 @@ pub struct CombatStats {
     pub harmless_hits: u32,
     /// Of those, the hits whose target's OnHit / OnHitWith blocks ran.
     pub harmless_scripts: u32,
+    /// Blood on the world behind shot actors ([`world_blood`]): the hits that rolled for
+    /// it, those that won the roll, and of those the ones that met a surface (a splatter
+    /// sent to the decals).
+    pub blood_rolls: u32,
+    pub blood_won: u32,
+    pub blood_sent: u32,
 }
 
 /// A projectile in flight with where it left from, where it is drawn and whether it
@@ -1294,6 +1304,10 @@ pub struct Combat {
     /// The spent-ammo items' own rolls (docs/spec-notes/spent-ammo-items.md), so they
     /// leave the shots' rolls as they were.
     spent_rng: SplitMix,
+    /// The blood splatters' own rolls ([`world_blood`]), likewise.
+    blood_rng: SplitMix,
+    /// The splatter chance was logged ([`blood_chance`]).
+    blood_chance_logged: bool,
     /// A reload ended and no shot has been fired since (No Jam After Reload).
     pub fresh_reload: bool,
 }
@@ -2470,6 +2484,8 @@ fn init_combat(mut commands: Commands, d: Res<PlayWorld>) {
         kick_back_goal: [0.0; 2],
         kick_back: [crate::ease::Spring::default(); 2],
         spent_rng: SplitMix(4),
+        blood_rng: SplitMix(6),
+        blood_chance_logged: false,
     });
 }
 
@@ -2674,7 +2690,8 @@ fn impact_for(s: &Sfx, script: Option<&ScriptState>, sim: &SimState, weapon: For
 }
 
 /// Show an impact (the renderer's model and debris, `ImpactFx`) and play its sounds there.
-fn show_impact(s: &Sfx, script: Option<&ScriptState>, sim: &SimState, mut fx: ImpactFx, sounds: &mut MessageWriter<PlaySound>, impacts: &mut MessageWriter<ImpactFx>) {
+/// Gives the impact as sent, with the struck actor's No Blood flags.
+fn show_impact(s: &Sfx, script: Option<&ScriptState>, sim: &SimState, mut fx: ImpactFx, sounds: &mut MessageWriter<PlaySound>, impacts: &mut MessageWriter<ImpactFx>) -> ImpactFx {
     // The base from the simulation: the game's world is not attached outside its turn.
     if let (Some(a), Some(rt)) = (fx.actor, script.and_then(|s| s.rt.as_ref())) {
         if let Some(b) = sim.base_of(a) {
@@ -2689,6 +2706,47 @@ fn show_impact(s: &Sfx, script: Option<&ScriptState>, sim: &SimState, mut fx: Im
             sounds.write(PlaySound { sound, at: Some(fx.point) });
         }
     }
+    fx
+}
+
+/// How far from where a shot met an actor its blood can land on the world, units
+/// [documented: GECK wiki ITR:OnWoundSpray, "a valid surface within 512 units of the
+/// impact point in the projectile direction"].
+pub const WORLD_BLOOD_REACH: f32 = 512.0;
+
+/// The splatter chance without the `fCombatEnvironmentBloodChance` game setting
+/// [hypothesis: observer check 251].
+pub const WORLD_BLOOD_CHANCE: f32 = 0.5;
+
+/// The chance (0..=1) that a shot on an actor leaves blood on the world: the game setting
+/// `fCombatEnvironmentBloodChance` [documented: GECK wiki ITR:OnWoundSpray names it as
+/// the roll], a value above 1 read as a percentage, one up to 1 as a fraction
+/// [hypothesis: observer check 251]; [`WORLD_BLOOD_CHANCE`] without it.
+pub fn blood_chance(setting: Option<f32>) -> f32 {
+    match setting {
+        Some(v) if v > 1.0 => (v / 100.0).min(1.0),
+        Some(v) => v.max(0.0),
+        None => WORLD_BLOOD_CHANCE,
+    }
+}
+
+/// The blood a shot on an actor leaves on the world (docs/spec-notes/impact-decals.md
+/// §4a): `hit` is the impact sent for the actor (its No Blood Decal flag and the armour
+/// tweak already in `no_decal`), `roll` in [0, 1) against `chance`. The first surface
+/// `surface` finds (from, unit direction, reach → point and normal) along the shot, else
+/// straight down from the hit, within [`WORLD_BLOOD_REACH`], gets the same impact as a
+/// decal only ([`ImpactFx::splatter`]); none without a surface. At most one a hit
+/// [documented: GECK wiki ITR:OnWoundSpray, "the engine breaks out of the raycast loop
+/// on the first valid surface"]; the downward line is ours [hypothesis: observer check
+/// 251, the wiki names only the projectile's direction].
+pub fn world_blood(hit: &ImpactFx, roll: f32, chance: f32, mut surface: impl FnMut(V3, V3, f32) -> Option<(V3, V3)>) -> Option<ImpactFx> {
+    if hit.actor.is_none() || hit.no_decal || hit.splatter || roll >= chance {
+        return None;
+    }
+    let along = vec::normalize(hit.dir);
+    let lines = [along, [0.0, 0.0, -1.0]];
+    let (point, normal, dir) = lines.into_iter().filter(|d| vec::len(*d) > 0.5).find_map(|d| surface(hit.point, d, WORLD_BLOOD_REACH).map(|(p, n)| (p, n, d)))?;
+    Some(ImpactFx { impact: hit.impact, shooter: FormId(0), point, normal, dir, actor: None, no_spray: true, no_decal: false, splatter: true })
 }
 
 /// Whether a projectile of `damage` (the weapon's per projectile, before armour) does not
@@ -2816,23 +2874,7 @@ impl CombatWorld for PhysView<'_> {
         if len < 1e-4 {
             return None;
         }
-        // The world only: no body, living or dead, shields another from a blast, nor
-        // anything small or see-through (clutter, small debris, dropped weapons, fences,
-        // thin trees); walls, rocks, the ground and wrecks do (the owner, 2026-10-27).
-        let passes = layers::LayerSet::from_layers(&[
-            layers::TRANSPARENT,
-            layers::TRANSPARENT_SMALL,
-            layers::TRANSPARENT_SMALL_ANIM,
-            layers::INVISIBLE_WALL,
-            layers::CLUTTER,
-            layers::WEAPON,
-            layers::PROJECTILE,
-            layers::TREES,
-            layers::BIPED,
-            layers::DEAD_BIP,
-        ]);
-        let f = Filter { exclude_layers: layers::character_ignores().union(passes), no_actors: true, ..Default::default() };
-        let h = self.q.ray(from, d, len, &f)?;
+        let h = self.q.ray(from, d, len, &world_only())?;
         Some(WorldHit {
             point: h.point,
             normal: h.normal,
@@ -2892,6 +2934,33 @@ fn ghosts(script: Option<&ScriptState>, phys: &PhysState, sim: Option<&SimState>
     let flagged = phys.world.actor_volumes().filter(|&id| id != FormId::PLAYER_REF.0 && !set.contains(&(id as ActorId)) && sim.world.peek(FormId(id)).is_some_and(|s| rt.game.base_is_ghost(s.base, FormId(id))));
     let flagged: Vec<ActorId> = flagged.map(|id| id as ActorId).collect();
     set.into_iter().chain(flagged).collect()
+}
+
+/// The world only: no body, living or dead, shields another from a blast, nor anything
+/// small or see-through (clutter, small debris, dropped weapons, fences, thin trees);
+/// walls, rocks, the ground and wrecks do (the owner, 2026-10-27). Blood splatters land on
+/// the same surfaces ([`world_surface`]).
+fn world_only() -> Filter {
+    let passes = layers::LayerSet::from_layers(&[
+        layers::TRANSPARENT,
+        layers::TRANSPARENT_SMALL,
+        layers::TRANSPARENT_SMALL_ANIM,
+        layers::INVISIBLE_WALL,
+        layers::CLUTTER,
+        layers::WEAPON,
+        layers::PROJECTILE,
+        layers::TREES,
+        layers::BIPED,
+        layers::DEAD_BIP,
+    ]);
+    Filter { exclude_layers: layers::character_ignores().union(passes), no_actors: true, ..Default::default() }
+}
+
+/// The first wall, rock, floor or wreck ([`world_only`]) on the line from `from` along
+/// `dir` within `reach` units: its point and normal (game space).
+fn world_surface(phys: &mut PhysState, from: V3, dir: V3, reach: f32) -> Option<(V3, V3)> {
+    let h = phys.world.queries().ray(from, dir, reach, &world_only())?;
+    Some((h.point, h.normal))
 }
 
 fn view<'p>(phys: &'p mut PhysState, script: Option<&ScriptState>, sim: Option<&SimState>) -> PhysView<'p> {
@@ -4629,7 +4698,7 @@ fn melee(
                     Some(impact) => {
                         stats.melee_impacts += 1;
                         debug!("combat: melee impact {impact} ({material}) at ({:.0}, {:.0}, {:.0})", h.point[0], h.point[1], h.point[2]);
-                        show_impact(s, script.as_deref(), &sim, ImpactFx { impact, shooter: FormId::PLAYER_REF, point: h.point, normal: h.normal, dir, actor: actor.map(|a| a as u32), no_spray: false, no_decal: false }, &mut sounds, &mut impacts);
+                        show_impact(s, script.as_deref(), &sim, ImpactFx { impact, shooter: FormId::PLAYER_REF, point: h.point, normal: h.normal, dir, actor: actor.map(|a| a as u32), no_spray: false, no_decal: false, splatter: false }, &mut sounds, &mut impacts);
                     }
                     None => debug!("combat: {} has no impact for {material}", w.edid.as_deref().unwrap_or("?")),
                 }
@@ -5092,7 +5161,7 @@ fn actor_attacks(
             };
             if let (Some(impact), _) = picked {
                 stats.melee_impacts += 1;
-                show_impact(s, script.as_deref(), &sim, ImpactFx { impact, shooter: b.attacker, point: b.point, normal: vec::scale(b.dir, -1.0), dir: b.dir, actor: Some(b.target.0), no_spray: false, no_decal: false }, &mut sounds, &mut impacts);
+                show_impact(s, script.as_deref(), &sim, ImpactFx { impact, shooter: b.attacker, point: b.point, normal: vec::scale(b.dir, -1.0), dir: b.dir, actor: Some(b.target.0), no_spray: false, no_decal: false, splatter: false }, &mut sounds, &mut impacts);
             }
         }
         // A blow that lands wears the weapon once, as the player's (§17); the Fists and
@@ -5669,7 +5738,7 @@ fn fly(
             let impact = e.impact_dataset.zip(ground.as_ref().filter(|_| water.is_none())).and_then(|(set, g)| sfx.as_deref()?.forms.impact_id(set, fnv_combat::fx::impact_material(g.material)));
             if let (Some(impact), Some(g)) = (impact, ground.filter(|_| water.is_none())) {
                 // The dirt is the cause's (no one's without one): detection hears it as theirs.
-                effects.1.write(ImpactFx { impact, shooter: cause.map_or(FormId(0), |c| c.actor), point: g.point, normal: g.normal, dir: [0.0, 0.0, -1.0], actor: None, no_spray: false, no_decal: false });
+                effects.1.write(ImpactFx { impact, shooter: cause.map_or(FormId(0), |c| c.actor), point: g.point, normal: g.normal, dir: [0.0, 0.0, -1.0], actor: None, no_spray: false, no_decal: false, splatter: false });
                 if let Some(i) = sfx.as_deref().and_then(|s| s.forms.impacts.get(&impact)) {
                     for sound in i.sound_1.into_iter().chain(i.sound_2) {
                         effects.0.write(PlaySound { sound, at: Some(g.point) });
@@ -5853,7 +5922,7 @@ fn fly(
             if let Some(impact) = impact {
                 stats.water_splashes += 1;
                 debug!("combat: splash {impact} at ({:.0}, {:.0}, {:.0})", w.point[0], w.point[1], w.point[2]);
-                show_impact(s, script.as_deref(), &sim, ImpactFx { impact, shooter: w.shooter, point: w.point, normal: [0.0, 0.0, 1.0], dir: w.dir, actor: None, no_spray: false, no_decal: true }, &mut effects.0, &mut effects.1);
+                show_impact(s, script.as_deref(), &sim, ImpactFx { impact, shooter: w.shooter, point: w.point, normal: [0.0, 0.0, 1.0], dir: w.dir, actor: None, no_spray: false, no_decal: true, splatter: false }, &mut effects.0, &mut effects.1);
             }
         }
     }
@@ -5911,7 +5980,24 @@ fn fly(
                 impact_for(s, script.as_deref(), &sim, id, p.actor, p.material)
             };
             if let Some(impact) = impact {
-                show_impact(s, script.as_deref(), &sim, ImpactFx { impact, shooter, point: p.point, normal: p.normal, dir: p.dir, actor: p.actor.map(|a| a as u32), no_spray: on_weapon, no_decal: stopped || on_weapon }, &mut effects.0, &mut effects.1);
+                let sent = show_impact(s, script.as_deref(), &sim, ImpactFx { impact, shooter, point: p.point, normal: p.normal, dir: p.dir, actor: p.actor.map(|a| a as u32), no_spray: on_weapon, no_decal: stopped || on_weapon, splatter: false }, &mut effects.0, &mut effects.1);
+                // Blood on the wall or floor behind or below an organic actor
+                // ([`world_blood`]); none where its own blood decal is not left.
+                if p.actor.is_some() && !on_weapon && !sent.no_decal && material.starts_with("organic") {
+                    let setting = sim.world.setting_f32("fCombatEnvironmentBloodChance");
+                    let chance = blood_chance(setting);
+                    if !c.blood_chance_logged {
+                        c.blood_chance_logged = true;
+                        info!("combat: blood on the world behind shot actors: chance {chance:.2} (fCombatEnvironmentBloodChance {}), within {WORLD_BLOOD_REACH:.0} units along the shot, else below", setting.map_or("not set".to_string(), |v| format!("{v}")));
+                    }
+                    let roll = c.blood_rng.next_f32();
+                    stats.blood_rolls += 1;
+                    stats.blood_won += u32::from(roll < chance);
+                    if let Some(fx) = world_blood(&sent, roll, chance, |from, d, reach| world_surface(&mut phys, from, d, reach)) {
+                        stats.blood_sent += 1;
+                        effects.1.write(fx);
+                    }
+                }
             }
             let hit = p.actor.map(|a| a as u32).or(p.object.map(|o| o as u32));
             effects.4.write(crate::world_sounds::log_impact(s, hit, p.actor.is_some(), p.material, material, impact));
@@ -6175,6 +6261,9 @@ fn report(mut exit: MessageReader<AppExit>, stats: Res<CombatStats>) {
         if s.death_drops > 0 {
             info!("combat summary: {} weapons dropped by actors that died holding them", s.death_drops);
         }
+        if s.blood_rolls > 0 {
+            info!("combat summary: blood on the world: {} shots on actors rolled, {} won the roll, {} met a wall or floor (splatters sent)", s.blood_rolls, s.blood_won, s.blood_sent);
+        }
         if s.disarmed > 0 {
             info!("crippled limbs summary: {} actors disarmed by a crippled arm", s.disarmed);
         }
@@ -6270,6 +6359,63 @@ mod tests {
         assert!(super::blood_stopped(12.0, 12.0));
         assert!(!super::blood_stopped(13.0, 12.0));
         assert!(!super::blood_stopped(0.0, 0.0));
+    }
+
+    /// A world of planes: each (a point on it, its unit normal); the line from `from`
+    /// along unit `d` meets the nearest one it faces within `reach`.
+    fn planes(planes: &[([f32; 3], [f32; 3])], from: [f32; 3], d: [f32; 3], reach: f32) -> Option<([f32; 3], [f32; 3])> {
+        use fnv_combat::vec;
+        planes
+            .iter()
+            .filter_map(|&(p, n)| {
+                let k = vec::dot(d, n);
+                (k < -1e-6).then(|| vec::dot(vec::sub(p, from), n) / k).filter(|t| (0.0..=reach).contains(t)).map(|t| (t, vec::add(from, vec::scale(d, t)), n))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, p, n)| (p, n))
+    }
+
+    #[test]
+    fn a_shot_actor_bleeds_onto_the_wall_behind_or_the_floor_below() {
+        use super::{blood_chance, world_blood, ImpactFx, WORLD_BLOOD_CHANCE};
+        use fnv_sim::FormId;
+        let hit = ImpactFx { impact: FormId(0x77), shooter: FormId(0x14), point: [0.0, 0.0, 50.0], normal: [-1.0, 0.0, 0.0], dir: [2.0, 0.0, 0.0], actor: Some(0x1234), no_spray: false, no_decal: false, splatter: false };
+        let floor = ([0.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
+        let wall = |x: f32| ([x, 0.0, 0.0], [-1.0, 0.0, 0.0]);
+        // A wall within reach along the shot: the splatter goes there, facing back.
+        let near = [floor, wall(100.0)];
+        let fx = world_blood(&hit, 0.1, 0.5, |f, d, r| planes(&near, f, d, r)).expect("a splatter on the wall");
+        assert_eq!((fx.point, fx.normal, fx.dir), ([100.0, 0.0, 50.0], [-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]));
+        assert_eq!(fx.impact, FormId(0x77));
+        // A decal only, on the world, heard by no one.
+        assert!(fx.splatter && fx.no_spray && !fx.no_decal);
+        assert_eq!((fx.actor, fx.shooter), (None, FormId(0)));
+        // The wall past reach: the floor below the hit.
+        let far = [floor, wall(600.0)];
+        let fx = world_blood(&hit, 0.1, 0.5, |f, d, r| planes(&far, f, d, r)).expect("a splatter on the floor");
+        assert_eq!((fx.point, fx.normal), ([0.0, 0.0, 0.0], [0.0, 0.0, 1.0]));
+        // Nothing within reach either way: none.
+        assert!(world_blood(&hit, 0.1, 0.5, |f, d, r| planes(&[wall(600.0)], f, d, r)).is_none());
+        // No Blood Decal (or the armour tweak), the roll lost, a hit on no actor, or a
+        // splatter itself: none, and no line is cast.
+        let mut cast = 0;
+        for h in [ImpactFx { no_decal: true, ..hit }, ImpactFx { actor: None, ..hit }, ImpactFx { splatter: true, ..hit }] {
+            assert!(world_blood(&h, 0.1, 0.5, |f, d, r| {
+                cast += 1;
+                planes(&near, f, d, r)
+            })
+            .is_none());
+        }
+        assert!(world_blood(&hit, 0.5, 0.5, |f, d, r| {
+            cast += 1;
+            planes(&near, f, d, r)
+        })
+        .is_none());
+        assert_eq!(cast, 0);
+        // The game setting as a percentage or a fraction; the default without it.
+        assert_eq!(blood_chance(Some(50.0)), 0.5);
+        assert_eq!(blood_chance(Some(0.25)), 0.25);
+        assert_eq!(blood_chance(None), WORLD_BLOOD_CHANCE);
     }
 
     use super::*;

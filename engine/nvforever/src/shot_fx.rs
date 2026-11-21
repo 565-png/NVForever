@@ -732,6 +732,10 @@ fn impacts(
         return;
     };
     for hit in landed.read() {
+        // A blood splatter on the world behind a shot actor is a decal only (`decals`).
+        if hit.splatter {
+            continue;
+        }
         // An actor flagged No Blood Spray shows none (docs/spec-notes/actor-flags.md §2).
         if hit.no_spray {
             fx.no_spray += 1;
