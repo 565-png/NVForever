@@ -358,7 +358,7 @@ expect = [
 
 [[scenario]]
 name = "lod-night-diffuse"
-source = "#3096 (player report R-ZXT6AC4J): north of Goodsprings (-67758, 2867) at night the distant hills to the north and east were drawn flat white (the player wrote that they turned right on coming closer). A game terrain chunk is spawned only once no diffuse it draws is still loading, and a missing diffuse is drawn with a neutral fallback colour, never white, logged as 'drawn with the fallback colour: <path>: <error>' (engine/nvforever/src/lod.rs, world.md §7). On stock data no shape is drawn without its diffuse and no chunk takes the fallback"
+source = "#3096 (player report R-ZXT6AC4J): north of Goodsprings (-67758, 2867) at night the distant hills to the north and east were drawn flat white (the player wrote that they turned right on coming closer). A game terrain chunk is spawned only once no diffuse it draws is still loading, and a missing diffuse is drawn with a neutral fallback colour, never white, logged as 'drawn with the fallback colour (shape i bound to …): <path>: <error>' (engine/nvforever/src/lod.rs, world.md §7). On stock data no shape is drawn without its diffuse and no chunk takes the fallback"
 note = "UNRUN when written (2026-11-21). The report's cause is not confirmed: a fallback line here on stock data would name the texture and its error"
 areas = ["renderer"]
 paths = ["engine/nvforever/src/lod.rs"]
@@ -370,20 +370,20 @@ expect = [
   { re = 'distant LOD terrain surfaces: (\d+) chunks drawn with the fallback colour', range = [0, 0], label = "stock data: every chunk's diffuse loads, none takes the fallback colour" },
   { re = 'distant LOD terrain surfaces: .*, (\d+) shapes drawn without a diffuse texture', range = [0, 0], label = "no distant terrain shape is drawn while its diffuse is still loading" },
 ]
-forbid = ["drawn without its diffuse texture", { re = 'drawn with the fallback colour: ', label = "no chunk drawn with the fallback colour on stock data" }]
+forbid = ["drawn without its diffuse texture", { re = 'drawn with the fallback colour \(shape ', label = "no chunk drawn with the fallback colour on stock data" }]
 manual = "lod_night_north/east: the distant hills are as dark as the near ground at night, textured, never flat white"
 
 [[scenario]]
 name = "lod-missing-diffuse"
 source = "#3096: with every level-8 terrain chunk's diffuse reading as missing (test aid NVF_PLAY_TEST_BROKEN_FILES), those chunks are still drawn, with the neutral fallback colour instead of white, each logged once with the texture's path and error, and they cover their areas like any other (engine/nvforever/src/lod.rs fallback_material, world.md §7)"
-note = "UNRUN when written (2026-11-21). Texture names: textures\\landscape\\lod\\<world>\\diffuse\\<world>.n.level<L>.x<X>.y<Y>.dds [observed, world.md §7]"
+note = "UNRUN when written (2026-11-21). The texture names come from an asset listing of the archives (world.md §7): textures\\landscape\\lod\\<world>\\diffuse\\<world>.n.level<L>.x<X>.y<Y>.dds"
 areas = ["renderer"]
 paths = ["engine/nvforever/src/lod.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_BROKEN_FILES = "missing:diffuse/wastelandnv.n.level8.", NVF_PLAY_TEST_LOOK = "4:30:2", NVF_PLAY_TEST_SHOTS = "14:lod_missing_level8.png" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67758,2867,8900", "--hour", "23"]
 run_seconds = 18
 expect = [
-  { re = 'distant LOD: terrain chunk level 8 x-?\d+ y-?\d+ drawn with the fallback colour: .*diffuse.*level8.*not in any archive', label = "a level-8 chunk without its diffuse is drawn with the fallback colour, the texture's path and error named" },
+  { re = 'distant LOD: terrain chunk level 8 x-?\d+ y-?\d+ drawn with the fallback colour \(shape \d+ bound to base colour sRGB 0\.45 0\.42 0\.38, no base texture\): .*diffuse.*level8.*: not in any archive', label = "a level-8 chunk without its diffuse is spawned bound to the fallback copy (its colour read back from the bound material, no base texture), the path the model named and the error given" },
   { re = 'distant LOD terrain surfaces: (\d+) chunks drawn with the fallback colour', range = [1, 100000], label = "level-8 chunks take the fallback colour" },
   { re = 'distant LOD at the end: LOD chunks \d+ \(levels 4/8/16/32: \d+/(\d+)/', range = [1, 100000], label = "the level-8 chunks are drawn at the end (no holes)" },
   { re = 'distant LOD terrain surfaces: .*, (\d+) shapes drawn without a diffuse texture', range = [0, 0], label = "none drawn while its diffuse is still loading" },

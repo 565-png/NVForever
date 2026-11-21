@@ -83,9 +83,10 @@
 //! covering the chunks it replaces, only once no shape it draws waits for its diffuse
 //! ([`Surface`]); until then the old chunks stay drawn. A shape whose diffuse is missing
 //! (not named, or its file failed to load, a failure that is not retried) would draw
-//! white, so it is drawn with a neutral fallback colour instead ([`fallback_material`]),
-//! logged once per chunk with the texture's path and error, and the chunk counts as
-//! covering like any other. A player's report showed distant hills flat white at night
+//! white, so it is drawn with a neutral fallback colour instead ([`fallback_material`]:
+//! a copy owned by the shape's entity alone, released with it), logged once per chunk
+//! when spawned, with the texture's path and error, and the chunk counts as covering like
+//! any other. A player's report showed distant hills flat white at night
 //! [observed: report R-ZXT6AC4J's screenshot]; its cause is not confirmed.
 
 use crate::fade;
@@ -340,8 +341,6 @@ pub struct LodState {
     pub block_stats: BlockStats,
     /// What the diffuse checks did since the start (#3096, logged at the exit).
     pub surfaces: SurfaceStats,
-    /// Fallback-colour copies of terrain materials whose diffuse is missing, by material.
-    fallback: HashMap<AssetId<NifMaterial>, Handle<NifMaterial>>,
     /// Chunks already logged as drawn with the fallback colour, and as drawn while a
     /// diffuse was still on its way.
     warned: HashSet<Chunk>,
@@ -600,7 +599,6 @@ impl LodState {
             terrain_rebuilds: 0,
             block_stats: BlockStats::default(),
             surfaces: SurfaceStats::default(),
-            fallback: HashMap::new(),
             warned: HashSet::new(),
             unguarded: HashSet::new(),
         }
@@ -882,19 +880,26 @@ fn fallback_material(m: &NifMaterial) -> NifMaterial {
     f
 }
 
-/// The texture failure reported for chunk `(l, x, y)`'s diffuse ("<path>: <error>", the
-/// texture cache's list), if any: the chunk's textures are named after it, its normal map
-/// in a `normals` folder (world.md §7).
-fn diffuse_failure(failures: &[String], world: &str, (l, x, y): Chunk) -> Option<String> {
-    let name = format!(".level{l}.x{x}.y{y}.");
-    failures
-        .iter()
-        .rev()
-        .find(|f| {
-            let f = f.to_ascii_lowercase();
-            f.contains(world) && f.contains(&name) && f.contains(".dds") && !f.contains("\\normals\\")
-        })
-        .cloned()
+/// A new fallback copy of material `src` ([`fallback_material`]) for one spawned shape:
+/// its handle is the copy's only owner, so the copy (and the textures it holds) goes with
+/// the entity, and nothing outlives the source material's own eviction.
+fn fallback_for(materials: &mut Assets<NifMaterial>, src: &Handle<NifMaterial>) -> Option<Handle<NifMaterial>> {
+    let f = materials.get(src).map(fallback_material)?;
+    Some(materials.add(f))
+}
+
+/// A material's base colour (sRGB) and base texture, for the log.
+fn describe_base(m: &StandardMaterial) -> String {
+    let c = m.base_color.to_srgba();
+    let tex = if m.base_color_texture.is_some() { "a base texture" } else { "no base texture" };
+    format!("base colour sRGB {:.2} {:.2} {:.2}, {tex}", c.red, c.green, c.blue)
+}
+
+/// "<path>: <error>" for a diffuse a model named and could not load (`path`, resolved as
+/// the texture cache resolves it): the error the cache reported for it, if any.
+fn texture_failure(failures: &[String], path: &str) -> String {
+    let prefix = format!("{}: ", path.to_ascii_lowercase());
+    failures.iter().rev().find(|f| f.to_ascii_lowercase().starts_with(&prefix)).cloned().unwrap_or_else(|| format!("{path}: not loaded"))
 }
 
 /// The masks of the level-4 squares holding `cells` (cell, fully drawn; on the grid from
@@ -994,7 +999,7 @@ pub fn update_lod(
         // The game's chunk model is prepared on a worker thread, as object blocks' are
         // (below), and its diffuse textures must be in the image store (#3096); the old
         // chunk stays drawn until they are. A missing diffuse is drawn with the fallback
-        // colour (spawn_terrain), logged here once per chunk.
+        // colour (spawn_terrain).
         if !generated {
             let tp = lod.terrain_path(chunk);
             if models.data.vfs.exists(&tp) {
@@ -1008,14 +1013,6 @@ pub fn update_lod(
                 if !admit(&surface) {
                     lod.surfaces.texture_waits += 1;
                     continue;
-                }
-                if let Surface::Failed(why) = surface {
-                    if lod.warned.insert(chunk) {
-                        let (l, x, y) = chunk;
-                        let reason = diffuse_failure(&models.textures.failures, &lod.world_name, chunk).unwrap_or_else(|| format!("{tp}: {why}"));
-                        warn!("distant LOD: terrain chunk level {l} x{x} y{y} drawn with the fallback colour: {reason}");
-                        lod.surfaces.fallback_chunks += 1;
-                    }
                 }
             }
         }
@@ -1218,16 +1215,19 @@ fn spawn_terrain(
         let material = match diffuse_of(models.materials.get(&s.material), &models.images) {
             Diffuse::Ready => s.material.clone(),
             Diffuse::Missing => {
+                let Some(h) = fallback_for(&mut models.materials, &s.material) else { continue };
                 lod.surfaces.fallback_shapes += 1;
-                match lod.fallback.get(&s.material.id()) {
-                    Some(h) => h.clone(),
-                    None => {
-                        let Some(f) = models.materials.get(&s.material).map(fallback_material) else { continue };
-                        let h = models.materials.add(f);
-                        lod.fallback.insert(s.material.id(), h.clone());
-                        h
-                    }
+                if lod.warned.insert(chunk) {
+                    lod.surfaces.fallback_chunks += 1;
+                    // What the entity is bound to, read back from the store.
+                    let bound = models.materials.get(&h).map_or_else(|| "not in the store".to_string(), |m| describe_base(&m.base));
+                    let missing = s.missing_diffuse.as_deref().map_or_else(
+                        || "no diffuse named".to_string(),
+                        |raw| texture_failure(&models.textures.failures, &nvf_assets::texture::resolved_path(raw, |p| models.data.vfs.exists(p))),
+                    );
+                    warn!("distant LOD: terrain chunk level {level} x{cx} y{cy} drawn with the fallback colour (shape {i} bound to {bound}): {missing}");
                 }
+                h
             }
             Diffuse::Loading => {
                 lod.surfaces.drawn_without_diffuse += 1;
@@ -1849,6 +1849,7 @@ mod tests {
             segments: Vec::new(),
             external_emittance: false,
             look: nvf_assets::material_anim::Look::stored([0.0; 3], 1.0, 1.0),
+            missing_diffuse: None,
         };
         let white = mat(&mut materials, None);
         let textured = mat(&mut materials, Some(images.add(Image::default())));
@@ -1909,16 +1910,34 @@ mod tests {
     }
 
     #[test]
-    fn diffuse_failure_names_the_chunks_own_texture() {
+    fn texture_failure_names_the_shapes_own_texture() {
         let failures = vec![
             "textures\\landscape\\lod\\wastelandnv\\normals\\wastelandnv.n.level8.x-16.y0.dds: bad".to_string(),
             "textures\\landscape\\lod\\wastelandnv\\diffuse\\wastelandnv.n.level8.x-16.y0.dds: not in any archive".to_string(),
-            "textures\\landscape\\lod\\wastelandnv\\diffuse\\wastelandnv.n.level8.x-1.y0.dds: other".to_string(),
         ];
-        let f = diffuse_failure(&failures, "wastelandnv", (8, -16, 0)).unwrap();
-        assert!(f.contains("\\diffuse\\") && f.ends_with("not in any archive"), "{f}");
-        assert!(diffuse_failure(&failures, "wastelandnv", (8, -24, 0)).is_none());
-        assert!(diffuse_failure(&failures, "freesideworld", (8, -16, 0)).is_none());
+        let f = texture_failure(&failures, "textures\\landscape\\lod\\wastelandnv\\diffuse\\wastelandnv.n.level8.x-16.y0.dds");
+        assert!(f.ends_with("diffuse\\wastelandnv.n.level8.x-16.y0.dds: not in any archive"), "{f}");
+        // A path the cache reported nothing for is still named.
+        assert_eq!(texture_failure(&failures, "textures\\a.dds"), "textures\\a.dds: not loaded");
+    }
+
+    /// Each spawned shape gets its own fallback copy, owned by its handle alone: despawning
+    /// the entity drops the last handle and releases the copy; the source material is not
+    /// held by it, so it can be evicted as before.
+    #[test]
+    fn fallback_copy_is_owned_by_the_entity() {
+        let mut materials = Assets::<NifMaterial>::default();
+        let src = materials.add(nif_material(StandardMaterial::default()));
+        let a = fallback_for(&mut materials, &src).unwrap();
+        let b = fallback_for(&mut materials, &src).unwrap();
+        assert_ne!(a.id(), b.id(), "no shared cache entry");
+        for h in [&a, &b, &src] {
+            let Handle::Strong(arc) = h else { panic!("strong handle") };
+            assert_eq!(Arc::strong_count(arc), 1, "only the entity's handle holds it");
+        }
+        assert!(materials.get(&a).is_some_and(|m| m.base.base_color_texture.is_none() && m.base.base_color != Color::WHITE));
+        assert!(describe_base(&materials.get(&a).unwrap().base).starts_with("base colour sRGB 0.45 0.42 0.38, no base texture"));
+        assert!(fallback_for(&mut materials, &Handle::default()).is_none(), "no source material: none");
     }
 
     #[test]
