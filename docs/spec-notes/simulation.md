@@ -758,10 +758,10 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
     BisonSteve02 [documented: FalloutNV.esm]) [design; reported: the player's issue says
     the suitcase can be looted in the original, not captured]. The render boxes are each
     drawn mesh's bounds, not the base's OBND (SuitCase02's OBND is all zeros
-    [documented: FalloutNV.esm]). So the bed is still picked when the ray leaves every
-    box of the bed before leaving the suitcase's (the suitcase hanging over the bed's
-    edge), when the bed's collision is hit before the suitcase's box is entered, and on
-    the bare mattress. Chairs, benches and activators do not yield: a chair's back keeps
+    [documented: FalloutNV.esm]). When no bed box wholly holds the suitcase's stretch
+    (the suitcase hanging over the bed's edge), nothing is set aside and the nearest rule
+    decides, whichever box that is; the bed's collision hit before the suitcase's box, and
+    the bare mattress, pick the bed. Another bed's box sets nothing aside either. Chairs, benches and activators do not yield: a chair's back keeps
     its prompt over a switch behind it. A wall before the suitcase still hides it, two
     boxes over the same stretch both stay, and an actor's rough box sets nothing aside
     (a sleeper's bed still yields to the sleeper, below). Beds are known from the script

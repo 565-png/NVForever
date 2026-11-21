@@ -126,7 +126,8 @@ pub fn choose_precise_first(
 /// picks the bed, and a wall in front still hides the suitcase. `hit` is the raw first
 /// hit, not a door promoted from behind it (`door_behind`), so nothing behind the wall
 /// sets a box aside. Two boxes over the same stretch both stay; a sleeper's rough box
-/// sets no bed's aside, so [`to_occupant`] still sees the bed. The result is
+/// sets no bed's aside, so [`to_occupant`] still sees the bed; nor does another bed's box
+/// (two beds never set each other aside). The result is
 /// [`choose_precise_first`]'s input.
 pub fn set_aside_enclosing(
     hit: Option<RayHit>,
@@ -141,7 +142,7 @@ pub fn set_aside_enclosing(
         if yielding.contains(&id) || !bed(id) {
             continue;
         }
-        let holds = |&&(other, e, x, r): &&(u32, f32, f32, bool)| other != id && !r && (0.0..=limit).contains(&e) && enter <= e && x <= exit && (enter < e || x < exit);
+        let holds = |&&(other, e, x, r): &&(u32, f32, f32, bool)| other != id && !r && !bed(other) && (0.0..=limit).contains(&e) && enter <= e && x <= exit && (enter < e || x < exit);
         if boxes.iter().filter(holds).any(|b| accept(b.0)) {
             yielding.push(id);
         }
@@ -378,6 +379,13 @@ mod tests {
         let two = [bed_box, (BED, 70.0, 90.0, false), case_box];
         assert_eq!(pick(at(SUITCASE, 99.0), &two, ANY).unwrap().form_id, SUITCASE);
         assert_eq!(pick(at(BED, 110.0), &two[..2], ANY).unwrap().form_id, BED);
+        // Two beds of two meshes each, each with a box inside the other's (21: 60-100
+        // and 115-125; 22: 70-80 and 105-140): neither sets the other aside, the nearest.
+        let beds = |id: u32| id == 21 || id == 22;
+        let boxes = [(21, 60.0, 100.0, false), (22, 70.0, 80.0, false), (22, 105.0, 140.0, false), (21, 115.0, 125.0, false)];
+        let kept = set_aside_enclosing(None, &boxes, REACH, beds, ANY);
+        assert_eq!(kept.len(), 4);
+        assert_eq!(choose_precise_first(None, kept, REACH, ANY).unwrap().form_id, 21);
     }
 
     /// #3323 review: the cutoff for setting a box aside is the raw first hit (a wall at
