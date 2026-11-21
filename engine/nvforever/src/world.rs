@@ -1000,7 +1000,7 @@ pub fn face_billboards(
 ) {
     let Ok(cam) = camera.single() else { return };
     let eye = bevy_to_game(cam.translation());
-    for (mut t, g) in &mut trees {
+    for (t, g) in &mut trees {
         let d = eye - bevy_to_game(g.translation());
         if d.x * d.x + d.y * d.y > 1e-6 {
             // Written only when it differs: a write marks the transform changed, which
