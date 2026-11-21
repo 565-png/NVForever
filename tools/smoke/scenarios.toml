@@ -34380,3 +34380,17 @@ expect = [
   { re = 'vwindow01\.nif: 1 shape\(s\) with a window environment map \(textures.effects.ShinyBright_e\.dds, scale 1\.00, over the blend\): VWindow01:0', label = "the pane is drawn with its environment map, added over its blend" },
   { re = 'test aid: screenshot .*glass_mccarran_north\.png', label = "the interrogation-side frame is saved" },
 ]
+
+[[scenario]]
+name = "key-on-broken-shelf"
+source = "#3333: Goodsprings Home's safe key (VZKeyDirtyGSHome2SafeKey 0x001767AB) lies on the bottom board of a broken shelf (ShelvesWooden01broke01 0x0010B1E7), its render box just under the board's collision surface (the shape's 0.7-unit shell), and was never the crosshair's target (engine/nvf-play/src/activate/pick.rs SURFACE_SLACK)"
+areas = ["activate"]
+paths = ["engine/nvf-play/src/activate/pick.rs"]
+note = "From (1210, -241), east of the shelf's open side, the view aimed at the key (aimref) sees it on the board under the crosshair [observed 2026-11-21: screenshot]. Nearer, at the report's spot (1160, -241), the upper board's front edge is in front of it on screen as in the collision, so the key is not expected from there"
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_GOTO = "5:1210:-241:2320", NVF_PLAY_TEST_CONTROL = "7:aimref=001767AB" }
+args = ["--cell", "GSHouseInterior02", "--play"]
+run_seconds = 10
+expect = [
+  { text = "test aid: aiming at 001767AB", label = "the view is turned to the key" },
+  { re = 'target 0x001767AB .*\(Take', label = "the key on the shelf is the target, to take" },
+]
