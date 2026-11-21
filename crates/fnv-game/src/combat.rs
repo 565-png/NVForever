@@ -254,9 +254,12 @@ pub fn worn_armor_class(world: &fnv_sim::World, id: FormId) -> fnv_sim::forms::A
         .equipment(id)
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|i| world.forms.item(i))
-        .find(|it| it.kind == ItemKind::Armor && it.slots.is_some_and(|s| s & crate::detection::UPPER_BODY != 0))
-        .map_or(ArmorClass::Light, |it| it.armor_class)
+        .find(|&i| {
+            world.resolve_item(i).is_some_and(|it| it.kind == ItemKind::Armor)
+                && world.effective_slots(i).is_some_and(|s| s & crate::detection::UPPER_BODY != 0)
+        })
+        .and_then(|i| world.effective_armor_class(i))
+        .unwrap_or(ArmorClass::Light)
 }
 
 /// Settings with their documented defaults (GECK wiki Experience Settings).

@@ -601,10 +601,8 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // `armor class`: 1 light, 2 medium, 3 heavy [documented: SetArmorClass's table].
         "setarmorclass" => {
             let class = num(args, 1, 0.0) as i64;
-            if let Some(a) = of_sig(g, form(args, 0), b"ARMO").filter(|_| (1..=3).contains(&class)) {
-                let flags = g.num_field(a, "BMDT", "general_flags") as u64 & !(MEDIUM | HEAVY);
-                let flags = flags | if class == 2 { MEDIUM } else if class == 3 { HEAVY } else { 0 };
-                g.set_field(a, "BMDT", "general_flags", XVal::Num(flags as f64));
+            if let Some(a) = form(args, 0).filter(|&a| g.is_armo(a) && (1..=3).contains(&class)) {
+                g.set_armo_class(a, class as u8);
             }
             zero
         }

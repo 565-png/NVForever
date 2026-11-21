@@ -328,7 +328,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // ---- record setters the getters read (`crate::nvse::field`), for the session ----
         // `list item` [documented: SetRepairList].
         "setrepairlist" => {
-            if let (Some(l), Some(f)) = (form(args, 0), form(args, 1)) {
+            if let (Some(l), Some(f)) = (form(args, 0), form(args, 1).or_else(|| subject.map(|r| base(g, r)))) {
                 g.field_overrides.insert((f, "REPL/".into()), XVal::Ref(l.0));
             }
             zero
@@ -336,9 +336,18 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // `mask item`: BMDT biped flags and general flags, as GetEquipmentSlotsMask and
         // GetEquipmentBipedMask read them [documented].
         "setequipmentslotsmask" | "setequipmentbipedmask" => {
-            if let Some(f) = form(args, 1) {
-                let path = if name == "setequipmentslotsmask" { "BMDT/biped_flags" } else { "BMDT/general_flags" };
-                g.field_overrides.insert((f, path.into()), XVal::Num(num(args, 0, 0.0).max(0.0).trunc()));
+            if let Some(f) = form(args, 1).or_else(|| subject.map(|r| base(g, r))) {
+                let mask = num(args, 0, 0.0).max(0.0).trunc();
+                if g.is_armo(f) {
+                    if name == "setequipmentslotsmask" {
+                        g.set_armo_slots(f, mask as u32);
+                    } else {
+                        g.set_armo_general_flags(f, (mask as u32 & 0xFF) as u8);
+                    }
+                } else {
+                    let path = if name == "setequipmentslotsmask" { "BMDT/biped_flags" } else { "BMDT/general_flags" };
+                    g.field_overrides.insert((f, path.into()), XVal::Num(mask));
+                }
             }
             zero
         }

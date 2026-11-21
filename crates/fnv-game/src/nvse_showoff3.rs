@@ -125,11 +125,11 @@ fn first_slot(g: &Game, item: FormId) -> u32 {
 /// The equip slots an item takes: a weapon slot 5, armour its BMDT biped flags; none for
 /// any other item (ammo, aid).
 fn slots_of(g: &Game, item: FormId) -> u32 {
-    match g.data.sig(item) {
+    match g.data.sig(g.unclone(item)) {
         Some(s) if &s == b"WEAP" => 1 << 5,
         Some(s) if &s == b"ARMO" => match crate::nvse::record_value(g, item, "BMDT", "biped_flags") {
             Some(XVal::Num(b)) => (b as u64 as u32) & SLOT_BITS,
-            _ => 0,
+            _ => g.world.effective_slots(item).unwrap_or(0) & SLOT_BITS,
         },
         _ => 0,
     }
@@ -145,7 +145,6 @@ fn slots_of(g: &Game, item: FormId) -> u32 {
 /// without a slot (ammo) are not equipped items here [hypothesis: the functions count by
 /// slot, as the duplicates note says].
 fn equipped(g: &mut Game, actor: FormId, mask: u32) -> Vec<(FormId, fnv_sim::inventory::Extra)> {
-    let forms = g.world.forms;
     let groups: Vec<(FormId, fnv_sim::inventory::Extra)> = match g.world.get(actor).ok().and_then(|s| s.inventory.as_ref()) {
         Some(inv) => inv.groups().filter(|x| x.1.equipped).map(|x| (x.0, x.1)).collect(),
         None => return Vec::new(),
@@ -159,7 +158,7 @@ fn equipped(g: &mut Game, actor: FormId, mask: u32) -> Vec<(FormId, fnv_sim::inv
         if slots == 0 {
             continue;
         }
-        let pick = if mask & SLOT_BITS == 0 { !forms.item(item).is_some_and(|i| i.non_playable) } else { slots & mask & SLOT_BITS != 0 };
+        let pick = if mask & SLOT_BITS == 0 { !g.world.effective_non_playable(item) } else { slots & mask & SLOT_BITS != 0 };
         if pick {
             out.push((item, extra));
         }
@@ -296,15 +295,18 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let min = num(args, 0, 0.0);
             let items = equipped(g, a, num(args, 1, 0.0) as i64 as u32);
             let rules = g.world.weight_rules(a);
-            let forms = g.world.forms;
             let total: f64 = items
                 .iter()
                 .filter_map(|(i, e)| {
-                    let it = forms.item(*i)?;
+                    let it = g.world.resolve_item(*i)?;
+                    let base_w = g.world.effective_weight(*i)?;
                     let w = if name == "getbaseequippedweight" {
-                        it.weight?
+                        base_w
                     } else {
-                        rules.effective_unit(it.weight_with_mods(e.mods)?, it.kind, true, it.power_armor)
+                        let orig = it.weight.unwrap_or(base_w);
+                        let delta = orig - it.weight_with_mods(e.mods).unwrap_or(orig);
+                        let unit = (base_w - delta).max(0.0);
+                        rules.effective_unit(unit, it.kind, true, g.world.effective_power_armor(*i))
                     };
                     (f64::from(w) >= min).then_some(f64::from(w))
                 })

@@ -544,7 +544,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // equipping does not].
         "setispowerarmor" => {
             let f = form(args, 1).or(subject).map(|f| base(g, f)).unwrap_or(FormId(0));
-            g.other.power_armor.insert(f, num(args, 0, 0.0) != 0.0);
+            g.set_armo_power_armor(f, num(args, 0, 0.0) != 0.0);
             zero
         }
         // Formatted by the VM (`Vm::host_function`), then here.

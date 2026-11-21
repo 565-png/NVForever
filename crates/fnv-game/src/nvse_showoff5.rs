@@ -506,8 +506,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                     None => return Some(Ok(XVal::Num(-1.0))),
                 },
             };
-            let Some(value) = g.world.forms.item(item).and_then(|i| i.value) else { return Some(Ok(XVal::Num(-1.0))) };
-            let has_health = g.world.forms.item(item).is_some_and(|i| i.health.is_some_and(|h| h > 0));
+            let Some(value) = g.world.resolve_item(item).and_then(|i| i.value) else { return Some(Ok(XVal::Num(-1.0))) };
+            let has_health = g.world.effective_health(item).is_some_and(|h| h > 0);
             let mut v = value_at(g, f64::from(value), condition, has_health);
             if num(args, 0, 0.0) != 0.0 && holder.is_some() && g.menu_open(crate::game::menus::BARTER) {
                 let skill = crate::functions::actor::actor_value(g, FormId::PLAYER_REF, crate::actor_values::BARTER).unwrap_or(0.0);

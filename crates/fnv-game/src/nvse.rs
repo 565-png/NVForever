@@ -534,10 +534,11 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
         let get = format!("get{rest}");
         let (value, form_at) = if name == "setbaseitemvalue" { (args.get(1), 0) } else { (args.first(), 1) };
         let f = item(g, form_at).unwrap_or(FormId(0));
+        let sig = g.data.sig(g.unclone(f));
         let target = match get.as_str() {
             "getbaseitemvalue" => Some(("DATA", "value")),
-            "getweight" if g.data.sig(f) == Some(*b"AMMO") => Some(("DAT2", "weight")),
-            "getweight" if g.data.sig(f) == Some(*b"ALCH") => Some(("DATA", "")),
+            "getweight" if sig == Some(*b"AMMO") => Some(("DAT2", "weight")),
+            "getweight" if sig == Some(*b"ALCH") => Some(("DATA", "")),
             "getweight" => Some(("DATA", "weight")),
             "getarmorarmorrating" => Some(("DNAM", "dr")),
             "getarmordt" => Some(("DNAM", "dt")),
@@ -549,11 +550,12 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
             "getobjecthealth" => Some(("DATA", "health")),
             // A creature's attack damage is not set [observed: atk1, SetAttackDamage 50 on
             // VStreetCrBrahmin2 still reads 0, though the page names creatures].
-            "getattackdamage" if g.data.sig(f) == Some(*b"CREA") => return Some(Ok(XVal::Num(0.0))),
+            "getattackdamage" if sig == Some(*b"CREA") => return Some(Ok(XVal::Num(0.0))),
             g2 => weapon_field(g2),
         };
         if let (Some((sub, path)), Some(v)) = (target, value) {
             g.field_overrides.insert((f, format!("{sub}/{path}")), v.clone());
+            g.sync_item_field_override(f, sub, path, v);
             return Some(Ok(XVal::Num(0.0)));
         }
         // The flag setters: one bit of DNAM's flags.
