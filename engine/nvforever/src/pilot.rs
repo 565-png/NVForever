@@ -2765,15 +2765,33 @@ const UNLOCK: u16 = 4211;
 /// GetCommandOpcode in the original].
 const START_COMBAT: u16 = 4118;
 
+/// KillActor's (Kill's) opcode [observed: schemas/script/command_opcodes.json].
+const KILL_ACTOR: u16 = 4235;
+
+/// Whether a choice's line runs KillActor: never taken only to leave a conversation.
+fn kills(g: &Game, c: &fnv_game::dialogue::Choice) -> bool {
+    g.data.infos.get(&c.info).is_some_and(|d| {
+        d.begin.into_iter().chain(d.end).any(|u| {
+            let mut calls = std::collections::BTreeMap::new();
+            fnv_game::intro::calls(&g.data.unit(u).program, &mut calls);
+            calls.contains_key(&KILL_ACTOR)
+        })
+    })
+}
+
 /// A choice the pilot keeps off when it has another: one whose line starts a fight
 /// (Jessup's Goodbye "When I kill you…" ended Boulder City in a gunfight), or a
-/// companion's command (FollowersWait left Boone waiting behind; FollowersFire).
+/// companion's command (FollowersWait left Boone waiting behind; FollowersFire), or one
+/// whose line kills someone (Dog's only Goodbye in the Sierra Madre kitchen, "Take that
+/// chain around your neck…", is his suicide: INFO 0x010124E2's end script; taken to leave
+/// the talk, his collar's countdown killed Dean, Christine and the player, round 21
+/// [observed]).
 fn choice_to_avoid(g: &Game, c: &fnv_game::dialogue::Choice) -> bool {
     let fights = g.data.infos.get(&c.info).is_some_and(|d| {
         d.begin.into_iter().chain(d.end).any(|u| {
             let mut calls = std::collections::BTreeMap::new();
             fnv_game::intro::calls(&g.data.unit(u).program, &mut calls);
-            calls.contains_key(&START_COMBAT)
+            calls.contains_key(&START_COMBAT) || calls.contains_key(&KILL_ACTOR)
         })
     });
     fights || g.data.name(c.topic).starts_with("Followers")
@@ -2850,7 +2868,7 @@ fn leave_talk(p: &mut Pilot, h: &mut Hands, go_along: bool) -> bool {
                 .iter()
                 .position(|x| x.goodbye && !x.darkened && !choice_to_avoid(g, x) && g.data.infos.get(&x.info).is_some_and(|d| d.begin.is_none() && d.end.is_none()))
                 .or_else(|| c.choices.iter().position(|x| x.goodbye && !choice_to_avoid(g, x)))
-                .or_else(|| if c.topic_list { None } else { c.choices.iter().position(|x| x.goodbye) })
+                .or_else(|| if c.topic_list { None } else { c.choices.iter().position(|x| x.goodbye && !kills(g, x)) })
             {
                 Some(i) => Way::Goodbye(i),
                 None if c.topic_list => Way::TopicList,
