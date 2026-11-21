@@ -51,6 +51,8 @@
     {"op": "choose", "topic": "NVDLC04DialogueEDENVDLC04EDETopic011", "max_frames": 30000},
     {"op": "wait_talk", "max_frames": 30000},
     {"op": "dismiss_message_boxes", "max": 2, "wait_frames": 10},
+    {"op": "note", "text": "The eyebot's room in the Ashton silo is behind Silo02Door03 (0x010029B5, lock 255, no key), opened by its linked wall terminal 0x0100D8C9 (DefaultUnlockTermWALL3Hard, a Hard hack) [observed: round 12 triage]; the put below lands the player inside it. Stand-in for the hack: the door unlocked."},
+    {"op": "call", "line": "0x010029B5.Unlock"},
     {"op": "move_player", "to": "0x0100BA43"},
     {"op": "remove_all_items", "from": "0x0100BA43", "to": "player"},
     {"op": "advance_seconds", "seconds": 1},

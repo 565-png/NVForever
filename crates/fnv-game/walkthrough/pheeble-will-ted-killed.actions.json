@@ -191,6 +191,16 @@
    "count": 1
   },
   {
+   "op": "note",
+   "text": "Ted is behind the freezer door 001199D4 (lock 255, key VMS18TedGundersonKey 0x001199DD), opened by the freezer terminal 0x001199DC (Very Easy) or the key, which Gunderson's lines INFO 0x00125ACD / 0x00126909 give [observed: round 12 triage]. Stand-in: the key."
+  },
+  {
+   "op": "add_item",
+   "to": "player",
+   "item": "VMS18TedGundersonKey",
+   "count": 1
+  },
+  {
    "op": "enable",
    "target": "VMS18TedGundersonREF"
   },

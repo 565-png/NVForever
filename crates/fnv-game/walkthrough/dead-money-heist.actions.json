@@ -29,9 +29,10 @@
   ],
   "actions": [
     {"op": "note", "text": "Starts where dead-money.actions.json ends: the Gala done (MQ02 100), the player gassed in the Sierra Madre's lobby (given: placed in NVDLC01Lobby where part 1's knockout leaves the player, [observed: dead-money.actions.json's headless trace]; without it the pilot walked from the Mojave), MQ03a at 5; the companions' quest variables as part 1 leaves them (Dean's, Christine's and Dog's posts held; Dog's and Dean's attitudes below 0, Christine's 2). The collar is worn (Collars global 1 as on a new game with DeadMoney.esm). Speech 75 is given: after the kitchen fight Dog and God can be talked into terms with Speech 75 or more. MQ02's stage 50 moved the companions into the casino (Dean to the theater, Christine to the suites, Dog to the kitchen) and the knockout moved Dean onto the theater's scaffold; those MoveTos are repeated here."},
-    {"op": "call", "line": "NVDLC01DeanREF.MoveTo NVDLC01DeanTheaterScaffMarker"},
-    {"op": "call", "line": "NVDLC01ChristineRef.MoveTo NVDLC01ChristineSuitesMarker"},
-    {"op": "call", "line": "NVDLC01DogREF.MoveTo NVDLC01DogKitchenMarker"},
+    {"op": "note", "text": "Dean, Christine and Dog reach their wings by NVDLC01MQ02 stage 50's script (MoveTo), not by a walk: their packages for those markers apply only once they are in NVDLC01Suites / NVDLC01Restaurant [observed: round 12 triage]. Done as the script does them."},
+    {"op": "call", "line": "NVDLC01DeanREF.MoveTo NVDLC01DeanTheaterScaffMarker", "label": "script: NVDLC01MQ02 stage 50"},
+    {"op": "call", "line": "NVDLC01ChristineRef.MoveTo NVDLC01ChristineSuitesMarker", "label": "script: NVDLC01MQ02 stage 50"},
+    {"op": "call", "line": "NVDLC01DogREF.MoveTo NVDLC01DogKitchenMarker", "label": "script: NVDLC01MQ02 stage 50"},
     {"op": "move_player", "to": "scripted:NVDLC01CasinoSwitchScript"},
     {"op": "note", "text": "Put the Beast Down (NVDLC01MQ03a). The player throws the casino floor's switch (OnActivate): the holograms go down, the three wings unlock, and MQ03a 10 starts Curtain Call and Last Luxuries (MQ03b and MQ03c 10)."},
     {"op": "player_activate", "target": "scripted:NVDLC01CasinoSwitchScript"},
