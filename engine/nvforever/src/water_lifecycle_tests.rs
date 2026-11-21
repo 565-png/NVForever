@@ -137,7 +137,9 @@ fn setup() -> (App, Entity, EmptyData) {
         .init_resource::<Assets<ShaderBuffer>>()
         .init_resource::<Assets<SkinnedMeshInverseBindposes>>()
         .init_resource::<ModelCache>()
-        .init_resource::<TextureCache>();
+        .init_resource::<TextureCache>()
+        // Whole budgets, as main's: `distant_water`'s surface reads follow the pace.
+        .insert_resource(crate::stream_pace::StreamPace::new(crate::stream_pace::Mode::Off));
     a.world_mut().spawn((WorldRoot, game_to_bevy()));
     let camera = a
         .world_mut()
