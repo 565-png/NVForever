@@ -1579,14 +1579,19 @@ fn prepare_into(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, first_per
 
 fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, first_person: bool, swaps: &[AltTexture], attachments: bool, external: Option<&Clip>) -> Result<PreparedModel, String> {
     let game = sink.data().clone();
+    // Where this file's time goes, for the exit's summary (#3149).
+    let mut timed = crate::load_times::Timed::start(&crate::load_times::DRAWN);
     let bytes = game.read(path).ok_or("not in any archive")?;
+    timed.read();
     let schema = game.schema.clone();
     let file = NifFile::parse(&bytes, Some(&schema)).map_err(|e| e.to_string())?;
+    timed.parsed();
     if file.size_table_ignored {
         // Its size table is wrong; the blocks were split by decoding them (#3198).
         bevy::log::info!("model: {path}: its block-size table does not fit its blocks; read block by block");
     }
     let dec = Decoded::new(&file, &bytes, &schema);
+    timed.decoded();
     let objects = scene_objects(&file, &dec);
     let by_block: HashMap<usize, &SceneObject> = objects.iter().map(|o| (o.block, o)).collect();
     let hidden_self = |b: usize| {
