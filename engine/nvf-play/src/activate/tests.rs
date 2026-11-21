@@ -247,7 +247,7 @@ fn describe_by_type_lock_and_destination() {
     assert_eq!(describe(&sim, ix, TRIGGER_REF), None, "unnamed activators are not offered");
     // With an Activation Prompt it is offered, by the prompt alone (#2160).
     assert_eq!(describe(&sim, ix, 0x777C), Some((String::new(), Action::Activate)));
-    let t = Targeted { form_id: 0x777C, name: String::new(), action: Action::Activate, distance: 50.0, source: pick::Source::Bounds, crime: false, empty: false };
+    let t = Targeted { form_id: 0x777C, name: String::new(), action: Action::Activate, distance: 50.0, source: pick::Source::Bounds, crime: false, empty: false, through: None };
     let p = crate::reticle::Prompt::of(&t, &sim);
     assert_eq!((p.action.as_str(), p.name.as_str()), ("Activate", ""));
     assert_eq!(describe(&sim, ix, 0x7779), None, "nor an unnamed door leading nowhere (#1598)");
