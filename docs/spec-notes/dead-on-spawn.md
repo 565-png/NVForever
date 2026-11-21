@@ -148,6 +148,13 @@ What the records hold [observed: `fnvtool esm decode`, FalloutNV.esm]:
   mate (the same base) it heard its herd's alarms, ran OnStartCombat, hit the player for
   0.3 and kept the detection meter at Caution, unseen and, a ghost, unhurt (#3228,
   #3139). Its corpse is drawn and ragdolled as before (§3, physics.md §4.3).
+- The same rule reaches every template script [observed: data test
+  `spawn_placeholders::the_camp_golf_herd_runs_its_placeholder_script`, FalloutNV.esm
+  alone]: 1,359 of the 8,956 scripted references are scripted only through a template,
+  1,157 of them by `OblivionSpawnTestScript`; the rest by 17 other scripts, three with a
+  GameMode block that now runs in loaded cells (`vGlowingOneSCRIPT` 81 references,
+  `CrNightkinSCRIPT` 4, `GunRunnerGuardScript` 3). OnDeath and the other blocks the
+  engine sends to one reference already read the template's script (`Game::ref_script`).
 - What a ghost does is unchanged: nobody attacks or detects it as an enemy, and it may
   still attack [documented: GECK wiki SetGhost notes, "Enemies of this calling ref will
   not go into combat or detect an actor with this flag", "*Can* inflict damage";
