@@ -542,6 +542,16 @@ row Off both resources stay empty (the game's systems that fill them do not run,
 emptying them once when the row is switched off), so the culling is upstream's. Upstream has
 no way to draw an unseen light's shadow maps ahead of time; drop this if it gains one.
 
+Another change (two-channel normal maps, #2981, docs/spec-notes/pbr-materials.md), in
+`src/render/pbr_functions.wesl` `apply_normal_mapping`, marked `NVForever two-channel normal
+clamp`: Z is rebuilt as `sqrt(max(1 - x² - y², 0))` instead of `sqrt(1 - x² - y²)`, so X and Y
+outside the unit disk (BC5 endpoints, filtering between texels) give Z 0 instead of a NaN.
+Only materials whose normal map is a two-channel format (`Bc5RgUnorm`, `Rg8Unorm`: Bevy's
+`TWO_COMPONENT_NORMAL_MAP` flag) reach the line; in NVForever those are the authored `_n`
+maps (nvf-assets `TextureUsage::NormalTwoChannel`), while the game's own normal maps are
+expanded to three channels on the CPU (docs/spec-notes/dds-bc5.md). Inside the disk the
+result is upstream's. Drop it when upstream clamps there.
+
 ## bevy_render 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
 [documented: `src/render_resource/pipeline_cache.rs::create_pipeline_task`, #2317]

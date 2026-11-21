@@ -3032,6 +3032,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fnv-pbr"
+version = "0.8.1"
+dependencies = [
+ "fnv-vfs",
+ "toml",
+]
+
+[[package]]
 name = "fnv-phys"
 version = "0.8.1"
 dependencies = [
@@ -4645,6 +4653,7 @@ dependencies = [
  "bevy",
  "fnv-dds",
  "fnv-nif",
+ "fnv-pbr",
  "fnv-vfs",
  "fnv-world",
  "naga",
@@ -4761,6 +4770,7 @@ dependencies = [
  "nvf-dlss-files",
  "nvf-play",
  "png",
+ "rayon",
  "rfd",
  "serde_json",
  "sysinfo",
