@@ -396,11 +396,11 @@ mod tests {
         const DOOR: u32 = 2;
         let (raw, door) = (Some(RayHit { form_id: None, distance: 80.0 }), Some(RayHit { form_id: Some(DOOR), distance: 94.0 }));
         let boxes = [(DOOR, 65.0, 120.0, false), (5, 85.0, 90.0, false)];
-        let kept = set_aside_enclosing(raw, &boxes, REACH, |_| true, ANY);
+        let kept = set_aside_enclosing(raw, &boxes, REACH, |id| id == DOOR, ANY);
         assert_eq!(choose_precise_first(door, kept, REACH, ANY), Some(Pick { form_id: DOOR, distance: 65.0, source: Source::Collision }));
-        assert_eq!(set_aside_enclosing(raw, &boxes, REACH, |_| true, ANY).len(), 2, "the raw hit sets nothing aside");
+        assert_eq!(set_aside_enclosing(raw, &boxes, REACH, |id| id == DOOR, ANY).len(), 2, "the raw hit sets nothing aside");
         // With the promoted hit as the cutoff the door's box would be set aside.
-        assert_eq!(set_aside_enclosing(door, &boxes, REACH, |_| true, ANY).len(), 1);
+        assert_eq!(set_aside_enclosing(door, &boxes, REACH, |id| id == DOOR, ANY).len(), 1);
     }
 
     #[test]
