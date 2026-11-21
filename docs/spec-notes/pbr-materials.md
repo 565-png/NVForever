@@ -11,6 +11,21 @@ choice, marked **[design]**; facts about the texture formats cite their source
 Version 1. Pack authors may rely on the layout, member names, channels and scalar keys
 below; a later version adds to them without changing their meaning.
 
+## Decided (maintainer, 2026-11-20, #3104)
+
+These choices are settled; pack authors and later versions can rely on them.
+
+- [design, owner 2026-11-20, #3104] **Member names**: `<stem>_orm.dds`, `<stem>_n.dds`,
+  `<stem>_p.dds` and `<stem>.toml`, with `<stem>_albedo.dds` reserved; the extension is not
+  part of the stem, so `foo.dds` and `foo.tga` in one folder share one set (Layout, below).
+- [design, owner 2026-11-20, #3104] **Normal map green points down**, the game's own
+  convention, so a pack can start from the game's normal maps (Channels, below).
+- [design, owner 2026-11-20, #3104] **DDS only**: members are DDS files; KTX2 is not read.
+- [design, owner 2026-11-20, #3104] `GameData.vfs` stays a public field
+  (`engine/nvf-assets/src/data.rs`); code that replaces the virtual file system goes
+  through `GameData::set_vfs`, which drops the cached index of sets so it is rebuilt from
+  the new one.
+
 ## What the engine implements at this stage
 
 | Part | State |
@@ -18,16 +33,16 @@ below; a later version adds to them without changing their meaning.
 | Path rules, member names, the index of sets a load order supplies | **implemented** (`crates/fnv-pbr`; `GameData::pbr_index` in `engine/nvf-assets/src/data.rs` builds it on first use and logs one line of counts; materials ask for it only while the Authored materials setting is on) |
 | `fnvtool pbr list` (which sets a load order has, and which archive or folder supplies each file) | **implemented** (`crates/fnvtool/src/pbr_cmd.rs`, docs/cli-contract.md) |
 | Scalar file reading (`<stem>.toml`) | **implemented**; read once per mount, by the first shape that asks (stage 3) [documented: `engine/nvf-assets/src/data.rs` `GameData::pbr_scalars`] |
-| Reading members' pixels | `_orm` (linear) and `_n` (two-channel normal role, `TextureUsage::NormalTwoChannel`) **implemented** (stage 3); `_p` (linear, unsigned only) **implemented on the experimental branch `pbr-height-2981`** (stage 4); `_albedo` stays reserved |
+| Reading members' pixels | `_orm` (linear) and `_n` (two-channel normal role, `TextureUsage::NormalTwoChannel`) **implemented** (stage 3); `_p` (linear, unsigned only) **implemented** (stage 4); `_albedo` stays reserved |
 | Reading BC7 and BC4 files (DDS with the DX10 header, or legacy `BC4U` / `BC4S`) | stage 1 of #2981 (`crates/fnv-dds`) |
 | Drawing a surface with its set (ORM, normal) | **implemented** in source (stage 3) [documented: `engine/nvf-assets/src/nif_spawn.rs` `shape_material`, `authored.rs` `retexture`]; the setting Authored materials (`authored-materials`, on by default, read at the start; `--graphics-only no-authored-materials`). Its check is the field test `pbr-authored-field` (below). A sample pack was drawn in the game with the setting off and on by the main session as of head `bebd7841a` (pictures not committed; they show the pack's own values, and no reference look exists to judge them by); those pictures are owed again after the fixes that followed that head |
-| Height maps (`_p`, parallax) | **implemented on the experimental branch `pbr-height-2981`** (stage 4, below: "Height maps"); not on main. The game's own height slot (#2979) is not read |
+| Height maps (`_p`, parallax) | **implemented** (stage 4, below: "Height maps"). The game's own height slot (#2979) is not read |
 | Metallic | read with the ORM but **held at 0** (stage 3, implemented) until the engine has a reflection source (stage 5) |
 | A pack validator (`fnvtool pbr check`, `fnvtool pbr selftest`) | **implemented** (`crates/fnvtool/src/pbr_check.rs`, docs/cli-contract.md `fnv.pbr.check/1`) |
 
 Sections marked "planned" describe how the engine will use a set once those stages land.
 Wherever this note says a member "will be read" or "will be accepted", stage 3 does so for
-`_orm` and `_n`; `_p` is read on the stage 4 branch only.
+`_orm` and `_n`, and stage 4 for `_p`.
 
 ## Layout
 
@@ -128,7 +143,7 @@ them correctly.
   engine reads the DX10 header and the BC4 FourCCs from stage 1 of #2981 on.
 - [design] The **top level's width and height must be multiples of 4**. The engine has no CPU
   decoder for BC7, so a file it cannot upload whole will be refused rather than decoded. A
-  `_p` off the grid is refused by the engine too (stage 4 branch: one warning naming the
+  `_p` off the grid is refused by the engine too (stage 4: one warning naming the
   file and its size), though it could decode one, so the engine and `fnvtool pbr check`
   agree on it.
 - [design] Ship **full mip chains**, down to 1x1. Smaller mip levels need not be multiples of 4.
@@ -147,7 +162,7 @@ A TOML file of plain keys, all optional:
 
 | Key | Meaning | Range | Default |
 |---|---|---|---|
-| `parallax_depth` | depth of the height map's darkest point below the surface, in UV units (stage 4 branch); 0 draws no height map | 0 to 0.08 | 0.03 (`fnv_pbr::DEFAULT_PARALLAX_DEPTH`) |
+| `parallax_depth` | depth of the height map's darkest point below the surface, in UV units (stage 4); 0 draws no height map | 0 to 0.08 | 0.03 (`fnv_pbr::DEFAULT_PARALLAX_DEPTH`) |
 | `roughness_scale` | multiplies the ORM's roughness; the product is held to 0..1 when drawn, and to 0.089..1 for the highlight's shape (below) | 0 to 2 | 1.0 |
 | `reflectance` | the highlight strength of non-metals; F0 = 0.16 x reflectance² (0 to 16 %) | 0 to 1 | 0.5 (F0 4 %) |
 
@@ -271,7 +286,7 @@ beyond the field test below):
   thresholds, and `rorschach-cards`.]
 - Calibration aids, off by default, read at the start [documented: `authored.rs` `PbrView`,
   `metallic_debug`; `engine/nvf-assets/src/nif_material.wesl`]: `NVF_PBR_VIEW` =
-  `roughness`, `metallic`, `occlusion`, `normal`, `authored` or (stage 4 branch) `height`
+  `roughness`, `metallic`, `occlusion`, `normal`, `authored` or (stage 4) `height`
   draws that input in place of the lit colour of forward-drawn lit NIF surfaces. Refracting shapes return before the
   view; additive draws add the view's colour by their alpha and multiplied draws stay
   neutral, so effects fade out of it; depth and coverage are unchanged.
@@ -280,13 +295,13 @@ beyond the field test below):
 - On the app's exit the log has one line `authored materials summary: ...` (or
   `authored materials summary: off (setting)`): counts of build events, not of visible
   shapes: material builds that applied an ORM set, the distinct ORM set stems seen at those
-  builds (on the stage 4 branch also the builds that applied a height-only set's height map),
+  builds (with stage 4 also the builds that applied a height-only set's height map),
   builds that skipped a set for one of the recorded reasons (other misses are not counted),
   `_orm` load failures (at a build or a swap alike), role copies made legacy, and calls of
   `retexture` on a shape with a saved legacy look [documented: `authored.rs` `Stats`, `report`].
   Rebuilt or discarded materials count again.
 
-## Height maps (stage 4, experimental branch `pbr-height-2981`)
+## Height maps (stage 4)
 
 What the branch's source does with a set's `_p`, as written; not compared with any running
 game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs`

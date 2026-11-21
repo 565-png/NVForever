@@ -447,6 +447,30 @@ struct SkinTint {
     offset: Option<Option<Handle<Image>>>,
 }
 
+/// Per shape of `part` (a part given texture `given`; `armor` for a worn model):
+/// - the race skin texture its skin shape takes in place of the one it names (skin
+///   showing inside an outfit or a glove, so a ghoul's or a raider's arms are not human
+///   skin [hypothesis, actors.md §3.1]; `worn` is `Appearance::worn_skin_texture`);
+/// - the texture (`fnv_vfs::texture_path`) its skin offset is looked up by: the worn skin,
+///   else the part's given texture on the shapes that take it, else its own; none for caps.
+///
+/// `part_uses` draws with both; read-ahead (`readahead::Plan::offsets`) asks the second
+/// which skin offsets a drawing will take.
+pub fn skin_textures<'a>(part: &nvf_assets::actor::PreparedPart, given: Option<&'a str>, armor: bool, worn: impl Fn(Option<&str>) -> Option<&'a str>) -> (Vec<Option<&'a str>>, Vec<Option<String>>) {
+    let takes_texture = part.texture_targets();
+    let worn_skin: Vec<Option<&'a str>> = part.shapes.iter().map(|s| if armor && !s.cap && s.is_skin() { worn(s.base_texture()) } else { None }).collect();
+    let lookup = part
+        .shapes
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let given = worn_skin[i].or(given.filter(|_| takes_texture[i]));
+            if s.cap { None } else { given.or_else(|| s.base_texture()).map(fnv_vfs::texture_path) }
+        })
+        .collect();
+    (worn_skin, lookup)
+}
+
 /// The parts of a resolved actor ready to assemble, each with its index in `a.parts`:
 /// models loaded, textures, FaceGen, body skin and hair colour applied, the hair's hat
 /// variant chosen. Parts whose model cannot be loaded are left out (counted in `stats`).
@@ -488,17 +512,10 @@ pub fn part_uses(a: &Appearance, world: &ActorWorld, ctx: &mut ActorCtx, stats: 
                 materials[i] = ctx.material_with_texture(&p.model, &part, i, t);
             }
         }
-        // A worn model's skin shapes (skin showing inside an outfit or a glove) take the
-        // race's skin texture in place of the one they name, so a ghoul's or a raider's
-        // arms are not human skin [hypothesis, actors.md §3.1].
-        let mut worn_skin: Vec<Option<&str>> = vec![None; part.shapes.len()];
-        if p.role == "armor" {
-            for (i, s) in part.shapes.iter().enumerate().filter(|(_, s)| !s.cap && s.is_skin()) {
-                let Some(t) = a.worn_skin_texture(s.base_texture()) else { continue };
-                if s.base_texture().map(fnv_vfs::texture_path) != Some(fnv_vfs::texture_path(t)) {
-                    materials[i] = ctx.material_with_texture(&p.model, &part, i, t);
-                }
-                worn_skin[i] = Some(t);
+        let (worn_skin, skin_lookup) = skin_textures(&part, p.texture.as_deref(), p.role == "armor", |t| a.worn_skin_texture(t));
+        for (i, t) in worn_skin.iter().enumerate() {
+            if let Some(t) = t.filter(|t| part.shapes[i].base_texture().map(fnv_vfs::texture_path) != Some(fnv_vfs::texture_path(t))) {
+                materials[i] = ctx.material_with_texture(&p.model, &part, i, t);
             }
         }
         // #2981: a shape whose role makes it skin (one of the race's skin textures) or the
@@ -542,11 +559,9 @@ pub fn part_uses(a: &Appearance, world: &ActorWorld, ctx: &mut ActorCtx, stats: 
         // [hypothesis, actors.md §4.1].
         let skin_span = info_span!("actor::skin_tint").entered();
         if let Some(fg) = fgts {
-            for (i, s) in part.shapes.iter().enumerate() {
-                let given = worn_skin[i].or(p.texture.as_deref().filter(|_| takes_texture[i]));
-                let tex = if s.cap { None } else { given.or_else(|| s.base_texture()) };
-                let Some(tex) = tex.map(fnv_vfs::texture_path) else { continue };
-                let Some(skin) = skins.iter_mut().find(|k| k.texture == tex) else { continue };
+            for (i, tex) in skin_lookup.iter().enumerate() {
+                let Some(tex) = tex else { continue };
+                let Some(skin) = skins.iter_mut().find(|k| &k.texture == tex) else { continue };
                 let mut cache = world.facegen.lock().expect("facegen cache");
                 let offset = skin
                     .offset
@@ -1009,7 +1024,8 @@ pub(crate) fn arm_weapon(
         return None;
     };
     let path = fnv_actor::resolve::mesh_path(model);
-    let bones = ctx.models.node_strings(&path, "UPB");
+    // The bones its parts hang from, read with the part on its worker thread (#3057).
+    let bones = part.upb.clone();
     let held: Vec<&nvf_assets::anim_play::Clip> = [fnv_actor::weapon::EquipClip::Aim, fnv_actor::weapon::EquipClip::Equip].iter().filter_map(|c| stance.clips.get(c)).map(|c| &*c.clip).collect();
     let shapes = crate::weapons::spawn_model(commands, spawned, skel, stance.weapon_node, &part, &bones, &stance.holstered_off, &held);
     for &e in &shapes.all {
@@ -1018,10 +1034,8 @@ pub(crate) fn arm_weapon(
             commands.entity(e).insert(crate::weapons::HeldWeapon { reference, weapon });
         }
     }
-    // Where its shots leave (`npc_combat`): the model's `ProjectileNode`.
-    if let Some(pm) = ctx.models.model(&path) {
-        crate::weapons::spawn_muzzle(commands, spawned, stance.weapon_node, &pm, reference);
-    }
+    // Where its shots leave (`npc_combat`): the part's `ProjectileNode`.
+    crate::weapons::spawn_muzzle(commands, spawned, stance.weapon_node, &part, reference);
     let skel_parent = skel.parents[stance.weapon_node].unwrap_or(0);
     let mut hold = WeaponHold::new(stance, world.weapon_mode == WeaponMode::Drawn, skel_parent);
     if !shapes.back.is_empty() || !shapes.gun.is_empty() {
