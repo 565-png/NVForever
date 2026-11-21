@@ -2,7 +2,7 @@
  "format": "nvf.damage.matrix/1",
  "name": "damage_parity",
  "issue": 3163,
- "note": "One hit at a time with one weapon on one actor record, at the same spot in the original and in NVForever (tools/capture/damage_parity.py; docs: tools/capture/README.md). FormIDs are FalloutNV.esm's [observed: fnvtool esm inventory]. The aim heights `z` are units above the target's feet: 85 and 120 for people as the dismember_odds campaign aimed [observed 2026-10-25]; the creatures' and robots' were tuned on 2026-11-21 until the 9mm pistol's shots landed on the torso (location 0) with the AI off: protectron 60 to 70 (40 a leg, 95 and up the head parts), sentry bot 105 to 120 (lower: a leg or the brain part), deathclaw 60 to 140, gecko 45 (35 gave no location); the cazador gave location 2 at every height from 35 to 70 [observed]. A row is judged by where the hit landed, not by where it was aimed. `nvf_kill`: the radscorpions placed in the runway's cell and the cells east, west and north of it [observed: fnvtool world refs], dead in the save `nvfairport`; NVForever's run starts from the data, so it kills them first. `eye`: the original's muzzle height standing [observed 2026-10-25, dismember_odds]; `nvf_eye`: NVForever's eye height (engine/nvf-play/src/player.rs EYE_HEIGHT).",
+ "note": "One hit at a time with one weapon on one actor record, at the same spot in the original and in NVForever (tools/capture/damage_parity.py; docs: tools/capture/README.md). FormIDs are FalloutNV.esm's [observed: fnvtool esm inventory]. The aim heights `z` are units above the target's feet: 85 and 120 for people as the dismember_odds campaign aimed [observed 2026-10-25]; the creatures' and robots' were tuned on 2026-11-21 until the 9mm pistol's shots landed on the torso (location 0): protectron 60 to 70 (40 a leg, 95 and up the head parts), sentry bot 105 to 120 (lower: a leg or the brain part), deathclaw 55 to 100 (above 140 nothing), gecko 50 to 55 (40 and under nothing or no location, 65 the head); the cazador gave location 2 at every height from 35 to 70 [observed]. A row is judged by where the hit landed, not by where it was aimed. `nvf_kill`: the radscorpions placed in the runway's cell and the cells east, west and north of it [observed: fnvtool world refs], dead in the save `nvfairport`; NVForever's run starts from the data, so it kills them first. `eye`: the original's muzzle height standing [observed 2026-10-25, dismember_odds]; `nvf_eye`: NVForever's eye height (engine/nvf-play/src/player.rs EYE_HEIGHT).",
  "save": "nvfairport",
  "place": {
   "marker": "0x0013DA13",
@@ -40,12 +40,12 @@
   {"key": "ranger_veteran", "base": "0x00179AF6", "edid": "NCRRangerVeteranCM", "aims": [{"name": "torso", "z": 85}, {"name": "head", "z": 120}]},
   {"key": "bos_paladin", "base": "0x000E27E2", "edid": "HVBrotherhoodOfSteelPaladinCM", "aims": [{"name": "torso", "z": 85}, {"name": "head", "z": 120}]},
   {"key": "coyote", "base": "0x000E584E", "edid": "CrCoyote", "aims": [{"name": "body", "z": 35}]},
-  {"key": "gecko", "base": "0x0010CD73", "edid": "NVCrGecko", "aims": [{"name": "body", "z": 45}]},
+  {"key": "gecko", "base": "0x0010CD73", "edid": "NVCrGecko", "aims": [{"name": "body", "z": 50}]},
   {"key": "bighorner", "base": "0x00108020", "edid": "NVCrBigHorner", "aims": [{"name": "body", "z": 70}]},
   {"key": "cazador", "base": "0x000E584D", "edid": "NVCrCazador", "aims": [{"name": "body", "z": 50}]},
   {"key": "nightkin", "base": "0x0007EA29", "edid": "CrSuperMutantNightkin", "aims": [{"name": "body", "z": 100}]},
   {"key": "protectron", "base": "0x000A592B", "edid": "CrProtectronArmy", "aims": [{"name": "body", "z": 65}]},
   {"key": "sentry_bot", "base": "0x000A5C6F", "edid": "CrSentryBotMGArmy", "aims": [{"name": "body", "z": 110}]},
-  {"key": "deathclaw_alpha", "base": "0x000E584F", "edid": "CrDeathClawAlpha", "aims": [{"name": "body", "z": 120}]}
+  {"key": "deathclaw_alpha", "base": "0x000E584F", "edid": "CrDeathClawAlpha", "aims": [{"name": "body", "z": 70}]}
  ]
 }

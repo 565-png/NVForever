@@ -518,7 +518,7 @@ record after record. Change the matrix, then write the campaign again (a test ke
 two in step).
 ```
 python tools/capture/damage_parity.py campaign
-python tools/capture/observe.py run tools/capture/observe/damage_parity.campaign.json --game "<FNV folder>" --data "<Data>"
+python tools/capture/observe.py run tools/capture/observe/damage_parity.campaign.json --only pistol9mm --game "<FNV folder>" --data "<Data>"   # and so on, one weapon a launch
 python tools/capture/damage_parity.py original C:/fnv-private/capture/out/obs_damage_parity_*.jsonl -o C:/fnv-private/capture/observe/damage_parity/original.rows.json
 
 python tools/capture/damage_parity.py scenarios -o <dir>/damage-parity.toml
@@ -533,6 +533,8 @@ python tools/capture/damage_parity.py compare C:/fnv-private/capture/observe/dam
   lines. `compare` gives, per weapon, record and aim, the plain hit's damage on both
   sides (no critical, no sneak attack), the target's DT and DR as each game reads them
   and where the hits landed, and says `match`, `differs`, or which side has no hit.
+- One weapon a game launch (`--only`): with all ten sessions in one launch the first
+  one's shots landed and most of the later ones' went wide [observed 2026-11-21].
 - What the original's run does to make the shots land [observed 2026-11-21, the trial
   sessions]: a person's weapon is taken away (a restrained person's rifle took the shots
   aimed at the torso: hit location 14, no health lost); creatures and robots have their
