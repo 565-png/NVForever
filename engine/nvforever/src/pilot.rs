@@ -334,6 +334,9 @@ pub const WAIT_HOURS: u32 = 24;
 /// units short of a speaker the player died at Christine's floor (round 22); walked back
 /// to a quiet spot instead, the way back lay behind a locked door too (round 23 [observed]).
 pub const SILENCE_SECS: f64 = 5.0;
+/// How long after walking out of an unswitchable speaker's range the player does not do it
+/// again: going back in, the collar's 10 s start afresh and the step's walk crosses it.
+pub const AWAY_AGAIN_SECS: f64 = 30.0;
 /// Seconds an errand may take.
 pub const ERRAND_SECS: f64 = 90.0;
 /// Seconds a message box nobody waits for stays up before the pilot closes it.
@@ -558,6 +561,9 @@ enum Errand {
     /// Switch off a speaker whose noise sets the player's collar counting down: Dead
     /// Money's radios and speakers ([`beeping_speaker`]).
     Silence(FormId),
+    /// Walk out of the range of a speaker no player can switch off (the Tampico's
+    /// invisible ones, destroyed at start: [`beeping_speaker`]): to a point past its radius.
+    Away(FormId),
 }
 
 /// A walk to a place.
@@ -794,6 +800,9 @@ struct Pilot {
     /// found once; and when to look for a beeping one next.
     speakers: Option<Vec<FormId>>,
     speaker_check: f64,
+    /// When the player last walked out of each unswitchable speaker's range: once in
+    /// [`AWAY_AGAIN_SECS`], then the step's walk dashes through, as a player does.
+    away_from: Vec<(FormId, f64)>,
     title: String,
     given: Vec<Json>,
     actions: Vec<Action>,
@@ -883,6 +892,7 @@ impl Pilot {
             threat_check: 0.0,
             speakers: None,
             speaker_check: 0.0,
+            away_from: Vec::new(),
             title: String::new(),
             given: Vec::new(),
             actions: Vec::new(),
@@ -2394,6 +2404,10 @@ fn silence_the_rest(p: &mut Pilot, h: &mut Hands) {
     for _ in 0..8 {
         let feet = h.feet();
         let Some(next) = h.game(|g| beeping_speaker(g, &list, feet)).flatten() else { break };
+        // One no player can switch off is walked away from instead (the next check).
+        if h.game(|g| g.extra.get(&next).is_some_and(|e| e.destroyed)) == Some(true) {
+            break;
+        }
         let done = h.script.rt.as_mut().map(|rt| with_world(rt, h.sim, |rt| rt.activate_as_player(next)));
         info!("pilot: step {}: the speaker {next} counts the player in too: switched off where it is: {}", p.i, outcome(done.as_ref()));
         p.errands.retain(|e| !matches!(e, Errand::Silence(s) if *s == next));
@@ -4119,6 +4133,10 @@ fn run_errand(p: &mut Pilot, h: &mut Hands) -> bool {
         }
     }
     match &errand {
+        Errand::Away(speaker) => {
+            info!("pilot: step {}: out of the range of speaker {speaker}", p.i);
+            true
+        }
         Errand::Silence(speaker) => {
             let speaker = *speaker;
             let done = h.script.rt.as_mut().map(|rt| with_world(rt, h.sim, |rt| rt.activate_as_player(speaker)));
@@ -4974,7 +4992,18 @@ fn drive(
         }
         let feet = h.feet();
         let list = p.speakers.clone().unwrap_or_default();
-        if let Some(speaker) = h.game(|g| beeping_speaker(g, &list, feet)).flatten() {
+        let beeping = h.game(|g| beeping_speaker(g, &list, feet)).flatten();
+        let fixed = beeping.filter(|s| h.game(|g| g.extra.get(s).is_some_and(|e| e.destroyed)) == Some(true));
+        if let Some(speaker) = fixed {
+            // One no player can switch off: out of its range, once a while.
+            let now = p.now;
+            p.away_from.retain(|(_, t)| now - *t < AWAY_AGAIN_SECS);
+            if !p.away_from.iter().any(|(s, _)| *s == speaker) {
+                info!("pilot: step {}: the collar beeps near speaker {speaker}, which no player can switch off: the player walks out of its range", p.i);
+                p.away_from.push((speaker, now));
+                p.errands.push_front(Errand::Away(speaker));
+            }
+        } else if let Some(speaker) = beeping {
             if !p.errands.iter().any(|e| matches!(e, Errand::Silence(s) if *s == speaker)) {
                 info!("pilot: step {}: the collar beeps near speaker {speaker}: switched off before the step goes on", p.i);
                 p.errands.push_front(Errand::Silence(speaker));
@@ -4987,12 +5016,26 @@ fn drive(
             if let Some(next) = p.errands.pop_front() {
                 let feet = h.feet();
                 let world = h.world;
-                let target = match &next {
-                    Errand::Search(r) | Errand::Take { from: r, .. } | Errand::Terminal { reference: r, .. } | Errand::Silence(r) => *r,
+                let (place, radius) = match &next {
+                    // Straight away from the speaker, to 200 units past its radius.
+                    Errand::Away(s) => {
+                        let s = *s;
+                        let out = h.game(|g| {
+                            let (_, at) = where_is(g, s)?;
+                            let reach = g.ref_var_named(s, "iradius").filter(|r| *r > 0.0).unwrap_or(768.0) as f32 + 200.0;
+                            let (dx, dy) = (feet[0] - at[0], feet[1] - at[1]);
+                            let len = dx.hypot(dy).max(1.0);
+                            Some([at[0] + dx / len * reach, at[1] + dy / len * reach, feet[2]])
+                        });
+                        (out.flatten().map(|pos| Place { space: space_of(h.location), pos }), 64.0)
+                    }
+                    Errand::Search(r) | Errand::Take { from: r, .. } | Errand::Terminal { reference: r, .. } | Errand::Silence(r) => {
+                        let target = *r;
+                        (h.game(|g| where_is(g, target)).flatten().and_then(|(cell, pos)| Some(Place { space: crate::nav::space_of_cell(world, cell?.0)?, pos })), NEAR_TARGET)
+                    }
                 };
-                let place = h.game(|g| where_is(g, target)).flatten().and_then(|(cell, pos)| Some(Place { space: crate::nav::space_of_cell(world, cell?.0)?, pos }));
                 if let Some(place) = place {
-                    p.errand = Some((next, walk_to(place, None, NEAR_TARGET, p.now, feet), p.now, 0));
+                    p.errand = Some((next, walk_to(place, None, radius, p.now, feet), p.now, 0));
                 }
             }
         }
