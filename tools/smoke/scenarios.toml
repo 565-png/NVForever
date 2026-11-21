@@ -983,7 +983,7 @@ expect = [
 
 [[scenario]]
 name = "graphics-enhanced"
-source = "docs/design/graphics-enhanced.md §3: the enhanced look starts, its switches change while the game runs, and temporal anti-aliasing (the Anti-aliasing choice) replaces the multisampling and back without a rendering error"
+source = "docs/design/graphics-enhanced.md §3: the enhanced look starts (with the 7 x 7 full-detail ring since #3048, §3.20, so every line ends with it), its switches change while the game runs, and temporal anti-aliasing (the Anti-aliasing choice) replaces the multisampling and back without a rendering error"
 areas = ["renderer", "graphics"]
 paths = [
   "engine/nvforever/src/graphics.rs", "engine/nvforever/src/ssao*", "engine/nvforever/src/post*",
@@ -996,13 +996,13 @@ args = ["--cell", "Goodsprings", "--play", "--no-voice", "--hour", "12", "--grap
 run_seconds = 24
 order = [[
   "graphics: ambient occlusion, longer shadows, bloom, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections",
-  { re = 'graphics: longer shadows, bloom, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections, water caustics and river flow$' },
-  { re = 'graphics: longer shadows, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections, water caustics and river flow$' },
-  { re = 'graphics: light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections, water caustics and river flow$' },
-  { re = 'graphics: ambient occlusion, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections, water caustics and river flow$' },
-  { re = 'graphics: ambient occlusion, light glow, sharpening, 16x anisotropic filtering, temporal anti-aliasing, sun shafts, screen-space water reflections, water caustics and river flow$' },
-  { re = 'graphics: ambient occlusion, light glow, sharpening, 16x anisotropic filtering, temporal anti-aliasing, screen-space water reflections, water caustics and river flow$' },
-  { re = 'graphics: ambient occlusion, light glow, sharpening, 16x anisotropic filtering, screen-space water reflections, water caustics and river flow$' },
+  { re = 'graphics: longer shadows, bloom, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections, water caustics and river flow, full-detail scenery 7 x 7$' },
+  { re = 'graphics: longer shadows, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections, water caustics and river flow, full-detail scenery 7 x 7$' },
+  { re = 'graphics: light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections, water caustics and river flow, full-detail scenery 7 x 7$' },
+  { re = 'graphics: ambient occlusion, light glow, sharpening, 16x anisotropic filtering, sun shafts, screen-space water reflections, water caustics and river flow, full-detail scenery 7 x 7$' },
+  { re = 'graphics: ambient occlusion, light glow, sharpening, 16x anisotropic filtering, temporal anti-aliasing, sun shafts, screen-space water reflections, water caustics and river flow, full-detail scenery 7 x 7$' },
+  { re = 'graphics: ambient occlusion, light glow, sharpening, 16x anisotropic filtering, temporal anti-aliasing, screen-space water reflections, water caustics and river flow, full-detail scenery 7 x 7$' },
+  { re = 'graphics: ambient occlusion, light glow, sharpening, 16x anisotropic filtering, screen-space water reflections, water caustics and river flow, full-detail scenery 7 x 7$' },
 ]]
 forbid = [
   { text = "Caught rendering error", label = "a rendering (validation) error while the multisampling changes" },
@@ -1552,7 +1552,7 @@ forbid = [{ text = "Caught rendering error", label = "a rendering (validation) e
 
 [[scenario]]
 name = "full-detail-ring"
-source = "[design, #2701] docs/design/graphics-enhanced.md §3.17 (engine/nvforever/src/full_detail.rs): started with --graphics-only full-detail-9x9 at Goodsprings noon, the full-detail ring comes on at 9 x 9 (radius 4) once, streams draw-only cells beyond the loaded 5 x 5 and draws their references; the exit summary counts its cells and references drawn, without a rendering or validation error. Whether the ring meets the loaded cells and the LOD without holes or doubling is checked in pictures by hand"
+source = "[design, #2701] docs/design/graphics-enhanced.md §3.20 (engine/nvforever/src/full_detail.rs): started with --graphics-only full-detail-9x9 at Goodsprings noon, the full-detail ring comes on at 9 x 9 (radius 4) once, streams draw-only cells beyond the loaded 5 x 5 and draws their references; the exit summary counts its cells and references drawn, without a rendering or validation error. Whether the ring meets the loaded cells and the LOD without holes or doubling is checked in pictures by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/full_detail.rs", "engine/nvforever/src/lod.rs", "engine/nvforever/src/treelod.rs", "engine/nvforever/src/destroyed.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
@@ -1576,7 +1576,7 @@ forbid = [
 
 [[scenario]]
 name = "full-detail-switch"
-source = "[design, #2701] docs/design/graphics-enhanced.md §3.17 Sizes (engine/nvforever/src/full_detail.rs): the settings page's Full-detail scenery row goes to 9 x 9 while the game runs at Goodsprings noon, the ring comes on and streams in; then to 7 x 7 (the outer cells fade out) and Off, without a rendering or validation error; the exit summary names the last size the ring had"
+source = "[design, #2701] docs/design/graphics-enhanced.md §3.20 Sizes (engine/nvforever/src/full_detail.rs): the settings page's Full-detail scenery row goes to 9 x 9 while the game runs at Goodsprings noon, the ring comes on and streams in; then to 7 x 7 (the outer cells fade out) and Off, without a rendering or validation error; the exit summary names the last size the ring had"
 areas = ["renderer", "graphics", "settings"]
 paths = ["engine/nvforever/src/full_detail.rs", "engine/nvforever/src/settings.rs", "engine/nvforever/src/graphics.rs", "crates/nvf-settings-layout/src/lib.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:12,24:28", NVF_PLAY_TEST_SETTINGS = "11:full-detail=9 x 9,25:full-detail=7 x 7,26.5:full-detail=Off" }
@@ -1603,7 +1603,7 @@ forbid = [
 
 [[scenario]]
 name = "full-detail-ring-off"
-source = "[design, #2701] docs/design/graphics-enhanced.md §3.17 Draw-only: the reference run of full-detail-ring-9x9, the same start, moves and clock with the ring off. Its game-side exit lines (cells loaded, residents in high process, encounter zones and triggers entered, quests running) give the numbers full-detail-ring-9x9 must give too: the ring changes nothing game-side"
+source = "[design, #2701] docs/design/graphics-enhanced.md §3.20 Draw-only: the reference run of full-detail-ring-9x9, the same start, moves and clock with the ring off. Its game-side exit lines (cells loaded, residents in high process, encounter zones and triggers entered, quests running) give the numbers full-detail-ring-9x9 must give too: the ring changes nothing game-side"
 note = "Keep env and args the same as full-detail-ring-9x9's but for the --graphics-only keys. GOD and GOTO: two cells east at 8 s, a short walk, back two cells at 16 s. The scripts' exit line has no OnLoad count; its quests running stand for the scripts"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/full_detail.rs", "engine/nvforever/src/destroyed.rs", "engine/nvf-play/src/moved.rs"]
@@ -1631,7 +1631,7 @@ forbid = [
 
 [[scenario]]
 name = "full-detail-ring-9x9"
-source = "[design, #2701] docs/design/graphics-enhanced.md §3.17 Draw-only: full-detail-ring-off's run with the ring at 9 x 9 gives the same game-side exit lines with the same numbers (cells loaded, residents in high process, encounter zones and triggers entered, quests running): ring cells are never loaded cells, so scripts, AI, triggers and streaming see no difference; the ring itself drew cells"
+source = "[design, #2701] docs/design/graphics-enhanced.md §3.20 Draw-only: full-detail-ring-off's run with the ring at 9 x 9 gives the same game-side exit lines with the same numbers (cells loaded, residents in high process, encounter zones and triggers entered, quests running): ring cells are never loaded cells, so scripts, AI, triggers and streaming see no difference; the ring itself drew cells"
 note = "Keep env and args the same as full-detail-ring-off's but for the --graphics-only keys; take the numbers from that scenario's"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/full_detail.rs", "engine/nvforever/src/destroyed.rs", "engine/nvf-play/src/moved.rs"]
