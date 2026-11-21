@@ -603,8 +603,8 @@ pub fn draw(
     play: Option<Res<crate::PlayWorld>>,
     mut forms: Local<Option<super::stats::read::Forms>>,
     (repair, modding, mut script): (Res<super::repair::PipRepair>, Res<super::item_mod::PipItemMod>, Option<ResMut<crate::script::ScriptState>>),
-    (hold, hotkeys): (Res<HotkeyHold>, Res<Hotkeys>),
-    (pip, mut logged, mut drawn_with, mut figures): (Res<PipBoy>, Local<String>, Local<Option<crate::pad::Labels>>, Local<Option<Heading>>),
+    (hold, hotkeys, mut figures): (Res<HotkeyHold>, Res<Hotkeys>, Local<Option<Heading>>),
+    (pip, mut logged, mut drawn_with): (Res<PipBoy>, Local<String>, Local<Option<crate::pad::Labels>>),
 ) {
     // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
     let _canvas = crate::interface::original_units();
