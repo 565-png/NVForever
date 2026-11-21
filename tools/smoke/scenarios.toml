@@ -30930,24 +30930,28 @@ order = [[{ re = 'pipboy data: radio tuned to ' }, { re = 'pipboy data: radio tu
 [[scenario]]
 name = "tiles-data-custom-marker"
 source = "#1954 with #1513 (docs/spec-notes/pipboy.md §5.3.1): with [UI] TileMenus=MapMenu both maps are drawn from their file (the question box painted over the tiles), prepared before the frame (data::prepare), and Place Marker's question box works on both as with the switch off: placed on the World Map, moved from the Local Map, removed; the page goes on drawn from its tiles on Quests"
-note = "pipboy-custom-marker's steps with the switch on, then Quests; the question box's answers are the hand-built page's, its hover reset when they are spawned again (data::draw)."
+note = "pipboy-custom-marker's steps with the switch on, then Quests; the question box's answers are the hand-built page's, its hover reset when they are spawned again (data::draw). #3324: after the removal, on the Local Map (no travel there, so the spot need not be clear of markers) a real left click (NVF_PLAY_TEST_KEYS' mouse-left) at canvas 700, 250 asks Place Marker's question over the tiles and Yes places the marker; then on the World Map a press held at 700, 250 while the pointer moves to 560, 300 is a drag and asks nothing."
 areas = ["pipboy", "ui"]
 paths = ["engine/nvf-play/src/pipboy/data.rs", "engine/nvf-play/src/pipboy/data/marker.rs", "engine/nvf-play/src/tiles/map_menu.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:objective:VCG02:3", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=data,13.5:tab=1,14:point=527:350,15:placemarker,16:key=use,17:tab=0,18.5:placemarker,19.5:key=use,20.5:placemarker,21:key=down,22:key=use,23:tab=2,25:close", NVF_PLAY_TEST_TILE_MENUS = "MapMenu" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:objective:VCG02:3", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=data,13.5:tab=1,14:point=527:350,15:placemarker,16:key=use,17:tab=0,18.5:placemarker,19.5:key=use,20.5:placemarker,21:key=down,22:key=use,23:point=700:250,24.5:key=use,25.5:tab=1,26.5:point=560:300,28:tab=2,30:close", NVF_PLAY_TEST_KEYS = "23.5:mouse-left:0.15,26:mouse-left:1.0", NVF_PLAY_TEST_TILE_MENUS = "MapMenu" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--size", "1280x720"]
-run_seconds = 27
+run_seconds = 32
 expect = [
   { text = "tiles: MapMenu draws world map from tiles", min = 1, label = "the World Map is drawn from its file since #1513's World Map slice; before: it kept the hand-built page" },
   { text = "tiles: MapMenu draws local map from tiles", min = 1, label = "the Local Map is drawn from its file since #1513's Local Map slice (tiles-data-local); before: it kept the hand-built page" },
-  { re = 'pipboy map: Place Marker asks ".+" \(2 answers\)', count = 1, label = "with no marker the question has two answers" },
-  { re = 'pipboy map: custom marker placed at \(-?\d+, -?\d+\) in 0x[0-9A-F]{8}', count = 1, label = "Yes places the marker" },
+  { re = 'pipboy map: Place Marker asks ".+" \(2 answers\)', count = 2, label = "with no marker the question has two answers: X's, and the click's after the removal" },
+  { re = 'pipboy map: custom marker placed at \(-?\d+, -?\d+\) in 0x[0-9A-F]{8}', count = 2, label = "Yes places the marker: X's, and the click's" },
   { re = 'pipboy map: dotted line to custom marker \(\d+ segments\)', min = 1, label = "the World Map's dotted line to it" },
   { re = 'pipboy map: Place Marker asks ".+" \(3 answers\)', count = 2, label = "with a marker the question has three answers" },
   { re = 'pipboy map: custom marker moved to \(-?\d+, -?\d+\)', count = 1, label = "the first answer moves it" },
   { text = "pipboy map: custom marker removed", count = 1, label = "Down and Enter take the second answer, once" },
+  { text = "pipboy map: a click on the local map away from any marker: Place Marker", count = 1, label = "#3324: the real left click on the Local Map drawn from its tiles asks Place Marker's question" },
+  { re = 'pipboy map: a click on the world map', count = 0, label = "#3324: the press dragged on the World Map asks nothing" },
+  { re = 'fast travel: asks', count = 0, label = "and no travel" },
+  { re = 'pipboy data: question box over the tiles \(2 answers\)', min = 2, label = "the click's question painted over the tiles too" },
   { text = "tiles: MapMenu draws quests from tiles", min = 1, label = "Quests drawn from its file after the maps" },
 ]
-order = [["pipboy map: custom marker placed at", "pipboy map: custom marker moved to", "pipboy map: custom marker removed", "tiles: MapMenu draws quests from tiles"]]
+order = [["pipboy map: custom marker placed at", "pipboy map: custom marker moved to", "pipboy map: custom marker removed", "pipboy map: a click on the local map away from any marker: Place Marker", "pipboy map: custom marker placed at", "tiles: MapMenu draws quests from tiles"]]
 
 [[scenario]]
 name = "tiles-data-missing-template"
@@ -30971,12 +30975,12 @@ order = [["MapMenu drawn by hand: MM_ListMarkerTemplate missing", "test aid: NVF
 [[scenario]]
 name = "pipboy-custom-marker"
 source = "#1954 (docs/spec-notes/pipboy.md §5.3, Place Marker): with the keyboard, Place Marker on the World Map asks whether to set the custom marker (two answers) and Yes places it at the highlight box; the World Map draws a dotted line from the arrow to it; the Local Map shows the same marker; Place Marker there asks with three answers (move, remove, keep): move moves it, keep leaves it, remove takes it off both maps [observed: a capture of the original's MapMenu, 2026-11-10]"
-note = "the pointer aid holds the highlight box 50 right of the map window's middle (canvas 527, 350) on both maps; placemarker is the maps' X button; key=use takes the chosen answer, key=down moves down the answers; the objective aid gives the World Map a quest marker too (its line is not required)"
+note = "the pointer aid holds the highlight box 50 right of the map window's middle (canvas 527, 350) on both maps; placemarker is the maps' X button; key=use takes the chosen answer, key=down moves down the answers; the objective aid gives the World Map a quest marker too (its line is not required). #3324: back on the World Map with no marker, a real left click (NVF_PLAY_TEST_KEYS' mouse-left, the button state the page reads) at canvas 800, 180, up and right of the player and away from any marker the start knows [hypothesis until the first run: if the run's 'world map highlights' line names a marker there, the click asks to travel instead; move the point], asks Place Marker's question and Yes places the marker; then a press held at 527, 350 while the pointer moves to 640, 350 is a drag and asks nothing"
 areas = ["pipboy"]
 paths = ["engine/nvf-play/src/pipboy/data.rs", "engine/nvf-play/src/pipboy/data/marker.rs", "engine/nvf-play/src/pipboy/data/travel.rs", "engine/nvf-play/src/pipboy/data/model.rs", "engine/nvf-play/src/pipboy/test_aid.rs"]
-env = { NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:objective:VCG02:3", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=data,13.5:tab=1,14:point=527:350,15:placemarker,16:key=use,17:tab=0,18.5:placemarker,19.5:key=use,20.5:placemarker,21:key=down,21.5:key=down,22:key=use,23:placemarker,23.5:key=down,24:key=use,25:tab=1,26.5:close", NVF_PLAY_TEST_SHOTS = "16.8:pipboy_custom_marker_world.png,18:pipboy_custom_marker_local.png" }
+env = { NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:objective:VCG02:3", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=data,13.5:tab=1,14:point=527:350,15:placemarker,16:key=use,17:tab=0,18.5:placemarker,19.5:key=use,20.5:placemarker,21:key=down,21.5:key=down,22:key=use,23:placemarker,23.5:key=down,24:key=use,25:tab=1,26:point=800:180,27.5:key=use,28.5:point=527:350,29.5:point=640:350,31:close", NVF_PLAY_TEST_KEYS = "26.5:mouse-left:0.15,29:mouse-left:1.0", NVF_PLAY_TEST_SHOTS = "16.8:pipboy_custom_marker_world.png,18:pipboy_custom_marker_local.png,27:pipboy_custom_marker_click_box.png" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--size", "1280x720"]
-run_seconds = 28
+run_seconds = 33
 expect = [
   { re = 'pipboy hints: data world map: Place Marker$', label = "World Map: Place Marker bright with the keyboard" },
   { re = 'pipboy map: Place Marker asks ".+" \(2 answers\) for \(-?\d+, -?\d+\) in 0x[0-9A-F]{8}', label = "with no marker the question has two answers" },
@@ -30989,6 +30993,10 @@ expect = [
   { text = "pipboy map: custom marker left where it was", label = "the third answer keeps it" },
   { text = "pipboy map: custom marker removed", label = "the second answer removes it" },
   { text = "pipboy map: world map shows no custom marker", label = "removed, the World Map shows none" },
+  { text = "pipboy map: a click on the world map away from any marker: Place Marker", count = 1, label = "#3324: the real left click on an empty spot asks Place Marker's question; the drag after it asks nothing" },
+  { re = 'pipboy map: Place Marker asks ".+" \(2 answers\)', count = 2, label = "X's question with no marker, and the click's" },
+  { re = 'pipboy map: custom marker placed at \(-?\d+, -?\d+\) in 0x[0-9A-F]{8}', count = 2, label = "X's Yes, and the click's Yes" },
+  { re = 'fast travel: asks', count = 0, label = "the click on an empty spot asks no travel" },
 ]
 order = [[
   "pipboy map: custom marker placed at",
@@ -30998,6 +31006,9 @@ order = [[
   "pipboy map: custom marker left where it was",
   "pipboy map: custom marker removed",
   "pipboy map: world map shows no custom marker",
+  "pipboy map: a click on the world map away from any marker: Place Marker",
+  { re = 'pipboy map: Place Marker asks ".+" \(2 answers\)' },
+  "pipboy map: custom marker placed at",
 ]]
 
 [[scenario]]

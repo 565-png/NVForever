@@ -36,8 +36,9 @@
 //!   place from above is not drawn). Indoors the map is drawn closer
 //!   ([`outline::INTERIOR_SCALE`]).
 //! - **Place Marker** (#1954, [`marker`]): the maps' X button (X, the controller's X, a
-//!   click on its hint) asks, in the same question box, whether to set the player's one
-//!   custom marker at the highlight box, or to move, remove or keep the one placed. Both
+//!   click on its hint; a click on a map away from any marker, #3324) asks, in the same
+//!   question box, whether to set the player's one custom marker at the highlight box,
+//!   or to move, remove or keep the one placed. Both
 //!   maps show it (the game keeps it, `fnv_game::Game::custom_map_marker`, so scripts'
 //!   SetCustomMapMarker shows too, and it is saved), and the World Map draws dotted lines
 //!   from the player's arrow to it and to the active quest's targets.
@@ -510,9 +511,12 @@ pub struct DataState {
     /// The boxes of the buttons at the right as last drawn, and their tab
     /// ([`button_boxes`], [`on_button`]).
     button_rects: (usize, Vec<Rect>),
-    /// Where the left button went down on the World Map, and how far the pointer has
-    /// moved since (a click asks to travel, a drag does not).
+    /// Where the left button went down on a map, and how far the pointer has moved since
+    /// (a click asks to travel or places the custom marker, a drag does neither).
     press: Option<(Vec2, f32)>,
+    /// A click on a map away from any marker this frame ([`travel_ask`], #3324): Place Marker
+    /// asks of the place under the highlight box once the map is drawn ([`step`]).
+    place_click: bool,
     /// The question box over the map: fast travel's (`travel`) or Place Marker's.
     popup: Option<Popup>,
     /// The pointer on the page this frame, whatever the input device (the question box's
@@ -997,6 +1001,7 @@ fn step(st: &mut DataState, open: Option<usize>, screen: Option<&PipBoyScreen>, 
         st.boxed = false;
         st.popup = None;
         st.travel_marker = None;
+        st.press = None;
     }
     if !st.was_open {
         st.was_open = true;
@@ -1031,7 +1036,15 @@ fn step(st: &mut DataState, open: Option<usize>, screen: Option<&PipBoyScreen>, 
     // Over a button at the right the pointer is off the map: the highlight box stays where
     // it was, and with it the Travel hint's marker (#1897).
     let on_map = pointer.filter(|_| !on_button(st, tab, pointer));
-    let view = build(st, tab, &lists, game, on_map, pointer.is_some());
+    let mut view = build(st, tab, &lists, game, on_map, pointer.is_some());
+    // A click on a map away from any marker asks Place Marker's question of the place under the
+    // highlight box as just drawn, at the pointer in this frame's view (#3324) [hypothesis: the
+    // original's mouse gesture, docs/handoff/observer-checks.md].
+    if std::mem::take(&mut st.place_click) && (tab == LOCAL || tab == WORLD) && st.popup.is_none() {
+        info!("pipboy map: a click on the {} map away from any marker: Place Marker", if tab == WORLD { "world" } else { "local" });
+        place_marker(st, tab, game, input.keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]));
+        view.popup = st.popup.clone();
+    }
     // The hints are logged when they change from what was last shown: the hand-built drawing's
     // last view, or with the early preparation the last one prepared.
     let last = if early.is_some() { st.last_view.as_ref() } else { st.shown.as_ref() };
@@ -2494,8 +2507,13 @@ fn travel_target(kept: Option<u32>, under: Option<u32>, aiming: bool, shown: &[u
 /// marker, or `travel` (Enter, the controller's A, the Travel hint's click) to the Travel
 /// target ([`travel_target`]). A press on a button at the right is the button's, never a
 /// map click; a click on the map away from any marker drops the Travel target.
+///
+/// A click on a map away from any marker (the World Map's with no marker under the highlight
+/// box, the Local Map's anywhere) sets [`DataState::place_click`]: Place Marker asks of the
+/// place clicked once the map is drawn (#3324) [hypothesis: the original's gesture]. A press
+/// that moved more than [`CLICK_SLOP`] before it was let go is a drag and does neither.
 fn travel_ask(st: &mut DataState, tab: usize, pointer: Option<Vec2>, (pressed, released): (bool, bool), travel: bool) -> Option<u32> {
-    if tab != WORLD {
+    if !(tab == WORLD || tab == LOCAL) {
         st.press = None;
         return None;
     }
@@ -2509,12 +2527,15 @@ fn travel_ask(st: &mut DataState, tab: usize, pointer: Option<Vec2>, (pressed, r
     if released {
         if let Some((_, moved)) = st.press.take().filter(|_| !over_button) {
             if moved <= CLICK_SLOP {
-                st.travel_marker = st.cursor_marker;
-                clicked = st.cursor_marker;
+                if tab == WORLD {
+                    st.travel_marker = st.cursor_marker;
+                    clicked = st.cursor_marker;
+                }
+                st.place_click = clicked.is_none() && in_window(map_window(st, tab), pointer).is_some();
             }
         }
     }
-    clicked.or(st.travel_marker.filter(|_| travel))
+    clicked.or(st.travel_marker.filter(|_| travel && tab == WORLD))
 }
 
 /// The highlight box: at the pointer while it is over the map, else where it was left
@@ -4810,6 +4831,141 @@ mod tests {
         travel_ask(&mut st, WORLD, on_map, (true, false), false);
         assert_eq!(travel_ask(&mut st, WORLD, on_map, (false, true), false), None);
         assert_eq!(st.travel_marker, None);
+    }
+
+    /// #3324: a click on a map away from any marker (the World Map's with no marker under the
+    /// highlight box, the Local Map's anywhere) asks Place Marker's question; a click on a
+    /// marker travels and places nothing; a press that moved more than the slop before it was
+    /// let go (the move seen in the release's own frame too) is a drag; a press on a hint is
+    /// the hint's; the other tabs have no map to click.
+    #[test]
+    fn a_click_away_from_any_marker_places_the_custom_marker() {
+        let p = Some(MAIN.min + MAP.min + Vec2::new(100.0, 300.0));
+        let moved = Some(MAIN.min + MAP.min + Vec2::new(100.0 + CLICK_SLOP + 4.0, 300.0));
+        let mut st = DataState::default();
+        // The World Map, no marker under the box.
+        assert_eq!(travel_ask(&mut st, WORLD, p, (true, false), false), None);
+        assert!(!st.place_click, "the press alone places nothing");
+        assert_eq!(travel_ask(&mut st, WORLD, p, (false, true), false), None);
+        assert!(st.place_click, "the click away from any marker asks Place Marker's question");
+        // On a marker: the travel, no marker placed.
+        st.place_click = false;
+        st.cursor_marker = Some(7);
+        travel_ask(&mut st, WORLD, p, (true, false), false);
+        assert_eq!(travel_ask(&mut st, WORLD, p, (false, true), false), Some(7));
+        assert!(!st.place_click);
+        st.cursor_marker = None;
+        // A drag: moved past the slop while held, or in the release's frame.
+        travel_ask(&mut st, WORLD, p, (true, false), false);
+        travel_ask(&mut st, WORLD, moved, (false, false), false);
+        travel_ask(&mut st, WORLD, p, (false, true), false);
+        assert!(!st.place_click, "moved away and back: a drag");
+        travel_ask(&mut st, LOCAL, p, (true, false), false);
+        travel_ask(&mut st, LOCAL, moved, (false, true), false);
+        assert!(!st.place_click, "the pointer moved in the release's frame: a drag");
+        // The Local Map: a click anywhere asks, and never travels.
+        st.travel_marker = Some(5);
+        travel_ask(&mut st, LOCAL, p, (true, false), false);
+        assert_eq!(travel_ask(&mut st, LOCAL, p, (false, true), true), None);
+        assert!(st.place_click);
+        st.place_click = false;
+        // A press on a hint over the map is the hint's.
+        let hint = Rect::from_center_size(p.unwrap(), Vec2::splat(40.0));
+        st.button_rects = (WORLD, vec![hint]);
+        travel_ask(&mut st, WORLD, p, (true, false), false);
+        travel_ask(&mut st, WORLD, p, (false, true), false);
+        assert!(!st.place_click);
+        // No map on Quests.
+        travel_ask(&mut st, QUESTS, p, (true, false), false);
+        travel_ask(&mut st, QUESTS, p, (false, true), false);
+        assert!(!st.place_click && st.press.is_none());
+    }
+
+    /// #3324 through the page's own frame with real mouse button input, on both layouts: the
+    /// hand-built page (`step` as `draw` runs it) and the page drawn from the file (`prepare`,
+    /// the map window the file published, here moved from the hand-built one). A press and
+    /// release 50 right of the map window's middle, the map on the player, puts up Place
+    /// Marker's question for the world position there (what the frame's view carries too);
+    /// with the box up another click places nothing; Y places it there. A press dragged past the
+    /// slop pans the map and asks nothing; a press on a hint over the map asks nothing.
+    #[test]
+    fn a_real_click_on_the_map_asks_place_marker_at_the_point_clicked() {
+        use bevy::ecs::system::RunSystemOnce;
+        fn hand_built(mut st: ResMut<DataState>, screen: Option<Res<PipBoyScreen>>, mut game: Game, mut input: Input, mut images: ResMut<Assets<Image>>) {
+            step(&mut st, Some(WORLD), screen.as_deref(), &mut game, &mut input, &mut images, None);
+        }
+        fn frame(w: &mut World, tiles: bool) {
+            if tiles {
+                w.run_system_once(prepare).unwrap();
+            } else {
+                w.run_system_once(hand_built).unwrap();
+            }
+            w.resource_mut::<ButtonInput<MouseButton>>().clear();
+            w.resource_mut::<ButtonInput<KeyCode>>().clear();
+        }
+        let feet = [0.0, 3.0 * model::CELL, 100.0];
+        let x = 50.0 / 2048.0 / model::MAP_SPAN * 4.0 * model::CELL;
+        for tiles in [false, true] {
+            let mut w = page_world(tiles, data_open(WORLD));
+            let map = WorldMap { root: 1, transform: model::MapTransform::default(), texture: "root.dds".into(), usable: [2048.0; 2], nw: [-2, 3], se: [1, 2] };
+            // The page drawn from the file publishes its window: 30 right and 20 down of the
+            // hand-built one here, so the click is read where that page draws the map.
+            let shift = if tiles { Vec2::new(30.0, 20.0) } else { Vec2::ZERO };
+            let window = Rect::from_corners(hand_built_window().min + shift, hand_built_window().max + shift);
+            w.insert_resource(DataState { maps: [(1, Some(map))].into_iter().collect(), markers: Some(Vec::new()), map_window: tiles.then_some((WORLD, window)), ..DataState::default() });
+            w.insert_resource(Location { world: 1, interior: None });
+            w.insert_resource(Player { heading: 0.0, pitch: 0.0, eye_height: 0.0, feet, body_eye: None, body_view: None, placed: None });
+            let at = window.min + MAP_MID + Vec2::new(50.0, 0.0);
+            w.insert_resource(PipBoyScreen { image: Handle::default(), camera: Entity::PLACEHOLDER, on_model: false, pointer: Some(at), scale: 1.0 });
+            // The page comes up (the maps centre on the player); then the press and release.
+            frame(&mut w, tiles);
+            w.resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
+            frame(&mut w, tiles);
+            assert!(w.resource::<DataState>().popup.is_none(), "tiles {tiles}: the press alone asks nothing");
+            w.resource_mut::<ButtonInput<MouseButton>>().release(MouseButton::Left);
+            frame(&mut w, tiles);
+            let st = w.resource::<DataState>();
+            let (ask, answers) = asked(st);
+            let marker::MarkerAsk::Set(spot) = ask else { panic!("tiles {tiles}: {ask:?}") };
+            assert_eq!(answers, 2);
+            assert!((spot.pos[0] - x).abs() < 0.5 && (spot.pos[1] - feet[1]).abs() < 0.5 && spot.space == 1, "tiles {tiles}: {spot:?}");
+            if tiles {
+                assert!(st.prepared.as_ref().is_some_and(|p| p.view.popup.is_some()), "the frame's view carries the question");
+            }
+            // The box is modal: a click under it places nothing more.
+            w.resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
+            frame(&mut w, tiles);
+            w.resource_mut::<ButtonInput<MouseButton>>().release(MouseButton::Left);
+            frame(&mut w, tiles);
+            assert!(w.resource::<DataState>().custom.is_none(), "tiles {tiles}");
+            assert!(matches!(asked(w.resource::<DataState>()).0, marker::MarkerAsk::Set(s) if s == spot), "tiles {tiles}: the same question");
+            // Y: placed there.
+            w.resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyY);
+            frame(&mut w, tiles);
+            let st = w.resource::<DataState>();
+            assert!(st.popup.is_none());
+            assert_eq!(st.custom, Some(spot), "tiles {tiles}");
+            // A drag: the press moved 40 before it was let go pans the map and asks nothing.
+            let centre = w.resource::<DataState>().centre[WORLD];
+            w.resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
+            frame(&mut w, tiles);
+            w.resource_mut::<PipBoyScreen>().pointer = Some(at + Vec2::new(40.0, 0.0));
+            frame(&mut w, tiles);
+            w.resource_mut::<ButtonInput<MouseButton>>().release(MouseButton::Left);
+            frame(&mut w, tiles);
+            let st = w.resource::<DataState>();
+            assert!(st.popup.is_none(), "tiles {tiles}: a drag asks nothing");
+            assert_ne!(st.centre[WORLD], centre, "tiles {tiles}: the drag panned the map");
+            // A press and release on a hint over the map: the hint's, not the map's.
+            let hint = Rect::from_center_size(at, Vec2::splat(40.0));
+            w.resource_mut::<PipBoyScreen>().pointer = Some(at);
+            w.resource_mut::<DataState>().button_rects = (WORLD, vec![hint]);
+            w.resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
+            frame(&mut w, tiles);
+            w.resource_mut::<ButtonInput<MouseButton>>().release(MouseButton::Left);
+            frame(&mut w, tiles);
+            assert!(w.resource::<DataState>().popup.is_none(), "tiles {tiles}: the hint's click");
+        }
     }
 
     #[test]
