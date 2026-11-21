@@ -604,7 +604,7 @@ pub fn draw(
     mut forms: Local<Option<super::stats::read::Forms>>,
     (repair, modding, mut script): (Res<super::repair::PipRepair>, Res<super::item_mod::PipItemMod>, Option<ResMut<crate::script::ScriptState>>),
     (hold, hotkeys): (Res<HotkeyHold>, Res<Hotkeys>),
-    (pip, mut logged, mut drawn_with): (Res<PipBoy>, Local<String>, Local<Option<crate::pad::Labels>>),
+    (pip, mut logged, mut drawn_with, mut figures): (Res<PipBoy>, Local<String>, Local<Option<crate::pad::Labels>>, Local<Option<(String, String)>>),
 ) {
     // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
     let _canvas = crate::interface::original_units();
@@ -612,7 +612,14 @@ pub fn draw(
     // The hints' set and keys follow the input device: a change of labels draws again.
     let labels = crate::pad::labels();
     let relabelled = drawn_with.replace(labels) != Some(labels);
-    if added.get(body).is_err() && !relabelled && !active.is_changed() && !repair.is_changed() && !modding.is_changed() && !hold.is_changed() && !hotkeys.is_changed() {
+    // The heading's HP and DT, read every frame the page is up: an aid item used from the
+    // list heals a frame after the list changed (the scripts run before the menu), and a
+    // heal over time or a wear change touches no menu state, so the page draws again when
+    // they differ from what it drew (#3120), as the STATS page does with its snapshot.
+    let shown = active.0.as_ref().is_some_and(|m| m.mode == Mode::Inventory) && modding.0.is_none() && repair.0.is_none();
+    let now = shown.then(|| heading(sim.bypass_change_detection(), script.as_mut().map(|s| s.bypass_change_detection()), combat.as_deref()));
+    let refigured = now.is_some() && *figures != now;
+    if added.get(body).is_err() && !relabelled && !refigured && !active.is_changed() && !repair.is_changed() && !modding.is_changed() && !hold.is_changed() && !hotkeys.is_changed() {
         return;
     }
     if forms.is_none() {
@@ -647,13 +654,8 @@ pub fn draw(
     if let (Some(r), Some((_, i))) = (selected, &info) {
         info!("pipboy items: {} selected: {:?}", r.name, i);
     }
-    // The heading's HP and DT: the STATS page's health, and the damage threshold a hit on
-    // the player meets (worn armour at its condition and the DT actor value,
-    // `crate::combat::target_armor`) [observed: "HP 205/205", "DT 8.0" on the owner's
-    // screenshots; hypothesis: the figure is the one combat uses].
-    let hp = super::stats::read::player_hp(sim, script.as_deref_mut());
-    let dt = combat.as_deref().map(|c| crate::combat::target_armor(c, script.as_deref_mut(), sim, FormId::PLAYER_REF).0);
-    let (hp, dt) = (hp_text(hp), dt_text(dt));
+    let (hp, dt) = now.unwrap_or_else(|| heading(sim, script.as_deref_mut(), combat.as_deref()));
+    *figures = Some((hp.clone(), dt.clone()));
     let offer = super::repair::current(&active, sim, script.as_deref());
     // The tab's hints for the selected row (the hotkey panel hides them).
     let tab = TABS[pip.tab().min(TABS.len() - 1)];
@@ -673,7 +675,7 @@ pub fn draw(
     // two lines taking more room (owner's playtest list 7 item 15).
     let heights = row_heights(&mut c, m);
     let first = if m.pointer_pick { m.scroll[Side::Player as usize].min(heights.len()) } else { first_shown(&heights, m.scroll[Side::Player as usize], m.selected[Side::Player as usize], LIST.height()) };
-    if active.is_changed() {
+    if active.is_changed() || refigured {
         info!("pipboy items: heading HP {hp}, DT {dt}; rows {first}.. of {} drawn", heights.len());
     }
     commands.entity(body).despawn_children().with_children(|p| {
@@ -813,6 +815,16 @@ fn item_info(p: &mut ChildSpawnerCommands, c: &mut Ctx, icon: Option<&str>, i: &
 /// The HP card's figure: health out of its whole, "--" unread.
 pub(crate) fn hp_text(hp: Option<(f64, f64)>) -> String {
     hp.map_or_else(|| "--".to_string(), |(v, max)| format!("{}/{}", super::stats::model::whole(v), super::stats::model::whole(max)))
+}
+
+/// The heading's HP and DT figures: the STATS page's health, and the damage threshold a hit
+/// on the player meets (worn armour at its condition and the DT actor value,
+/// `crate::combat::target_armor`) [observed: "HP 205/205", "DT 8.0" on the owner's
+/// screenshots; hypothesis: the figure is the one combat uses].
+pub(crate) fn heading(sim: &mut SimState, mut script: Option<&mut crate::script::ScriptState>, combat: Option<&crate::combat::Combat>) -> (String, String) {
+    let hp = super::stats::read::player_hp(sim, script.as_deref_mut());
+    let dt = combat.map(|c| crate::combat::target_armor(c, script, sim, FormId::PLAYER_REF).0);
+    (hp_text(hp), dt_text(dt))
 }
 
 /// The DT card's figure: one decimal, "--" unread.
