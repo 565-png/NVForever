@@ -2750,6 +2750,34 @@ forbid = [
   { text = "still being retried after", label = "a pipeline still retried at the cap" },
 ]
 [[scenario]]
+name = "light-shadows-switch"
+source = "[design, #3077 review] docs/design/graphics-enhanced.md §3.17 'With the row Off', engine/nvforever/src/light_shadows.rs (`live`, the wind-down) and engine/vendor/bevy_pbr (`HoldLightShadowMaps::active`): the ALC shadows row switched Off and back to Quality while the game runs in Novac at 22:00. Off, the lamps stop casting ('light shadows: off') and the renderer drops the hold (every light's shadow views made again, no static-cache attachment kept); on again, the lamps cast and the static cache composites without a miss, with no rendering or pipeline error either way. Whether the shadows look as before is checked in pictures by hand"
+areas = ["renderer", "graphics", "settings"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/vendor/bevy_pbr/src/render/light.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PAUSE = "10:12,18:20", NVF_PLAY_TEST_SETTINGS = "11:light-shadows=Off,19:light-shadows=Quality", NVF_PLAY_TEST_MOVE = "13:1:0:walk,16:0:0,21:0:1:walk,25:0:0" }
+args = ["--cell", "Novac", "--play", "--hour", "22", "--no-voice", "--no-messages", "--light-shadows=quality"]
+run_seconds = 34
+order = [[
+  { re = 'light shadows: [1-9][0-9]* cast \([0-9]+ point, [0-9]+ spot lights\) within', label = "lamps cast from the start" },
+  "settings: light-shadows Off",
+  { text = "light shadows: off", label = "switched off, the lamps stop casting" },
+  "settings: light-shadows Quality",
+  { re = 'light shadows: [1-9][0-9]* cast \([0-9]+ point, [0-9]+ spot lights\) within', label = "switched on again, the lamps cast again" },
+  { re = 'static cache draws [0-9]+, static cache composites [0-9]+, static cache misses 0', label = "the static cache after the switches, without a miss" },
+]]
+expect = [
+  { text = "light shadows: off", count = 1, label = "off once" },
+]
+forbid = [
+  { re = 'static cache misses [1-9]', label = "a composite without its static layer after the switches" },
+  { text = "DeviceLost", label = "the GPU device was lost while the row switched" },
+  { text = "Caught rendering error", label = "a rendering (validation) error while the hold went and came back (a view kept a slot or a static-cache attachment)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "panicked", label = "a panic (a kept phase binned twice, a stale slot)" },
+  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
+]
+
+[[scenario]]
 name = "light-shadows-gunfight"
 source = "[design] docs/design/graphics-enhanced.md §3.17 'Other lights': with --light-shadows=quality, Trudy's shotgun flashes in the Prospector Saloon at night cast as transient lights, each drawn once (switched on as often as cast), without a rendering or pipeline error. [observed 2026-11-18, these arguments run by hand: transients 4 cast, 4 switched on, 24 faces drawn.] The picture and the cost are checked by hand"
 areas = ["renderer", "graphics", "combat"]
