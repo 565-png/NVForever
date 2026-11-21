@@ -1,8 +1,9 @@
-//! The full-detail scenery ring (#2701, Stage 1; docs/design/graphics-enhanced.md §3.17):
+//! The full-detail scenery ring (#2701, Stage 1; docs/design/graphics-enhanced.md §3.20):
 //! with the settings page's Full-detail scenery row at 7 x 7 or 9 x 9, the full models of
 //! static scenery are drawn in the cells just beyond the loaded 5 x 5, out to 3 or 4 grid
 //! steps from the camera's cell, where the distant LOD blocks would stand in for them.
-//! Off by default and in both presets. Everything here is NVForever's own design, not the
+//! Off by default and in `vanilla`, 7 x 7 in `enhanced` (maintainer decision 2026-11-21,
+//! #3048). Everything here is NVForever's own design, not the
 //! original's behaviour.
 //!
 //! - **Draw-only.** The game keeps loading exactly the cells it loads without the ring:
@@ -42,7 +43,7 @@
 //!   hand-off with a loaded cell follows one rule ([`hand_off`]), under which the ideal
 //!   dither masks of the LOD segment, the ring cell and the loaded cell draw each pixel
 //!   once (tested); the LOD's budgeted rebuilds and its terrain under partly drawn full
-//!   terrain are outside that (docs/design/graphics-enhanced.md §3.17).
+//!   terrain are outside that (docs/design/graphics-enhanced.md §3.20).
 //! - **Streaming** ([`stream`]): ring cells are the cells `r + 1 ..= R` steps from the
 //!   loaded grid's centre (`r` the loaded radius, `R` the ring's), faded out beyond
 //!   `R + 1` (and, when the row is turned off or made smaller, those out of its new
@@ -1588,12 +1589,14 @@ mod tests {
         assert!(!ring_casts_shadows(false, 12_000.0, 2));
     }
 
-    /// Off in both looks; `--graphics-only full-detail-7x7` / `full-detail-9x9` turn it on.
+    /// Off in vanilla, 7 x 7 in `enhanced` (maintainer decision 2026-11-21, #3048);
+    /// `--graphics-only full-detail-7x7` / `full-detail-9x9` turn it on.
     #[test]
-    fn off_in_both_presets_and_the_keys_parse() {
+    fn seven_in_enhanced_off_in_vanilla_and_the_keys_parse() {
         use crate::graphics::Preset;
         assert_eq!(Graphics::preset(Preset::Vanilla).full_detail, FullDetail::Off);
-        assert_eq!(Graphics::preset(Preset::Enhanced).full_detail, FullDetail::Off);
+        assert_eq!(Graphics::preset(Preset::Enhanced).full_detail, FullDetail::Seven);
+        assert!(Graphics::preset(Preset::Enhanced).describe().ends_with("full-detail scenery 7 x 7"));
         assert_eq!(Graphics::only(&["full-detail-7x7".into()]).unwrap().full_detail, FullDetail::Seven);
         let nine = Graphics::only(&["full-detail-9x9".into()]).unwrap();
         assert_eq!(nine.full_detail, FullDetail::Nine);
