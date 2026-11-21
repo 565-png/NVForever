@@ -4936,7 +4936,8 @@ mod tests {
     /// travels by Enter.
     #[test]
     fn a_click_away_from_any_marker_places_the_custom_marker() {
-        let p = Some(MAIN.min + MAP.min + Vec2::new(100.0, 300.0));
+        let at = MAIN.min + MAP.min + Vec2::new(100.0, 300.0);
+        let p = Some(at);
         let moved = Some(MAIN.min + MAP.min + Vec2::new(100.0 + CLICK_SLOP + 4.0, 300.0));
         let mut st = DataState::default();
         assert_eq!(travel_ask(&mut st, WORLD, p, (true, false), false), None);
@@ -4959,7 +4960,7 @@ mod tests {
         assert_eq!(st.map_click, Some(LOCAL));
         st.map_click = None;
         // A press on a hint over the map is the hint's.
-        let hint = Rect::from_center_size(p.unwrap(), Vec2::splat(40.0));
+        let hint = Rect::from_center_size(at, Vec2::splat(40.0));
         st.button_rects = (WORLD, vec![hint]);
         travel_ask(&mut st, WORLD, p, (true, false), false);
         travel_ask(&mut st, WORLD, p, (false, true), false);
