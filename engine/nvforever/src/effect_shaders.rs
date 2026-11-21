@@ -35,8 +35,8 @@
 //!   their materials with the alpha multiplied in; 1 gives the originals back. Their
 //!   effect shaders' overlays stay on (covered as the mesh's own material) and fade with
 //!   the alpha drawn (#3017).
-//! - **Hologram colours** (#3017): a script's play of a hologram membrane ends the earlier
-//!   script plays of hologram membranes on its reference (`script_family`).
+//! - **Hologram colours** (#3017): which colour plays is settled at the script call
+//!   (`fnv_game::functions::misc::ScriptLooks::play`); here every script play is drawn.
 //!
 //! Log: `effect shader: <EDID> on <who> (…)` when one starts, `… ends (…)` when it ends,
 //! `effect shader: <EDID> on <who> fades with its actor to <a> (<n> overlays on <m>
@@ -52,7 +52,7 @@ use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
 use fnv_game::data::MagicEffectDef;
 use fnv_sim::FormId;
-use fnv_world::effect_shader::{blend, Addons, EffectShader, Holes, EDGE_INVERSE, NO_PARTICLES};
+use fnv_world::effect_shader::{blend, Addons, EffectShader, Holes, EDGE_INVERSE};
 use nvf_assets::material_anim::RigMaterials;
 use nvf_assets::model::ModelCtx;
 use nvf_assets::nif_material::nif_material;
@@ -69,7 +69,7 @@ impl Plugin for EffectShadersPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Shaders>()
             .init_resource::<crate::effect_particles::EffectParticles>()
-            .add_systems(Update, (play.after(nvf_play::player::BodySet), cover.after(play), sync_player_effects.after(cover), actor_alpha.after(crate::texture_swap::apply), crate::effect_particles::draw.after(sync_player_effects), addons_leaving.after(play)))
+            .add_systems(Update, (play.after(nvf_play::player::BodySet).after(actor_alpha), cover.after(play), sync_player_effects.after(cover), actor_alpha.after(crate::texture_swap::apply), crate::effect_particles::draw.after(sync_player_effects), addons_leaving.after(play)))
             .add_systems(PostUpdate, crate::effect_particles::build.in_set(crate::particles::ParticleDrawSet))
             .add_systems(Last, (report, crate::effect_particles::report, release_faded));
         crate::particles::configure_draw_set(app);
@@ -419,36 +419,9 @@ fn edge_material(s: &EffectShader) -> NifMaterial {
 /// the depth test's bias, where a value below 1 is 0: the edge is ordered, not moved.
 const DARK_EDGE_AFTER_FILL: f32 = 0.5;
 
-/// The family a script-played shader belongs to, if any: a script's play of one ends the
-/// earlier script plays of its family on the same reference. Only the hologram membranes
-/// form one: no particle shader, "Edge Effect Inverse" and destination blend Source Alpha,
-/// which only the six hologram colours of Dead Money and Old World Blues carry
-/// [observed: §2 of the notes and the main session's EFSH listing of 2026-11-21]. Dead
-/// Money's hologram ability plays Aggressive over a Neutral it never stops; that the
-/// newer colour takes over is read from the script's shape [hypothesis: #3017,
-/// observer-checks.md item 250]. Every other shader stacks as before [design: no rule of
-/// "the last shader wins" for unrelated shaders].
-fn script_family(s: &EffectShader) -> Option<(u8, u32)> {
-    let hologram = NO_PARTICLES | EDGE_INVERSE;
-    (s.has_membrane() && s.flags & hologram == hologram && s.dest_blend == blend::SOURCE_ALPHA).then_some((s.flags, s.dest_blend))
-}
-
-/// The script plays a later play of the same family on the same reference replaces:
-/// their serials. `plays`: (serial, reference, family) of every script play.
-fn replaced_plays(plays: &[(u64, u32, Option<(u8, u32)>)]) -> HashSet<u64> {
-    let mut newest: HashMap<(u32, (u8, u32)), u64> = HashMap::new();
-    for &(serial, on, family) in plays {
-        if let Some(f) = family {
-            let n = newest.entry((on, f)).or_insert(serial);
-            *n = (*n).max(serial);
-        }
-    }
-    plays.iter().filter(|(serial, on, family)| family.is_some_and(|f| newest[&(*on, f)] != *serial)).map(|p| p.0).collect()
-}
-
 /// An overlay's alpha: the record's cycle at this moment times the alpha its actor is
-/// drawn with (the see-through copy its covered meshes wear; 1 with none), so a membrane
-/// fades out with the actor it covers [hypothesis: effect-shaders.md §5, #3017].
+/// drawn with (the see-through copy its meshes wear this frame; 1 with none), so a
+/// membrane fades out with the actor it covers [hypothesis: effect-shaders.md §5, #3017].
 fn overlay_alpha(cycle: f32, drawn_alpha: f32) -> f32 {
     cycle * drawn_alpha.clamp(0.0, 1.0)
 }
@@ -508,17 +481,6 @@ fn play(
     let st = &mut *st;
     let now = time.elapsed_secs();
 
-    // #3017: a script's play of a hologram colour ends the earlier ones on its reference
-    // (`script_family`), also when both were played in the same frame.
-    let families: Vec<(u64, u32, Option<(u8, u32)>)> = game.script_looks.shaders.iter().map(|p| {
-        let record = st.records.entry(p.shader.0).or_insert_with(|| fnv_world::effect_shader::effect_shader(world.lo, world.schema, p.shader.0).map(Box::new));
-        (p.serial, p.on.0, record.as_deref().and_then(script_family))
-    }).collect();
-    let replaced = replaced_plays(&families);
-    for serial in &replaced {
-        game.script_looks.end(*serial);
-    }
-
     // What should play: (source, reference, shader, duration, persist).
     let mut want: Vec<(Source, u32, u32, Option<f64>, bool)> =
         game.script_looks.shaders.iter().map(|p| (Source::Script(p.serial), p.on.0, p.shader.0, p.duration, true)).collect();
@@ -534,10 +496,7 @@ fn play(
     let wanted: HashSet<Source> = want.iter().map(|w| w.0).collect();
 
     // Ends: stopped, the effect over, or its time up.
-    let mut ended: Vec<(Source, &'static str)> = st.active.keys().filter(|k| !wanted.contains(k)).map(|k| {
-        let why = if matches!(k, Source::Script(serial) if replaced.contains(serial)) { "replaced by a later one of its kind" } else { "stopped" };
-        (*k, why)
-    }).collect();
+    let mut ended: Vec<(Source, &'static str)> = st.active.keys().filter(|k| !wanted.contains(k)).map(|k| (*k, "stopped")).collect();
     for (k, a) in &st.active {
         if a.until.is_some_and(|u| now - a.since >= u) {
             ended.push((*k, "its time is up"));
@@ -806,9 +765,10 @@ fn play(
         }
         // #3017: the overlays fade with the alpha their actor is drawn with (Dead Money's
         // holograms flicker theirs between 0, 0.7 and 1 while their membrane plays): that of
-        // the see-through copy its covered meshes wear. A mesh no copy is made for (the
-        // player's third-person body, which `AlphaDrawing` does not reach) keeps 1.
-        a.faded_by = a.covered.keys().find_map(|e| see_through.get(*e).ok().map(|f| f.alpha)).unwrap_or(1.0);
+        // the see-through copy its meshes wear this frame (`actor_alpha` runs first), so a
+        // play started on an actor already unseen starts unseen. A mesh no copy is made for
+        // (the player's third-person body, which `AlphaDrawing` does not reach) keeps 1.
+        a.faded_by = meshes.iter().find_map(|(e, ..)| see_through.get(*e).ok().map(|f| f.alpha)).unwrap_or(1.0);
         let drawn_alpha = a.faded_by;
         // The cut copies (made only for shaders without holes) follow their originals.
         let fills = a.fill.iter().chain(a.cut.values().filter_map(|c| c[0].as_ref()));
@@ -1487,26 +1447,6 @@ mod tests {
         assert_eq!(overlay_alpha(0.5, 2.0), 0.5);
     }
 
-    /// #3017: only the hologram membranes (no particles, edge inverse, destination Source
-    /// Alpha) form a family; the newest play of the family on a reference replaces the
-    /// earlier ones, on that reference only.
-    #[test]
-    fn only_hologram_colours_replace_each_other() {
-        let holo = script_family(&hologram_membrane([164, 206, 240]));
-        assert!(holo.is_some());
-        let mut shield = hologram_membrane([0; 3]);
-        shield.dest_blend = blend::ONE;
-        assert_eq!(script_family(&shield), None, "the turret shield (destination One) stacks");
-        let mut goo = hologram_membrane([0; 3]);
-        goo.dest_blend = blend::SOURCE_INVERTED_ALPHA;
-        assert_eq!(script_family(&goo), None, "the plasma glows (alpha-blended) stack");
-        let mut particles = hologram_membrane([0; 3]);
-        particles.flags &= !fnv_world::effect_shader::NO_PARTICLES;
-        assert_eq!(script_family(&particles), None);
-        let plays = [(1, 7, holo), (2, 7, holo), (3, 7, None), (4, 8, holo), (5, 7, holo)];
-        assert_eq!(replaced_plays(&plays), HashSet::from([1, 2]));
-    }
-
     /// #3017: a Dead Money hologram flickers its actor alpha (SetActorAlpha 0, 0.7, back to 1)
     /// while its membrane plays. The see-through copy must not count as a blended mesh: the
     /// overlays stay on the mesh (the same entities) through every alpha and after it.
@@ -1587,12 +1527,11 @@ mod tests {
         v
     }
 
-    /// #3017: Dead Money's hologram ability after a load, in combat: Neutral at its start,
-    /// Neutral again and Aggressive (Neutral never stopped). Only Aggressive is drawn and
-    /// kept; an unrelated shader on the same hologram (a fire) and a Neutral on another
-    /// hologram stay.
+    /// #3017: the renderer draws every script play (which hologram colour plays is settled
+    /// at the script call), a hologram colour and a fire on one reference together, and logs
+    /// each reference's set when it changes.
     #[test]
-    fn a_later_hologram_colour_replaces_the_earlier_and_others_stack() {
+    fn script_plays_are_all_drawn_and_their_set_kept() {
         let (neutral, aggressive, fire) = (0x0100_1118, 0x0100_307C, 0x0005_F9B6);
         let mut n = hologram_membrane([164, 206, 240]);
         n.edid = "Neutral".into();
@@ -1609,16 +1548,41 @@ mod tests {
         script_play(&mut app, holo, fire, 3);
         app.update();
         assert_eq!(script_shaders(&app), vec![(holo, "Fire".to_string()), (holo, "Neutral".into()), (other, "Neutral".into())]);
-        // The replay 60 updates on, in one frame.
-        script_play(&mut app, holo, neutral, 4);
+        assert_eq!(app.world().resource::<Shaders>().script_sets[&holo], vec!["Fire".to_string(), "Neutral".into()]);
+        // The script side's colour rule: Aggressive ended Neutral there.
+        app.world_mut().resource_mut::<PlaybackTestGame>().0.script_looks.shaders.retain(|p| p.serial != 1);
         script_play(&mut app, holo, aggressive, 5);
         app.update();
         assert_eq!(script_shaders(&app), vec![(holo, "Aggressive".to_string()), (holo, "Fire".into()), (other, "Neutral".into())]);
-        let serials: Vec<u64> = app.world().resource::<PlaybackTestGame>().0.script_looks.shaders.iter().map(|p| p.serial).collect();
-        assert_eq!(serials, vec![2, 3, 5], "the replaced Neutral is let go, so it does not come back");
-        app.update();
-        assert_eq!(script_shaders(&app).len(), 3);
         assert_eq!(app.world().resource::<Shaders>().script_sets[&holo], vec!["Aggressive".to_string(), "Fire".into()]);
+        // All gone: the set is let go.
+        app.world_mut().resource_mut::<PlaybackTestGame>().0.script_looks.shaders.clear();
+        app.update();
+        assert!(app.world().resource::<Shaders>().script_sets.is_empty());
+    }
+
+    /// #3017: a persistent membrane started on an actor already unseen (alpha 0) starts
+    /// unseen: no frame at full strength before its coverage.
+    #[test]
+    fn a_membrane_started_on_an_unseen_actor_starts_unseen() {
+        let shader = 0x0100_307D;
+        let (mut app, _files) = playback_app(test_game(), &[(shader, hologram_membrane([213, 210, 191]))]);
+        let on = 0xFF00_0007;
+        let own = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(nif_material(StandardMaterial::default()));
+        let mesh = app.world_mut().spawn((RefVisual(on), Mesh3d(Handle::default()), MeshMaterial3d(own))).id();
+        app.world_mut().resource_mut::<PlaybackTestGame>().0.script_looks.alpha.insert(FormId(on), 0.0);
+        app.update();
+        assert!(app.world().get::<Faded>(mesh).is_some());
+        script_play(&mut app, on, shader, 1);
+        app.update();
+        let shaders = app.world().resource::<Shaders>();
+        let active = &shaders.active[&Source::Script(1)];
+        assert_eq!(active.faded_by, 0.0);
+        let materials = app.world().resource::<Assets<NifMaterial>>();
+        for h in [active.fill.as_ref().unwrap(), active.edge.as_ref().unwrap()] {
+            assert_eq!(materials.get(h).unwrap().base.base_color.alpha(), 0.0, "no first frame at full strength");
+        }
+        assert_eq!(active.covered[&mesh].len(), 2, "covered all the same");
     }
 
     /// #3017: the overlays' alpha is the record's cycle times the alpha the actor is drawn

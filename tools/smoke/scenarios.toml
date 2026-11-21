@@ -28296,25 +28296,33 @@ forbid = [
 
 [[scenario]]
 name = "dead-money-hologram-threat"
-source = "#3017 (effect-shaders.md §9): a hostile Sierra Madre casino hologram goes from blue to yellow when the player comes within 600 units and to red when it attacks; each step of its threat machine (NVDLC01HoloCasinoCodeHolderSCRIPT, per the maintainer's decode) stops the old shader before playing the new"
-note = "DATA-DEPENDENT, not yet run when written: CasinoHologramB was seen as a resident of NVDLC01Casino (package NVDLC01HologramCasinoPatrol03) in a run of 2026-11-20; that a code holder drives it, and the timer that turns yellow to red, are from the issue's decode, not checked here. God mode; the player is put 450 units from it at 8 s (yellow), 200 units at 18 s (red) and 1500 units at 30 s (the retreat: yellow, then blue, per the decode; the hologram may keep fighting, and the spot may not be open floor). The ability's own replay of Neutral (about 60 updates after the start) also logs a stop and a start of Neutral before the threat steps. The set lines (`effect shaders by script on`) end with the one colour expected, so a leftover blue fails."
+source = "#3017 (effect-shaders.md §9): a hostile Sierra Madre casino hologram goes from blue to yellow when the player comes within 600 units, to red when it attacks, and back when the player leaves; each step of its threat machine (NVDLC01HoloCasinoCodeHolderSCRIPT) stops the old colour before playing the new"
+note = "DATA-DEPENDENT, not yet run when written: CasinoHologramB was seen as a resident of NVDLC01Casino (package NVDLC01HologramCasinoPatrol03) in a run of 2026-11-20; that a code holder drives it, and its timers, are from the decompiled scripts, not checked here. God mode; MoveTo by the call aid (its line marks each step): 450 units at 8 s (yellow), 200 units at 18 s (red), 1500 units at 30 s (the retreat: yellow, then blue; the hologram may keep fighting, and the spot may not be open floor). Each step wants the old colour's stop and the new colour's start and set after its move line; the set count (5: blue, yellow, red, yellow, blue) fails on any other set in between, a blue between the red and the retreat included."
 areas = ["effect-shaders", "scripts"]
 paths = ["engine/nvforever/src/effect_shaders.rs", "crates/fnv-game/src/functions/misc.rs"]
 args = ["--cell", "NVDLC01Casino", "--play", "--no-voice", "--no-messages"]
 run_seconds = 50
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "8:moveto:player:CasinoHologramB:450:0:0,18:moveto:player:CasinoHologramB:200:0:0,30:moveto:player:CasinoHologramB:1500:0:0", NVF_PLAY_TEST_SHOTS = "6:holo_calm.png,14:holo_attention.png,26:holo_aggressive.png,45:holo_retreat.png" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "8:call:player:MoveTo:CasinoHologramB:450:0:0,18:call:player:MoveTo:CasinoHologramB:200:0:0,30:call:player:MoveTo:CasinoHologramB:1500:0:0", NVF_PLAY_TEST_SHOTS = "6:holo_calm.png,14:holo_attention.png,26:holo_aggressive.png,45:holo_retreat.png" }
+expect = [
+  { re = 'effect shaders by script on CasinoHologramB: ', max = 5, label = "five sets in all (blue, yellow, red, yellow, blue): none in between" },
+]
 order = [[
-  { text = "effect shader: NVDLC01HologramNeutral on CasinoHologramB (fill and darkening edge, until stopped)", label = "calm: blue" },
-  { text = "effect shader: NVDLC01HologramNeutral on CasinoHologramB ends (stopped)", label = "blue stopped" },
-  { text = "effect shader: NVDLC01HologramAttention on CasinoHologramB (fill and darkening edge, until stopped)", label = "within 600 units: yellow" },
-  { text = "effect shader: NVDLC01HologramAttention on CasinoHologramB ends (stopped)", label = "yellow stopped" },
-  { text = "effect shader: NVDLC01HologramAggressive on CasinoHologramB (fill and darkening edge, until stopped)", label = "attacking: red" },
-], [
-  { re = 'effect shaders by script on CasinoHologramB: NVDLC01HologramNeutral$', label = "calm: blue alone" },
-  { re = 'effect shaders by script on CasinoHologramB: NVDLC01HologramAttention$', label = "within 600 units: yellow alone" },
-  { re = 'effect shaders by script on CasinoHologramB: NVDLC01HologramAggressive$', label = "attacking: red alone" },
-  { re = 'effect shaders by script on CasinoHologramB: NVDLC01HologramAttention$', label = "retreat: yellow alone again" },
-  { re = 'effect shaders by script on CasinoHologramB: NVDLC01HologramNeutral$', label = "retreat: blue alone again" },
+  { re = 'effect shaders by script on CasinoHologramB: NVDLC01HologramNeutral$', label = "calm before the first move: blue alone" },
+  { re = 'script: test aid calls MoveTo on ', label = "step 1: the player 450 units from it" },
+  { text = "effect shader: NVDLC01HologramNeutral on CasinoHologramB ends (stopped)", label = "step 1: blue stopped" },
+  { text = "effect shader: NVDLC01HologramAttention on CasinoHologramB (fill and darkening edge, until stopped)", label = "step 1: yellow" },
+  { re = 'effect shaders by script on CasinoHologramB: NVDLC01HologramAttention$', label = "step 1: yellow alone" },
+  { re = 'script: test aid calls MoveTo on ', label = "step 2: the player 200 units from it" },
+  { text = "effect shader: NVDLC01HologramAttention on CasinoHologramB ends (stopped)", label = "step 2: yellow stopped" },
+  { text = "effect shader: NVDLC01HologramAggressive on CasinoHologramB (fill and darkening edge, until stopped)", label = "step 2: red" },
+  { re = 'effect shaders by script on CasinoHologramB: NVDLC01HologramAggressive$', label = "step 2: red alone" },
+  { re = 'script: test aid calls MoveTo on ', label = "step 3: the player 1500 units away" },
+  { text = "effect shader: NVDLC01HologramAggressive on CasinoHologramB ends (stopped)", label = "step 3: red stopped" },
+  { text = "effect shader: NVDLC01HologramAttention on CasinoHologramB (fill and darkening edge, until stopped)", label = "step 3: yellow again" },
+  { re = 'effect shaders by script on CasinoHologramB: NVDLC01HologramAttention$', label = "step 3: yellow alone" },
+  { text = "effect shader: NVDLC01HologramAttention on CasinoHologramB ends (stopped)", label = "step 3: yellow stopped" },
+  { text = "effect shader: NVDLC01HologramNeutral on CasinoHologramB (fill and darkening edge, until stopped)", label = "step 3: blue again" },
+  { re = 'effect shaders by script on CasinoHologramB: NVDLC01HologramNeutral$', label = "step 3: blue alone" },
 ]]
 forbid = [
   { re = 'effect shader: NVDLC01Hologram\w+: fill texture .* not found', label = "a hologram colour's fill texture missing" },

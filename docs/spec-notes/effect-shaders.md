@@ -132,9 +132,10 @@ Read here as [hypothesis where marked]:
   would take), so the rim takes the colour off the mesh and the fill's light together
   [design: without it the two tie in the transparent sort; the wiki's "darken the
   mesh" read as the end result]. Before #3017 the edge was added: Dead Money's holograms
-  wore a broad near-white rim (fall off 0.95, edge colours from (164, 206, 240) to
-  (213, 210, 191)) that paled the yellow and red fills alike [hypothesis: how far it
-  paled them is not measured against the original; observer-checks.md item 250].
+  got an added rim in their pale edge colours (fall off 0.95, edge colours from
+  (164, 206, 240) to (213, 210, 191)). That it looked near-white and washed the yellow
+  and red fills out is a hypothesis until frames of both engines are compared
+  [hypothesis: observer-checks.md item 250].
 - Which records the flag reaches [observed: the main session's EFSH listing over the
   masters, 2026-11-21]: it is set on FalloutNV.esm's `PlasmaGooification`,
   `PlasmaGooificationGlow` and `PlasmaGooificationSmall` (destination Source Inverted
@@ -182,7 +183,9 @@ Read here as [hypothesis where marked]:
   record's cycle times the actor's alpha, so at 0 the membrane goes with the body
   [hypothesis: the original's fade of a membrane with SetActorAlpha is not documented;
   observer-checks.md item 250]. The factor is the alpha of the see-through copy the
-  covered meshes actually wear, 1 without one: the player's third-person body is not
+  reference's meshes wear that frame (the actor alpha is drawn first, so a membrane
+  started on an actor already at 0 starts unseen), 1 without one: the player's
+  third-person body is not
   given one (`AlphaDrawing` reaches only meshes with a `RefVisual`), so a player's
   membrane is not faded by a script alpha the body does not show [design]. The log says
   `effect shader: <EDID> on <who> fades with its actor to <a> (<n> overlays on <m>
@@ -405,25 +408,34 @@ What runs here:
   PlayMagicShaderVisuals, StopMagicShaderVisuals) [documented: the function table,
   `functions/mod.rs`]. A play is kept per (reference, shader): playing one again starts
   it over, stopping one ends only that one, and different shaders on one reference are
-  drawn together, but for the hologram family below [design:
+  drawn together, but for the hologram colours below [design:
   `misc::play_magic_shader_visuals`, `effect_shaders.rs::play`].
   So each threat step ends the old colour (`… ends (stopped)`) before the new one
   starts; that the machine moves on these references in a running game is not yet seen
   [hypothesis; smoke `dead-money-hologram-threat`].
 - The ability's replay plays Aggressive over a Neutral it never stopped, so in combat
-  after a load both are played on one hologram. The script's shape suggests its authors
-  expected the newer colour to take over [hypothesis: inferred from the call sequence;
-  observer-checks.md item 250]. So the hologram membranes form a family: a script's play
-  of one ends the earlier script plays of the family on the same reference, also when
-  both came in the same frame (the older one's start never shows), logged `… ends
-  (replaced by a later one of its kind)`. The family is the shaders with no particle
-  shader, "Edge Effect Inverse" and destination blend Source Alpha, which only the six
-  hologram colours of Dead Money and Old World Blues are [observed: §2 and the EFSH
-  listing above] (`effect_shaders.rs::script_family`). Every other shader stacks as
-  before, the turret shield and the plasma glows included [design: no rule of "the last
-  shader wins" for unrelated shaders]. A side of it: the ability's Neutral replay a
-  second after a load, if it comes after a code holder's yellow or red, turns the
-  hologram blue until the next threat step [hypothesis: the same reading].
+  after a load both are played on one hologram; out of combat it plays Neutral over
+  whatever colour a code holder's OnLoad has just restored. The script's shape suggests
+  its authors expected a threat colour to take over and the neutral replay not to undo
+  a code holder's alert [hypothesis: inferred from the call sequence; observer-checks.md
+  item 250]. The colour rule, applied at the script call
+  (`fnv_game::functions::misc::ScriptLooks::play`), so HasEffectShader and the drawing
+  agree:
+  - a threat colour (Attention, Aggressive) played on a hologram ends the other colours
+    of its set playing there;
+  - the neutral colour is not played while another colour of its set plays there; a
+    code holder reaches it only after stopping the threat colour, so it still shows on
+    the way down.
+  So "Neutral, Neutral, Aggressive" in one update leaves Aggressive; Attention restored
+  by OnLoad survives the ability's Neutral replay; Stop Attention then Play Neutral shows
+  Neutral [design over the hypothesis above].
+- The sets are named by identity, the plugin that defines each and its FormID in it
+  (`HOLOGRAM_COLOURS`): DeadMoney.esm 0x001118, 0x00307D, 0x00307C and OldWorldBlues.esm
+  0x012080, 0x012081, 0x012082 [observed: the maintainer's decode and the main session's
+  EFSH listing, 2026-11-21]; a colour is neutral when its editor ID ends in "Neutral".
+  Not by flags [design]: a mod's membrane with the same flags is left alone. Every other
+  shader stacks as before, the turret shield and the plasma glows included [design: no
+  rule of "the last shader wins" for unrelated shaders].
 - Each reference's set of script-played shaders is logged when it changes: `effect
   shaders by script on <who>: <EDIDs, sorted, or none>`, so one colour alone can be
   checked.
