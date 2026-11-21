@@ -111,6 +111,7 @@ mod showoff4;
 mod showoff5;
 mod softlock;
 mod source_metadata;
+mod spell_alch_mgef_overrides;
 mod step_budget;
 mod sup1;
 mod sup4;

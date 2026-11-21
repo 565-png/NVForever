@@ -537,7 +537,7 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
         let target = match get.as_str() {
             "getbaseitemvalue" => Some(("DATA", "value")),
             "getweight" if g.data.sig(f) == Some(*b"AMMO") => Some(("DAT2", "weight")),
-            "getweight" if g.data.sig(f) == Some(*b"ALCH") => Some(("DATA", "")),
+            "getweight" if g.data.sig(g.unclone(f)) == Some(*b"ALCH") => Some(("DATA", "")),
             "getweight" => Some(("DATA", "weight")),
             "getarmorarmorrating" => Some(("DNAM", "dr")),
             "getarmordt" => Some(("DNAM", "dt")),
@@ -633,7 +633,7 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
         // its value in ENIT.
         "getweight" | "getitemvalue" | "getbasehealth" | "getarmorarmorrating" | "getarmordt" => {
             let f = item(g, 0).unwrap_or(FormId(0));
-            let alch = g.data.sig(f) == Some(*b"ALCH");
+            let alch = g.data.sig(g.unclone(f)) == Some(*b"ALCH");
             // [observed: nvse-forms, Stimpak value 0] an ALCH's value (ENIT) is not what
             // GetItemValue reads.
             if alch && name == "getitemvalue" {
@@ -785,7 +785,14 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
         "getnumloadedmods" => XVal::Num(g.data.load_order.len() as f64),
         // [documented: GetEquipType; observed: nvse-forms, 10mm pistol 2, leather armor 7,
         // stimpak 11, 10mm ammo 0] the item's ETYP.
-        "getequiptype" => num_of(field(g, item(g, 0).unwrap_or(FormId(0)), "ETYP", "")),
+        "getequiptype" => {
+            let f = item(g, 0).unwrap_or(FormId(0));
+            if let Some(d) = g.ingestible_def(f) {
+                XVal::Num(if d.equip_type >= 0 { d.equip_type as f64 } else { 0.0 })
+            } else {
+                num_of(field(g, f, "ETYP", ""))
+            }
+        }
         // [documented: GetRepairList; GetModelPath; GetIconPath].
         "getrepairlist" => form_of(field(g, item(g, 0).unwrap_or(FormId(0)), "REPL", "")),
         // GetTexturePath: the icon (ICON) [observed: nvse-misc, pistol, stimpak, caps, the
