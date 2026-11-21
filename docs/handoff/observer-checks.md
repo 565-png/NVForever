@@ -3469,7 +3469,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-21 (the music under the Pip-Boy radio, #3311)
 
-250. **What does the Pip-Boy radio do to the music?** (P2; #3311, audio.md §13.2 item 9,
+262. **What does the Pip-Boy radio do to the music?** (P2; #3311, audio.md §13.2 item 9,
      radio.md §8.) A player's report says the place's music should stop while the radio
      is on. Ours: while the Pip-Boy plays its station (a line or song sounding now or
      within 8 s) the place's music is turned down to silence over 3 s and plays on

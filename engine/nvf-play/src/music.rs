@@ -392,7 +392,7 @@ const RADIO_FADE: f32 = DEFAULT_FADE;
 /// which keeps its level as battle music does; the stem comes and goes by its own fade,
 /// so a battle starting or ending under the radio blends, while the explore and
 /// suspense stems stay down. A battle set's loop and the music scripts ask for (`place`
-/// false) keep theirs [hypothesis: observer check 250; #3311, a player's report that the
+/// false) keep theirs [hypothesis: observer check 262; #3311, a player's report that the
 /// music should stop while the radio is on].
 pub fn radio_share(place: bool, dungeon: bool, duck: f32) -> [f32; 3] {
     let duck = duck.clamp(0.0, 1.0);

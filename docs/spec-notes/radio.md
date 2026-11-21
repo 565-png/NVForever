@@ -318,7 +318,7 @@ No texts are printed.
   heard above zero level now or within 8 s), the place's music
   is turned down to silence and fades back in, where it has got to, when it stops;
   static alone leaves the music alone, battle music still plays over the radio, and
-  world receivers do not turn the music down [hypothesis: observer check 250; design:
+  world receivers do not turn the music down [hypothesis: observer check 262; design:
   the 8 s hold; audio.md §13.2 item 9].
 - **Controls** [design; there is no Pip-Boy screen yet]: `]` tunes to the next station
   received (off → first → … → last → off), `[` to the previous; not while a script has

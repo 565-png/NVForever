@@ -810,7 +810,7 @@ Counts are of FalloutNV.esm alone [observed] unless they say otherwise.
    and the death and level-up music. Incidental phrases (item 6) are not changed
    [hypothesis: a player's report says the music should stop while the radio is on;
    battle music, how fast it goes, whether it resumes or starts again, and static or
-   out of range are observer check 250; design: the 3 s fades, the 8 s hold, resumed
+   out of range are observer check 262; design: the 3 s fades, the 8 s hold, resumed
    rather than started again].
 
 Seen [observed 2026-10-11, `nvforever --play`, the owner's load order]:
@@ -844,7 +844,7 @@ Seen [observed 2026-10-11, `nvforever --play`, the owner's load order]:
 - What the Pip-Boy radio does to the music (§13.2 item 9): whether battle music cuts in
   over it, whether the place's music fades or stops, whether it comes back when the
   radio is turned off, and what static at the edge of a station's radius or a station
-  out of reception does (observer check 250).
+  out of reception does (observer check 262).
 
 ### 13.5 Fallout 3 music (owner, list 5 item 69)
 
