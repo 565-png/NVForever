@@ -784,6 +784,19 @@ impl Extend<FormId> for KnownTopics {
 }
 
 /// The player's state outside the world's reference table.
+/// Who called DisablePlayerControls ([`PlayerState::controls_disabled_by`]).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ControlsCaller {
+    /// The script unit's label (`Ctx::unit`: the owner record, a quest stage, a dialogue line).
+    pub unit: String,
+    /// The quest whose script or stage result ran it.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub quest: Option<FormId>,
+    /// The reference the script runs on.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reference: Option<FormId>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct PlayerState {
     pub xp: f64,
@@ -840,6 +853,11 @@ pub struct PlayerState {
     /// text, sneaking.
     #[serde(default)]
     pub controls_disabled: [bool; 7],
+    /// The last DisablePlayerControls call that still holds a group: the running unit's
+    /// label, its quest and its reference, for the players' reports' controls_locked event
+    /// (#3044) [design]. Cleared once EnablePlayerControls leaves no group disabled.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub controls_disabled_by: Option<ControlsCaller>,
     /// SetHardcore (otherwise the configuration's).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub hardcore: Option<bool>,
