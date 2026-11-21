@@ -410,9 +410,9 @@ pub fn radio_share(place: bool, dungeon: bool, duck: f32) -> [f32; 3] {
 /// volume as they were.
 fn mix(t: &mut Track, dt: f32, volume: f32, duck: f32) {
     let share = radio_share(t.place, t.layer_names == DUNGEON_LAYERS, duck);
-    for k in 0..3 {
+    for (k, share) in share.into_iter().enumerate() {
         t.level[k] = fade_step(t.level[k], t.target[k], dt, t.fade);
-        t.levels[k].store((t.level[k] * t.gain[k] * volume * share[k]).to_bits(), Ordering::Relaxed);
+        t.levels[k].store((t.level[k] * t.gain[k] * volume * share).to_bits(), Ordering::Relaxed);
     }
 }
 
@@ -1280,6 +1280,9 @@ fn play(
     }
 }
 
+/// The screens that hold the place's music down ([`mix_tracks`]).
+type Screens<'a> = (Option<Res<'a, crate::main_menu::MainMenu>>, Option<Res<'a, crate::intro::Intro>>, Option<Res<'a, crate::poker::PokerScreen>>);
+
 /// Each frame after [`play`]: the tracks' fades moved on and their levels handed to the
 /// mixer, at the player's volume, the conversation tweak and, for the place's music
 /// (outgoing crossfades too), its share under the Pip-Boy radio (`radio_share`): while
@@ -1294,7 +1297,7 @@ fn mix_tracks(
     music: Option<ResMut<Music>>,
     state: Res<State<PlayState>>,
     tweaks: Option<Res<crate::tweaks::TweakSettings>>,
-    (main_menu, intro, poker): (Option<Res<crate::main_menu::MainMenu>>, Option<Res<crate::intro::Intro>>, Option<Res<crate::poker::PokerScreen>>),
+    (main_menu, intro, poker): Screens,
     radio: Option<Res<crate::radio::Radio>>,
 ) {
     let Some(mut music) = music else { return };
