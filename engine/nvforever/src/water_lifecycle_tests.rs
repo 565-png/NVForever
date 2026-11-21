@@ -155,7 +155,7 @@ fn setup() -> (App, Entity, EmptyData) {
 fn local_plane(a: &mut App, grid: (i32, i32)) -> Entity {
     let cache = a.world().resource::<WaterCache>();
     let mesh = cache.plane.clone().unwrap();
-    let mat = cache.materials[&(WATER, true, false)].clone();
+    let mat = cache.materials[&(WATER, true, false, FlowDirection::STILL)].clone();
     let e = a
         .world_mut()
         .spawn((
@@ -182,11 +182,23 @@ fn local_plane(a: &mut App, grid: (i32, i32)) -> Entity {
     e
 }
 
+/// Advance `distant_water` until `main`'s budgeted surface reads (#2956) finish
+/// populating the initial or newly expanded LOD square (`built_for.is_some()`).
+fn settle_distant_water(a: &mut App) {
+    for _ in 0..32 {
+        a.update();
+        if a.world().resource::<DistantWater>().built_for.is_some() {
+            return;
+        }
+    }
+    panic!("distant_water did not finish budgeted surface reads within 32 frames");
+}
+
 #[test]
 fn equal_count_stream_replacement_removes_coplanar_distant_owner_and_retains_neighbors() {
     let (mut a, _, _dir) = setup();
     a.add_systems(Update, distant_water);
-    a.update();
+    settle_distant_water(&mut a);
     let local0 = local_plane(&mut a, (0, 0));
     a.update();
     let (old1, neighbor, material) = {
@@ -245,7 +257,7 @@ fn equal_count_stream_replacement_removes_coplanar_distant_owner_and_retains_nei
 fn lod_and_interior_changes_reconcile_real_planes_without_camera_or_count_changes() {
     let (mut a, _, _dir) = setup();
     a.add_systems(Update, distant_water);
-    a.update();
+    settle_distant_water(&mut a);
     let old: Vec<_> = a
         .world()
         .resource::<DistantWater>()
@@ -260,7 +272,7 @@ fn lod_and_interior_changes_reconcile_real_planes_without_camera_or_count_change
         .planes
         .contains_key(&(4, 0)));
     a.world_mut().resource_mut::<LodState>().radius = 1;
-    a.update();
+    settle_distant_water(&mut a);
     assert!(
         a.world()
             .resource::<DistantWater>()
