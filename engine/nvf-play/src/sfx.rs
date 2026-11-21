@@ -175,6 +175,9 @@ pub struct ScriptSounds {
     pub fades_in: Vec<(u32, f32)>,
     /// Sounds whose stop fades them out over seconds instead of at once.
     pub fades_out: Vec<(FormId, f32)>,
+    /// Items a script gave the player whose pick-up sound plays at the listener
+    /// (`script_events::ScriptEffect::ItemAddedSound`, #3095).
+    pub items_added: Vec<FormId>,
 }
 
 /// A script's sound fading in or out (`fnv_game::nvse_jg9`): seconds in all and so far,
@@ -747,6 +750,9 @@ pub struct Sfx {
     pub played: u32,
     pub silent: u32,
     pub failed: u32,
+    /// [`LoopScale`] as [`play`] last read it: a [`LoopSound`] loop starts at its share, so
+    /// one faded in from silence (`crate::heartbeat`) does not sound whole for its first frame.
+    loop_start: HashMap<FormId, f32>,
     /// The listener's reverb environment now ([`crate::reverb::RoomReverb`] keeps it),
     /// and how many sounds were played through one.
     pub room_reverb: Option<&'static Preset>,
@@ -809,9 +815,16 @@ pub struct Sfx {
 }
 
 impl Sfx {
+    /// A SOUN record by Editor ID (any case). The form store (`fnv_sim::forms`) does not
+    /// index SOUN records, so its `by_edid` finds no sound (#3095).
+    pub fn sound_by_edid(&self, edid: &str) -> Option<FormId> {
+        self.forms.sounds.iter().find(|(_, s)| s.edid.as_deref().is_some_and(|e| e.eq_ignore_ascii_case(edid))).map(|(f, _)| *f)
+    }
+
     fn new(forms: FxForms) -> Sfx {
         Sfx {
             forms,
+            loop_start: HashMap::new(),
             files: HashMap::new(),
             decoding: Vec::new(),
             folders: HashMap::new(),
@@ -1471,11 +1484,14 @@ fn start_looping(out: &mut Out, sfx: &mut Sfx, r: &Resolved, handle: Handle<PcmS
         return None;
     }
     sfx.played += 1;
-    let mut e = out.commands.spawn((AudioPlayer::<PcmSound>(handle), PlaybackSettings::LOOP.with_volume(Volume::Linear(gain)), SfxSound, SoundCategory::of_effect(r.s.edid.as_deref())));
+    // A loop of a module's starts at its share ([`LoopScale`]), its whole gain kept for
+    // [`loop_scales`].
+    let share = if script { 1.0 } else { sfx.loop_start.get(&sound).copied().unwrap_or(1.0).clamp(0.0, 1.0) };
+    let mut e = out.commands.spawn((AudioPlayer::<PcmSound>(handle), PlaybackSettings::LOOP.with_volume(Volume::Linear(gain * share)), SfxSound, SoundCategory::of_effect(r.s.edid.as_deref())));
     if script {
         e.insert(ScriptPlayed(sound));
     } else {
-        e.insert(Looping(sound));
+        e.insert((Looping(sound), LoopFull(gain)));
         if is_interface(r.s.edid.as_deref()) {
             e.insert(KeepsSpeed);
         }
@@ -1542,6 +1558,7 @@ fn play(
     player: Option<Res<Player>>,
     data: Option<Res<nvf_assets::GameData>>,
     mut assets: ResMut<Assets<PcmSound>>,
+    loop_scale: Option<Res<LoopScale>>,
 ) {
     let (Some(mut sfx), Some(data)) = (sfx, data) else {
         requests.clear();
@@ -1550,6 +1567,9 @@ fn play(
         return;
     };
     let sfx = &mut *sfx;
+    if let Some(l) = loop_scale.filter(|l| l.is_changed()) {
+        sfx.loop_start.clone_from(&l.0);
+    }
     let vfs = &data.vfs;
     let ss = &mut *script_sounds;
     let mut out = Out { commands: &mut commands, assets: &mut assets, settings: &settings, player: player.as_deref() };
