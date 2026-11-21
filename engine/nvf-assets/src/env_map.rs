@@ -19,7 +19,7 @@
 //! a streak on a static bottle kept its screen place under sun, fire and moon, took the
 //! light's colour and fell to about a third from day to night; a fit (a hypothesis)
 //! against NVForever's unscaled term asked for 3.75-7.75 times the term on that bottle by
-//! day and about none at night; observer check 227]. By day L is at most 1, so the
+//! day and about none at night; observer check 254]. By day L is at most 1, so the
 //! default can only dim the strength-1 term, while the fit asks for up to 8.5 times the
 //! term on some objects (the other Sarsaparilla bottle): the day strength is open and
 //! deliberately left at 1. L follows the sun
@@ -75,7 +75,7 @@ use std::sync::OnceLock;
 /// job envmap, GetNumericINISetting]. NVForever reads no INI value for it [design]. The
 /// fade itself is not observed: setting both values to 1 in the running original changed
 /// no picture at 51-1,200 units [observed: capture job envmap5], so either the setting
-/// does not apply live or the fade does not act there; observer check 228.
+/// does not apply live or the fade does not act there; observer check 255.
 pub const ENV_MAP_LOD1: f32 = 1500.0;
 
 /// Camera distance past which there is no reflection: `fEnvMapLOD2` = 1800, "Max distance
@@ -86,7 +86,7 @@ pub const ENV_MAP_LOD1: f32 = 1500.0;
 /// translation, usually the reference's), not to each fragment; a model whose parts sit
 /// under nodes of their own (the HELIOS One reflector row) fades part by part
 /// [hypothesis: the wiki gives the two distances and says "on objects", not the curve;
-/// observer check 228].
+/// observer check 255].
 pub const ENV_MAP_LOD2: f32 = 1800.0;
 
 /// The environment-map inputs of a lit shader property with Environment_Mapping
@@ -362,9 +362,9 @@ pub(crate) fn mask_mode(has_mask: bool, no_mask: NoMask, normal_alpha: bool) -> 
 /// The alpha mode of a shape that reflects (`window`: whether it has the window flag;
 /// `None`: it does not reflect): a blended one is drawn premultiplied where the blend
 /// rule for its set says so ([`EnvAids::blend_for`]), otherwise it keeps its mode.
-/// Window shapes are premultiplied by default (#2669; observer check 222); other shapes
+/// Window shapes are premultiplied by default (#2669; observer check 249); other shapes
 /// keep their blend [hypothesis, the conservative choice: hair, cell fades, blended
-/// cut-outs and material animation key on `AlphaMode::Blend`; observer check 226].
+/// cut-outs and material animation key on `AlphaMode::Blend`; observer check 253].
 pub(crate) fn env_alpha_mode(alpha_mode: AlphaMode, window: Option<bool>, aids: &EnvAids) -> AlphaMode {
     match window {
         Some(w) if aids.blend_for(w) == EnvBlend::Premultiplied && matches!(alpha_mode, AlphaMode::Blend) => AlphaMode::Premultiplied,

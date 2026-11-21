@@ -59,8 +59,7 @@ use crate::activate::pick::{self, RayHit};
 use crate::phys::PhysState;
 use crate::script::{Runtime, ScriptState};
 use crate::sim::SimState;
-use crate::{space, PlayData, PlaySet, PlayState, PlayWorld, PlayerCamera, RefVisual, Travel};
-use bevy::camera::primitives::Aabb;
+use crate::{space, PlayData, PlaySet, PlayState, PlayWorld, PlayerCamera, Travel};
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
@@ -478,17 +477,18 @@ fn toggle(
     mut commands: Commands,
     roots: Query<Entity, With<ConsoleRoot>>,
     free_cam: Res<crate::free_cam::FreeCam>,
-    tweaks: Option<Res<crate::tweaks::TweakSettings>>,
+    (tweaks, bindings, mouse): (Option<Res<crate::tweaks::TweakSettings>>, Option<Res<crate::bindings::Bindings>>, crate::pad::ActionButtons<MouseButton>),
 ) {
     let keys = keys.snapshot();
-    // The player's tweak: another key opens the console [design: docs/design/tweaks.md].
-    let key = crate::tweaks::console_key(tweaks.as_deref());
+    let mouse = mouse.snapshot();
+    // The Console binding (Controls > Additional Features), ` unless the player rebinds it.
+    let pressed = crate::bindings::binding_just_pressed(bindings.as_deref(), crate::bindings::Control::Console, |k| keys.just_pressed(k), |m| mouse.just_pressed(m));
     let by_aid = aid.0.first().is_some_and(|(t, _)| time.world_secs().is_some_and(|now| *t <= now));
     if !c.open {
         // The free camera's mode 1 holds the world in `Menu` with no menu open (`crate::free_cam`).
         let world = *state.get() == PlayState::Playing || (free_cam.holds_world() && *state.get() == PlayState::Menu);
         let free = world && active.0.is_none() && !loading.active();
-        if free && (keys.just_pressed(key) || by_aid || c.open_asked) {
+        if free && (pressed || by_aid || c.open_asked) {
             c.open = true;
             c.open_asked = false;
             // Already `Menu` under the free camera: no change of state, which would close it.
@@ -498,7 +498,7 @@ fn toggle(
         }
         return;
     }
-    if keys.any_just_pressed([key, KeyCode::Escape]) {
+    if pressed || keys.just_pressed(KeyCode::Escape) {
         close(&mut c, &mut next, &mut commands, &roots);
     }
 }
@@ -717,6 +717,7 @@ fn typing(
                 let terms = query_terms(rest);
                 if terms.is_empty() {
                     c.print("A line is a script function: [reference.]Function argument ...  e.g. player.additem 0000000F 100");
+                    c.print("eval <script expression>: print a number, form, quoted string, or array preview");
                     c.print("help <text>: records and functions whose name or Editor ID contains it (not case sensitive); \"two words\" for a phrase, several words must all match");
                     c.print("prid <ref>, coc <cell>, cow <world> <x> <y>, coe <x> <y>, tgm, cls, save <name>, load [name], saves, set <var> to <value>, editor (editor mode on/off), editor select|move|turn|place|delete|undo, editor save <Name.esp>, editor why [topic] (why the selected actor says what it says). Click something to select it; calls without a reference run on it.");
                     c.print("Quests and info: sq, sqt, movetoqt [n], sqs <quest>, sqv <quest>, sv, caqs, inv, getavinfo <av>, setgs <setting> <value>, cam, qqq, advlevel (level up), poker [casino] (a poker table)");
@@ -1216,7 +1217,7 @@ fn click(
     windows: Query<&Window, With<PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<PlayerCamera>>,
     phys: Option<ResMut<PhysState>>,
-    visuals: Query<(&RefVisual, &Aabb, &GlobalTransform, &InheritedVisibility)>,
+    visuals: crate::PickVisuals,
     sim: Res<SimState>,
     play: Res<PlayWorld>,
     mut script: Option<ResMut<ScriptState>>,
@@ -1321,7 +1322,7 @@ pub struct Under {
 /// The reference a ray from `o` along `d` (Bevy space) picks within `reach` game units:
 /// the first collision hit, else the render bounds it enters, as the console's click and
 /// the crosshair pick.
-pub fn pick_under(o: Vec3, d: Vec3, reach: f32, phys: Option<&mut PhysState>, visuals: &Query<(&RefVisual, &Aabb, &GlobalTransform, &InheritedVisibility)>, pickable: impl Fn(u32) -> bool + Copy) -> Under {
+pub fn pick_under(o: Vec3, d: Vec3, reach: f32, phys: Option<&mut PhysState>, visuals: &crate::PickVisuals, pickable: impl Fn(u32) -> bool + Copy) -> Under {
     let (eye, dir) = (space::to_game(o), {
         let p = space::to_game(o + d);
         let e = space::to_game(o);
@@ -1445,7 +1446,7 @@ fn draw(c: Res<Console>, mut texts: Query<(&Part, &mut Text)>, time: Res<Time<Re
 }
 
 /// A box around the selected reference's drawn parts while the console is open.
-fn outline(c: Res<Console>, visuals: Query<(&RefVisual, &Aabb, &GlobalTransform, &InheritedVisibility)>, mut gizmos: Gizmos) {
+fn outline(c: Res<Console>, visuals: crate::PickVisuals, mut gizmos: Gizmos) {
     let (true, Some(id)) = (c.open, c.selected) else { return };
     for (r, aabb, gt, v) in &visuals {
         if r.0 != id || !v.get() {
@@ -1592,7 +1593,16 @@ pub(crate) fn run_call(rt: &mut Runtime, call: &ConsoleCall) -> ConsoleReply {
 }
 
 fn run_line(rt: &mut Runtime, call: &ConsoleCall) -> Result<ConsoleReply, String> {
-    let w = words(&call.line);
+    let line = call.line.trim();
+    let end = line.find(char::is_whitespace).unwrap_or(line.len());
+    let (word, expression) = line.split_at(end);
+    if word.eq_ignore_ascii_case("eval") {
+        let expression = expression.trim();
+        let ctx = fnv_game::game::RunCtx { self_ref: call.selected.map(FormId), ..Default::default() };
+        let value = rt.game.eval_console_expression(expression, ctx)?;
+        return Ok(ConsoleReply { lines: vec![format!("{expression} >> {value}")], ..Default::default() });
+    }
+    let w = words(line);
     let Some(first) = w.first() else { return Ok(ConsoleReply::default()) };
     let (on_name, func) = match first.rsplit_once('.') {
         Some((r, f)) if !r.is_empty() && !f.is_empty() => (Some(r.to_string()), f.to_string()),

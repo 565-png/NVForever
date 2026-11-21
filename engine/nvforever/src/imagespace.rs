@@ -244,6 +244,35 @@ impl ScreenModifiers {
     }
 }
 
+/// Current assigned cinematic values for nonanimated records (image-modifiers.md).
+/// Keep the decoded record immutable: another session/lens must not inherit edits.
+fn live_modifier_effect(m: &ImageModifier, seconds: f32, game: Option<&fnv_game::Game<'_>>) -> ScreenEffect {
+    let mut effect = m.at(seconds);
+    let Some(game) = game.filter(|_| !m.animatable) else { return effect };
+    for trait_id in 37..=50 {
+        let Some(value) = game.traits.image_modifier_override(fnv_sim::FormId(m.form_id), trait_id) else { continue };
+        let value = value as f32;
+        if !value.is_finite() { continue; }
+        match trait_id {
+            37 => effect.cinematic.saturation.mult = value,
+            38 => effect.cinematic.saturation.add = value,
+            // Match the IMAD getter's IAD signatures and the record decoder's field order.
+            39 => effect.cinematic.contrast_avg_lum.mult = value,
+            40 => effect.cinematic.contrast_avg_lum.add = value,
+            41 => effect.cinematic.contrast.mult = value,
+            42 => effect.cinematic.contrast.add = value,
+            43 => effect.cinematic.brightness.mult = value,
+            44 => effect.cinematic.brightness.add = value,
+            45 => effect.blur_radius = value,
+            46 => effect.double_vision = value,
+            // Tint RGBA are all 0–255, alpha included (image-modifiers.md).
+            47..=50 => effect.tint[(trait_id - 47) as usize] = value / 255.0,
+            _ => unreachable!(),
+        }
+    }
+    effect
+}
+
 /// `--imod <Editor ID or 0xFormID>[@seconds]`.
 pub fn parse_forced(world: &WorldData, arg: &str) -> Result<Forced, String> {
     let (name, at) = match arg.split_once('@') {
@@ -317,7 +346,7 @@ fn screen_effect(mods: &mut ScreenModifiers, world: &WorldData, script: Option<&
         if m.finished(seconds) {
             continue;
         }
-        effects.push(m.at(seconds));
+        effects.push(live_modifier_effect(m, seconds, script.and_then(|s| s.rt.as_ref()).map(|rt| &rt.game)));
         forms.push(form);
     }
     // The strongest depth of field and motion blur are the ones shown (`combine`).
@@ -522,6 +551,9 @@ const WAIT_MENU_BLUR: f32 = 3.0;
 /// wait menu's [design: the original's shots show the world blurred behind the tutorial and
 /// container menus (docs/spec-notes/tutorial-menu.md §5), not how strongly or how fast].
 const TILE_MENU_BLUR: f32 = 3.0;
+/// The blur behind the pause menu: a third of a tile menu's [design: owner 2026-11-15, "the
+/// bluring of the box behind the whole menu is way too strong" at 3].
+const PAUSE_MENU_BLUR: f32 = 1.0;
 
 /// The blur of the world behind the Pip-Boy, in the same units [documented:
 /// `Fallout_default.ini` `[Pipboy] fBlurRadiusPipboy=3.5`; hypothesis: the same units as
@@ -675,7 +707,8 @@ fn update_grade(
     // A 3D scope's lens: a neutral grade with only the lens's modifiers on it.
     let lens = match &world {
         Some(w) if !mods.lens_held.is_empty() => {
-            let effects: Vec<ScreenEffect> = mods.lens_held.clone().into_iter().filter_map(|f| mods.record(w, f).map(|m| m.at(0.0))).collect();
+            let game = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
+            let effects: Vec<ScreenEffect> = mods.lens_held.clone().into_iter().filter_map(|f| mods.record(w, f).map(|m| live_modifier_effect(m, 0.0, game))).collect();
             let e = combine(&effects);
             let c = graded(&fnv_world::imagespace::Cinematic::default(), &e);
             let r = &e.radial;
@@ -718,7 +751,24 @@ fn tile_menu_blur_text(now: TileMenuBlur) -> String {
 /// afresh each frame, so nothing stays when the menu goes. A 3D scope's lens has its own
 /// grade, which holds only the lens's modifiers, and `sharp`, what the Pip-Boy keeps sharp, is
 /// left alone. With nothing drawn from tiles no grade is touched.
-fn tile_menu_blur(drawing: Option<Res<TileMenuBlur>>, mut last: Local<TileMenuBlur>, mut grades: Query<&mut ImageSpaceGrade, Without<LensGrade>>) {
+fn tile_menu_blur(
+    drawing: Option<Res<TileMenuBlur>>,
+    mut last: Local<TileMenuBlur>,
+    mut grades: Query<&mut ImageSpaceGrade, Without<LensGrade>>,
+    (paused, main_menu, mut was_paused): (Option<Res<nvf_play::pause::Paused>>, Option<Res<nvf_play::main_menu::MainMenu>>, Local<bool>),
+) {
+    // The pause menu over a game blurs the world behind it as a tile menu does, so its text
+    // reads over a busy picture [design: owner 2026-11-15, the menu overhaul].
+    let pause = paused.is_some_and(|p| p.0) && !main_menu.is_some_and(|m| m.open);
+    if pause != *was_paused {
+        info!("pause menu blur: {}", if pause { format!("radius {PAUSE_MENU_BLUR}") } else { "off".to_string() });
+        *was_paused = pause;
+    }
+    if pause {
+        for mut grade in &mut grades {
+            grade.blur = grade.blur.max(PAUSE_MENU_BLUR);
+        }
+    }
     let now = drawing.as_deref().copied().unwrap_or_default();
     if now != *last {
         info!("tile menu blur: {}", tile_menu_blur_text(now));
@@ -1020,3 +1070,7 @@ mod tests {
         assert!((a - 0.75).abs() < 1e-6 && (r - 1.0 / 3.0).abs() < 1e-6, "{r} {a}");
     }
 }
+
+#[cfg(test)]
+#[path = "imagespace_live_trait_tests.rs"]
+mod live_trait_tests;

@@ -2965,6 +2965,30 @@ already talking takes over at once, same topic or another; nothing is queued or 
      whether the subtitle shows at each distance.
 
 
+## Added 2026-11-15 (Use Weapon at objects and markers, #2652)
+
+207. **How does UseWeapon aim at objects and markers?** (P1; #2652, #2715 shooter
+     half; `docs/spec-notes/use-weapon.md` section 6.) [documented: #2652 supplied record
+     facts] The Hopeville silo mainframe's ACTI OnHit ED-E block sets NVDLC04MQ01a
+     55 after its package requests one Always Hit / Do No Damage arc-welder shot;
+     the commissary terminals also wait on ED-E's hit. Capture activation and button
+     1 at the mainframe, then a commissary unlock: does OnHit receive ED-E, and where
+     does the beam land? Capture a finite script use at an XMarker: do its shots fire
+     and does ED-E resume the next package without ResetAI? In G.I. Blues, do the
+     barkers keep firing at VFSPacerBusShelterREF while their Repeat Fire package
+     holds, including during combat? [hypothesis] NVForever aims at placed position
+     plus OBND centre (marker: position alone), counts misses toward finite uses, and
+     dispatches harmless object hits with the shooter. Check that placement on an
+     asymmetric or rotated object as well. [documented: #2652 w4 supplied world refs]
+     The barkers and Pacer stand in FreesideNorthWorld, while the shelter belongs
+     to FreesideWorld; both have parent WastelandNV and share coordinates.
+     [hypothesis, #2652] NVForever treats a non-actor placed Use Weapon / UseWeapon
+     target in a sibling worldspace (same nonempty immediate parent) as coordinates
+     in the shooter's worldspace, with its OBND centre added. Capture whether the
+     barkers turn and shoot at this shelter from the fight markers, and compare an
+     unrelated-worldspace object and a sibling-worldspace actor target (neither
+     receives this projection). Pacer's cover pose is outside this check.
+
 ## Added 2026-11-15 (old-head hair outside the race list, #2714)
 
 210. **Which hair does the original use when an NPC's HAIR is outside its race's
@@ -3221,10 +3245,217 @@ already talking takes over at once, same topic or another; nothing is queued or 
      x1 plus up to four from AmmoMissilelauncher75). Also whether a robot whose folder has
      no reload clip (Mister Gutsy's plasma gun or flamer) ever pauses as if reloading.
 
+## Answered 2026-11-16 (sky and grade, Capital Wasteland against the Mojave)
 
-## Added 2026-11-16 (window glass and environment maps, #2462)
+222. **Why is our Capital Wasteland sky dark brown where the original's is pale green?**
+     (Owner 2026-11-16, Tale of Two Wastelands.) Answered [observed: 54 frames of the
+     original through `capture_frames.py`, the TTW game started from Mod Organizer 2's
+     "Tale of Two Wastelands" entry]: the adapter's tint was dropped where the base image
+     space has none, the high-noon colour column was not used, the dome's green weight
+     was read as the horizon colour, and Mojave-fitted daytime factors darkened and
+     warmed the sky. world.md section 6 "Sky and grade across two worldspaces" has the
+     figures. How to run it again: the capture plugin starts a queued job only after a
+     save has loaded, so a `coc` from the main menu is not enough; TTW's "missing
+     dependency" box pauses the game until it is clicked; the game can hang on its quit
+     line and has to be closed before the next run.
+     Sweep 2026-11-17 (27 worldspaces, world.md section 6 "Sweep of the other
+     worldspaces"): most match; Point Lookout, Anchorage, The Pitt's bridge and the
+     nuked Divide do not. To run a TTW capture: Mod Organizer 2 must be opened by the
+     owner first (started from a session it cannot launch the game: error 5), the
+     launch then goes through it (`moshortcut://:Tale of Two Wastelands`); the base
+     game's own load order has no add-ons, so their worldspaces need this route too.
+     Left to check: the sky level against "LUM Ramp No Tex" in a third worldspace
+     (Point Lookout, Zion, The Pitt); the Capital Wasteland's ground level; the sunrise
+     sky; the sky near the sun at noon.
 
-222. **How does the observation window at Camp McCarran look from each side?** (P3;
+## Answered 2026-11-17 (ResetAI right after AddScriptPackage, #2865)
+
+223. **Does the original keep a script package added just before ResetAI in the same
+     script run?** (P2; #2865; `crates/fnv-game/src/functions/ai_state.rs` `reset_ai`.)
+     Answered [observed, base game]: no. GSVictorRef given VES01aVictorNovacGoHomePackage
+     alone holds it; given it and ResetAI in one script he is on his own package two
+     loops later and stays there (owner-decision-captures.md, od_06, "AddScriptPackage
+     and ResetAI in one script run"). The runtime already does this. A job script cannot
+     name a reference, package or quest by Editor ID: build each with `BuildRef 0
+     <decimal form ID>`.
+224. **Do Gibson's dogs take up a mole rat's fight against the player?** (P2; #2927;
+     `crates/fnv-game/src/provocation.rs` `call_allies`, `combat_group.rs` `raise_alarms`.)
+     Answered [observed, base game, three runs]: yes. With three mole rats attacking a
+     passive player beside the yard, three of four dogs (run 2) and four of four (run 3)
+     went into combat with the player before any mole rat was harmed and stayed in it
+     after all three were dead; `GetShouldAttack player` stayed 0. In run 1 the mole rats
+     lost the player early and no dog joined. The runtime already does this
+     (combat-groups.md §4). To count placed creatures in a job: walk `GetFirstRef 200 1`
+     and compare `GetBaseObject`.
+225. **In a child worldspace with Use Land Data, which landscape is drawn where the child
+     has its own LAND and it differs from the parent's?** (P2; #2345;
+     `crates/fnv-world/src/index.rs` `take_parent_data`.) Tale of Two Wastelands:
+     MegatonWorld squares (-1, -7) and (1, -6), ParadiseFalls (-9, 15) and (-9, 16),
+     GNRroofWorld (flat at about 12,280 over the parent's ground at about 10,700). Stand
+     in each and read the player's z on the ground (`player.GetPos Z`): the child's
+     height or the parent's. NVForever keeps the child's own LAND and takes the parent's
+     only where the child has none. Also: per-cell water in ParadiseFalls (Use Water
+     Data), which NVForever does not take from the parent's cells.
+226. **What do SetStage and the objective functions do on a quest already completed or
+     failed?** (P2; #2958; `crates/fnv-game/src/game.rs` `set_stage`, `set_objective`.)
+     Answered [observed, base game, four jobs]: SetStage marks the stage done and runs its
+     script but does not start the quest again; SetObjectiveDisplayed and
+     SetObjectiveCompleted do nothing, even after StartQuest; CompleteAllObjectives (in
+     the stage's script) still completes. A quest stopped without being completed starts
+     again on SetStage and on SetObjectiveDisplayed (layer5-captures.md §5.8). Not
+     separated: whether CompleteAllObjectives or the stage's Complete Quest flag completed
+     the objective; FailAllObjectives; what the Pip-Boy lists for such a quest.
+
+
+## Added 2026-11-17 (OK on a message box without buttons, #2925)
+
+240. **What does GetButtonPressed give after OK on a message box that has no buttons?**
+     (P2; #2925, scripts.md §7.2 engine API.) The GECK wiki says a message box with no
+     buttons shows a default OK button and that GetButtonPressed gives the pressed
+     button's index from zero once, then -1 [documented: GECK wiki ShowMessage,
+     GetButtonPressed]; it does not say what the default OK gives. Ours: 0, once, then -1,
+     to the script that showed the box; a corner message (no Message Box flag) gives -1
+     [hypothesis: inferred from SCPT 0x000E9483, the Broken Mr. Handy in
+     BlackMountainTreasure, whose GameMode block waits for button 0 after BMRhondaFixMsg,
+     0x000E9551, a box without buttons]. In the Black Mountain treasure room with Science
+     60, activate REFR 0x000E84A4, pick "[Science] Check the robot's circuitry.", press OK
+     on the second box: if the robot gets up (`000E84A4.GetDead` 0, its new name, the
+     prompt no longer "Search"), the original gives 0. For a direct reading, a test
+     plugin's script that shows a buttonless message box and prints GetButtonPressed every
+     frame for a second after the OK (PrintC) gives the value and how many times it comes.
+
+## Added 2026-11-17 (SendAssaultAlarm on a faction with no member present, #2926)
+
+241. **What does `SendAssaultAlarm Player <faction>` do when no member of the faction is
+     present and alive?** (P3; #2926, crime-karma.md §3.5.) The wiki says only that it picks
+     "an NPC in the … faction" in place of the player [documented: GECK wiki
+     SendAssaultAlarm]. Ours: nobody turns and no crime is counted; the calling actor is
+     never the stand-in [hypothesis]. In Techatticup Mine, kill every raider of
+     `CaesarsLegionTechMineFaction` (0x001400F9) with the console, then free an NCR
+     hostage (`TechMineNCRHostage2REF`, button "Untie him."): log
+     `TechMineNCRHostage2REF.GetAlarmed`, `player.IsInCombat` and the hostage's combat
+     target for 10 s, and whether the second hostage's message box still opens. Then once
+     with the raiders alive: which raider turns (the nearest, the first in some order, or
+     all of them) and whether the guards at the entrance join. Ours picks the first member
+     in FormID order: TecLegionaryRaider5REF (0x0011F654) of 17 present and alive
+     [observed: our headless walkthrough techatticup-hostages-2926, #2926 probe].
+
+
+## Added 2026-11-15 (radscorpion spacing and melee cadence, #2535)
+
+244. **How close do two large creatures come, and how often does a creature attack?**
+     (P2; physics.md §6.8, combat-rules.md §10.) **Answered in part
+     [observed: capture run15b_b2, 2026-11-15; xNVSE 6.4.9, JIP LN 57.30]:**
+     VCrTier2RadscorpionMed and VCrTier3GiantRadscorpionMed on Searchlight Airport's
+     runway against a standing god-mode player, GetDistance between the pair and
+     GetAnimAction of each at 30 samples/s for 17 s. While both were within 300 units
+     of the player (452 samples), centre spacing was median 131, tenth percentile 93,
+     ninetieth 283, minimum 32 briefly. Each entered action 2 seven times in about
+     13 s. Successive attack-start gaps: 2.82, 1.47, 1.39, 2.20, 2.67, 1.28 and
+     2.05, 3.74, 1.93, 2.15, 1.37, 2.00 s (median 2.0, least 1.28). Action 2 lasted
+     0.77–1.18 s, then action 4 for 0.44–1.10 s. No attack began during action 2.
+     The shortest gaps (1.28, 1.37, 1.39, 1.47) are just past the ordinary clips'
+     `a:` keys (1.267/1.300) and the sting's end (1.267).
+
+     [design, #2535] Ours now holds a creature's next melee decision until the playing
+     clip's `a:` key, or its end without one; earlier keys still shorten the base timer.
+     Creatures only (the maintainer's decision of 2026-11-18 on #2971): people and NPCs
+     keep the 1.2 s base timer (÷ attack speed), brought forward to an earlier key,
+     until their pace is measured here. Walking creatures use a BBX
+     half-width × actor scale circle when larger than their previous block radius
+     [hypothesis: fits the observed spacing; the original's shape was not seen].
+     The world capsule is unchanged [design: `phys::npc_params`].
+     [design: `hitvol::sync_volumes`, #2535] The wider circle also stays when a
+     fighter stops and its walking character is removed; standing attack blocks
+     therefore retain both creatures' widths.
+
+     **Still open:** the original's extra pause after action 4 (3/14 attacks at once,
+     others after 0.1–2.1 s) is not built; what chooses its duration? Against a player
+     backing away for 10 s, one creature attacked three times (3.5 s apart), the
+     other never [observed: capture run15b_b2, 2026-11-15]. Backing-away cadence
+     parity and the unseen collision shape remain open [design]. **People's pace:** does
+     a person's next melee swing (one-handed, two-handed, fists; with late `a:` keys or
+     none) also wait for its clip's key or end, or come on a fixed base? Measure the
+     attack-start gaps of NPCs as above; until then people keep the base timer (#2971).
+     **A creature in a lunge's way:** does a dog or other creature standing in front
+     of the player stop a Legion Assault lunge (a forward power attack's clip carrying
+     the player), or does the player pass or push it? Ours: the creature's BBX circle
+     stops the lunge after about 25 of its 332 units [observed: the main session's
+     runs of NVForever, 2026-11-18, smoke `perk-legion-lunge` with fiend dogs rushing
+     the player, 4 runs of 6; on main, with the narrower block, 0 of 6].
+     [observed: the main session's runs of NVForever, 2026-11-15, reproduction on
+     Searchlight Airport's runway: the Radscorpion + Giant Radscorpion pair against
+     a god-mode player who backs away from 16 s to 28 s; pair distance read once
+     a second; three runs of upstream main 99faa23b7 and six of this branch]
+     Standing and fighting, the pair stays 66–84 units apart on upstream main and
+     113 on this branch (the designed sum). Chasing, both builds stay mostly
+     62–64 units apart. On this branch, in four of six runs one reading late in
+     the chase, as the pair comes back to a stop, fell to 7–39 units for about a
+     second. Upstream main showed no such dip in its runs.
+     [design, #2535] The widened block keeps standing creatures apart but not
+     moving ones, and the change from walking to standing can let one creature
+     pass briefly into the other. Both are left for the follow-up on the character
+     controller's movement path.
+
+## Added 2026-11-21 (script effects shown by name, #3119)
+
+245. **How do the ITEMS card and STATS > EFF write a Script effect flagged Display Name
+     Only?** (P3; #3119, pipboy.md §5.) The GECK wiki says such an effect shows its name
+     and that the names of several are put together [documented: GECK wiki Base Effect];
+     it does not say where or how. Ours: after the value changes, comma-separated
+     ("STR +2, Damage +25%"), the EFF line titled with the item's name [hypothesis]. With a
+     Psycho, a Cateye and a Steady carried, read the ITEMS > Aid card of each; use the
+     Psycho and read STATS > Status > EFF while it lasts; a screenshot of each answers it.
+
+## Added 2026-11-21 (Ammo Use 0 on a ranged weapon, #3023)
+
+246. **Does a ranged weapon with Ammo Use 0 fire without spending or carrying its ammo,
+     and does it ever reload?** (P2; #3023.) The GECK wiki calls Ammo Use "the amount of
+     ammo used per shot" [documented: GECK wiki Weapons] and says nothing of 0. Of the
+     base game's and the add-ons' 502 WEAP records, 25 have Ammo Use 0; all but one are
+     melee weapons or detonators without a projectile; the one ranged weapon is Lonesome
+     Road's Laser Detonator (NVDLC04WeapSonicDetonator, automatic, clip 1, Fire Rate 10,
+     Microfusion Breeder ammo) [observed: `fnvtool combat form` over the six masters].
+     Ours: no round is spent, so it fires at its rate with no reload and needs none carried
+     [hypothesis]. In the Divide, hold the trigger on one of the laser targets for 5 s with
+     and without Microfusion Breeder rounds carried: count the beams (a video at 30 fps
+     does it), watch for a reload, and read the ammo count before and after.
+
+## Added 2026-11-21 (what GetDestructionStage counts, #3053)
+
+247. **Does GetDestructionStage give the stage counted from 1 (DSTD index + 1) or the
+     stage's DSTD damage-stage field?** (P2; #3053, scripts.md.) The wiki says it returns
+     "the current Damage Stage" [documented: GECK wiki GetDestructionStage]. Counting from
+     0 cannot be it: Zeta's generator core tests 8 with eight stages, the Brain waits for 7
+     with seven [observed: their scripts and DEST]. Ours: index + 1 [hypothesis]; the
+     damage-stage field fits every case found too. They differ on Point Lookout's
+     DLC04DarMuckBubble (0x0A012C5E: index 1, damage stage 3, at 40 %): damage one to under
+     40 % with the console (`DamageObject`) and print `GetDestructionStage` (2 or 3).
+
+## Added 2026-11-21 (greetings of two quests at equal priority, #3199, #3061)
+
+248. **Which greeting does an actor say when two quests of the same priority both have
+     one it can say?** (P1: All or Nothing cannot be finished on House's path without the
+     answer; #3199, #3061, dialogue.md §7 item A.) The runtime takes the one stored first
+     (rule 2, an owner statement of 2026-10-10). Two cases where the shipped quest needs
+     the later one [observed: records]:
+     - On House's path, install the override chip in the Hoover Dam control room
+       (VHDControlOverrideBoxSCRIPT runs `VHDMainControlPanel1REF.StartConversation
+       Player, Greeting`). Does the panel say 0x001554D8 ("I knew you'd make it.
+       Resourceful, as always."; VHDHouseBattle, Say Once) or House's generic Lucky 38
+       greeting 0x00125EBD ("The Legion's assault could begin at any moment.";
+       VDialogueMrHouse)? Both quests are priority 55; the generic line is stored first.
+     - In Fallout 3 (or TTW), talk to Doctor Zimmer in Rivet City before The Replicated
+       Man starts: the hire line 0x0002026A (MS08, Say Once) or MS08Fin's goodbye
+       0x000C84FF ("Our dealings are done...")? Both priority 50; the goodbye is stored first.
+     Our [hypothesis]: at equal priority a Say Once line of one quest wins over another
+     quest's plain line. If both come out as the quests need, any further pair that tells
+     "Say Once first" from "later quest first" (the second case has the earlier quest win)
+     is worth a frame.
+
+## Added 2026-11-15 (the Camp McCarran observation window, #2462)
+
+249. **How does the observation window at Camp McCarran look from each side?** (P3;
      #2462, nif.md §6 "Window glass and environment maps".) Ours since #2462: the pane
      (VWindow01 0x000FB2F4 in CampMCTermInt02, `vwindow01.nif`) draws its environment
      cube `ShinyBright_e.dds` added over its blend, not weighted by its texture alpha
@@ -3249,7 +3480,7 @@ Status lines below come from captures of the original, jobs envmap, envmap2 … 
 other shapes" has the numbers). They are exteriors only: interior shots fail in the
 capture setup, so every part of a check that needs an interior is still open.
 
-223. **How strong is the reflection on a masked prop without the window flag, and does it
+250. **How strong is the reflection on a masked prop without the window flag, and does it
      follow the view?** (P3; #2841, nif.md §6 "Environment maps on other shapes".) Ours:
      the cube read along the view reflected about the normal, × the shape's
      `environment_map_scale` × its slot-5 mask, added to the lit colour [hypothesis]. Place
@@ -3269,7 +3500,7 @@ capture setup, so every part of a check that needs an interior is still open.
      strength, and whether the scale
      multiplies: the two bottles' glass differs in colour (4.0-4.6× under moonlight), so
      they cannot show it; a pair with the same texture and different scales is needed.
-224. **Does a shape with Environment_Mapping and a cube but no slot-5 mask reflect?** (P3;
+251. **Does a shape with Environment_Mapping and a cube but no slot-5 mask reflect?** (P3;
      #2841, nif.md §6.) Ours: at full strength over the whole shape [hypothesis]. Place
      an empty whiskey bottle (WhiskeyBottle01Empty01, `whiskeybottle01empty.nif`,
      `shinydull_e.dds`, no mask) and a cafeteria drinking glass (DrinkingGlass01,
@@ -3280,14 +3511,14 @@ capture setup, so every part of a check that needs an interior is still open.
      *Status: open.* The whiskey bottle is patterned with one glossy patch, not evenly
      washed; the cafeteria glass is evenly milky [observed]; their own textures cannot be
      told from an unmasked term.
-225. **Which way is the cube turned on a shape without the window flag, and on a window?**
+252. **Which way is the cube turned on a shape without the window flag, and on a window?**
      (P3; #2841, nif.md §6.) The GECK wiki says the window flag "simply flips the cubemap
      orientation" without saying which axis. Ours: both read the game-space reflection
      (x, y, z) as (x, z, y) [hypothesis]. In Lucky 38, frame a shape that reflects
      `textures\effects\nv\nvl38reflect_e.dds` (a distinctive cube; 9 shapes in 6 models
      set it without the window flag) from a level view and from looking down at it, and
      do the same for a window shape (both flags) under any cube, e.g. the observation
-     window of check 222. Compare where the bright parts of the cube land with
+     window of check 249. Compare where the bright parts of the cube land with
      `NVF_PLAY_DEBUG_ENV_AXES` (`base`, `flip-x`, `flip-y`, `flip-z`, `swap-yz`) and
      `NVF_PLAY_DEBUG_ENV_AXES_WINDOW`.
      *Status: partly answered.* The bright patches are fixed in the world, not in the
@@ -3299,10 +3530,10 @@ capture setup, so every part of a check that needs an interior is still open.
      by the engine for … advanced effect combinations (e.g. parallax + cube mapping)": if
      the engine switches a PPLighting shape with parallax and a cube to it at run time,
      such shapes would show a flipped cube too [hypothesis]; frame one if any is found.
-226. **On blended glass without the window flag, is the reflection weighted by the glass's
+253. **On blended glass without the window flag, is the reflection weighted by the glass's
      alpha?** (P3; #2841, nif.md §6.) Ours: the shape keeps its blend, so its reflection
      fades with its alpha like the rest of its colour; window shapes are drawn with the
-     reflection over the blend (check 222) [hypothesis]. Place a drinking glass
+     reflection over the blend (check 249) [hypothesis]. Place a drinking glass
      (DrinkingGlass02, `clutter\junk\drinkingglass01.nif`, masked) in front of a dark
      wall and take a frame close up (about 60 units) and one strafing. A faint film whose
      streaks are no brighter than the glass itself agrees with ours; bright streaks over a
@@ -3310,7 +3541,7 @@ capture setup, so every part of a check that needs an interior is still open.
      *Status: open.* The glass tried (the cafeteria glass placed in the air) drew opaque
      in the original, transmission below about 0.1 [observed], so it had no faint alpha
      to compare; the junk drinking glass named here is the one to use.
-227. **Does the reflection depend on the light, with and without Env Map Fade?** (P3;
+254. **Does the reflection depend on the light, with and without Env Map Fade?** (P3;
      #2841, nif.md §6.) The wiki: Env Map Fade (Shader Flags 2 bit 15) "Fades the
      cubemap's brightness based on the distance to the nearest light". Ours (since the
      captures below): shapes without the window flag are scaled by the scene light, the
@@ -3338,7 +3569,7 @@ capture setup, so every part of a check that needs an interior is still open.
      [observed]. Open: interiors, the
      role of point lights, and what L is exactly (sun intensity, ambient, or a light sum
      at the surface).
-228. **Do reflections fade out between 1,500 and 1,800 units from the camera?** (P3;
+255. **Do reflections fade out between 1,500 and 1,800 units from the camera?** (P3;
      #2841, nif.md §6.) The INI settings `fEnvMapLOD1` 1500 and `fEnvMapLOD2` 1800
      [documented: GECK wiki "INI Settings"]. Ours: whole up to 1,500 units, none from
      1,800, linear between, on window shapes too [hypothesis for the curve]. In a long
@@ -3354,7 +3585,7 @@ capture setup, so every part of a check that needs an interior is still open.
      does not apply live or the fade does not act there; a crate at 600-1,900 units
      showed no sheen to lose (envmap4). Use an object with a strong visible sheen, the
      camera fixed and the object moved, at a fixed game time.
-229. **Does a shape with Environment_Mapping but no cube in slot 4 reflect anything?**
+256. **Does a shape with Environment_Mapping but no cube in slot 4 reflect anything?**
      (P3; #2841, nif.md §6.) 214 such shapes in the data (the wine bottle Wine,
      `clutter\food\winebottle01.nif`, 238 placements; the Pimp-Boy). Ours: no reflection
      (no default cube) [hypothesis]. Frame a wine bottle close up and strafing. A plain

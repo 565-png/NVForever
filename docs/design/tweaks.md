@@ -453,7 +453,7 @@ unless the player binds them, so nothing changes until then.
 | Shift to Talk While Sneaking | `bTalkWhileSneakingIfShiftIsHeld` | `activate::shift_talks` sets a switch read by `actor_action_in`, which then offers Talk |
 | No Active Quest From New Objectives / After Completing One | `bDontSetQuestWhenObjectivesAdded`, `bDontSetQuestWhenCompletingObjectives` | `pipboy::data` stops picking the first quest under way by itself; either switch does it, as NVForever has no separate objective-added moment there |
 | Hide Read Notes | `bHideReadNotes` | `pipboy::data` leaves out notes `Game::note_read` says are read, but for the one on screen |
-| Console Key | `iConsoleKey` | `tweaks::CONSOLE_KEYS` (the original's `` ` `` first, then keys nothing else takes) read by `console::toggle` |
+| Console Key | `iConsoleKey` | a key binding, `bindings::Control::Console` (`` ` `` by default, rebound on Controls > Additional Features like any control) read by `console::toggle` [design: owner 2026-11-16] |
 | Tab Closes Terminals | `bTabClosesTerminals` | `terminal::keys` sends Exit on Tab |
 | Tab Goes Back in the Pause Menu | `bTabBackInStartMenu` | `pause::choose`: Tab is Back on the main page's question and the load list; Settings and Controls keep Tab for their tabs |
 | Fast Travel From Anywhere | `bAllowUnsafeFastTravel` | `pipboy::data::travel::tweak_checks` drops the place refusal (Can't Travel From Here, Can't Fast Travel) |
@@ -545,13 +545,13 @@ unless the player binds them, so nothing changes until then.
 | (already so) | `bDisplayItemEffectTotals` | `Game::aid_preview` counts an effect over time whole, so the EFFECTS figure is the total; the per-second breakdown is not shown |
 | Map Zooms at the Pointer | `bBetterMapZoom` | `pipboy::data::take_input` adds a drag of the pointer's offset from `MAP_MID` times (1 − growth) after a wheel zoom, so the place under it stays (both maps; the world map's edge clamp still applies) |
 | Console Homes | `bAddSetHomeCommand` | `console::typing` takes `sethome`, `home`, `back` and `delhome` (an optional name, "home" without one) while `Console::homes_on`; the homes are travels kept for the session, not saved |
-| Screenshot Key | `iScreenshotKey` | nvforever `keys` takes the picture on `tweaks::screenshot_key`: F12, Print Screen, F11, Scroll Lock or Pause (`SCREENSHOT_KEYS`, keys nothing else takes) |
+| Screenshot Key | `iScreenshotKey` | a key binding, `bindings::Control::Screenshot` (F12 by default, rebound on Controls > Additional Features); nvforever `keys` takes the picture on it [design: owner 2026-11-16] |
 | Shift Screenshot Hides the HUD | `bShiftScreenshotHidesMenus` | with Shift held, nvforever `keys` sets `MenusHidden` (what `tm` sets), takes the picture three frames later and puts it back after six; an open menu stays in the picture |
 | Console Lines Name Their Plugin | `bModConsolePrintsIncludeName` | the script runner's `print` puts `[plugin]` (the unit key's first part) before the line; the base game's scripts too |
 | Weapon Requirements Matter | `bWeaponRequirementsMatter` | `Game::weapon_requirement_unmet` compares the weapon's DNAM Strength and skill requirements with the player's values now; the Pip-Boy (`menu.rs`) and the hotkeys (`weapon_wheel::read`, not for the weapon already equipped) refuse with "Needs <stat> <n>." |
 | Console Shows Models | `bExtraConsoleDetails` | `console::describe` adds the base's MODL path (`MODEL_DETAILS`); the cell's Editor ID and name were already in the details |
 | Backward Pace, Sideways Pace | `bMovementPenalties` | the player's step multiplies the pace by the backward and sideways shares, a diagonal weighted by its forward and side parts; aiming already slows to a walk (`aiming_walks`) |
-| Hacking: Symbols Do Nothing, No Repeat Guesses, Dud When Attempts Full, Duds Spare Tried Words | `bImprovedHacking` | `hacking::Puzzle::rules` (`HackRules`, set by `terminal.rs` from the game's tweaks) in `Puzzle::choose`; `Puzzle::guessed` keeps the words denied; the options about printing are not done |
+| Hacking: Symbols Do Nothing, No Repeat Guesses, Dud When Attempts Full, Duds Spare Tried Words, Mark Guesses as Duds, Keep Matching Characters, Compact Guess Log, Replenish Bonus Attempts | `bImprovedHacking` | `hacking::Puzzle::rules` (`HackRules::from_tweaks`, set by `terminal.rs` from the game's tweaks) in `Puzzle::choose`; `Puzzle::guessed` keeps the words denied; `mark_guesses_as_duds` blanks wrong guesses in the dump, optionally retaining password-matching characters (`keep_matching_chars`, Stewie 9.50); `compact_guesses` logs `>WORD (n/len)` on one line; `replenish_bonus` adds attempts on Replenished instead of resetting to 4; `bOverscroll` and speed/typing options are not done |
 | Run While Overencumbered | `bOverencumberedTweak` | `player::encumbered_walks` no longer forces a walk and sets `OVERENCUMBERED`; `tweaks::ap_costs` adds the overencumbered running and jump costs (4 a second and 10 a jump by default, our numbers), walking and refusing the jump without the points |
 | Enemy Blows Hit Where They Land | `bLocationalMeleeDamage` | an NPC's blow on the player takes `player_body_part`'s `hit_part` in place of `HitPart::default()`; the player's blows already used the struck part's; NPC on NPC has no part lookup yet |
 | Disarming Needs Skill | `bDisarmRequiresSkill` | `Game::disarm_chances` (the readme's formulas: disarm = mult × (skill + Perception − 5) × 100 / required; set off = mult × (required − skill + 5 − Luck) × 2, each held to 0–100); `activate` rolls before the disarm and on a failure either queues the mine in `Mines::set_off` (no fuse) or says it is still armed |
@@ -740,7 +740,7 @@ game's Data folder, read-only).
 | `bHoldToActivate` | done |  | 9 | Hold to Activate: E held half a second (ours) on containers and bodies, furniture and water, each a switch (bContainers, bFurniture, bWater). Not built: crafting (nothing marks a workbench), taking items while held, the stealing delay |
 | `bHoldToHolsterMeleeWeapons` | done |  |  | already so: a tap reloads, holstering needs the hold, and melee drops the reload |
 | `bHostilesPrioritizePlayer` | done |  | 3 | Hostiles Prioritize Player with Chance at the Start, Chance Mid-Fight and Detection Needed; one roll for each companion a fighter would pick |
-| `bImprovedHacking` | done |  | 10 | four Hacking switches (symbols do nothing, no repeat guesses, dud when attempts full, duds spare tried words); the print options not built |
+| `bImprovedHacking` | done |  | 10 | eight Hacking switches/options (symbols do nothing, no repeat guesses, dud when attempts full, duds spare tried words, mark guesses as duds, keep matching characters, compact guess log, replenish bonus attempts); overscroll and print-speed options not built |
 | `bJumpingCostsAP` | done |  | 3 | Action Points per Jump (slider 0-50; the combat-only and jump-anyway options not built) |
 | `bJumpSwimsUpwards` | done |  | 2 | Jump Swims Upwards (at the walking stroke speed; the sub-options not offered) |
 | `bJumpWhileOverencumbered` | done |  |  | already so: NVForever never refuses the jump when over-encumbered |
@@ -1101,7 +1101,7 @@ game's Data folder, read-only).
 | `bShowWeaponAmmoUseInMenus` | done | yes |  | Rounds per Shot |
 | `bSkipSkillMenuIfNoPointsToAssign` | done | yes |  | Perks First When No Points |
 | `bSortEquipableAmmo` | done | yes |  | Usable Ammo First |
-| `bSynchronizeContainerCategories` | done | yes | 1 | Matching Categories (the option for emptying a category not built) |
+| `bSynchronizeContainerCategories` | done | yes | 1 | Matching Categories (also keeps the emptied category after transferring its last item, matching `bPreventSwitchWhenEmptyingCategory`) |
 | `bTakeAllInCompanionContainers` | done | yes |  | already so: Take All shows for companions |
 | `b12HourPipboyClock` | done |  |  | 12-Hour Pip-Boy Clock |
 | `b24HourSleepWaitClock` | done |  |  | already so: the wait clock is 24-hour |
@@ -1212,7 +1212,7 @@ game's Data folder, read-only).
 
 | INI key | Status | VNV on | Options | Note |
 |---|---|---|---|---|
-| `iConsoleKey` | done |  | 1 | Console Key (a choice of six keys) |
+| `iConsoleKey` | done |  | 1 | Console Key (a key binding, Controls > Additional Features) |
 | `iDisableCollisionKey` | done |  | 1 | a Controls key: No Collision (held) |
 | `iDropEquippedWeaponKey` | done |  | 1 | Drop Weapon key (Controls page; not a quest item or one that can't be dropped) |
 | `iEquipLastWeaponKey` | done |  | 4 | Last Weapon key (Controls page; the weapon before the one now, put away) |
@@ -1233,7 +1233,7 @@ game's Data folder, read-only).
 | `iRadioVolumeDownKey` | done |  | 1 | Radio Volume Down key |
 | `iRadioVolumeUpKey` | done |  | 1 | Radio Volume Up key (a tenth of the Radio volume) |
 | `iRepeatActivateKey` | done |  | 2 | Repeat Activate key (Controls page) and Repeat Activate Takes Only |
-| `iScreenshotKey` | done |  | 1 | Screenshot Key (a choice of five) |
+| `iScreenshotKey` | done |  | 1 | Screenshot Key (a key binding, Controls > Additional Features) |
 | `iSkipRadioSongKey` | done |  | 1 | Skip Radio Song key (not a script's conversation) |
 | `iToggleCrosshairKey` | done |  | 1 | a Controls key: Show/Hide Crosshair |
 | `iToggleMenusKey` | done |  | 1 | a Controls key: Show/Hide HUD (as ToggleMenus) |

@@ -400,8 +400,6 @@ pub struct TweakSettings {
     /// `bTalkWhileSneakingIfShiftIsHeld`: Shift held while sneaking talks to a person
     /// instead of picking their pocket.
     pub shift_talks_sneaking: bool,
-    /// `iConsoleKey`: which of [`CONSOLE_KEYS`] opens the console (0: the original's).
-    pub console_key: usize,
     /// `bTabClosesTerminals`: Tab closes a terminal from any of its pages.
     pub tab_closes_terminals: bool,
     /// `bTabBackInStartMenu`: Tab goes back in the pause menu where it steps no tabs.
@@ -522,8 +520,6 @@ pub struct TweakSettings {
     pub hide_hotkeyed_repair: bool,
     /// `bAddSetHomeCommand`: the console's `sethome`, `home`, `back` and `delhome`.
     pub console_homes: bool,
-    /// `iScreenshotKey`: which of [`SCREENSHOT_KEYS`] takes a screenshot.
-    pub screenshot_key: usize,
     /// `bShiftScreenshotHidesMenus`: with Shift held, a screenshot leaves out the HUD.
     pub shift_screenshot_hides: bool,
     /// `bExtraConsoleDetails`/`bMeshPath`: a selected reference's console details give
@@ -670,23 +666,6 @@ pub fn companion_colour(t: Option<&TweakSettings>) -> Option<Color> {
     })
 }
 
-/// The keys the console may open on, the original's first; ones nothing else in the
-/// game takes [design: docs/design/tweaks.md].
-pub const CONSOLE_KEYS: [(KeyCode, &str); 6] = [(KeyCode::Backquote, "` (default)"), (KeyCode::Insert, "Insert"), (KeyCode::Home, "Home"), (KeyCode::End, "End"), (KeyCode::Delete, "Delete"), (KeyCode::F10, "F10")];
-
-/// The key that opens the console under the iConsoleKey tweak.
-pub fn console_key(t: Option<&TweakSettings>) -> KeyCode {
-    CONSOLE_KEYS[t.map_or(0, |t| t.console_key).min(CONSOLE_KEYS.len() - 1)].0
-}
-
-/// The keys a screenshot may be taken with, NVForever's own first; ones nothing else in
-/// the game takes [design: docs/design/tweaks.md].
-pub const SCREENSHOT_KEYS: [(KeyCode, &str); 5] = [(KeyCode::F12, "F12 (default)"), (KeyCode::PrintScreen, "Print Screen"), (KeyCode::F11, "F11"), (KeyCode::ScrollLock, "Scroll Lock"), (KeyCode::Pause, "Pause")];
-
-/// The key that takes a screenshot under the iScreenshotKey tweak.
-pub fn screenshot_key(t: Option<&TweakSettings>) -> KeyCode {
-    SCREENSHOT_KEYS[t.map_or(0, |t| t.screenshot_key).min(SCREENSHOT_KEYS.len() - 1)].0
-}
 
 /// The walk-angle choices: 30 to 80 degrees by 5; 45 is the physics' own.
 const ANGLES: usize = 11;
@@ -886,7 +865,6 @@ impl Default for TweakSettings {
             blackjack_total: false,
             slots_hold_to_spin: false,
             shift_talks_sneaking: false,
-            console_key: 0,
             tab_closes_terminals: false,
             tab_back_in_pause: false,
             unsafe_fast_travel: false,
@@ -938,7 +916,6 @@ impl Default for TweakSettings {
             hide_hotkeyed_barter: false,
             hide_hotkeyed_repair: false,
             console_homes: false,
-            screenshot_key: 0,
             shift_screenshot_hides: false,
             console_model_details: false,
             back_pace: 1.0,
@@ -1891,25 +1868,6 @@ impl Plugin for TweaksPlugin {
         switch!(app, "no-quest-set-on-objective", "No Active Quest From New Objectives", "With no quest active, a new objective does not make its quest the active one. (Stewie's Tweaks bDontSetQuestWhenObjectivesAdded)", game.no_quest_set_on_objective);
         switch!(app, "no-quest-set-on-complete", "No Active Quest After Completing One", "When the active quest is done, no other quest becomes active by itself. (Stewie's Tweaks bDontSetQuestWhenCompletingObjectives)", game.no_quest_set_on_complete);
         switch!(app, "hide-read-notes", "Hide Read Notes", "The Pip-Boy's notes list leaves out notes already read. (Stewie's Tweaks bHideReadNotes)", game.hide_read_notes);
-        add_setting(
-            app,
-            Setting::slider(
-                "tweak-console-key",
-                GROUP,
-                "Console Key",
-                "The key that opens and closes the console. (Stewie's Tweaks iConsoleKey)",
-                Slider::choice(
-                    CONSOLE_KEYS.len(),
-                    |w| choice_part(w.get_resource::<TweakSettings>().map_or(0, |t| t.console_key).min(CONSOLE_KEYS.len() - 1), CONSOLE_KEYS.len()),
-                    |w, v| {
-                        if let Some(mut t) = w.get_resource_mut::<TweakSettings>() {
-                            t.console_key = choice_index(v, CONSOLE_KEYS.len());
-                        }
-                    },
-                    |v| CONSOLE_KEYS[choice_index(v, CONSOLE_KEYS.len())].1.to_string(),
-                ),
-            ),
-        );
         switch!(app, "tab-closes-terminals", "Tab Closes Terminals", "Tab closes a terminal from any page instead of going back a page (Backspace still goes back). (Stewie's Tweaks bTabClosesTerminals)", tab_closes_terminals);
         switch!(app, "tab-back-in-pause", "Tab Goes Back in the Pause Menu", "Tab goes back a page in the pause menu, as Backspace does (the Settings and Controls pages keep Tab for their tabs). (Stewie's Tweaks bTabBackInStartMenu)", tab_back_in_pause);
         switch!(app, "unsafe-fast-travel", "Fast Travel From Anywhere", "Fast travel works from places flagged against it, such as interiors; leaving a scripted place this way can break it. (Stewie's Tweaks bAllowUnsafeFastTravel)", unsafe_fast_travel);
@@ -2107,25 +2065,6 @@ impl Plugin for TweaksPlugin {
         switch!(app, "hide-hotkeyed-repair", "Hide Hotkeyed Items in Repair", "Things on a hotkey are not offered as parts when repairing in the Pip-Boy. (Stewie's Tweaks bHideHotkeyedItemsInRepairLists)", hide_hotkeyed_repair);
         switch!(app, "map-zoom-at-pointer", "Map Zooms at the Pointer", "The mouse wheel zooms the Pip-Boy's maps in and out about the place under the pointer, not the middle. (Stewie's Tweaks bBetterMapZoom)", game.map_zoom_at_pointer);
         switch!(app, "console-homes", "Console Homes", "Console: sethome, home and delhome [name]; back undoes the last home or back. Kept until you quit. (Stewie's Tweaks bAddSetHomeCommand)", console_homes);
-        add_setting(
-            app,
-            Setting::slider(
-                "tweak-screenshot-key",
-                GROUP,
-                "Screenshot Key",
-                "The key that saves a picture of the screen. (Stewie's Tweaks iScreenshotKey)",
-                Slider::choice(
-                    SCREENSHOT_KEYS.len(),
-                    |w| choice_part(w.get_resource::<TweakSettings>().map_or(0, |t| t.screenshot_key).min(SCREENSHOT_KEYS.len() - 1), SCREENSHOT_KEYS.len()),
-                    |w, v| {
-                        if let Some(mut t) = w.get_resource_mut::<TweakSettings>() {
-                            t.screenshot_key = choice_index(v, SCREENSHOT_KEYS.len());
-                        }
-                    },
-                    |v| SCREENSHOT_KEYS[choice_index(v, SCREENSHOT_KEYS.len())].1.to_string(),
-                ),
-            ),
-        );
         switch!(app, "shift-screenshot-hides", "Shift Screenshot Hides the HUD", "Holding Shift as you take a screenshot leaves the HUD, crosshair and messages out of the picture. (Stewie's Tweaks bShiftScreenshotHidesMenus)", shift_screenshot_hides);
         switch!(app, "print-plugin-names", "Console Lines Name Their Plugin", "A line a script prints to the console starts with the name of the plugin it comes from, in brackets. (Stewie's Tweaks bModConsolePrintsIncludeName)", game.print_plugin_names);
         switch!(app, "weapon-requirements-matter", "Weapon Requirements Matter", "A weapon cannot be equipped while your Strength or its skill is below what it asks. (Stewie's Tweaks bWeaponRequirementsMatter)", game.weapon_requirements_matter);
@@ -2136,6 +2075,29 @@ impl Plugin for TweaksPlugin {
         switch!(app, "hack-no-repeat-words", "Hacking: No Repeat Guesses", "A word you have already tried cannot be tried again, so it costs no attempt. (Stewie's Tweaks bImprovedHacking)", game.hack_no_repeat_words);
         switch!(app, "hack-dud-when-full", "Hacking: Dud When Attempts Full", "A bracket pair found with all attempts left removes a dud instead of giving attempts back. (Stewie's Tweaks bImprovedHacking)", game.hack_dud_when_full);
         switch!(app, "hack-spare-guessed", "Hacking: Duds Spare Tried Words", "Removing a dud leaves the words you have already tried, unless only they are left. (Stewie's Tweaks bImprovedHacking)", game.hack_spare_guessed);
+        switch!(app, "hack-mark-guesses-as-duds", "Hacking: Mark Guesses as Duds", "Wrong guesses turn into dots in the dump like removed duds. (Stewie's Tweaks bImprovedHacking, bMarkGuessesAsDuds)", game.hack_mark_guesses_as_duds);
+        switch!(app, "hack-keep-matching-chars", "Hacking: Keep Matching Characters", "With Mark Guesses as Duds, letters matching the password stay visible in place. (Stewie's Tweaks bMarkGuessesAsDudsKeepMatchingCharacters)", game.hack_keep_matching_chars);
+        switch!(app, "hack-compact-guesses", "Hacking: Compact Guess Log", "Prints each wrong guess on one log line with its likeness instead of three lines. (Stewie's Tweaks bImprovedHacking, bCompactGuesses)", game.hack_compact_guesses);
+        add_setting(
+            app,
+            Setting::slider(
+                "tweak-hack-replenish-bonus",
+                GROUP,
+                "Hacking: Replenish Bonus Attempts",
+                "Extra attempts a Replenished bracket adds instead of resetting to 4; 0 resets to 4. (Stewie's Tweaks iAllowanceReplenishedBonus)",
+                Slider {
+                    get: |w| w.get_resource::<TweakSettings>().map_or(0.0, |t| (f32::from(t.game.hack_replenish_bonus) / 10.0).clamp(0.0, 1.0)),
+                    set: |w, v| {
+                        if let Some(mut t) = w.get_resource_mut::<TweakSettings>() {
+                            t.game.hack_replenish_bonus = (v * 10.0).round() as u8;
+                        }
+                    },
+                    min: 0.0,
+                    step: 0.1,
+                    shown: Some(|v| format!("{:.0}", (v * 10.0).round())),
+                },
+            ),
+        );
         switch!(app, "run-overencumbered", "Run While Overencumbered", "Carrying too much, you can still run and jump by spending Action Points; with none left you walk. (Stewie's Tweaks bOverencumberedTweak)", run_overencumbered);
         amount!(app, "over-run-ap", "Overencumbered Running AP", "Action Points running costs each second while carrying too much (with Run While Overencumbered). (Stewie's Tweaks bOverencumberedTweak)", 20.0, f32, over_run_ap);
         amount!(app, "over-jump-ap", "Overencumbered Jump AP", "Action Points a jump costs while carrying too much (with Run While Overencumbered). (Stewie's Tweaks bOverencumberedTweak)", 50.0, f32, over_jump_ap);

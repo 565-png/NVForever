@@ -1150,6 +1150,82 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   corr(G, dH/dy) from −0.24 to −0.93, the sign of a downward green axis. Bevy assumes
   upward green (glTF), so the renderers set `flip_normal_map_y`. Unflipped, bumps were
   lit from below: rock faces looked inside-out and glistened at the wrong edges.
+- **Stored tangents** (2026-11-19). A shape-data block with bit 12 of its flags set stores
+  "Tangents" then "Bitangents", one vector per vertex each, after its normals
+  [documented: nif.xml NiGeometryData, condition `Has Normals` and `(Data Flags | BS Data
+  Flags) & 4096`; BSGeometryDataFlags bit 12 "Has Tangents"]. nif.xml documents nothing
+  more of them: not which texture axis each follows, nor their handedness. From the data
+  [observed: a local probe, not in the repo, over the 7,182 models under `meshes\`
+  architecture, clutter, dungeons, landscape, furniture, vehicles and scol of the game's
+  archives (LOD and markers left out), 23,358 normal-mapped shapes, every one of which
+  but 9 stores them; vertices a triangle uses. Per shape-data block it took the arrays
+  `fnv_nif::scene::mesh_data` decodes, the texture gradients from the triangles' UVs, and
+  `Mesh::generate_tangents` on the mesh `nvf_assets::nif_spawn::build_mesh` makes, and
+  compared their directions per vertex. What the repo keeps of it: the tests of
+  `nvf_assets::tangents` check the mapping below against Bevy's generator on a plain and a
+  mirrored quad, and a game run logs at exit how many shapes took the stored arrays and
+  why the others did not (`models: normal-map tangents of …`)]:
+  - Against each vertex's texture gradients (the position's change along u and along v,
+    from its triangles' UVs): the "bitangent" lies within 25° of +du at 93.3 % of 13.5
+    million vertices (−du: 0.03 %), the "tangent" within 25° of +dv at 89.8 % (−dv:
+    0.03 %). The names are the other way round from the usual ones, where the tangent
+    follows u.
+  - Bevy's frame (`Mesh::generate_tangents`, mikktspace; the shader's bitangent is w ×
+    cross(normal, tangent) and points up the image, towards decreasing v) is the stored
+    "bitangent" made orthogonal to the normal, with w the sign that turns that bitangent
+    towards minus the stored "tangent": within 25° of the generator's, sign included, at
+    97.8 % of 13.65 million vertices (94.2 % within 5°); 1.8 % more than 25° off, 0.4 %
+    with the other sign. Where they differ, neither frame follows the texture gradients at
+    83 % of the vertices (705 shapes with over 5 % differing): a texture stretched or
+    squeezed there.
+  - At 15,457 vertices (0.1 %) the stored tangent lies along the stored bitangent (the
+    texture squeezed to a line), which leaves the sign open; the generator's own sign
+    there is that of the tiny remainder at 72 % of a 17,637-vertex check. 1,752 vertices
+    in 121 shapes store zero vectors.
+
+  The static models' renderer uses them so (`nvf_assets::tangents`): a sign left open
+  takes the remainder's (+ without one); a shape with a zero vector, a bitangent along
+  its normal, a value that is not finite or arrays of the wrong length at a vertex a
+  triangle uses generates its tangents, as do actor parts [design]. That the original's
+  shader reads its normal maps in this stored frame is a [hypothesis]; it is the frame
+  the files carry. The models whose vertices differ most from the generator's (to look at
+  in game): Novac's `novac_home04burned.nif` (18 %), `novac_bungalow*.nif` (13-14 %),
+  `novac_dino.nif` (10 %), `novac_motel02.nif`; Goodsprings' `scol\scolgshouse02.nif` and
+  `06` (14 %, `NVRanchHouse01`), `noso\nv_noso_ranchhouse0*.nif`, the Nellis AFB sign, the
+  Tops' `nv_tops_recmusicsign.nif` (73 %) and the destroyed NoSo apartments (50-65 %).
+
+  Looked at, same camera with the stored tangents and with `NVF_STORED_TANGENTS=0`
+  [observed 2026-11-20, the free-camera explorer's `--screenshot`, 1600 × 900, weather
+  `NVWastelandClear`, GTX 1050; differences counted in grey levels outside the HUD]:
+  `novac_home04burned.nif` (reference 0015246B) from the south at 07:00 and from the west
+  at 18:00, the sun low and to the side; `nv_noso_apartments02_dest03/08.nif` (0013D685,
+  0014DC33-35) and `scol\scolgshouse02.nif` (00177CA4) from the south at 07:00;
+  `nv_tops_recmusicsign.nif` (00152D6C, TOPSCasino) from the north. No surface lit from
+  the wrong side and no seam in either. The burned home's walls and the NoSo ruins match
+  to the eye; the pixels that differ by more than 24 levels (0.33-0.73 % at Novac, 0.02 %
+  at NoSo, 0.007 % in Goodsprings) are the swaying grass and one roof edge. The Tops sign
+  differs by a mean of 0.02 levels; that it is a glowing sign, which its normal map barely
+  shows on, is a [hypothesis].
+
+  A second, wider look [observed 2026-11-20, a build of this change alone (head 5b5e4cf09),
+  `--graphics vanilla`, 1600 × 900; pixels differing by more than 8
+  levels]: six framed views at 07:30, each stored, generated and stored again (the run-to-
+  run noise), then the four exterior sites from the north, east, south and west, raised
+  350 units, at 07:00 and 17:30 (38 views). `novac_home04burned.nif`: no difference on the
+  building from any side (at most 0.6 %, all of it wind-moved grass and bushes, as between
+  two stored runs). `scolgshouse02.nif`: small differences in the shingle relief near the
+  two roof vents (north view, 17:30). `scolgshouse06.nif` (00177CAE): small differences in
+  the shingle edges of the west slope (east view). The NoSo apartments: the broken brick
+  ends, whose texture is stretched into streaks, are a little brighter or darker here and
+  there (that the streaks come from the stretched UVs, not the tangents, is a
+  [hypothesis]). In none of them a seam, a light/dark flip, bumps lit from the wrong side
+  or faceting, in either version.
+
+  Not compared with the original game: an nvf_capture run reached every camera but each
+  screenshot failed (`StretchBlt failed`), and a run from the `nvfstrip` save crashed the
+  original after `coc TOPSCasino` [observed 2026-11-20]. So these looks show that the
+  stored tangents add no artifact the generated ones avoid, not which of the two the
+  original's look matches.
 - **Specular** [observed, 500 random meshes from `Fallout - Meshes.bsa`]: of 738
   NiMaterialProperty blocks on BSShaderPPLightingProperty shapes, 697 (94%) have a
   black specular colour, 18 white, 23 other; 1,011 of 1,279 such shader properties set
@@ -1313,7 +1389,8 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
     weighted by the texture's alpha (the shape is drawn premultiplied: lit colour × alpha
     + reflection) [hypothesis: weighted by the pane's alpha of about 0.05 the bright map
     could not be seen either, and a bright reflection on a nearly clear pane only makes
-    sense if it shows; an observer frame of the window from both sides would settle it].
+    sense if it shows; an observer frame of the window from both sides would settle it:
+    observer-checks.md 249].
     The reflection does not depend on the lights, so the pane shows from its dark side
     too.
   - Cube axes: the game is Z-up; a cube map's faces are laid out for a Y-up lookup (+Y
@@ -1438,19 +1515,19 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   decals, hair and advanced effect combinations (e.g. parallax + cube mapping)"
   [documented: GECK wiki "NIF Shader Properties"]. No model stores that block (the schema
   has none), but the engine may switch PPLighting shapes with parallax and a cube to it
-  at run time, flipping their cube [hypothesis]; one more reading for observer check
-  225. Choices, each tagged, with the observer check that would settle it:
+  at run time, flipping their cube [hypothesis]; one more reading for observer
+  check 252. Choices, each tagged, with the observer check that would settle it:
   - Strength and view: the cube read along the view reflected about the normal-mapped
     normal (world-fixed, which fits the bright patches observed), × the scale × the mask,
     added to the lit colour, as for windows [hypothesis for the lookup, the strength and
-    the scale; observer check 223]. By day L (next bullet) is at most 1, so the default
+    the scale; observer check 250]. By day L (next bullet) is at most 1, so the default
     can only dim the strength-1 term, while the fit asks for up to 8.5 times the term on
     some objects (a Sarsaparilla bottle): the day strength is **open** and deliberately left at 1.
   - Light: × the scene light L, per channel the ambient colour plus the sun's or moon's
     (indoors the cell's ambient plus directional colour), as display values without any
     N·L, held to 1 (`env_map::scene_light`, `env_scene_light` in nif_material.wesl)
     [hypothesis, from the dimming and the light colour observed on the static bottle;
-    observer check 227]. The shader takes them from the view's light uniforms, which in a
+    observer check 254]. The shader takes them from the view's light uniforms, which in a
     world view hold the colours NVForever lights with: outdoors the weather's colours ×
     `AMBIENT_SHARE` 0.9, `SUN_SHARE` 0.75, `MOON_SHARE` 0.5 (sky.rs) with the sunlight's
     fade and the lightning flash, not the records' bytes as stored; indoors XCLL's ambient
@@ -1460,28 +1537,31 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
     alone, as the lit surfaces do. Window shapes keep #2462's unscaled term by default
     (`NVF_PLAY_DEBUG_ENV_LIGHT_WINDOW=scene` scales them too). Views without the world
     view's display-value lights (the minigame views) keep the term unscaled.
-  - No slot-5 mask: full strength [hypothesis; observer check 224].
+  - No slot-5 mask: full strength [hypothesis; observer check 251].
   - Cube orientation: the same lookup as window shapes, (x, z, y) of the game-space
-    reflection [hypothesis: the wiki says the two differ by a flip; observer check 225].
+    reflection [hypothesis: the wiki says the two differ by a flip; observer check 252].
   - A blended shape without the window flag keeps its blend, so its reflection is
     weighted by its alpha like the rest of its colour; window shapes stay premultiplied
     (#2462) [hypothesis, the conservative choice: hair, cell fades, blended cut-outs and
-    material animation key on the blend mode; observer check 226].
+    material animation key on the blend mode; observer check 253]. A blended cut-out (a
+    tested shape whose texture is a mask, `nif_spawn::blended_cutout`) stays blended
+    whether or not it has the window flag, so its reflection is added inside the blend
+    [design, as merged with #2669].
   - Env Map Fade (flags 2 bit 15) changes nothing [hypothesis, from no difference
     observed in the exterior captures, against the wiki's documented fade; observer check
-    227].
+    254].
   - Camera distance: whole up to 1500 units, none from 1800, linear between, by the
     distance to the shape node's origin (the mesh instance's translation, usually the
     reference's), so a long shape fades as a whole, while a model whose parts sit under
     nodes of their own (the HELIOS One reflector row, its reflectors about 240 units apart
     [documented: `heliosone_solarreflector_row.nif` node translations, read with `fnvtool`])
     fades part by part; on window shapes too [hypothesis for the
-    curve and the origin, documented distances, the fade unobserved; observer check 228].
+    curve and the origin, documented distances, the fade unobserved; observer check 255].
     A blended window shape (drawn premultiplied) keeps its colour × alpha even where its
     reflection has faded out or its strength is 0 [design]. The `glass-mccarran-*` frames
     stand well inside 1500 units, so #2462's pictures do not change.
   - A shape with the flag and no slot-4 file reflects nothing (no default cube)
-    [hypothesis; observer check 229].
+    [hypothesis; observer check 256].
   - The mask's red channel is read, as for windows [hypothesis; only the 29 masks with
     an alpha channel could differ].
 

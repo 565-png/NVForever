@@ -580,6 +580,67 @@ fn an_ally_that_sees_a_fight_helps() {
 }
 
 #[test]
+fn a_faction_friend_that_helps_friends_joins_a_fight_against_the_player() {
+    // #2927 (combat-groups.md §4) [observed, base game: Gibson's dogs, Helps Friends and
+    // Allies, whose faction names the mole rats' a Friend and who are neutral to the
+    // player, went into combat with the player when mole rats attacked it beside the
+    // yard, and stayed in it after the mole rats were dead]. The hounds are made friends
+    // of the rats (SetAlly with both friend flags); a rat (Own) fights the player. The
+    // hound, neutral to the player, detects the rat: with Helps Friends and Allies it
+    // takes the fight up, by assistance and by the rat's alarm; with Helps Allies or
+    // Helps Nobody it stays out; its grudge outlasts the rat.
+    const SET_ALLY: u16 = 0x1079;
+    const SET_AV: u16 = 0x100F;
+    use fnv_game::awareness::Change;
+    let (own, hound, player) = (FormId(OWN_REF), FormId(HOUND_REF), FormId::PLAYER_REF);
+    let set_up = |g: &mut Game, assistance: f64| {
+        let ctx = Ctx { unit: "test".into(), opcode: SET_ALLY, on: None, self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
+        g.call_function(&ctx, &[form(HOUNDS), form(RATS), ArgValue::Value(Value::Num(1.0)), ArgValue::Value(Value::Num(1.0))]);
+        // Aggressive, as the dogs are (the fixture's hound is Very Aggressive).
+        call(g, SET_AV, HOUND_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
+        call(g, SET_AV, HOUND_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(assistance))]);
+        assert_eq!(g.reaction_to(hound, own), fnv_game::provocation::FRIEND);
+        assert!(!g.would_attack(hound, player), "neutral to the player");
+        assert!(g.attacked_by(own, player));
+        fighting(g, OWN_REF, PLAYER);
+        let t = g.time;
+        g.detection.pairs.insert((hound, own), (Detection { value: 5.0, band: Band::Detected, ..Default::default() }, t));
+    };
+    let f = fixture();
+    // Helps Friends and Allies: assistance.
+    let mut g = game(&f);
+    set_up(&mut g, 2.0);
+    assert_eq!(g.call_allies(), 1);
+    assert!(g.would_attack(hound, player));
+    assert!(g.awareness.get(hound).is_some_and(|a| a.alarms.iter().any(|x| x.owner == player && x.cause == Cause::Ally)));
+    assert!(g.provocations.take_notes().iter().any(|n| matches!(n, Note::Assists { helper, victim, attacker } if *helper == hound && *victim == own && *attacker == player)));
+    // The rat dies: the hound's grudge against the player stays.
+    g.extra.entry(own).or_default().dead = true;
+    assert!(g.would_attack(hound, player));
+    // The same by the rat's alarm when it starts fighting (no detection needed).
+    let mut g = game(&f);
+    set_up(&mut g, 2.0);
+    g.detection.pairs.clear();
+    only_near(&mut g, &[OWN_REF]);
+    let now = g.time;
+    g.awareness.changes.push(Change { actor: own, from: State::Normal, to: State::Combat, time: now, about: Some(player), cause: None, at: Some([500.0, 0.0, 0.0]), value: Some(5.0) });
+    let near: std::collections::BTreeMap<FormId, [f32; 3]> = [(own, [0.0, 0.0, 0.0]), (hound, [1000.0, 0.0, 0.0]), (player, [500.0, 0.0, 0.0])].into_iter().collect();
+    assert_eq!(g.raise_alarms(&near), 1);
+    assert!(g.would_attack(hound, player));
+    // Helps Allies (a friend is not an ally) and Helps Nobody: it stays out of both.
+    for assistance in [1.0, 0.0] {
+        let mut g = game(&f);
+        set_up(&mut g, assistance);
+        assert_eq!(g.call_allies(), 0, "Assistance {assistance}");
+        only_near(&mut g, &[OWN_REF]);
+        let now = g.time;
+        g.awareness.changes.push(Change { actor: own, from: State::Normal, to: State::Combat, time: now, about: Some(player), cause: None, at: Some([500.0, 0.0, 0.0]), value: Some(5.0) });
+        assert_eq!(g.raise_alarms(&near), 0, "Assistance {assistance}");
+        assert!(!g.would_attack(hound, player));
+    }
+}
+
+#[test]
 fn a_faction_ally_of_the_player_takes_up_the_players_fight() {
     // #2794 (combat-ai.md §10.3) [hypothesis: Assistance counts the player as an ally to
     // help]. The rats are made allies of the player's faction (SetAlly); the bandit (a
@@ -2026,4 +2087,88 @@ fn an_alarm_about_a_disguised_player_turns_nobody_the_disguise_fools() {
     g.awareness.changes.push(Change { actor: own, from: State::Normal, to: State::Combat, time: now, about: Some(player), cause: None, at: Some([500.0, 0.0, 0.0]), value: Some(5.0) });
     assert_eq!(g.raise_alarms(&near), 0, "a fight");
     assert!(!g.would_attack(helper, player), "no grudge");
+}
+
+#[test]
+fn set_combat_disabled_blocks_combat_entry_allows_being_attacked_and_resets_on_load() {
+    use fnv_game::awareness::Change;
+    use fnv_game::game::RunCtx;
+    use fnv_script::vm::XVal;
+
+    let f = fixture();
+    let mut g = game(&f);
+    let (bandit, own, helper, player) = (FormId(BANDIT_REF), FormId(OWN_REF), FormId(HELPER_REF), FormId::PLAYER_REF);
+    let eval_on = |g: &mut Game, actor: FormId, expr: &str| -> f64 {
+        let src = format!("Begin Function {{ }}\nSetFunctionValue ({expr})\nEnd\n");
+        let ctx = RunCtx { self_ref: Some(actor), ..Default::default() };
+        match g.run_query(&src, ctx) {
+            Ok(XVal::Num(n)) => n,
+            other => panic!("expected Num for `{expr}`, got {other:?} (events: {:?})", g.events),
+        }
+    };
+    let run_on = |g: &mut Game, actor: FormId, stmt: &str| {
+        let src = format!("Begin Function {{ }}\n{stmt}\nEnd\n");
+        let ctx = RunCtx { self_ref: Some(actor), ..Default::default() };
+        g.run_query(&src, ctx).unwrap_or_else(|e| panic!("stmt `{stmt}` failed: {e:?} (events: {:?})", g.events));
+    };
+
+    // Baseline: Bandit is hostile to player and enters Combat via StartCombat.
+    assert_eq!(eval_on(&mut g, bandit, "GetCombatDisabled"), 0.0);
+    assert!(g.would_attack(bandit, player));
+    g.start_combat(bandit, player);
+    assert_eq!(g.awareness.state(bandit), State::Combat);
+
+    // SetCombatDisabled 1 immediately ends active combat and blocks all combat re-entry.
+    run_on(&mut g, bandit, "SetCombatDisabled 1");
+    assert_eq!(eval_on(&mut g, bandit, "GetCombatDisabled"), 1.0);
+    assert_eq!(g.awareness.state(bandit), State::Normal);
+    assert!(!g.would_attack(bandit, player));
+    assert!(!g.hurt_by(bandit, player, [0.0; 3]));
+    g.start_combat(bandit, player);
+    assert_eq!(g.awareness.state(bandit), State::Normal);
+    g.observe_threat(bandit, player, &Detection { value: 100.0, band: Band::Detected, ..Default::default() }, [0.0; 3]);
+    g.settle_awareness();
+    assert_eq!(g.awareness.state(bandit), State::Normal);
+
+    // Other actors can still attack a combat-disabled actor (documented: "though they can still be attacked").
+    g.start_combat(own, bandit);
+    assert_eq!(g.awareness.state(own), State::Combat);
+    assert_eq!(g.combat_target_of(own), Some(bandit));
+    assert!(g.would_attack(own, bandit));
+    assert_eq!(g.awareness.state(bandit), State::Normal);
+
+    // Ally combat alarms do not recruit a combat-disabled helper.
+    only_near(&mut g, &[OWN_REF, HELPER_REF]);
+    call(&mut g, SET_PC_ENEMY_OF_FACTION, PLAYER, &[form(RATS), num(1.0)]);
+    run_on(&mut g, helper, "SetCombatDisabled 1");
+    let now = g.time;
+    let near: std::collections::BTreeMap<FormId, [f32; 3]> = [(own, [0.0; 3]), (helper, [500.0, 0.0, 0.0]), (player, [600.0, 0.0, 0.0])].into_iter().collect();
+    g.awareness.changes.clear();
+    fighting(&mut g, OWN_REF, PLAYER);
+    g.awareness.changes.push(Change { actor: own, from: State::Normal, to: State::Combat, time: now, about: Some(player), cause: None, at: Some([600.0, 0.0, 0.0]), value: Some(5.0) });
+    assert_eq!(g.raise_alarms(&near), 0, "combat-disabled helper ignores ally alarm");
+    assert_eq!(g.awareness.state(helper), State::Normal);
+
+    // SetCombatDisabled 0 re-enables combat.
+    run_on(&mut g, bandit, "SetCombatDisabled 0");
+    assert_eq!(eval_on(&mut g, bandit, "GetCombatDisabled"), 0.0);
+    assert!(g.would_attack(bandit, player));
+    g.start_combat(bandit, player);
+    assert_eq!(g.awareness.state(bandit), State::Combat);
+
+    // Save/load resets SetCombatDisabled on BOTH fresh-run restore and same-run load (documented:
+    // "automatically reset (combat is re-enabled) every time a saved game is loaded").
+    run_on(&mut g, bandit, "SetCombatDisabled 1");
+    assert_eq!(eval_on(&mut g, bandit, "GetCombatDisabled"), 1.0);
+    let snap = g.snapshot();
+    let session = g.take_session();
+
+    let mut fresh = Game::restore(&f.data, World::restore(&f.forms, &f.refs, &snap.sim).unwrap(), GameConfig { strict: true, ..GameConfig::default() }, &snap).unwrap();
+    assert_eq!(eval_on(&mut fresh, bandit, "GetCombatDisabled"), 0.0);
+    assert!(fresh.would_attack(bandit, player));
+
+    let mut same_run = Game::restore(&f.data, World::restore(&f.forms, &f.refs, &snap.sim).unwrap(), GameConfig { strict: true, ..GameConfig::default() }, &snap).unwrap();
+    same_run.put_session(session);
+    assert_eq!(eval_on(&mut same_run, bandit, "GetCombatDisabled"), 0.0);
+    assert!(same_run.would_attack(bandit, player));
 }

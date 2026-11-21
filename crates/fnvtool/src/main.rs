@@ -42,6 +42,8 @@ mod nav_cmd;
 mod nav_path;
 mod observer;
 mod nif_cmd;
+mod pbr_check;
+mod pbr_cmd;
 mod phys_cmd;
 mod quest_sweep;
 mod script_cmd;
@@ -100,6 +102,9 @@ enum Cmd {
     /// DDS textures.
     #[command(subcommand)]
     Dds(DdsCmd),
+    /// Authored PBR material maps under `textures\pbr\` (docs/spec-notes/pbr-materials.md).
+    #[command(subcommand)]
+    Pbr(pbr_cmd::PbrCmd),
     /// SpeedTree .spt tree parameter files.
     #[command(subcommand)]
     Spt(SptCmd),
@@ -978,6 +983,23 @@ pub enum VfsCmd {
         #[arg(long)]
         archive_list: Option<String>,
     },
+    /// A Mod Organizer 2 instance's profile as the merge it means (#1526): the enabled
+    /// mods from the lowest priority up, the overwrite folder last, and the profile's
+    /// active plugins (fnv.vfs.mods/1). With `--data` and `--path`, the path is resolved
+    /// through those layers as the engine reads it.
+    Mods {
+        /// The instance folder (the one holding ModOrganizer.ini).
+        instance: PathBuf,
+        /// Profile name (default: the instance's selected_profile).
+        #[arg(long)]
+        profile: Option<String>,
+        /// The game's Data folder, for `--path`.
+        #[arg(long)]
+        data: Option<PathBuf>,
+        /// A game path to resolve (e.g. `textures\clutter\vodka.dds`).
+        #[arg(long)]
+        path: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1155,7 +1177,7 @@ pub(crate) fn parse_formid(s: &str) -> Result<u32, String> {
     u32::from_str_radix(hex, 16).map_err(|_| format!("not a hex FormID: {s}"))
 }
 
-fn emit(v: &Value) {
+pub(crate) fn emit(v: &Value) {
     use std::io::Write;
     let mut lock = std::io::stdout().lock();
     let _ = lock.write_all(v.to_string().as_bytes());
@@ -1208,6 +1230,8 @@ fn main() -> ExitCode {
         Cmd::Esm(c) => esm_cmd::run(c),
         Cmd::Nif(c) => nif_cmd::run(c),
         Cmd::Dds(c) => dds_cmd::run(c),
+        // `pbr check` and `pbr selftest` print their report and may still fail.
+        Cmd::Pbr(c) => return pbr_cmd::main(c),
         Cmd::Spt(c) => spt_cmd::run(c),
         Cmd::World(c) => world_cmd::run(c),
         Cmd::Phys(c) => phys_cmd::run(c),

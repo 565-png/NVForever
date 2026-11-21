@@ -176,6 +176,20 @@ the actor jumps or drops over them (actor-jumps.md §3).
   overlaps the bounds. The door requires a key (XLOC 255), has no key or owner, and is
   opened by `VFSMickTravelToLinkedPackage` (0x00127920)'s end script after Mick arrives;
   that script sets `VFreeformFreeside.MickHoldoutWeapons` to 4 and evaluates his package.
+- **In-place doors not in the world** [hypothesis, #2405]: a door that opens in place
+  and is disabled (placed Initially Disabled, or disabled by a script; enable parents
+  followed) or deleted bars nothing and gets no door stop, as a disabled load door is no
+  way through (#2566). Both are `NavGraph::disabled_doors`, built from the load order's
+  enable state and brought in line with the game's (`fnv_ai::Ai::apply_door_presence`).
+  The case [observed: `fnvtool esm decode`, `nav path`, `script decompile`, TTW load
+  order]: Point Lookout's mansion (`DLC04Mansion01`) has two doors of base
+  `DLC04MDoorBig01` in one doorway at (-1408, -1664, 1024), the quest's spawn door
+  `DLC04MQ02LDSeq01Spawn01aDoor` (0x0E0035BB, locked 255; `DLC04MQ02LD` stage 10
+  `SetOpenState 1`s it) and `DLC04SideDoubleDoor02REF` (0x0E00DE2E, locked 255,
+  Initially Disabled; SCPT 0x0E00B786 enables it and disables the spawn door later).
+  Before, the disabled one closed `nav path` from Desmond to his
+  `DLC04ManDesmondWaitForPlayerREF` even with the spawn door open; now that path is
+  1,368 units.
 - **Open in-place doors** [hypothesis, #2716]: an open door does not refuse triangles
   to any actor, even while locked or previously refused by its activation script.
   [documented: GECK wiki SetOpenState, offline snapshot 2026-10-28,
@@ -343,6 +357,17 @@ newly cut triangle plan again, as for a navmesh switched off. Log lines: `nav: N
 obstacles that can be enabled or disabled stand on the navmesh …` at the start, `nav:
 obstacles switched […]` on a change. Not done: the collision-layer condition (fnv-nav
 reads no models), cutting by the shape rather than the bounds.
+
+**Bounds wider than a cell cut nothing** (issue #2846) [engine choice: `MAX_SIDE`, 4,096
+units along the model's x or y, scaled]. Such bounds hold an animated activator's whole
+motion, not where it stands [hypothesis]. Survey of the come-and-go obstacles [observed
+2026-11-17]: FalloutNV.esm and its add-ons 197, none wider than 1,794; Tale of Two
+Wastelands' load order 393, of which only Fallout 3's MQ05 landing vertibirds
+(`MQ05VertibirdLandREF` 0x06079FEE, `Mq05VertibirdLandREF02` 0x060AE06E, base
+`MQ05VertibirdLandACT`, 12,146 by 12,885) are wider; the next is 4,633 by 2,444 and placed
+enabled, so it never cut. Cut, the vertibirds took 7,927 triangles around the Jefferson
+Memorial: the Enclave troops they bring had no triangle to start from, nor the player at
+the intake pipe's control panel.
 
 **The poll is skipped while nothing it reads changed** (issue #1430) [design:
 `fnv_ai::Ai::obstacles_in_line`, crates/fnv-ai/src/carry.rs]. `Game::present` reads the

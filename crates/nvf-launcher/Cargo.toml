@@ -14,6 +14,9 @@ fnv-install = { path = "../fnv-install" }
 fnv-save = { path = "../fnv-save" }
 # The languages NVForever's own words come in (the Language list), as the game reads them.
 fnv-util = { path = "../fnv-util" }
+# The game's settings menu: its tabs, categories and row order, and the menu file it writes
+# beside NVForever.ini (src/catalog.rs), so the Settings page is the game's.
+nvf-settings-layout = { path = "../nvf-settings-layout" }
 # DLSS: NVIDIA's licence and the game's own download, checks and folder (src/dlss.rs, #2765).
 nvf-dlss-files = { path = "../nvf-dlss-files" }
 # A new install ID after "Delete them now" (src/reports.rs), as the game makes it.
@@ -23,7 +26,10 @@ serde_json.workspace = true
 # The window (docs/design/launcher.md): egui through eframe on OpenGL (glow), not wgpu, so
 # the launcher stays small and starts on any GPU driver. MIT/Apache-2.0. No `accesskit` (screen
 # readers) yet: on Linux it brings zbus/zvariant, unmaintained (RustSec), which deny.toml refuses.
-eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+# `clipboard` is not default-features-false optional: without it egui keeps a copy/paste buffer of
+# its own, so text cannot pass between the launcher and other programs (#3066). egui-winit's
+# clipboard on Linux is arboard (X11) and smithay-clipboard (Wayland); neither brings zbus.
+eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "glow", "wayland", "x11"] }
 # Pictures (the logo, the newest save's thumbnail, news images) through egui's image loader.
 egui_extras = { version = "0.37", default-features = false, features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }

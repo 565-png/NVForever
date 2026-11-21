@@ -40,6 +40,11 @@ impl Game<'_> {
         }
         f
     }
+
+    /// Read-only view of active `TempCloneForm` alias -> parent mappings.
+    pub fn clones(&self) -> &std::collections::HashMap<FormId, FormId> {
+        &self.clones
+    }
 }
 
 /// The functions of this file; `None` for any other name.
@@ -62,17 +67,16 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         // [documented: GetUserTime; observed: a string map of the 8 keys] the computer's
         // local time.
         "getusertime" => {
-            use chrono::{Datelike, Timelike};
-            let now = chrono::Local::now();
+            let now = jiff::Timestamp::now().to_zoned_datetime(crate::local_time::system_zone());
             let pairs: [(&str, u32); 8] = [
                 ("Year", now.year().max(0) as u32),
-                ("Month", now.month()),
-                ("DayOfWeek", now.weekday().num_days_from_sunday()),
-                ("Day", now.day()),
-                ("Hour", now.hour()),
-                ("Minute", now.minute()),
-                ("Second", now.second()),
-                ("Millisecond", now.timestamp_subsec_millis().min(999)),
+                ("Month", now.month() as u32),
+                ("DayOfWeek", now.weekday().to_sunday_zero_offset() as u32),
+                ("Day", now.day() as u32),
+                ("Hour", now.hour() as u32),
+                ("Minute", now.minute() as u32),
+                ("Second", now.second() as u32),
+                ("Millisecond", (now.millisecond() as u32).min(999)),
             ];
             let entries = pairs.iter().map(|(k, v)| (XKey::Str((*k).to_string()), XVal::Num(f64::from(*v)))).collect();
             XVal::Array(g.ext.new_array(ArrayKind::StringMap, entries))
@@ -110,6 +114,7 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
                 Err(error) => return Some(Err(error)),
             };
             g.snapshot_combat_style(f, id);
+            g.snapshot_sound_traits(f, id);
             g.clones.insert(id, f);
             // A clone of an item goes into containers (MCM's list of mods, `World`).
             g.world.add_clone_item(id, f);

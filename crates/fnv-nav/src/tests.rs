@@ -758,6 +758,40 @@ fn locked_doors_that_open_in_place_close_the_way_without_the_key() {
 }
 
 #[test]
+fn a_door_that_opens_in_place_and_is_not_in_the_world_bars_nothing() {
+    // #2405, Point Lookout's mansion: two doors in one doorway, the quest's spawn door
+    // (opened by its stage) and a locked one placed initially disabled for later. The
+    // disabled one stood in Desmond's way; a door not in the world bars nothing.
+    use crate::graph::DoorLock;
+    let mut g = graph(&[(grid(1, [0.0, 0.0], 10, 1, 100.0, &[], flat), W)]);
+    let locked = DoorLock { level: 255, key: None };
+    g.set_in_place_doors(vec![hinged(0xD00, 500.0, 0.0), hinged(0xD01, 500.0, 0.0)], |_| Some(locked));
+    let from = Place { space: W, pos: [50.0, 50.0, 0.0] };
+    let to = Place { space: W, pos: [950.0, 50.0, 0.0] };
+    let spawn_open = PathParams { open_doors: vec![0xD00], ..Default::default() };
+    // Both in the world: the locked one closes the way, and the search says how much it
+    // searched before giving up (the failed leg's triangles were not counted: "0
+    // triangles searched" read as no door at all).
+    match g.find_path(from, to, &spawn_open) {
+        Err(PathError::Unreachable { expanded }) => assert!(expanded > 0, "{expanded}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(g.doors_closing(from, to, &spawn_open), Some(vec![0xD01]), "the door to blame");
+    // Disabled (as placed, or by a script): no barrier, and no stop in front of it.
+    let changes = g.sync_door_presence([(0xD01, false)]);
+    assert_eq!(changes.gone, vec![0xD01]);
+    let path = g.find_path(from, to, &spawn_open).unwrap();
+    assert_eq!(path.legs[0].door_stops.iter().map(|s| s.door).collect::<Vec<_>>(), vec![0xD00]);
+    assert_eq!(g.doors_closing(from, to, &spawn_open), Some(vec![]));
+    // Enabled again: closed again.
+    assert_eq!(g.sync_door_presence([(0xD01, true)]).back, vec![0xD01]);
+    assert!(g.find_path(from, to, &spawn_open).is_err());
+    // A way no door would open: nothing to blame.
+    let island = graph(&[(grid(1, [0.0, 0.0], 2, 1, 100.0, &[], flat), W), (grid(2, [1000.0, 0.0], 2, 1, 100.0, &[], flat), W)]);
+    assert_eq!(island.doors_closing(from, Place { space: W, pos: [1050.0, 50.0, 0.0] }, &PathParams::default()), None);
+}
+
+#[test]
 fn locked_door_overlap_allows_only_endpoints_outside_its_footprint() {
     // [design, #2716] Synthetic rotated door: model y is game -x. The goal's
     // triangle reaches x=500, but the goal at x=450 is outside the footprint.
@@ -1147,6 +1181,28 @@ fn an_obstacle_placed_enabled_does_not_cut() {
     assert!(g.sync_obstacles([(0x5B0, false)]).len() == 1 && g.cut_triangles() == 0);
     assert!(g.sync_obstacles([(0x5B0, true)]).len() == 1 && g.cut_triangles() == 0);
     assert!(g.can_reach(from, to, &PathParams::default()));
+}
+
+/// An obstacle wider than an exterior cell (the bounds of MQ05's landing vertibirds hold
+/// their whole flight) cuts nothing when enabled; one just under the limit still does
+/// (issue #2846, `crate::obstacles::MAX_SIDE`).
+#[test]
+fn an_obstacle_wider_than_a_cell_does_not_cut() {
+    let side = crate::obstacles::MAX_SIDE;
+    let wide = crate::obstacles::Obstacle { bounds: ([-side / 2.0 - 1.0, -4.0, 0.0], [side / 2.0 + 1.0, 4.0, 90.0]), ..sandbags(0.0, 90.0) };
+    assert!(wide.too_wide());
+    let scaled = crate::obstacles::Obstacle { bounds: ([-side * 0.499, -4.0, 0.0], [side * 0.499, 4.0, 90.0]), scale: 1.01, ..sandbags(0.0, 90.0) };
+    assert!(scaled.too_wide(), "the placed scale counts");
+    let under = crate::obstacles::Obstacle { bounds: ([-side / 2.0 + 1.0, -4.0, 0.0], [side / 2.0 - 1.0, 4.0, 90.0]), ..sandbags(0.0, 90.0) };
+    assert!(!under.too_wide());
+    let (from, to) = (Place { space: W, pos: [50.0, 50.0, 0.0] }, Place { space: W, pos: [950.0, 50.0, 0.0] });
+    let mut g = graph(&[(grid(1, [0.0, 0.0], 10, 1, 100.0, &[], flat), W)]);
+    g.set_obstacles(vec![wide], |_| true);
+    assert_eq!(g.cut_triangles(), 0);
+    assert!(g.can_reach(from, to, &PathParams::default()));
+    g.set_obstacles(vec![under], |_| true);
+    assert!(g.cut_triangles() > 0);
+    assert!(!g.can_reach(from, to, &PathParams::default()));
 }
 
 /// The floor near an obstacle's top is on it, not under it, and a floor far below its

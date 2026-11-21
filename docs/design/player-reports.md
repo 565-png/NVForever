@@ -14,7 +14,12 @@ What exists already and is reused, not rewritten:
   check at start for an earlier run that ended with no clean exit and no crash report (a
   native crash, a kill), crash reports for panics (`crash-<time>-<pid>.txt`: thread,
   message, location, backtrace, command line, cell and position), and `redact`, which
-  writes the player's home folder as `%USERPROFILE%` (#1710).
+  writes the player's home folder as `%USERPROFILE%` (#1710). Off Windows it also
+  hides the removable-drive mounts under the player's name (`/run/media/<user>`,
+  `/media/<user>`); one list (`crash::name_folders`) feeds it, the reports and the Linux
+  signal handler. A report also writes the Data, game and NVForever folders and, on a
+  Mod Organizer 2 run, the instance and its mods and overwrite folders as names
+  (`<Data>`, `<MO2 mods>`, ...) (#3152).
 - [documented: `docs/design/frame-telemetry.md`] Bounded frame telemetry (JSONL schema 1),
   a developer aid behind `NVF_PLAY_TEST_FRAME_TELEMETRY`. Its schema is a model for the
   performance part below, but it stays a developer aid; nothing below turns it on.
@@ -73,7 +78,7 @@ menu, on a player's start only (not with `--data`, `NVFOREVER_DATA`, a test aid 
 > NVForever can send a report after each session: the build, your PC's hardware and
 > settings, your mod list, how it ran, the game's log and any problems it noticed.
 > No personal details, no saves.
-> You can change this at any time in Settings → Gameplay → Reports.
+> You can change this at any time in Settings → Gameplay → Bug Reports.
 >
 > [ Send reports ]  [ Not now ]   *What is sent?* (opens §3 in the browser)
 
@@ -96,7 +101,8 @@ Endpoint=           ; empty = the project's server; set for a self-hosted one
 
 - `InstallId` is random, made at opt-in, not derived from hardware or account. Turning
   reports off and on again makes a new one (the old one is unlinked).
-- Settings → Gameplay → Reports (`engine/nvf-play/src/settings_layout.rs`): a toggle
+- Settings → Gameplay → Bug Reports (`crates/nvf-settings-layout/src/lib.rs` `SECTIONS`;
+  the launcher shows the same rows): a toggle
   (Send reports) and "Delete my reports" (§6); "Open reports folder" and the last sent
   time are designed but not built. The hand report (§3.3) is opened from the
   pause menu's "Report a bug", not from Settings.
@@ -135,6 +141,16 @@ Not in it: save names, character name, screenshots, typed console text (console
 *commands* are recorded by name and arguments' form IDs, not free text).
 
 ### 3.2 Crash report (automatic when opted in)
+
+[documented: `engine/nvforever/src/crash.rs`] Local panic reports keep the established
+`crash-<UTC second>-<pid>.txt` name. Concurrent or successive panics using that same
+name preserve the first report and its recorder/snapshot sidecars. Each later panic
+still logs its own thread, message and location, and says that the earlier report was
+preserved. A later second can produce another report; the collector's existing latest
+report selection is unchanged. This preserves same-name panic evidence only: earlier
+GPU errors remain in the run log and structured events, and the panic report does not
+establish a GPU failure's cause. Report write errors are still logged, and sidecar
+collection is still attempted when writing the text fails.
 
 [design] When a session ends `panic` or `native`, the next start sends with its summary:
 
@@ -177,6 +193,36 @@ Not in it: save names, character name, screenshots, typed console text (console
   a Linux `native` end is log-only (`native-nofile`) until a Linux dump pipeline exists;
   nothing new is uploaded. (`native-nofile` is a server-side report kind: nothing in this
   repo implements it yet — planned, and its home is the reports service, not the engine.)
+
+**A run that just stops** (#2755) [documented: `engine/nvforever/src/exit_watch.rs`,
+`crash.rs`]: 13 sessions on 0.7.0 ended mid-play with no panic, no dump and no line. The
+exception filter does not see a stack overflow (it returns at once: no stack to write
+with), a fail-fast or abort (no handler runs; Rust's abort on a failed allocation is one),
+a crash after a driver replaced the filter, or the process being ended from outside. What
+tells them apart is the process's exit code, which only another process can read:
+
+- At its start the game starts a watcher: the same executable with `--watch-exit <pid>
+  <run log>`, no window, which waits for the game's process, reads its exit code and, when
+  it is not 0, adds a line to the end of that run's log: `run log: the process ended with
+  exit code 0xC00000FD (stack overflow)`. Codes named: `0xC00000FD` stack overflow,
+  `0xC0000409` fail-fast, `0xC0000005` access violation, `0xC0000374` heap corruption,
+  `0xC0000017` no memory, `0xC000013A` console closed, 1 an error exit or ended from
+  outside, 101 a panic in the main thread. Windows only; `NVF_EXIT_WATCH=0` turns it off.
+- The line is part of the run log, so it is in the log sent with the crash, and the next
+  start repeats it (`run log: the previous run's process ended with exit code …`).
+- An allocation that fails writes `out of memory: an allocation of N bytes failed` into
+  the run log before Rust aborts (the game's global allocator, crash.rs).
+- A lost graphics device (the driver stopped answering) ends the run as one (#2934): the
+  frames in flight usually panic first on the dead device, so from Bevy's loss line on a
+  panic's crash report says `thread: the graphics driver`, `message: graphics device lost:
+  <reason>`, `at: reported by wgpu`, with the panic that followed and its backtrace under
+  `backtrace:`. The session's `end` is `panic` as before; the message, and so the
+  signature, is the loss's whatever panic followed. With no panic the handler Bevy asks
+  writes the same report. The player gets a message saying the graphics driver stopped
+  responding and what to try (not in unattended runs), as for GPU memory running out.
+- [design, not built] The summary carries no `exit_code` field yet: the server's schema
+  check would have to know it first. Until then the dashboard can split `native` ends by
+  the log's line.
 
 The crash is grouped server-side by a **signature**: for panics, the message with numbers
 stripped plus the top 3 frames inside NVForever's own crates; for dumps, the faulting
@@ -475,7 +521,13 @@ login, allow-list).
   `reports\pending\` (oldest first, at most 5 per start), moves sent ones to
   `reports\sent\` (last 20 kept for the player to see), drops files older than 14 days.
   HTTP with `ureq` or `reqwest` (blocking, rustls), 10 s timeout, no retries in the same
-  run. Offline is normal and silent.
+  run. Offline is normal and silent. **As built** [documented:
+  `engine/nvforever/src/reports/upload.rs`, dependencies.md]: `ureq` 3 over the system's
+  TLS and certificates, on Windows (SChannel) and on Linux (the system's OpenSSL, #3144).
+  Until #3144 the Linux build had no HTTP client: Report a bug, Send reports and Delete
+  my reports never got an answer there and said the network was at fault. On Linux the
+  first-launch popup is still not shown (§2.1), so reports start off and are switched on
+  in Settings; an earlier run still going is told from `/proc/<pid>/exe`.
 - All files go through `fnv_install::guard_write` under the home; nothing is written to
   the game folder or `Documents\My Games\FalloutNV`.
 - **Developers do not send reports** [owner 2026-11-11]: a development build, a
