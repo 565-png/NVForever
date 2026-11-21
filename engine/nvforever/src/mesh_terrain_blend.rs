@@ -1615,7 +1615,7 @@ mod tests {
         let prefix = "mesh terrain blend: ready eligible-shapes=12 resident-cells=9 generation=3 variant=status shape=height resolution=512 shading=albedo";
         assert!(line.starts_with(&format!("{prefix} weight-version=1 stat-shapes=2 excluded-shapes=2 pending-material-shapes=1 excluded-world=0 excluded-rig=1 excluded-particles=1 excluded-posed=0")), "{line}");
         assert!(line.contains(" excluded-missing-source=1 excluded-temporary=0 excluded-alpha-mode=0"), "{line}");
-        assert!(line.ends_with(" excluded-depth-bias-nonfinite=0 excluded-billboard=0 admitted-blend=1 admitted-bias=1 admitted-decal=1 admitted-mask=0 admitted-alpha-cut=1 scol-shapes=1 detail=colour"), "round 7: SCOL shapes after the census; round 10a: the detail mode last: {line}");
+        assert!(line.ends_with(" excluded-depth-bias-nonfinite=0 excluded-billboard=0 excluded-environment-map=0 admitted-blend=1 admitted-bias=1 admitted-decal=1 admitted-mask=0 admitted-alpha-cut=1 scol-shapes=1 detail=colour"), "round 7: SCOL shapes after the census; round 10a: the detail mode last: {line}");
         let layered = crate::terrain_surface::PublishedSurface { detail: vec![((0, 0), 1), ((1, 0), 3)], ..surface.clone() };
         assert!(ready_line(&layered, 3, &parse("8:status:height:512:albedo").unwrap(), &census).ends_with(" scol-shapes=1 detail=layers detail-quadrants=2"));
         for (_, name) in reason::NAMES { assert!(line.contains(&format!(" excluded-{name}=")), "every reason is printed, zero included: {name}"); }
