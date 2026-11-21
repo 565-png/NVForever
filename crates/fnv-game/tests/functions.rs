@@ -1934,11 +1934,20 @@ fn the_player_detects_and_far_pairs_fight() {
 /// (`Game::set_camera_sights`); the player reads those, nobody else does.
 #[test]
 fn the_player_sees_a_body_in_the_cameras_view() {
+    use fnv_game::detection::{Settings, Situation};
     let f = fixture();
     let mut g = game(&f);
+    g.set_loaded([FormId(CELL)].into_iter().collect());
     let get_los = 0x101B;
+    // Seen while alive (a detection pair, kept up to a second), then killed: the pair
+    // measured alive is no longer read; the camera's word on the body is.
+    let seen = Situation { distance: 300.0, exterior: true, line_of_sight: true, in_view: true, light: 80.0, ..Default::default() };
+    g.detect(&Settings::default(), FormId(PLAYER), FormId(ADULT_REF), &seen);
+    assert_eq!(call(&mut g, get_los, Some(PLAYER), &[r(ADULT_REF)]), 1.0);
     call(&mut g, 0x108B, Some(ADULT_REF), &[r(PLAYER)]);
     assert!(g.is_dead(FormId(ADULT_REF)));
+    assert!(g.detection.get(FormId(PLAYER), FormId(ADULT_REF)).is_some_and(|d| d.seen));
+    g.set_camera_sights([]);
     // Dead and not measured: 0.
     assert_eq!(call(&mut g, get_los, Some(PLAYER), &[r(ADULT_REF)]), 0.0);
     // In the camera's view with nothing between: 1, for the player only.
@@ -1951,6 +1960,16 @@ fn the_player_sees_a_body_in_the_cameras_view() {
     // A word not renewed goes stale (the engine stopped measuring: a load, a menu).
     g.set_camera_sights([FormId(ADULT_REF)]);
     g.time += fnv_game::functions::senses::CAMERA_SIGHT_SECONDS + 0.5;
+    assert_eq!(call(&mut g, get_los, Some(PLAYER), &[r(ADULT_REF)]), 0.0);
+    // Disabled after the measurement, in the same frame: not seen [documented: GECK wiki
+    // GetLineOfSight]; enabled again, seen; its cell unloaded, not seen.
+    g.set_camera_sights([FormId(ADULT_REF)]);
+    assert_eq!(call(&mut g, get_los, Some(PLAYER), &[r(ADULT_REF)]), 1.0);
+    call(&mut g, 0x1022, Some(ADULT_REF), &[]);
+    assert_eq!(call(&mut g, get_los, Some(PLAYER), &[r(ADULT_REF)]), 0.0);
+    call(&mut g, 0x1021, Some(ADULT_REF), &[]);
+    assert_eq!(call(&mut g, get_los, Some(PLAYER), &[r(ADULT_REF)]), 1.0);
+    g.set_loaded(Default::default());
     assert_eq!(call(&mut g, get_los, Some(PLAYER), &[r(ADULT_REF)]), 0.0);
 }
 

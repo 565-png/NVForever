@@ -231,14 +231,18 @@ det2, player.GetLineOfSight Ringo 1 and GetDetected 0 at 6,682 units outdoors]. 
 player's own measurements feed the two functions only: no detection state, no alarm.
 **Bodies** (#3232). Dying and dead actors are in no pair, so player.GetLineOfSight on a
 body read 0, and TTW's "Those!" never left stage 10: Fallout3.esm's MS04Script advances
-on `Player.GetLOS FredWilksRef == 1` with Fred Wilks lying dead in his house [observed:
-`fnvtool esm decode` of the script, cited in the issue; the player report's log, body at
-rest 193 units from the player, in view]. The player's camera now measures every drawn
+on `Player.GetLOS FredWilksRef == 1` [documented: Fallout3.esm, MS04Script's GameMode
+block as `fnvtool esm decode` reads the record, cited in the issue], and Fred Wilks lay
+dead in his house [observed: the player report's log and snapshot, body at rest 193
+units from the player, in view]. The player's camera now measures every drawn
 body: the same ±95° and wall check, from the camera to where the body lies (its
-ragdoll's trunk, else the middle of its hit volume as drawn), and the game keeps the
-bodies seen at the last measurement for 1 s (`Game::set_camera_sights`)
-[documented: GECK wiki GetLineOfSight, on the player any object can be the target; the
-point aimed at: engineering choice]. Another actor's GetLineOfSight on a body still
+ragdoll's trunk, else the middle of its hit volume as drawn) [documented: GECK wiki
+GetLineOfSight, on the player any object can be the target; the point aimed at:
+engineering choice]. The game keeps the bodies seen at the last measurement for 1 s
+(`Game::set_camera_sights`), read only while the body is still enabled and in a loaded
+cell [documented: same page, "Will not return true when checking if a disabled
+reference is in view"]. On a dead target that is the only answer: the pair measured
+while it lived (kept up to a second) is not read. Another actor's GetLineOfSight on a body still
 reads 0 [hypothesis: the page says only that its target must be an actor].
 Not built: player.GetLineOfSight on an object that is not an actor (the original allows
 it on the player).

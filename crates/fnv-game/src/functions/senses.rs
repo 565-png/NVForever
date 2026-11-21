@@ -271,9 +271,15 @@ impl Game<'_> {
     }
 
     /// Whether the player's camera saw `target` (a body) at the engine's last
-    /// measurement, within [`CAMERA_SIGHT_SECONDS`].
+    /// measurement, within [`CAMERA_SIGHT_SECONDS`], and is still there: in the world,
+    /// enabled and in a loaded cell. A body disabled (or moved out) since the measurement
+    /// is not seen, even within the same frame or while a menu holds the clock
+    /// [documented: GECK wiki GetLineOfSight, "Will not return true when checking if a
+    /// disabled reference is in view"].
     pub fn camera_sees(&self, target: FormId) -> bool {
         self.senses.camera_sees.get(&target).is_some_and(|&t| self.time - t <= CAMERA_SIGHT_SECONDS)
+            && self.present(target)
+            && self.cell_of(target).is_some_and(|c| self.loaded_cells.contains(&c))
     }
 }
 
@@ -292,15 +298,20 @@ impl Game<'_> {
 /// (its ragdoll's trunk), and tells which it sees ([`Game::set_camera_sights`]): the
 /// player reads those [documented: the page lets the player test any object, an actor
 /// dead or alive among them; Fallout3.esm's MS04Script (TTW "Those!") advances on
-/// `Player.GetLOS FredWilksRef == 1` with Fred Wilks lying dead, #3232]. Another
-/// actor's GetLOS on a body reads 0 [hypothesis: the page says only that its target must
-/// be an actor]. A target that is not an actor is not measured: 0 [documented: on a
+/// `Player.GetLOS FredWilksRef == 1` with Fred Wilks lying dead, #3232]. On a dead
+/// target that is the only answer: a pair measured while it lived (kept up to a second
+/// after the death) is not read, so a body the player turned from reads 0 at the next
+/// measurement. Another actor's GetLOS on a body reads 0 [hypothesis: the page says only
+/// that its target must be an actor]. A target that is not an actor is not measured: 0 [documented: on a
 /// non-player actor GetLOS returns false for anything but an actor; on the player the
 /// original also tests other objects, which NVForever does not yet].
 pub fn get_line_of_sight(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let r = ctx.subject()?;
     let target = a.form(0)?;
-    yes(g.detection.get(r, target).is_some_and(|d| d.seen) || (r == FormId::PLAYER_REF && g.camera_sees(target)))
+    if g.is_dead(target) {
+        return yes(r == FormId::PLAYER_REF && g.camera_sees(target));
+    }
+    yes(g.detection.get(r, target).is_some_and(|d| d.seen))
 }
 
 /// `IsPlayerGrabbedRef ref`: 1 while the player holds that reference with the grab
