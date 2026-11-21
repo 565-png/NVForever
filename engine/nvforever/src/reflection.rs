@@ -110,6 +110,7 @@ impl Plugin for ReflectionPlugin {
             (resize_reflection, read_water_pixels, update_reflection)
                 .chain()
                 .after(TransformSystems::Propagate)
+                .after(crate::underwater::underwater_fog)
                 .before(VisibilitySystems::UpdateFrusta)
                 // Cascades are built only for active cameras: switch on before that, or
                 // the renderer finds an active view without sun shadow cascades.
