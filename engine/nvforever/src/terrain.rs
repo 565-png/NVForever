@@ -1078,24 +1078,42 @@ pub struct TerrainSource {
     pub tile: f32,
 }
 
-/// Spawn a cell's terrain from its prepared landscape ([`prepare_terrain`]) in one go, with
-/// the fold decision and the mesh terrain blend's capture given; returns the landscape and
-/// the surface it is drawn on (for the grass). Under 4 × 4 near the cell's quadrants are
-/// handed to `crate::terrain_lod` to be redrawn by distance.
+/// Spawn a cell's terrain from its prepared landscape ([`prepare_terrain`]) in one go;
+/// returns the landscape and the surface it is drawn on (for the grass). Under 4 × 4 near
+/// the cell's quadrants are handed to `crate::terrain_lod` to be redrawn by distance. Cell
+/// streaming spawns the same through [`TerrainSpawn`], a quadrant at a time.
+pub fn spawn_terrain(commands: &mut Commands, cell: Entity, world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx) -> (Land, Surface) {
+    let mut spawn = TerrainSpawn::begin(world, prep, tm);
+    while !spawn.step(commands, cell, world, tm) {}
+    spawn.finish(commands, cell, tm)
+}
+
+/// [`spawn_terrain`] with the fold decision and the mesh terrain blend's capture given
 /// (`capture`: the blend is on, `mesh_terrain_blend.rs::recording`). With it, the cell
 /// also gets a [`crate::terrain_surface::SurfaceCell`]: every quadrant's draws in their
 /// drawing order, the base (folded or not) and then each blended layer drawn over it, for
 /// the bake's flat unlit copies [design]. The near draws are the same either way.
-/// Cell streaming spawns the same through [`TerrainSpawn`], a quadrant at a time.
 #[cfg(test)]
 pub(crate) fn spawn_terrain_with(commands: &mut Commands, cell: Entity, world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx, folds: bool, capture: bool) -> (Land, Surface) {
-    let mut spawn = TerrainSpawn::begin_with(world, prep, tm, folds, capture);
+    let mut spawn = TerrainSpawn::begin_with(world, prep, tm, folds, capture, true);
+    while !spawn.step(commands, cell, world, tm) {}
+    spawn.finish(commands, cell, tm)
+}
+
+/// A cell's terrain drawn only, for the full-detail ring (full_detail.rs, #2701): as
+/// [`spawn_terrain`] draws it, but it adds nothing to the cache's counts (the smoothed and
+/// stored cells of the terrain summary, the layers past a folded group), captures no
+/// surface for the mesh terrain blend and is not redrawn by distance under 4 × 4 near
+/// (`crate::terrain_lod` knows the loaded cells only) [design].
+pub(crate) fn spawn_terrain_draw_only(commands: &mut Commands, cell: Entity, world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx) -> (Land, Surface) {
+    let folds = tm.tm.folds();
+    let mut spawn = TerrainSpawn::begin_with(world, prep, tm, folds, false, false);
     while !spawn.step(commands, cell, world, tm) {}
     spawn.finish(commands, cell, tm)
 }
 
 /// [design] A cell's terrain being spawned a quadrant at a time (docs/design/
-/// streaming-hitches.md §3.4): [`spawn_terrain_with`] in steps, so cell streaming can stop
+/// streaming-hitches.md §3.4): [`spawn_terrain`] in steps, so cell streaming can stop
 /// between two quadrants when its frame's budget is spent (world.rs `CellStart`). The cell
 /// stays hidden until all of it is in, and what is spawned is the same either way.
 pub struct TerrainSpawn {
@@ -1109,28 +1127,34 @@ pub struct TerrainSpawn {
     origin: Vec2,
     tile: f32,
     folds: bool,
+    /// A loaded cell's terrain (counted, handed to `crate::terrain_lod`), not a draw-only
+    /// one ([`spawn_terrain_draw_only`]).
+    counted: bool,
     captured: Option<crate::terrain_surface::SurfaceCell>,
     overflow: usize,
     entities: [Vec<Entity>; 4],
 }
 
 impl TerrainSpawn {
-    /// The run's fold decision, and the capture while the mesh terrain blend records.
+    /// A loaded cell's terrain: the run's fold decision, and the capture while the mesh
+    /// terrain blend records.
     pub fn begin(world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx) -> Self {
         let folds = tm.tm.folds();
-        Self::begin_with(world, prep, tm, folds, crate::mesh_terrain_blend::recording())
+        Self::begin_with(world, prep, tm, folds, crate::mesh_terrain_blend::recording(), true)
     }
 
-    fn begin_with(world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx, folds: bool, capture: bool) -> Self {
+    fn begin_with(world: &WorldData, prep: TerrainPrep, tm: &mut TerrainCtx, folds: bool, capture: bool, counted: bool) -> Self {
         let TerrainPrep { grid, land, surface, layers: drawn, quads, draw, origin, tile } = prep;
-        if surface.is_smoothed() {
-            tm.tm.cache.smoothed_cells += 1;
-        } else {
-            tm.tm.cache.stored_cells += 1;
+        if counted {
+            if surface.is_smoothed() {
+                tm.tm.cache.smoothed_cells += 1;
+            } else {
+                tm.tm.cache.stored_cells += 1;
+            }
         }
         let captured = capture.then(|| surface_cell(world, grid, &surface));
         let quads: Vec<(usize, QuadMeshes)> = quads.into_iter().enumerate().collect();
-        Self { grid, land, surface, drawn, quads: quads.into_iter(), draw, origin, tile, folds, captured, overflow: 0, entities: Default::default() }
+        Self { grid, land, surface, drawn, quads: quads.into_iter(), draw, origin, tile, folds, counted, captured, overflow: 0, entities: Default::default() }
     }
 
     /// The landscape and the cell's grid square (for the grass, world.rs).
@@ -1139,7 +1163,7 @@ impl TerrainSpawn {
     /// Spawn the next quadrant; `true` when none is left.
     pub fn step(&mut self, commands: &mut Commands, cell: Entity, world: &WorldData, tm: &mut TerrainCtx) -> bool {
         let Some((q, meshes)) = self.quads.next() else { return true };
-        let near = NearDraw { commands: &mut *commands, cell, visibility: Visibility::Inherited, count: true };
+        let near = NearDraw { commands: &mut *commands, cell, visibility: Visibility::Inherited, count: self.counted };
         let spawned = quadrant_draws(Some(near), world, &self.drawn, q as u8, meshes, self.tile, tm, self.folds, self.captured.as_mut());
         self.overflow += spawned.overflow;
         self.entities[q] = spawned.entities;
@@ -1149,11 +1173,11 @@ impl TerrainSpawn {
     /// Every quadrant is in ([`TerrainSpawn::step`] said so): the capture, the 4 × 4 near
     /// hand-over and the landscape and surface for the grass.
     pub fn finish(self, commands: &mut Commands, cell: Entity, tm: &mut TerrainCtx) -> (Land, Surface) {
-        let Self { land, surface, drawn, draw, origin, tile, captured, overflow, entities, quads, .. } = self;
+        let Self { land, surface, drawn, draw, origin, tile, counted, captured, overflow, entities, quads, .. } = self;
         debug_assert_eq!(quads.len(), 0, "finished with quadrants left");
         // The first cell with layers past a folded group says how many it drew blended over
         // them (once a run; the smoke check that such layer draws exist at all).
-        if overflow > 0 {
+        if overflow > 0 && counted {
             let most = folded_layers(tile);
             let first = tm.tm.cache.overflow_layers == 0;
             tm.tm.cache.overflow_layers += overflow;
@@ -1166,7 +1190,7 @@ impl TerrainSpawn {
         }
         // 4 x 4 near (the run's choice, fixed before the first cell): the cell's quadrants are
         // redrawn by distance from what they were built from.
-        if let Some(rule) = nvf_play::smooth_terrain::distance_rule() {
+        if let Some(rule) = nvf_play::smooth_terrain::distance_rule().filter(|_| counted) {
             let source = TerrainSource { land: land.clone(), surface: surface.clone(), layers: drawn, origin, tile };
             tm.tm.cache.lod.get_or_insert_with(|| crate::terrain_lod::TerrainLod::new(rule)).add_cell(cell, std::sync::Arc::new(source), draw, entities);
         }

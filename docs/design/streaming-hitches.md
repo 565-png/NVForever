@@ -898,3 +898,38 @@ builds, i9-14900K, RTX 4070, 48 GB, game files in the OS cache [observed, 2026-1
   gave a 28 ms mean and 227 frames over 100 ms): a 6-core laptop running something beside
   the game may be the reports' many 0.5-1.5 s frames [hypothesis]; what the 3.4-3.9 s
   frames are stays open. The next build's reports will say whether the house's count falls.
+
+## 7. Each model file is read and decoded twice: what the second time costs (#3149, 2026-11-21)
+
+A placed object with collision has its NIF read from the archive, parsed and fully decoded
+once to be drawn (`nvf-assets/src/model.rs`, read pool) and once more for its collision
+(`nvf-play/src/phys/prepare.rs`, the physics loader thread); nothing shares the decode.
+The exit's log now has a line for it, `model load times (thread time): drawn: …;
+collision: …` (`nvf-assets/src/load_times.rs`): files, and milliseconds of thread time for
+the read, `NifFile::parse`, `Decoded::new` and the rest of each side's preparing.
+
+[observed: three smoke launches of a release build at a3e540633 plus this line, the bench
+machine, other sessions' work running beside it, one run each]
+
+| Launch | Drawn: files, whole | Collision: files, read / parse / decode / rest | Second read+parse+decode, of both sides |
+|---|---|---|---|
+| `save-write` (Goodsprings start, `--play`) | 713, 3,926 ms (decode 168) | 346, 76 / 1 / 45 / 63 ms | 3.0 % |
+| `console-cow-coe` (Goodsprings, then two travels) | 921, 4,417 ms (decode 170) | 380, 157 / 2 / 66 / 116 ms | 4.7 % |
+| `cell-streaming` (a flight, no `--play`, so no collision) | 1,119, 6,107 ms (decode 189) | none | - |
+
+- The second decode is 45-66 ms of thread time a launch, 1.1-1.4 % of all model loading;
+  with its read and parse, 3.0-4.7 %. Most of that is the archive read, which the operating
+  system's file cache already makes cheap the second time.
+- On the physics loader thread itself the read, parse and decode are 66 % of its work on
+  model files (122 of 185 ms, 225 of 340 ms) and 18-21 % of all it does for the cells: the
+  same launches' `physics streaming` lines give 587 and 1,264 ms, of which building the
+  rapier shapes is 362 and 823 ms (62-65 %).
+- On the drawn side the decode is 3-4 % of a model's preparing; the rest (meshes, tangents,
+  textures) is 83-85 % in the two launches with physics, 67 % in the flight, where the
+  archive reads took 29 %.
+
+So neither a block filter on `Decoded` for the collision reader nor one decode shared by
+both readers is built [design]: the most either could save is about 1 % of the model
+loading's thread time, on a thread that does not hold the frame, and the collision reader
+does need the drawn shapes of a model that can be stood on (`DrawnFloors`). The physics
+side's cost to look at, if any, is the shapes.
