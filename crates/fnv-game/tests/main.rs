@@ -14,6 +14,7 @@ mod string_settings;
 mod digest;
 
 mod abilities;
+mod actor_base_flags;
 mod actor_values;
 mod aid;
 mod appearance;
