@@ -130,6 +130,7 @@ mod unconscious;
 mod unlisted;
 mod vendor_services;
 mod voice_gate;
+mod weapon_sound_overrides;
 mod zones;
 
 /// With `autotests = false` Cargo builds only the files named, so a new file in `tests/`

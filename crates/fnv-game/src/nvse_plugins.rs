@@ -268,15 +268,25 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             XVal::Num(idx)
         }
         // ZNAM; Set… for the session, none leaving the sound [observed: plugins2, the
-        // beep reads back, a null set does not clear it].
-        "getputdownsound" => match form(args, 0).and_then(|f| crate::nvse::record_value(g, f, "ZNAM", "")) {
-            Some(XVal::Ref(r)) => XVal::Ref(r),
-            _ => XVal::Ref(0),
+        // beep reads back, a null set does not clear it]. WEAP shares live slots 12/13
+        // with GetWeaponSound / SetWeaponSound.
+        "getputdownsound" => match form(args, 0) {
+            Some(f) if g.is_weapon_form(f) => XVal::Ref(g.weapon_sound(f, 13).map_or(0, |s| s.0)),
+            Some(f) => match crate::nvse::record_value(g, f, "ZNAM", "") {
+                Some(XVal::Ref(r)) => XVal::Ref(r),
+                _ => XVal::Ref(0),
+            },
+            None => XVal::Ref(0),
         },
         "setpickupsound" | "setputdownsound" => {
             if let (Some(f), Some(s)) = (form(args, 0), form(args, 1)) {
-                let sub = if name == "setpickupsound" { "YNAM/" } else { "ZNAM/" };
-                g.field_overrides.insert((f, sub.into()), XVal::Ref(s.0));
+                if g.is_weapon_form(f) {
+                    let slot = if name == "setpickupsound" { 12 } else { 13 };
+                    g.set_weapon_sound(f, slot, Some(s));
+                } else if g.is_sound_form(s) {
+                    let sub = if name == "setpickupsound" { "YNAM/" } else { "ZNAM/" };
+                    g.field_overrides.insert((f, sub.into()), XVal::Ref(s.0));
+                }
             }
             zero
         }
