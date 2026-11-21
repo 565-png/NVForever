@@ -166,7 +166,7 @@ or floor near them. Cause: the shot's impact went to the actor's body only (§4;
     the whole volume of an actor with published parts reads the first part [design]; an
     actor without published parts, one whose skeleton gives no limb chains, gets none)
     has no blood spurt / decal impact data set (the
-    severable one, else the explodable [hypothesis: observer check 251]) [documented:
+    severable one, else the explodable [hypothesis: observer check 259]) [documented:
     GECK wiki Body Part]. Its impact for the actor's material is the splatter, not the
     weapon's impact data set's, whose organic slot can hold another effect (a flamer's
     scorch).
@@ -175,7 +175,7 @@ or floor near them. Cause: the shot's impact went to the actor's body only (§4;
   world only (walls, rocks, the ground, wrecks: what shields from a blast, not bodies,
   clutter, small or see-through things or trees); if it meets nothing, a second line
   straight down from the hit [hypothesis: the wiki names only the projectile's direction
-  and a loop of casts; observer check 251]. The first surface met gets the splatter as a
+  and a loop of casts; observer check 259]. The first surface met gets the splatter as a
   decal only (`ImpactFx::splatter`): no model, no sound, no noise. It is placed as any
   world decal (§2, §3): its cell, the placement radius, the frame cap, the life and the
   global cap.

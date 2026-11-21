@@ -3455,7 +3455,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-21 (blood on the world behind a shot actor, #3318)
 
-251. **Where does a shot on an actor leave blood on the walls and floor near it, and
+259. **Where does a shot on an actor leave blood on the walls and floor near it, and
      which impact is it?** (P2; #3318, impact-decals.md §4a.) The engine rolls
      `fCombatEnvironmentBloodChance` (default 0.75, FalloutNV.esm does not set it) and
      casts up to 512 units from the hit in the projectile's direction, first surface only,
