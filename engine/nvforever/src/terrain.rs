@@ -115,8 +115,9 @@
 //! shape's diffuse finds its set (nvf_assets `TextureCache::authored_height`), and loaded
 //! with the material whenever the run's Authored materials state is on, so the switch flips
 //! the materials in place ([`sync_parallax`]) as height blending does; only materials that
-//! hold a height map are edited, and the mesh terrain blend, which compares what its
-//! captures are made from, does not recapture for them (the bake copy drops the switch). terrain.wesl marches once over the
+//! hold a height map are edited, noted for the frame ([`ParallaxEdits`]), and the mesh
+//! terrain blend does not recapture for those edits alone when what its captures are made
+//! from compares equal (the bake copy drops the switch). terrain.wesl marches once over the
 //! blended depth, each layer's ordered share (painted opacity x the layer texture's alpha)
 //! x its own set's depth x (1 - its height), on one step grid for every quadrant
 //! ([`PARALLAX_SCALE`]), then reads every texture at the one shifted coordinate, the layers
@@ -569,8 +570,20 @@ impl Plugin for TerrainPlugin {
 /// asset events are sent ([`bevy::asset::AssetEventSystems`]), so a frame's edits reach the
 /// mesh terrain blend's capture refresh (after the events) that same frame.
 fn add_switch_systems(app: &mut App) {
-    app.add_systems(PostUpdate, (sync_height_blend, sync_anti_tiling, sync_parallax).before(bevy::asset::AssetEventSystems));
+    app.init_resource::<ParallaxEdits>()
+        .add_systems(PostUpdate, (sync_height_blend, sync_anti_tiling, sync_parallax).before(bevy::asset::AssetEventSystems))
+        .add_systems(Last, |mut edits: ResMut<ParallaxEdits>| edits.0.clear());
 }
+
+/// The folded materials [`sync_parallax`] edited this frame, one count per edit. The mesh
+/// terrain blend's capture refresh passes over a material's Modified events only when they
+/// are no more than these and the capture's inputs compare equal (terrain_surface.rs
+/// `refresh_captures`); any other edit, even one that leaves the inputs as they were,
+/// remakes the capture. Emptied every frame (`Last`): the edits are sent the frame they are
+/// made (the switches run before the asset events) and read that frame [design, #3322
+/// review].
+#[derive(Resource, Default, Debug)]
+pub struct ParallaxEdits(pub HashMap<AssetId<TerrainMaterial>, u32>);
 
 /// Whether the settings ask for height blending (module notes); false without the
 /// `Graphics` resource.
@@ -615,7 +628,7 @@ fn parallax_wanted(graphics: Option<&crate::graphics::Graphics>) -> bool {
 /// change (and an edit would make the mesh terrain blend recapture it for nothing); the
 /// switch it was made with stays recorded, unread. New materials take the setting when
 /// they are made ([`TerrainCtx::folded_material`]).
-pub fn sync_parallax(graphics: Option<Res<crate::graphics::Graphics>>, mut materials: ResMut<Assets<TerrainMaterial>>, mut last: Local<Option<bool>>) {
+pub fn sync_parallax(graphics: Option<Res<crate::graphics::Graphics>>, mut materials: ResMut<Assets<TerrainMaterial>>, mut edits: Option<ResMut<ParallaxEdits>>, mut last: Local<Option<bool>>) {
     let want = parallax_wanted(graphics.as_deref());
     if *last == Some(want) {
         return;
@@ -624,6 +637,9 @@ pub fn sync_parallax(graphics: Option<Res<crate::graphics::Graphics>>, mut mater
     for id in &stale {
         if let Some(mut m) = materials.get_mut(*id) {
             m.extension.parallax = want;
+            if let Some(edits) = edits.as_deref_mut() {
+                *edits.0.entry(*id).or_default() += 1;
+            }
         }
     }
     if last.is_some() || want {
@@ -2172,7 +2188,8 @@ mod tests {
             assert!(parse_height_blend(invalid).is_err(), "{invalid}");
         }
         // The additional uniform does not enter TerrainLayersKey or enable the effect.
-        assert_eq!(TerrainLayersUniform::min_size().get(), 48);
+        // Six four-number fields since #3322 (parallax and each layer's depth).
+        assert_eq!(TerrainLayersUniform::min_size().get(), 96);
         let off = TerrainLayers::default();
         assert!(!TerrainLayersKey::from(&off).height_blend);
         assert_eq!(TerrainLayersUniform::from(&off).height, height_blend_params().uniform());
@@ -2271,6 +2288,37 @@ mod tests {
         let mut d = main();
         height_blend_def(&mut d, key(true, false));
         assert!(!has(&d) && d.fragment.as_ref().unwrap().shader_defs.len() == 1);
+    }
+
+    /// #3322 review: terrain.wesl's `TerrainLayers` and `TerrainIndices` are the Rust side's
+    /// uniform and bindless index table, field for field.
+    #[test]
+    fn the_shader_structs_match_the_rust_layouts() {
+        let terrain = include_str!("terrain.wesl").replace("\r\n", "\n");
+        let fields = |name: &str| -> Vec<(String, String)> {
+            let body = terrain.split(&format!("struct {name} {{\n")).nth(1).unwrap_or_else(|| panic!("struct {name}")).split("\n}").next().unwrap();
+            body.lines()
+                .map(|l| l.split("//").next().unwrap().trim())
+                .filter(|l| !l.is_empty())
+                .map(|l| {
+                    let (n, t) = l.trim_end_matches(',').split_once(':').unwrap();
+                    (n.trim().to_string(), t.trim().to_string())
+                })
+                .collect()
+        };
+        let layers = fields("TerrainLayers");
+        let names: Vec<&str> = layers.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["counts", "tile", "height", "parallax", "depths_low", "depths_high"], "TerrainLayersUniform's fields, in order");
+        assert!(layers[0].1 == "vec4<u32>" && layers[1..].iter().all(|(_, t)| t == "vec4<f32>"), "{layers:?}");
+        assert_eq!(TerrainLayersUniform::min_size().get(), 16 * layers.len() as u64);
+        // The index table: one u32 per index of range(50..70) (the data, then every texture).
+        let indices = fields("TerrainIndices");
+        assert_eq!(indices.len(), 70 - 50);
+        assert!(indices.iter().all(|(_, t)| t == "u32"));
+        let heights: Vec<&str> = indices.iter().map(|(n, _)| n.as_str()).filter(|n| n.starts_with("height")).collect();
+        assert_eq!(heights, ["height0", "height1", "height2", "height3", "height4", "height5"], "bindings 64 to 69, last");
+        assert!(terrain.contains("    height0: u32,   // 64") && terrain.contains("    height5: u32,   // 69"));
+        assert!(include_str!("terrain.rs").contains("index_table(range(50..70), binding(100))"));
     }
 
     #[test]
@@ -2500,6 +2548,23 @@ mod tests {
         app.update();
         assert!(kept_height_blend(&app, entity), "height blending beside a parallax edit remade the capture");
         assert_ne!(cell_changed(&app, entity), before);
+    }
+
+    /// #3322 review: an edit the parallax switch did not make remakes the capture even when
+    /// it leaves every input as it was (a generic Modified is never second-guessed).
+    #[test]
+    fn a_generic_edit_remakes_the_capture_even_with_equal_inputs() {
+        let (mut app, entity, folded) = capture_world();
+        let before = cell_changed(&app, entity);
+        {
+            let mut materials = app.world_mut().resource_mut::<Assets<TerrainMaterial>>();
+            let mut m = materials.get_mut(&folded).unwrap();
+            let depths = m.extension.parallax_depths;
+            m.extension.parallax_depths = depths;
+        }
+        app.update();
+        app.update();
+        assert_ne!(cell_changed(&app, entity), before, "remade");
     }
 
     /// #3322 review: parallax flipped while the mesh terrain blend is off (its refresh not

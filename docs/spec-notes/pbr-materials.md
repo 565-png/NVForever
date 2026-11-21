@@ -602,7 +602,8 @@ addition of NVForever's own until observer check 250 answers it [hypothesis: it 
   not follow the shift's jumps between neighbouring pixels (which implicit derivatives of the
   moved coordinate would, at relief and hole edges, even where a pixel's own shift is
   nothing). The surface is set up as anti-tiling sets it up (terrain_pbr.wesl), the
-  occlusion once the colour is final.
+  occlusion (SSAO's multibounce) from the base's colour before the layers are folded in, as
+  Bevy's set-up takes it on the path without parallax.
 - [design] **The ray.** The march follows the view's own ray (Bevy's `calculate_view`: one
   direction in an orthographic view, as the minimap's camera); the fade goes by the
   distance from the camera.
@@ -613,9 +614,10 @@ addition of NVForever's own until observer check 250 answers it [hypothesis: it 
   hit or stepped over on both sides alike (the test
   `a_layer_moves_as_far_whatever_else_its_quadrant_holds`). Not covered: two quadrants whose
   painted opacities differ along their shared edge, and a layer drawn on its own (below).
-  Height blending, when on,
-  still weighs the colours by brightness; its weights do not reshape the march (a later
-  stage may let a real height map stand in for brightness there).
+  With height blending on, its weights (worked out from brightness at the plain coordinate,
+  "Weights, once" above) are the march's too: a layer the height blend leaves out of a pixel
+  gives that pixel no displacement (a later stage may let a real height map stand in for
+  brightness in the height blend itself).
 - [design] **Depth and steps.** Each layer keeps its own set's depth (held to the scalar
   range's end); the march's scale is that end, 0.08 (`PARALLAX_SCALE`), the same for every
   quadrant, each layer's depth taken over it (`parallax_scales`). A grid from each
@@ -653,13 +655,15 @@ addition of NVForever's own until observer check 250 answers it [hypothesis: it 
   material without a height map keeps its old pipeline with the switch on and is not
   touched when the switch flips, so without a ground pack nothing changes, the mesh terrain
   blend's captures included (smoke `terrain-parallax-no-pack`). With a pack, the flips edit
-  only the materials with height maps, and the mesh terrain blend remakes a capture only
-  when what it is made from changed (terrain_surface.rs `captured_inputs_unchanged`: the
-  bake copies, compared whole, and the detail's resolution): the bake copy drops the
-  switch, so its edits change nothing there, while a height-blending or anti-tiling edit in
-  the same frame, or after a while with the blend off, still remakes it (the tests
-  `the_capture_refresh_compares_its_inputs`,
-  `an_edit_after_a_blend_off_interval_still_remakes_the_capture`).
+  only the materials with height maps, noted for that frame (`ParallaxEdits`), and the mesh
+  terrain blend passes over a material's edits only when they are those alone and what the
+  capture is made from compares equal (terrain_surface.rs `captured_inputs_unchanged`: the
+  bake copies, compared whole, and the detail's resolution; the bake copy drops the
+  switch). Any other edit remakes the capture as before, even one that leaves its inputs
+  equal: a height-blending or anti-tiling edit in the same frame, one after a while with the
+  blend off, a generic one (the tests `the_capture_refresh_compares_its_inputs`,
+  `an_edit_after_a_blend_off_interval_still_remakes_the_capture`,
+  `a_generic_edit_remakes_the_capture_even_with_equal_inputs`).
 - **Not done in stage 1** (owed): a generated-ground field test that judges a readback (shift on a
   tilted view, none head-on, none with the switch off: owed; the PBR field builds its own
   panels, not the landscape, and an aid would have to mount generated `_p` files for a

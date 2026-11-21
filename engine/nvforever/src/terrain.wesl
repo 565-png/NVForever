@@ -622,7 +622,7 @@ fn fragment(
     @if(TERRAIN_ANTI_TILING) var pbr_input = terrain_pbr_begin(in, is_front, standard_material(in.instance_index));
     // Parallax: the surface set up as anti-tiling sets it up (terrain_pbr.wesl: no read at the
     // plain place), the base's diffuse and normal map read at the moved place with the plain
-    // place's gradients, the occlusion once the colour is final (below).
+    // place's gradients, the occlusion from the base's colour (below).
     @if(TERRAIN_PARALLAX && !TERRAIN_ANTI_TILING) var pbr_input = terrain_pbr_begin(in, is_front, standard_material(in.instance_index));
     @if(TERRAIN_PARALLAX && !TERRAIN_ANTI_TILING) let parallax_n_pre = pbr_input.N;
     @if(TERRAIN_PARALLAX && VERTEX_UVS_A) let parallax_fp = TerrainFootprint((standard_material(in.instance_index).uv_transform * vec3(in.uv, 1.0)).xy, parallax_ddx, parallax_ddy);
@@ -634,6 +634,10 @@ fn fragment(
             pbr_input.N = terrain_world_normal(calculate_tbn_mikktspace(in.world_normal, in.world_tangent), terrain_base_normal(in.instance_index, parallax_flags, parallax_taps, parallax_fp), terrain_back_face(pbr_input, is_front));
         }
     }
+    // The occlusion from the base's colour and the normal before any map, as Bevy's set-up
+    // takes it on the path without parallax (before the layers are folded in), so a pixel
+    // with no shift is shaded the same [design, #3322 review].
+    @if(TERRAIN_PARALLAX && !TERRAIN_ANTI_TILING) pbr_input = terrain_pbr_occlusion(pbr_input, parallax_n_pre);
     let counts = layer_counts(in.instance_index);
     @if(VERTEX_UVS_A) {
         let standard = standard_material(in.instance_index);
@@ -781,8 +785,6 @@ fn fragment(
             pbr_input = terrain_pbr_occlusion(pbr_input, n_pre);
         }
     }
-    // Parallax's set-up: the occlusion once the colour is final, as anti-tiling's.
-    @if(TERRAIN_PARALLAX && !TERRAIN_ANTI_TILING) pbr_input = terrain_pbr_occlusion(pbr_input, parallax_n_pre);
     // [design] Surface bake of a folded base (terrain_surface.rs): its unlit colour.
     @if(SURFACE_BAKE) return surface_bake(pbr_input.material.base_color.rgb);
     @if(!SURFACE_BAKE) {

@@ -1452,9 +1452,25 @@ pub fn refresh_captures(
     ordinary: Res<Assets<nvf_assets::NifMaterial>>,
     folded_events: Option<Res<Messages<AssetEvent<TerrainMaterial>>>>,
     ordinary_events: Option<Res<Messages<AssetEvent<nvf_assets::NifMaterial>>>>,
+    parallax_edits: Option<Res<crate::terrain::ParallaxEdits>>,
     mut cursors: Local<CaptureEvents>,
 ) {
-    let folded_changed: HashSet<_> = folded_events.as_ref().map(|e| cursors.folded.read(e).filter_map(modified_asset).collect()).unwrap_or_default();
+    // Each changed folded material, and whether something other than this frame's parallax
+    // flips changed it (a removal, or more Modified events than the flips made).
+    let mut modified: HashMap<AssetId<TerrainMaterial>, u32> = HashMap::new();
+    let mut removed: HashSet<AssetId<TerrainMaterial>> = HashSet::new();
+    if let Some(events) = folded_events.as_ref() {
+        for event in cursors.folded.read(events) {
+            match event {
+                AssetEvent::Modified { id } => *modified.entry(*id).or_default() += 1,
+                AssetEvent::Removed { id } => { removed.insert(*id); }
+                _ => {}
+            }
+        }
+    }
+    let flips = |id: &AssetId<TerrainMaterial>| parallax_edits.as_deref().and_then(|p| p.0.get(id)).copied().unwrap_or(0);
+    let generic: HashSet<AssetId<TerrainMaterial>> = modified.iter().filter(|(id, n)| **n > flips(id)).map(|(id, _)| *id).chain(removed.iter().copied()).collect();
+    let folded_changed: HashSet<AssetId<TerrainMaterial>> = modified.keys().copied().chain(removed.iter().copied()).collect();
     let ordinary_changed: HashSet<_> = ordinary_events.as_ref().map(|e| cursors.ordinary.read(e).filter_map(modified_asset).collect()).unwrap_or_default();
     for mut cell in &mut cells {
         // Component edits/replacement also refresh the derived dependency list. Preserve
@@ -1462,10 +1478,14 @@ pub fn refresh_captures(
         if cell.is_changed() { cell.bypass_change_detection().refresh_dependencies(); }
         let dirty = cell.sources.iter().any(|s| match s { CaptureSource::Folded(h) => folded_changed.contains(&h.id()), CaptureSource::Single(h, _) => ordinary_changed.contains(&h.id()) });
         if !dirty { continue; }
-        // #3322 review: an edit that changes nothing the capture is made from (the terrain
-        // parallax switch: the bake copy drops it, the detail never reads it) leaves the
-        // cell untouched, so the publication is not remade for it.
-        if captured_inputs_unchanged(&cell, &folded, &ordinary) { continue; }
+        // #3322 review: the terrain parallax switch's own edits (and nothing else this frame)
+        // leave the cell untouched when what it is made from compares equal (the bake copy
+        // drops the switch, the detail never reads it); any other edit remakes it as before.
+        let parallax_only = cell.sources.iter().all(|s| match s {
+            CaptureSource::Folded(h) => !generic.contains(&h.id()),
+            CaptureSource::Single(h, _) => !ordinary_changed.contains(&h.id()),
+        });
+        if parallax_only && captured_inputs_unchanged(&cell, &folded, &ordinary) { continue; }
         let sources = cell.sources.clone();
         let mut missing = false;
         for (source, (_, draw)) in sources.iter().zip(&mut cell.quadrants) {
