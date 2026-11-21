@@ -3379,3 +3379,71 @@ fn a_group_condition_on_the_speaker_lets_others_than_the_fixed_speaker_say_a_lin
     assert!(!g.can_say(chatter, player, FormId(GR_CREW)), "the fixed speaker, but not in the faction");
     assert!(g.can_say(chatter, player, FormId(GR_FIXED)));
 }
+
+#[test]
+fn set_on_dialog_topic_event_handler_fires_for_info_topic_and_wildcard_filters() {
+    let f = fixture();
+    let mut g = game(&f);
+    let run = |g: &mut Game, body: &str| {
+        let src = format!("Begin Function {{ }}\n{body}\nEnd\n");
+        g.run_query(&src, fnv_game::game::RunCtx::default()).unwrap();
+    };
+    // Register an INFO-filtered handler (using bare hex FormID like Casino Rewards Fix),
+    // a DIAL topic-filtered handler, an unrelated INFO handler (must not fire), and an
+    // unfiltered wildcard handler.
+    let info_hex = format!("{C_BYE:08X}");
+    let other_hex = format!("{I_BYE:08X}");
+    let topic_hex = format!("{T_BYE:08X}");
+    run(
+        &mut g,
+        &format!(
+            "SetOnDialogTopicEventHandler (begin function {{ref rForm}}\n\
+             PlayerREF.AuxVarSetRef \"*dt_info_self\" (GetSelf)\n\
+             PlayerREF.AuxVarSetRef \"*dt_info_form\" rForm\n\
+             end) 1 {info_hex}"
+        ),
+    );
+    run(
+        &mut g,
+        &format!(
+            "SetOnDialogTopicEventHandler (begin function {{ref rForm}}\n\
+             PlayerREF.AuxVarSetRef \"*dt_topic_self\" (GetSelf)\n\
+             PlayerREF.AuxVarSetRef \"*dt_topic_form\" rForm\n\
+             end) 1 {topic_hex}"
+        ),
+    );
+    run(
+        &mut g,
+        &format!(
+            "SetOnDialogTopicEventHandler (begin function {{ref rForm}}\n\
+             PlayerREF.AuxVarSetFlt \"*dt_other\" 1\n\
+             end) 1 {other_hex}"
+        ),
+    );
+    run(
+        &mut g,
+        "SetOnDialogTopicEventHandler (begin function {ref rForm}\n\
+         PlayerREF.AuxVarSetRef \"*dt_wild_form\" rForm\n\
+         PlayerREF.AuxVarSetFlt \"*dt_wild\" ((PlayerREF.AuxVarGetFlt \"*dt_wild\") + 1)\n\
+         end) 1",
+    );
+    g.start_dialogue(actor(), None).unwrap();
+    listen(&mut g);
+    assert_eq!(pick(&mut g, T_BYE), FormId(C_BYE));
+    let aux_flt = |g: &mut Game, key: &str| -> f64 {
+        let src = format!("Begin Function {{ }}\nSetFunctionValue (PlayerREF.AuxVarGetFlt \"{key}\")\nEnd\n");
+        g.run_query(&src, fnv_game::game::RunCtx::default()).unwrap().num().unwrap()
+    };
+    let aux_ref = |g: &mut Game, key: &str| -> u32 {
+        let src = format!("Begin Function {{ }}\nSetFunctionValue (PlayerREF.AuxVarGetRef \"{key}\")\nEnd\n");
+        g.run_query(&src, fnv_game::game::RunCtx::default()).unwrap().value().unwrap().as_form().unwrap_or(0)
+    };
+    assert_eq!(aux_ref(&mut g, "*dt_info_self"), NPC1_REF, "INFO-filtered handler gets speaker as GetSelf");
+    assert_eq!(aux_ref(&mut g, "*dt_info_form"), C_BYE, "INFO-filtered handler receives the spoken INFO form");
+    assert_eq!(aux_ref(&mut g, "*dt_topic_self"), NPC1_REF, "topic-filtered handler gets speaker as GetSelf");
+    assert_eq!(aux_ref(&mut g, "*dt_topic_form"), T_BYE, "topic-filtered handler receives the spoken DIAL topic form");
+    assert_eq!(aux_flt(&mut g, "*dt_other"), 0.0, "non-matching INFO filter must not fire");
+    assert_eq!(aux_ref(&mut g, "*dt_wild_form"), T_BYE, "unfiltered wildcard handler receives the spoken topic");
+    // Greeting + T_BYE = 2 spoken lines for the unfiltered wildcard handler.
+    assert_eq!(aux_flt(&mut g, "*dt_wild"), 2.0, "unfiltered wildcard handler fired for both greeting and topic");
+}
