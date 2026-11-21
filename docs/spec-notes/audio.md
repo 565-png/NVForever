@@ -796,8 +796,10 @@ Counts are of FalloutNV.esm alone [observed] unless they say otherwise.
    table, the radios not held (the Esc menu, a loading screen), and one of that
    station's lines or songs heard now or within the last 8 s (the gaps between lines, a
    file still being read). Heard means played at a level above 0 after the volumes, the
-   Radio While Talking tweak and reception's static; a line at no level lets the music
-   back at once, and retuning or switching off forgets the last station's line. Static
+   Radio While Talking tweak and reception's static; a line at no level, or the
+   programme muted outright even between lines (a volume or that tweak at 0, the station
+   all static), lets the music back at once, and retuning or switching off forgets the
+   last station's line, which only counts for the station tuned. Static
    alone (a station saying nothing, one whose lines have no file, a station all static
    at the edge of its range) and a station out of reception leave the music alone. Only the level the mixer
    is given changes: the player's Music volume, SetMusicState's pause and the layers

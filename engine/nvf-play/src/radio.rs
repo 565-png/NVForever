@@ -380,6 +380,8 @@ struct Playing {
     track: Track,
     /// A song (a response with a sound form), not talk or a loop.
     song: bool,
+    /// The station (base) it plays.
+    station: u32,
 }
 
 #[derive(Component)]
@@ -1167,16 +1169,8 @@ fn play(
         if looping {
             radio.loops += 1;
         }
-        radio.playing.insert(w.key, Playing { entity, level, meter, track: w.track.clone(), song: w.response.is_some_and(|(_, _, song)| song) });
+        radio.playing.insert(w.key, Playing { entity, level, meter, track: w.track.clone(), song: w.response.is_some_and(|(_, _, song)| song), station: w.station });
     }
-    // The Pip-Boy plays its station for the music while one of the station's lines or
-    // songs is heard (not static alone, not a line without a file, not one at no level),
-    // bridged over the gaps; not while the radios are held (the Esc menu, a loading
-    // screen), whose clock stands still.
-    let tuned = pip_station.filter(|_| pip_heard).map(|(s, _)| s);
-    let line_gain = radio.playing.get(&PIPBOY).filter(|p| matches!(p.track, Track::Line { .. })).map(|p| f32::from_bits(p.level.load(Ordering::Relaxed)) * radio_volume);
-    radio.pipboy_line_at = pipboy_line_seen(radio.pipboy_line_at, tuned, line_gain, now);
-    radio.pipboy_playing = pipboy_holds_music(tuned, held, radio_volume, radio.pipboy_line_at, now);
     // The Pip-Boy station's loudness as played, for the exit summary (#1077).
     if let Some((song, loud)) = radio.playing.get(&PIPBOY).map(|p| (p.song, f32::from_bits(p.meter.load(Ordering::Relaxed)) * f32::from_bits(p.level.load(Ordering::Relaxed)))).filter(|(_, l)| *l > 0.0) {
         let slot = &mut radio.loudness[usize::from(!song)];
@@ -1190,6 +1184,18 @@ fn play(
         }
         keep
     });
+    // The Pip-Boy plays its station for the music while one of that station's lines or
+    // songs is heard (not static alone, not a line without a file, not one at no level),
+    // bridged over the gaps; not while the radios are held (the Esc menu, a loading
+    // screen), whose clock stands still. Read after what no longer sounds was let go, so
+    // a line of the station tuned away from is not credited to the new one.
+    let tuned = pip_station.filter(|_| pip_heard);
+    // Muted outright even between lines: no sound, the Radio volume or the conversation
+    // tweak at 0, or the station all static.
+    let muted = volume <= 0.0 || radio_volume <= 0.0 || pip_share.is_some_and(|s| s >= 1.0);
+    let line_gain = pipboy_line_gain(&radio.playing, tuned, radio_volume);
+    radio.pipboy_line_at = pipboy_line_seen(radio.pipboy_line_at, tuned.map(|(s, _)| s), line_gain, muted, now);
+    radio.pipboy_playing = pipboy_holds_music(tuned.map(|(s, _)| s), held, radio_volume, radio.pipboy_line_at, now);
     for sink in &sinks {
         match (held, sink.is_paused()) {
             (true, false) => sink.pause(),
@@ -1199,15 +1205,30 @@ fn play(
     }
 }
 
+/// The level the Pip-Boy plays a line or song of the station it is tuned to (`tuned`:
+/// placed reference and base) at now, after the volumes, the conversation tweak,
+/// reception's static and the player's Radio volume: `None` when it plays none of that
+/// station's (between lines, static, a line still being read, or one of a station tuned
+/// away from).
+fn pipboy_line_gain(playing: &HashMap<u32, Playing>, tuned: Option<(FormId, u32)>, radio_volume: f32) -> Option<f32> {
+    let (_, base) = tuned?;
+    let p = playing.get(&PIPBOY).filter(|p| p.station == base && matches!(p.track, Track::Line { .. }))?;
+    Some(f32::from_bits(p.level.load(Ordering::Relaxed)) * radio_volume)
+}
+
 /// The last line or song the Pip-Boy made heard (station, radios' clock), this frame:
 /// `tuned` the station it plays now (`None`: off, not received, sound off or at the poker
-/// table), `line_gain` the level its line or song is played at now after the volumes,
-/// the conversation tweak and reception's static (`None`: none plays). A line heard
-/// (gain above 0) is noted; one at no level (muted, all static) clears it, as switching
-/// off does; a line seen on another station (a retune, a save restored onto another
-/// station) does not count [design: #3311].
-pub fn pipboy_line_seen(last: Option<(FormId, f64)>, tuned: Option<FormId>, line_gain: Option<f32>, now: f64) -> Option<(FormId, f64)> {
+/// table), `line_gain` the level its line or song is played at now ([`pipboy_line_gain`];
+/// `None`: none plays), `muted` the programme silenced outright (sound or a volume at 0,
+/// the station all static). A line heard (gain above 0) is noted; one at no level, or
+/// muting even between lines, clears it, as switching off does; a line seen on another
+/// station (a retune, a save restored onto another station) does not count [design:
+/// #3311].
+pub fn pipboy_line_seen(last: Option<(FormId, f64)>, tuned: Option<FormId>, line_gain: Option<f32>, muted: bool, now: f64) -> Option<(FormId, f64)> {
     let st = tuned?;
+    if muted {
+        return None;
+    }
     match line_gain {
         Some(g) if g > 0.0 => Some((st, now)),
         Some(_) => None,
@@ -1392,19 +1413,55 @@ mod tests {
     fn a_line_counts_for_its_own_tuning_and_only_when_heard() {
         let (a, b) = (FormId(0xA), FormId(0xB));
         // A song heard on A is noted.
-        assert_eq!(pipboy_line_seen(None, Some(a), Some(0.4), 10.0), Some((a, 10.0)));
+        assert_eq!(pipboy_line_seen(None, Some(a), Some(0.4), false, 10.0), Some((a, 10.0)));
         // Between lines on A it is kept...
-        assert_eq!(pipboy_line_seen(Some((a, 10.0)), Some(a), None, 11.0), Some((a, 10.0)));
+        assert_eq!(pipboy_line_seen(Some((a, 10.0)), Some(a), None, false, 11.0), Some((a, 10.0)));
         // ...retuned to quiet B it is dropped, so B does not inherit A's hold.
-        let after = pipboy_line_seen(Some((a, 10.0)), Some(b), None, 10.5);
+        let after = pipboy_line_seen(Some((a, 10.0)), Some(b), None, false, 10.5);
         assert_eq!(after, None);
         assert!(!pipboy_holds_music(Some(b), false, 0.5, after, 10.5));
         // Switched off: dropped.
-        assert_eq!(pipboy_line_seen(Some((a, 10.0)), None, None, 10.5), None);
+        assert_eq!(pipboy_line_seen(Some((a, 10.0)), None, None, false, 10.5), None);
         // A line played at no level (Radio While Talking 0 % in a conversation, the
         // station all static at the edge of its range) clears it at once.
-        assert_eq!(pipboy_line_seen(Some((a, 10.0)), Some(a), Some(0.0), 10.5), None);
-        assert!(!pipboy_holds_music(Some(a), false, 0.5, pipboy_line_seen(Some((a, 10.0)), Some(a), Some(0.0), 10.5), 10.5));
+        assert_eq!(pipboy_line_seen(Some((a, 10.0)), Some(a), Some(0.0), false, 10.5), None);
+        assert!(!pipboy_holds_music(Some(a), false, 0.5, pipboy_line_seen(Some((a, 10.0)), Some(a), Some(0.0), false, 10.5), 10.5));
+        // Muted in a gap between lines (Radio While Talking 0 % on entering a
+        // conversation just after a song ended, the station gone all static): cleared too.
+        assert_eq!(pipboy_line_seen(Some((a, 10.0)), Some(a), None, true, 10.5), None);
+    }
+
+    fn playing_line(station: u32, level: f32) -> Playing {
+        Playing {
+            entity: Entity::PLACEHOLDER,
+            level: Arc::new(AtomicU32::new(level.to_bits())),
+            meter: Arc::new(AtomicU32::new(0)),
+            track: Track::Line { info: FormId(1), part: 0 },
+            song: true,
+            station,
+        }
+    }
+
+    /// Retuned to a received, broadcasting station with nothing to say yet: the line the
+    /// Pip-Boy still holds from the station tuned away from is not that station's, so it
+    /// neither holds the music nor carries the old hold over.
+    #[test]
+    fn a_line_of_the_station_tuned_away_from_is_not_credited() {
+        let (a_ref, a, b_ref, b) = (FormId(0x10A), 0xA, FormId(0x10B), 0xB);
+        let mut playing = HashMap::new();
+        playing.insert(PIPBOY, playing_line(a, 0.4));
+        // On A its song is heard.
+        assert_eq!(pipboy_line_gain(&playing, Some((a_ref, a)), 0.5), Some(0.2));
+        let last = pipboy_line_seen(None, Some(a_ref), pipboy_line_gain(&playing, Some((a_ref, a)), 0.5), false, 10.0);
+        assert!(pipboy_holds_music(Some(a_ref), false, 0.5, last, 10.0));
+        // Tuned to B, A's song still in the map: no gain for B, A's line dropped.
+        assert_eq!(pipboy_line_gain(&playing, Some((b_ref, b)), 0.5), None);
+        let after = pipboy_line_seen(last, Some(b_ref), pipboy_line_gain(&playing, Some((b_ref, b)), 0.5), false, 10.1);
+        assert_eq!(after, None);
+        assert!(!pipboy_holds_music(Some(b_ref), false, 0.5, after, 10.1));
+        // Static under the Pip-Boy key is not a line either.
+        playing.insert(PIPBOY, Playing { track: Track::Loop("static".into()), ..playing_line(b, 0.4) });
+        assert_eq!(pipboy_line_gain(&playing, Some((b_ref, b)), 0.5), None);
     }
 
     #[test]
