@@ -3469,7 +3469,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-21 (Dead Money's hologram colours, #3017)
 
-250. **How does a Dead Money hologram look in each threat state, and does its membrane
+266. **How does a Dead Money hologram look in each threat state, and does its membrane
      fade with its flicker?** (P2; #3017, effect-shaders.md §4, §5, §9.) The three shaders
      (`NVDLC01HologramNeutral` blue, `NVDLC01HologramAttention` yellow,
      `NVDLC01HologramAggressive` red) are additive membranes with "Edge Effect Inverse"
