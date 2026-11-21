@@ -16,6 +16,7 @@ mod digest;
 mod abilities;
 mod actor_values;
 mod aid;
+mod ammo_overrides;
 mod appearance;
 mod area_effects;
 mod ash_piles;
