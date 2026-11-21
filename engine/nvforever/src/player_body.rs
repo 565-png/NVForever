@@ -267,7 +267,7 @@ const ARMS_SHADE_NEAR: f32 = 64.0;
 /// itself, whatever it draws: about 0.75 ms at Novac at 07:00 with 4096² maps for one
 /// caster as for three, against 0.25 ms for none [observed 2026-11-02, #1374].
 #[allow(clippy::type_complexity)]
-fn near_shade_casters(
+pub(crate) fn near_shade_casters(
     mut shade: Query<(&mut bevy::camera::visibility::CascadesVisibleEntities, &GlobalTransform), With<ArmsShade>>,
     views: Query<&GlobalTransform, With<Camera>>,
     casters: Query<(&bevy::camera::primitives::Aabb, &GlobalTransform, Has<crate::terrain::LandMesh>)>,
@@ -1061,8 +1061,13 @@ struct Motion {
     /// The camera's bob: first person's, and the third-person pivot's smoothing
     /// (`head_bob.rs`).
     head: crate::head_bob::HeadBob,
+    /// The last times (seconds of the game's clock) the sway moved the first-person arms and
+    /// the head moved the view off the clips' pose (the exit summary, a smoke check).
+    moved_at: [Option<f32>; 2],
     /// The first-person weapon lowered against a wall or a friend (`weapon_lower.rs`).
     lower: WeaponLower,
+    /// The first-person sprint pose's fade (`sprint_view.rs`).
+    sprint: crate::sprint_view::SprintView,
     /// The true iron sights were last reported on the eye (a smoke check).
     sights_told: bool,
     /// The weapon was last reported lowered (a smoke check).
@@ -1126,7 +1131,9 @@ impl Default for Motion {
             velocity: Vec2::ZERO,
             sway: ViewSway::default(),
             head: crate::head_bob::HeadBob::default(),
+            moved_at: [None; 2],
             lower: WeaponLower::default(),
+            sprint: crate::sprint_view::SprintView::default(),
             sights_told: false,
             lower_told: false,
             sights_share: 0.0,
@@ -1404,7 +1411,7 @@ impl MotionTrace {
                 match std::fs::File::create(&path) {
                     Ok(f) => {
                         let mut w = std::io::BufWriter::new(f);
-                        let _ = std::io::Write::write_all(&mut w, b"t,dt,heading,pitch,eye_x,eye_y,eye_z,hand_x,hand_y,hand_z,hand_rx,hand_ry,hand_rz,sway_x,sway_y,sway_z,sway_yaw,sway_pitch,sway_roll,sights,aiming,falling,sneaking,speed,drawn,feet_z,airborne,lhand_x,lhand_y,lhand_z,lens\n");
+                        let _ = std::io::Write::write_all(&mut w, b"t,dt,heading,pitch,eye_x,eye_y,eye_z,hand_x,hand_y,hand_z,hand_rx,hand_ry,hand_rz,sway_x,sway_y,sway_z,sway_yaw,sway_pitch,sway_roll,sights,aiming,falling,sneaking,speed,drawn,feet_z,airborne,lhand_x,lhand_y,lhand_z,lens,rgrip_x,rgrip_y,rgrip_z,rgrip_turn,lgrip_x,lgrip_y,lgrip_z\n");
                         info!("motion trace: writing {path}");
                         self.file = Some(w);
                         self.layers = std::fs::File::create(format!("{path}.layers")).ok().map(std::io::BufWriter::new);
@@ -1417,17 +1424,18 @@ impl MotionTrace {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn write(&mut self, t: f64, dt: f32, player: &Player, eye: Option<Vec3>, hand: Option<(Vec3, Vec3)>, sway: SwayPose, flags: (f32, bool, bool, bool, f32, bool), airborne: f32, left: Option<Vec3>, lens: f32) {
+    fn write(&mut self, t: f64, dt: f32, player: &Player, eye: Option<Vec3>, hand: Option<(Vec3, Vec3)>, sway: SwayPose, flags: (f32, bool, bool, bool, f32, bool), airborne: f32, left: Option<Vec3>, lens: f32, grips: Option<(Vec3, f32, Vec3)>) {
         let Some(w) = self.file.as_mut() else { return };
         let e = eye.unwrap_or(Vec3::NAN);
         let (h, r) = hand.unwrap_or((Vec3::NAN, Vec3::NAN));
         let l = left.unwrap_or(Vec3::NAN);
+        let (rg, rt, lg) = grips.unwrap_or((Vec3::NAN, f32::NAN, Vec3::NAN));
         let (yaw, pitch, roll) = sway.rotation.to_euler(EulerRot::ZXY);
         let (sights, aiming, falling, sneaking, speed, drawn) = flags;
         let b = |v: bool| u8::from(v);
         let line = format!(
-            "{t:.5},{dt:.5},{:.5},{:.5},{:.3},{:.3},{:.3},{:.4},{:.4},{:.4},{:.6},{:.6},{:.6},{:.4},{:.4},{:.4},{yaw:.5},{pitch:.5},{roll:.5},{sights:.4},{},{},{},{speed:.1},{},{:.3},{airborne:.3},{:.4},{:.4},{:.4},{lens:.5}\n",
-            player.heading, player.pitch, e.x, e.y, e.z, h.x, h.y, h.z, r.x, r.y, r.z, sway.offset.x, sway.offset.y, sway.offset.z, b(aiming), b(falling), b(sneaking), b(drawn), player.feet[2], l.x, l.y, l.z
+            "{t:.5},{dt:.5},{:.5},{:.5},{:.3},{:.3},{:.3},{:.4},{:.4},{:.4},{:.6},{:.6},{:.6},{:.4},{:.4},{:.4},{yaw:.5},{pitch:.5},{roll:.5},{sights:.4},{},{},{},{speed:.1},{},{:.3},{airborne:.3},{:.4},{:.4},{:.4},{lens:.5},{:.3},{:.3},{:.3},{rt:.2},{:.3},{:.3},{:.3}\n",
+            player.heading, player.pitch, e.x, e.y, e.z, h.x, h.y, h.z, r.x, r.y, r.z, sway.offset.x, sway.offset.y, sway.offset.z, b(aiming), b(falling), b(sneaking), b(drawn), player.feet[2], l.x, l.y, l.z, rg.x, rg.y, rg.z, lg.x, lg.y, lg.z
         );
         let _ = std::io::Write::write_all(w, line.as_bytes());
     }
@@ -1642,6 +1650,11 @@ fn report(mut exit: MessageReader<AppExit>, body: Res<PlayerBody>) {
         info!("player body summary: head bob {}, deepest first-person dip {:.2} units; third-person pivot over {} frames moved {pivot:.3} units a frame (rms) against the head's {head:.3}, pivot/head {:.2}", if body.head_bob { "on" } else { "off" }, m.head.peak_dip, m.head.frames, pivot / head.max(1e-3));
         info!("player body summary: head inertia, deepest take-off or landing dip {:.2} units; breathing camera {}, highest rise {:.2} units", m.head.peak_land.max(0.0) + 0.0, if body.head_bob { "on" } else { "off" }, m.head.peak_breath.max(0.0) + 0.0);
         info!("player body summary: most gun recoil back {:.2} units, most out of breath {:.2}", m.sway.peak_recoil.max(0.0) + 0.0, m.head.peak_exertion);
+        info!(
+            "player body summary: off the clips' pose, the arms last moved by Weapon Inertia {}, the view by the head's springs (Camera Motion, Movement Inertia's landing dip) {}",
+            m.moved_at[0].map_or("never".to_string(), |t| format!("at {t:.1} s")),
+            m.moved_at[1].map_or("never".to_string(), |t| format!("at {t:.1} s"))
+        );
         info!("player body summary: weapon lowering {}, lowered {} times, most {:.2}", if body.weapon_lower { "on" } else { "off" }, m.lower.times, m.lower.peak);
     }
 }
@@ -2539,6 +2552,20 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
         // A draw's or a holster's clip keeps a straight fade: the hand-over sets it (below).
         if (first_inertia && l.tag != TAG_EQUIP) || (f.aim_fade.is_some() && is_aim(l.tag)) || crouch_fade(l.tag).is_some() {
             l.smooth = true;
+        } else if !first_inertia && l.tag < TAG_SPECIAL {
+            // None of the rules above holds now (Animation Smoothing, Weapon Handling's aim or
+            // the eased crouch switched off, or the crouch done): the rig's own layers take
+            // the clips' own straight fade again. Kept, a layer that stays (the idle, a drawn
+            // weapon's hold) faded the switched-off way for the rest of the session: the hold
+            // crossed over to the sights along the settling curve over the aim's 0.6 s. A layer
+            // already leaving keeps its way out, but one left to the draw's hand-over (which
+            // no longer runs) goes at the clips' pace instead of never.
+            if !l.is_leaving() {
+                l.straighten();
+                l.fade_out = DEFAULT_FADE;
+            } else if !l.fade_out.is_finite() {
+                l.fade_out = DEFAULT_FADE;
+            }
         }
         // A draw's or a holster's clip lets go slowly: its last pose is not the pose that
         // follows (the arms down after a holster), and over its own short time the
@@ -2601,6 +2628,12 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
             let length = l.clip.length().max(1e-3);
             let u = nvf_play::inertia::land_curve_inv((l.time / length).clamp(0.0, 1.0), stretch) + f.dt.max(0.0) / (length * stretch.max(1.0));
             (l.time, l.rate) = (nvf_play::inertia::land_curve(u, stretch) * length, 0.0);
+        }
+    } else {
+        // Played by its clock again (Movement Inertia switched off part-way through a
+        // landing): held at the place it was put at, the view stayed dipped.
+        for l in a.layers.iter_mut().filter(|l| l.tag == TAG_LAND && l.rate == 0.0) {
+            l.rate = 1.0;
         }
     }
     // The idles: each at the time its playback is at. One that has ended holds its last
@@ -3156,7 +3189,7 @@ fn drive_weapon_emitters(state: Res<PlayerBody>, mut emitters: Query<&mut crate:
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn drive_body(
     mut commands: Commands,
-    (time, turbo, sim, mut told_scale, sequences, mut trace): (Res<Time>, Option<Res<nvf_play::script::PlayerTimeScale>>, Option<Res<nvf_play::sim::SimState>>, Local<Option<f32>>, Res<crate::script_sequences::PlayerSequences>, Local<MotionTrace>),
+    (time, turbo, sim, mut told_scale, sequences, mut trace, stance_motion): (Res<Time>, Option<Res<nvf_play::script::PlayerTimeScale>>, Option<Res<nvf_play::sim::SimState>>, Local<Option<f32>>, Res<crate::script_sequences::PlayerSequences>, Local<MotionTrace>, Option<Res<nvf_play::stance::StanceMotion>>),
     d: Res<PlayWorld>,
     intent: Res<MoveIntent>,
     control: Res<PlayerControl>,
@@ -3241,7 +3274,10 @@ fn drive_body(
         (1.0, 0.0, true)
     } else {
         let (f, r, walk) = inertia.as_deref().map_or((intent.forward, intent.right, intent.walk), |i| i.clip_intent(intent.forward, intent.right, intent.walk, player.heading));
-        (f, r, !walk)
+        // A sprint from a walk (Always Run off) runs: the run clips from half a sprint on
+        // (`nvf_play::sprint`).
+        let sprint_runs = stance_motion.as_deref().is_some_and(|s| s.sprint_share >= nvf_play::sprint::RUN_GAIT_FROM);
+        (f, r, !walk || sprint_runs)
     };
     let feet = player.feet;
     if dt > 0.0 {
@@ -3578,7 +3614,11 @@ fn drive_body(
         }
         *told_scale = Some(script_scale);
     }
-    let root = Transform { translation: Vec3::from_array(feet) - sink, rotation: Quat::from_rotation_z(-player.heading), scale: Vec3::splat(body.scale * script_scale) };
+    // Sprint (`sprint_view.rs`): its share, how out of breath it left the player, and in
+    // third person the body's lean about its feet.
+    let (sprint_share, winded) = stance_motion.as_deref().map_or((0.0, 0.0), |s| (s.sprint_share, s.winded));
+    let lean = if third_view { crate::sprint_view::lean(sprint_share) } else { Quat::IDENTITY };
+    let root = Transform { translation: Vec3::from_array(feet) - sink, rotation: Quat::from_rotation_z(-player.heading) * lean, scale: Vec3::splat(body.scale * script_scale) };
     let third = Posed { root, look_pitch: player.pitch, special: &idles.third, sequences:&sequences.third, sequence_dt: dt, pipboy: None, sway: SwayPose::NONE, sights: None };
     let third_eye = pose_rig(&mut body.third, &frame, &events, third, &mut ctx, &mut transforms).map(|(e, _)| e + eye_sink);
     // The third-person body's melee attack clip carries the player by its root's travel
@@ -3650,9 +3690,11 @@ fn drive_body(
             exertion: if advanced && state.head_bob { m.head.exertion() } else { 0.0 },
             reloading: f32::from(u8::from(f.animator.layers.iter().any(|l| l.tag == TAG_RELOAD && !l.finished() && !l.is_leaving()))),
             on: advanced && state.weapon_sway && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
+            sprint: sprint_share,
         })
     });
     let sway = crate::view_sway::rescale(sway, sway_share);
+    let mut moved = [sway != SwayPose::NONE, false];
     // The head bob in first person moves the whole arms rig, camera node, arms and
     // weapon together (`head_bob.rs`).
     if let Some(f) = body.first.as_ref() {
@@ -3675,8 +3717,17 @@ fn drive_body(
             kick: if soft_recoil { kick } else { 0.0 },
             punch,
             on: advanced && state.head_bob && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
+            // Sprint's bob and its out of breath, Camera Motion's (`sprint_view.rs`).
+            sprint: sprint_share,
+            winded: if advanced && state.head_bob { winded } else { 0.0 },
         });
         at = [at[0] + o.x, at[1] + o.y, at[2] + o.z];
+        moved[1] = o != Vec3::ZERO;
+    }
+    for (at, moved) in m.moved_at.iter_mut().zip(moved) {
+        if moved {
+            *at = Some(time.elapsed_secs());
+        }
     }
     // Lowered against a wall or a friend ahead (`weapon_lower.rs`): a drawn weapon, not
     // fists; aiming, the trigger, an attack or a reload bring it up.
@@ -3700,6 +3751,11 @@ fn drive_body(
         info!("weapon lowering: {}", if m.lower.down { if control.lowered { "lowered by hand" } else if ahead.friendly { "lowered for a friendly actor ahead" } else { "lowered against a surface ahead" } } else { "raised" });
     }
     let sway = crate::weapon_lower::then(sway, crate::weapon_lower::pose(lowered, crate::weapon_lower::weight(prefix)));
+    // Sprinting lowers the gun further (`sprint_view.rs`), faded where the arms are not the
+    // player's.
+    let sprint_pose = m.sprint.pose_share(sprint_share, idles.held.is_none() && !idles.first.covers() && pipboy.is_none(), dt);
+    let sprint_weight = if prefix == UNARMED { crate::sprint_view::FISTS } else { crate::weapon_lower::weight(prefix) };
+    let sway = crate::weapon_lower::then(sway, crate::sprint_view::pose(sprint_pose, sprint_weight));
     // True iron sights: brought up at their own pace while the view zooms in, for the
     // guns whose model has a sighting node, while the player looks through the arms rig
     // by themself.
@@ -3805,6 +3861,14 @@ fn drive_body(
             }
         }
     }
+    // Sprint's side sway (`sprint_view.rs`, Camera Motion): a small roll of the first-person
+    // view about its own line, so the crosshair's point and the aim stay.
+    let stride = body.first.as_ref().map_or(0.0, |f| f.animator.phase);
+    let roll_on = advanced && state.head_bob && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none();
+    let roll = m.sprint.roll(stride, sprint_share, roll_on, dt);
+    if roll != 0.0 && player.body_view.is_none() && !third_view {
+        player.body_view = Some(crate::sprint_view::rolled_view(player.heading, player.pitch, roll));
+    }
     m.events = events;
 
     // The eye: the first-person camera node; without that rig, the head's eye, swung
@@ -3833,7 +3897,15 @@ fn drive_body(
             let turn = rot(c).inverse() * rot(h);
             Some((Vec3::from(h.translation) - Vec3::from(c.translation), turn.to_scaled_axis()))
         });
-        trace.write(time.elapsed_secs_f64(), dt, &player, eye, hand, sway, (m.sights_share, control.aiming, m.falling, stance == Stance::Sneak, m.speed, m.hands.phase == WeaponPhase::Drawn), m.airborne, left, lens_k);
+        // Each hand in the weapon's frame (the `Weapon` node, model space): where it holds
+        // the gun, to see a hand leave its grip; the right hand with its turn there.
+        let grips = body.first.as_ref().filter(|_| m.hands.in_hand).and_then(|f| {
+            let gun = f.weapon_node_at(Transform::IDENTITY, &[])?.inverse();
+            let bone = |n: &str| f.animator.skel.by_name.get(n).map(|&b| gun * f.animator.model_space(b));
+            let (r, l) = (bone("Bip01 R Hand")?, bone("Bip01 L Hand")?);
+            Some((Vec3::from(r.translation), r.to_scale_rotation_translation().1.to_scaled_axis().length().to_degrees(), Vec3::from(l.translation)))
+        });
+        trace.write(time.elapsed_secs_f64(), dt, &player, eye, hand, sway, (m.sights_share, control.aiming, m.falling, stance == Stance::Sneak, m.speed, m.hands.phase == WeaponPhase::Drawn), m.airborne, left, lens_k, grips);
         trace.write_layers(time.elapsed_secs_f64(), &m.hands, body.first.as_ref().map(|f| &f.animator));
     }
     state.head_eye = third_eye.filter(|_| third_view).map(|e| e.to_array());
