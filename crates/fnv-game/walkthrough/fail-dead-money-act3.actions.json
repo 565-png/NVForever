@@ -101,6 +101,8 @@
     {"op": "advance_seconds", "seconds": 1},
     {"op": "get_ref", "of": "player", "label": "player alive after Dog's death"},
     {"op": "note", "text": "Curtain Call at the Tampico (NVDLC01MQ03b). Travel to the theater (stand-in): the player picks up the key trigger's spot by the door (stage 15) and steps into the hall's first trigger, which starts the theater's sequence (TheaterCodeBox state 1): Dean appears on the scaffold and his dialogue package (GREETING) is started here by hand."},
+    {"op": "note", "text": "First the Tampico's Ambient Audio Control terminal (NVDLC01SpeakerTheaterTerminal, \"Power Off Ambient Audio System\"): its entry switches off the theater's invisible speakers (TheaterSpeakerInv01REF and others: SetDestroyed 0, Activate, SetDestroyed 1, TERM 0x01004F07 [observed: script decompile]), which no player can switch off by hand; inside their 768 units the collar went off (round 25 [observed])."},
+    {"op": "terminal", "target": "placed:NVDLC01SpeakerTheaterTerminal", "item": 0, "label": "theater speakers powered off"},
     {"op": "move_player", "to": "scripted:NVDLC01TheaterKeyTriggerSCRIPT"},
     {"op": "trigger_enter", "trigger": "scripted:NVDLC01TheaterKeyTriggerSCRIPT", "event": "inside"},
     {"op": "advance_seconds", "seconds": 1},
