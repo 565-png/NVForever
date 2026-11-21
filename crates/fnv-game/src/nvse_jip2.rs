@@ -41,6 +41,8 @@ pub struct PlayerTold {
     /// or jam holding them down (the engine's `Combat::player_sights_up`); false while a
     /// melee weapon blocks. For SUP's HUD bars' aiming condition (`crate::ui_hudbar`).
     pub sights_up: bool,
+    /// A kill camera (`nvf_play::kill_cam::KillCam::kill_playing`) currently has the view.
+    pub kill_cam: bool,
     pub pad: Pad,
 }
 
@@ -222,8 +224,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let aiming = g.jip2.told.aiming && w.is_some();
             yes(aiming && (scoped == (name == "getpcusingscope")))
         }
-        // NVForever has no kill camera [hypothesis: VATS and its kill cam are not built].
-        "isinkillcam" => zero,
+        // Live kill-camera state reported each frame by the engine (`KillCam::kill_playing`)
+        // [documented: GECK wiki IsInKillCam; design: classic VATS attack cameras are excluded].
+        "isinkillcam" => yes(g.jip2.told.kill_cam),
         "isincharGen" | "isinchargen" => zero,
         // In water: the physics' swimming state [hypothesis: wading is not told];
         // immersion 1 when swimming, else 0 [hypothesis].
