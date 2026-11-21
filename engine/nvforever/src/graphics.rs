@@ -224,6 +224,14 @@ pub struct Graphics {
     /// changes). Read once at the start (nvf_assets `reflection_cube::set_enabled`, main.rs);
     /// this field is the settings row's value for the next start.
     pub authored_reflections: bool,
+    /// Full models of static scenery in the cells beyond the loaded ones, draw-only
+    /// (full_detail.rs; 7 x 7 in `enhanced`, off in vanilla) [design, #2701; maintainer
+    /// decision 2026-11-21 on #3048].
+    pub full_detail: crate::full_detail::FullDetail,
+    /// Static scenery the distant LOD blocks do not hold, from its own LOD models or full
+    /// models by size, beyond the loaded cells and the ring, draw-only (distant_objects.rs;
+    /// off in both presets) [design, #3014].
+    pub distant_objects: crate::distant_objects::DistantObjects,
 }
 
 /// The settings key of the Authored materials row (#2981).
@@ -232,9 +240,10 @@ pub const AUTHORED_MATERIALS_KEY: &str = "authored-materials";
 /// The settings key of the Reflections on authored materials row (#2981).
 pub const AUTHORED_REFLECTIONS_KEY: &str = "authored-reflections";
 
-/// The keys of `--graphics-only`: the settings page's switches and the anti-aliasing and
-/// shadow-filter choices that are not vanilla's, in the order of [`Graphics::describe`].
-pub const KEYS: [&str; 20] = [
+/// The keys of `--graphics-only`: the settings page's switches and the anti-aliasing,
+/// shadow-filter, full-detail and distant-object choices that are not vanilla's, in the
+/// order of [`Graphics::describe`].
+pub const KEYS: [&str; 24] = [
     "ambient-occlusion",
     "fine-shadows",
     "bloom",
@@ -255,6 +264,10 @@ pub const KEYS: [&str; 20] = [
     "terrain-shadows",
     "heat-haze",
     "desert-haze",
+    "full-detail-7x7",
+    "full-detail-9x9",
+    "distant-objects-8",
+    "distant-objects-12",
 ];
 
 impl Graphics {
@@ -316,6 +329,13 @@ impl Graphics {
             authored_materials: true,
             // On in both looks [design, #2981]: without a pack nothing reflects.
             authored_reflections: true,
+            // An addition of our own for machines with GPU headroom: the 7 x 7 ring in
+            // `enhanced`, off in vanilla [design, #2701; maintainer decision 2026-11-21 on
+            // #3048].
+            full_detail: if on { crate::full_detail::FullDetail::Seven } else { crate::full_detail::FullDetail::Off },
+            // Off in both looks: an addition of our own; whether `enhanced` turns it on is
+            // the maintainer's call [design, #3014].
+            distant_objects: crate::distant_objects::DistantObjects::Off,
         }
     }
 
@@ -348,7 +368,8 @@ impl Graphics {
     }
 
     /// Exactly the improvements named ([`KEYS`]) on (`--graphics-only`); of the
-    /// anti-aliasings and of the shadow filters the last named wins.
+    /// anti-aliasings, of the shadow filters, of the full-detail sizes and of the
+    /// distant-object reaches the last named wins.
     pub fn only(keys: &[String]) -> Result<Self, String> {
         let mut g = Graphics::preset(Preset::Vanilla);
         for k in keys.iter().map(|k| k.trim()).filter(|k| !k.is_empty()) {
@@ -358,6 +379,10 @@ impl Graphics {
                 "taa" => g.screen_aa = ScreenAa::Taa,
                 "shadow-filter-hardware" => g.shadow_filter = ShadowFilteringMethod::Hardware2x2,
                 "shadow-filter-temporal" => g.shadow_filter = ShadowFilteringMethod::Temporal,
+                "full-detail-7x7" => g.full_detail = crate::full_detail::FullDetail::Seven,
+                "full-detail-9x9" => g.full_detail = crate::full_detail::FullDetail::Nine,
+                "distant-objects-8" => g.distant_objects = crate::distant_objects::DistantObjects::Eight,
+                "distant-objects-12" => g.distant_objects = crate::distant_objects::DistantObjects::Twelve,
                 "no-glow" => g.glow = false,
                 "no-eye-adaptation" => g.eye_adaptation = false,
                 "no-neon-glow" => g.neon_glow = false,
@@ -402,6 +427,8 @@ impl Graphics {
             (self.desert_haze, "desert haze"),
             (!self.authored_materials, "no authored materials"),
             (!self.authored_reflections, "no authored reflections"),
+            (self.full_detail != crate::full_detail::FullDetail::Off, self.full_detail.describe()),
+            (self.distant_objects != crate::distant_objects::DistantObjects::Off, self.distant_objects.describe()),
         ];
         let mut on: Vec<&str> = names.iter().filter(|(on, _)| *on).map(|(_, n)| *n).collect();
         if self.fsr().is_some() {
@@ -1492,8 +1519,11 @@ mod tests {
     #[test]
     fn every_key_is_a_switch_and_enhanced_leaves_taa_off() {
         let all = Graphics::only(&KEYS.map(String::from)).expect("keys");
-        // Of the three anti-aliasings and the two shadow filters the last named is on.
-        assert_eq!(all.describe().split(", ").count(), KEYS.len() + 1 - 3);
+        // Of the three anti-aliasings, the two shadow filters, the two full-detail sizes and
+        // the two distant-object reaches the last named is on.
+        assert_eq!(all.describe().split(", ").count(), KEYS.len() + 1 - 5);
+        assert_eq!(all.full_detail, crate::full_detail::FullDetail::Nine);
+        assert_eq!(all.distant_objects, crate::distant_objects::DistantObjects::Twelve);
         assert_eq!((all.screen_aa, all.shadow_filter), (ScreenAa::Taa, ShadowFilteringMethod::Temporal));
         let enhanced = Graphics::preset(Preset::Enhanced);
         assert!(enhanced.screen_aa == ScreenAa::Off && enhanced.light_shafts && enhanced.water_reflections && enhanced.water_effects);
