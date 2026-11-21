@@ -6,7 +6,8 @@ use super::*;
 use fnv_combat::data::BodyPartData;
 use fnv_combat::fx::{FxForms, Impact, WeaponFx, IMPACT_MATERIALS};
 
-#[allow(dead_code)]
+// The critical-hit tests load the same fixture file as their own module.
+#[allow(dead_code, clippy::duplicate_mod)]
 #[path = "../../../test-fixtures/critical_hit_records.rs"]
 mod records;
 use records::*;
