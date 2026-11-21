@@ -189,7 +189,8 @@ or floor near them. Cause: the shot's impact went to the actor's body only (§4;
   the posed colliders).
 - Log: `decals: <IPCT> splatters blood (<TXST>) on the world behind a shot actor at ...`
   for the first; at exit `combat summary: blood on the world: <n> shots on actors rolled,
-  <w> won the roll, <s> met a wall or floor` and `decals: blood on the world behind shot
+  <w> won the roll, <s> met a wall or floor`, one line per actor struck (`combat summary: blood
+  on the world behind <ref>: <s> splatters from <n> rolled hits`) and `decals: blood on the world behind shot
   actors: <s> splatters sent, <p> placed`. Smoke `impact-decals-blood`.
 
 ## 5. Not built, open

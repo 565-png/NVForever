@@ -975,6 +975,8 @@ pub struct CombatStats {
     pub blood_rolls: u32,
     pub blood_won: u32,
     pub blood_sent: u32,
+    /// The same by actor struck (its reference): hits rolled, splatters sent.
+    pub blood_by: std::collections::BTreeMap<u32, (u32, u32)>,
 }
 
 /// A projectile in flight with where it left from, where it is drawn and whether it
@@ -6032,8 +6034,12 @@ fn fly(
                 let roll = c.blood_rng.next_f32();
                 stats.blood_rolls += 1;
                 stats.blood_won += u32::from(roll < chance);
+
                 let hit = ImpactFx { impact: blood, shooter, point: p.point, normal: p.normal, dir: p.dir, actor: struck, no_spray: false, no_decal, splatter: false };
-                if let Some(fx) = world_blood(&hit, blood, roll, chance, |from, d, reach| world_surface(&mut phys, from, d, reach)) {
+                let fx = world_blood(&hit, blood, roll, chance, |from, d, reach| world_surface(&mut phys, from, d, reach));
+                let by = stats.blood_by.entry(struck.unwrap_or(0)).or_default();
+                *by = (by.0 + 1, by.1 + u32::from(fx.is_some()));
+                if let Some(fx) = fx {
                     stats.blood_sent += 1;
                     effects.1.write(fx);
                 }
@@ -6299,6 +6305,9 @@ fn report(mut exit: MessageReader<AppExit>, stats: Res<CombatStats>) {
         }
         if s.blood_rolls > 0 {
             info!("combat summary: blood on the world: {} shots on actors rolled, {} won the roll, {} met a wall or floor (splatters sent)", s.blood_rolls, s.blood_won, s.blood_sent);
+            for (actor, (rolls, sent)) in &s.blood_by {
+                info!("combat summary: blood on the world behind {actor:08X}: {sent} splatters from {rolls} rolled hits");
+            }
         }
         if s.disarmed > 0 {
             info!("crippled limbs summary: {} actors disarmed by a crippled arm", s.disarmed);
