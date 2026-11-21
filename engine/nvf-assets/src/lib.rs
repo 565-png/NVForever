@@ -22,6 +22,7 @@ pub mod reflection_room;
 pub mod release;
 pub mod nif_material;
 pub mod nif_spawn;
+pub mod tangents;
 pub mod terrain_sampling;
 pub mod texture;
 
