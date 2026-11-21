@@ -645,11 +645,13 @@ machine, other sessions' work running beside it, one run each]
 - The second decode is 45-66 ms of thread time a launch, 1.1-1.4 % of all model loading;
   with its read and parse, 3.0-4.7 %. Most of that is the archive read, which the operating
   system's file cache already makes cheap the second time.
-- On the physics loader thread itself the read, parse and decode are 21-27 % of its model
-  work and 18 % of all it does for a cell: the same launches' `physics streaming` lines
-  give 587 and 1,264 ms, of which building the rapier shapes is 362 and 823 ms (62-65 %).
+- On the physics loader thread itself the read, parse and decode are 66 % of its work on
+  model files (122 of 185 ms, 225 of 340 ms) and 18-21 % of all it does for the cells: the
+  same launches' `physics streaming` lines give 587 and 1,264 ms, of which building the
+  rapier shapes is 362 and 823 ms (62-65 %).
 - On the drawn side the decode is 3-4 % of a model's preparing; the rest (meshes, tangents,
-  textures) is 83-86 %.
+  textures) is 83-85 % in the two launches with physics, 67 % in the flight, where the
+  archive reads took 29 %.
 
 So neither a block filter on `Decoded` for the collision reader nor one decode shared by
 both readers is built [design]: the most either could save is about 1 % of the model
