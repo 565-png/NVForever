@@ -357,6 +357,41 @@ expect = [
 ]
 
 [[scenario]]
+name = "lod-night-diffuse"
+source = "#3096 (player report R-ZXT6AC4J): north of Goodsprings (-67758, 2867) at night the distant hills to the north and east were drawn flat white until the player came closer. A game terrain chunk is now drawn only with its diffuse texture in the image store (engine/nvforever/src/lod.rs, world.md §7): no terrain shape is drawn without one, and a chunk held for lack of one names its path and reason in a 'held without its diffuse texture' line"
+note = "UNRUN when written (2026-11-21). The report's own cause is not pinned: a held chunk here on stock data would show it (its line names the texture and the error); the expectations hold either way"
+areas = ["renderer"]
+paths = ["engine/nvforever/src/lod.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_LOOK = "4:30:2,12:80:2", NVF_PLAY_TEST_SHOTS = "11:lod_night_north.png,19:lod_night_east.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67758,2867,8900", "--hour", "23"]
+run_seconds = 21
+expect = [
+  { re = 'distant LOD at the end: LOD chunks (\d+) ', range = [10, 100000], label = "the game's terrain chunks are drawn out to the reach" },
+  { re = 'distant LOD terrain surfaces: .*, (\d+) shapes drawn without a diffuse texture', range = [0, 0], label = "no distant terrain shape is drawn without its diffuse (it would be white)" },
+]
+forbid = ["drawn without its diffuse texture"]
+manual = "lod_night_north/east: the distant hills are as dark as the near ground at night, textured, never flat white"
+
+[[scenario]]
+name = "lod-missing-diffuse"
+source = "#3096: with every level-8 terrain chunk's diffuse reading as missing (test aid NVF_PLAY_TEST_BROKEN_FILES), those chunks are held, never drawn white, and their level-16 parents are drawn over their areas instead (engine/nvforever/src/lod.rs draw_list, world.md §7)"
+note = "UNRUN when written (2026-11-21). Texture names: textures\\landscape\\lod\\<world>\\diffuse\\<world>.n.level<L>.x<X>.y<Y>.dds [observed, world.md §7]"
+areas = ["renderer"]
+paths = ["engine/nvforever/src/lod.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_BROKEN_FILES = "missing:diffuse/wastelandnv.n.level8.", NVF_PLAY_TEST_LOOK = "4:30:2", NVF_PLAY_TEST_SHOTS = "14:lod_missing_level8.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67758,2867,8900", "--hour", "23"]
+run_seconds = 18
+expect = [
+  { re = 'distant LOD: terrain chunk level 8 x-?\d+ y-?\d+ held without its diffuse texture \(.*not in any archive\); level 16 x-?\d+ y-?\d+ drawn over its area instead', label = "a level-8 chunk without its diffuse is held, the texture's error named, its parent drawn instead" },
+  { re = 'distant LOD terrain surfaces: (\d+) chunks held', range = [1, 100000], label = "level-8 chunks held" },
+  { re = 'distant LOD at the end: LOD chunks \d+ \(levels 4/8/16/32: \d+/(\d+)/', range = [0, 0], label = "no level-8 chunk is drawn at the end: each gave way to its level-16 parent" },
+  { re = 'distant LOD at the end: LOD chunks \d+ \(levels 4/8/16/32: \d+/\d+/(\d+)/', range = [1, 100000], label = "level-16 chunks are drawn" },
+  { re = 'distant LOD terrain surfaces: .*, (\d+) shapes drawn without a diffuse texture', range = [0, 0], label = "none drawn without its diffuse" },
+]
+forbid = ["drawn without its diffuse texture"]
+manual = "lod_missing_level8: distant terrain textured (coarser in the level-8 band), no white hills, no holes"
+
+[[scenario]]
 name = "distant-objects"
 source = "[design, #3014] docs/design/graphics-enhanced.md §3.21 (engine/nvforever/src/distant_objects.rs): started with --graphics-only distant-objects-12 at Goodsprings noon, the distant objects come on at a reach of 12 cells once, and the exit summary counts the cells judged and the references drawn beyond the loaded cells, without a rendering or validation error. Whether they sit where the LOD leaves holes, with no doubling, is checked in pictures by hand"
 areas = ["renderer", "graphics"]
