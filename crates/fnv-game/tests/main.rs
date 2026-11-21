@@ -63,6 +63,7 @@ mod item_ref_health;
 mod jg_nif;
 mod jg10;
 mod jg3;
+mod jip_animaction_playgroup;
 mod jip_combat_events;
 mod jip_main_loop_zero;
 mod jip_target_and_trigger_events;

@@ -1263,9 +1263,7 @@ impl Runtime {
                 let r = resolve(g, r)?;
                 let code = match group.parse::<u16>() {
                     Ok(c) => c,
-                    Err(_) => (0..=u16::from(u8::MAX))
-                        .find(|c| g.anim_group_name(*c).is_some_and(|n| n.eq_ignore_ascii_case(group)))
-                        .ok_or_else(|| format!("{group} is not an animation group"))?,
+                    Err(_) => g.anim_group_code(group).ok_or_else(|| format!("{group} is not an animation group"))?,
                 };
                 let ctx = fnv_game::functions::Ctx { unit: "test aid".into(), opcode: PLAY_GROUP, on: Some(r), self_ref: Some(r), action_ref: None, quest: None, inst: None, in_condition: false };
                 g.call_function(&ctx, &[ArgValue::Enum(code), ArgValue::Value(Value::Num(f64::from(*flag)))]);
