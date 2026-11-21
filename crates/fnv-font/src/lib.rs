@@ -235,13 +235,21 @@ fn word_runs(word: &str, wrap: bool) -> impl Iterator<Item = &str> {
     })
 }
 
-/// The engine's runtime CJK glyph provider. The format and layout crate can also be
-/// used on its own, in which case an unsupported character is measured as `?`.
-type CjkMetrics = fn(char, f32) -> Option<Glyph>;
-static CJK_METRICS: std::sync::OnceLock<CjkMetrics> = std::sync::OnceLock::new();
+/// The engine provides the live CJK gate and the runtime metrics. Standalone layout
+/// keeps legacy wrapping and measures unsupported characters as a question mark.
+struct CjkProvider {
+    enabled: fn() -> bool,
+    metrics: fn(char, f32) -> Option<Glyph>,
+}
 
-pub fn set_cjk_metrics(metrics: CjkMetrics) {
-    let _ = CJK_METRICS.set(metrics);
+static CJK_PROVIDER: std::sync::OnceLock<CjkProvider> = std::sync::OnceLock::new();
+
+pub fn set_cjk_provider(enabled: fn() -> bool, metrics: fn(char, f32) -> Option<Glyph>) {
+    let _ = CJK_PROVIDER.set(CjkProvider { enabled, metrics });
+}
+
+pub fn cjk_enabled() -> bool {
+    CJK_PROVIDER.get().is_some_and(|provider| (provider.enabled)())
 }
 
 impl Font {
@@ -301,10 +309,11 @@ impl Font {
     }
 
     pub fn cjk_glyph(&self, c: char) -> Option<Glyph> {
-        if !self.needs_cjk_fallback(c) {
+        let provider = CJK_PROVIDER.get()?;
+        if !self.needs_cjk_fallback(c) || !(provider.enabled)() {
             return None;
         }
-        CJK_METRICS.get()?(c, self.size)
+        (provider.metrics)(c, self.size)
     }
 
     /// The primary glyph, a runtime CJK glyph, or `?`.
@@ -327,9 +336,13 @@ impl Font {
     }
 
     /// Set a text in lines (§3): a line ends at a line break, or before a word or CJK
-    /// character that would reach past `wrap`. The spaces a line is broken at are not
-    /// set. A run with no break wider than `wrap` gets a line of its own.
+    /// character that would reach past `wrap` (with CJK enabled). The spaces a line is
+    /// broken at are not set. A run with no break wider than `wrap` gets a line of its own.
     pub fn lines(&self, text: &str, wrap: Option<f32>) -> Vec<Line> {
+        self.lines_with_cjk_wrap(text, wrap, wrap.is_some() && cjk_enabled())
+    }
+
+    fn lines_with_cjk_wrap(&self, text: &str, wrap: Option<f32>, cjk_wrap: bool) -> Vec<Line> {
         let mut out = Vec::new();
         for para in text.replace("\r\n", "\n").split('\n') {
             let mut line = Line::default();
@@ -339,7 +352,7 @@ impl Font {
                 if i > 0 {
                     gap += self.glyph(b' ').advance();
                 }
-                for run in word_runs(word, wrap.is_some()) {
+                for run in word_runs(word, cjk_wrap) {
                     if wrap.is_some_and(|max| {
                         !line.glyphs.is_empty() && line.width + gap + self.width(run) > max
                     }) {
@@ -434,17 +447,6 @@ mod tests {
 
     #[test]
     fn cjk_fallback_keeps_the_primary_glyphs() {
-        // A synthetic provider supplies one otherwise missing character. Other tests
-        // are unaffected by it, including the missing-font case below.
-        let rare = '\u{30000}';
-        set_cjk_metrics(|c, size| {
-            (c == '\u{30000}').then_some(Glyph {
-                width: size,
-                height: 20.0,
-                ascent: 15.0,
-                ..Glyph::default()
-            })
-        });
         let mut f = Font::parse(&file()).unwrap();
         for c in ['中', '。', '！'] {
             assert!(f.needs_cjk_fallback(c));
@@ -462,9 +464,9 @@ mod tests {
         );
         assert!(!f.needs_cjk_fallback('中'));
         assert_eq!(f.width("a中"), 25.0);
-        let line = &f.lines(&format!("a{rare}a"), None)[0];
-        assert_eq!(line.glyphs[2].x, 42.0);
-        assert_eq!(f.bitmap_glyph(&line.glyphs[1]).ascent, 15.0);
+        let line = &f.lines("a\u{30000}a", Some(12.0))[0];
+        assert_eq!((line.text().as_str(), line.width, line.glyphs[2].x), ("a\u{30000}a", 33.0, 22.0));
+        assert_eq!(f.bitmap_glyph(&line.glyphs[1]), *f.glyph(b'?'));
     }
 
     #[test]
@@ -523,7 +525,7 @@ mod tests {
         for c in "甲乙丙丁（），。𠀀".chars() {
             f.extra.insert(c, glyph);
         }
-        let lines = f.lines("甲乙，丙（丁）𠀀。", Some(48.0));
+        let lines = f.lines_with_cjk_wrap("甲乙，丙（丁）𠀀。", Some(48.0), true);
         assert_eq!(
             lines.iter().map(Line::text).collect::<Vec<_>>(),
             ["甲乙，", "丙", "（丁）", "𠀀。"]
@@ -548,7 +550,7 @@ mod tests {
             f.extra.insert(c, glyph);
         }
         let spaced = |text, wrap| {
-            f.lines(text, wrap)
+            f.lines_with_cjk_wrap(text, wrap, wrap.is_some())
                 .iter()
                 .map(|l| l.text_spaced(&f))
                 .collect::<Vec<_>>()

@@ -4,20 +4,70 @@ use bevy::asset::RenderAssetUsages;
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::tasks::{futures::check_ready, Task};
 use fnv_font::Glyph;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use swash::scale::{Render, ScaleContext, Source};
 use swash::{CacheKey, FontDataRef, FontRef, StringId};
 
 static PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
-static FALLBACK: OnceLock<Mutex<Fallback>> = OnceLock::new();
+#[cfg(not(test))]
+static FALLBACK: OnceLock<Mutex<Option<Fallback>>> = OnceLock::new();
+static GENERATION: AtomicU32 = AtomicU32::new(1);
 
 /// Keep the path until layout actually encounters a missing CJK glyph.
 pub fn configure(path: Option<PathBuf>) {
-    let _ = PATH.set(path);
-    fnv_font::set_cjk_metrics(|ch, size| lookup(ch, size).map(|(_, glyph)| glyph.metrics));
+    let _ = PATH.set(path.filter(|path| !path.as_os_str().is_empty()));
+    fnv_font::set_cjk_provider(enabled, |ch, size| {
+        lookup(ch, size).map(|(_, glyph)| glyph.metrics)
+    });
+}
+
+fn enabled_for(code_page: u16, language: &str, path: Option<&Path>) -> bool {
+    code_page == 936 || language == "zh" || path.is_some_and(|path| !path.as_os_str().is_empty())
+}
+
+pub fn enabled() -> bool {
+    #[cfg(test)]
+    if TEST_ENABLED.get() {
+        return true;
+    }
+    enabled_for(
+        fnv_util::text::code_page().number(),
+        fnv_util::words::language(),
+        PATH.get().and_then(Option::as_deref),
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FALLBACK: OnceLock<Mutex<Option<Fallback>>> = const { OnceLock::new() };
+}
+
+#[cfg(test)]
+pub(crate) fn with_enabled_for_test<T>(f: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TEST_ENABLED.set(self.0);
+        }
+    }
+    configure(None);
+    let _reset = Reset(TEST_ENABLED.replace(true));
+    f()
+}
+
+/// Changes when the gate changes or a newly loaded source can change layout.
+pub(crate) fn revision() -> u32 {
+    if enabled() {
+        GENERATION.load(Ordering::Relaxed)
+    } else {
+        0
+    }
 }
 
 #[cfg(windows)]
@@ -180,66 +230,172 @@ fn raster(font: FontRef<'_>, key: GlyphKey, context: &mut ScaleContext) -> Optio
     })
 }
 
+/// A worker skips unreadable candidates and returns just the next usable file.
+enum SourcePaths {
+    System,
+    Explicit(PathBuf),
+    Remaining(std::vec::IntoIter<PathBuf>),
+}
+
+impl SourcePaths {
+    fn load(self) -> Option<LoadedFont> {
+        let mut paths = match self {
+            Self::System => system_paths().into_iter(),
+            Self::Remaining(paths) => paths,
+            Self::Explicit(path) => {
+                let Some(font) = FontFile::read(&path) else {
+                    warn!(
+                        "interface: CjkFontPath cannot be read as a font: {}",
+                        path.display()
+                    );
+                    return None;
+                };
+                return Some(LoadedFont { font, rest: None });
+            }
+        };
+        let font = paths.find_map(|path| FontFile::read(&path))?;
+        let rest = (!paths.as_slice().is_empty()).then_some(Self::Remaining(paths));
+        Some(LoadedFont { font, rest })
+    }
+}
+
+struct LoadedFont {
+    font: FontFile,
+    rest: Option<SourcePaths>,
+}
+
 struct Fallback {
-    sources: Vec<(PathBuf, OnceLock<Option<FontFile>>)>,
-    explicit: bool,
+    next: Option<SourcePaths>,
+    loading: Option<Task<Option<LoadedFont>>>,
+    fonts: Vec<FontFile>,
     context: ScaleContext,
     glyphs: HashMap<GlyphKey, Option<Arc<Raster>>>,
 }
 
 impl Fallback {
-    fn new(paths: Vec<PathBuf>, explicit: bool) -> Self {
-        let sources = paths
-            .into_iter()
-            .map(|path| (path, OnceLock::new()))
-            .collect();
+    fn new(next: Option<SourcePaths>) -> Self {
         Self {
-            sources,
-            explicit,
+            next,
+            loading: None,
+            fonts: Vec::new(),
             context: ScaleContext::new(),
             glyphs: HashMap::new(),
         }
     }
 
+    fn start(&mut self, load: impl FnOnce() -> Option<LoadedFont> + Send + 'static) {
+        self.loading = Some(nvf_assets::read_pool::read_pool().spawn(async move { load() }));
+    }
+
+    /// Publish completed reads at the start of a frame so measurement and painting agree.
+    fn poll(&mut self) -> bool {
+        let Some(loaded) = self.loading.as_mut().and_then(check_ready) else {
+            return false;
+        };
+        self.loading = None;
+        let Some(LoadedFont { font, rest }) = loaded else {
+            return false;
+        };
+        self.next = rest;
+        self.fonts.push(font);
+        self.glyphs.retain(|_, glyph| glyph.is_some());
+        true
+    }
+
     fn get(&mut self, key: GlyphKey) -> Option<Arc<Raster>> {
-        self.glyphs
-            .entry(key)
-            .or_insert_with(|| {
-                self.sources.iter().find_map(|(path, font)| {
-                    let file = font.get_or_init(|| {
-                        let file = FontFile::read(path);
-                        if file.is_none() && self.explicit {
-                            warn!(
-                                "interface: CjkFontPath cannot be read as a font: {}",
-                                path.display()
-                            );
-                        }
-                        file
-                    });
-                    file.as_ref()?.raster(key, &mut self.context).map(Arc::new)
-                })
-            })
-            .clone()
+        if let Some(glyph) = self.glyphs.get(&key) {
+            return glyph.clone();
+        }
+        let glyph = self
+            .fonts
+            .iter()
+            .find_map(|font| font.raster(key, &mut self.context))
+            .map(Arc::new);
+        if glyph.is_none() && self.loading.is_none() {
+            if let Some(paths) = self.next.take() {
+                self.start(move || paths.load());
+            }
+        }
+        self.glyphs.insert(key, glyph.clone());
+        glyph
     }
 }
 
+fn with_fallback<T>(f: impl FnOnce(&OnceLock<Mutex<Option<Fallback>>>) -> T) -> T {
+    #[cfg(not(test))]
+    {
+        f(&FALLBACK)
+    }
+    #[cfg(test)]
+    {
+        FALLBACK.with(f)
+    }
+}
+
+/// File reads and parsing happen out of this lock. A pending lookup returns immediately
+/// and keeps using the primary face's question mark until the next published result.
 pub fn lookup(ch: char, line: f32) -> Option<(GlyphKey, Arc<Raster>)> {
-    let path = PATH.get()?;
-    if !line.is_finite() || line <= 0.0 {
+    lookup_when_enabled(enabled(), ch, line, |key| {
+        with_fallback(|fallback| {
+            let mut slot = fallback.get_or_init(Mutex::default).lock().unwrap();
+            let fallback = slot.get_or_insert_with(|| {
+                let paths = PATH
+                    .get()
+                    .and_then(Option::as_ref)
+                    .cloned()
+                    .map_or(SourcePaths::System, SourcePaths::Explicit);
+                Fallback::new(Some(paths))
+            });
+            fallback.get(key)
+        })
+    })
+}
+
+fn lookup_when_enabled(
+    enabled: bool,
+    ch: char,
+    line: f32,
+    get: impl FnOnce(GlyphKey) -> Option<Arc<Raster>>,
+) -> Option<(GlyphKey, Arc<Raster>)> {
+    if !enabled || !line.is_finite() || line <= 0.0 {
         return None;
     }
     let key = GlyphKey(
         ch,
         (line * DENSITY).round().clamp(1.0, (PAGE / 2) as f32) as u16,
     );
-    let fallback = FALLBACK.get_or_init(|| {
-        let fallback = match path {
-            Some(path) => Fallback::new(vec![path.clone()], true),
-            None => Fallback::new(system_paths(), false),
-        };
-        Mutex::new(fallback)
-    });
-    Some((key, fallback.lock().unwrap().get(key)?))
+    Some((key, get(key)?))
+}
+
+/// Readiness is published here, before UI systems measure or paint anything.
+pub(crate) fn update(world: &mut World, mut was_enabled: Local<bool>) {
+    let enabled = enabled();
+    let disabled = std::mem::replace(&mut *was_enabled, enabled) && !enabled;
+    if disabled {
+        with_fallback(|fallback| {
+            if let Some(fallback) = fallback.get() {
+                fallback.lock().unwrap().take();
+            }
+        });
+        world.remove_resource::<Atlas>();
+    }
+    let loaded = enabled
+        && with_fallback(|fallback| {
+            fallback.get().is_some_and(|fallback| {
+                fallback
+                    .lock()
+                    .unwrap()
+                    .as_mut()
+                    .is_some_and(Fallback::poll)
+            })
+        });
+    if loaded {
+        GENERATION.fetch_add(1, Ordering::Relaxed);
+    }
+    if disabled || loaded {
+        crate::pause::letters_changed(world);
+        crate::interface::redraw_cjk_lines(world);
+    }
 }
 
 #[derive(Resource, Default)]
@@ -350,12 +506,234 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fallback_requires_code_page_936_chinese_ui_or_a_path() {
+        let calls = |page, language, path| {
+            let mut calls = 0;
+            let active = enabled_for(page, language, path);
+            assert!(lookup_when_enabled(active, '中', 24.0, |_| {
+                calls += 1;
+                None
+            })
+            .is_none());
+            calls
+        };
+        for (page, language) in [
+            (1252, "en"),
+            (1251, "ru"),
+            (1250, "pl"),
+            (1252, "ja"),
+            (65001, "de"),
+        ] {
+            assert_eq!(calls(page, language, None), 0);
+            assert_eq!(calls(page, language, Some(Path::new(""))), 0);
+        }
+        assert_eq!(calls(936, "en", None), 1);
+        assert_eq!(calls(1252, "zh", None), 1);
+        assert_eq!(calls(1252, "en", Some(Path::new("custom-font.otf"))), 1);
+        assert_eq!(calls(1252, "en", None), 0);
+    }
+
+    /// Make one synthetic CJK mapping in the already bundled OFL test font.
+    fn test_font() -> FontFile {
+        let mut bytes = crate::vector_font::FONT_BYTES.to_vec();
+        let glyph = FontRef::from_index(&bytes, 0).unwrap().charmap().map('A');
+        assert_ne!(glyph, 0);
+        let count = u16::from_be_bytes(bytes[4..6].try_into().unwrap()) as usize;
+        let cmap = bytes[12..12 + 16 * count]
+            .chunks_exact(16)
+            .find(|record| &record[..4] == b"cmap")
+            .unwrap();
+        let offset = u32::from_be_bytes(cmap[8..12].try_into().unwrap()) as usize;
+        let table = [
+            0,
+            0,
+            0,
+            1, // cmap version and number of encoding records
+            0,
+            3,
+            0,
+            10,
+            0,
+            0,
+            0,
+            12, // Windows Unicode full repertoire
+            0,
+            12,
+            0,
+            0,
+            0,
+            0,
+            0,
+            28, // format 12, size
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1, // language and number of groups
+            0,
+            0,
+            0x4e,
+            0x2d,
+            0,
+            0,
+            0x4e,
+            0x2d, // one-code-point range
+            0,
+            0,
+            glyph.to_be_bytes()[0],
+            glyph.to_be_bytes()[1],
+        ];
+        bytes[offset..offset + table.len()].copy_from_slice(&table);
+        FontFile::from_bytes(bytes).unwrap()
+    }
+
+    #[test]
+    fn pending_font_keeps_the_question_mark_then_redraws_the_visible_line() {
+        use crate::interface::{original_units, plain_font, set_marked, u, Face};
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+
+        #[derive(Clone, Component)]
+        struct Mark;
+
+        with_enabled_for_test(|| {
+            let _units = original_units();
+            let mut app = App::new();
+            app.init_resource::<Assets<Image>>();
+            app.add_systems(First, update);
+            app.update();
+            let bitmap = app
+                .world_mut()
+                .resource_mut::<Assets<Image>>()
+                .add(Image::default());
+            let mut font = plain_font(24.0, 7.0);
+            for (ch, uv) in [
+                (b'?', [0.0, 0.0, 0.25, 0.25]),
+                (b'A', [0.25, 0.0, 0.5, 0.25]),
+            ] {
+                font.glyphs[ch as usize] = Glyph {
+                    uv,
+                    width: 4.0,
+                    height: 5.0,
+                    ascent: 4.0,
+                    after: 3.0,
+                    ..default()
+                };
+            }
+            let face = Face {
+                font,
+                image: Some((bitmap.clone(), Vec2::splat(16.0))),
+                vector: None,
+            };
+            let wait = Duration::from_secs(5);
+            let (started, running) = mpsc::channel();
+            let (resume, pending) = mpsc::channel();
+            {
+                let mut fallback = Fallback::new(None);
+                fallback.start(move || {
+                    assert!(std::thread::current()
+                        .name()
+                        .is_some_and(|name| name.starts_with("NVF Read Pool")));
+                    started.send(()).unwrap();
+                    pending.recv_timeout(wait).unwrap();
+                    Some(LoadedFont {
+                        font: test_font(),
+                        rest: None,
+                    })
+                });
+                with_fallback(|state| {
+                    let mut slot = state.get_or_init(Mutex::default).lock().unwrap();
+                    assert!(slot.is_none());
+                    *slot = Some(fallback);
+                });
+            }
+            running.recv_timeout(wait).unwrap();
+            let line = face.font.lines("中A", None).remove(0);
+            assert_eq!(line.width, 14.0);
+            assert_eq!(line.glyphs[1].x, 7.0);
+            let root = app
+                .world_mut()
+                .commands()
+                .spawn(Node::default())
+                .with_children(|p| set_marked(p, &face, &line, 0.0, 20.0, Color::WHITE, Mark))
+                .id();
+            app.world_mut().flush();
+
+            let drawn = |world: &mut World| {
+                let mut query = world.query_filtered::<(&Node, &ImageNode), With<Mark>>();
+                query
+                    .iter(world)
+                    .map(|(node, image)| (node.left, image.image.clone(), image.rect))
+                    .collect::<Vec<_>>()
+            };
+            app.update();
+            let before = drawn(app.world_mut());
+            assert_eq!(before.len(), 2);
+            assert!(before.contains(&(
+                u(0.0),
+                bitmap.clone(),
+                Some(Rect::new(0.0, 0.0, 4.0, 4.0))
+            )));
+            assert!(before.contains(&(
+                u(7.0),
+                bitmap.clone(),
+                Some(Rect::new(4.0, 0.0, 8.0, 4.0))
+            )));
+
+            resume.send(()).unwrap();
+            let until = Instant::now() + wait;
+            while !with_fallback(|fallback| {
+                fallback
+                    .get()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .loading
+                    .as_ref()
+                    .unwrap()
+                    .is_finished()
+            }) {
+                assert!(Instant::now() < until, "font loader did not finish");
+                std::thread::yield_now();
+            }
+            app.update();
+            let after = drawn(app.world_mut());
+            assert_eq!(after.len(), 2);
+            let width = face.font.glyph_of('中').advance();
+            assert_ne!(width, 7.0);
+            assert!(after.iter().any(|(_, image, _)| *image != bitmap));
+            assert!(after.contains(&(
+                u(width),
+                bitmap.clone(),
+                Some(Rect::new(4.0, 0.0, 8.0, 4.0))
+            )));
+            assert!(app.world().get_entity(root).is_ok());
+
+            TEST_ENABLED.set(false);
+            app.update();
+            let restored = drawn(app.world_mut());
+            assert_eq!(restored.len(), before.len());
+            assert!(before.iter().all(|glyph| restored.contains(glyph)));
+            assert!(!app.world().contains_resource::<Atlas>());
+            assert!(with_fallback(|fallback| fallback
+                .get()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .is_none()));
+        });
+    }
+
+    #[test]
     fn outline_metrics_and_atlas_entries_are_reused() {
-        let mut fallback = Fallback::new(Vec::new(), false);
+        let mut fallback = Fallback::new(None);
         let file = FontFile::from_bytes(crate::vector_font::FONT_BYTES.to_vec()).unwrap();
-        fallback
-            .sources
-            .push((PathBuf::new(), OnceLock::from(Some(file))));
+        fallback.fonts.push(file);
         // Use the bundled OFL font to exercise the rasterizer without adding a fixture font.
         let a = GlyphKey('A', 48);
         let glyph = fallback.get(a).unwrap();
@@ -385,7 +763,7 @@ mod tests {
 
     #[test]
     fn a_missing_or_invalid_font_has_no_glyph() {
-        let mut fallback = Fallback::new(vec![PathBuf::new()], true);
+        let mut fallback = Fallback::new(None);
         let key = GlyphKey('中', 48);
         assert!(FontFile::from_bytes(vec![0; 32]).is_none());
         assert!(fallback.get(key).is_none());

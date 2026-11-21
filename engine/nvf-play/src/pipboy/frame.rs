@@ -596,7 +596,7 @@ pub fn draw(
     repair_tiles: Option<Res<crate::tiles::repair_menu::RepairTiles>>,
     map_tiles: Option<Res<crate::tiles::map_menu::MapTiles>>,
     item_mod_tiles: Option<Res<crate::tiles::item_mod_menu::ItemModTiles>>,
-    mut shown: Local<Option<(Page, usize, Frame, bool)>>,
+    mut shown: Local<Option<(Page, usize, Frame, bool, u32)>>,
 ) {
     // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
     let _canvas = crate::interface::original_units();
@@ -608,7 +608,7 @@ pub fn draw(
     let tiled = tiled || item_mod_tiles.is_some_and(|t| t.ready.is_some());
     // The DATA page likewise, on the tabs it draws (`crate::tiles::map_menu::MapTiles::ready`).
     let tiled = tiled || map_tiles.is_some_and(|t| t.ready.is_some());
-    let want = pip.shown().then(|| (pip.page, pip.tab(), pip.frame, tiled));
+    let want = pip.shown().then(|| (pip.page, pip.tab(), pip.frame, tiled, crate::cjk_font::revision()));
     if want == *shown && (want.is_none() || !roots.is_empty()) {
         return;
     }
@@ -616,7 +616,7 @@ pub fn draw(
     for e in &roots {
         commands.entity(e).despawn();
     }
-    let Some((page, tab, frame, tiled)) = want else { return };
+    let Some((page, tab, frame, tiled, _)) = want else { return };
     // The screen menu is plain, as the barter menu is: the device's own screen around the
     // pages is `device_screen.rs`'s, on the device only (docs/design/screen-menu.md §2).
     let device = frame == Frame::Device;

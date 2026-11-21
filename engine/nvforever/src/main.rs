@@ -1077,13 +1077,13 @@ fn main() -> AppExit {
         eprintln!("explore: the free-camera explorer (--explore)");
     }
     let developer_data = args.data.is_some();
-    let code_page_named = match setup::text_code_page() {
-        Ok((c, named)) => {
+    let (code_page_named, cjk_font_path) = match setup::text_code_page() {
+        Ok((c, named, cjk_font_path)) => {
             if c != fnv_util::text::CodePage::default() {
                 eprintln!("setup: game text read as {c}");
             }
             fnv_util::text::set_code_page(c);
-            named
+            (named, cjk_font_path)
         }
         Err(e) => {
             eprintln!("error: {e}");
@@ -1105,7 +1105,7 @@ fn main() -> AppExit {
         }
     };
     args.data = Some(install.data.clone());
-    setup::install_fonts(&install);
+    setup::install_fonts(&install, cjk_font_path);
     // Every `fnv_install::guard_write` from here on refuses writes into this install,
     // also where the writer has none at hand (saves, test aids; #994).
     fnv_install::remember_game(&install);

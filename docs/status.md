@@ -209,9 +209,9 @@ contract and limits: [Built-in luck setting getter fallback](spec-notes/builtin-
 
 ## 7. Interface and audio (Layer 7)
 
-CJK glyph fallback is implemented for interface fonts. Missing characters use an
-installed outline font or `[Interface] CjkFontPath`, and CJK text can wrap between
-characters. See [font notes](spec-notes/fonts.md#23-missing-cjk-characters).
+With code page 936, a Chinese interface, or `[Interface] CjkFontPath`, the interface
+can wrap CJK text between characters and read an outline font for missing glyphs
+on the read pool. See [font notes](spec-notes/fonts.md#23-missing-cjk-characters).
 
 | System | State | Specifics | Notes |
 |---|---|---|---|

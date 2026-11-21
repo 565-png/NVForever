@@ -22,7 +22,7 @@
 //! profile instead (`fnv_install::mo2`; docs/mod-organizer-2.md).
 
 use fnv_install::{check_separation, Config, EngineHome, GameInstall, InstallError};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The game at `dir`, or why it cannot be used, in words for the player.
 fn validate(dir: &Path, home: &EngineHome) -> Result<GameInstall, String> {
@@ -92,12 +92,17 @@ pub fn game_install(cli: Option<&Path>) -> Result<GameInstall, String> {
 /// `NVF_CODE_PAGE`, else `[Text] CodePage` of the home's NVForever.ini, else
 /// Windows-1252. Set before any of the game's text is read. The flag says whether one of
 /// the two named it; when neither did, [`guess_code_page`] may change it once the
-/// plugins are open.
-pub fn text_code_page() -> Result<(fnv_util::text::CodePage, bool), String> {
-    let ini = EngineHome::user().and_then(|h| Config::load(&h).ok()).and_then(|c| c.code_page).filter(|v| !v.trim().is_empty());
+/// plugins are open. Read the optional CJK font path from the same INI.
+pub fn text_code_page() -> Result<(fnv_util::text::CodePage, bool, Option<PathBuf>), String> {
+    let (ini, cjk_font_path) = EngineHome::user().and_then(|home| {
+        let cfg = Config::load(&home).ok()?;
+        let ini = cfg.code_page.filter(|v| !v.trim().is_empty());
+        let cjk_font_path = cfg.cjk_font_path.map(|path| home.root.join(path));
+        Some((ini, cjk_font_path))
+    }).unwrap_or_default();
     let env = std::env::var(fnv_util::text::ENV).ok().filter(|v| !v.trim().is_empty());
     let named = ini.is_some() || env.is_some();
-    fnv_util::text::chosen(ini.as_deref()).map(|c| (c, named))
+    fnv_util::text::chosen(ini.as_deref()).map(|c| (c, named, cjk_font_path))
 }
 
 /// The code page read from the plugins' own text when no setting names one (#1443,
@@ -130,12 +135,8 @@ pub fn follow_text_language() {
 /// read-only input; the per-user `My Games\FalloutNV` copy is never read
 /// (docs/design/install-layout.md). A localized install pointing these at its own files is
 /// [hypothesis: no localized install looked at, observer check 77].
-pub fn install_fonts(game: &GameInstall) {
-    let cjk = EngineHome::user().and_then(|home| {
-        let cfg = Config::load(&home).ok()?;
-        cfg.cjk_font_path.map(|path| home.root.join(path))
-    });
-    nvf_play::interface::set_cjk_font_path(cjk);
+pub fn install_fonts(game: &GameInstall, cjk_font_path: Option<PathBuf>) {
+    nvf_play::interface::set_cjk_font_path(cjk_font_path);
     let Some(text) = fnv_install::child_ci(&game.root, "Fallout_default.ini").and_then(|p| std::fs::read(p).ok()) else {
         return;
     };

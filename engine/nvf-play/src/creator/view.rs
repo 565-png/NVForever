@@ -20,7 +20,7 @@
 
 use super::model::{Model, RowView, ACTIONS};
 use crate::interface::{
-    amber, at, face, line_anchor, plain_font, set_glyph, set_line, u, Face, Picture, Pictures,
+    amber, at, face, line_anchor, needs_cjk_line, plain_font, set_line, set_scaled_bitmap_line, u, Face, Picture, Pictures,
 };
 use bevy::prelude::*;
 use fnv_font::Line;
@@ -219,11 +219,7 @@ pub fn text(p: &mut ChildSpawnerCommands, face: &Face, s: &str, x: f32, top: f32
     // the menus' body text, chargen::draw::BODY_BASE for 31].
     let base = top + face.font.size * 0.75 * scale;
     let Some((image, size)) = &face.image else {
-        let fallback = line
-            .glyphs
-            .iter()
-            .any(|g| face.font.needs_cjk_fallback(g.ch));
-        if fallback {
+        if needs_cjk_line(face, &line) {
             let transform = UiTransform {
                 scale: Vec2::splat(scale),
                 ..default()
@@ -237,12 +233,12 @@ pub fn text(p: &mut ChildSpawnerCommands, face: &Face, s: &str, x: f32, top: f32
         }
         return w;
     };
+    if needs_cjk_line(face, &line) {
+        set_scaled_bitmap_line(p, face, &line, x, base, scale, color, ());
+        return w;
+    }
     p.spawn(line_anchor(base)).with_children(|p| {
         for placed in &line.glyphs {
-            if face.font.needs_cjk_fallback(placed.ch) {
-                set_glyph(p, face, placed, x + placed.x * scale, 0.0, scale, color, ());
-                continue;
-            }
             let g = face.font.glyph(placed.code);
             if !g.drawn() {
                 continue;

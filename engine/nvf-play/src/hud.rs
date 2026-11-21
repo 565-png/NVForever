@@ -767,6 +767,7 @@ fn place_name(
     mut face_: Local<Option<Face>>,
     (mut shown, mut region): (Local<(Option<String>, Option<String>)>, Local<(Option<fnv_sim::FormId>, Option<String>)>),
     text: Query<Entity, With<PlaceNameText>>,
+    mut font_revision: Local<u32>,
 ) {
     let _hud = crate::interface::hud_units();
     let Ok(e) = text.single() else { return };
@@ -791,7 +792,9 @@ fn place_name(
         region.1.clone()
     })();
     let now = (region_words, words);
-    if *shown == now {
+    let revision = crate::cjk_font::revision();
+    let font_changed = std::mem::replace(&mut *font_revision, revision) != revision;
+    if *shown == now && !font_changed {
         return;
     }
     if now.0 != shown.0 {

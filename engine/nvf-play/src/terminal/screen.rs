@@ -706,7 +706,7 @@ pub fn note_text(n: Option<&NoteDef>) -> String {
 
 /// Menu choices and the result prompt have a single row. Keep long CJK text within it.
 fn fit_cjk_line<'a>(font: &Font, text: &'a str, room: f32) -> std::borrow::Cow<'a, str> {
-    if text.chars().any(fnv_font::is_cjk) {
+    if crate::cjk_font::enabled() && text.chars().any(fnv_font::is_cjk) {
         crate::pause::fit_text(|s| font.width(s), text, room).into()
     } else {
         text.into()
@@ -818,9 +818,12 @@ mod tests {
         for c in "甲乙丙丁".chars() {
             font.extra.insert(c, glyph);
         }
-        assert_eq!(fit_cjk_line(&font, "甲乙", 66.0), "甲乙");
-        assert_eq!(fit_cjk_line(&font, "甲乙丙丁甲", 66.0), "甲乙...");
-        assert_eq!(fit_cjk_line(&font, "abcdefghi", 66.0), "abcdefghi");
+        assert_eq!(fit_cjk_line(&font, "甲乙丙丁甲", 66.0), "甲乙丙丁甲");
+        crate::cjk_font::with_enabled_for_test(|| {
+            assert_eq!(fit_cjk_line(&font, "甲乙", 66.0), "甲乙");
+            assert_eq!(fit_cjk_line(&font, "甲乙丙丁甲", 66.0), "甲乙...");
+            assert_eq!(fit_cjk_line(&font, "abcdefghi", 66.0), "abcdefghi");
+        });
     }
 
     #[test]

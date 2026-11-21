@@ -721,21 +721,90 @@ pub fn set_line(p: &mut ChildSpawnerCommands, face: &Face, line: &Line, x: f32, 
 
 /// [`set_line`] with `mark` on every coloured node (each glyph, or the stand-in text).
 pub fn set_marked(p: &mut ChildSpawnerCommands, face: &Face, line: &Line, x: f32, base: f32, color: Color, mark: impl Bundle + Clone) {
+    set_scaled_bitmap_line(p, face, line, x, base, 1.0, color, mark);
+}
+
+type RedrawLine = Box<dyn Fn(&mut ChildSpawnerCommands) + Send + Sync>;
+
+#[derive(Component)]
+struct CjkLine(RedrawLine);
+
+/// A CJK line retains its advances and gaps so even a static screen can replace its
+/// question marks and move the following letters when the font is ready.
+pub(crate) fn redraw_cjk_lines(world: &mut World) {
+    use bevy::ecs::world::CommandQueue;
+    let mut lines = world.query::<(Entity, &CjkLine)>();
+    let mut queue = CommandQueue::default();
+    let mut commands = Commands::new(&mut queue, world);
+    for (entity, redraw) in lines.iter(world) {
+        commands.entity(entity).despawn_related::<Children>().with_children(|p| redraw.0(p));
+        if !crate::cjk_font::enabled() {
+            commands.entity(entity).remove::<CjkLine>();
+        }
+    }
+    queue.apply(world);
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn set_scaled_bitmap_line(
+    p: &mut ChildSpawnerCommands,
+    face: &Face,
+    line: &Line,
+    x: f32,
+    base: f32,
+    scale: f32,
+    color: Color,
+    mark: impl Bundle + Clone,
+) {
+    if !needs_cjk_line(face, line) {
+        draw_marked(p, face, line, x, base, scale, color, mark);
+        return;
+    }
+    let advance: Vec<_> = line.glyphs.iter().map(|g| face.font.glyph_of(g.ch).advance()).collect();
+    let unit_scale = unit_scale();
+    let mut anchor = p.spawn(at(0.0, 0.0, 0.0, 0.0));
+    anchor.with_children(|p| draw_marked(p, face, line, x, base, scale, color, mark.clone()));
+    let face = face.clone();
+    let line = line.clone();
+    anchor.insert(CjkLine(Box::new(move |p| {
+        let _units = units_at(unit_scale);
+        let mut line = line.clone();
+        let mut delta = 0.0;
+        for (glyph, &old_advance) in line.glyphs.iter_mut().zip(&advance) {
+            glyph.x += delta;
+            delta += face.font.glyph_of(glyph.ch).advance() - old_advance;
+        }
+        line.width += delta;
+        draw_marked(p, &face, &line, x, base, scale, color, mark.clone());
+    })));
+}
+
+pub(crate) fn needs_cjk_line(face: &Face, line: &Line) -> bool {
+    crate::cjk_font::enabled() && line.glyphs.iter().any(|g| face.font.needs_cjk_fallback(g.ch))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_marked(
+    p: &mut ChildSpawnerCommands,
+    face: &Face,
+    line: &Line,
+    x: f32,
+    base: f32,
+    scale: f32,
+    color: Color,
+    mark: impl Bundle + Clone,
+) {
     if face.image.is_some() && face.vector.is_none() {
         // [observed: #1221] Snap the shared baseline once, keeping each glyph's
         // fractional texture box.
         p.spawn(line_anchor(base)).with_children(|p| {
             for placed in &line.glyphs {
-                set_glyph(p, face, placed, x + placed.x, 0.0, 1.0, color, mark.clone());
+                set_glyph(p, face, placed, x + placed.x * scale, 0.0, scale, color, mark.clone());
             }
         });
         return;
     }
-    if !line
-        .glyphs
-        .iter()
-        .any(|g| face.font.needs_cjk_fallback(g.ch))
-    {
+    if !needs_cjk_line(face, line) {
         set_bevy_line(p, face, line.text_spaced(&face.font), x, base, color, mark);
         return;
     }
@@ -1078,6 +1147,10 @@ fn own_texture(path: &str) -> String {
 #[cfg(test)]
 #[path = "interface_layout_tests.rs"]
 mod layout_tests;
+
+#[cfg(test)]
+#[path = "interface/bitmap_text_tests.rs"]
+mod bitmap_text_tests;
 
 #[cfg(test)]
 #[path = "interface/tga_consumer_tests.rs"]
