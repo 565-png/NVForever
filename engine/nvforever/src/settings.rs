@@ -1341,16 +1341,25 @@ fn register_graphics(app: &mut App) {
     for (key, label, note, switches, get, set) in switches {
         add_setting(app, Setting { key, group: GROUP_GRAPHICS, label, note, switches, get, set, slider: None });
     }
-    nvf_play::settings::set_disabled_status(app, "terrain-parallax", |w| parallax_status(nvf_assets::authored::enabled(), w.get_resource::<Graphics>().is_some_and(|g| g.authored_materials)));
+    nvf_play::settings::set_needs_in_game(app, "terrain-parallax", |w| parallax_status(nvf_assets::authored::enabled(), w.get_resource::<Graphics>().is_some_and(|g| g.authored_materials)));
 }
 
-/// The Terrain parallax row's status while the run's Authored materials state (`session`,
-/// nvf_assets `authored::enabled`, fixed at the start) is off but its row (`row`) is on: no
-/// height map can load until the next start [design, #3322 review]. With the row off the
-/// shared NEEDS rule says why instead.
+/// The Terrain parallax row's availability in the game, by the run's Authored materials
+/// state (`session`, nvf_assets `authored::enabled`, fixed at the start), not the row's
+/// saved value (`row`, which the launcher's NEEDS rule follows for the next start): free
+/// while the run has authored materials, even with the row turned off for the next start
+/// (the height maps stay loaded); greyed with a restart note while the row is on but the run
+/// started without them; the NEEDS words while both are off [design, #3322 review].
 pub(crate) fn parallax_status(session: bool, row: bool) -> Option<&'static str> {
-    (!session && row).then_some(PARALLAX_RESTART)
+    match (session, row) {
+        (true, _) => None,
+        (false, true) => Some(PARALLAX_RESTART),
+        (false, false) => Some(PARALLAX_NEEDS),
+    }
 }
+
+/// The NEEDS words of the Terrain parallax row (nvf_settings_layout `NEEDS`).
+pub(crate) const PARALLAX_NEEDS: &str = "Needs Authored Materials.";
 
 /// What the Terrain parallax row says while Authored materials waits for the next start.
 pub(crate) const PARALLAX_RESTART: &str = "After a restart (Authored Materials)";
@@ -2930,24 +2939,29 @@ dlss-model=Preset K
         assert!(nvf_play::settings::note_switches(FPS_SPLIT_SWITCHES).is_empty());
     }
 
-    /// #3322 review: the Terrain parallax row follows the run's Authored materials state:
-    /// greyed with a restart note while the row is on but the run started without it; the
-    /// shared NEEDS rule while the row is off; free while both are on.
+    /// #3322 review: in the game the Terrain parallax row follows the run's Authored
+    /// materials state, not the row's saved value (the launcher's NEEDS rule, for the next
+    /// start): free while the run has them, even with the row turned off; greyed with a
+    /// restart note while the row is on but the run started without them.
     #[test]
-    fn the_terrain_parallax_row_waits_for_a_restart_of_authored_materials() {
-        assert_eq!(parallax_status(false, true), Some(PARALLAX_RESTART));
+    fn the_terrain_parallax_row_follows_this_runs_authored_materials() {
         assert_eq!(parallax_status(true, true), None);
-        assert_eq!(parallax_status(false, false), None, "the NEEDS rule says it");
-        assert_eq!(parallax_status(true, false), None, "the NEEDS rule says it");
+        assert_eq!(parallax_status(true, false), None, "turned off for the next start: still drawn this run");
+        assert_eq!(parallax_status(false, true), Some(PARALLAX_RESTART));
+        assert_eq!(parallax_status(false, false), Some(PARALLAX_NEEDS));
+        assert_eq!(nvf_settings_layout_why("terrain-parallax"), Some(PARALLAX_NEEDS), "the same words as the shared NEEDS rule");
         assert!(PARALLAX_RESTART.len() <= 40);
         let mut app = rows_app();
-        let settings = app.world().resource::<nvf_play::settings::Settings>();
         let i = row(&app, "terrain-parallax");
-        assert_eq!(settings.disabled_status(app.world(), i), None, "Authored materials on, as this run's");
+        let status = |app: &App| app.world().resource::<nvf_play::settings::Settings>().disabled_status(app.world(), i);
+        assert_eq!(status(&app), None, "Authored materials on, as this run's");
         app.world_mut().resource_mut::<Graphics>().authored_materials = false;
-        let settings = app.world().resource::<nvf_play::settings::Settings>();
-        assert_eq!(settings.disabled_status(app.world(), i), Some("Needs Authored Materials."));
-        assert!(!settings.list()[i].note.contains("original"), "whether the original draws relief is a hypothesis");
+        assert_eq!(status(&app), None, "the saved row off does not grey it while this run has them");
+        assert!(!app.world().resource::<nvf_play::settings::Settings>().list()[i].note.contains("original"), "whether the original draws relief is a hypothesis");
+
+        fn nvf_settings_layout_why(key: &str) -> Option<&'static str> {
+            nvf_play::settings_layout::needs(key).first().map(|r| r.why)
+        }
     }
 
     /// #2661: the mesh terrain blend's row stands among the Graphics switches, off in a

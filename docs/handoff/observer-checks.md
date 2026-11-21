@@ -3477,5 +3477,6 @@ already talking takes over at once, same topic or another; nothing is queued or 
      painted over the dirt base), look down at about 30 degrees and strafe slowly sideways
      for a few seconds, then crouch and repeat closer: stones whose painted bumps slide
      against each other as the view moves say the original draws relief; texels that move
-     rigidly with the ground say it draws none. A count of LTEX texture sets (TXST) with a
-     `TX04` path (fnvtool, owed) would tell whether the data even offers a height map.
+     rigidly with the ground say it draws none. The data offers none: no LTEX texture set
+     of FalloutNV.esm names a `TX04` map [documented: counted with fnvtool, 2026-11-21;
+     pbr-materials.md "Terrain layers: parallax"].

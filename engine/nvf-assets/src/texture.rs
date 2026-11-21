@@ -779,6 +779,11 @@ impl TextureCache {
         self.load_key(fnv_vfs::normalize(path), usage, false, data, images, formats)
     }
 
+    /// The deepest an authored set's height map may be drawn, in texture-coordinate units: the
+    /// end of the scalar range (`fnv_pbr::PARALLAX_DEPTH_RANGE`), for marches that share one
+    /// step grid across sets (nvforever terrain.rs `PARALLAX_SCALE`).
+    pub const AUTHORED_HEIGHT_MAX_DEPTH: f32 = *fnv_pbr::PARALLAX_DEPTH_RANGE.end();
+
     /// The authored height map (`_p`) for a texture drawn outside the NIF shapes, with its
     /// depth (UV units): the set the index finds for the texture's resolved path, as a shape's
     /// diffuse finds it, of which only the `_p` is loaded (`crate::authored::find_height`).

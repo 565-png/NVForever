@@ -1266,8 +1266,9 @@ stretches drift downstream. Vanilla leaves the switch off. Enhanced turns it on.
   count as flat. Not drawn while Terrain anti-tiling is on. The shadows, the depth prepass, the
   collision, the mesh terrain blend and the distant landscape keep the plain surface, and
   so do layers drawn on their own (GPUs without bindless textures; a texture repeat that
-  does not divide the cell). Needs Authored materials (greyed while it is off, and until the
-  next start when it was off at this one). Whether the original draws any relief on its
+  does not divide the cell). Needs Authored materials: in the game, as this run has it
+  (greyed until a restart when it was off at the start; still available after turning it
+  off for the next start); in the launcher, as saved. Whether the original draws any relief on its
   landscape is not known [hypothesis: none]. Off by
   default and in both presets until its cost is measured (the maintainer's call); switches
   at once, no restart.

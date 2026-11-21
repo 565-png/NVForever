@@ -566,9 +566,12 @@ addition of NVForever's own until observer check 250 answers it [hypothesis: it 
   stage. The same refusals as on shapes apply (signed, wrong format, sides not a multiple of
   4, depth 0), with the same one warning per file. Loaded with the quadrant's folded
   material whenever the run's Authored materials state is on, whether the switch is on or
-  not, so the switch flips while the game runs. The data's own height slot (a texture set's
-  `TX04`, which impact-decals.md records as the parallax slot for decals) is not read; how
-  many landscape texture sets name one is not counted yet (an `fnvtool` count is owed).
+  not, so the switch flips while the game runs. The data offers no other source:
+  `FalloutNV.esm` has 89 LTEX records, 88 of them with a TNAM, naming 70 distinct texture
+  sets, and none of those names a `TX04` (height) map; of the ESM's texture sets, 11 carry a
+  `TX04` (six `SuburbanRubble01_p` for NIF shapes, five impact decals) [documented:
+  FalloutNV.esm, counted with `fnvtool esm decode` on the test install, 2026-11-21]. An
+  authored set's `_p` is therefore the landscape's only height source.
 - [design] **The base is flat.** A quadrant's base texture takes no height map in this stage:
   a quadrant without painted layers is drawn by the separate landscape material, which
   stays unshifted, and a moving base would break at that quadrant's edge.
@@ -576,24 +579,39 @@ addition of NVForever's own until observer check 250 answers it [hypothesis: it 
   draw marches once, Bevy's steep parallax with the occlusion refinement (the vendored
   `parallaxed_uv`'s steps, view vector, tangent frame and signs, as on NIF shapes), over one
   blended depth: the sum over the layers of share x the layer's own depth x (1 - height),
-  the share the layer's ordered share (painted opacity x the layer diffuse's alpha, read
-  once at the plain coordinate, laid over the earlier layers as the ordinary blend lays
-  them); the base and a layer without a height map add no depth (flat at the surface).
-  Then every texture of the quadrant, the base's and the layers', diffuse and normal map,
-  is read at the one moved coordinate. Flat at the surface rather than mid-height so that
-  the shift falls to nothing as a height-mapped layer's share does. Edges: where the
-  shares and heights agree on both sides (the painted opacities of one LAND grid, the same
-  textures), the depth sum agrees too, since each layer brings its own depth and an
-  unpainted layer (share 0) adds nothing; what remains at a quadrant edge is the march's
-  step count, which follows the common scale (next item) and can differ by a step's
-  rounding [hypothesis: not visible; not yet seen]. Height blending, when on,
+  the share the layer's ordered share (painted opacity x the layer diffuse's alpha, laid
+  over the earlier layers as the ordinary blend lays them); the base and a layer without a
+  height map add no depth (flat at the surface). Then every texture of the quadrant, the
+  base's and the layers', diffuse and normal map, is read at the one moved coordinate.
+  Flat at the surface rather than mid-height so that the shift falls to nothing as a
+  height-mapped layer's share does.
+- [design] **Coverage, once.** The layers' alphas are read once, at the plain coordinate,
+  with the drawn blend's own read (same texture, coordinate and bias), and both the march
+  and the drawn blend weigh the layers by them: a hole in a layer's texture stays where the
+  march saw it (a pixel that starts in a hole of a dirt overlay marches on the gravel under
+  it and is drawn as gravel, not as displaced dirt), and where the shift is nothing the
+  blend is exactly the one without parallax. The cheaper of the two consistent rules (the
+  other, alpha at every march step, would add up to six reads per step); the cost is that a
+  hole's outline does not move with the relief.
+- [design] **Edges.** Where the shares and heights agree on both sides of a quadrant edge
+  (the painted opacities of one LAND grid, the same textures), the march agrees too: the
+  depth sum is the same (each layer brings its own depth, an unpainted layer adds nothing)
+  and every quadrant marches on the same step grid (next item), so the same narrow ridge is
+  hit or stepped over on both sides alike (the test
+  `a_layer_moves_as_far_whatever_else_its_quadrant_holds`). Not covered: two quadrants whose
+  painted opacities differ along their shared edge, and a layer drawn on its own (below).
+  Height blending, when on,
   still weighs the colours by brightness; its weights do not reshape the march (a later
   stage may let a real height map stand in for brightness there).
-- [design] **Depth and steps.** Each layer keeps its own set's depth; the march's scale is the
-  deepest of a quadrant's layers, each layer's depth taken over it (`parallax_scales`), so a
-  0.02 layer moves as far beside a 0.08 layer that is not painted there as alone (the test
-  `a_layer_moves_as_far_whatever_else_its_quadrant_holds`). At most 8 steps (`PARALLAX_LAYERS`; fewer than a shape's march, as every step
-  reads up to six height maps), fewer as the view steepens. The height maps are read at the
+- [design] **Depth and steps.** Each layer keeps its own set's depth (held to the scalar
+  range's end); the march's scale is that end, 0.08 (`PARALLAX_SCALE`), the same for every
+  quadrant, each layer's depth taken over it (`parallax_scales`). A grid from each
+  quadrant's deepest layer, as first written, stepped a 0.02 layer beside an unpainted 0.08
+  one four times as coarsely as alone (0.00625 against 0.025 texture-coordinate units a
+  step at the same view). At most 8 steps (`PARALLAX_LAYERS`; fewer than a shape's march,
+  as every step reads up to six height maps), fewer as the view steepens; a shallow layer
+  takes fewer of them (a 0.02 layer about a quarter), the refinement interpolating between
+  them [design: the price of one grid; to judge in pictures with a pack]. The height maps are read at the
   level their screen footprint asks for (not the top level, as the shapes' march reads),
   with the base texture's sampler.
 - [design] **Fade.** Full strength up to 1024 units from the camera, none from 2048
@@ -613,19 +631,26 @@ addition of NVForever's own until observer check 250 answers it [hypothesis: it 
   step's reads by the taps' count; left for a later stage.
 - [design] **The switch.** Settings row Terrain parallax (`terrain-parallax`, Graphics ›
   Detail and Distance), off by default and in both presets until its cost is measured
-  (whether a look turns it on is the maintainer's call); greyed while the Authored materials
-  row is off, and while the row is on but the run started without it (no height map loads
-  until the next start: "After a restart"); `--graphics-only terrain-parallax`. A folded
+  (whether a look turns it on is the maintainer's call). In the game its availability follows
+  the run's Authored materials state, not that row's saved value: free while the run has
+  them (also after the row is turned off for the next start: the height maps stay loaded),
+  greyed "After a restart" while the row is on but the run started without them, greyed
+  with the NEEDS words while both are off; the launcher greys it by the saved row, for the
+  next start. `--graphics-only terrain-parallax`. A folded
   material without a height map keeps its old pipeline with the switch on and is not
   touched when the switch flips, so without a ground pack nothing changes, the mesh terrain
   blend's captures included (smoke `terrain-parallax-no-pack`). With a pack, the flips edit
   only the materials with height maps, and the mesh terrain blend passes over those edits
-  (`PipelineOnlyEdits`): nothing it captures reads the switch.
+  (`PipelineOnlyEdits`): nothing it captures reads the switch. The switches' systems run
+  before the asset events are sent, so the noted edits meet exactly their own events, and a
+  height-blending or anti-tiling edit of the same material in the same frame still remakes
+  the capture (the test `a_surface_edit_beside_a_parallax_edit_still_remakes_the_capture`).
 - **Not done in stage 1:** a generated-ground field test that judges a readback (shift on a
-  tilted view, none head-on: the PBR field builds its own panels, not the landscape); the
-  frame-time cost with and without the switch at a ground-heavy and a layer-heavy place;
-  the `TX04` count; before/after pictures with a ground pack; the base's own `_p`; height
-  maps for the separate landscape materials.
+  tilted view, none head-on, none with the switch off: owed; the PBR field builds its own
+  panels, not the landscape, and an aid would have to mount generated `_p` files for a
+  landscape texture); the frame-time cost with and without the switch at a ground-heavy and
+  a layer-heavy place; before/after pictures with a ground pack; the base's own `_p`;
+  height maps for the separate landscape materials.
 
 ## Load order: per file, so ship complete sets
 

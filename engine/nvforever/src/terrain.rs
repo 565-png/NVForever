@@ -118,8 +118,9 @@
 //! hold a height map are edited, and those edits are noted ([`PipelineOnlyEdits`]) so the
 //! mesh terrain blend does not recapture for them. terrain.wesl marches once over the
 //! blended depth, each layer's ordered share (painted opacity x the layer texture's alpha)
-//! x its own set's depth x (1 - its height), on a common scale (the material's deepest
-//! layer), then reads every texture at the one shifted coordinate; the march fades out
+//! x its own set's depth x (1 - its height), on one step grid for every quadrant
+//! ([`PARALLAX_SCALE`]), then reads every texture at the one shifted coordinate, the layers
+//! blended by the alphas read at the plain coordinate, the march's own; the march fades out
 //! between [`PARALLAX_FADE`]'s distances, well inside the loaded cells. A layer without a
 //! height map, and the base always, adds no depth (flat at the surface), so the shift falls
 //! to nothing where the layers with height maps fade out, a layer moves as far on both sides
@@ -317,17 +318,17 @@ impl TerrainLayers {
     /// map, else 0.
     pub fn layer_depths(&self) -> [f32; FOLDED_LAYERS] {
         let bits = self.height_bits();
-        std::array::from_fn(|k| if bits & 1 << k != 0 { self.parallax_depths[k].max(0.0) } else { 0.0 })
+        std::array::from_fn(|k| if bits & 1 << k != 0 { self.parallax_depths[k].clamp(0.0, PARALLAX_SCALE) } else { 0.0 })
     }
 
-    /// The march's scale: the deepest of [`Self::layer_depths`] (0 without a height map).
-    pub fn parallax_depth(&self) -> f32 {
-        self.layer_depths().into_iter().fold(0.0, f32::max)
+    /// The march's scale: [`PARALLAX_SCALE`] when the material holds a height map, else 0.
+    pub fn parallax_scale(&self) -> f32 {
+        if self.holds_heights() { PARALLAX_SCALE } else { 0.0 }
     }
 
     /// Whether the material holds a height map the march can read (and a depth to march).
     pub fn holds_heights(&self) -> bool {
-        self.parallax_depth() > 0.0
+        self.layer_depths().iter().any(|&d| d > 0.0)
     }
 }
 
@@ -338,7 +339,7 @@ impl TerrainLayers {
 /// [`FEATURE_PARALLAX`]); `tile` x [`TerrainLayers::tile`], y
 /// [`TerrainLayers::texture_repeat`]; `height` the start-up (depth, gain, source ID: global 0
 /// / local 1, reserved) [design, #2550]; `parallax` the march's scale
-/// ([`TerrainLayers::parallax_depth`]), its most layers ([`PARALLAX_LAYERS`]) and the
+/// ([`TerrainLayers::parallax_scale`]), its most layers ([`PARALLAX_LAYERS`]) and the
 /// distances its fade starts and ends at ([`PARALLAX_FADE`]), `depths_low` and
 /// `depths_high` each layer's own depth ([`TerrainLayers::layer_depths`]: layers 0 to 3,
 /// then 4 and 5) [design, #3322].
@@ -359,6 +360,15 @@ pub const HEIGHT_BITS_SHIFT: u32 = 8;
 /// down) [design, #3322: every step reads up to seven height maps, so fewer than the NIF
 /// shapes' march takes].
 pub const PARALLAX_LAYERS: f32 = 8.0;
+
+/// The terrain parallax march's scale, in texture-coordinate units: the deepest a set's
+/// height map may be (the scalar range's end), the same for every folded material, so every
+/// quadrant marches on one step grid and a layer meets the same steps on both sides of a
+/// quadrant edge, whatever else either quadrant holds [design, #3322 review: a grid from
+/// each material's deepest layer stepped a shallow layer four times as coarsely beside a
+/// deep one]. Shallower layers take fewer of the [`PARALLAX_LAYERS`] steps (the refinement
+/// interpolates between them).
+pub const PARALLAX_SCALE: f32 = nvf_assets::texture::TextureCache::AUTHORED_HEIGHT_MAX_DEPTH;
 
 /// The distances from the camera (world units) where the terrain parallax starts to fade and
 /// where it is gone [design, #3322: within the camera's own cell and its neighbours' near
@@ -450,7 +460,7 @@ impl From<&TerrainLayers> for TerrainLayersUniform {
         let features = if l.height_blend { FEATURE_HEIGHT_BLEND } else { 0 } | if key.anti_tiling { FEATURE_ANTI_TILING } else { 0 } | if key.parallax { FEATURE_PARALLAX } else { 0 };
         let repeat = if nvf_assets::terrain_sampling::repeat_valid(l.texture_repeat) { l.texture_repeat } else { 0.0 };
         let bits = bits | l.height_bits() << HEIGHT_BITS_SHIFT;
-        let parallax = Vec4::new(l.parallax_depth(), PARALLAX_LAYERS, PARALLAX_FADE.0, PARALLAX_FADE.1);
+        let parallax = Vec4::new(l.parallax_scale(), PARALLAX_LAYERS, PARALLAX_FADE.0, PARALLAX_FADE.1);
         let d = l.layer_depths();
         TerrainLayersUniform {
             counts: UVec4::new(l.count.min(most as u32), bits, u32::from(l.burn.is_some()), features),
@@ -550,8 +560,21 @@ impl Plugin for TerrainPlugin {
         // copy's pipeline (`SURFACE_BAKE`) ever imports it.
         load_internal_asset!(app, SURFACE_BAKE_SHADER, "terrain_surface.wesl", |s, _| Shader::from_wesl(s, "embedded://nvforever/terrain_surface.wesl"));
         bevy::asset::load_internal_asset!(app, WEIGHTS_SHADER, "terrain_weights.wesl", |s, _| bevy::shader::Shader::from_wesl(s, "embedded://nvforever/terrain_weights.wesl"));
-        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default()).add_systems(Startup, log_height_blend_params).init_resource::<PipelineOnlyEdits>().add_systems(PostUpdate, (sync_height_blend, sync_anti_tiling, sync_parallax)).add_systems(Last, age_pipeline_only_edits);
+        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default()).add_systems(Startup, log_height_blend_params);
+        add_switch_systems(app);
     }
+}
+
+/// The terrain switches' systems: each flips the folded materials in place, all before the
+/// asset events are sent ([`bevy::asset::AssetEventSystems`]), so every edit they make in a
+/// frame is sent that frame together with the frame's other edits of the same material, and
+/// [`PipelineOnlyEdits`]' counts meet exactly the parallax edits' own events when
+/// terrain_surface.rs `refresh_captures` (after the events) reads them: a height-blending
+/// or anti-tiling edit of the same material is never taken for one [design, #3322 review].
+fn add_switch_systems(app: &mut App) {
+    app.init_resource::<PipelineOnlyEdits>()
+        .add_systems(PostUpdate, (sync_height_blend, sync_anti_tiling, sync_parallax).before(bevy::asset::AssetEventSystems))
+        .add_systems(Last, age_pipeline_only_edits);
 }
 
 /// Whether the settings ask for height blending (module notes); false without the
@@ -851,7 +874,7 @@ impl TerrainCtx<'_, '_, '_> {
         if extension.holds_heights() {
             self.tm.cache.parallax_materials += 1;
             if self.tm.cache.parallax_materials == 1 {
-                info!("terrain: first folded material with authored height maps: {} of {} layers (depths {:?})", extension.height_bits().count_ones(), layers.len(), extension.layer_depths());
+                info!("terrain: first folded material with authored height maps: {} of {} layers (depths {:?}, marched on scale {PARALLAX_SCALE})", extension.height_bits().count_ones(), layers.len(), extension.layer_depths());
             }
         }
         let base = self.surface(tex.as_deref());
@@ -2258,7 +2281,7 @@ mod tests {
         let u = TerrainLayersUniform::from(&mapped);
         assert_eq!(u.counts.y, 0b10 | 0b10 << HEIGHT_BITS_SHIFT, "layer 1's normal map and height map, each in its bits");
         assert_eq!(u.counts.w, FEATURE_PARALLAX);
-        assert_eq!(u.parallax, Vec4::new(0.04, PARALLAX_LAYERS, PARALLAX_FADE.0, PARALLAX_FADE.1));
+        assert_eq!(u.parallax, Vec4::new(PARALLAX_SCALE, PARALLAX_LAYERS, PARALLAX_FADE.0, PARALLAX_FADE.1));
         assert_eq!((u.depths_low, u.depths_high), (Vec4::new(0.0, 0.04, 0.0, 0.0), Vec4::ZERO));
         assert_eq!(TerrainLayersUniform::from(&mapped).counts.truncate(), TerrainLayersUniform::from(&TerrainLayers { parallax: false, ..mapped.clone() }).counts.truncate(), "the switch moves only the feature bit");
         // Off with height maps held: the old pipeline, the height bits still recorded.
@@ -2317,12 +2340,12 @@ mod tests {
         let [height0, height1, height2, height3, height4, height5] = slots_of(&a, &b);
         let l = TerrainLayers { count: 4, tile: 256.0, parallax_depths: depths_of(), height0, height1, height2, height3, height4, height5, ..default() };
         assert_eq!(l.height_bits(), 0b1010, "bit k for layer k");
-        assert_eq!((l.layer_depths(), l.parallax_depth()), ([0.0, 0.02, 0.0, 0.05, 0.0, 0.0], 0.05));
+        assert_eq!((l.layer_depths(), l.parallax_scale()), ([0.0, 0.02, 0.0, 0.05, 0.0, 0.0], PARALLAX_SCALE));
         let u = TerrainLayersUniform::from(&l);
-        assert_eq!((u.parallax.x, u.depths_low, u.depths_high), (0.05, Vec4::new(0.0, 0.02, 0.0, 0.05), Vec4::ZERO));
+        assert_eq!((u.parallax.x, u.depths_low, u.depths_high), (PARALLAX_SCALE, Vec4::new(0.0, 0.02, 0.0, 0.05), Vec4::ZERO));
         // Only the layers drawn count: with three, the fourth's map and depth are left out.
         let three = TerrainLayers { count: 3, ..l.clone() };
-        assert_eq!((three.height_bits(), three.parallax_depth()), (0b10, 0.02));
+        assert_eq!((three.height_bits(), three.layer_depths()), (0b10, [0.0, 0.02, 0.0, 0.0, 0.0, 0.0]));
         // Without the shader-worked coordinate four layers are drawn, so a fifth's map is not.
         let carried = TerrainLayers { count: 6, tile: 0.0, height4: Some(a.clone()), parallax_depths: [0.05; 6], ..default() };
         assert_eq!((carried.height_bits(), carried.holds_heights()), (0, false));
@@ -2369,20 +2392,27 @@ mod tests {
     #[test]
     fn a_layer_moves_as_far_whatever_else_its_quadrant_holds() {
         // #3322 review: a 0.02 layer beside a quadrant edge, its neighbour quadrant also
-        // holding a 0.08 layer that is not painted there (share 0): the same shift on both
-        // sides, as each layer keeps its own depth on the march's common scale.
+        // holding a 0.08 layer that is not painted there (share 0): the same steps and the
+        // same shift on both sides, over a varying height field (narrow ridges a coarser grid
+        // would step over), as each layer keeps its own depth on the one fixed scale.
         let image = Handle::<Image>::default();
         let alone = TerrainLayers { count: 1, tile: 256.0, parallax: true, height0: Some(image.clone()), parallax_depths: [0.02, 0.0, 0.0, 0.0, 0.0, 0.0], ..default() };
         let beside = TerrainLayers { count: 2, height1: Some(image.clone()), parallax_depths: [0.02, 0.08, 0.0, 0.0, 0.0, 0.0], ..alone.clone() };
         let (ua, ub) = (TerrainLayersUniform::from(&alone), TerrainLayersUniform::from(&beside));
-        assert_eq!((ua.parallax.x, ub.parallax.x), (0.02, 0.08), "the march's scales differ");
+        assert_eq!((ua.parallax.x, ub.parallax.x), (PARALLAX_SCALE, PARALLAX_SCALE), "one step grid for both quadrants");
+        assert_eq!(PARALLAX_SCALE, 0.08, "the scalar range's end (fnv_pbr::PARALLAX_DEPTH_RANGE)");
         let tilted = Vec3::new(0.6, 0.0, -0.8);
-        for (share, height) in [(1.0, 0.5), (0.6, 0.3), (0.25, 0.0)] {
-            let (shares, heights) = ([share, 0.0, 0.0, 0.0, 0.0, 0.0], [height, 0.9, 0.0, 0.0, 0.0, 0.0]);
-            let a = parallax_march(&|_| parallax_depth_from(&ua, shares, heights), tilted, ua.parallax.x);
-            let b = parallax_march(&|_| parallax_depth_from(&ub, shares, heights), tilted, ub.parallax.x);
-            assert!(a.length() > 0.0 && (a - b).length() < 1e-5, "share {share} height {height}: {a} and {b}");
+        // Narrow ridges along U in the 0.02 layer's height map; the 0.08 layer high and flat.
+        let ridges = |p: Vec2| [0.5 + 0.5 * (p.x * 900.0).sin().powi(15), 0.9, 0.0, 0.0, 0.0, 0.0];
+        for share in [1.0, 0.6, 0.25] {
+            let shares = [share, 0.0, 0.0, 0.0, 0.0, 0.0];
+            let a = parallax_march(&|p| parallax_depth_from(&ua, shares, ridges(p)), tilted, ua.parallax.x);
+            let b = parallax_march(&|p| parallax_depth_from(&ub, shares, ridges(p)), tilted, ub.parallax.x);
+            assert!(a.length() > 0.0 && a == b, "share {share}: {a} and {b}");
         }
+        // A set deeper than the scale is held to it.
+        let deep = TerrainLayers { parallax_depths: [0.2, 0.0, 0.0, 0.0, 0.0, 0.0], ..alone.clone() };
+        assert_eq!(deep.layer_depths()[0], PARALLAX_SCALE);
     }
 
     #[test]
@@ -2449,7 +2479,13 @@ mod tests {
         assert!(terrain.contains("    let delta = values.x * fade * layer_depth * Vt.xy * vec2(1.0, -1.0) / steepness;"));
         assert!(terrain.contains("            depth += w[k + 1u] * scale[k] * (1.0 - layer_height(k, instance_index, uv, footprint));"));
         assert!(terrain.contains("    let scale = parallax_scales(instance_index, values.x);"));
-        assert!(terrain.contains("            paint[k] = o * layer_alpha(k, instance_index, uv, footprint);"));
+        assert!(terrain.contains("        paint[k] = saturate(opacity[k]) * alpha[k];"));
+        // #3322 review: the alphas the march weighs the layers by are the drawn blend's, read
+        // once at the plain coordinate with the blend's own read.
+        assert!(terrain.contains("            parallax_alpha[k] = layer_diffuse(k, in.instance_index, parallax_plain_uv).a;"));
+        assert!(terrain.contains("                @if(TERRAIN_PARALLAX) let share = saturate(opacity[k]) * parallax_alpha[k];"));
+        assert!(terrain.contains("                @if(TERRAIN_PARALLAX) paint[k] = saturate(opacity[k]) * parallax_alpha[k];"));
+        assert!(terrain.find("            parallax_alpha[k] = layer_diffuse(").unwrap() < shift, "read before the shift"); 
         assert!(terrain.contains("    let w = terrain_ordered_shares(paint, n);"));
         assert!(terrain.contains("@if(TERRAIN_PARALLAX && !TERRAIN_HEIGHT_BLEND) import nvforever::terrain_weights::terrain_ordered_shares;"));
         // The march itself: none head-on, none over flat ground, some when tilted.
@@ -2465,6 +2501,56 @@ mod tests {
     /// height map for their pipeline alone; with the mesh terrain blend on, those edits'
     /// Modified events must not remake the captures (nothing they read changed), while a
     /// real edit of the same material still does.
+    /// #3322 review: through the real schedule (the asset system sending the events, the
+    /// switches before it, the capture refresh after it, as mesh_terrain_blend.rs orders it):
+    /// height blending and parallax flipped in the same frame remake the capture (the
+    /// height-blending edit is a surface edit); parallax alone leaves it as it was.
+    #[test]
+    fn a_surface_edit_beside_a_parallax_edit_still_remakes_the_capture() {
+        use bevy::asset::{AssetApp, AssetPlugin};
+        use crate::graphics::{Graphics, Preset};
+        use crate::terrain_surface::{CaptureDraw, CapturePath, CaptureSource, SurfaceCell};
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Image>().init_asset::<NifMaterial>().init_asset::<TerrainMaterial>()
+            .insert_resource(Graphics::preset(Preset::Vanilla)).insert_resource(TerrainSettings { tile: 256.0 })
+            .add_systems(PostUpdate, crate::terrain_surface::refresh_captures.after(bevy::asset::AssetEventSystems));
+        add_switch_systems(&mut app);
+        let diffuse = app.world_mut().resource_mut::<Assets<Image>>().add(Image::default());
+        let source = TerrainMaterial { base: surface_material(Some(diffuse.clone()), None), extension: TerrainLayers { count: 1, diffuse0: Some(diffuse.clone()), height0: Some(diffuse.clone()), parallax_depths: [0.04; 6], texture_repeat: 256.0, tile: 256.0, ..default() } };
+        let folded = app.world_mut().resource_mut::<Assets<TerrainMaterial>>().add(source.clone());
+        let mut cell = SurfaceCell {
+            world: 0, grid: (0, 0), heights: vec![0.0; SIDE * SIDE], quadrants: vec![], paths: [CapturePath::HeightOnly("not-captured"); 4], content_revision: 0,
+            sources: vec![CaptureSource::Folded(folded.clone())], dependencies: default(), detail: default(),
+        };
+        cell.capture(0, vec![(Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default()), CaptureDraw::Folded(Box::new(source.clone())))], CapturePath::Folded { layers: 1 });
+        let entity = app.world_mut().spawn(cell).id();
+        // Settle: the material's Added event and the switches' first pass.
+        app.update();
+        app.update();
+        let mark = |app: &mut App| {
+            let mut cell = app.world_mut().get_mut::<SurfaceCell>(entity).unwrap();
+            let CaptureDraw::Folded(m) = &mut cell.bypass_change_detection().quadrants[0].1 else { panic!("the folded copy") };
+            m.extension.count = 5;
+        };
+        let kept = |app: &App| match &app.world().get::<SurfaceCell>(entity).unwrap().quadrants[0].1 { CaptureDraw::Folded(m) => (m.extension.count, m.extension.height_blend), _ => panic!("the folded copy") };
+        mark(&mut app);
+        {
+            let mut g = app.world_mut().resource_mut::<Graphics>();
+            g.terrain_height_blend = true;
+            g.terrain_parallax = true;
+        }
+        app.update();
+        app.update();
+        assert_eq!(kept(&app), (1, true), "the height-blending edit remade the capture though a parallax edit came with it");
+        mark(&mut app);
+        app.world_mut().resource_mut::<Graphics>().terrain_parallax = false;
+        app.update();
+        app.update();
+        assert_eq!(kept(&app).0, 5, "parallax alone: the capture as it was");
+        assert!(!TerrainLayersKey::from(&app.world().resource::<Assets<TerrainMaterial>>().get(&folded).unwrap().extension).parallax);
+    }
+
     #[test]
     fn the_parallax_switch_leaves_the_mesh_blend_captures_alone() {
         use bevy::ecs::system::RunSystemOnce;
