@@ -378,9 +378,15 @@ pub(crate) fn find_target(
     };
     // A bed's box does not hide the suitcase lying in it (`pick::set_aside_enclosing`,
     // #3323), cut off at the raw first hit, not a door promoted from behind it.
-    let bounds = pick::set_aside_enclosing(hit, &bounds, REACH, |id| beds.contains(&id), |id| describe_once(id).is_some());
+    let kept = pick::set_aside_enclosing(hit, &bounds, REACH, |id| beds.contains(&id), |id| describe_once(id).is_some());
+    // `NVF_PLAY_TEST_PICK_LOG`: what the pick was made from, logged with each new target.
+    let note = pick_log().then(|| {
+        let aside: Vec<String> = bounds.iter().filter(|b| !kept.iter().any(|k| k.0 == b.0)).map(|b| format!("0x{:08X}", b.0)).collect();
+        let boxes: Vec<String> = bounds.iter().map(|b| format!("0x{:08X} {:.1}-{:.1}{}{}", b.0, b.1, b.2, if b.3 { " rough" } else { "" }, if beds.contains(&b.0) { " bed" } else { "" })).collect();
+        format!("pick: raw hit {:?}; boxes [{}]; set aside [{}]", hit.map(|h| (h.form_id.map(|id| format!("0x{id:08X}")), h.distance)), boxes.join(", "), aside.join(", "))
+    });
     let hit = pick::door_behind(hit, behind, |id| describe_once(id).is_some());
-    let picked = pick::choose_precise_first(hit, bounds, REACH, |id| describe_once(id).is_some());
+    let picked = pick::choose_precise_first(hit, kept, REACH, |id| describe_once(id).is_some());
     // How far the sleeper's body is from the eye: its posed bones (`crate::hitvol::ActorParts`,
     // which follow the lying body), else its render boxes (rough: the bind pose).
     let body_distance = |actor: u32| {
@@ -405,6 +411,9 @@ pub(crate) fn find_target(
     });
     let key = |t: &Option<Targeted>| t.as_ref().map(|t| (t.form_id, t.action.clone(), t.crime, t.empty));
     if key(&target.0) != key(&new) {
+        if let Some(note) = note {
+            info!("{note}");
+        }
         match &new {
             Some(t) => info!(
                 "target 0x{:08X} {} ({}{}{}) by {:?} at {:.0}",
@@ -426,6 +435,14 @@ pub(crate) fn find_target(
 
 /// How far past a surface the ray behind it starts, game units.
 const NUDGE: f32 = 0.5;
+
+/// Whether `NVF_PLAY_TEST_PICK_LOG` is on: each new target logs the raw first collision
+/// hit, every render box the view ray enters (reference, entry and exit, rough, bed) and
+/// the boxes set aside (`pick::set_aside_enclosing`, #3323).
+fn pick_log() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("NVF_PLAY_TEST_PICK_LOG").is_ok_and(|v| !matches!(v.trim(), "" | "0" | "off" | "false")))
+}
 
 /// Seconds a creature's "has something to say" answer is kept before it is asked again.
 const TALKER_SECONDS: f64 = 2.0;
