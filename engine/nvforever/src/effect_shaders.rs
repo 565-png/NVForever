@@ -70,7 +70,7 @@ impl Plugin for EffectShadersPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Shaders>()
             .init_resource::<crate::effect_particles::EffectParticles>()
-            .add_systems(Update, (play.after(nvf_play::player::BodySet).after(actor_alpha), cover.after(play), sync_player_effects.after(cover), actor_alpha.after(crate::texture_swap::apply), crate::effect_particles::draw.after(sync_player_effects), addons_leaving.after(play)))
+            .add_systems(Update, (play.after(nvf_play::player::BodySet).after(actor_alpha), cover.after(play), sync_player_effects.after(cover), actor_alpha.after(crate::texture_swap::apply).after(nvf_play::PlaySet::Sync), crate::effect_particles::draw.after(sync_player_effects), addons_leaving.after(play)))
             .add_systems(PostUpdate, crate::effect_particles::build.in_set(crate::particles::ParticleDrawSet))
             .add_systems(Last, (report, crate::effect_particles::report, release_faded));
         crate::particles::configure_draw_set(app);
@@ -976,15 +976,22 @@ fn hologram_cover(m: &NifMaterial, shader_has_holes: bool) -> Cover {
     }
 }
 
-/// The texture alpha below which a hologram's see-through body gets no membrane: only
-/// its empty texels [design, #3017].
+/// The texture alpha below which a hologram's see-through body gets no membrane: its
+/// empty texels, and with them faint ones below 8/255 [design, #3017].
 const HOLOGRAM_BODY_CUT: f32 = 8.0 / 255.0;
+
+/// A cut (0-1) in the holes test's units: the shader takes 255 and above for "no holes",
+/// so a cut of 1 (only fully opaque texels) is drawn as 254.5, which keeps 255 and drops
+/// 254 the same way (#3017).
+fn holes_cut(cut: f32) -> f32 {
+    (cut * 255.0).clamp(0.0, 254.5)
+}
 
 /// An overlay material cut where `texture`'s alpha, at the mesh's own texture
 /// coordinates, is below `cut` (0-1): the holes test turned round (nif_material.rs
 /// "Holes", `holes.z`), with no edge band.
 fn cut_by(mut m: NifMaterial, texture: Handle<Image>, cut: f32) -> NifMaterial {
-    m.extension.holes = Vec4::new(cut * 255.0, 0.0, 1.0, 0.0);
+    m.extension.holes = Vec4::new(holes_cut(cut), 0.0, 1.0, 0.0);
     m.extension.holes_texture = Some(texture);
     m
 }
@@ -1091,7 +1098,7 @@ pub(crate) struct AlphaDrawing<'w, 's> {
     st: ResMut<'w, Shaders>,
     materials: ResMut<'w, Assets<NifMaterial>>,
     #[allow(clippy::type_complexity)]
-    drawn: Query<'w, 's, (Entity, &'static RefVisual, Option<&'static MeshMaterial3d<NifMaterial>>, Option<&'static crate::mesh_terrain_blend::BlendShape>, Option<&'static Faded>, Option<&'static nvf_assets::nif_material::MaterialOverride>), Without<Overlay>>,
+    drawn: Query<'w, 's, (Entity, &'static RefVisual, Option<&'static MeshMaterial3d<NifMaterial>>, Option<&'static crate::mesh_terrain_blend::BlendShape>, Option<&'static Faded>, Option<&'static nvf_assets::nif_material::MaterialOverride>, Option<&'static nvf_play::fade::Fading>), Without<Overlay>>,
     /// The meshes of `drawn` still wearing a see-through copy.
     #[allow(clippy::type_complexity)]
     still_faded: Query<'w, 's, (), (With<Faded>, With<RefVisual>, Without<Overlay>)>,
@@ -1108,16 +1115,19 @@ impl AlphaDrawing<'_, '_> {
             return changed;
         }
         let st = &mut **st;
-        for (e, rv, mat, blend, faded, drawing) in &*drawn {
+        for (e, rv, mat, blend, faded, drawing, fading) in &*drawn {
             let Some(mat) = nvf_assets::nif_surface_blend::source_material(mat, blend) else { continue };
             let want = alpha.get(&FormId(rv.0)).copied();
             // #3017: the copy was made while a fade (`nvf_play::fade`) drew the mesh, from
             // the fade's copy, which the fade removed at its end, putting the mesh's own
             // material back on: that one is the original from now on. Without this the
             // release gave the mesh the removed copy, and the effect shaders' coverage
-            // stayed judged on it.
+            // stayed judged on it. The fade removes its copy at once and gives the material
+            // back by a command: until that is applied the fade's record names it (this
+            // system runs after the fade's, `nvf_play::PlaySet::Sync`, with the commands
+            // applied between, but does not count on it).
             let removed = faded.is_some_and(|f| !materials.contains(f.original.id()));
-            let worn = || nvf_assets::nif_material::plain_material(mat, drawing).clone();
+            let worn = || fading.map_or_else(|| nvf_assets::nif_material::plain_material(mat, drawing).clone(), |f| f.original().clone());
             match (want, faded) {
                 (None, None) => {}
                 (None, Some(f)) => {
@@ -1425,6 +1435,11 @@ mod tests {
         assert_eq!(cut_out_overlay(&haze, false), Cover::None);
         let m = cut_by(with(AlphaMode::Add, 0.0), tex.clone(), 0.5);
         assert_eq!(m.extension.holes, Vec4::new(127.5, 0.0, 1.0, 0.0));
+        // #3017: a cut of 1 stays a cut (the shader reads 255 as no holes): 255 kept, 254 dropped.
+        let full = cut_by(with(AlphaMode::Add, 0.0), tex.clone(), 1.0).extension.holes.x;
+        assert!(full < 255.0 && full > 254.0, "{full}");
+        assert_eq!(holes_cut(0.0), 0.0);
+        assert_eq!(holes_cut(2.0), 254.5);
         assert_eq!(m.extension.holes_texture, Some(tex));
     }
 

@@ -112,15 +112,21 @@ Read here as [hypothesis where marked]:
   (no fill) painted the player's hair flat orange with a bright rim and the head looked
   bald (owner's playtest, 2026-10-24; smoke `hair-under-fire`). Whether the original
   draws the membrane on hair, and through its alpha, is not known.
-- Except under a hologram colour (§9): Dead Money's hologram bodies are see-through by
-  their own materials, so this rule left them bare and their membrane never showed
-  [observed: `effect shaders summary: … 0 overlays drawn` in smoke runs of 2026-11-20
-  with `NVDLC01HologramNeutral` playing on HoloGalREF, HoloDudeREF, VaultHoloCREF and
-  NVDLC01HologramVendor2REF; `covers 8 meshes of CasinoHologramB` with no overlay in the
-  run of 2026-11-21]. Under one of the six hologram colours a blended or cut-out mesh
-  with a texture gets overlays cut where that texture's alpha is below its own cut or
-  8/255, one without a texture gets them whole [design: the membrane is the hologram's
-  look; `effect_shaders.rs::hologram_cover`]. The `covers` line counts the meshes given
+- Except under a hologram colour (§9): the membrane never showed on Dead Money's
+  holograms [observed: `effect shaders summary: 6 played, 3 ended, 0 overlays drawn`
+  and `2 played, 1 ended, 0 overlays drawn` in smoke runs of 2026-11-20, with
+  `NVDLC01HologramNeutral` playing on HoloGalREF, HoloDudeREF and VaultHoloCREF, and on
+  NVDLC01HologramVendor2REF; in the run of 2026-11-21 every `fades with its actor` line
+  of CasinoHologramB said `0 overlays on 8 meshes` (its `covers 8 meshes` line counted
+  meshes left bare as covered)]. Why: their body meshes are see-through by their own
+  materials (blended or cut out), which this rule leaves bare [documented: a code
+  finding in `effect_shaders.rs::cover`, inferred from the counts; the materials
+  themselves were not dumped]. Under one of the six hologram colours a blended or
+  cut-out mesh with a texture gets overlays cut where that texture's alpha is below its
+  own cut or 8/255, one without a texture gets them whole [design: the membrane is the
+  hologram's look; `effect_shaders.rs::hologram_cover`]. The 8/255 floor drops faint
+  texels below it as well as empty ones [design]. A cut of 1 (only fully opaque texels)
+  is drawn as 254.5 in the holes test, which reads 255 as "no holes" [design]. The `covers` line counts the meshes given
   overlays and those left bare: `(overlays on <k>; none on <b> blended or cut out, <c>
   cloaked)`.
 - Blend: destination 2 (One) and 5 (Source Alpha) are drawn additively, 6 (Source
@@ -439,17 +445,23 @@ What runs here:
   whatever colour a code holder's OnLoad has just restored. The script's shape suggests
   its authors expected a threat colour to take over and the neutral replay not to undo
   a code holder's alert [hypothesis: inferred from the call sequence; observer-checks.md
-  item 250]. The colour rule, applied at the script call
+  item 266]. The colour rule, applied at the script call
   (`fnv_game::functions::misc::ScriptLooks::play`), so HasEffectShader and the drawing
   agree:
   - a threat colour (Attention, Aggressive) played on a hologram ends the other colours
     of its set playing there;
   - the neutral colour is not played while another colour of its set plays there; a
     code holder reaches it only after stopping the threat colour, so it still shows on
-    the way down.
+    the way down;
+  - a neutral colour a threat colour ends, or a neutral play refused under one, is held
+    back under it (`ScriptLooks::hologram_fallbacks`) and comes back when that threat
+    colour ends by its time; a script's `StopMagicShaderVisuals` of the neutral colour
+    lets it go, and a threat colour stopped by a script brings nothing back by itself
+    (the code holders play the next colour after their Stop). A timed red over the
+    always-on blue so leaves blue when it runs out, not a bare hologram.
   So "Neutral, Neutral, Aggressive" in one update leaves Aggressive; Attention restored
   by OnLoad survives the ability's Neutral replay; Stop Attention then Play Neutral shows
-  Neutral [design over the hypothesis above].
+  Neutral [design over the hypothesis above]. Old World Blues' set follows the same rule.
 - The sets are named by identity, the plugin that defines each and its FormID in it
   (`HOLOGRAM_COLOURS`): DeadMoney.esm 0x001118, 0x00307D, 0x00307C and OldWorldBlues.esm
   0x012080, 0x012081, 0x012082 [observed: the maintainer's decode and the main session's
