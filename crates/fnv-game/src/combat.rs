@@ -624,6 +624,14 @@ impl Game<'_> {
         if let Some(a) = info.attacker {
             self.extra.entry(a).or_default().last_target = Some(target);
         }
+        if info.critical {
+            // [documented: SetOnCriticalHitEventHandler] this = struck actor;
+            // arguments: source, weapon. Fired after `last_hit` is recorded so
+            // `GetHitLocation` reads this hit as in the wiki example.
+            let source = fnv_script::vm::XVal::Ref(info.attacker.map_or(0, |a| a.0));
+            let weapon = fnv_script::vm::XVal::Ref(info.weapon.map_or(0, |w| w.0));
+            self.jip_event("criticalhit", Some(target), vec![source, weapon]);
+        }
         if dealt > 0.0 {
             // [documented: SetOnHealthDamageEventHandler] the amount negative, the source.
             let source = fnv_script::vm::XVal::Ref(info.attacker.map_or(0, |a| a.0));
@@ -1085,9 +1093,12 @@ impl Game<'_> {
 
     /// Run the OnFire blocks of the weapon `actor` fired (its object script)
     /// [documented: block name; observed: the detonator's script, `DetonatorOnFire`, is
-    /// an OnFire block].
+    /// an OnFire block], and fire JIP's `SetOnFireWeaponEventHandler` event
+    /// [documented: SetOnFireWeaponEventHandler]. Returns whether an OnFire block ran.
     pub fn weapon_fired(&mut self, actor: FormId, weapon: FormId) -> bool {
-        self.item_event(actor, weapon, event::ON_FIRE, None)
+        let ran = self.item_event(actor, weapon, event::ON_FIRE, None);
+        self.fire_weapon_jip_event(actor, weapon, false);
+        ran
     }
 
     /// The XP the player earns for killing `target` (see the module notes): none for the
