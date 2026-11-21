@@ -1177,7 +1177,13 @@ impl Runtime {
                 let (r, m) = (resolve(g, r)?, resolve(g, m)?);
                 let ctx = fnv_game::functions::Ctx { unit: "test aid".into(), opcode: MOVE_TO, on: Some(r), self_ref: Some(r), action_ref: None, quest: None, inst: None, in_condition: false };
                 let args: Vec<ArgValue> = std::iter::once(ArgValue::Value(Value::Ref(m.0))).chain(off.iter().map(|v| ArgValue::Value(Value::Num(f64::from(*v))))).collect();
+                // A MoveTo the game refuses fails the aid, as a `call:` does (#2841: a
+                // scenario's forbid on failed steps must see it).
+                let from = g.events.len();
                 g.call_function(&ctx, &args);
+                if let Some(EventKind::CallFailed { error, .. }) = g.events[from..].iter().map(|e| &e.kind).find(|k| matches!(k, EventKind::CallFailed { .. })) {
+                    return Err(format!("MoveTo: {error}"));
+                }
             }
             ScriptAid::Stop(q) => {
                 let q = resolve(g, q)?;

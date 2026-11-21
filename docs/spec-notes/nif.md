@@ -1512,7 +1512,8 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   and so is object LOD block geometry (LOD_Building) without the window flag, which
   stands beyond the loaded cells, farther than `fEnvMapLOD2` [design]; window shapes keep
   #2462's gate there too. A slot-4 file that is a flat texture (6 shapes) is reported once
-  as an info line, not a warning. A reflecting exterior STAT or SCOL shape is not given
+  as an info line, not a warning; one flagged as a cube map without six faces is a
+  warning [design]. A reflecting exterior STAT or SCOL shape is not given
   the opt-in mesh-terrain blend (off by default in both looks), which has no
   environment bindings: the reflection, the original's own effect, wins over
   NVForever's addition [design; docs/design/graphics-enhanced.md "Selection"]. The window flag stays a property of its own on the
