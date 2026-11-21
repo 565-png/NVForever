@@ -523,7 +523,7 @@ impl Plugin for ReportsPlugin {
                 detectors: Default::default(),
             })
             .add_systems(Startup, (read_gpu, read_window))
-            .add_systems(Update, (collect, track_loads, detect.after(nvf_play::control::enforce_locks)).chain())
+            .add_systems(Update, (collect, track_loads, list_model_sources, detect.after(nvf_play::control::enforce_locks)).chain())
             // After Bevy's window-closed exit (AppExit in Last): else a window closed by the
             // player missed the clean end and the run was sent as a native crash (#2203).
             .add_systems(Last, (controls::detect, write_summary.after(bevy::window::ExitSystems)).chain());
@@ -803,21 +803,25 @@ mod stuck_tests {
     }
 }
 
+/// Whose record names each model file, listed once on a thread of its own as soon as the
+/// load order is there (#3045, asset_sources.rs).
+fn list_model_sources(world: Option<Res<crate::world::WorldData>>) {
+    if let Some(world) = world {
+        anomaly::list_model_sources(world.lo);
+    }
+}
+
 /// The anomaly detectors that read the game's state each frame (anomaly.rs), and the ones
 /// the log lines found since the last frame, given where the player is.
 fn detect(
     real: Res<Time<Real>>,
     loading: Option<Res<nvf_play::loading::Loading>>,
     intent: Option<Res<nvf_play::player::MoveIntent>>,
-    (locks, seat, world): (Option<Res<nvf_play::control::ControlLocks>>, Option<Res<nvf_play::furniture::PlayerSeat>>, Option<Res<crate::world::WorldData>>),
+    (locks, seat): (Option<Res<nvf_play::control::ControlLocks>>, Option<Res<nvf_play::furniture::PlayerSeat>>),
     voice: Option<Res<nvf_play::voice::VoiceState>>,
     memory: Option<Res<crate::memory_budget::MemoryBudget>>,
     mut c: ResMut<Collector>,
 ) {
-    // Whose record names each model file, listed once on a thread of its own (#3045).
-    if let Some(world) = &world {
-        anomaly::list_model_sources(world.lo);
-    }
     let c = &mut *c;
     let t_s = c.started.elapsed().as_secs();
     let loading_now = loading.as_ref().is_some_and(|l| l.active());
