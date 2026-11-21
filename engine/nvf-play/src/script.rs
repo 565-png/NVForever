@@ -522,6 +522,20 @@ fn source_compile_mode(unattended: bool) {
     }
 }
 
+/// The game INI text the script VM's INI functions read (`fnv_game::nvse_settings`),
+/// lowest precedence first. `--mo2` sets the profile's own INIs and `initweaks.ini`
+/// (#1526 phase 2b); empty otherwise, so a setting reads as missing.
+static INI_TEXTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Give the script VM the game INI text to read (start-up, before the scripts load).
+pub fn set_ini_texts(texts: Vec<String>) {
+    *INI_TEXTS.lock().unwrap_or_else(|e| e.into_inner()) = texts;
+}
+
+fn ini_texts() -> Vec<String> {
+    INI_TEXTS.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
 /// Build the script data on its own thread (decoding every unit takes about a second;
 /// render streaming and physics start meanwhile).
 fn start_loading(d: PlayData, refs: &'static RefTable) -> Receiver<Loaded> {
@@ -536,7 +550,12 @@ fn start_loading(d: PlayData, refs: &'static RefTable) -> Receiver<Loaded> {
             let step = Instant::now();
             let table = FunctionTable::load(&path).map_err(|e| e.to_string())?;
             info!("script build: function table: {:.0} ms", step.elapsed().as_secs_f64() * 1e3);
-            let data: &'static GameData = Box::leak(Box::new(GameData::build(d.lo, d.schema, table, &json, refs)));
+            let data: &'static GameData = Box::leak(Box::new({
+                let mut data = GameData::build(d.lo, d.schema, table, &json, refs);
+                // The game INI text the extender's INI functions read (`--mo2`'s profile).
+                data.ini_texts = ini_texts();
+                data
+            }));
             info!("script build: the whole thread: {:.0} ms", t.elapsed().as_secs_f64() * 1e3);
             Ok((data, t.elapsed().as_secs_f64()))
         })();
