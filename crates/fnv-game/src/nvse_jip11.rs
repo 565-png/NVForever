@@ -27,6 +27,8 @@ pub struct Jip11State {
     pub set_breath: Option<f32>,
     /// ResetFallTime's actors, for the engine to take.
     pub fall_resets: BTreeSet<FormId>,
+    /// Engine-reported remaining fall time in seconds, by actor (GetFallTimeRemaining).
+    pub fall_time_remaining: BTreeMap<FormId, f32>,
     /// SetActorUnarmedEffect's effects, by the actor base that supplies its effects.
     pub unarmed: BTreeMap<FormId, FormId>,
     /// RemoveNthEffect's removed entries, by magic item: record indices.
@@ -150,6 +152,65 @@ impl Game<'_> {
     /// ResetFallTime's actors since the last call.
     pub fn take_fall_resets(&mut self) -> Vec<FormId> {
         std::mem::take(&mut self.other.jip11.fall_resets).into_iter().collect()
+    }
+
+    /// Record or clear an actor's remaining fall time in seconds (GetFallTimeRemaining).
+    pub fn set_fall_time_remaining(&mut self, actor: FormId, seconds: Option<f32>) {
+        match seconds.filter(|s| s.is_finite() && *s > 0.0) {
+            Some(s) => {
+                self.other.jip11.fall_time_remaining.insert(actor, s);
+            }
+            None => {
+                self.other.jip11.fall_time_remaining.remove(&actor);
+            }
+        }
+    }
+
+    /// Estimated seconds remaining before `actor` lands (GetFallTimeRemaining)
+    /// [documented: GECK wiki GetFallTimeRemaining; hypothesis: kinematic time to ground
+    /// from ray cast, tracked velocity, and gravity when no direct engine value is set].
+    pub fn fall_time_remaining(&self, actor: FormId) -> f64 {
+        if let Some(&sec) = self.other.jip11.fall_time_remaining.get(&actor) {
+            return f64::from(sec.max(0.0));
+        }
+        let air_time = self.gaps.air_times.get(&actor).copied().unwrap_or(0.0);
+        if air_time <= 0.0 {
+            return 0.0;
+        }
+        let Some(pos) = self.world.peek(actor).map(|s| s.pos).or_else(|| self.world.placed.get(actor).map(|p| p.pos)) else {
+            return 0.0;
+        };
+        let Some(dist) = crate::ray::cast(
+            [pos[0], pos[1], pos[2] + 1.0],
+            [pos[0], pos[1], pos[2] - 100_000.0],
+            crate::ray::CastKind::World,
+        ) else {
+            return 0.0;
+        };
+        let height = f64::from((dist - 1.0).max(0.0));
+        if height <= 0.0 {
+            return 0.0;
+        }
+        // Standard world gravity: 9.81 m/s^2 * 70 game units/m = 686.7 units/s^2
+        // (matching `fnv_combat::projectile` / `fnv-phys`), overridden by SetLocalGravityVector
+        // and scaled by SetActorGravityMult.
+        const WORLD_GRAVITY: f64 = 686.7;
+        let g_base = match self.other.jip13.gravity {
+            Some((gv, cell_opt)) if cell_opt.is_none() || cell_opt == self.cell_of(actor) => f64::from(-gv[2]),
+            _ => WORLD_GRAVITY,
+        };
+        let mult = self.gaps.gravity.get(&actor).copied().unwrap_or(1.0);
+        let g_eff = g_base * mult;
+        let vz = match self.jip2.velocity.get(&actor) {
+            Some(&(_, v)) => f64::from(v[2]),
+            None if g_eff > 0.0 => -g_eff * f64::from(air_time),
+            None => 0.0,
+        };
+        if g_eff <= 0.0 {
+            return if vz < 0.0 { height / (-vz) } else { 0.0 };
+        }
+        let disc = (vz * vz + 2.0 * g_eff * height).max(0.0);
+        ((vz + disc.sqrt()) / g_eff).max(0.0)
     }
 
     /// The detection value of `target` as ForceActorDetectionValue leaves it: the forced
@@ -427,9 +488,9 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             }
         }
         // ---- falls ----
-        // [decision: the time to the ground needs the ground below a falling actor, which
-        // only the engine's physics knows; 0 until it is passed over, spec note §6.]
-        "getfalltimeremaining" => zero,
+        // Estimated seconds until the falling actor hits the ground, 0 when grounded
+        // [documented: GECK wiki GetFallTimeRemaining; docs/spec-notes/nvse-stubs-persistent-fall-spread-unique.md].
+        "getfalltimeremaining" => XVal::Num(subject.map_or(0.0, |r| g.fall_time_remaining(r))),
         // The fall is measured again from where the actor is now [documented]; the
         // engine takes the request (`nvf_play::falls`).
         "resetfalltime" => {
