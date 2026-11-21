@@ -139,6 +139,7 @@ runs only where the game fires it (`Game::jip_event`):
 | crafting | the recipe menu made an item: once per output, with all of it (`Game::item_crafted`) [hypothesis: the page does not say how a recipe made several times is reported] | #1408 |
 | locationdiscover | the engine found a map marker, with the marker reference (`Game::challenge_marker_found`) | #1408 |
 | dialogtopic | a dialogue line is spoken (`dialogue.rs` `speak` and `game.rs` `say_line`), with `this = speaker` and `arg0 = info` when matched by an INFO filter or `topic` when matched by a topic/wildcard filter [documented; hypothesis: unfiltered/wildcard passes topic] | authored controls |
+| fasttravel | the player fast-travels (`nvse_jip12.rs` `Game::fast_travel`, `Game::note_fast_travel_to`, and `Game::note_fast_travel` called by `nvf_play::pipboy::data::travel::depart`), with no calling reference and `arg0` the arrival marker reference (the map marker's linked reference when present, else the map marker itself); blocked/refused travel does not fire [documented: SetOnFastTravelEventHandler; hypothesis: `note_fast_travel` resolves the arrival marker from the player's landing position] | #2272 |
 
 Not fired yet: criticalhit, fireweapon, reloadweapon, animaction, playgroup,
-fasttravel, pctargetchange, triggerdown/up.
+pctargetchange, triggerdown/up.
