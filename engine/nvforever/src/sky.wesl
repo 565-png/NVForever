@@ -85,7 +85,7 @@ fn tony_inverse(y: f32) -> f32 {
     return TONY_IN[N - 1u];
 }
 
-// ---- Night sky detail (night_sky.rs, docs/design/graphics-enhanced.md §3.17) ----
+// ---- Night sky detail (night_sky.rs, docs/design/graphics-enhanced.md §3.19) ----
 // An engineering choice for the enhanced look, not the original's behaviour. Every value
 // comes from `sky.moon` / `sky.night`, zero with the switch off (the branches are skipped).
 

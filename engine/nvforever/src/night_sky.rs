@@ -2,7 +2,7 @@
 //! round the moon and moonlit clouds, from the climate's own stars and moon and the shown
 //! weather's own colours and fog. An engineering choice for the enhanced look [design], not a
 //! fact about the original game and never used to explain a difference from it
-//! (docs/design/graphics-enhanced.md §3.17).
+//! (docs/design/graphics-enhanced.md §3.19).
 //!
 //! No pass, texture or mesh of its own: every part is drawn by the sky's own shader
 //! (`sky.wesl`) from two fields of the sky parts' uniform (`sky::SkyLight::moon` and
