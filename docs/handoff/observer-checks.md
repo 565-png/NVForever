@@ -3432,9 +3432,23 @@ already talking takes over at once, same topic or another; nothing is queued or 
      DLC04DarMuckBubble (0x0A012C5E: index 1, damage stage 3, at 40 %): damage one to under
      40 % with the console (`DamageObject`) and print `GetDestructionStage` (2 or 3).
 
+## Added 2026-11-15 (the Camp McCarran observation window, #2462)
+
+249. **How does the observation window at Camp McCarran look from each side?** (P3;
+     #2462, nif.md §6 "Window glass and environment maps".) Ours since #2462: the pane
+     (VWindow01 0x000FB2F4 in CampMCTermInt02, `vwindow01.nif`) draws its environment
+     cube `ShinyBright_e.dds` added over its blend, not weighted by its texture alpha
+     (about 0.05 in the middle), so grey reflection streaks show from both sides
+     [hypothesis]. In CampMCTermInt02 take one frame from the observation side
+     (`player.setpos x 112`, `y 1200`, `z 18672`, facing north) and one from inside the
+     interrogation room (`x 112`, `y 1700`, `z 18672`, facing south), then a third from
+     the room side while strafing past, to see whether the streaks move with the view.
+     Streaks moving with the view as bright as the frame agree with ours; a pane that is
+     only a faint grey film, or nothing, says the reflection is weighted by alpha.
+
 ## Added 2026-11-21 (talking through cell bars, #3233)
 
-249. **Does the crosshair pass collision on the Transparent layer (3), and on Transparent
+250. **Does the crosshair pass collision on the Transparent layer (3), and on Transparent
      Small (26/28): can the player talk to, take, open or search what stands behind it?**
      (P2; #3233, simulation.md §5 "Talking through bars".) The wiki says nothing but
      projectiles passes Transparent and that actors see through it [documented: GECK wiki
