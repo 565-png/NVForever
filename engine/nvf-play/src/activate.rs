@@ -400,7 +400,8 @@ const REVIVE_NEEDS_STIMPAK: &str = "You need a Stimpak to revive them.";
 /// prompt and says nothing, as before]. Without the scripts: Talk.
 fn actor_action(rt: Option<&mut crate::script::Runtime>, sim: &mut SimState, id: u32, talkers: &mut HashMap<u32, (bool, f64)>) -> Action {
     let Some(rt) = rt else { return Action::Talk };
-    let creature = sim.refs.get(FormId(id)).is_some_and(|p| &p.sig == b"ACRE");
+    // By the base for a reference made at run time, which has no placement (#3124).
+    let creature = sim.is_creature(id);
     crate::script::with_world(rt, sim, |rt| actor_action_in(&mut rt.game, creature, id, talkers))
 }
 
