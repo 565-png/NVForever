@@ -907,6 +907,15 @@ mod tests {
             .insert_resource(crate::graphics::Graphics::preset(crate::graphics::Preset::Enhanced))
             .add_plugins(ReflectionPlugin)
             .add_systems(Update, crate::water::distant_water);
+        // distant_water budgets uncached surface reads per frame (#2956), so settle the
+        // initial r = 3 square around (0, 0) at t = 0 before timed reflection checks.
+        for _ in 0..6 {
+            app.update();
+            if app.world().resource::<DistantWater>().plane_cells().count() == 3 {
+                break;
+            }
+        }
+        assert_eq!(app.world().resource::<DistantWater>().plane_cells().count(), 3);
         (app, camera, data)
     }
 
