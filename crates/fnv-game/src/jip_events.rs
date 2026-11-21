@@ -64,6 +64,9 @@ pub struct JipEvents {
     pub music_states: Vec<u8>,
     /// What lasts the whole session, across loads (`Game::take_session`).
     pub kept: JipKept,
+    /// `(frame, [(actor, weapon)])` pairs whose `fireweapon` event already fired this
+    /// frame, deduplicating `weapon_fired` -> `projectile_fired` and multi-pellet bursts.
+    pub(crate) fired_this_frame: (u64, Vec<(FormId, FormId)>),
 }
 
 impl JipEvents {
@@ -739,6 +742,55 @@ impl Game<'_> {
     /// two outputs, is reported].
     pub fn item_crafted(&mut self, item: FormId, quantity: i64) {
         self.jip_event("crafting", None, vec![XVal::Ref(item.0), XVal::Num(quantity as f64)]);
+    }
+
+    /// Fire JIP's `SetOnFireWeaponEventHandler` event (`fireweapon`) when an actor fires
+    /// a ranged weapon: `this = actor`, `arg0 = weapon` base form
+    /// [documented: SetOnFireWeaponEventHandler, docs/spec-notes/jip-events.md §2].
+    ///
+    /// Excluded:
+    /// - non-actors (e.g. trap activators firing via `FireWeapon`);
+    /// - melee/hand-to-hand weapons (WEAP DNAM `animation_type` 0..=2);
+    /// - the player while god mode (`ToggleGodMode`) is active (demigod /
+    ///   `ToggleImmortalMode` still fires) [documented: SetOnFireWeaponEventHandler].
+    ///
+    /// When `dedup_same_frame` is true (`Game::projectile_fired`), skip if
+    /// `(self.frame, actor, weapon)` already fired this frame so a player shot
+    /// (`weapon_fired` followed by `projectile_fired`) or a multi-pellet shotgun burst
+    /// fires once per round [hypothesis].
+    pub(crate) fn fire_weapon_jip_event(&mut self, actor: FormId, weapon: FormId, dedup_same_frame: bool) -> usize {
+        let is_actor = actor == FormId::PLAYER_REF
+            || matches!(
+                crate::functions::base_of(self, actor).and_then(|b| self.data.sig(b)).as_ref(),
+                Some(b"NPC_") | Some(b"CREA")
+            );
+        if !is_actor {
+            return 0;
+        }
+        if matches!(self.data.weapon_anim_types.get(&weapon), Some(0..=2)) {
+            return 0;
+        }
+        if actor == FormId::PLAYER_REF && self.toggles.god_mode {
+            return 0;
+        }
+        if self.jip.fired_this_frame.0 != self.frame {
+            self.jip.fired_this_frame = (self.frame, Vec::new());
+        }
+        let key = (actor, weapon);
+        if dedup_same_frame && self.jip.fired_this_frame.1.contains(&key) {
+            return 0;
+        }
+        if !self.jip.fired_this_frame.1.contains(&key) {
+            self.jip.fired_this_frame.1.push(key);
+        }
+        self.jip_event("fireweapon", Some(actor), vec![XVal::Ref(weapon.0)])
+    }
+
+    /// Fire JIP's `SetOnReloadWeaponEventHandler` event (`reloadweapon`) when an actor
+    /// starts reloading `weapon`: `this = actor`, `arg0 = weapon` base form
+    /// [documented: SetOnReloadWeaponEventHandler, docs/spec-notes/jip-events.md §2].
+    pub fn weapon_reloaded(&mut self, actor: FormId, weapon: FormId) -> usize {
+        self.jip_event("reloadweapon", Some(actor), vec![XVal::Ref(weapon.0)])
     }
 
     /// The main-loop callbacks due this frame (`Game::tick`).
