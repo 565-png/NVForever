@@ -296,9 +296,33 @@ fn scripts_open_barter(script: Option<ResMut<crate::script::ScriptState>>, mut o
 /// reference's (`fnv_game::Game::merchant_container`); the merchant itself without one.
 fn merchant_stock(script: Option<&mut crate::script::ScriptState>, sim: &mut SimState, merchant: FormId) -> FormId {
     let placed = sim.refs.get(merchant).and_then(|p| p.merchant_container);
-    let scripted = script.and_then(|s| s.rt.as_mut()).and_then(|rt| crate::script::with_world(rt, sim, |rt| rt.game.merchant_container(merchant)));
-    scripted.or(placed).unwrap_or(merchant)
+    match script.and_then(|s| s.rt.as_mut()) {
+        Some(rt) => crate::script::with_world(rt, sim, |rt| rt.game.merchant_container(merchant)).unwrap_or(merchant),
+        None => placed.unwrap_or(merchant),
+    }
 }
+
+#[cfg(test)]
+mod merchant_clear_tests {
+    use super::*;
+
+    #[test]
+    fn barter_stock_does_not_restore_an_explicitly_cleared_authored_container() {
+        let merchant = FormId(0x301); let stock = FormId(0x310);
+        let mut reference = crate::sim::placed_ref(merchant.0);
+        reference.merchant_container = Some(stock);
+        let mut sim = SimState::over_placed([reference]);
+        let mut script = crate::script::ScriptState::over_no_plugins();
+        assert_eq!(merchant_stock(Some(&mut script), &mut sim, merchant), stock);
+        script.rt.as_mut().unwrap().game.extra.entry(merchant).or_default().merchant_container_cleared = true;
+        assert_eq!(merchant_stock(Some(&mut script), &mut sim, merchant), merchant);
+        assert_eq!(merchant_stock(None, &mut sim, merchant), stock);
+    }
+}
+
+#[cfg(test)]
+#[path = "menu/merchant_source_tests.rs"]
+mod merchant_source_tests;
 
 /// What `merchant` sells, by its services (`fnv_game::services`,
 /// docs/spec-notes/vendor-services.md §4), logged with whether it offers its services now;
@@ -395,7 +419,11 @@ pub(crate) fn open_menus(
             let skill = barter_skill(script.as_deref_mut(), &mut sim);
             info!("menu: barter with {merchant}: stock in {stock}, Barter skill {skill}");
             let sells = vendor_sells(script.as_deref_mut(), &mut sim, merchant);
+            let barter_hidden = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| rt.game.barter_hidden_for(merchant)).unwrap_or_default();
             MenuModel::open_barter(&mut sim.world, merchant, stock, model::CAPS, skill, b.discount).and_then(|mut m| {
+                if !barter_hidden.is_empty() {
+                    m.set_barter_hidden(&mut sim.world, barter_hidden)?;
+                }
                 if let Some(s) = sells {
                     m.set_sells(&mut sim.world, s)?;
                     let held = m.trade.as_ref().map_or(&[][..], |t| &t.withheld[..]);
@@ -851,12 +879,18 @@ fn publish_jip_menus(mut active: ResMut<ActiveMenu>, script: Option<ResMut<crate
     let units = |side: Side| t.offered[side as usize].keys().map(|u| u.0).collect::<std::collections::BTreeSet<_>>().into_iter().collect::<Vec<_>>();
     rt.game.set_barter_view(Some(BarterView { merchant_caps: t.purse[Side::Container as usize], stock: t.stock, bought: units(Side::Container), sold: units(Side::Player), mult: t.mults() }));
     let set = rt.game.barter_price_mults();
-    if m.trade.as_ref().is_some_and(|t| t.mult_set != set) {
+    let hidden = rt.game.barter_hidden_for(t.merchant);
+    let mult_changed = t.mult_set != set;
+    let hidden_changed = t.hidden != hidden;
+    if mult_changed || hidden_changed {
         let Some(m) = active.0.as_mut() else { return };
         if let Some(t) = m.trade.as_mut() {
             t.mult_set = set;
+            t.hidden = hidden;
         }
-        info!("barter: a script set the price multipliers to {set:?}");
+        if mult_changed {
+            info!("barter: a script set the price multipliers to {set:?}");
+        }
         if let Err(e) = crate::script::with_world(rt, &mut sim, |rt| m.refresh(&mut rt.game.world)) {
             warn!("barter: the trade cannot be listed again: {e}");
         }

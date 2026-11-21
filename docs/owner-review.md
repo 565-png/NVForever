@@ -305,6 +305,14 @@ the spec it links to.
 
 ## Tier 3: rules where we chose to differ, or that the original has no answer for
 
+- **Saving while a mod's temporary clone is placed (#3147).** [design, #3147] While a
+  reference whose base was made by `TempCloneForm` is alive, every save is refused
+  whole (`Game::checked_snapshot`; a failed save now says so in a corner message). A mod
+  that keeps such a clone placed stops all saving for as long as it exists. The other
+  choice: save without those references, so the game is saved and the clones are gone
+  after a load (dropping them silently was rejected in review; nothing records your
+  choice). Keep refusing, or save without them?
+  ([temporary scene bases](spec-notes/temporary-scene-bases.md))
 - **Corpses in a crowd held while a head or hand still turns (#2083).** [observed, #2083]
   In battle-50, 34 corpses were held still moving at their time limit: 26 shot corpses
   at the 1 s `MAX_AWAKE_SHOVED` (your item 51), 8 fresh ones (7 at the 3 s
@@ -443,13 +451,10 @@ the spec it links to.
   property, and ruling otherwise means a per-model exception. Check the storm in game at
   night in HVDustStorm ([activators section 6.1](spec-notes/activators.md)).
 
-- **Map markers on the compass at the original's fixed range (#2348).** Your playtest
-  list 5 item 12 asked for markers on the compass with a "range by Perception", built as
-  Perception × 2048 (10,240 units at Perception 5, 20,480 at 10). Since #2348 the range is
-  the original's: the game setting `iMapMarkerVisibleDistance` (10000 by default), found
-  and unfound alike, whatever the Perception; quest targets stay at any distance. If the
-  Perception scaling should stay, say so on #2348: it can come back, as the default or as
-  an opt-in. ([hud §11](spec-notes/hud.md); observer check 227)
+- **Map markers on the compass use a fixed range (#2348).** [design, owner 2026-11-18]
+  The maintainer chose `iMapMarkerVisibleDistance` (10,000 units by default) for found
+  and unfound places, replacing the Perception-based range from playtest list 5 item 12.
+  Quest targets remain visible at any distance. ([hud §11](spec-notes/hud.md); observer check 227)
 
 19. **Walking away from a conversation.** The world freezes while you talk, as in the
     original, and walking off does not end it. Should walking off end it where the line
