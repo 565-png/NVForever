@@ -2769,10 +2769,10 @@ paths = [
   "engine/nvforever/src/taa*", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/fsr*",
   "engine/nvforever/src/upscaler*", "engine/nvforever/src/upscaler/**",
 ]
-env = { WGPU_BACKEND = "vulkan", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:21", NVF_PLAY_TEST_SETTINGS = "11:anti-aliasing=0.667,12.5:anti-aliasing=1,14:anti-aliasing=0,15.5:anti-aliasing=1,17:fsr-upscaling=Quality,19:fsr-upscaling=Off" }
+env = { WGPU_BACKEND = "vulkan", NVF_FFX_API = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:21", NVF_PLAY_TEST_SETTINGS = "11:anti-aliasing=0.667,12.5:anti-aliasing=1,14:anti-aliasing=0,15.5:anti-aliasing=1,17:fsr-upscaling=Quality,19:fsr-upscaling=Off" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720", "--graphics-only", "taa", "--no-lodgen"]
 run_seconds = 24
-note = "DLSS goes the same way (graphics.rs apply takes TAA off for any effective temporal upscaler) but needs NVF_DLSS_DIR, so FSR stands in for it here. The start may say 'taa: on' more than once (the camera's view made again by the cell load), hence min counts"
+note = "DLSS goes the same way (graphics.rs apply takes TAA off for any effective temporal upscaler) but needs NVF_DLSS_DIR, so FSR stands in for it here. NVF_FFX_API=0 keeps the built-in FSR 3.1.4 whatever FidelityFX library lies beside the exe (ffx_api.rs), so the dispatch line is always the 3.1.4 one. The start may say 'taa: on' more than once (the camera's view made again by the cell load), hence min counts"
 order = [[
   "taa: on for a view: its history starts over",
   "settings: anti-aliasing FXAA",

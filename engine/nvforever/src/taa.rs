@@ -32,6 +32,8 @@ use crate::fly::FlyCam;
 use bevy::core_pipeline::prepass::ViewPrepassTextures;
 use bevy::core_pipeline::tonemapping::tonemapping;
 use bevy::core_pipeline::{Core3d, Core3dSystems, FullscreenShader};
+use bevy::ecs::schedule::ScheduleConfigs;
+use bevy::ecs::system::ScheduleSystem;
 use bevy::math::{DMat4, DVec3};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -100,15 +102,18 @@ impl Plugin for TaaPlugin {
         render_app
             .init_resource::<Histories>()
             .add_systems(RenderStartup, init_pipelines)
-            .add_systems(
-                Render,
-                (drop_stale::<TaaView>, prepare).chain().in_set(RenderSystems::PrepareResources).after(bevy::core_pipeline::core_3d::prepare_prepass_textures),
-            )
+            .add_systems(Render, prepare_systems())
             .add_systems(
                 Core3d,
                 taa_pass.in_set(Core3dSystems::PostProcess).after(tonemapping).after(crate::ssao::ao_pass).before(crate::imagespace::blur_pass),
             );
     }
+}
+
+/// The render world's preparation, as [`TaaPlugin`] adds it to `Render`: the state of views
+/// whose TAA was turned off dropped ([`drop_stale`]), then this frame's ([`prepare`]).
+fn prepare_systems() -> ScheduleConfigs<ScheduleSystem> {
+    (drop_stale::<TaaView>, prepare).chain().in_set(RenderSystems::PrepareResources).after(bevy::core_pipeline::core_3d::prepare_prepass_textures)
 }
 
 /// The 2,3 Halton point `i` (1-based), each part in 0..1.
@@ -428,6 +433,36 @@ mod tests {
         assert_eq!(frame(&mut world, e), Some(true));
         assert!(pass_runs_on(&mut world, e));
         assert_eq!(frame(&mut world, e), Some(false));
+    }
+
+    /// The hookup the plugin uses: `drop_stale` (for the real `TaaView`) is in the render
+    /// world's preparation and runs before `prepare`.
+    #[test]
+    fn the_render_world_drops_the_stale_state_before_prepare() {
+        use std::any::TypeId;
+        let mut world = World::new();
+        let mut schedule = Schedule::default();
+        schedule.add_systems(prepare_systems());
+        schedule.initialize(&mut world).expect("the preparation's schedule builds");
+        let order: Vec<TypeId> = schedule.systems().expect("initialized").map(|(_, system)| system.system_type()).collect();
+        let at = |id: TypeId| order.iter().position(|t| *t == id);
+        let drop = at(IntoSystem::into_system(drop_stale::<TaaView>).system_type()).expect("drop_stale::<TaaView> is not in the preparation");
+        let prepare = at(IntoSystem::into_system(prepare).system_type()).expect("prepare is not in the preparation");
+        assert!(drop < prepare, "drop_stale must run before prepare");
+    }
+
+    /// `taa_pass` itself (not only [`PassViews`]) reads [`TaaView`] only on views with
+    /// [`TemporalAa`].
+    #[test]
+    fn the_pass_query_takes_only_views_that_carry_taa() {
+        let mut world = World::new();
+        let mut pass = IntoSystem::into_system(taa_pass);
+        let access = pass.initialize(&mut world);
+        let (taa, view) = (world.component_id::<TemporalAa>().expect("registered"), world.component_id::<TaaView>().expect("registered"));
+        let set = access.to_filtered_access_set();
+        let reads_view: Vec<_> = set.filtered_accesses().iter().filter(|a| a.access().has_read(view)).collect();
+        assert!(!reads_view.is_empty(), "taa_pass reads TaaView");
+        assert!(reads_view.iter().all(|a| a.with_filters().any(|c| c == taa)), "taa_pass must take only views with TemporalAa");
     }
 
     #[test]
