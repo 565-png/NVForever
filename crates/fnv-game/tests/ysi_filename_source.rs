@@ -200,22 +200,22 @@ fn required_filename_calls_reach_real_inventory_and_the_existing_ui_image_trait(
     let mut g = game(&f);
     g.world.add_item(FormId::PLAYER_REF, ITEM, 2).unwrap();
     let before = g.world.snapshot();
-    assert_eq!(success(&mut g,"let item := OwnYsiItem\nlet icon := ySIGetTagTrait \"filename\" item\nSetUIString \"HUDMainMenu/OwnedIcon/filename\" (icon)\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")"),XVal::Str("Owned/matched.dds".into()));
+    assert_eq!(success(&mut g,"let item := OwnYsiItem\nlet icon := ySIGetTrait \"filename\" item\nSetUIString \"HUDMainMenu/OwnedIcon/filename\" (icon)\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")"),XVal::Str("Owned/matched.dds".into()));
     // Plain legacy string arguments keep their literal-token convention; grouped
     // values and explicit conversion pass the variable contents instead.
     assert_eq!(
-        success(&mut g, "let icon := ySIGetTagTrait \"filename\" OwnYsiItem\nSetUIString \"HUDMainMenu/OwnedIcon/filename\" icon\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")"),
+        success(&mut g, "let icon := ySIGetTrait \"filename\" OwnYsiItem\nSetUIString \"HUDMainMenu/OwnedIcon/filename\" icon\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")"),
         XVal::Str("icon".into())
     );
     assert_eq!(
-        success(&mut g, "let icon := ySIGetTagTrait \"filename\" OwnYsiItem\nSetUIStringAlt (\"HUDMainMenu/OwnedIcon/filename\") $icon\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")"),
+        success(&mut g, "let icon := ySIGetTrait \"filename\" OwnYsiItem\nSetUIStringAlt (\"HUDMainMenu/OwnedIcon/filename\") $icon\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")"),
         XVal::Str("Owned/matched.dds".into())
     );
-    assert_eq!(success(&mut g,"let pair := ar_List OwnYsiItem\nSetFunctionValue (pair[0].ySIGetTagTrait \"filename\")"),XVal::Str("Owned/matched.dds".into()));
+    assert_eq!(success(&mut g,"let pair := ar_List OwnYsiItem\nSetFunctionValue (pair[0].ySIGetTrait \"filename\")"),XVal::Str("Owned/matched.dds".into()));
     assert_eq!(
         success(
             &mut g,
-            "SetFunctionValue (OwnYsiPlaced.ySIGetTagTrait \"filename\")"
+            "SetFunctionValue (OwnYsiPlaced.ySIGetTrait \"filename\")"
         ),
         XVal::Str("Owned/matched.dds".into())
     );
@@ -250,7 +250,7 @@ fn multiple_files_use_certain_highest_priority_without_guessing_tie_order() {
     assert_eq!(
         success(
             &mut g,
-            "SetFunctionValue (ySIGetTagTrait \"filename\" OwnYsiItem)"
+            "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"
         ),
         XVal::Str("Owned/high.dds".into())
     );
@@ -265,7 +265,7 @@ fn multiple_files_use_certain_highest_priority_without_guessing_tie_order() {
     assert_eq!(
         query(
             &mut fresh,
-            "SetFunctionValue (ySIGetTagTrait \"filename\" OwnYsiItem)"
+            "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"
         ),
         Err("ambiguous ySI tag priority; native tie ordering remains unqualified".into())
     );
@@ -294,7 +294,7 @@ fn unknown_possible_winners_refuse_but_decisively_false_or_lower_rules_do_not_wi
         let mut g = game(&f);
         let result = query(
             &mut g,
-            "SetFunctionValue (ySIGetTagTrait \"filename\" OwnYsiItem)",
+            "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)",
         );
         if expected {
             assert_eq!(result, Ok(XVal::Str("Owned/certain.dds".into())));
@@ -308,20 +308,39 @@ fn unknown_possible_winners_refuse_but_decisively_false_or_lower_rules_do_not_wi
 }
 
 #[test]
-fn unsupported_string_invalid_receiver_and_missing_icon_never_fake_a_value() {
+fn invalid_receiver_non_item_and_missing_icon_never_fake_a_value_and_tag_icon_stay_intact() {
     let files = Files::new();
     files.write("ySI.json", &certain("Owned/icon.dds"));
     let f = fixture();
     let mut g = game(&f);
     let before = g.world.snapshot();
     for bad in [
-        "SetFunctionValue (ySIGetTagTrait \"string\" OwnYsiItem)",
-        "SetFunctionValue (empty.ySIGetTagTrait \"filename\")",
-        "SetFunctionValue (ySIGetTagTrait \"filename\" Player)",
+        "SetFunctionValue (empty.ySIGetTrait \"filename\")",
+        "SetFunctionValue (ySIGetTrait \"filename\" Player)",
     ] {
         assert!(query(&mut g, bad).is_err(), "{bad}");
         assert_eq!(g.world.snapshot(), before);
     }
+    // Existing in-memory ySISetTrait / ySIGetTrait "tag" and "icon" behavior is preserved.
+    success(
+        &mut g,
+        "ySISetTrait \"tag\" \"(owned)\" OwnYsiItem\nySISetTrait \"icon\" \"Owned/set.dds\" OwnYsiItem",
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"tag\" OwnYsiItem)"),
+        XVal::Str("(owned)".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"icon\" OwnYsiItem)"),
+        XVal::Str("Owned/set.dds".into())
+    );
+    assert_eq!(
+        success(
+            &mut g,
+            "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"
+        ),
+        XVal::Str("Owned/icon.dds".into())
+    );
     files.write(
         "ySI.json",
         &config(
@@ -332,7 +351,7 @@ fn unsupported_string_invalid_receiver_and_missing_icon_never_fake_a_value() {
     let mut fresh = game(&f);
     assert!(query(
         &mut fresh,
-        "SetFunctionValue (ySIGetTagTrait \"filename\" OwnYsiItem)"
+        "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"
     )
     .unwrap_err()
     .contains("missing or ambiguous"));
@@ -344,7 +363,7 @@ fn game_restore_reloads_the_config_snapshot_without_saving_provider_cache() {
     files.write("ySI.json", &certain("Owned/first.dds"));
     let f = fixture();
     let mut g = game(&f);
-    let expression = "SetFunctionValue (ySIGetTagTrait \"filename\" OwnYsiItem)";
+    let expression = "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)";
     assert_eq!(
         success(&mut g, expression),
         XVal::Str("Owned/first.dds".into())
@@ -392,7 +411,7 @@ fn local_comments_preserve_quoted_content_and_generic_json_stays_strict() {
     assert_eq!(
         success(
             &mut g,
-            "SetFunctionValue (ySIGetTagTrait \"filename\" OwnYsiItem)"
+            "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"
         ),
         XVal::Str("https://owned.invalid/a/*literal*/icon.dds".into())
     );
@@ -428,7 +447,7 @@ fn mapped_file_bound_and_malformed_configuration_refuse_explicitly() {
     assert_eq!(
         success(
             &mut at_bound,
-            "SetFunctionValue (ySIGetTagTrait \"filename\" OwnYsiItem)"
+            "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"
         ),
         XVal::Str("Owned/base.dds".into())
     );
@@ -437,7 +456,7 @@ fn mapped_file_bound_and_malformed_configuration_refuse_explicitly() {
     assert_eq!(
         query(
             &mut g,
-            "SetFunctionValue (ySIGetTagTrait \"filename\" OwnYsiItem)"
+            "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"
         ),
         Err("ySI filename configuration exceeds the mapped file bound".into())
     );
@@ -455,7 +474,7 @@ fn mapped_file_bound_and_malformed_configuration_refuse_explicitly() {
     assert_eq!(
         query(
             &mut fresh,
-            "SetFunctionValue (ySIGetTagTrait \"filename\" OwnYsiItem)"
+            "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"
         ),
         Err("unterminated ySI configuration comment".into())
     );
@@ -477,7 +496,7 @@ fn quest_item_filename_uses_authored_and_saved_world_flags_through_real_source_a
             ]),
         ),
     );
-    let assign = "let item := OwnYsiItem\nlet icon := ySIGetTagTrait \"filename\" item\nSetUIString \"HUDMainMenu/OwnedIcon/filename\" (icon)\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")";
+    let assign = "let item := OwnYsiItem\nlet icon := ySIGetTrait \"filename\" item\nSetUIString \"HUDMainMenu/OwnedIcon/filename\" (icon)\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")";
     for flags in [0, 0x400] {
         let f = fixture_with_item_flags(flags);
         let mut g = game(&f);
@@ -500,7 +519,7 @@ fn quest_item_filename_uses_authored_and_saved_world_flags_through_real_source_a
         assert_eq!(
             success(
                 &mut back,
-                "SetFunctionValue (OwnYsiPlaced.ySIGetTagTrait \"filename\")"
+                "SetFunctionValue (OwnYsiPlaced.ySIGetTrait \"filename\")"
             ),
             XVal::Str("Owned/quest.dds".into())
         );
@@ -513,7 +532,7 @@ fn quest_item_filename_uses_authored_and_saved_world_flags_through_real_source_a
         assert_eq!(
             success(
                 &mut back,
-                "SetFunctionValue (ySIGetTagTrait \"filename\" OwnYsiItem)"
+                "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"
             ),
             XVal::Str("Owned/ordinary.dds".into())
         );
@@ -531,7 +550,7 @@ fn quest_item_false_rules_disqualify_unknowns_but_possible_or_malformed_winners_
     files.write("ySI.json", &cfg.to_string());
     let f = fixture();
     let mut g = game(&f);
-    let ask = "SetFunctionValue (ySIGetTagTrait \"filename\" OwnYsiItem)";
+    let ask = "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)";
     assert_eq!(success(&mut g, ask), XVal::Str("Owned/certain.dds".into()));
     success(&mut g, "SetQuestObject OwnYsiItem 1");
     assert_eq!(
@@ -571,7 +590,7 @@ fn aggregate_byte_limit_accepts_exact_valid_input_and_refuses_one_more_byte_with
     let mut allowed = game(&f);
     allowed.world.add_item(FormId::PLAYER_REF, ITEM, 2).unwrap();
     let before = allowed.world.snapshot();
-    let assign = "let icon := ySIGetTagTrait \"filename\" OwnYsiItem\nSetUIString \"HUDMainMenu/OwnedIcon/filename\" (icon)\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")";
+    let assign = "let icon := ySIGetTrait \"filename\" OwnYsiItem\nSetUIString \"HUDMainMenu/OwnedIcon/filename\" (icon)\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")";
     assert_eq!(
         success(&mut allowed, assign),
         XVal::Str("Owned/byte-limit.dds".into())
@@ -635,7 +654,7 @@ fn aggregate_valid_rule_limit_reaches_the_final_winner_and_refuses_the_next_rule
     let mut allowed = game(&f);
     allowed.world.add_item(FormId::PLAYER_REF, ITEM, 3).unwrap();
     let before = allowed.world.snapshot();
-    let assign = "let icon := ySIGetTagTrait \"filename\" OwnYsiItem\nSetUIStringAlt (\"HUDMainMenu/OwnedIcon/filename\") $icon\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")";
+    let assign = "let icon := ySIGetTrait \"filename\" OwnYsiItem\nSetUIStringAlt (\"HUDMainMenu/OwnedIcon/filename\") $icon\nSetFunctionValue (GetUIString \"HUDMainMenu/OwnedIcon/filename\")";
     assert_eq!(
         success(&mut allowed, assign),
         XVal::Str("Owned/rule-limit.dds".into())

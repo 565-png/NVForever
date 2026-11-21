@@ -38,8 +38,11 @@ enum Match {
     Unknown,
 }
 
-pub(crate) fn handles(name: &str) -> bool {
-    name.eq_ignore_ascii_case("ySIGetTagTrait")
+pub(crate) fn handles(name: &str, args: &[XVal]) -> bool {
+    name.eq_ignore_ascii_case("ySIGetTrait")
+        && args
+            .first()
+            .is_some_and(|v| matches!(v, XVal::Str(s) if s.eq_ignore_ascii_case("filename")))
 }
 
 pub(crate) fn call(
@@ -58,12 +61,15 @@ pub(crate) fn call(
         (None, [XVal::Str(name), XVal::Ref(item)]) if *item != 0 => (name, FormId(*item)),
         _ => {
             return Err(
-                "ySIGetTagTrait expects a trait and one explicit item or item receiver".into(),
+                "ySIGetTrait \"filename\" expects a trait and one explicit item or item receiver"
+                    .into(),
             )
         }
     };
-    if trait_name != "filename" {
-        return Err("ySIGetTagTrait supports only the documented filename subset; other traits remain unqualified".into());
+    if !trait_name.eq_ignore_ascii_case("filename") {
+        return Err(
+            "ySIGetTrait filename mapper handles only the filename trait".into(),
+        );
     }
     let original = g.unclone(item);
     let base = if g.world.forms.item(original).is_some() {
@@ -75,7 +81,7 @@ pub(crate) fn call(
         || g.world.deleted_base(item).is_some()
         || g.world.forms.item(base).is_none()
     {
-        return Err("ySIGetTagTrait requires a live inventory item or item base".into());
+        return Err("ySIGetTrait \"filename\" requires a live inventory item or item base".into());
     }
     if g.ysi_filename.book.is_none() {
         g.ysi_filename.book = Some(Book::load());

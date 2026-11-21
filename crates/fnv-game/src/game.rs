@@ -7346,7 +7346,7 @@ impl Host for Exec<'_, '_> {
     }
 
     fn ext_call(&mut self, name: &str, on: Option<Value>, args: &[fnv_script::vm::XVal]) -> Option<Result<fnv_script::vm::XVal, String>> {
-        if crate::ysi_filename::handles(name) {
+        if crate::ysi_filename::handles(name, args) {
             return Some(crate::ysi_filename::call(self.game, on, args));
         }
         if functions::player_source::handles(name) {

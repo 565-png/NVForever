@@ -5,18 +5,27 @@ The original Sorting Icons configuration's author documentation describes `tags`
 matching tag rules, form/property conditions and explicit mod/form/formlist selectors.
 Icon records associate a tag with its template and filename [documented: Sorting
 Icons 1.4b package, `menus/ySI/ySI.json` author documentation; original configuration
-is not redistributed]. Original JAM item UDFs request the `filename` trait with an
-explicit item, while sort UDFs request `string` using both explicit items and chained
-receivers [observed: original mod script workload, not a runtime observation].
+is not redistributed].
+
+`yUI` (version 140) registers `ySIGetTrait` (`0x21D0`) and `ySISetTrait` (`0x21D1`)
+[documented: GECK wiki `YSIGetTrait`/`YSISetTrait`; observed: original FNV 1.4.0.525
+with xNVSE 6.4.9 and yUI 140]. In that original-game runtime, `ySIGetTagTrait` is not
+registered by any loaded plugin, and calling `ySIGetTrait "filename"` on an item
+configured with a tag and icon filename (`FalloutNV.esm` `00000F`) returns the
+configured icon filename string while passing a string tag instead of a form fails
+script compilation [observed: original FNV 1.4.0.525 with xNVSE 6.4.9 and yUI 140].
+Accordingly, `ySIGetTagTrait` is left out of NVForever, and the bounded configuration
+reader below is wired to `ySIGetTrait "filename"` while preserving the existing
+in-memory `ySIGetTrait` / `ySISetTrait` `"tag"` and `"icon"` behavior.
 
 ## Source mapping
 
-The bounded `ySIGetTagTrait "filename" item` / `item.ySIGetTagTrait "filename"`
-mapping evaluates the documented configuration fields through existing record and
-inventory consumers. The call shapes (a trait string, then an explicit item, or an
-item receiver) come from the mod script workload above [observed: mod scripts, not
-a runtime observation]; that the call returns the icon's filename string is a
-[hypothesis] from how those scripts pass the result to their UI writers.
+The bounded `ySIGetTrait "filename" item` / `item.ySIGetTrait "filename"` mapping
+evaluates the documented configuration fields through existing record and inventory
+consumers. The explicit-item `"filename"` return is [observed: original FNV 1.4.0.525
+with xNVSE 6.4.9 and yUI 140, single configured item]. Placed-item receiver forms,
+multi-rule precedence/ties, and bad-item/no-rule outputs on `ySIGetTrait "filename"`
+remain [hypothesis] until an interactive-desktop multi-rule capture runs.
 
 - Explicit `mod` + hexadecimal local `form`, including a list of form strings, and
   `formType` scalar/list predicates are evaluated [documented: field names, package
