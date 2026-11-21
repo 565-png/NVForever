@@ -3484,8 +3484,8 @@ already talking takes over at once, same topic or another; nothing is queued or 
      radio, and does the radio go quiet under it? Then two cases apart, which ours
      treats differently: (a) at the edge of a Radius station's range, where the station
      is still received but heard as nearly all static (Black Mountain Radio near
-     `x -47300`, `y 5300`, `z 9000`, radio.md §8), does the music stay away (ours: yes,
-     the station's songs still sound under the static)? (b) walked out of reception
+     `x -47300`, `y 5300`, `z 9000`, radio.md §8), does the music stay away (ours: yes
+     while any of the song is heard under the static, no once it is all static)? (b) walked out of reception
      altogether, the Pip-Boy still on, does the music come back (ours: yes)? Last, with
      the Radio volume at 0 and a station playing: is the music still turned down (ours:
      no)?

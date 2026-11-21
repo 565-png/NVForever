@@ -118,7 +118,7 @@ const GAP: f64 = 0.5;
 /// Something joining a response later than this many seconds into it seeks to there.
 const JOIN: f64 = 0.25;
 /// Seconds the Pip-Boy radio still counts as playing for the music after its station's
-/// last line or song stopped sounding: the gaps between lines (`GAP`), a file still
+/// last line or song stopped being heard: the gaps between lines (`GAP`), a file still
 /// being read, a station asking again (`RETRY`) [design: #3311].
 pub const MUSIC_HOLD: f64 = 8.0;
 /// The keys of the Pip-Boy and its static among the receivers.
@@ -469,8 +469,10 @@ pub struct Radio {
     /// The Pip-Boy radio plays a station now ([`pipboy_holds_music`]). The place's music is
     /// turned down while it does (`crate::music`, #3311).
     pub pipboy_playing: bool,
-    /// The radios' clock when the Pip-Boy last sounded one of its station's lines or songs.
-    pipboy_line_at: Option<f64>,
+    /// The station (placed reference) the Pip-Boy last made one of its lines or songs
+    /// heard on, and when (the radios' clock); cleared on retuning, switching off and a
+    /// muted line ([`pipboy_line_seen`]).
+    pipboy_line_at: Option<(FormId, f64)>,
     /// The Skip Radio Song key was pressed (`crate::tweaks`): the Pip-Boy's station ends
     /// the line it is saying now [design: docs/design/tweaks.md].
     pub skip: bool,
@@ -1167,12 +1169,14 @@ fn play(
         }
         radio.playing.insert(w.key, Playing { entity, level, meter, track: w.track.clone(), song: w.response.is_some_and(|(_, _, song)| song) });
     }
-    // The Pip-Boy plays its station for the music when one of the station's lines or songs
-    // sounds (not static alone, not a line without a file), bridged over the gaps.
-    if radio.playing.get(&PIPBOY).is_some_and(|p| matches!(p.track, Track::Line { .. })) {
-        radio.pipboy_line_at = Some(now);
-    }
-    radio.pipboy_playing = pipboy_holds_music(pip_heard, radio_volume, radio.pipboy_line_at, now);
+    // The Pip-Boy plays its station for the music while one of the station's lines or
+    // songs is heard (not static alone, not a line without a file, not one at no level),
+    // bridged over the gaps; not while the radios are held (the Esc menu, a loading
+    // screen), whose clock stands still.
+    let tuned = pip_station.filter(|_| pip_heard).map(|(s, _)| s);
+    let line_gain = radio.playing.get(&PIPBOY).filter(|p| matches!(p.track, Track::Line { .. })).map(|p| f32::from_bits(p.level.load(Ordering::Relaxed)) * radio_volume);
+    radio.pipboy_line_at = pipboy_line_seen(radio.pipboy_line_at, tuned, line_gain, now);
+    radio.pipboy_playing = pipboy_holds_music(tuned, held, radio_volume, radio.pipboy_line_at, now);
     // The Pip-Boy station's loudness as played, for the exit summary (#1077).
     if let Some((song, loud)) = radio.playing.get(&PIPBOY).map(|p| (p.song, f32::from_bits(p.meter.load(Ordering::Relaxed)) * f32::from_bits(p.level.load(Ordering::Relaxed)))).filter(|(_, l)| *l > 0.0) {
         let slot = &mut radio.loudness[usize::from(!song)];
@@ -1195,13 +1199,29 @@ fn play(
     }
 }
 
-/// Whether the Pip-Boy radio counts as playing for the music (#3311): heard at all
-/// (`heard`: on, tuned to a station received here, sound on, not at the poker table), the
-/// player's Radio volume above 0 (`radio_volume`), and one of its station's lines or songs
-/// sounded within [`MUSIC_HOLD`] seconds (`line_at`, on the radios' clock `now`). Static
-/// alone and a station with nothing to play leave the music alone [design].
-pub fn pipboy_holds_music(heard: bool, radio_volume: f32, line_at: Option<f64>, now: f64) -> bool {
-    heard && radio_volume > 0.0 && line_at.is_some_and(|t| now - t < MUSIC_HOLD)
+/// The last line or song the Pip-Boy made heard (station, radios' clock), this frame:
+/// `tuned` the station it plays now (`None`: off, not received, sound off or at the poker
+/// table), `line_gain` the level its line or song is played at now after the volumes,
+/// the conversation tweak and reception's static (`None`: none plays). A line heard
+/// (gain above 0) is noted; one at no level (muted, all static) clears it, as switching
+/// off does; a line seen on another station (a retune, a save restored onto another
+/// station) does not count [design: #3311].
+pub fn pipboy_line_seen(last: Option<(FormId, f64)>, tuned: Option<FormId>, line_gain: Option<f32>, now: f64) -> Option<(FormId, f64)> {
+    let st = tuned?;
+    match line_gain {
+        Some(g) if g > 0.0 => Some((st, now)),
+        Some(_) => None,
+        None => last.filter(|(s, _)| *s == st),
+    }
+}
+
+/// Whether the Pip-Boy radio counts as playing for the music (#3311): tuned to a station
+/// it plays (`tuned`, as for [`pipboy_line_seen`]), the radios not held (`held`: the Esc
+/// menu, a loading screen), the player's Radio volume above 0, and a line or song of that
+/// station heard within [`MUSIC_HOLD`] seconds (`line`, on the radios' clock `now`).
+/// Static alone and a station with nothing to play leave the music alone [design].
+pub fn pipboy_holds_music(tuned: Option<FormId>, held: bool, radio_volume: f32, line: Option<(FormId, f64)>, now: f64) -> bool {
+    !held && radio_volume > 0.0 && tuned.is_some_and(|st| line.is_some_and(|(s, t)| s == st && now - t < MUSIC_HOLD))
 }
 
 fn report(mut exit: MessageReader<AppExit>, radio: Res<Radio>, script: Res<ScriptState>, places: Option<Res<RadioPlaces>>) {
@@ -1349,17 +1369,42 @@ mod tests {
 
     #[test]
     fn the_pipboy_holds_the_music_only_while_its_station_sounds() {
-        // A line sounding now, or in the gap after one: the music is held.
-        assert!(pipboy_holds_music(true, 0.5, Some(10.0), 10.0));
-        assert!(pipboy_holds_music(true, 0.5, Some(10.0), 10.0 + MUSIC_HOLD - 0.1));
-        // Nothing played for longer than the hold, or nothing ever (static alone, a station
+        let (a, b) = (Some(FormId(0xA)), Some(FormId(0xB)));
+        let line = Some((FormId(0xA), 10.0));
+        // A line heard now, or in the gap after one: the music is held.
+        assert!(pipboy_holds_music(a, false, 0.5, line, 10.0));
+        assert!(pipboy_holds_music(a, false, 0.5, line, 10.0 + MUSIC_HOLD - 0.1));
+        // Nothing heard for longer than the hold, or nothing ever (static alone, a station
         // with no file to play): the music comes back.
-        assert!(!pipboy_holds_music(true, 0.5, Some(10.0), 10.0 + MUSIC_HOLD));
-        assert!(!pipboy_holds_music(true, 0.5, None, 10.0));
+        assert!(!pipboy_holds_music(a, false, 0.5, line, 10.0 + MUSIC_HOLD));
+        assert!(!pipboy_holds_music(a, false, 0.5, None, 10.0));
         // The Radio volume at 0 (Music on, a station tuned and playing): the music stays.
-        assert!(!pipboy_holds_music(true, 0.0, Some(10.0), 10.0));
-        // Not heard (off, out of range, at the poker table): never, whatever played.
-        assert!(!pipboy_holds_music(false, 0.5, Some(10.0), 10.0));
+        assert!(!pipboy_holds_music(a, false, 0.0, line, 10.0));
+        // Off, out of range, at the poker table: never, whatever played.
+        assert!(!pipboy_holds_music(None, false, 0.5, line, 10.0));
+        // The Esc menu holds the radios and their clock: the music is let go meanwhile.
+        assert!(!pipboy_holds_music(a, true, 0.5, line, 10.0));
+        // Retuned to a quiet station: the last station's line does not hold it.
+        assert!(!pipboy_holds_music(b, false, 0.5, line, 10.5));
+    }
+
+    #[test]
+    fn a_line_counts_for_its_own_tuning_and_only_when_heard() {
+        let (a, b) = (FormId(0xA), FormId(0xB));
+        // A song heard on A is noted.
+        assert_eq!(pipboy_line_seen(None, Some(a), Some(0.4), 10.0), Some((a, 10.0)));
+        // Between lines on A it is kept...
+        assert_eq!(pipboy_line_seen(Some((a, 10.0)), Some(a), None, 11.0), Some((a, 10.0)));
+        // ...retuned to quiet B it is dropped, so B does not inherit A's hold.
+        let after = pipboy_line_seen(Some((a, 10.0)), Some(b), None, 10.5);
+        assert_eq!(after, None);
+        assert!(!pipboy_holds_music(Some(b), false, 0.5, after, 10.5));
+        // Switched off: dropped.
+        assert_eq!(pipboy_line_seen(Some((a, 10.0)), None, None, 10.5), None);
+        // A line played at no level (Radio While Talking 0 % in a conversation, the
+        // station all static at the edge of its range) clears it at once.
+        assert_eq!(pipboy_line_seen(Some((a, 10.0)), Some(a), Some(0.0), 10.5), None);
+        assert!(!pipboy_holds_music(Some(a), false, 0.5, pipboy_line_seen(Some((a, 10.0)), Some(a), Some(0.0), 10.5), 10.5));
     }
 
     #[test]

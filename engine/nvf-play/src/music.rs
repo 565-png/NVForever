@@ -468,6 +468,14 @@ struct Track {
 #[derive(Component)]
 struct MusicSound;
 
+/// Where a track [`Music::start`]s: the place's music or a battle loop, or music a
+/// script asked for (also the death and level-up music).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Slot {
+    Place,
+    Script,
+}
+
 /// A battle and the music it brought.
 #[derive(Default)]
 struct Battle {
@@ -753,10 +761,12 @@ impl Music {
         self.file_path(vfs, file).is_some_and(|p| vfs.exists(&p) && !matches!(self.files.peek(&p), Some(None)))
     }
 
-    /// Start what is wanted, silent, with its layers fading in. Its files are read off
-    /// the main thread (`FileBytes::fetch`); the sound starts once they are all in
+    /// Start what is wanted, silent, with its layers fading in, as the place's music or
+    /// a battle loop (`Slot::Place`; the place's music is what the Pip-Boy radio turns
+    /// down) or as music a script asked for (`Slot::Script`). Its files are read off the
+    /// main thread (`FileBytes::fetch`); the sound starts once they are all in
     /// ([`Music::finish`]), this frame when they were kept already.
-    fn start(&mut self, commands: &mut Commands, vfs: &Arc<fnv_vfs::Vfs>, assets: &mut Assets<LayeredMusic>, w: &Wanted, now: f32) -> Track {
+    fn start(&mut self, commands: &mut Commands, vfs: &Arc<fnv_vfs::Vfs>, assets: &mut Assets<LayeredMusic>, w: &Wanted, now: f32, slot: Slot) -> Track {
         let levels: Arc<[AtomicU32; 3]> = Arc::new([AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)]);
         let mut paths = Vec::new();
         for (k, file) in w.files.iter().enumerate() {
@@ -780,7 +790,7 @@ impl Music {
             min_on: w.min_on,
             on_since: [now; 3],
             layer_names: w.layers,
-            place: false,
+            place: slot == Slot::Place && !matches!(w.key, Key::Battle(_)),
         };
         let layers: Vec<&str> = (0..3).filter(|&k| w.on[k] && w.files[k].is_some()).map(|k| w.layers[k]).collect();
         t.layer_names = w.layers;
@@ -989,7 +999,7 @@ fn play(
                     old.target = [0.0; 3];
                     music.leaving.push(old);
                 }
-                let t = music.start(&mut commands, &data.vfs, &mut assets, &w, now);
+                let t = music.start(&mut commands, &data.vfs, &mut assets, &w, now, Slot::Script);
                 music.script = Some(t);
             }
             None => {
@@ -1068,7 +1078,7 @@ fn play(
                 info!("music: the player died: the music stops, the default objects' death music {} plays", ty.edid.as_deref().unwrap_or("?"));
                 if audible {
                     w.fade = SCRIPT_FADE;
-                    let t = music.start(&mut commands, &data.vfs, &mut assets, &w, now);
+                    let t = music.start(&mut commands, &data.vfs, &mut assets, &w, now, Slot::Script);
                     music.script = Some(t);
                     music.deaths += 1;
                 }
@@ -1107,7 +1117,7 @@ fn play(
                         music.leaving.push(old);
                     }
                     w.fade = SCRIPT_FADE;
-                    let t = music.start(&mut commands, &data.vfs, &mut assets, &w, now);
+                    let t = music.start(&mut commands, &data.vfs, &mut assets, &w, now, Slot::Script);
                     music.script = Some(t);
                     music.level_ups += 1;
                 }
@@ -1203,8 +1213,7 @@ fn play(
             if matches!(w.key, Key::Battle(_)) {
                 music.battle_sets += 1;
             }
-            let mut t = music.start(&mut commands, &data.vfs, &mut assets, w, now);
-            t.place = !matches!(w.key, Key::Battle(_));
+            let t = music.start(&mut commands, &data.vfs, &mut assets, w, now, Slot::Place);
             music.current = Some(t);
         }
     }
@@ -1579,6 +1588,59 @@ mod tests {
         step(35, false, settings.volume, &mut duck, [&mut place, &mut script, &mut battle]);
         assert!((heard(&place) - 0.3).abs() < 1e-6, "audible again");
         assert_eq!(settings.volume, 0.6);
+    }
+
+    /// Started by `Music::start` as the game starts the place's music (and a script's
+    /// music beside it), then mixed by `mix_tracks`: what the mixer is told before,
+    /// during and after the Pip-Boy radio plays its station.
+    #[test]
+    fn a_place_track_started_by_the_game_turns_down_under_the_radio() {
+        use bevy::ecs::system::RunSystemOnce;
+        let dir = std::env::temp_dir().join(format!("nvf-music-radio-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let vfs = Arc::new(fnv_vfs::Vfs::open(&dir, &[]).unwrap());
+        let mut app = App::new();
+        app.init_resource::<Music>()
+            .init_resource::<Assets<LayeredMusic>>()
+            .insert_resource(MusicSettings { play: true, volume: 0.6 })
+            .insert_resource(State::new(PlayState::Playing))
+            .insert_resource(Time::<Real>::default())
+            .init_resource::<crate::radio::Radio>()
+            .add_systems(Update, mix_tracks);
+        // A music type, as a cell names one (a folder: no file is read here), started as
+        // the place's music and as a script's.
+        let ty = MusicType { form_id: 7, edid: Some("Place".into()), file: Some("place\\".into()), db: 1.0 };
+        let w = wanted_type(&ty).unwrap();
+        app.world_mut()
+            .run_system_once(move |mut commands: Commands, mut music: ResMut<Music>, mut assets: ResMut<Assets<LayeredMusic>>| {
+                let mut t = music.start(&mut commands, &vfs, &mut assets, &w, 0.0, Slot::Place);
+                (t.level, t.gain) = ([1.0, 0.0, 0.0], [0.5, 1.0, 1.0]);
+                music.current = Some(t);
+                let mut s = music.start(&mut commands, &vfs, &mut assets, &w, 0.0, Slot::Script);
+                (s.level, s.gain) = ([1.0, 0.0, 0.0], [0.5, 1.0, 1.0]);
+                music.script = Some(s);
+            })
+            .unwrap();
+        let frames = |app: &mut App, n: usize| {
+            for _ in 0..n {
+                app.world_mut().resource_mut::<Time<Real>>().update_with_duration(Duration::from_millis(100));
+                app.update();
+            }
+        };
+        let now = |app: &App| {
+            let m = app.world().resource::<Music>();
+            (heard(m.current.as_ref().unwrap()), heard(m.script.as_ref().unwrap()))
+        };
+        frames(&mut app, 2);
+        assert!((now(&app).0 - 0.3).abs() < 1e-6, "the place's music before: {:?}", now(&app));
+        app.world_mut().resource_mut::<crate::radio::Radio>().pipboy_playing = true;
+        frames(&mut app, 35);
+        assert_eq!(now(&app).0, 0.0, "the place's music under the radio");
+        assert!((now(&app).1 - 0.3).abs() < 1e-6, "a script's music keeps its level");
+        app.world_mut().resource_mut::<crate::radio::Radio>().pipboy_playing = false;
+        frames(&mut app, 35);
+        assert!((now(&app).0 - 0.3).abs() < 1e-6, "the place's music after: {:?}", now(&app));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A dungeon set under the radio: a battle brings its battle stem in by the stem's

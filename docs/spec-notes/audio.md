@@ -791,11 +791,15 @@ Counts are of FalloutNV.esm alone [observed] unless they say otherwise.
    marker's set, else the cell's or worldspace's type, and its outgoing crossfades) is
    turned down to silence over 3 s; it plays on unheard, so when the radio stops it
    fades back in over 3 s where it has got to. "Plays its station"
-   (`radio::pipboy_holds_music`): on, tuned to a station received here, sound on and
-   the player's Radio volume above 0, not at the poker table, and one of the station's
-   lines or songs sounding now or within the last 8 s (the gaps between lines, a file
-   still being read). Static alone (a station saying nothing, one whose lines have no
-   file) and a station out of reception leave the music alone. Only the level the mixer
+   (`radio::pipboy_holds_music`, `radio::pipboy_line_seen`): on, tuned to a station
+   received here, sound on and the player's Radio volume above 0, not at the poker
+   table, the radios not held (the Esc menu, a loading screen), and one of that
+   station's lines or songs heard now or within the last 8 s (the gaps between lines, a
+   file still being read). Heard means played at a level above 0 after the volumes, the
+   Radio While Talking tweak and reception's static; a line at no level lets the music
+   back at once, and retuning or switching off forgets the last station's line. Static
+   alone (a station saying nothing, one whose lines have no file, a station all static
+   at the edge of its range) and a station out of reception leave the music alone. Only the level the mixer
    is given changes: the player's Music volume, SetMusicState's pause and the layers
    stay as they were. A world receiver (a placed radio, a jukebox, an actor made a
    radio) does not turn the music down. Battle music keeps its level over the radio: a
