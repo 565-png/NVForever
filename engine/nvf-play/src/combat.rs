@@ -2069,10 +2069,13 @@ fn perk_speed(c: Res<Combat>, mut anim: ResMut<WeaponAnim>, mut script: Option<R
 /// creature's pace goes with its scale (`creature_pace`) [hypothesis: the clips' root
 /// motion shrinks with the body; owner's TTW run 2026-11-02, the baby at
 /// `player.SetScale 0.4` moved at full speed].
-fn stat_speed(mut script: Option<ResMut<ScriptState>>, mut sim: ResMut<SimState>, speed: Option<ResMut<crate::player::StatSpeed>>) {
+fn stat_speed(mut script: Option<ResMut<ScriptState>>, mut sim: ResMut<SimState>, speed: Option<ResMut<crate::player::StatSpeed>>, mut player: Option<ResMut<crate::player::Player>>) {
     let (Some(mut speed), Some(rt)) = (speed, script.as_deref_mut().and_then(|s| s.rt.as_mut())) else { return };
     let (mult, armor) = with_world(rt, &mut sim, |rt| (rt.game.move_speed_mult(FormId::PLAYER_REF) as f32, rt.game.armor_speed_mult(FormId::PLAYER_REF)));
     let scale = sim.script_scale(FormId::PLAYER_REF.0).unwrap_or(1.0).max(crate::sim::MIN_DRAWN_SCALE);
+    if let Some(p) = player.as_deref_mut() {
+        p.eye_height = crate::player::EYE_HEIGHT * scale;
+    }
     let want = mult * scale;
     // The player's tweak: Agility scales the jump, 1 + mult x (Agility - 1) [design: docs/design/tweaks.md].
     let k = rt.game.tweaks.agility_jump_mult;
