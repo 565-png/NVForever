@@ -357,6 +357,79 @@ expect = [
 ]
 
 [[scenario]]
+name = "distant-objects"
+source = "[design, #3014] docs/design/graphics-enhanced.md §3.21 (engine/nvforever/src/distant_objects.rs): started with --graphics-only distant-objects-12 at Goodsprings noon, the distant objects come on at a reach of 12 cells once, and the exit summary counts the cells judged and the references drawn beyond the loaded cells, without a rendering or validation error. Whether they sit where the LOD leaves holes, with no doubling, is checked in pictures by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/distant_objects.rs", "engine/nvforever/src/lod.rs", "crates/fnv-world/tests/visible_when_distant.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "distant-objects-12"]
+run_seconds = 30
+order = [[
+  { text = "distant objects: reach 12 cells (ratio", label = "the distant objects come on at 12 cells from the start" },
+  { re = 'distant objects summary: (?P<n>\d+) cells', range = [1, 2000], label = "the exit summary: cells out to 12 cells judged (at most 600 around a player standing still)" },
+]]
+expect = [
+  { re = 'graphics: .*distant objects 12 cells', label = "the graphics line names the distant objects" },
+  { text = "distant objects: reach 12 cells (ratio", count = 1, label = "the distant objects on once" },
+  { re = 'distant objects summary: \d+ cells, (?P<n>\d+) drawn', range = [1, 1000000], label = "the distant objects drew references the LOD leaves out" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the distant objects" },
+  { text = "Shader validation error", label = "a shader of the distant objects that does not validate" },
+  { text = "Validation Error", label = "a graphics API validation error with the distant objects on from the start" },
+  { text = "panicked", label = "a panic with the distant objects on from the start" },
+]
+
+[[scenario]]
+name = "distant-objects-switch"
+source = "[design, #3014] docs/design/graphics-enhanced.md §3.21 (engine/nvforever/src/distant_objects.rs): the settings page's Distant objects row goes to 12 cells while the game runs at Goodsprings noon, the distant objects come on and stream in; then to 8 cells (the far ones fade out) and Off, without a rendering or validation error; the exit summary is logged as they were on"
+areas = ["renderer", "graphics", "settings"]
+paths = ["engine/nvforever/src/distant_objects.rs", "engine/nvforever/src/settings.rs", "crates/nvf-settings-layout/src/lib.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:12,24:28", NVF_PLAY_TEST_SETTINGS = "11:distant-objects=12 cells,25:distant-objects=8 cells,26.5:distant-objects=Off" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 32
+order = [[
+  "settings: distant-objects 12 cells",
+  { text = "distant objects: reach 12 cells (ratio", label = "the row turns the distant objects on at 12 cells in play" },
+  "settings: distant-objects 8 cells",
+  { text = "distant objects: reach 8 cells (ratio", label = "the reach made smaller in play" },
+  "settings: distant-objects Off",
+  { text = "distant objects: off, 0 cells left", label = "Off: every distant cell faded out and retired" },
+  { re = 'distant objects summary: (?P<n>\d+) cells', range = [1, 2000], label = "the exit summary: cells judged while they were on" },
+]]
+expect = [
+  { re = 'graphics: .*distant objects 12 cells', label = "the graphics line names the distant objects at 12 cells" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error while the distant objects' reach changes" },
+  { text = "Shader validation error", label = "a shader that does not validate while the distant objects' reach changes" },
+  { text = "Validation Error", label = "a graphics API validation error while the distant objects' reach changes" },
+  { text = "panicked", label = "a panic while the distant objects' reach changes" },
+  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
+]
+
+[[scenario]]
+name = "distant-objects-with-ring"
+source = "[design, #3014] docs/design/graphics-enhanced.md §3.21 (engine/nvforever/src/distant_objects.rs, full_detail.rs): started with --graphics-only full-detail-9x9,distant-objects-12 at Goodsprings noon, the full-detail ring and the distant objects beyond it both come on and both log their exit summaries, without a rendering or validation error"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/distant_objects.rs", "engine/nvforever/src/full_detail.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "full-detail-9x9,distant-objects-12"]
+run_seconds = 30
+expect = [
+  { text = "full detail: 9 x 9 ring (radius 4)", count = 1, label = "the ring on once beside the distant objects" },
+  { text = "distant objects: reach 12 cells (ratio", count = 1, label = "the distant objects on once beside the ring" },
+  { re = 'full detail summary: 9x9, (?P<n>\d+) cells', range = [1, 500], label = "the ring's exit summary with cells beyond the loaded ones" },
+  { re = 'distant objects summary: (?P<n>\d+) cells', range = [1, 2000], label = "the distant objects' exit summary with cells beyond the ring" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the ring and the distant objects" },
+  { text = "Shader validation error", label = "a shader that does not validate with the ring and the distant objects" },
+  { text = "Validation Error", label = "a graphics API validation error with the ring and the distant objects" },
+  { text = "panicked", label = "a panic with the ring and the distant objects" },
+]
+
+[[scenario]]
 name = "auto-fly"
 source = "CLAUDE.md: after renderer changes, the moving-camera smoke test (cell streaming and LOD rebuilds)"
 areas = ["renderer"]

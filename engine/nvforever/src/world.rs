@@ -706,12 +706,12 @@ impl ReadAhead {
     }
 }
 
-/// Which references' models a cell's read-ahead prepares: the placement and its base
-/// (enabled, not an imposter or primitive, [`cell_models`]).
-pub(crate) type ModelFilter = fn(&Placement, &BaseObject) -> bool;
+/// Which references' models a cell's read-ahead prepares: the load order, the placement
+/// and its base (enabled, not an imposter or primitive, [`cell_models`]).
+pub(crate) type ModelFilter = fn(&LoadOrder, &Placement, &BaseObject) -> bool;
 
 /// The models the loaded cells draw as static models ([`spawn_model`]).
-fn loaded_models(_: &Placement, base: &BaseObject) -> bool {
+fn loaded_models(_: &LoadOrder, _: &Placement, base: &BaseObject) -> bool {
     DRAWN.contains(&&base.sig) && !base.is_speedtree()
 }
 
@@ -826,7 +826,7 @@ fn cell_models(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], hide: &[String]
             continue;
         }
         let Some(base) = p.base.and_then(|b| base_object(lo, schema, b)) else { continue };
-        if !filter(&p, &base) {
+        if !filter(lo, &p, &base) {
             continue;
         }
         let Some(path) = base.world_model_path() else { continue };
@@ -2564,7 +2564,7 @@ mod blend_census_tests {
             enable_parent: None, open_by_default: false, teleport: false, emittance: None, imposter, primitive: false,
         };
         let base = |sig: [u8; 4]| BaseObject {
-            form_id: 0x200, sig, edid: None, model: Some("scol/synthetic_road.nif".into()), world_model: None, world_alt_textures: vec![], worn_only: false,
+            form_id: 0x200, sig, edid: None, model: Some("scol/synthetic_road.nif".into()), world_model: None, world_alt_textures: vec![], worn_only: false, flags: 0, bounds: None,
         };
         let model = PreparedModel::default();
         let path = "scol/synthetic_road.nif";

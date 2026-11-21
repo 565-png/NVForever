@@ -77,7 +77,8 @@ use bevy::ecs::system::SystemParam;
 use bevy::light::NotShadowCaster;
 use bevy::math::Affine3A;
 use bevy::prelude::*;
-use fnv_world::placed::{base_object, placement, ref_flags, BaseObject, Placement};
+use fnv_esm::LoadOrder;
+use fnv_world::placed::{base_object, placement, placement_visible_when_distant, BaseObject, Placement};
 use fnv_world::CELL_SIZE;
 use nvf_assets::model::ModelCtx;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -237,6 +238,18 @@ impl RingCellState {
     /// The cell keeps its LOD segment ([`KeptRefs::keeps_segment`]).
     pub fn keep_segment(&self) -> bool {
         self.kept.keeps_segment()
+    }
+
+    /// A resting ring cell at `level` for other modules' tests (distant_objects.rs).
+    #[cfg(test)]
+    pub(crate) fn for_test(level: f32) -> RingCellState {
+        RingCellState::new(Entity::PLACEHOLDER, level, KeptRefs::default(), false, Vec::new())
+    }
+
+    /// The same with its trees fallen back to the billboards (`trees_kept`).
+    #[cfg(test)]
+    pub(crate) fn for_test_trees_kept(level: f32) -> RingCellState {
+        RingCellState::new(Entity::PLACEHOLDER, level, KeptRefs::default(), true, Vec::new())
     }
 
     /// Fully drawn and staying.
@@ -440,6 +453,13 @@ impl FullDetailRing {
         }
     }
 
+    /// Nothing of the ring is left to read or spawn around `centre` (with `loaded` the
+    /// loaded radius): every ring cell it wants is drawn, or the ring is off. The distant
+    /// objects (distant_objects.rs, #3014) start only then.
+    pub fn idle(&self, centre: Grid, loaded: i32) -> bool {
+        self.radius == 0 || (self.spawning.is_empty() && !self.ahead.busy() && ring_cells(centre, loaded, self.radius).iter().all(|c| self.cells.contains_key(c)))
+    }
+
     /// Hide a ring cell and despawn it over the next frames; its idle rigs are stilled
     /// ([`fade_ring`]).
     fn retire(&mut self, commands: &mut Commands, e: Entity) {
@@ -515,15 +535,20 @@ pub fn ring_choice(kind: RefKind, sig: Option<&[u8; 4]>, flagged: bool) -> RingR
     }
 }
 
-/// The reference's "visible when distant" flag (module notes).
-pub fn flagged(p: &Placement) -> bool {
-    p.flags & ref_flags::VISIBLE_WHEN_DISTANT != 0
+/// Whether a reference is "visible when distant" (module notes): its own flag or its
+/// base's, in any plugin's version of either record
+/// (`fnv_world::placed::placement_visible_when_distant`, #3014). An object LOD block may
+/// hold a reference for either flag, so a reference flagged only through its base (a
+/// non-static a LOD plugin flags) is drawn here too: left out by type, it would be
+/// missing while its cell's segment is hidden.
+pub fn flagged(lo: &LoadOrder, p: &Placement) -> bool {
+    placement_visible_when_distant(lo, p)
 }
 
 /// The models a ring cell's read-ahead prepares (`world::read_ahead_cells`): SpeedTrees
 /// are not models (tree.rs builds them).
-fn ring_models(p: &Placement, base: &BaseObject) -> bool {
-    !base.is_speedtree() && ring_choice(classify_ref(p, Some(base), || true), Some(&base.sig), flagged(p)) == RingRef::Draw
+fn ring_models(lo: &LoadOrder, p: &Placement, base: &BaseObject) -> bool {
+    !base.is_speedtree() && ring_choice(classify_ref(p, Some(base), || true), Some(&base.sig), flagged(lo, p)) == RingRef::Draw
 }
 
 /// Whether ring meshes cast sun shadows: only while the cascades (`reach` units) reach
@@ -837,7 +862,7 @@ fn spawn_ring_ref(commands: &mut Commands, ctx: &RefCtx, sp: Target, kept: &mut 
         return Spawned::Done;
     }
     let base = p.base.and_then(|b| base_object(world.lo, world.schema, b));
-    let flag = flagged(&p);
+    let flag = flagged(world.lo, &p);
     match ring_choice(classify_ref(&p, base.as_ref(), || true), base.as_ref().map(|b| &b.sig), flag) {
         RingRef::Draw => {}
         RingRef::SkipType => {
@@ -1364,7 +1389,7 @@ mod tests {
     /// billboards.
     #[test]
     fn ring_trees_agree_with_the_billboards() {
-        let base = |sig: [u8; 4], model: &str| BaseObject { form_id: 0x200, sig, edid: None, model: Some(model.into()), world_model: None, world_alt_textures: vec![], worn_only: false };
+        let base = |sig: [u8; 4], model: &str| BaseObject { form_id: 0x200, sig, edid: None, model: Some(model.into()), world_model: None, world_alt_textures: vec![], worn_only: false, flags: 0, bounds: None };
         assert!(crate::treelod::distant_tree(&base(*b"TREE", "trees\\joshua01.spt"), true));
         assert!(!crate::treelod::distant_tree(&base(*b"TREE", "trees\\joshua01.spt"), false), "disabled at the start: no billboard, no ring tree");
         assert!(!crate::treelod::distant_tree(&base(*b"STAT", "trees\\joshua01.spt"), true), "not a TREE");
@@ -1515,8 +1540,11 @@ mod tests {
             form_id: 0x100, sig: *b"REFR", flags, base: Some(0x200), position: [0.0; 3], rotation: [0.0; 3], scale: 1.0,
             enable_parent: None, open_by_default: false, teleport: false, emittance: None, imposter, primitive,
         };
-        let base = |sig: [u8; 4], model: &str| BaseObject { form_id: 0x200, sig, edid: None, model: Some(model.into()), world_model: None, world_alt_textures: vec![], worn_only: false };
-        let vwd = ref_flags::VISIBLE_WHEN_DISTANT;
+        let base = |sig: [u8; 4], model: &str| BaseObject { form_id: 0x200, sig, edid: None, model: Some(model.into()), world_model: None, world_alt_textures: vec![], worn_only: false, flags: 0, bounds: None };
+        let vwd = fnv_world::placed::ref_flags::VISIBLE_WHEN_DISTANT;
+        let plugins: Vec<fnv_esm::Plugin> = Vec::new();
+        let lo = LoadOrder::new(&plugins).unwrap();
+        let ring_models = |p: &Placement, b: &BaseObject| ring_models(&lo, p, b);
         assert!(ring_models(&p(0, false, false), &base(*b"STAT", "rocks\\rock01.nif")));
         assert!(!ring_models(&p(0, false, false), &base(*b"DOOR", "doors\\door01.nif")));
         assert!(ring_models(&p(vwd, false, false), &base(*b"DOOR", "doors\\door01.nif")));
@@ -1526,7 +1554,42 @@ mod tests {
         assert!(ring_models(&p(0, false, false), &base(*b"MSTT", "effects\\smoke.nif")));
         assert!(!ring_models(&p(vwd, false, false), &base(*b"NPC_", "")), "an actor");
         assert_eq!(classify_ref(&p(vwd, false, false), Some(&base(*b"STAT", "a.nif")), || false), RefKind::Disabled);
-        assert!(flagged(&p(vwd | 0x400, false, false)) && !flagged(&p(0x400, false, false)));
+        assert!(flagged(&lo, &p(vwd | 0x400, false, false)) && !flagged(&lo, &p(0x400, false, false)));
+    }
+
+    /// A plugin in memory holding header-only records (signature, header flags, FormID).
+    fn header_plugin(records: &[(&[u8; 4], u32, u32)]) -> fnv_esm::Plugin {
+        let rec = |sig: &[u8], flags: u32, fid: u32, payload: &[u8]| {
+            [sig, &(payload.len() as u32).to_le_bytes(), &flags.to_le_bytes(), &fid.to_le_bytes(), &[0; 4], &15u16.to_le_bytes(), &[0; 2], payload].concat()
+        };
+        let hedr = [b"HEDR".as_slice(), &12u16.to_le_bytes(), &1.34f32.to_le_bytes(), &0i32.to_le_bytes(), &0x800u32.to_le_bytes()].concat();
+        let mut bytes = rec(b"TES4", 1, 0, &hedr);
+        for (sig, flags, fid) in records {
+            let body = rec(sig.as_slice(), *flags, *fid, &[]);
+            bytes.extend([b"GRUP".as_slice(), &((24 + body.len()) as u32).to_le_bytes(), sig.as_slice(), &0i32.to_le_bytes(), &[0; 8], &body].concat());
+        }
+        fnv_esm::Plugin::parse(&bytes, "Test.esm".into()).unwrap()
+    }
+
+    /// #3014: a reference flagged visible when distant only through its base (a door a LOD
+    /// plugin flags) is drawn in the ring, not left out by its type: its cell's segment is
+    /// hidden, so leaving it out left a hole. An unflagged door is still left out.
+    #[test]
+    fn a_base_flagged_non_static_is_drawn() {
+        let plugins = vec![header_plugin(&[(b"DOOR", 0x8000, 0x200), (b"DOOR", 0, 0x201)])];
+        let lo = LoadOrder::new(&plugins).unwrap();
+        let p = |base: u32| Placement {
+            form_id: 0x100, sig: *b"REFR", flags: 0, base: Some(base), position: [0.0; 3], rotation: [0.0; 3], scale: 1.0,
+            enable_parent: None, open_by_default: false, teleport: false, emittance: None, imposter: false, primitive: false,
+        };
+        let door = |fid: u32| BaseObject { form_id: fid, sig: *b"DOOR", edid: None, model: Some("doors\\door01.nif".into()), world_model: None, world_alt_textures: vec![], worn_only: false, flags: 0, bounds: None };
+        assert!(flagged(&lo, &p(0x200)), "the base's flag counts");
+        assert!(!flagged(&lo, &p(0x201)));
+        let model = RefKind::Drawn { light: false, how: DrawnAs::Model };
+        assert_eq!(ring_choice(model, Some(b"DOOR"), flagged(&lo, &p(0x200))), RingRef::Draw);
+        assert_eq!(ring_choice(model, Some(b"DOOR"), flagged(&lo, &p(0x201))), RingRef::SkipType);
+        assert!(ring_models(&lo, &p(0x200), &door(0x200)), "read ahead too");
+        assert!(!ring_models(&lo, &p(0x201), &door(0x201)));
     }
 
     /// The hand-off: under a loaded cell at any fade step the ring cell draws exactly its

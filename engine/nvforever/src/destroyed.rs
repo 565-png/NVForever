@@ -165,7 +165,7 @@ fn swap_models(
             ring.pending_swaps.insert(r);
             continue;
         }
-        let flagged = crate::full_detail::flagged(&p);
+        let flagged = crate::full_detail::flagged(world.lo, &p);
         for (cell_e, old) in targets {
             let Ok((cell, _)) = ring_cells.get(cell_e) else { continue };
             let rt = Affine3A::from_translation(-cell.translation) * ref_affine(&p);

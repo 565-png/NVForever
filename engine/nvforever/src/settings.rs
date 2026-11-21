@@ -1078,6 +1078,22 @@ fn register_graphics(app: &mut App) {
         },
         ChoiceList { names: |_| full_detail_names(), chosen: full_detail_chosen, pick: take_full_detail, save: full_detail_chosen, load: take_full_detail, ask_keep: false },
     );
+    // Distant objects (#3014, distant_objects.rs): Off, 8 cells or 12 cells, switched in
+    // play (cells out of a smaller reach fade out, new ones stream in).
+    add_choice_list(
+        app,
+        Setting {
+            key: DISTANT_OBJECTS_KEY,
+            group: GROUP_GRAPHICS,
+            label: "Distant objects",
+            note: "Draws the rocks, shacks, pylons and signs the distant LOD leaves out, up to 8 or 12 cells away. Costs GPU time. Not in the original.",
+            switches: "--graphics-only",
+            get: |_| false,
+            set: |_, _| {},
+            slider: None,
+        },
+        ChoiceList { names: |_| distant_objects_names(), chosen: distant_objects_chosen, pick: take_distant_objects, save: distant_objects_chosen, load: take_distant_objects, ask_keep: false },
+    );
     // The sun's shadow maps' side, 2048 (the default) or 4096, changed in play (#2843); saved
     // as its name, the branch's older slider part (0 or 1) still loads.
     add_choice_list(
@@ -1581,6 +1597,29 @@ fn take_full_detail(w: &mut World, text: &str) -> bool {
     match nvf_play::settings::choice_of(text, &full_detail_names(), |v| choice_index(v, FullDetail::CHOICES.len())) {
         Some(i) => {
             w.resource_mut::<Graphics>().full_detail = FullDetail::CHOICES[i].1;
+            true
+        }
+        None => false,
+    }
+}
+
+/// The Distant objects row's key (#3014).
+pub(crate) const DISTANT_OBJECTS_KEY: &str = "distant-objects";
+
+fn distant_objects_names() -> Vec<String> {
+    crate::distant_objects::DistantObjects::CHOICES.iter().map(|c| c.0.to_string()).collect()
+}
+
+fn distant_objects_chosen(w: &World) -> String {
+    w.resource::<Graphics>().distant_objects.name().to_string()
+}
+
+/// The distant objects' reach `text` names (or a slider's part stands for).
+fn take_distant_objects(w: &mut World, text: &str) -> bool {
+    use crate::distant_objects::DistantObjects;
+    match nvf_play::settings::choice_of(text, &distant_objects_names(), |v| choice_index(v, DistantObjects::CHOICES.len())) {
+        Some(i) => {
+            w.resource_mut::<Graphics>().distant_objects = DistantObjects::CHOICES[i].1;
             true
         }
         None => false,
@@ -2794,6 +2833,26 @@ dlss-model=Preset K
         assert_eq!(app.world().resource::<Graphics>().full_detail, FullDetail::Seven, "unchanged");
     }
 
+    /// #3014: the Distant objects row is off by default (both presets) and takes each reach
+    /// by its name, in any case; another name is refused.
+    #[test]
+    fn the_distant_objects_row_is_off_by_default_and_takes_each_reach() {
+        use crate::distant_objects::DistantObjects;
+        let _offer_probe = crate::dlss_download::TestOfferProbe::new(Some(false));
+        let mut app = rows_app();
+        let _ = row(&app, DISTANT_OBJECTS_KEY);
+        assert_eq!(distant_objects_chosen(app.world()), "Off");
+        for (name, d) in DistantObjects::CHOICES {
+            assert!(take_distant_objects(app.world_mut(), name), "{name}");
+            assert_eq!(app.world().resource::<Graphics>().distant_objects, d);
+            assert_eq!(distant_objects_chosen(app.world()), name);
+        }
+        assert!(take_distant_objects(app.world_mut(), "8 CELLS"));
+        assert_eq!(app.world().resource::<Graphics>().distant_objects, DistantObjects::Eight);
+        assert!(!take_distant_objects(app.world_mut(), "16 cells"));
+        assert_eq!(app.world().resource::<Graphics>().distant_objects, DistantObjects::Eight, "unchanged");
+    }
+
     /// #2377: the command-line switches moved out of the notes into `Setting::switches`; each
     /// row of the Graphics tab still names the switches its note named, in the note's order
     /// (`--shadow-distance` of Longer sun shadows too: it was not "a part of" there), and no
@@ -2835,6 +2894,7 @@ dlss-model=Preset K
             ("water-mirror", &["--graphics-only"]),
             (MESH_BLEND_KEY, &["--graphics-only"]),
             (FULL_DETAIL_KEY, &["--graphics-only"]),
+            (DISTANT_OBJECTS_KEY, &["--graphics-only"]),
         ];
         for (key, switches) in want {
             let s = settings.list()[row(&app, key)];

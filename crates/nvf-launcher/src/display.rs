@@ -111,6 +111,8 @@ pub fn steps(key: &str) -> Option<Vec<String>> {
         "sun-shadows" => Some(["Off", "Performance", "Quality"].map(String::from).to_vec()),
         // full_detail.rs FullDetail::CHOICES (#2701).
         "full-detail" => Some(["Off", "7 x 7", "9 x 9"].map(String::from).to_vec()),
+        // distant_objects.rs DistantObjects::CHOICES (#3014).
+        "distant-objects" => Some(["Off", "8 cells", "12 cells"].map(String::from).to_vec()),
         // Degrees in steps of 5 (engine settings.rs FOV_MIN..FOV_MAX, VIEWMODEL_FOV_*).
         "field-of-view" => Some((0..13).map(|i| format!("{}°", 50 + 5 * i)).collect()),
         "viewmodel-field-of-view" => Some((0..13).map(|i| format!("{}°", 30 + 5 * i)).collect()),
@@ -400,6 +402,11 @@ mod tests {
             assert!(fd.contains(&format!("(\"{w}\", FullDetail::")), "full_detail.rs: {w}");
         }
         assert!(fd.contains("pub const CHOICES: [(&'static str, FullDetail); 3]"));
+        let dob = engine("distant_objects.rs");
+        for w in steps("distant-objects").unwrap() {
+            assert!(dob.contains(&format!("(\"{w}\", DistantObjects::")), "distant_objects.rs: {w}");
+        }
+        assert!(dob.contains("pub const CHOICES: [(&'static str, DistantObjects); 3]"));
         assert!(st.contains("pub(crate) const LEGACY_KEY: &str = \"fsr-upscaling\";") && st.contains("set_older_key(app, UPSCALER_KEY, LEGACY_KEY)"));
         assert!(st.contains("if fnv_install::ini_get(&text, section, \"display-sync\").is_some() {") && st.contains("let Some(old) = fnv_install::ini_get(&text, section, \"vsync\")"), "the old vsync key is read only without display-sync");
         let q = engine("quality.rs");
