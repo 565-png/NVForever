@@ -447,6 +447,6 @@ traits 37–50 to selected nonanimatable screen/lens modifiers without changing 
 immutable record cache or core getter/setter policy. Compiled-source grade controls
 cover getter-to-setter contrast/alpha round trips, updates, removal/re-entry,
 lens/animated isolation and checked restore. Revision-specific water and grade
-checks are recorded in PR #2861. Native animated edits and alpha units, and
-installed Radiation Visuals/UnderwaterFX acceptance, remain open
+checks are recorded in PR #2861. Native animated edits and NAM3 alpha (trait 54) units,
+and installed Radiation Visuals/UnderwaterFX acceptance, remain open
 ([image modifiers](spec-notes/image-modifiers.md)).

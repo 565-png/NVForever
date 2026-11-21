@@ -494,14 +494,21 @@ assigned values. Follow the existing IMAD getter and decoder: 37–38 are satura
 (`0x13`/`0x53` IAD), and 43–44 are brightness [hypothesis: this trait-to-field order
 is the existing getter's, not a capture of the original setter]. Tint RGBA (47–50) are
 all 0–255: divide each assigned value by 255; the getter reads TNAM alpha ×255 like its
-RGB [observed, in an installed mod, not the original game: the installed radiation
-controller writes 47–49 as 0–255 and 50 as its effect strength times its tint strength
-(default 0.3) times 255] [hypothesis: that the original getter and setter use 0–255
-for trait 50 too; no capture in the original game confirms it]
-[observed: owner playtest in NVForever with that mod, 2026-11-18, visually confirmed
-on three builds in irradiated water: before this PR the cyan effect persisted; with
-trait 50 read as 0–1 alpha the whole screen turned cyan; with 47–50 all read as 0–255
-the tint looked correct. This is an NVForever observation, not an original-game capture].
+RGB [observed: original FNV 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-20 —
+`GetImageSpaceModTrait` on unchanged non-animated `FalloutNV.esm` IMADs returned
+traits 47–50 as `[106.0, 141.0, 149.0, 120.0]` for `WastelandMegatonNightISFX`
+(`0x00054E13`, authored TNAM `106/255, 141/255, 149/255, 120/255`),
+`[101.0, 154.0, 150.0, 160.0]` for `WastelandNightISFX` (`0x00091890`, authored TNAM
+`101/255, 154/255, 150/255, 160/255`), and `[102.0, 149.0, 153.0, 100.0]` for
+`WastelandNorthNightISFX` (`0x0003920C`, authored TNAM `102/255, 149/255, 153/255, 100/255`);
+`SetImageSpaceModTrait` round-trips on the same records read back `0.35000002` for trait 50 = `0.35`,
+`128.0` for trait 50 = `128.0`, and `200.000015` for trait 47 = `200.0`].
+Separately, in an installed mod (Radiation Visuals), the controller writes 47–49 as 0–255
+and 50 as its effect strength times its tint strength (default 0.3) times 255, and a
+contributor playtest in NVForever with that mod (2026-11-18) visually confirmed on three
+builds in irradiated water that before this PR the cyan effect persisted, with trait 50
+read as 0–1 alpha the whole screen turned cyan, and with 47–50 all read as 0–255 the tint
+looked correct.
 Leave every unassigned component, other effect, sound, duration and track alone.
 [engine design choice] Read only bounded fields of active modifiers; do not clone the
 record cache, mutate the load order or scan unrelated forms each frame. Nonfinite values
