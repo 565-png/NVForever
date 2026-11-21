@@ -1,4 +1,4 @@
-//! The authored material branch of `shape_material_inner` (#2981): the fields a set fills,
+//! The authored material branch of `shape_material_with` (#2981): the fields a set fills,
 //! what it leaves, the shapes it never touches, and the legacy look kept for swaps.
 
 use super::*;
@@ -85,7 +85,7 @@ fn an_authored_set_fills_its_fields_over_the_legacy_ones() {
     let s = set(&mut scratch, true, Scalars { parallax_depth: None, roughness_scale: Some(0.7), reflectance: Some(0.3) });
     let mut source = SetTextures::new(Some((KEY, s.clone())));
     let mut mesh = triangle();
-    let (m, missing) = shape_material_with(&wall(), &mut mesh, &mut source);
+    let (m, missing) = shape_material_with(&wall(), &mut mesh, &mut source, Tangents::Generate);
     assert!(missing.is_none());
     assert_eq!(source.asked, [KEY], "looked up once, by the resolved diffuse");
     let (diffuse, game_normal) = (source.handle(r"walls\brick.dds"), source.handle(r"walls\brick_n.dds"));
@@ -109,7 +109,7 @@ fn defaults_apply_without_scalars_and_the_game_normal_stays_without_an_n() {
     let mut scratch = Assets::<Image>::default();
     let s = set(&mut scratch, false, Scalars::default());
     let mut source = SetTextures::new(Some((KEY, s.clone())));
-    let (m, _) = shape_material_with(&wall(), &mut triangle(), &mut source);
+    let (m, _) = shape_material_with(&wall(), &mut triangle(), &mut source, Tangents::Generate);
     let game_normal = source.handle(r"walls\brick_n.dds");
     assert_eq!((m.base.perceptual_roughness, m.base.reflectance), (1.0, 0.5));
     assert_eq!(m.base.normal_map_texture.as_ref(), Some(&game_normal));
@@ -118,26 +118,29 @@ fn defaults_apply_without_scalars_and_the_game_normal_stays_without_an_n() {
 }
 
 /// A shape without a normal map that gains one from `_n` gets tangents on the mesh being
-/// built (the drawn one); a copy of a drawn mesh without them (`keep_tangents`) does not take
-/// the `_n` and gains no tangents.
+/// built, from the caller's tangent source: generated for a new mesh, and for a copy of a
+/// drawn mesh (`Tangents::Keep`) its own when it has them, generated otherwise, as for the
+/// game's own normal map.
 #[test]
-fn a_first_normal_from_n_brings_tangents_to_the_drawn_mesh_only() {
+fn a_first_normal_from_n_brings_tangents_to_the_mesh() {
     let mut scratch = Assets::<Image>::default();
     let s = set(&mut scratch, true, Scalars::default());
     let bare = Props { textures: vec![r"walls\brick.dds".into()], ..Default::default() };
     let mut source = SetTextures::new(Some((KEY, s.clone())));
     let mut mesh = triangle();
     assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_none());
-    let (m, _) = shape_material_with(&bare, &mut mesh, &mut source);
+    let (m, _) = shape_material_with(&bare, &mut mesh, &mut source, Tangents::Generate);
     assert!(mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some(), "tangents for the first normal map");
     assert_eq!(m.base.normal_map_texture, s.normal);
     assert_eq!(m.extension.legacy.as_ref().map(|l| (l.normal.is_none(), l.tangents, l.reflectance)), Some((true, true, 0.3)));
     let mut copy = triangle();
-    let (m, _) = shape_material_inner(&bare, &mut copy, &mut source, true);
-    assert!(copy.attribute(Mesh::ATTRIBUTE_TANGENT).is_none());
-    assert!(m.base.normal_map_texture.is_none(), "no _n on a copy whose drawn mesh has no tangents");
-    assert_eq!(m.base.metallic_roughness_texture.as_ref(), Some(&s.orm), "the rest of the set still applies");
-    assert!(!m.extension.legacy.unwrap().tangents);
+    let (m, _) = shape_material_with(&bare, &mut copy, &mut source, Tangents::Keep);
+    assert!(copy.attribute(Mesh::ATTRIBUTE_TANGENT).is_some(), "a copy without tangents has them generated");
+    assert_eq!(m.base.normal_map_texture, s.normal);
+    assert_eq!(m.base.metallic_roughness_texture.as_ref(), Some(&s.orm));
+    assert!(m.extension.legacy.unwrap().tangents);
+    let (m, _) = shape_material_with(&bare, &mut copy, &mut source, Tangents::Keep);
+    assert_eq!(m.base.normal_map_texture, s.normal, "a copy that has tangents keeps them and takes the _n");
 }
 
 #[test]
@@ -156,7 +159,7 @@ fn shapes_a_set_never_touches_keep_the_game_material_and_ask_nothing() {
         ("excluded by its caller", Props { no_authored: true, ..wall() }),
     ] {
         let mut source = SetTextures::new(Some((KEY, s.clone())));
-        let (m, _) = shape_material_with(&props, &mut triangle(), &mut source);
+        let (m, _) = shape_material_with(&props, &mut triangle(), &mut source, Tangents::Generate);
         assert!(source.asked.is_empty(), "{why}: no lookup");
         assert!(m.base.metallic_roughness_texture.is_none() && m.base.occlusion_texture.is_none(), "{why}");
         assert_ne!(m.extension.emissive_rule.w, AUTHORED_MARK, "{why}");
@@ -165,14 +168,14 @@ fn shapes_a_set_never_touches_keep_the_game_material_and_ask_nothing() {
     for key in [r"textures\pipboy3000\pc\english\pipboyarm01.dds", r"textures\interface\icons\x.dds"] {
         let mut source = SetTextures::new(Some((key, s.clone())));
         let props = Props { textures: vec![key.into()], ..wall() };
-        let (m, _) = shape_material_with(&props, &mut triangle(), &mut source);
+        let (m, _) = shape_material_with(&props, &mut triangle(), &mut source, Tangents::Generate);
         assert!(source.asked.is_empty() && m.base.metallic_roughness_texture.is_none(), "{key}");
     }
     // No UVs: the maps could not be read.
     let mut source = SetTextures::new(Some((KEY, s.clone())));
     let mut no_uv = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::MAIN_WORLD);
     no_uv.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]; 3]);
-    assert!(shape_material_with(&wall(), &mut no_uv, &mut source).0.base.metallic_roughness_texture.is_none());
+    assert!(shape_material_with(&wall(), &mut no_uv, &mut source, Tangents::Generate).0.base.metallic_roughness_texture.is_none());
 }
 
 /// The drawn fields (everything but the CPU-only legacy look) of a material with the run's
@@ -189,13 +192,13 @@ fn off_no_set_and_restored_materials_draw_the_same() {
         let mut source = SetTextures::new(Some((KEY, s.clone())));
         source.masked = mask;
         source.on = false;
-        let (off, _) = shape_material_with(&props, &mut triangle(), &mut source);
+        let (off, _) = shape_material_with(&props, &mut triangle(), &mut source, Tangents::Generate);
         assert!(source.asked.is_empty() && off.extension.legacy.is_none(), "off: no lookup, no legacy look");
         source.on = true;
         let set = source.set.take();
-        let (no_set, _) = shape_material_with(&props, &mut triangle(), &mut source);
+        let (no_set, _) = shape_material_with(&props, &mut triangle(), &mut source, Tangents::Generate);
         source.set = set;
-        let (mut authored, _) = shape_material_with(&props, &mut triangle(), &mut source);
+        let (mut authored, _) = shape_material_with(&props, &mut triangle(), &mut source, Tangents::Generate);
         assert_eq!(drawn(&off), drawn(&no_set), "{props:?}");
         assert_ne!(drawn(&off), drawn(&authored));
         let look = authored.extension.legacy.clone().unwrap();
@@ -216,7 +219,7 @@ fn masks_and_cut_outs_stay_the_game_diffuses() {
     let s = set(&mut scratch, true, Scalars::default());
     let corn = Props { textures: vec![key.into()], alpha: Some((0x12ED, 0)), ..Default::default() };
     let mut source = SetTextures::new(Some((key, s.clone())));
-    let (m, _) = shape_material_with(&corn, &mut triangle(), &mut source);
+    let (m, _) = shape_material_with(&corn, &mut triangle(), &mut source, Tangents::Generate);
     assert_eq!(m.extension.blended_cutout, Some(BLENDED_CUTOUT_CUT));
     assert!(matches!(m.base.alpha_mode, AlphaMode::Blend));
     assert_eq!(m.base.metallic_roughness_texture.as_ref(), Some(&s.orm));
