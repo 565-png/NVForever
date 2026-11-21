@@ -36,7 +36,10 @@ fn sample_depth_map(uv: vec2<f32>, material_bind_group_slot: u32) -> f32 {
     // NVForever height maps: the texture stores height (white = high, the authored `_p` of
     // docs/spec-notes/pbr-materials.md), the march reads depth (white = deepest); one shared
     // inversion for both bindings. Upstream returns the red channel as it is.
-    return 1.0 - height;
+    // NVForever height range (#2979): the height is held to 0..1 first, so a signed texture
+    // (a game slot-3 map in BC4/BC5 signed, read through the linear loader) cannot push the
+    // depth outside the march's 0..1 layers.
+    return 1.0 - clamp(height, 0.0, 1.0);
 }
 
 /// An implementation of parallax mapping, see https://en.wikipedia.org/wiki/Parallax_mapping
@@ -136,7 +139,14 @@ fn parallaxed_uv(
     let previous_depth = sample_depth_map(previous_uv, material_bind_group_slot) -
         current_layer_depth + layer_depth;
 
-    let weight = next_depth / (next_depth - previous_depth);
+    // NVForever occlusion guard (#2979): upstream divides by `next_depth - previous_depth`
+    // whatever they are. Only when the march brackets a hit (the last layer at or below the
+    // surface, the one before above it) is the weight in 0..1; otherwise (the march ran out
+    // of layers, or a flat stretch makes the denominator 0) the last layer's coordinates are
+    // kept (weight 0) instead of extrapolating or dividing by zero.
+    let denominator = next_depth - previous_depth;
+    let bracketed = next_depth <= 0.0 && previous_depth >= 0.0 && denominator < -1e-6;
+    let weight = select(0.0, next_depth / min(denominator, -1e-6), bracketed);
 
     uv = mix(uv, previous_uv, weight);
 

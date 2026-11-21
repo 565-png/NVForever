@@ -34228,6 +34228,7 @@ expect = [
   { re = 'game height maps summary: depth 0\.015 \(relief:4, 8 layers\); [1-9]\d* material builds draw a NIF.s own height map \(texture-set slot 3, shader flag 11\), 0 more had it replaced by an authored _p,', count = 1, label = "REPCONN HQ's flagged shapes draw their slot-3 height maps (none replaced: authored sets off)" },
   { re = 'game height maps summary: .*, 0 could not load it;', count = 1, label = "every slot-3 height map asked for loads" },
   { re = 'test aid: game_parallax_repconn\.png: \d+ % of the view is one colour', count = 1, label = "the frame was captured" },
+  { re = 'Screenshot saved to .*game_parallax_repconn\.png', count = 1, label = "the frame was written" },
 ]
 forbid = [
   { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
@@ -34247,6 +34248,7 @@ expect = [
   "authored materials: off",
   { text = "NVF_GAME_PARALLAX_DEPTH=0: the game's own height maps (slot 3, shader flag 11) are not drawn", count = 1 },
   { re = 'test aid: game_parallax_repconn_flat\.png: \d+ % of the view is one colour', count = 1, label = "the frame was captured" },
+  { re = 'Screenshot saved to .*game_parallax_repconn_flat\.png', count = 1, label = "the frame was written" },
   { re = 'game height maps summary: off \(NVF_GAME_PARALLAX_DEPTH=0\) \(relief:4, 8 layers\); 0 material builds draw a NIF.s own height map \(texture-set slot 3, shader flag 11\), 0 more had it replaced by an authored _p, 0 left it flat .*, 0 could not load it;', count = 1, label = "depth 0: no game height map drawn, left flat or loaded" },
 ]
 forbid = [

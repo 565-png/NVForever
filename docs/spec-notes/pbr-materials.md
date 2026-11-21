@@ -373,7 +373,14 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   drawing it would need the actor to draw the copy with its new tangents. Parallax at
   grazing views is bounded by the vendored march's grazing clamp (the step's divisor held
   at a view steepness of at least 0.15; engine/vendor/README.md). A shape whose tangents
-  could not be made, or that may not draw the map, does not load the file. It applies **whatever the
+  could not be made, or that may not draw the map, does not load the file.
+  - [design] **Intentional changes to authored materials too** (#2979, in the shared
+    vendored march; engine/vendor/README.md): the grazing clamp also bounds an authored
+    `_p`'s step (an unflagged floor seen at |Vt.z| = 0.05 now steps a third as far as
+    before), kept for both sources so no view gives runaway or non-finite coordinates;
+    the sampled height is held to 0..1 before the inversion (a signed texture cannot leave
+    the march's layers); and the occlusion method (`NVF_PBR_PARALLAX_METHOD=occlusion`)
+    interpolates only when the march brackets a hit, keeping the last layer otherwise. It applies **whatever the
   Authored materials setting**, since it is the game's material, not a set's
   (`authored::apply_game_height`). Precedence: it is put on before the legacy look is taken,
   so it is that look's parallax baseline (`LegacyLook::parallax`); a set's `_p` (authored or
