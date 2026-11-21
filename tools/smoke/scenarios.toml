@@ -34214,41 +34214,41 @@ forbid = [
 note = "The same field with the setting off: the index is never built (no 'authored materials: N sets' line), the material path loads no pbr file (the fixture's own check reads the generated files first), the plain, lit, dark and flat panels draw the same and the reference (its game normal map) differs from them."
 
 [[scenario]]
-name = "game-parallax-repconn"
-source = "[design, #2979] docs/spec-notes/nif.md §6 \"Parallax height maps\", docs/spec-notes/pbr-materials.md \"The game's own height maps\": with authored materials off, REPCONN HQ's shapes whose texture set names a height map (slot 3) with shader flag bit 11 draw it as a depth map; depth and method provisional [hypothesis] until observer check 261; a frame in target/smoke (game_parallax_repconn.png)"
+name = "game-parallax-vault34"
+source = "[design, #2979] docs/spec-notes/nif.md §6 \"Parallax height maps\", docs/spec-notes/pbr-materials.md \"The game's own height maps\": with authored materials off, Vault 34's shapes whose texture set names a height map (slot 3) with shader flag bit 11 draw it as a depth map; depth and method provisional [hypothesis] until observer check 261; a frame in target/smoke (game_parallax_vault34.png)"
 areas = ["renderer", "textures", "nif"]
 paths = ["engine/nvf-assets/src/authored.rs", "engine/nvf-assets/src/authored/", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/nif_spawn/", "engine/nvf-assets/src/model.rs", "engine/nvf-assets/src/actor.rs", "engine/nvforever/src/effect_shaders.rs", "engine/vendor/bevy_pbr/src/render/parallax_mapping.wesl"]
 # The switches the counts depend on are pinned (depth, method, layers, alpha-tested), and authored sets are off, so every count is the game's own maps.
-env = { NVFOREVER_HOME = "game-parallax-home", NVF_GAME_PARALLAX_DEPTH = "0.015", NVF_PBR_PARALLAX_METHOD = "relief:4", NVF_PBR_PARALLAX_LAYERS = "8", NVF_PBR_PARALLAX_MASK = "0", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_LOOK = "6:0:-40", NVF_PLAY_TEST_SHOT_FLATNESS = "1", NVF_PLAY_TEST_SHOTS = "8:game_parallax_repconn.png" }
-args = ["--cell", "RepconHQ01", "--play", "--no-voice", "--no-messages", "--graphics-only", "no-authored-materials"]
+env = { NVFOREVER_HOME = "game-parallax-home", NVF_GAME_PARALLAX_DEPTH = "0.015", NVF_PBR_PARALLAX_METHOD = "relief:4", NVF_PBR_PARALLAX_LAYERS = "8", NVF_PBR_PARALLAX_MASK = "0", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_LOOK = "6:0:-40", NVF_PLAY_TEST_SHOT_FLATNESS = "1", NVF_PLAY_TEST_SHOTS = "8:game_parallax_vault34.png" }
+args = ["--cell", "Vault34a", "--play", "--no-voice", "--no-messages", "--graphics-only", "no-authored-materials"]
 run_seconds = 14
 expect = [
   "authored materials: off",
   { text = "authored materials summary: off (setting)", count = 1 },
-  { re = 'game height maps summary: depth 0\.015 \(relief:4, 8 layers\); [1-9]\d* material builds draw a NIF.s own height map \(texture-set slot 3, shader flag 11\), 0 more had it replaced by an authored _p,', count = 1, label = "REPCONN HQ's flagged shapes draw their slot-3 height maps (none replaced: authored sets off)" },
+  { re = 'game height maps summary: depth 0\.015 \(relief:4, 8 layers\); [1-9]\d* material builds draw a NIF.s own height map \(texture-set slot 3, shader flag 11\), 0 more had it replaced by an authored _p,', count = 1, label = "Vault 34's flagged shapes draw their slot-3 height maps (none replaced: authored sets off)" },
   { re = 'game height maps summary: .*, 0 could not load it;', count = 1, label = "every slot-3 height map asked for loads" },
-  { re = 'test aid: game_parallax_repconn\.png: \d+ % of the view is one colour', count = 1, label = "the frame was captured" },
-  { re = 'Screenshot saved to .*game_parallax_repconn\.png', count = 1, label = "the frame was written" },
+  { re = 'test aid: game_parallax_vault34\.png: \d+ % of the view is one colour', count = 1, label = "the frame was captured" },
+  { re = 'Screenshot saved to .*game_parallax_vault34\.png', count = 1, label = "the frame was written" },
 ]
 forbid = [
   { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
 ]
-note = "The count is of material builds that still draw the game's map, not distinct shapes (a model built twice counts twice). RepconHQ01 was picked from the REPCONN HQ `_p` texture set nif.md §6 lists, without a survey of the cell [hypothesis]: if the count is 0 there, move both game-parallax scenarios to a cell whose meshes name one of the 20 shipped height textures (397 of the 510 shapes are under meshes/dungeons). The view is pinned (heading 0, pitch -40 from the start position, LOOK at 6 s) so the two runs' frames compare; no flagged surface's position in the cell is known, so the frame need not show one."
-manual = "Open game_parallax_repconn.png beside game_parallax_repconn_flat.png (game-parallax-repconn-off): floors and rubble with height maps show relief, nothing else changes."
+note = "The count is of material builds that still draw the game's map, not distinct shapes (a model built twice counts twice). Vault34a was chosen by probe runs of this branch (2026-11-22, authored materials off, the test install): 69 builds there; RepconHQ01, which the first version of this scenario used, has none [observed: our runs]."
+manual = "Open game_parallax_vault34.png beside game_parallax_vault34_flat.png (game-parallax-vault34-off): floors and rubble with height maps show relief, nothing else changes."
 
 [[scenario]]
-name = "game-parallax-repconn-off"
-source = "[design, #2979] docs/spec-notes/pbr-materials.md \"The game's own height maps\": the control of game-parallax-repconn: the game depth switch at 0 draws and loads no game height map"
+name = "game-parallax-vault34-off"
+source = "[design, #2979] docs/spec-notes/pbr-materials.md \"The game's own height maps\": the control of game-parallax-vault34: the game depth switch at 0 draws and loads no game height map"
 areas = ["renderer", "textures", "nif"]
 paths = ["engine/nvf-assets/src/authored.rs", "engine/nvf-assets/src/authored/", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/nif_spawn/"]
-env = { NVFOREVER_HOME = "game-parallax-home", NVF_GAME_PARALLAX_DEPTH = "0", NVF_PBR_PARALLAX_METHOD = "relief:4", NVF_PBR_PARALLAX_LAYERS = "8", NVF_PBR_PARALLAX_MASK = "0", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_LOOK = "6:0:-40", NVF_PLAY_TEST_SHOT_FLATNESS = "1", NVF_PLAY_TEST_SHOTS = "8:game_parallax_repconn_flat.png" }
-args = ["--cell", "RepconHQ01", "--play", "--no-voice", "--no-messages", "--graphics-only", "no-authored-materials"]
+env = { NVFOREVER_HOME = "game-parallax-home", NVF_GAME_PARALLAX_DEPTH = "0", NVF_PBR_PARALLAX_METHOD = "relief:4", NVF_PBR_PARALLAX_LAYERS = "8", NVF_PBR_PARALLAX_MASK = "0", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_LOOK = "6:0:-40", NVF_PLAY_TEST_SHOT_FLATNESS = "1", NVF_PLAY_TEST_SHOTS = "8:game_parallax_vault34_flat.png" }
+args = ["--cell", "Vault34a", "--play", "--no-voice", "--no-messages", "--graphics-only", "no-authored-materials"]
 run_seconds = 14
 expect = [
   "authored materials: off",
   { text = "NVF_GAME_PARALLAX_DEPTH=0: the game's own height maps (slot 3, shader flag 11) are not drawn", count = 1 },
-  { re = 'test aid: game_parallax_repconn_flat\.png: \d+ % of the view is one colour', count = 1, label = "the frame was captured" },
-  { re = 'Screenshot saved to .*game_parallax_repconn_flat\.png', count = 1, label = "the frame was written" },
+  { re = 'test aid: game_parallax_vault34_flat\.png: \d+ % of the view is one colour', count = 1, label = "the frame was captured" },
+  { re = 'Screenshot saved to .*game_parallax_vault34_flat\.png', count = 1, label = "the frame was written" },
   { re = 'game height maps summary: off \(NVF_GAME_PARALLAX_DEPTH=0\) \(relief:4, 8 layers\); 0 material builds draw a NIF.s own height map \(texture-set slot 3, shader flag 11\), 0 more had it replaced by an authored _p, 0 left it flat .*, 0 could not load it;', count = 1, label = "depth 0: no game height map drawn, left flat or loaded" },
 ]
 forbid = [

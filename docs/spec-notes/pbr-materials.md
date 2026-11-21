@@ -394,8 +394,8 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   shows them like a set's. The exit line `game height maps summary: ...` (printed whatever
   the setting) gives the depth or "off", then the builds that still draw the game's map,
   those where a set's `_p` replaced it, those left flat, those that could not load it, and
-  later copies that dropped one; smoke scenarios `game-parallax-repconn` (authored sets off,
-  switches pinned, a non-zero drawn count) and its control `game-parallax-repconn-off`
+  later copies that dropped one; smoke scenarios `game-parallax-vault34` (authored sets off,
+  switches pinned, a non-zero drawn count) and its control `game-parallax-vault34-off`
   (depth 0, nothing drawn).
 - [design] **Signed `_p` is refused** (one warning per file; an authored set keeps its other
   maps), as `fnvtool pbr check` refuses it ("Compression and sizes"); so is a `_p` whose file
