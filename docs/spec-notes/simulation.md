@@ -737,7 +737,33 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
     wins over it, nearer or not, so an item beside a body is taken rather than the body
     searched; with no such box the body is picked by its box as before (#3125) [design].
     The console's click keeps the plain nearest rule. Collision on the trigger layer (12)
-    does not block the ray [hypothesis].
+    does not block the ray [hypothesis]. Nor does the Invisible Wall layer (27): "the
+    player can activate / loot objects through this layer" [documented: GECK wiki
+    "Collision layer", INVISIBLE WALL; #1602, docs/spec-notes/cells-refs.md].
+  - **Talking through bars** (#3233; `engine/nvf-play/src/activate/see_through.rs`): when
+    the ray's first hit is a reference's collision on a see-through layer, Transparent (3),
+    Transparent Small (26) or Transparent Small Anim (28), and nothing is offered (no
+    activatable collision hit, no render box entered before it), the ray is cast again
+    from the eye passing those layers; if the first thing it meets within reach is a
+    living actor whose prompt is Talk, that actor is the target (by collision, at its own
+    distance) [design]. The Vault 3 captives stand behind JailCellDoorway01 (0x000EF3FA, a
+    STAT with one collision object on layer 3), which every ray from the player's place
+    toward Rick Lancer (V3Prisoner01Ref 0x000F47B0) hit 25 to 34 units out, with no static
+    collision behind it within 200 units [observed: `fnvtool phys cell --cell Vault3b
+    --ray`, #3233]. The layers are the ones actors see through ("Actors can see through
+    this layer type" [documented: GECK wiki "Collision layer", TRANSPARENT, TRANSPARENT
+    SMALL]; Transparent Small Anim by its name [hypothesis]); for the activation pick the
+    wiki says only that nothing but projectiles passes Transparent, so the original's
+    crosshair on these layers is an observer question (observer-checks.md #249). The
+    rule is kept narrow on purpose [design]: only Talk passes, so items, containers, doors,
+    a body to search and a pocket to pick behind bars, a fence or a window stay out of
+    reach (render-bounds picks still count only before the first collision hit, and the
+    activation ray itself still stops on the bars); anything else between the bars and
+    the actor (a wall, the cell's door) hides the actor; GetCrosshairRef and
+    PlaceAtReticle's far ray keep the first collision hit. Shots (`layers::shot_ignores`)
+    and movement are not changed. Starting the conversation checks no line of sight or
+    distance (`fnv_game::Game::start_dialogue`; the walk-up distance is for force greets
+    only), so the bars do not refuse it.
   - **What is offered**: references the simulation considers present (not taken, enabled)
     whose base is an item, container, door, actor or placed explosive with a weapon to
     give; activators and furniture only with a display name (FULL) [hypothesis: unnamed

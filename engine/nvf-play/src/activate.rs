@@ -27,6 +27,7 @@
 
 pub mod outcome;
 pub mod pick;
+pub mod see_through;
 #[cfg(test)]
 pub(crate) mod tests;
 
@@ -210,7 +211,8 @@ fn destination_name(sim: &SimState, index: &fnv_world::WorldIndex, door: FormId,
 
 /// The collision ray under the crosshair (the player's capsule and trigger volumes
 /// ignored), or a door just behind what it hits (`pick::door_behind`), then the
-/// render-bounds fallback (`pick`). In first person it is the eye's
+/// render-bounds fallback (`pick`), then someone to talk to behind bars
+/// (`see_through`, #3233). In first person it is the eye's
 /// view ray; in third person the camera's, through the crosshair over the shoulder
 /// (`control::Crosshair`; playtest list 4, item 11).
 #[allow(clippy::too_many_arguments)]
@@ -234,6 +236,8 @@ pub(crate) fn find_target(
     // The node of what the far ray meets (GetReticleNode, `fnv_game::nvse_jip13`).
     let mut far_node = None;
     let mut behind = None;
+    // An actor behind bars or a fence the ray stops on (`see_through::actor_behind`).
+    let mut through = None;
     let hit = phys.and_then(|mut p| {
         let mut filter = p.player.as_ref().map_or_else(Filter::default, |c| Filter::excluding(c.key()));
         // Trigger volumes do not block the view [hypothesis].
@@ -250,11 +254,12 @@ pub(crate) fn find_target(
         });
         // Invisible walls do not take the crosshair: what stands behind one is activated
         // (#1602: the Gun Runners' kiosk, nv_gunrun_kiosk.nif, is one body on layer 27
-        // Invisible Wall, the Vendortron inside it) [hypothesis: by the layer's name, as
-        // sight (nvforever detection.rs) and blast cover (combat.rs) pass it too]. The far
+        // Invisible Wall, the Vendortron inside it) [documented: GECK wiki "Collision
+        // layer": "the player can activate / loot objects through this layer"]. The far
         // ray above (PlaceAtReticle) keeps stopping at them.
         filter.exclude_layers.insert(layers::INVISIBLE_WALL);
         let h = p.world.queries().ray(eye, dir, REACH, &filter)?;
+        through = see_through::actor_behind(&mut p.world, eye, dir, REACH, &h, &filter);
         let owner = |o: Owner| match o {
             // An actor's hit volume (combat C3) targets the actor.
             Owner::Ref { form_id, .. } | Owner::Actor { form_id, .. } => Some(form_id),
@@ -354,6 +359,9 @@ pub(crate) fn find_target(
     };
     let hit = pick::door_behind(hit, behind, |id| describe_once(id).is_some());
     let picked = pick::choose_precise_first(hit, bounds, REACH, |id| describe_once(id).is_some());
+    // Nothing offered and the ray stopped on bars: talk to whoever stands behind them
+    // (#3233). Only Talk passes; GetCrosshairRef (above) stays the first collision hit.
+    let picked = see_through::talk_through(picked, through, REACH, |id| matches!(describe_once(id), Some((_, Action::Talk))));
     let chosen = picked.and_then(|p| describe_once(p.form_id).map(|d| (p, d)));
     let game = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
     let new = chosen.map(|(Pick { form_id, distance, source }, (name, action))| {
