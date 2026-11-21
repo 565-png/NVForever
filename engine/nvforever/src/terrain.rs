@@ -2559,8 +2559,8 @@ mod tests {
         {
             let mut materials = app.world_mut().resource_mut::<Assets<TerrainMaterial>>();
             let mut m = materials.get_mut(&folded).unwrap();
-            let depths = m.extension.parallax_depths;
-            m.extension.parallax_depths = depths;
+            // Touched mutably, nothing changed: a generic Modified with equal inputs.
+            std::hint::black_box(&mut *m);
         }
         app.update();
         app.update();
