@@ -3421,6 +3421,22 @@ already talking takes over at once, same topic or another; nothing is queued or 
      and without Microfusion Breeder rounds carried: count the beams (a video at 30 fps
      does it), watch for a reload, and read the ammo count before and after.
 
+## Added 2026-11-21 (a lakelurk standing on a deep lake bed, #2980)
+
+250. **How does a creature that swims stand on a lake bed deeper than it is tall?**
+     (P3; #2980, physics.md §6.6 "Actors standing on the bed".) Ours since #2980: an
+     actor whose character swims (on the ground with its feet 115 or more under the
+     surface) but stands still with its feet on the bed plays its standing idle
+     (`mirelurkking\mtidle.kf` for a lakelurk); moving, its swimming clips
+     [hypothesis]. Before, it held its swimming idle (`swimidle.kf`) on the bottom, which
+     a player read as a T-pose. At Boulder Beach (Lake Mead, surface 2600), from the
+     shore at (56992, 37536) walk east to about x 58300 (feet about 250 under the
+     surface), `tgm` on, `placeatme 00145EDB` (CrLakelurkCG), and look at it for 10 s
+     (with `tai` if it moves at once); then `tai` again and walk away so it follows. A lakelurk standing on
+     the bottom in its standing idle agrees with ours; one held in the floating swim
+     pose (limbs out, slow loop) says the original keeps the swimming idle at rest,
+     and one that rises to float near the surface says swimming actors have buoyancy.
+
 ## Added 2026-11-21 (what GetDestructionStage counts, #3053)
 
 247. **Does GetDestructionStage give the stage counted from 1 (DSTD index + 1) or the

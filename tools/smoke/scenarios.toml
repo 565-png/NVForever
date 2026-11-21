@@ -16894,6 +16894,21 @@ expect = [
 forbid = [{ text = "player: stops swimming", label = "swims on over the deepening bed" }]
 
 [[scenario]]
+name = "lakelurk-rests-on-bed"
+source = "issue #2980 (docs/spec-notes/physics.md §6.6, Actors standing on the bed): a lakelurk on a lake bed deeper than wade_depth swims from its first step, held at the bed; standing still there it plays its standing idle (mtidle.kf), not its swimming idle (engine/nvforever/src/swimming.rs rests_on_bed). Every actor has a clip on its base layer (locomotion.rs base_fault)"
+note = "the player swims out from the Boulder Beach shore as wade-in-swim (about x 58300 at 14 s, the bed about 250-300 under the lake's 2600, the player at about 118 under it), then a lakelurk is placed at the player (created_spots puts it on the bed below); NVF_PLAY_TEST_UNSEEN keeps it and the beach's lakelurks unaware. The positions are worked out from physics.md §6.6, not yet run"
+areas = ["physics", "actors", "creatures"]
+paths = ["engine/nvforever/src/swimming.rs", "engine/nvforever/src/locomotion.rs", "crates/fnv-phys/src/character.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_MOVE = "10:1:0,14:0:0", NVF_PLAY_TEST_SCRIPT = "15:call:player:PlaceAtMe:NVCrLakelurk:1" }
+args = ["--play", "--pos=56992,37536,2745", "--heading", "90", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 26
+expect = [
+  { re = 'swimming: FF[0-9A-F]{6} rests on the bed under water: it stands on its standing clips', label = "the placed lakelurk stands on the bed on its standing idle, not its swimming idle (#2980)" },
+  { re = 'swimming summary: .* (?P<n>\d+) stood still on the bed', range = [1, 100], label = "counted in the summary" },
+]
+forbid = [{ text = "actor has no base clip", label = "every actor has a clip on its base layer (else its body falls to the bind pose)" }]
+
+[[scenario]]
 name = "caravan-currency"
 source = "docs/spec-notes/caravan.md §3.1 (HelpCaravanBetting: NCR dollars and Legion coins may be bet): with 10 caps and ten $20 NCR notes the player's funds count the notes at their value; Auto Match against Ringo's bid, and Play Caravan pays the ante with the caps and then the notes, the change in caps; then the player forfeits"
 areas = ["caravan", "menus"]

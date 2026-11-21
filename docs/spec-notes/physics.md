@@ -2475,6 +2475,23 @@ just above the surface. A human check in the game would settle the depth: walk i
 Mead at Boulder Beach (east from (56992, 37536)) and note where swimming starts. The bed
 falls about 12°, 44 below S at 256 units out, 140 at 768.
 
+**Actors standing on the bed** (2026-11-21, #2980). Actors give the controller no
+vertical input, so the rule above leaves an actor placed on a bed deeper than
+`wade_depth` swimming from its first step, held at the bed with no buoyancy; the
+lakelurks placed in Lake Mead played their swimming idle (`mirelurkking\swimidle.kf`, a
+floating pose) standing on the bottom until a fight's aim and attack clips covered it
+[hypothesis: the cause of the reported T-pose, read from the code, not yet seen running].
+The physics is unchanged (the player's and every swimmer's depths stay as above). The
+animation reads the swimming state otherwise: an actor whose character swims with its
+feet within 2 units of the support under them (`Character::ground_gap`, 0 against the
+bed, at least 9 for a swimmer floating at `float_depth` over a bed deep enough to swim
+on) and standing still (slower than `STAND_SPEED`, no walk or run playing) plays its
+standing clips; moving, it swims on its swimming clips as before
+(`engine/nvforever/src/swimming.rs`, `rests_on_bed`) [design]. "Swimming is when your
+feet do not touch solid ground" [documented: GECK wiki fSwimRadiationDamageMult]; how the
+original poses such an actor is observer check 250 [hypothesis]. Smoke
+`lakelurk-rests-on-bed`.
+
 **Placed water** (2026-10-08) [observed: the masters and `Fallout - Meshes.bsa`, read-only].
 The reference in `NVDLC03SLH2OINT` is REFR 0x03014467, base PWAT 0x03014465
 (`NVDLC03CleanWater2048x2048`: OBND ±1024 × ±1024 × 0, MODL

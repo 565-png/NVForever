@@ -496,6 +496,8 @@ pub struct Locomotion {
     under: Under,
     /// Times "moves with no movement clip" was logged for this actor (once).
     clipless_logged: u8,
+    /// Whether "has no base clip" was logged for this actor ([`Locomotion::base_fault`], once).
+    baseless_logged: bool,
 }
 
 /// [design, #2352] The creature set's pose-only idle below movement, stance, aim,
@@ -545,7 +547,7 @@ fn under_clip(idle: &BoundClip) -> BoundClip {
 
 impl Locomotion {
     pub fn new(set: Arc<ClipSet>, phase: f32) -> Locomotion {
-        Locomotion { stand: set.clone(), set, blend: Blend::new(Move::Idle, phase), prev_set: None, velocity: [0.0; 2], turn: 0.0, hold: false, sneak: None, hurt: None, hurt_alert: None, sneaking: false, limping: false, swim: None, swimming: false, alert: None, alerted: false, pace: 1.0, gait_speed: 0.0, in_air: false, jump: Default::default(), armed: None, armed_on: false, armed_logged: Vec::new(), idle_under: false, under: Under::default(), clipless_logged: 0 }
+        Locomotion { stand: set.clone(), set, blend: Blend::new(Move::Idle, phase), prev_set: None, velocity: [0.0; 2], turn: 0.0, hold: false, sneak: None, hurt: None, hurt_alert: None, sneaking: false, limping: false, swim: None, swimming: false, alert: None, alerted: false, pace: 1.0, gait_speed: 0.0, in_air: false, jump: Default::default(), armed: None, armed_on: false, armed_logged: Vec::new(), idle_under: false, under: Under::default(), clipless_logged: 0, baseless_logged: false }
     }
 
     /// The standing set now (kNVSE's SetActorAnimationPath swaps it, anim_paths.rs).
@@ -832,6 +834,58 @@ impl Locomotion {
         };
         self.set.jump.get(land, fnv_actor::jump::dir_index(fnv_actor::jump::jump_dir(self.velocity)))
     }
+
+    /// The name of the set the actor plays from now ([`Locomotion::posture_set`]), for
+    /// the log.
+    pub fn posture_name(&self) -> &'static str {
+        if self.swimming && self.swim.is_some() {
+            return "swimming";
+        }
+        let armed = self.armed.as_ref().filter(|_| self.armed_on);
+        let limp = if self.alerted { self.hurt_alert.as_ref().or(self.hurt.as_ref()) } else { self.hurt.as_ref() };
+        if self.sneaking && armed.and_then(|a| a.sneak.as_ref()).or(self.sneak.as_ref()).is_some() {
+            return "crouched";
+        }
+        if !self.sneaking && self.limping && armed.and_then(|a| a.hurt.as_ref()).or(limp).is_some() {
+            return "limping";
+        }
+        match (armed.is_some(), self.alerted && self.alert.is_some()) {
+            (true, _) => "armed",
+            (false, true) => "alert",
+            (false, false) => "standing",
+        }
+    }
+
+    /// What leaves the actor's body to its bind pose under its other layers after
+    /// [`Locomotion::layers`] filled `player`: no clip on the base layer (layer 0, its
+    /// movement clip: the set it plays from has no clip for the move), or a weight or
+    /// phase there that is not a finite number (`BlendPlayer` then falls back to the
+    /// bind transform). `None` when the base layer is sound. A diagnostic (#2980: a
+    /// creature in a T-pose until it fought, when the aim and attack clips covered
+    /// the base layer).
+    pub fn base_fault(&self, player: &BlendPlayer) -> Option<String> {
+        let mv = self.blend.cur.mv;
+        match &player.layers[0] {
+            None => {
+                let idle = self.set.clips.get(&Move::Idle).map_or("none", |c| c.path.as_str());
+                Some(format!("no {} clip in its {} set ({} clips, idle {idle})", mv.group(), self.posture_name(), self.set.clips.len()))
+            }
+            Some(l) if !l.weight.is_finite() || !l.phase.is_finite() => {
+                Some(format!("its {} clip in its {} set has weight {} and phase {}", mv.group(), self.posture_name(), l.weight, l.phase))
+            }
+            Some(_) => None,
+        }
+    }
+
+    /// [`Locomotion::base_fault`] the first time this actor has one (to log once).
+    pub fn base_fault_news(&mut self, player: &BlendPlayer) -> Option<String> {
+        if self.baseless_logged {
+            return None;
+        }
+        let fault = self.base_fault(player)?;
+        self.baseless_logged = true;
+        Some(fault)
+    }
 }
 
 /// How far past the walk/run switch point the speed must go before the gait changes,
@@ -1052,6 +1106,9 @@ fn drive_one(item: &mut ActorAnimItem<'_, '_>, written: bool, dt: f32, now: f32,
     }
     cost.turn_frames += u64::from(lo.blend.cur.mv.is_turn());
     lo.layers(player);
+    if let Some(fault) = lo.base_fault_news(player) {
+        warn!("actor has no base clip: {}: {fault}; its body falls back to the bind pose under its other layers", name.map_or("actor", |n| n.as_str()));
+    }
     let drawn = crate::attack_anims::drawn(weapon.as_deref());
     if let Some(w) = weapon.as_mut() {
         if !w.hold {
@@ -1539,6 +1596,31 @@ mod tests {
         assert!(!lo.set_swimming(true));
         assert!(lo.set_swimming(false));
         assert!(!Arc::ptr_eq(&lo.set, &swim));
+    }
+
+    #[test]
+    fn a_missing_or_non_finite_base_clip_is_told_once() {
+        let stand = set();
+        let mut lo = Locomotion::new(stand.clone(), 0.0);
+        let mut player = BlendPlayer::new(Vec::new(), Arc::new(Vec::new()));
+        lo.layers(&mut player);
+        assert_eq!(lo.base_fault(&player), None);
+        // The set it plays from has no clip for the move: nothing on layer 0.
+        let mut no_idle = (*stand).clone();
+        no_idle.clips.remove(&Move::Idle);
+        lo.swim = Some(Arc::new(no_idle));
+        lo.swimming = true;
+        lo.set = lo.posture_set();
+        lo.layers(&mut player);
+        assert!(player.layers[0].is_none());
+        assert_eq!(lo.base_fault_news(&player).as_deref(), Some("no Idle clip in its swimming set (4 clips, idle none)"));
+        assert_eq!(lo.base_fault_news(&player), None, "told once");
+        assert!(lo.base_fault(&player).is_some());
+        // A weight that is not a finite number.
+        let mut lo = Locomotion::new(stand.clone(), 0.0);
+        lo.layers(&mut player);
+        player.layers[0].as_mut().expect("idle").weight = f32::NAN;
+        assert_eq!(lo.base_fault(&player).as_deref(), Some("its Idle clip in its standing set has weight NaN and phase 0"));
     }
 
     #[test]
