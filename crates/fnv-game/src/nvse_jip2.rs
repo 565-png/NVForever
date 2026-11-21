@@ -448,8 +448,11 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let (a, b, t) = (num(args, 0, 0.0), num(args, 1, 0.0), num(args, 2, 0.0));
             XVal::Num(a + (b - a) * t)
         }
-        // The Pip-Boy's mode [hypothesis: 0 while it is closed, as observed].
-        "getpipboymode" => zero,
+        // The Pip-Boy's mode: 0 closed, 1/2 opening, 3 opened, 4/5 closing [documented:
+        // GECK wiki GetPipBoyMode]. NVForever reports 3 whenever any Pip-Boy page is open
+        // (`Game::menu_open(menus::PIPBOY)`, including underneath a tutorial overlay) and
+        // 0 otherwise [hypothesis: opening/closing animation modes 1/2/4/5 are not emitted].
+        "getpipboymode" => XVal::Num(if g.menu_open(crate::game::menus::PIPBOY) { 3.0 } else { 0.0 }),
         // [observed: an unknown stat is -1, and ModExtraMiscStat did not create one]
         "getextramiscstat" => XVal::Num(g.jip2.misc_stats.get(&text(args, 0).to_ascii_lowercase()).copied().unwrap_or(-1.0)),
         // ModExtraMiscStat and InitExtraMiscStat: `crate::nvse_ttw`.

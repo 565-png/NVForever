@@ -41,6 +41,7 @@ mod difficulty;
 mod effect_updates;
 mod experience;
 mod player_source_commands;
+mod pipboy_mode;
 mod extender_conditions;
 mod factions;
 mod fixtures_data;
