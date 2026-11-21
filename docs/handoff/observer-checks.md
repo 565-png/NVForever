@@ -3469,7 +3469,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-21 (relief on the landscape's texture layers, #3322)
 
-250. **Does the original draw any parallax or relief on the landscape's texture layers?**
+264. **Does the original draw any parallax or relief on the landscape's texture layers?**
      (P3; #3322, pbr-materials.md "Terrain layers: parallax".) NVForever's terrain
      parallax is an addition of its own until this is answered; ours assumes the original
      draws none, as no landscape texture set is known to name a height texture

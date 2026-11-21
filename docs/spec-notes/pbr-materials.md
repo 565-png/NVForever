@@ -556,7 +556,7 @@ pack [documented: `engine/nvforever/src/terrain.rs` "Parallax", `TerrainCtx::fol
 `sync_parallax`, `parallax_def`; `engine/nvforever/src/terrain.wesl` `parallax_shift`;
 `engine/nvf-assets/src/texture.rs` `TextureCache::authored_height`, `authored.rs`
 `find_height`]. Whether the original draws any relief on its landscape is not known: an
-addition of NVForever's own until observer check 250 answers it [hypothesis: it draws none].
+addition of NVForever's own until observer check 264 answers it [hypothesis: it draws none].
 
 - [design] **Source.** A landscape layer's height map is the `_p` of the set the index finds
   for the layer's diffuse path (the LTEX's texture set's diffuse, resolved as a shape's
