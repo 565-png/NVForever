@@ -555,12 +555,6 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
             set(g, f0, "NNAM", "", XVal::Str(text(args, 1)));
             zero
         }
-        // Sounds: the IDs are SNDD flags' bits (SNDX in older records) [documented:
-        // GetSoundFlag; the schema's SOUN].
-        "getsoundflag" => {
-            let sub = if json(g, f0, "SNDD", "").is_some() { "SNDD" } else { "SNDX" };
-            yes(get_bit(g, f0, sub, "flags", k))
-        }
         // [documented: GetGameDifficulty, SetGameDifficulty: 0 very easy … 4 very hard].
         "getgamedifficulty" => XVal::Num(g.difficulty.code() as f64),
         "setgamedifficulty" => {

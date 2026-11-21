@@ -1554,8 +1554,6 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 _ => XVal::Ref(0),
             }
         }
-        // Return 0 [observed: gaps4].
-        "setsoundflag" | "stopsoundalt" => zero,
         // An unknown patch [observed: gaps2 and gaps4, 0 for both].
         "getoptionalpatch" | "setoptionalpatch" => zero,
         _ => return None,
