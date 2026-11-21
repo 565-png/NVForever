@@ -3746,9 +3746,8 @@ mod tests {
         phys.player = Some(phys.world.add_character(FormId::PLAYER_REF.0, fnv_phys::CharacterParams::default(), player_feet));
         let player_radius = phys.player.as_ref().unwrap().params.radius;
         let me = 0xFF00_0000;
-        let mut blocks = ActorBlocks::default();
         // Its block where it stood 1,100 units back; its feet now 51 units from the player.
-        blocks.list = vec![Block::character(me, [1151.0, 0.0, 0.0], 30.0, 60.0, false)];
+        let mut blocks = ActorBlocks { list: vec![Block::character(me, [1151.0, 0.0, 0.0], 30.0, 60.0, false)], ..Default::default() };
         let feet = [51.0, 0.0, 0.0];
         let bodies = CombatBodies::new(Some(&phys), Some(&blocks));
         assert_eq!(bodies.gap(me, FormId::PLAYER_REF.0, player_feet), Some(1151.0 - 30.0 - player_radius), "the old measure");
