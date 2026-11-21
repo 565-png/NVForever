@@ -110,8 +110,10 @@ Code: `crates/fnv-game/src/respawn.rs` (from `Game::set_loaded`),
   the cell's next frame and before the engine draws the reset. A script that kills it
   there (the placeholders of §4.1) leaves it dead again before any per-frame block, AI
   or combat step runs [design: the order of `set_loaded`]. A recreated actor whose new
-  pick runs another script (template flag "Script", a mixed list) starts that script's
-  instance afresh, the old one's variables and a ScriptWait of it dropped [design].
+  pick runs another script (template flag "Script", a mixed list; compared with the
+  script it ran before the reset, a SetScript change included) starts that script's
+  instance afresh; a ScriptWait is dropped unless it is of the script it runs now
+  [design].
 
 ### 4.1 The leveled spawns' placeholder creature [2026-11-21, #3228; #3139]
 
@@ -155,14 +157,17 @@ What the records hold [observed: `fnvtool esm decode`, FalloutNV.esm]:
   unseen and, a ghost, unhurt (#3228). Its corpse is drawn and ragdolled as before (§3,
   physics.md §4.3).
 - **A loaded save** keeps its cells loaded, so no cell load runs OnLoad: after a restore
-  the living actors of the loaded cells that are scripted only through their template
-  and whose script has an OnLoad block run it at the first frame
-  (`Game::queue_template_onloads`). A save from an earlier build that holds a
+  the living actors now in a loaded cell (where they were placed, or moved to) that are
+  scripted only through their template and whose script has an OnLoad block run it at
+  the first frame (`Game::queue_template_onloads`, `Game::restored_onload`), each
+  checked again then (present, in a loaded cell, alive) and skipped if a cell load ran
+  its OnLoad first. A save from an earlier build that holds a
   placeholder alive so has it dead and destroyed at once [design; hypothesis: the
   original runs OnLoad when a reference's 3D loads, a loaded save's too]. References
   scripted by their own base get no OnLoad on a load, as before.
 - **Not the per-frame blocks** [design]: an actor scripted only through its template
-  runs no GameMode (or other per-frame) block, until running a list pick's per-frame
+  runs no GameMode, MenuMode or far-frame block (`Game::template_only`), moved ones
+  included, until running a list pick's per-frame
   script is checked against the original. The wiki's "Use Script" (Template Data: "Uses
   the Script of the ActorBase") is the reason a later change may widen it. The blocks
   the engine sends to one reference (OnDeath, OnStartCombat, OnHit …) already read the

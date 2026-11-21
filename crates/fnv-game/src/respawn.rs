@@ -149,6 +149,9 @@ impl Game<'_> {
 
     /// The reference `r` starts again as authored, alive (module notes).
     fn recreate(&mut self, r: FormId) {
+        // The script it runs now (its pick's, a SetScript change included), before the
+        // pick is made again.
+        let before = self.ref_script(r);
         self.extra.remove(&r);
         if let Some(p) = self.world.placed.get(r) {
             let (cell, pos, rot) = (p.cell, p.pos, p.rot);
@@ -159,12 +162,15 @@ impl Game<'_> {
         // Made anew: at its level now, its leveled pick and carried items with it.
         self.refix_level(r);
         let _ = self.world.reset_inventory(r);
-        // A new pick may run another script (template flag "Script"): its instance
-        // starts fresh, and a ScriptWait of the old script's ends [design, #3228].
+        // A new pick may run another script (template flag "Script"): when the script it
+        // runs changes, its instance starts fresh; a ScriptWait ends unless it is the
+        // script it runs now [design, #3228].
         let key = crate::game::InstKey::Ref { reference: r };
-        let script = self.ref_script(r);
-        if self.instances.get(&key).is_some_and(|i| i.script != script) {
+        let after = self.ref_script(r);
+        if before != after {
             self.instances.remove(&key);
+        }
+        if self.jip.waits.get(&key).is_some_and(|w| Some(w.script) != after) {
             self.jip.waits.remove(&key);
         }
         // The layer that moves actors starts it again from its authored place.

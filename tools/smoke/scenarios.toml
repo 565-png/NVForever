@@ -7494,7 +7494,12 @@ run_seconds = 100
 expect = [
   { re = 'wait summary: .* 72 hours passed' },
   { re = 'cell reset: .* actors back alive: .*VSpawnTier1(BigHornerSmall75|BloatFlyMed50)', label = "the herd's cell is reset and its dead spawns come back" },
-  { re = 'script: OnLoad of FalloutNV\.esm\|SCPT 0x00159603 ran on Some\(0x00168D(45|47|4C|4D|4F|50)\)', min = 12, label = "the herd's placeholders run their OnLoad at the first load and again after the reset (6 + 6)" },
+  { re = 'script: OnLoad of FalloutNV\.esm\|SCPT 0x00159603 ran on Some\(0x00168D45\)', min = 2, label = "herd placeholder 0x00168D45 runs its OnLoad at the first load and again after the reset" },
+  { re = 'script: OnLoad of FalloutNV\.esm\|SCPT 0x00159603 ran on Some\(0x00168D47\)', min = 2, label = "herd placeholder 0x00168D47 runs its OnLoad at the first load and again after the reset" },
+  { re = 'script: OnLoad of FalloutNV\.esm\|SCPT 0x00159603 ran on Some\(0x00168D4C\)', min = 2, label = "herd placeholder 0x00168D4C runs its OnLoad at the first load and again after the reset" },
+  { re = 'script: OnLoad of FalloutNV\.esm\|SCPT 0x00159603 ran on Some\(0x00168D4D\)', min = 2, label = "herd placeholder 0x00168D4D runs its OnLoad at the first load and again after the reset" },
+  { re = 'script: OnLoad of FalloutNV\.esm\|SCPT 0x00159603 ran on Some\(0x00168D4F\)', min = 2, label = "herd placeholder 0x00168D4F runs its OnLoad at the first load and again after the reset" },
+  { re = 'script: OnLoad of FalloutNV\.esm\|SCPT 0x00159603 ran on Some\(0x00168D50\)', min = 2, label = "herd placeholder 0x00168D50 runs its OnLoad at the first load and again after the reset" },
   { re = 'console: GetDead on 0x00168D(45|47|4C|4D|4F|50) >> 1\.00', count = 6, label = "after the reset every herd placeholder is dead" },
   { re = 'console: GetDestroyed on 0x00168D(45|47|4C|4D|4F|50) >> 1\.00', count = 6, label = "and destroyed again by its OnLoad (the reset cleared it)" },
   { re = 'console: IsInCombat on 0x00168D(45|47|4C|4D|4F|50) >> 0\.00', count = 6, label = "and in no fight" },

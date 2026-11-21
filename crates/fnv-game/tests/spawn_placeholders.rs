@@ -318,6 +318,78 @@ fn a_restored_live_placeholder_is_killed_at_the_first_frame() {
     assert_eq!(local(&back, MIXED_REF, 1), 5.0, "the living mixed spawn ran its OnLoad again, unchanged");
 }
 
+/// An actor scripted only through its template that walked (listed as moved, which the
+/// per-frame scheduler also reads) still gets no GameMode block, nor a far frame.
+#[test]
+fn a_template_scripted_actor_that_moved_gets_no_game_mode() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.player_entered(Some(FormId(CELL_A)));
+    g.set_actor_place(FormId(MIXED_REF), Some(FormId(CELL_A)), [64.0, 0.0, 0.0], 0.0).unwrap();
+    assert!(g.moved.contains(&FormId(MIXED_REF)), "a step lists it as moved");
+    assert!(g.template_only(FormId(MIXED_REF)));
+    assert!(!g.template_only(FormId(OWN_SCRIPTED_REF)));
+    g.frames(3);
+    assert_eq!(local(&g, MIXED_REF, 3), 0.0, "its GameMode block does not run");
+    g.player_entered(Some(FormId(CELL_B)));
+    assert!(!g.run_far_frame(FormId(MIXED_REF)), "no far frame either");
+}
+
+/// A placeholder an older build left alive and walking, saved in another loaded cell than
+/// the one it was placed in (the report's ran at the player), is found by where it is now.
+#[test]
+fn a_restored_live_placeholder_away_from_its_cell_is_killed() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.player_entered(Some(FormId(CELL_A)));
+    g.set_loaded([FormId(CELL_A), FormId(CELL_B)].into_iter().collect());
+    g.extra.remove(&FormId(SPAWN_REF));
+    g.set_actor_place(FormId(SPAWN_REF), Some(FormId(CELL_B)), [500.0, 0.0, 0.0], 0.0).unwrap();
+    let s = g.snapshot();
+    let world = World::restore(&f.forms, &f.refs, &s.sim).unwrap();
+    let mut back = Game::restore(&f.data, world, GameConfig::default(), &s).unwrap();
+    assert_eq!(back.cell_of(FormId(SPAWN_REF)), Some(FormId(CELL_B)));
+    back.frames(1);
+    assert!(back.is_dead(FormId(SPAWN_REF)), "its OnLoad killed it where it stood");
+    assert!(destroyed(&back, SPAWN_REF));
+}
+
+/// One queued by the restore that dies before its turn does not run its OnLoad.
+#[test]
+fn a_restored_placeholder_killed_before_its_turn_runs_no_on_load() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.player_entered(Some(FormId(CELL_A)));
+    g.extra.remove(&FormId(SPAWN_REF));
+    let s = g.snapshot();
+    let world = World::restore(&f.forms, &f.refs, &s.sim).unwrap();
+    let mut back = Game::restore(&f.data, world, GameConfig::default(), &s).unwrap();
+    assert!(back.restored_onload.contains(&FormId(SPAWN_REF)));
+    assert!(back.kill(FormId(SPAWN_REF), None));
+    back.frames(1);
+    assert!(!destroyed(&back, SPAWN_REF), "checked again at its turn: dead, so no OnLoad");
+    assert!(back.restored_onload.is_empty());
+}
+
+/// A reset whose pick runs the same script keeps the instance: its variables stay.
+#[test]
+fn a_reset_that_keeps_the_pick_keeps_the_script_instance() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.player_entered(Some(FormId(CELL_A)));
+    let key = InstKey::Ref { reference: FormId(MIXED_REF) };
+    g.store(key, Some(FormId(SCRIPT_A)), 2, fnv_script::vm::Value::Num(4.0), "test", true);
+    assert!(g.kill(FormId(MIXED_REF), Some(FormId::PLAYER_REF)));
+    reset_herd_cell(&mut g);
+    assert!(!g.is_dead(FormId(MIXED_REF)));
+    assert_eq!(g.ref_script(FormId(MIXED_REF)), Some(FormId(SCRIPT_A)));
+    assert_eq!(local(&g, MIXED_REF, 2), 4.0, "the same script: its instance kept");
+}
+
 fn data_dir() -> Option<PathBuf> {
     let Some(dir) = std::env::var_os("FNVLAB_DATA_DIR").map(PathBuf::from) else {
         eprintln!("skipped: FNVLAB_DATA_DIR is not set (no game data)");
