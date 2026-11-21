@@ -238,11 +238,11 @@ fn calculated_item_value_includes_weapon_mods_and_live_barter_multipliers() {
         }
     };
 
-    // Base rifle (value 75) at full condition: 75 * 0.0316 * 10^1.5 = 74.946 -> 74.
+    // Base rifle (value 75) at full condition: 75 * 0.0316 * 10^1.5 = 74.946 -> 75.
     // Attached mods (75, 125, 100) add their full IMOD values without condition scaling
     // [observed: o26_value, docs/spec-notes/weapon-mods.md §6].
-    assert_eq!(on(&mut g, player_rifle, "GetCalculatedItemValue"), 74.0);
-    for (flags, expected) in [(1, 149.0), (2, 199.0), (4, 174.0), (3, 274.0), (7, 374.0)] {
+    assert_eq!(on(&mut g, player_rifle, "GetCalculatedItemValue"), 75.0);
+    for (flags, expected) in [(1, 150.0), (2, 200.0), (4, 175.0), (3, 275.0), (7, 375.0)] {
         assert_eq!(on(&mut g, player_rifle, &format!("SetWeaponRefModFlags {flags}")), 1.0);
         assert_eq!(on(&mut g, player_rifle, "GetCalculatedItemValue"), expected, "mods={flags}");
     }
@@ -250,14 +250,24 @@ fn calculated_item_value_includes_weapon_mods_and_live_barter_multipliers() {
     // Condition scales only the weapon's own value; attached mods keep their full +300.
     // 50%: 75 * 0.0316 * 5^1.5 = 26.497 -> 26 / 326.
     // 25%: 75 * 0.0316 * 2.5^1.5 = 9.368 -> 9 / 309.
-    // 75%: 75 * 0.0316 * 7.5^1.5 = 48.678 -> 48 / 348.
-    for (cond, bare, modded) in [(0.5_f64, 26.0, 326.0), (0.25, 9.0, 309.0), (0.75, 48.0, 348.0)] {
+    // 75%: 75 * 0.0316 * 7.5^1.5 = 48.679 -> 49 / 349.
+    for (cond, bare, modded) in [(0.5_f64, 26.0, 326.0), (0.25, 9.0, 309.0), (0.75, 49.0, 349.0)] {
         assert_eq!(on(&mut g, player_rifle, &format!("SetItemRefCurrentHealth {cond} 1")), 1.0);
         assert_eq!(on(&mut g, player_rifle, "SetWeaponRefModFlags 0"), 1.0);
         assert_eq!(on(&mut g, player_rifle, "GetCalculatedItemValue"), bare, "bare cond={cond}");
         assert_eq!(on(&mut g, player_rifle, "SetWeaponRefModFlags 7"), 1.0);
         assert_eq!(on(&mut g, player_rifle, "GetCalculatedItemValue"), modded, "modded cond={cond}");
     }
+
+    // Fresh 10mm pistol (Value 750) at full condition: 750 * 0.0316 * 10^1.5 = 749.46 -> 749
+    // [observed 2026-11-08: showoff5.itemvalue.pistol].
+    q(&mut g, "TestPistol.SetItemValue 750");
+    g.world.inventory_mut(FormId::PLAYER_REF).unwrap().add_extra(FormId(GUN), 1, Extra { condition: Some(1.0), mods: 0, ..Extra::default() });
+    let player_pistol = match q(&mut g, "array_var a\nlet a := player.GetInvRefsForItem TestPistol\nSetFunctionValue a[0]") {
+        XVal::Ref(r) => FormId(r),
+        v => panic!("expected ref for TestPistol: {v:?}"),
+    };
+    assert_eq!(on(&mut g, player_pistol, "GetCalculatedItemValue"), 749.0);
 
     // World-placed/dropped reference reads RefState.extra (condition + mods).
     g.world.inventory_mut(FormId(VENDOR_REF)).unwrap().add_extra(FormId(RIFLE), 1, Extra { condition: Some(0.5), mods: 7, ..Extra::default() });
@@ -285,22 +295,22 @@ fn calculated_item_value_includes_weapon_mods_and_live_barter_multipliers() {
         sold: Vec::new(),
         mult: [1.4, 0.5],
     }));
-    // Player selling: 326.497 * 0.5 = 163.248 -> 163.
+    // Player selling: 326.497 * 0.5 = 163.249 -> 163.
     assert_eq!(on(&mut g, player_rifle, "GetCalculatedItemValue 1"), 163.0);
-    // Merchant selling to player: 374.946 * 1.4 = 524.924 -> 524.
-    assert_eq!(on(&mut g, vendor_rifle, "GetCalculatedItemValue 1"), 524.0);
+    // Merchant selling to player: 374.946 * 1.4 = 524.924 -> 525.
+    assert_eq!(on(&mut g, vendor_rifle, "GetCalculatedItemValue 1"), 525.0);
 
     // SetBarterPriceMult overrides take precedence over BarterView::mult.
     q(&mut g, "SetBarterPriceMult 1 0.8\nSetBarterPriceMult 0 1.25");
     // Player selling: 326.497 * 0.8 = 261.198 -> 261.
     assert_eq!(on(&mut g, player_rifle, "GetCalculatedItemValue 1"), 261.0);
-    // Merchant selling to player: 374.946 * 1.25 = 468.682 -> 468.
-    assert_eq!(on(&mut g, vendor_rifle, "GetCalculatedItemValue 1"), 468.0);
+    // Merchant selling to player: 374.946 * 1.25 = 468.682 -> 469.
+    assert_eq!(on(&mut g, vendor_rifle, "GetCalculatedItemValue 1"), 469.0);
 
     // Closing BarterView falls back to GMST Barter skill formula while menu stays open.
     g.set_barter_view(None);
     assert!(on(&mut g, player_rifle, "GetCalculatedItemValue 1") < 326.0);
-    assert!(on(&mut g, vendor_rifle, "GetCalculatedItemValue 1") > 374.0);
+    assert!(on(&mut g, vendor_rifle, "GetCalculatedItemValue 1") > 375.0);
 
     // Non-item returns -1; Stewie gate remains at 941.
     assert_eq!(n(&mut g, "player.GetCalculatedItemValue"), -1.0);

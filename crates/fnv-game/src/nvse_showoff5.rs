@@ -542,9 +542,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                     });
                 v *= mult;
             }
-            // A whole number, the fraction dropped [observed: 749.46 shows as 749;
-            // hypothesis: truncated rather than rounded].
-            XVal::Num(v.trunc())
+            // Rounded to nearest whole number [observed: o26_value Varmint Rifle
+            // 74.946 -> 75 and 48.679 -> 49; showoff5.itemvalue.pistol 749.46 -> 749].
+            XVal::Num(v.round())
         }
         // `whatAttack [weapon]`: the AP of the player's weapon (fists without one): 0 the
         // weapon's own (its override, else its animation type's setting), 1 a melee
