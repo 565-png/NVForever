@@ -15,33 +15,58 @@ pub struct GameData {
     pub vfs: Arc<Vfs>,
     pub schema: Arc<Schema>,
     /// The authored material sets under `textures\pbr\` (#2981), built from `vfs` the
-    /// first time [`GameData::pbr_index`] is asked; clones share it, as they share `vfs`.
-    /// Private, so it is only ever made together with its VFS.
-    pbr: Arc<OnceLock<fnv_pbr::PbrIndex>>,
+    /// first time [`GameData::pbr_index`] is asked, and the sets' scalar files read once
+    /// ([`GameData::pbr_scalars`]); clones share both, as they share `vfs`. Private, so it is
+    /// only ever made together with its VFS and renewed with it.
+    pbr: Arc<PbrMount>,
+}
+
+/// What belongs to one mount's authored sets: the index and the scalar files read.
+#[derive(Default)]
+struct PbrMount {
+    index: OnceLock<fnv_pbr::PbrIndex>,
+    scalars: crate::authored::ScalarCache,
 }
 
 impl GameData {
     /// `vfs` and `schema` with an authored-material index of their own, not yet built.
     pub fn new(vfs: Arc<Vfs>, schema: Arc<Schema>) -> GameData {
-        GameData { vfs, schema, pbr: Arc::new(OnceLock::new()) }
+        GameData { vfs, schema, pbr: Arc::default() }
     }
 
     /// Mount another VFS: the authored-material index starts afresh with it. Clones made
-    /// before keep the old VFS and its index together.
+    /// before keep the old VFS and its index together. Only tests call it: materials made
+    /// under the old mount (role exclusions skipped where it had no authored set,
+    /// `crate::authored::mount_has_sets`) would have to be made again for a new one.
     pub fn set_vfs(&mut self, vfs: Arc<Vfs>) {
         self.vfs = vfs;
-        self.pbr = Arc::new(OnceLock::new());
+        self.pbr = Arc::default();
     }
 
     /// The sets of authored material maps the VFS supplies (docs/spec-notes/pbr-materials.md),
     /// built on first use from the VFS's paths under `textures\pbr\` (no file is read) and
-    /// logged in one line. Not used by any material yet.
+    /// logged in one line. Asked for only while the run's Authored materials setting is on
+    /// (`crate::authored`).
     pub fn pbr_index(&self) -> &fnv_pbr::PbrIndex {
-        self.pbr.get_or_init(|| {
+        self.pbr.index.get_or_init(|| {
             let index = fnv_pbr::PbrIndex::build(self.vfs.paths(|k| k.starts_with(fnv_pbr::PBR_DIR)));
             info!("{}", index.summary());
             index
         })
+    }
+
+    /// Whether [`GameData::pbr_index`] has been built (the setting off never asks: tests and
+    /// the field, `pbr_field.rs`).
+    pub(crate) fn pbr_index_built(&self) -> bool {
+        self.pbr.index.get().is_some()
+    }
+
+    /// The scalars of the set file at `path` (a `.toml` the index names), read, parsed and
+    /// warned about once per mount, whichever thread asks first; the others wait for that
+    /// one read (`crate::authored::scalars_cached`). A new mount ([`GameData::set_vfs`])
+    /// reads them afresh.
+    pub(crate) fn pbr_scalars(&self, path: &str) -> fnv_pbr::Scalars {
+        crate::authored::scalars_cached(&self.pbr.scalars, path, || self.read(path))
     }
 
     /// Open the default archive set of `data_dir` (read-only) and load the schemas.
@@ -184,18 +209,19 @@ mod tests {
             std::fs::write(p, b"x").unwrap();
         }
         let data = GameData::new(Arc::new(Vfs::open(&dir, &[]).unwrap()), Arc::new(Schema::default()));
-        assert!(data.pbr.get().is_none(), "built before it was asked for");
+        assert!(data.pbr.index.get().is_none(), "built before it was asked for");
         let clone = data.clone();
         assert_eq!(data.pbr_index().counts().authored, 1);
-        assert!(clone.pbr.get().is_some(), "a clone shares the built index");
+        assert!(clone.pbr.index.get().is_some(), "a clone shares the built index");
         assert!(data.pbr_index().lookup(r"textures\walls\brick07.dds").is_some());
         let fresh = GameData::new(Arc::new(Vfs::open(&other, &[]).unwrap()), data.schema.clone());
-        assert!(fresh.pbr.get().is_none());
+        assert!(fresh.pbr.index.get().is_none());
         assert!(fresh.pbr_index().is_empty());
         // Mounting another VFS in place renews the index; the clone keeps the old pair.
         let mut moved = data.clone();
         moved.set_vfs(Arc::new(Vfs::open(&other, &[]).unwrap()));
-        assert!(moved.pbr.get().is_none());
+        assert!(moved.pbr.index.get().is_none());
+        assert!(moved.pbr.scalars.lock().unwrap().is_empty(), "the scalar files are read afresh for the new mount");
         assert!(moved.pbr_index().is_empty());
         assert_eq!(clone.pbr_index().counts().authored, 1);
         std::fs::remove_dir_all(&dir).unwrap();
