@@ -89,7 +89,10 @@ mod frame_pace;
 mod frame_telemetry;
 mod blit_warm;
 mod handoff;
+mod distant_objects;
+mod full_detail;
 mod furniture;
+mod game_digest;
 mod graphics;
 mod grass;
 mod grass_fire_fx;
@@ -189,6 +192,7 @@ mod frame_gen;
 mod fsr;
 mod upscaler;
 mod speech_look;
+mod stream_pace;
 mod stress_sample;
 mod profile;
 mod perf_overlay;
@@ -212,6 +216,7 @@ mod underwater_caustics;
 mod vigor_view;
 mod walk_probe;
 mod water;
+mod weapon_models;
 mod window_icon;
 mod window_mode;
 mod world;
@@ -312,10 +317,17 @@ struct Args {
     /// Override the weather's fog distances: "near,far" in game units.
     #[arg(long)]
     fog: Option<String>,
-    /// Distant LOD (terrain chunks, object blocks) out to this distance in game units
-    /// (the game's fBlockLoadDistance; default the owner's INI value) [hypothesis: lod.rs].
+    /// Distant object LOD blocks out to this distance in game units (the game's
+    /// fBlockLoadDistance; default the owner's INI value) [hypothesis: lod.rs]; the
+    /// terrain reaches at least as far. 0 drops only the object blocks: --no-lod turns
+    /// off all distant LOD (terrain, water, objects and trees).
     #[arg(long, default_value_t = 125_000.0)]
     lod_distance: f32,
+    /// Distant terrain LOD chunks (and the distant water on them) out to this distance in
+    /// game units, or to --lod-distance when that is larger (default calibrated at one
+    /// pose above Goodsprings, #3055) [observed + hypothesis: lod.rs].
+    #[arg(long, default_value_t = 250_000.0)]
+    lod_terrain_distance: f32,
     /// Finest terrain LOD (level 4) within this distance (fBlockLoadDistanceLow).
     #[arg(long, default_value_t = 50_000.0)]
     lod_near_distance: f32,
@@ -561,7 +573,8 @@ struct Args {
     /// (ambient-occlusion, fine-shadows, bloom, sharpen, anisotropic, light-shafts,
     /// water-reflections, water-effects, terrain-height-blend, terrain-anti-tiling, cloud-shadows, terrain-shadows, heat-haze, desert-haze, and
     /// mesh-terrain-blend, which no look turns on) and choices (fxaa, smaa or taa instead of --msaa;
-    /// shadow-filter-hardware or shadow-filter-temporal), for comparing them one at a time.
+    /// shadow-filter-hardware or shadow-filter-temporal; full-detail-7x7 or full-detail-9x9;
+    /// distant-objects-8 or distant-objects-12), for comparing them one at a time.
     /// The switches on in vanilla are left on unless named off: no-glow, no-eye-adaptation,
     /// no-neon-glow, no-water-mirror, no-authored-materials, no-authored-reflections.
     #[arg(long, value_delimiter = ',', conflicts_with = "graphics")]
@@ -923,6 +936,7 @@ fn parse_vec<const N: usize>(s: &str) -> Option<[f32; N]> {
 fn lod_settings(args: &Args) -> lod::LodSettings {
     lod::LodSettings {
         far: args.lod_distance.max(0.0),
+        terrain_far: args.lod_terrain_distance.max(0.0),
         near: args.lod_near_distance.max(0.0),
         split: args.lod_split.max(0.0),
         trees: args.tree_distance.max(0.0),
@@ -1860,6 +1874,8 @@ fn main() -> AppExit {
     .insert_resource(screen_modifiers)
     .insert_resource(fly::AutoFly(args.auto_fly))
     .insert_resource(lod::LodState::new(&world, lod_settings(&args), !args.no_lod && interior.is_none(), lodgen).with_origin(lod_origin))
+    // What each object block holds by cell (#3014, the distant objects read it).
+    .init_resource::<lod::BlockContents>()
     .insert_resource(TerrainSettings { tile: args.terrain_tile })
     // The terrain wireframe (#2149), off unless asked for: it builds nothing while off.
     .add_plugins(terrain_wireframe::TerrainWireframePlugin { on: args.terrain_wireframe })
@@ -1891,6 +1907,7 @@ fn main() -> AppExit {
         centre: None,
         waiting: Vec::new(),
         model_overrides: Default::default(),
+        travels: 0,
     })
     .insert_resource(world)
     .init_resource::<nvf_assets::actor::ActorParts>()
@@ -1934,6 +1951,9 @@ fn main() -> AppExit {
     .insert_resource(readahead::ReadAhead::from_env())
     .add_systems(Update, readahead::read_ahead.run_if(world::world_not_held).after(world::stream).after(world::draw_waiting_actors))
     .add_systems(Last, readahead::report)
+    .init_resource::<stream_pace::StreamPace>()
+    .add_systems(First, stream_pace::follow)
+    .add_systems(Last, stream_pace::report)
     .init_resource::<AnimCost>()
     .add_systems(Update, advance_animations)
     .add_systems(Update, particles::sync_idle_materials.after(anim_objects::hold).before(nvf_assets::material_anim::bind_rig_materials))
@@ -1952,6 +1972,14 @@ fn main() -> AppExit {
     .add_systems(Last, activators::report)
     .add_plugins(nvf_play::doors::DoorsPlugin)
     .add_plugins(destroyed::DestroyedPlugin)
+    // The full-detail scenery ring (#2701), off unless the settings or --graphics-only turn
+    // it on: draw-only cells beyond the loaded ones (full_detail.rs).
+    .add_plugins(full_detail::FullDetailPlugin)
+    // Distant objects (#3014), off unless the settings or --graphics-only turn it on:
+    // draw-only scenery beyond the ring the LOD blocks do not hold (distant_objects.rs).
+    .add_plugins(distant_objects::DistantObjectsPlugin)
+    // Test aid NVF_PLAY_TEST_GAME_DIGEST: the game's state at given times (game_digest.rs).
+    .add_plugins(game_digest::GameDigestPlugin)
     .add_systems(Update, (doors::script_drawn, doors::register, doors::open_all.run_if(move || open_doors), doors::pose).chain().after(nvf_play::doors::DoorSystems).after(advance_animations))
     .init_resource::<locomotion::ActorAnimCost>()
     .add_systems(PreUpdate, actors::take_background_work)
@@ -2103,6 +2131,8 @@ fn main() -> AppExit {
             // The player knocked down (player_knockdown.rs).
             app.add_plugins(player_knockdown::PlayerKnockdownPlugin);
             app.add_plugins((cell_resets::CellResetsPlugin, resurrect::ResurrectPlugin, appearance::AppearancePlugin, zones::ZonesPlugin));
+            // Weapon models scripts set, drawn (weapon_models.rs).
+            app.add_plugins(weapon_models::WeaponModelsPlugin);
             // What drawn NPCs wear and hold follows their inventories (outfits.rs).
             app.add_plugins(outfits::OutfitsPlugin);
             if shadow_probe::enabled() {
@@ -2803,7 +2833,8 @@ struct AnimCost {
 
 fn advance_animations(
     time: Res<Time>,
-    playing: Query<&mut nvf_assets::anim_play::Playing>,
+    // A full-detail ring copy's idle stays still while its cell is hidden (full_detail.rs).
+    playing: Query<&mut nvf_assets::anim_play::Playing, Without<full_detail::RingDormant>>,
     transforms: Query<&mut Transform>,
     visibility: Query<&mut Visibility>,
     mut cost: ResMut<AnimCost>,

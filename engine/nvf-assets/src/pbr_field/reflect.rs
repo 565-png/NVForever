@@ -4,7 +4,7 @@
 //! generated into a fresh folder under `NVFOREVER_HOME`, read through a real VFS, the panels'
 //! materials from the real `shape_material`, GPU readbacks judged.
 //!
-//! Thirteen panels (2x2 quads) in three rows, drawn by two cameras of the same pose,
+//! Twelve panels (2x2 quads) in three rows, drawn by two cameras of the same pose,
 //! exposure (Bevy's default, the production one), MSAA (4x) and world-view ambient light (a
 //! display value of 0.6 with the negative alpha that marks a world view,
 //! nvforever `lights::display_ambient`; brightness `light_unit()`), no directional light:
@@ -23,8 +23,7 @@
 //! (docs/spec-notes/pbr-materials.md "Metal base colour"), head-on metals at roughness 0.5:
 //! `lift`, a dark bronze diffuse ([`BRONZE`]) with the default metal gain (12, limited to
 //! 1 / 0.40 by the bronze's red, so lifted to (1, 0.75, 0.5)); `lift1`, the same with
-//! `metal_gain = 1`; `albedo`, a white diffuse whose set's `_albedo` is the bronze (gain
-//! default 1 with an `_albedo`).
+//! `metal_gain = 1`.
 //!
 //! "The switch" below is the run's reflections state (`reflection_cube::enabled`): the
 //! settings' Reflections on authored materials row with Authored materials, which the
@@ -38,10 +37,10 @@
 //! the head-on metals' chromaticity lies nearer the cube's (neutral) mean as roughness rises
 //! (pins the level rule); the smooth head-on metal is clearly tinted; the legacy and
 //! zero-reflectance controls equal camera B's; the dielectric does not darken; the lifted
-//! bronze is clearly brighter than `lift1` with the same hue, and `albedo` equals `lift1`.
+//! bronze is clearly brighter than `lift1` with the same hue.
 //! Camera B (no cube): every white panel draws the same white under the ambient light, the
-//! metals included (metallic held at 0 where the view has no cube), and the three bronze
-//! panels the same bronze (no lift without a cube; the `_albedo` drawn in every view). With the switch off, the cube stays on
+//! metals included (metallic held at 0 where the view has no cube), and the two bronze
+//! panels the same bronze (no lift without a cube). With the switch off, the cube stays on
 //! camera A, so the run also shows that the reflection gate keeps it from every shader that
 //! did not opt in: camera A equals camera B panel for panel. The off run's camera B is
 //! today's picture; that the on run's camera B equals it is compared across the two runs'
@@ -108,7 +107,7 @@ pub(super) struct Panel {
     pub cell: (usize, usize),
 }
 
-pub(super) const PANELS: [Panel; 13] = [
+pub(super) const PANELS: [Panel; 12] = [
     Panel { name: "metal20+X", stem: "metal20", reflect: Vec3::X, cell: (0, 0) },
     Panel { name: "metal20-X", stem: "metal20", reflect: Vec3::NEG_X, cell: (1, 0) },
     Panel { name: "metal20+Y", stem: "metal20", reflect: Vec3::Y, cell: (2, 0) },
@@ -121,7 +120,6 @@ pub(super) const PANELS: [Panel; 13] = [
     Panel { name: "zero", stem: "zero", reflect: Vec3::Z, cell: (4, 1) },
     Panel { name: "lift", stem: "lift", reflect: Vec3::Z, cell: (0, 2) },
     Panel { name: "lift1", stem: "lift1", reflect: Vec3::Z, cell: (1, 2) },
-    Panel { name: "albedo", stem: "painted", reflect: Vec3::Z, cell: (2, 2) },
 ];
 /// The tilted metals (orientation), by index.
 const ORIENTED: std::ops::Range<usize> = 0..5;
@@ -130,17 +128,15 @@ const ROUGHNESS: [usize; 3] = [4, 5, 6];
 const DIELECTRIC: usize = 7;
 const LEGACY: usize = 8;
 const ZERO: usize = 9;
-/// The bronze metal at its default gain, at gain 1, and the white diffuse with a bronze
-/// `_albedo`.
+/// The bronze metal at its default gain and at gain 1.
 const LIFT: usize = 10;
 const LIFT1: usize = 11;
-const PAINTED: usize = 12;
 /// The panels with a white diffuse (rows one and two).
 const WHITE_PANELS: std::ops::Range<usize> = 0..10;
-const BRONZE_PANELS: [usize; 3] = [LIFT, LIFT1, PAINTED];
+const BRONZE_PANELS: [usize; 2] = [LIFT, LIFT1];
 
 /// The ORMs (RGBA bytes: occlusion, roughness, metallic) of the authored sets.
-const ORMS: [(&str, [u8; 4]); 8] = [
+const ORMS: [(&str, [u8; 4]); 7] = [
     ("metal20", [255, 51, 255, 255]),
     ("metal50", [255, 128, 255, 255]),
     ("metal90", [255, 230, 255, 255]),
@@ -148,11 +144,9 @@ const ORMS: [(&str, [u8; 4]); 8] = [
     ("zero", [255, 128, 0, 255]),
     ("lift", [255, 128, 255, 255]),
     ("lift1", [255, 128, 255, 255]),
-    ("painted", [255, 128, 255, 255]),
 ];
 const WHITE: [u8; 4] = [255, 255, 255, 255];
-/// A dark bronze as sRGB bytes, about linear (0.40, 0.30, 0.20): the `lift` panels' diffuse
-/// and the `albedo` panel's `_albedo`.
+/// A dark bronze as sRGB bytes, about linear (0.40, 0.30, 0.20): the `lift` panels' diffuse.
 const BRONZE: [u8; 4] = [170, 149, 124, 255];
 const DIFFUSE_SIDE: u32 = 8;
 const ORM_SIDE: u32 = 16;
@@ -170,8 +164,8 @@ const ORM_SIDE: u32 = 16;
 /// (F_ab about 0.72, the +Z face at level 2.5, (0.225, 0.225, 0.475)): `lift1` about (17, 13,
 /// 18) in bytes (luminance about 14, a little more with Bevy's multiple-scattering term),
 /// `lift` 2.49 times it, about (41, 31, 44), the same chromaticity (distance under 0.01;
-/// against [`LIFT_RATIO`] and [`HUE_SAME`]); `albedo` equal to `lift1` (against [`SAME`]);
-/// on camera B the three bronze panels the same (against [`SAME_B`]).
+/// against [`LIFT_RATIO`] and [`HUE_SAME`]); on camera B the two bronze panels the same
+/// (against [`SAME_B`]).
 const FACE_MARGIN: f64 = 0.05;
 const MIP_STEP: f64 = 0.05;
 const MIN_TINT: f64 = 30.0;
@@ -362,20 +356,16 @@ pub(super) fn make_scene(world: &mut World, data: &GameData, on: bool) -> Result
             if panel.stem == "zero" && material.base.reflectance != 0.0 {
                 return Err(format!("zero panel: reflectance {}, expected 0 from its scalar file", material.base.reflectance));
             }
-            // Row three: each set's metal gain (the run's override replaces them all), and the
-            // `_albedo` drawn in place of the white diffuse.
+            // Row three: each set's metal gain (the run's override replaces them all).
             let gain = match panel.stem {
                 "lift" => Some(fnv_pbr::DEFAULT_METAL_GAIN),
-                "lift1" | "painted" => Some(1.0),
+                "lift1" => Some(1.0),
                 _ => None,
             };
             if let Some(want) = gain.map(|g| crate::authored::metal_gain_override().unwrap_or(g)) {
                 if material.extension.metal_gain != want {
                     return Err(format!("{} panel: metal gain {}, expected {want}", panel.name, material.extension.metal_gain));
                 }
-            }
-            if panel.stem == "painted" && (material.extension.authored_albedo.is_none() || material.base.base_color_texture != material.extension.authored_albedo) {
-                return Err("albedo panel: its set's _albedo is not the base colour texture".into());
             }
             prepared.push((mesh, material));
         }
@@ -510,7 +500,7 @@ pub(super) fn describe(a: &Report, b: &Report) -> String {
     });
     let chroma = ROUGHNESS.map(|i| format!("{}={:.3}", PANELS[i].name, chroma_distance(a.mean[i])));
     format!(
-        "A [{}] B [{}] faces A [{}] chroma A [{}] |A-B| legacy={:.2} zero={:.2} dielectric gain={:.2} B spread={:.2} lift A ratio={:.2} hue={:.3} |albedo-lift1| A={:.2} B bronze spread={:.2}",
+        "A [{}] B [{}] faces A [{}] chroma A [{}] |A-B| legacy={:.2} zero={:.2} dielectric gain={:.2} B spread={:.2} lift A ratio={:.2} hue={:.3} B bronze spread={:.2}",
         means(a),
         means(b),
         faces.collect::<Vec<_>>().join(" "),
@@ -521,7 +511,6 @@ pub(super) fn describe(a: &Report, b: &Report) -> String {
         b_spread(b),
         lift_ratio(a),
         chroma_between(a.mean[LIFT], a.mean[LIFT1]),
-        max_channel_diff(a.mean[PAINTED], a.mean[LIFT1]),
         bronze_spread(b),
     )
 }
@@ -590,8 +579,7 @@ pub(super) fn judge(a: &Report, b: &Report, on: bool) -> Result<(), String> {
     if b_spread(b) > SAME_B {
         failed.push(format!("camera B's panels differ by {:.2}", b_spread(b)));
     }
-    // Camera B, both runs: the bronze panels the same (no lift without a cube, the `_albedo`
-    // drawn in every view).
+    // Camera B, both runs: the bronze panels the same (no lift without a cube).
     if bronze_spread(b) > SAME_B {
         failed.push(format!("camera B's bronze panels differ by {:.2}", bronze_spread(b)));
     }
@@ -620,17 +608,13 @@ pub(super) fn judge(a: &Report, b: &Report, on: bool) -> Result<(), String> {
         if !DIELECTRIC_GAIN.contains(&gain) {
             failed.push(format!("the dielectric's gain {gain:.2} outside {DIELECTRIC_GAIN:?}"));
         }
-        // Metal base colour: the lift brightens the bronze and keeps its hue; the `_albedo`
-        // draws as the same bronze at gain 1.
+        // Metal base colour: the lift brightens the bronze and keeps its hue.
         if lift_ratio(a) < LIFT_RATIO {
             failed.push(format!("the lifted metal is {:.2} times as bright as at gain 1, under {LIFT_RATIO}", lift_ratio(a)));
         }
         let hue = chroma_between(a.mean[LIFT], a.mean[LIFT1]);
         if hue > HUE_SAME {
             failed.push(format!("the lift moved the hue by {hue:.3}, over {HUE_SAME}"));
-        }
-        if max_channel_diff(a.mean[PAINTED], a.mean[LIFT1]) > SAME {
-            failed.push(format!("albedo differs from lift1 by {:.2}", max_channel_diff(a.mean[PAINTED], a.mean[LIFT1])));
         }
     } else {
         for (i, panel) in PANELS.iter().enumerate() {
@@ -674,21 +658,17 @@ pub(super) fn fixture() -> Vec<(&'static str, Vec<u8>)> {
         ("textures/reflect/legacy.dds", white.clone()),
         ("textures/reflect/zero.dds", white.clone()),
         ("textures/reflect/lift.dds", bronze.clone()),
-        ("textures/reflect/lift1.dds", bronze.clone()),
-        ("textures/reflect/painted.dds", white),
+        ("textures/reflect/lift1.dds", bronze),
         ("textures/pbr/reflect/metal20_orm.dds", orm("metal20")),
         ("textures/pbr/reflect/metal50_orm.dds", orm("metal50")),
         ("textures/pbr/reflect/metal90_orm.dds", orm("metal90")),
         ("textures/pbr/reflect/dielectric_orm.dds", orm("dielectric")),
         ("textures/pbr/reflect/zero_orm.dds", orm("zero")),
         ("textures/pbr/reflect/zero.toml", b"# the zero-reflectance control\nreflectance = 0.0\n".to_vec()),
-        // Row three: `lift` has no scalar file (the default gain), `lift1` sets gain 1,
-        // `painted` draws its `_albedo` (the bronze) over a white diffuse.
+        // Row three: `lift` has no scalar file (the default gain), `lift1` sets gain 1.
         ("textures/pbr/reflect/lift_orm.dds", orm("lift")),
         ("textures/pbr/reflect/lift1_orm.dds", orm("lift1")),
         ("textures/pbr/reflect/lift1.toml", b"# the unlifted bronze\nmetal_gain = 1\n".to_vec()),
-        ("textures/pbr/reflect/painted_orm.dds", orm("painted")),
-        ("textures/pbr/reflect/painted_albedo.dds", bronze),
     ]
 }
 
@@ -763,7 +743,7 @@ fn write_fixture(out: &Path) -> std::io::Result<()> {
     create_file(
         &out.join("scene.txt"),
         format!(
-            "{} panels in {ROWS} rows of {COLS} cells of {CELL} px, 2x2 quads (white diffuse; row three a bronze diffuse at the default metal gain and at gain 1, and a white diffuse with a bronze _albedo), each tilted so its reflection (orthographic view, V = +Z) points to: {}; two cameras of one pose, exposure Bevy's default, MSAA 4x, ambient display value {AMBIENT} (world view, brightness light_unit), no directional light, no tonemapping; camera A has a reflection cube (linear faces {}; level L mixed towards ({:.2}) by L / 5), camera B none\n",
+            "{} panels in {ROWS} rows of {COLS} cells of {CELL} px, 2x2 quads (white diffuse; row three a bronze diffuse at the default metal gain and at gain 1), each tilted so its reflection (orthographic view, V = +Z) points to: {}; two cameras of one pose, exposure Bevy's default, MSAA 4x, ambient display value {AMBIENT} (world view, brightness light_unit), no directional light, no tonemapping; camera A has a reflection cube (linear faces {}; level L mixed towards ({:.2}) by L / 5), camera B none\n",
             PANELS.len(),
             PANELS.iter().map(|p| format!("{} {}", p.name, face_name(p.reflect))).collect::<Vec<_>>().join(", "),
             faces.join(", "),

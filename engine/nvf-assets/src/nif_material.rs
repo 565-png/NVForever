@@ -392,6 +392,13 @@ pub fn depth_equal(descriptor: &mut RenderPipelineDescriptor, mesh_key: MeshPipe
 /// views that have the occlusion's bindings: engine/vendor/README.md).
 pub const AMBIENT_OCCLUSION_DEF: &str = "NVF_AMBIENT_OCCLUSION";
 
+/// The main pass's shader def of the alpha-tested parallax switch (crate::authored
+/// `parallax_mask`, a development aid, off by default): nif_material.wesl then tests the cut of
+/// an alpha-tested shape with a depth map at the unshifted coordinates, where the depth-only
+/// passes (nif_prepass.wesl, Bevy's prepass, the shadow passes) test it, instead of at the
+/// shifted ones the base colour is read at.
+pub const PARALLAX_MASK_DEF: &str = "NVF_PBR_PARALLAX_MASK";
+
 /// A pipeline that must not take the ambient occlusion although bevy_pbr's rule gives it the
 /// def: its surface is not the one the depth prepass holds (water, a refracting shape), so
 /// the texels under it are another surface's (the bed's, the wall's behind), or a material
@@ -554,10 +561,11 @@ pub struct NifSurface {
     /// kept for shapes that may take one, so a change of diffuse can apply the new one's set
     /// or go back; `None` for every other material. CPU only.
     pub legacy: Option<crate::authored::LegacyLook>,
-    /// The authored set's `_albedo` this material draws as its base colour texture in place of
-    /// the game's diffuse (#2981, `crate::authored::apply`), so a restore, a swap or an unlit
-    /// copy can tell it from a texture a caller put there; `None` otherwise. CPU only.
-    pub authored_albedo: Option<Handle<Image>>,
+    /// An authored height map (#2981 stage 4) is on the material: `crate::authored` put its
+    /// depth map and parallax settings over the legacy look's (`apply_height`), and takes
+    /// them off only while this is set. Tracked explicitly, not by comparing handles, so a
+    /// baseline depth map of the game's own (#2979) would never be mistaken for one. CPU only.
+    pub height_overlay: bool,
     /// Window environment map (`nif_spawn::window_env`; docs/spec-notes/nif.md §6 "Window
     /// glass and environment maps"): x the scale of the reflection (0: none), y 1 when
     /// [`env_mask`](Self::env_mask) is set; z, w unused. The reflection, the cube read in
@@ -682,7 +690,7 @@ impl Default for NifSurface {
             anti_tiling: false,
             metal_gain: 0.0,
             legacy: None,
-            authored_albedo: None,
+            height_overlay: false,
             env: Vec4::ZERO,
             env_cube: None,
             env_mask: None,
@@ -801,18 +809,22 @@ impl MaterialExtension for NifSurface {
         // unless NVF_PBR_VIEW is set at the start): the main pass's colour only.
         // The metallic debug switch (crate::authored::metallic_debug; off unless
         // NVF_PBR_METALLIC=1 at the start) likewise, except with reflections on, which retire
-        // its "keep the metal share" rule.
+        // its "keep the metal share" rule, and the alpha-tested parallax switch
+        // (crate::authored::parallax_mask; off unless NVF_PBR_PARALLAX_MASK=1): its main pass
+        // tests an alpha-tested height-mapped shape's cut at the unshifted coordinates, as the
+        // depth-only passes do, which need no def for it.
         // Reflections (crate::reflection_cube; the run's Reflections on authored materials,
         // fixed at the start): the opt-in to the view's environment map light, main pass only (nvforever
         // lights/reflection_gate.rs compiles bevy_pbr's environment blocks under it), and the
         // view-dependent metallic in nif_material.wesl.
         let reflect = crate::reflection_cube::enabled();
         let metallic_def: &[&str] = if crate::authored::metallic_debug() && !reflect { &["NVF_PBR_METALLIC"] } else { &[] };
+        let mask_def: &[&str] = if crate::authored::parallax_mask() { &[PARALLAX_MASK_DEF] } else { &[] };
         let reflect_def: &[&str] = if reflect { &[crate::reflection_cube::REFLECT_DEF] } else { &[] };
         let view_defs = crate::authored::view().shader_defs();
-        if !(view_defs.is_empty() && metallic_def.is_empty() && reflect_def.is_empty()) && !descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
+        if !(view_defs.is_empty() && metallic_def.is_empty() && mask_def.is_empty() && reflect_def.is_empty()) && !descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
             if let Some(fragment) = descriptor.fragment.as_mut() {
-                fragment.shader_defs.extend(view_defs.iter().chain(metallic_def).chain(reflect_def).map(|d| ShaderDefVal::from(*d)));
+                fragment.shader_defs.extend(view_defs.iter().chain(metallic_def).chain(mask_def).chain(reflect_def).map(|d| ShaderDefVal::from(*d)));
             }
         }
         // StandardMaterial has set the rasteriser's bias from the material's depth bias.
@@ -1078,6 +1090,9 @@ impl Plugin for NifMaterialPlugin {
         // where nothing did, as in the viewer).
         crate::authored::view();
         crate::authored::metallic_debug();
+        crate::authored::parallax_layers();
+        crate::authored::parallax_method();
+        crate::authored::parallax_mask();
         crate::authored::metal_gain_override();
         crate::reflection_cube::enabled();
         app.add_plugins(crate::reflection_cube::ReflectionCubePlugin);

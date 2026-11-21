@@ -5,8 +5,11 @@
 use std::ops::RangeInclusive;
 
 /// [design] `parallax_depth`: how deep the height map's darkest point lies below the
-/// surface, in UV units (Bevy's `parallax_depth_scale`). Above 0.25 the relief tears.
-pub const PARALLAX_DEPTH_RANGE: RangeInclusive<f32> = 0.0..=0.25;
+/// surface, in UV units (Bevy's `parallax_depth_scale`). Up to 0.08: in the main session's
+/// pictures of 2026-11-20 (a tiled floor, a 512 `_p`) a depth of 0.06 already drew stair-step
+/// bands with the occlusion method and, with the relief method, vertical streaks on the
+/// patch walls (docs/spec-notes/pbr-materials.md, "Scalars").
+pub const PARALLAX_DEPTH_RANGE: RangeInclusive<f32> = 0.0..=0.08;
 
 /// [design] `roughness_scale`: multiplies the ORM's green channel. Up to 2 so a pack can
 /// make a map rougher as well as smoother; the product is clamped to 1 when drawn.
@@ -29,14 +32,14 @@ pub const DEFAULT_ROUGHNESS_SCALE: f32 = 1.0;
 /// `reflectance` when the file does not set it (F0 = 4 %).
 pub const DEFAULT_REFLECTANCE: f32 = 0.5;
 
-/// `metal_gain` when the file does not set it and the set has no `_albedo` [design: the
-/// main session's pictures of 2026-11-20, a steel weapon (the first-person minigun at noon:
-/// near black at 1, dark bronze at 6, worn steel at 12, brighter steel at 20 to 30)].
-pub const DEFAULT_METAL_GAIN: f32 = 12.0;
+/// [design] `parallax_depth` when the file does not set it: the engine's own depth, in UV
+/// units (a set's height map drawn as parallax, #2981 stage 4).
+pub const DEFAULT_PARALLAX_DEPTH: f32 = 0.03;
 
-/// `metal_gain` when the file does not set it and the set has an `_albedo`, whose colours are
-/// real reflectances already [design].
-pub const DEFAULT_METAL_GAIN_WITH_ALBEDO: f32 = 1.0;
+/// `metal_gain` when the file does not set it [design, owner 2026-11-21, #3237: the
+/// pictures of 2026-11-20, a steel weapon (the first-person minigun at noon: near black at
+/// 1, dark bronze at 6, worn steel at 12, brighter steel at 20 to 30)].
+pub const DEFAULT_METAL_GAIN: f32 = 12.0;
 
 /// The values a scalar file sets; `None` for a key it leaves out (or gave a value that was
 /// ignored). An unset `parallax_depth` keeps the engine's own depth.
@@ -57,10 +60,15 @@ impl Scalars {
         self.reflectance.unwrap_or(DEFAULT_REFLECTANCE)
     }
 
-    /// The set's metal gain: the file's, else [`DEFAULT_METAL_GAIN_WITH_ALBEDO`] for a set with
-    /// an `_albedo` (`has_albedo`), else [`DEFAULT_METAL_GAIN`].
-    pub fn metal_gain_or_default(&self, has_albedo: bool) -> f32 {
-        self.metal_gain.unwrap_or(if has_albedo { DEFAULT_METAL_GAIN_WITH_ALBEDO } else { DEFAULT_METAL_GAIN })
+    /// The height map's depth: the file's `parallax_depth`, else [`DEFAULT_PARALLAX_DEPTH`].
+    /// 0 means the set draws no height map.
+    pub fn parallax_depth_or_default(&self) -> f32 {
+        self.parallax_depth.unwrap_or(DEFAULT_PARALLAX_DEPTH)
+    }
+
+    /// The set's metal gain: the file's, else [`DEFAULT_METAL_GAIN`].
+    pub fn metal_gain_or_default(&self) -> f32 {
+        self.metal_gain.unwrap_or(DEFAULT_METAL_GAIN)
     }
 }
 
@@ -123,9 +131,12 @@ pub fn parse_scalars(bytes: &[u8]) -> ScalarFile {
             out.warnings.push(format!("`{key}` = {n} is not a finite number: ignored"));
             continue;
         }
+        // Judged in f32, the type the value is kept in: an end written as it is (0.08) is
+        // inside its range, though the f64 it parses to lies a hair beyond the f32 end.
         let (lo, hi) = (*range.start(), *range.end());
-        let clamped = n.clamp(f64::from(lo), f64::from(hi)) as f32;
-        if n < f64::from(lo) || n > f64::from(hi) {
+        let v = n as f32;
+        let clamped = v.clamp(lo, hi);
+        if v < lo || v > hi {
             out.warnings.push(format!("`{key}` = {n} is outside {lo} to {hi}: clamped to {clamped}"));
         }
         *slot = Some(clamped);

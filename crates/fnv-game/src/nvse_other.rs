@@ -83,6 +83,8 @@ pub struct OtherState {
     pub package_lists: HashMap<FormId, Vec<FormId>>,
     /// SetFlagsLow/High's record flags.
     pub flags: HashMap<FormId, u32>,
+    /// SetActorBaseFlagsLow/High's 32-bit ACBS flags, by actor base form.
+    pub acbs_flags: HashMap<FormId, u32>,
     /// Con_SCOF's file name (nothing is written).
     pub scof: Option<String>,
     /// AddAnimation's and DelAnimation's lists, by actor base.
@@ -758,8 +760,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // SetModelPath(Ex), SetIconPath(Ex), SetTexturePath,
         // SetBipedModelPath(Ex), SetBipedIconPath(Ex)]: the scope model is MOD3 [observed:
         // the sniper rifle's MOD3 is interface\HUD\mildotscope.NIF]. The getters see the
-        // change; the drawn models do not [hypothesis: "If the replaced model is already
-        // loaded, then it will need to be reloaded"; NVForever reads the record's].
+        // change; the drawn models do not, but for a weapon's (weapon-mods.md §8)
+        // [hypothesis: "If the replaced model is already loaded, then it will need to be
+        // reloaded"; NVForever reads the record's].
         "getscopemodelpath" | "getbipediconpath" => {
             let (sub, at) = if name == "getscopemodelpath" {
                 ("MOD3", 0)
