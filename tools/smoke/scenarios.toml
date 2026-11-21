@@ -18125,7 +18125,7 @@ env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SAMPLE = "2", NVF_PLAY_TEST_SCRIP
 args = ["--cell", "GSSchoolHouse", "--pos", "700,-900,3340", "--play", "--no-voice", "--no-messages"]
 run_seconds = 50
 expect = [
-  { re = 'NVCrGiantMantisNymph \S+: created at \(1101, -1875, 3339\), stands at \(-?\d+, -?\d+, 33[2-5]\d\)', min = 20, label = "the nymphs stand on the floor round the egg, not in it" },
+  { re = 'NVCrGiantMantisNymph \S+: created at \(1101, -1875, 3339\), stands at \(-?\d+, -?\d+, 33[2-5]\d\)', min = 20, label = "the nymphs stand on the floor round the egg, not in it", known_failing = "#3298: 12 since #3053 (GetDestructionStage counts from 1): the egg's script places 12 at stage 1 or 2, and the aid's one hit takes it through 2 and 3; whether the original gives 12 or 24 is observer check 247" },
   { text = "created where no free spot is near", count = 0, label = "every nymph found a spot" },
   { re = 'stress frames: .*1% low (?P<n>[\d.]+) ms', range = [0, 400], label = "no run of second-long frames (was 1,162 ms)" },
   { re = 'at most (?P<n>\d+) one-shots at once', range = [1, 64], label = "the footsteps are held to the voice limit" },

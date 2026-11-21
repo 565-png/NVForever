@@ -3431,6 +3431,17 @@ already talking takes over at once, same topic or another; nothing is queued or 
      damage-stage field fits every case found too. They differ on Point Lookout's
      DLC04DarMuckBubble (0x0A012C5E: index 1, damage stage 3, at 40 %): damage one to under
      40 % with the console (`DamageObject`) and print `GetDestructionStage` (2 or 3).
+     A second case, in the base game and needing no console (#3298): the mantis egg in the
+     Goodsprings schoolhouse (0x0010AC54, V22MantisOotheca: health 1; stages index 0 at
+     100 %, index 1 at 99 % with Cap Damage and Destroy and 50 points a second of its own
+     damage, index 2 at 0 %; damage-stage fields 0, 1, 2 [observed: fnvtool esm decode]).
+     Its script places 12 nymphs (four `PlaceAtMe … 3`) on each OnDestructionStageChange
+     where `GetDestructionStage` is 1 or 2 [observed: fnvtool script decompile, SCPT
+     0x000EF406]. Shoot the egg once and count the nymphs. 12 says index + 1 (our two
+     stage changes, to index 1 and then 2, read 2 and 3). 24 does not settle it: the
+     damage-stage field gives it (the changes read 1 and 2), and so does index + 1 if
+     the original also runs the block for index 0 (reading 1, 2, 3). Ours: 12 since
+     #3053; the smoke scenario `mantis-egg-spawn` expected at least 20 before it.
 
 ## Added 2026-11-21 (greetings of two quests at equal priority, #3199, #3061)
 
