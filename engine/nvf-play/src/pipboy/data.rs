@@ -1342,7 +1342,7 @@ impl DataState {
     }
 
     /// The markers of `world` not found yet that the map does not show either (no
-    /// Visible/Travel flag, not shown by a script), for the compass's Hide Unmapped Places
+    /// Visible flag, not shown by a script), for the compass's Hide Unmapped Places
     /// tweak [design: docs/design/tweaks.md].
     pub fn unmapped_of(&self, world: u32, game: Option<&fnv_game::Game>) -> std::collections::HashSet<u32> {
         self.markers
@@ -1353,7 +1353,7 @@ impl DataState {
                     return false;
                 }
                 let flags = game.and_then(|g| g.marker_flags(FormId(m.form))).unwrap_or(m.flags);
-                if flags & (fnv_game::nvse_lu2::MARKER_VISIBLE | fnv_game::nvse_lu2::MARKER_TRAVEL) != 0 {
+                if flags & fnv_game::nvse_lu2::MARKER_VISIBLE != 0 {
                     return false;
                 }
                 !game.is_some_and(|g| g.map_marker_shown(FormId(m.form), flags & fnv_game::nvse_lu2::MARKER_HIDDEN != 0))
@@ -2573,28 +2573,33 @@ pub(crate) fn nearest(places: impl Iterator<Item = Vec2>, want: Vec2) -> Option<
 }
 
 /// Whether the player knows a marker (`Some`), and whether it is drawn as discovered
-/// (`true`): found within its radius, flagged Can Travel To (`FNAM` bit 2 or
-/// `SetMapMarkerTravel`), or made a travel target by ShowMap's or ShowAllMapMarkers'
-/// canTravel (owner 2026-10-23: `tmm 1` shows every marker with its own icon). Known
-/// also when shown by ShowMap, ShowAllMapMarkers (which leaves out markers flagged
-/// "Show All" Hidden, FNAM bit 4 or `SetMapMarkerHidden` [documented: xEdit's flag
-/// names, schemas/fnv/world.json], when asked to) or by its Visible flag (`FNAM` bit 1
-/// or `SetMapMarkerVisible`) [hypothesis]; those keep the undiscovered icon.
+/// (`true`): found within its radius, made a travel target by ShowMap's or
+/// ShowAllMapMarkers' canTravel (owner 2026-10-23: `tmm 1` shows every marker with its
+/// own icon), or explicitly enabled as a travel target by a script's
+/// `SetMapMarkerTravel 1` once visible/shown. The authored Can Travel To flag (`FNAM`
+/// bit 2) alone does not mark an undiscovered marker as known or discovered. Known also
+/// when shown by ShowMap, ShowAllMapMarkers (which leaves out markers flagged "Show All"
+/// Hidden, FNAM bit 4 or `SetMapMarkerHidden` [documented: xEdit's flag names,
+/// schemas/fnv/world.json], when asked to) or by its Visible flag (`FNAM` bit 1 or
+/// `SetMapMarkerVisible`) [hypothesis]; those keep the undiscovered icon.
 fn known(st: &DataState, game: &Game, m: &read::Marker) -> Option<bool> {
     let rt = game.script.as_ref().and_then(|s| s.rt.as_ref());
-    let flags = rt.and_then(|rt| rt.game.marker_flags(FormId(m.form))).unwrap_or(m.flags);
+    let id = FormId(m.form);
+    let flags = rt.and_then(|rt| rt.game.marker_flags(id)).unwrap_or(m.flags);
     let hidden = flags & fnv_game::nvse_lu2::MARKER_HIDDEN != 0;
     let visible_flag = flags & fnv_game::nvse_lu2::MARKER_VISIBLE != 0;
-    let travel_flag = flags & fnv_game::nvse_lu2::MARKER_TRAVEL != 0;
-    let shown = rt.is_some_and(|rt| rt.game.map_marker_shown(FormId(m.form), hidden));
+    let script_travel = rt.and_then(|rt| rt.game.marker_flag_override(id, fnv_game::nvse_lu2::MARKER_TRAVEL));
+    let shown = rt.is_some_and(|rt| rt.game.map_marker_shown(id, hidden));
     let by_script = shown
+        && script_travel != Some(false)
         && rt.is_some_and(|rt| {
             let p = &rt.game.player;
-            p.travel_markers.contains(&FormId(m.form)) || p.all_markers.is_some_and(|a| a.shown && a.travel)
+            p.travel_markers.contains(&id) || p.all_markers.is_some_and(|a| a.shown && a.travel)
         });
-    let found = st.discovered.contains(&m.form) || travel_flag || by_script;
+    let found = st.discovered.contains(&m.form) || by_script;
     let enabled = game.sim.as_ref().is_none_or(|s| s.present(m.form));
-    (enabled && (found || shown || visible_flag)).then_some(found)
+    let visible = found || shown || visible_flag;
+    (enabled && visible).then_some(found || script_travel == Some(true))
 }
 
 fn marker_kind(rt: Option<&crate::script::Runtime>, m: &read::Marker) -> u8 {
@@ -5781,6 +5786,167 @@ mod tests {
             assert_eq!(shown.marks[0].picture(), model::marker_icon(14, true));
             assert_eq!(shown.detail, None, "SetMapMarkerRep 0 clears reputation line");
             assert_eq!(shown.marks[0].detail, None);
+        }
+    }
+
+    #[test]
+    fn authored_can_travel_to_does_not_discover_or_unmap_before_player_finds_marker() {
+        use bevy::ecs::system::SystemState;
+        use model::MapTransform;
+
+        const STAT: u32 = 0x800;
+        const ROOM: u32 = 0x900;
+        const MARKER_VIS_TRAVEL: u32 = 0x910;
+        const MARKER_TRAVEL_ONLY: u32 = 0x911;
+
+        let sub = |sig: &[u8; 4], data: &[u8]| [sig.as_slice(), &(data.len() as u16).to_le_bytes(), data].concat();
+        let rec = |sig: &[u8; 4], id: u32, subs: &[Vec<u8>]| {
+            let body: Vec<u8> = subs.iter().flat_map(|s| s.iter().copied()).collect();
+            [sig.as_slice(), &(body.len() as u32).to_le_bytes(), &0u32.to_le_bytes(), &id.to_le_bytes(), &0u32.to_le_bytes(), &0u32.to_le_bytes(), &body].concat()
+        };
+        let grp = |label: [u8; 4], kind: u32, body: &[u8]| [b"GRUP".as_slice(), &((24 + body.len()) as u32).to_le_bytes(), &label, &kind.to_le_bytes(), &0u64.to_le_bytes(), body].concat();
+        let top = |sig: &[u8; 4], body: &[u8]| grp(*sig, 0, body);
+        let tes4 = rec(b"TES4", 0, &[sub(b"HEDR", &[1.34f32.to_le_bytes().as_slice(), &0u32.to_le_bytes(), &0x800u32.to_le_bytes()].concat())]);
+        let bytes = [
+            tes4,
+            top(b"STAT", &rec(b"STAT", STAT, &[sub(b"EDID", b"VanillaMarkerStat\0")])),
+            top(b"NPC_", &rec(b"NPC_", 0x7, &[sub(b"EDID", b"Player\0")])),
+            top(
+                b"CELL",
+                &grp(
+                    0i32.to_le_bytes(),
+                    2,
+                    &grp(
+                        0i32.to_le_bytes(),
+                        3,
+                        &[
+                            rec(b"CELL", ROOM, &[sub(b"EDID", b"VanillaRoom\0"), sub(b"DATA", &[1])]),
+                            grp(
+                                ROOM.to_le_bytes(),
+                                6,
+                                &grp(
+                                    ROOM.to_le_bytes(),
+                                    9,
+                                    &[
+                                        // Undiscovered marker authored Visible | Can Travel To (FNAM = 1 | 2).
+                                        rec(
+                                            b"REFR",
+                                            MARKER_VIS_TRAVEL,
+                                            &[
+                                                sub(b"EDID", b"VanillaVisTravelRef\0"),
+                                                sub(b"NAME", &STAT.to_le_bytes()),
+                                                sub(b"XMRK", &[]),
+                                                sub(b"FNAM", &[1 | 2]),
+                                                sub(b"FULL", b"Visible Ridge\0"),
+                                                sub(b"TNAM", &[5, 0]),
+                                                sub(b"DATA", &[0; 24]),
+                                            ],
+                                        ),
+                                        // Undiscovered marker authored Can Travel To only (FNAM = 2), as typical vanilla locations.
+                                        rec(
+                                            b"REFR",
+                                            MARKER_TRAVEL_ONLY,
+                                            &[
+                                                sub(b"EDID", b"VanillaTravelOnlyRef\0"),
+                                                sub(b"NAME", &STAT.to_le_bytes()),
+                                                sub(b"XMRK", &[]),
+                                                sub(b"FNAM", &[2]),
+                                                sub(b"FULL", b"Hidden Valley Camp\0"),
+                                                sub(b"TNAM", &[2, 0]),
+                                                sub(b"DATA", &[0; 24]),
+                                            ],
+                                        ),
+                                    ]
+                                    .concat(),
+                                ),
+                            ),
+                        ]
+                        .concat(),
+                    ),
+                ),
+            ),
+        ]
+        .concat();
+        let plugin = fnv_esm::Plugin::parse(&bytes, "VanillaMarkers.esm".into()).unwrap();
+        let script = crate::script::ScriptState::over_plugins(&[plugin]);
+
+        let run = |script: &mut crate::script::ScriptState, body: &str| {
+            script.rt.as_mut().unwrap().game.run_query(&format!("Begin Function {{ }}\n{body}\nEnd\n"), Default::default()).unwrap();
+        };
+
+        let m_vis_travel = read::Marker { form: MARKER_VIS_TRAVEL, world: 1, pos: [0.0; 3], name: "Visible Ridge".into(), kind: 5, flags: 1 | 2, radius: 10.0, reputation: None };
+        let m_travel_only = read::Marker { form: MARKER_TRAVEL_ONLY, world: 1, pos: [4096.0, 0.0, 0.0], name: "Hidden Valley Camp".into(), kind: 2, flags: 2, radius: 10.0, reputation: None };
+        let root = WorldMap { root: 1, transform: MapTransform::default(), texture: "root.dds".into(), usable: [2048.0; 2], nw: [-2, 1], se: [1, -2] };
+        let mut st = DataState {
+            tile_rows: true,
+            maps: [(1, Some(root))].into_iter().collect(),
+            markers: Some(vec![m_vis_travel.clone(), m_travel_only.clone()]),
+            ..DataState::default()
+        };
+
+        let mut world = World::new();
+        world.insert_resource(Location { world: 1, interior: None });
+        world.insert_resource(Player { heading: 0.0, pitch: 0.0, eye_height: 0.0, feet: [0.0; 3], body_eye: None, body_view: None, placed: None });
+        world.insert_resource(script);
+        let mut state = SystemState::<Game>::new(&mut world);
+
+        // Before discovery:
+        // - Visible | Can Travel To is known as undiscovered (Some(false)), NOT discovered.
+        // - Can Travel To alone is unknown (None) and stays in unmapped_of (Hide Unmapped Places).
+        {
+            let game = state.get_mut(&mut world).unwrap();
+            let g = &game.script.as_ref().unwrap().rt.as_ref().unwrap().game;
+            assert_eq!(known(&st, &game, &m_vis_travel), Some(false), "authored Visible | Can Travel To starts undiscovered");
+            assert_eq!(known(&st, &game, &m_travel_only), None, "authored Can Travel To alone stays hidden before discovery");
+            assert_eq!(st.unmapped_of(1, Some(g)), [MARKER_TRAVEL_ONLY].into_iter().collect(), "Hide Unmapped Places keeps authored Can Travel To-only marker");
+            assert_eq!(st.unmapped_of(1, None), [MARKER_TRAVEL_ONLY].into_iter().collect());
+
+            let shown = world_map(&mut st, &game, None, false);
+            assert_eq!(shown.marks.len(), 1);
+            assert_eq!(shown.marks[0].icon, Some((5, false)));
+            assert_eq!(shown.marks[0].picture(), model::marker_icon(5, false));
+        }
+
+        // Setting Hidden alone on Visible | Can Travel To must not flip authored Can Travel To into discovered;
+        // ShowAllMapMarkers 1 0 0 (Explorer perk) reveals the Can Travel To-only marker as undiscovered (not discovered).
+        run(
+            world.resource_mut::<crate::script::ScriptState>().as_mut(),
+            r#"
+            VanillaVisTravelRef.SetMapMarkerHidden 1
+            ShowAllMapMarkers 1 0 0
+            "#,
+        );
+        {
+            let game = state.get_mut(&mut world).unwrap();
+            let g = &game.script.as_ref().unwrap().rt.as_ref().unwrap().game;
+            assert_eq!(known(&st, &game, &m_vis_travel), Some(false), "SetMapMarkerHidden must not treat authored FNAM bit 2 as a script travel override");
+            assert_eq!(known(&st, &game, &m_travel_only), Some(false), "Explorer ShowAllMapMarkers 1 0 0 shows marker undiscovered");
+            assert!(st.unmapped_of(1, Some(g)).is_empty());
+        }
+
+        // Clearing ShowAllMapMarkers restores Hide Unmapped Places for the Can Travel To-only marker;
+        // SetMapMarkerVisible 0 on Visible | Can Travel To moves it into unmapped_of and off the map.
+        run(
+            world.resource_mut::<crate::script::ScriptState>().as_mut(),
+            r#"
+            ShowAllMapMarkers 0
+            VanillaVisTravelRef.SetMapMarkerVisible 0
+            "#,
+        );
+        {
+            let game = state.get_mut(&mut world).unwrap();
+            let g = &game.script.as_ref().unwrap().rt.as_ref().unwrap().game;
+            assert_eq!(known(&st, &game, &m_vis_travel), None);
+            assert_eq!(st.unmapped_of(1, Some(g)), [MARKER_VIS_TRAVEL, MARKER_TRAVEL_ONLY].into_iter().collect());
+        }
+
+        // Discovering the marker (or ShowMap with canTravel=1) marks it discovered (Some(true)).
+        st.discovered.insert(MARKER_VIS_TRAVEL);
+        run(world.resource_mut::<crate::script::ScriptState>().as_mut(), "ShowMap VanillaTravelOnlyRef 1");
+        {
+            let game = state.get_mut(&mut world).unwrap();
+            assert_eq!(known(&st, &game, &m_vis_travel), Some(true));
+            assert_eq!(known(&st, &game, &m_travel_only), Some(true));
         }
     }
 }

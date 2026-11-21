@@ -47,6 +47,10 @@ pub struct State {
     /// SetMapMarkerHidden / Travel / Visible's flags and SetMapMarkerType's types, by
     /// marker reference (`Game::marker_flags`, read by the Pip-Boy's map too).
     pub marker_flags: HashMap<FormId, u8>,
+    /// Mask of `MARKER_*` flag bits explicitly set or cleared by a script
+    /// (`SetMapMarkerVisible`, `SetMapMarkerTravel`, `SetMapMarkerHidden`), distinct
+    /// from the authored `FNAM` bits.
+    pub marker_flag_overrides: HashMap<FormId, u8>,
     pub marker_kind: HashMap<FormId, u8>,
     /// SetRadio…'s radio data, by station reference.
     pub radio: HashMap<FormId, fnv_sim::refs::RadioData>,
@@ -60,6 +64,29 @@ impl Game<'_> {
     pub fn marker_flags(&self, r: FormId) -> Option<u8> {
         let m = self.world.placed.get(r).and_then(|p| p.map_marker)?;
         Some(self.other.lutana.lu2.marker_flags.get(&r).copied().unwrap_or(m.flags))
+    }
+
+    /// Whether a script explicitly overrode `bit` (`MARKER_VISIBLE`, `MARKER_TRAVEL`, or
+    /// `MARKER_HIDDEN`) on map marker `r`: `Some(true)` when set on, `Some(false)` when
+    /// cleared, `None` when the bit still comes from the authored `FNAM` record (or `r`
+    /// is no map marker).
+    pub fn marker_flag_override(&self, r: FormId, bit: u8) -> Option<bool> {
+        let mask = self.other.lutana.lu2.marker_flag_overrides.get(&r).copied()?;
+        if mask & bit == 0 {
+            return None;
+        }
+        Some(self.marker_flags(r)? & bit != 0)
+    }
+
+    /// Clear a script override bit on `r` (used when `ShowMap` re-enables travel after a
+    /// prior `SetMapMarkerTravel 0`).
+    pub(crate) fn clear_marker_flag_override(&mut self, r: FormId, bit: u8) {
+        if let Some(mask) = self.other.lutana.lu2.marker_flag_overrides.get_mut(&r) {
+            *mask &= !bit;
+            if *mask == 0 {
+                self.other.lutana.lu2.marker_flag_overrides.remove(&r);
+            }
+        }
     }
 
     /// A map marker's type as it stands (the icon it shows).
@@ -90,6 +117,7 @@ impl Game<'_> {
     fn set_marker_flag(&mut self, r: FormId, bit: u8, on: bool) {
         if let Some(f) = self.marker_flags(r) {
             self.other.lutana.lu2.marker_flags.insert(r, if on { f | bit } else { f & !bit });
+            *self.other.lutana.lu2.marker_flag_overrides.entry(r).or_insert(0) |= bit;
             if !on && bit == MARKER_VISIBLE {
                 self.player.map_markers.remove(&r);
             }

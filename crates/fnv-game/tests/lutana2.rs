@@ -20,6 +20,7 @@ const FOOD: u32 = 0x802;
 const ROOM: u32 = 0x900;
 const MARKER: u32 = 0x910;
 const RADIO: u32 = 0x911;
+const TRAVEL_ONLY_MARKER: u32 = 0x912;
 
 struct Fixture {
     data: GameData,
@@ -41,9 +42,23 @@ fn fixture() -> Fixture {
         MARKER,
         &[sub(b"EDID", z("TestMarkerRef")), sub(b"NAME", STAT.to_le_bytes().to_vec()), sub(b"XMRK", vec![]), sub(b"FNAM", vec![1 | 2]), sub(b"FULL", z("Test Place")), sub(b"TNAM", vec![5, 0]), sub(b"DATA", vec![0; 24])],
     );
+    let travel_only = record(
+        b"REFR",
+        0,
+        TRAVEL_ONLY_MARKER,
+        &[
+            sub(b"EDID", z("TravelOnlyMarkerRef")),
+            sub(b"NAME", STAT.to_le_bytes().to_vec()),
+            sub(b"XMRK", vec![]),
+            sub(b"FNAM", vec![2]),
+            sub(b"FULL", z("Travel Only Place")),
+            sub(b"TNAM", vec![2, 0]),
+            sub(b"DATA", vec![0; 24]),
+        ],
+    );
     let xrdo = [6000f32.to_le_bytes(), 2u32.to_le_bytes(), 15f32.to_le_bytes(), 0u32.to_le_bytes()].concat();
     let radio = record(b"REFR", 0, RADIO, &[sub(b"EDID", z("TestRadioRef")), sub(b"NAME", TACT.to_le_bytes().to_vec()), sub(b"XRDO", xrdo), sub(b"DATA", vec![0; 24])]);
-    let children = group(ROOM.to_le_bytes(), 6, &group(ROOM.to_le_bytes(), 9, &[marker, radio].concat()));
+    let children = group(ROOM.to_le_bytes(), 6, &group(ROOM.to_le_bytes(), 9, &[marker, travel_only, radio].concat()));
     let bytes = [
         tes4(),
         top(b"STAT", &stat),
@@ -92,7 +107,20 @@ fn map_markers_and_radio_stations_from_their_data() {
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerTravel"), 1.0);
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerHidden"), 0.0);
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerType"), 5.0, "Cave");
-    assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerVisible"), 2.0, "authored Visible | Can Travel To");
+    // Authored Can Travel To (FNAM bit 2) does not mark an undiscovered marker as discovered/2:
+    // Visible | Can Travel To reads 1 (on map, not travelable yet); Can Travel To alone reads 0.
+    assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerVisible"), 1.0, "undiscovered Visible | Can Travel To must not read 2");
+    assert_eq!(n(&mut g, "TravelOnlyMarkerRef.GetMapMarkerVisible"), 0.0, "undiscovered Can Travel To alone reads 0");
+    // ShowMap without canTravel (0) reveals Can Travel To-only as 1; ShowMap with canTravel (1) or discovery reads 2.
+    q(&mut g, "ShowMap TravelOnlyMarkerRef 0");
+    assert_eq!(n(&mut g, "TravelOnlyMarkerRef.GetMapMarkerVisible"), 1.0, "ShowMap 0 does not promote authored Can Travel To to 2");
+    q(&mut g, "ShowMap TravelOnlyMarkerRef 1");
+    assert_eq!(n(&mut g, "TravelOnlyMarkerRef.GetMapMarkerVisible"), 2.0, "ShowMap 1 makes it a travel target");
+    // Discovering TestMarkerRef promotes it to 2; explicit SetMapMarkerTravel 0 drops it back to 1.
+    g.set_found_markers([FormId(MARKER)]);
+    assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerVisible"), 2.0, "discovered marker reads 2");
+    g.set_found_markers([]);
+    assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerVisible"), 1.0, "undiscovered again reads 1");
     assert_eq!(
         match q(&mut g, "SetFunctionValue (TestMarkerRef.GetCustomMapMarkerIcon)") {
             XVal::Str(s) => s,
@@ -100,8 +128,13 @@ fn map_markers_and_radio_stations_from_their_data() {
         },
         "Interface\\Icons\\World Map\\icon_map_cave.dds"
     );
-    q(&mut g, "TestMarkerRef.SetMapMarkerTravel 0");
+    // Setting Hidden alone must not promote authored Can Travel To to 2.
     q(&mut g, "TestMarkerRef.SetMapMarkerHidden 1");
+    assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerVisible"), 1.0, "SetMapMarkerHidden alone keeps undiscovered marker at 1");
+    // Explicit script SetMapMarkerTravel 1 on a visible marker promotes it to 2; 0 drops it back to 1.
+    q(&mut g, "TestMarkerRef.SetMapMarkerTravel 1");
+    assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerVisible"), 2.0, "script SetMapMarkerTravel 1 on visible marker reads 2");
+    q(&mut g, "TestMarkerRef.SetMapMarkerTravel 0");
     q(&mut g, "TestMarkerRef.SetMapMarkerType 14");
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerTravel"), 0.0);
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerHidden"), 1.0);
@@ -119,6 +152,10 @@ fn map_markers_and_radio_stations_from_their_data() {
     // SetMapMarkerVisible 0 hides the marker, and ShowAllMapMarkers skips it while Hidden is set.
     q(&mut g, "TestMarkerRef.SetMapMarkerVisible 0");
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerVisible"), 0.0);
+    // Script SetMapMarkerTravel 1 on an unshown/hidden marker must still read 0 until shown/visible.
+    q(&mut g, "TestMarkerRef.SetMapMarkerTravel 1");
+    assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerVisible"), 0.0, "SetMapMarkerTravel 1 alone does not reveal an unshown marker");
+    q(&mut g, "TestMarkerRef.SetMapMarkerTravel 0");
     q(&mut g, "ShowAllMapMarkers 1 0 0");
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerVisible"), 1.0, "skipHidden=0 reveals hidden marker");
     q(&mut g, "ShowAllMapMarkers 1 1 1");

@@ -258,6 +258,9 @@ pub fn show_map(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     g.player.map_markers.insert(m);
     if a.num_or(1, 0.0) != 0.0 {
         g.player.travel_markers.insert(m);
+        if g.marker_flag_override(m, crate::nvse_lu2::MARKER_TRAVEL) == Some(false) {
+            g.clear_marker_flag_override(m, crate::nvse_lu2::MARKER_TRAVEL);
+        }
     }
     none()
 }
@@ -281,22 +284,26 @@ impl Game<'_> {
 /// and a fast-travel target [documented: GECK wiki GetMapMarkerVisible, "Marker State"].
 /// A marker the player found reads 2 [observed: the Goodsprings marker in the save
 /// nvftest, capture `fa_batch1_queries`]; ShowMap's canTravel, ShowAllMapMarkers' travel
-/// flag, and the marker's own XMRK/session flags (`Game::marker_flags`) feed visibility
-/// and travel consistently with the Pip-Boy map.
+/// flag, and explicit script `SetMapMarkerVisible` / `SetMapMarkerTravel` /
+/// `SetMapMarkerHidden` changes feed visibility and travel consistently with the Pip-Boy
+/// map. The authored Can Travel To flag (`FNAM` bit 2) does not mark an undiscovered
+/// marker as known or return 2 before the player finds it or a script enables travel.
 pub fn get_map_marker_visible(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
     let r = ctx.subject()?;
     let flags = g.marker_flags(r);
     let hidden = flags.is_some_and(|f| f & crate::nvse_lu2::MARKER_HIDDEN != 0);
     let visible_flag = flags.is_some_and(|f| f & crate::nvse_lu2::MARKER_VISIBLE != 0);
-    let travel_flag = flags.is_some_and(|f| f & crate::nvse_lu2::MARKER_TRAVEL != 0);
+    let script_travel = g.marker_flag_override(r, crate::nvse_lu2::MARKER_TRAVEL);
     let found = g.player.found_markers.contains(&r);
     let shown = g.map_marker_shown(r, hidden);
-    if !(found || shown || visible_flag || travel_flag) {
+    if !(found || shown || visible_flag) {
         return Ok(Value::Num(0.0));
     }
-    let travel = found
-        || travel_flag
-        || (shown && (g.player.travel_markers.contains(&r) || g.player.all_markers.is_some_and(|a| a.shown && a.travel)));
+    let by_script_travel = shown && (g.player.travel_markers.contains(&r) || g.player.all_markers.is_some_and(|a| a.shown && a.travel));
+    let travel = match script_travel {
+        Some(on) => on,
+        None => found || by_script_travel,
+    };
     Ok(Value::Num(if travel { 2.0 } else { 1.0 }))
 }
 
