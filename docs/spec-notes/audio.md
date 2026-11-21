@@ -787,6 +787,17 @@ Counts are of FalloutNV.esm alone [observed] unless they say otherwise.
    [hypothesis].
 8. Intro, outro and incidental sounds go through `crate::sfx` at the listener (the
    effects volume) and are not played with music off [design].
+9. **The Pip-Boy radio** (#3311): while it plays a station (on, tuned to a station
+   received here, sound on, not at the poker table; `radio::Radio::pipboy_playing`) the
+   place's music (its marker's set, else the cell's or worldspace's type) fades out over
+   its fade time and no incidental phrase plays; when the radio stops or the station is
+   no longer received, the place's music starts again from its beginning, fading in.
+   Battle music still comes in over the radio (a battle set's loop, or the battle layer
+   of the place's dungeon set, whose other layers play with it then), and script music
+   (item 7), the death and level-up music play as before [hypothesis: a player's report
+   says the music should stop while the radio is on; what the original does with battle
+   music, fades and the return is observer check 250; design: started again, not held
+   where it was].
 
 Seen [observed 2026-10-11, `nvforever --play`, the owner's load order]:
 - Standing next to Violet (`--cell Goodsprings --pos=-46800,65000,4600 --hour 12`):
@@ -816,6 +827,9 @@ Seen [observed 2026-10-11, `nvforever --play`, the owner's load order]:
   a group, and whether the original plays the intro before the loop or over it.
 - What a dungeon set's "suspense" answers to, and how a controller with both dungeon
   sets and a battle list chooses.
+- What the Pip-Boy radio does to the music (§13.2 item 9): whether battle music cuts in
+  over it, whether the place's music fades or stops, and whether it comes back when the
+  radio is turned off (observer check 250).
 
 ### 13.5 Fallout 3 music (owner, list 5 item 69)
 

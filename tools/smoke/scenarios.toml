@@ -4687,6 +4687,27 @@ expect = [
 ]
 
 [[scenario]]
+name = "music-under-pipboy-radio"
+source = "#3311 (audio.md §13.2 item 9): the Goodsprings music fades out while the Pip-Boy radio plays Mojave Music Radio (on at 12 s) and starts again when it is turned off (26 s)"
+areas = ["audio", "music", "radio"]
+paths = ["engine/nvf-play/src/music.rs", "engine/nvf-play/src/radio.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_RADIO = "12:on,26:off" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-69000,3500,8900", "--hour", "12"]
+run_seconds = 45
+expect = [
+  { re = 'music summary: 2 started, .*\b1 held by the Pip-Boy radio', label = "music summary: 2 started, … 1 held by the Pip-Boy radio" },
+]
+order = [[
+  "music: musSetLOCDesExplBothABC day started, layers outer+middle+inner",
+  "pipboy radio: on, tuned to vCountryRadio",
+  "music: the Pip-Boy radio plays: the place's music is held",
+  "music: musSetLOCDesExplBothABC day fades out",
+  "pipboy radio: off",
+  "music: the Pip-Boy radio stopped: the place's music comes back",
+  "music: musSetLOCDesExplBothABC day started, layers outer+middle+inner",
+]]
+
+[[scenario]]
 name = "radio-jukebox"
 launch = "saloon-jukebox"
 source = "CLAUDE.md: after radio changes, the saloon jukebox switched off at 14 s and on at 22 s (docs/spec-notes/radio.md §6: the programme runs on from when first heard, at the scripts' first frame, so it comes back about 22 s in; the aids count from the same frame since the start's loading screen, #703)"

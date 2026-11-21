@@ -462,6 +462,10 @@ pub struct Radio {
     pub refused: u32,
     pub conversations: u32,
     pub conversations_ignored: u32,
+    /// The Pip-Boy radio plays a station now: on, tuned to one received here, sound on,
+    /// not at the poker table. The place's music is held while it does (`crate::music`,
+    /// #3311).
+    pub pipboy_playing: bool,
     /// The Skip Radio Song key was pressed (`crate::tweaks`): the Pip-Boy's station ends
     /// the line it is saying now [design: docs/design/tweaks.md].
     pub skip: bool,
@@ -927,6 +931,7 @@ fn play(
             heard.push((PIPBOY, base, 1.0 - share, true, None));
         }
     }
+    radio.pipboy_playing = settings.play && table.is_none() && pip_station.is_some() && pip_share.is_some();
 
     // The Skip Radio Song key: the Pip-Boy's station, received, ends its line now, so the
     // line's end script runs and the station's own order picks the next. Not a

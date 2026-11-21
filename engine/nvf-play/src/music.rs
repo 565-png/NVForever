@@ -48,6 +48,11 @@
 //!   [observed: the record and its file; hypothesis: that the death plays it, by its
 //!   name]. No music plays while the player is dead; alive again, the place's music
 //!   comes back [design].
+//! - **The Pip-Boy radio** (`crate::radio::Radio::pipboy_playing`): while it plays a
+//!   station the place's music fades out over its fade time and no incidental phrase
+//!   plays; when the radio stops (off, out of range) the place's music starts again from
+//!   its beginning. Battle music still comes in over the radio, and music scripts ask for
+//!   plays beside it [hypothesis: observer check 250; #3311].
 //! - Music goes on in menus and behind loading screens [design].
 //! - Not built: the main menu's music (no main menu yet; `SMainMenuMusicTrack`), the
 //!   controllers' retrigger delay and `NAM1` (not understood), `IsMusicPlaying`-style
@@ -373,6 +378,36 @@ pub fn hold_layers(wanted: [bool; 3], playing: [bool; 3], on_since: [f32; 3], mi
     [0, 1, 2].map(|k| wanted[k] || (playing[k] && now - on_since[k] < min_on))
 }
 
+/// Where the music heard comes from ([`wanted_source`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Heard {
+    Silent,
+    /// A battle set's loop.
+    Battle,
+    /// The place's music: its marker's set (a dungeon set plays a battle's layer too), else
+    /// the cell's or worldspace's music type.
+    Place,
+}
+
+/// What is wanted: nothing while the player is dead, the battle set's loop once it is
+/// due, silence while a battle set recovers, else the place's music. While the Pip-Boy
+/// radio plays a station (`radio`) the place's music is held silent, unless a battle
+/// plays it (`battle_in_place`: a battle where the place's dungeon set plays its battle
+/// layer); battle music still comes in over the radio [hypothesis: observer check 250;
+/// #3311, a player's report that the music should stop while the radio is on].
+pub fn wanted_source(dead: bool, battle_loop: bool, recovering: bool, radio: bool, battle_in_place: bool) -> Heard {
+    if dead {
+        Heard::Silent
+    } else if battle_loop {
+        Heard::Battle
+    } else if recovering || (radio && !battle_in_place) {
+        Heard::Silent
+    } else {
+        // Also during a battle set's wait before its loop.
+        Heard::Place
+    }
+}
+
 /// Day for a set without a controller (an incidental set).
 fn incidental_day(hour: f32) -> bool {
     hour >= INCIDENTAL_DAY.0 && hour < INCIDENTAL_DAY.1
@@ -450,6 +485,8 @@ pub struct Music {
     battle: Battle,
     /// The player is dead: no music plays.
     dead: bool,
+    /// The Pip-Boy radio plays a station: the place's music is held ([`wanted_source`]).
+    radio: bool,
     /// When the next incidental phrase is due, and the region it is for.
     incidental: Option<(u32, f32)>,
     reported: HashSet<String>,
@@ -465,6 +502,8 @@ pub struct Music {
     pub deaths: u32,
     /// Level-up music started ([`MusicCues::level_up`]).
     pub level_ups: u32,
+    /// Times the Pip-Boy radio came on and held the place's music.
+    pub radio_holds: u32,
     /// SetMusicState 1 holds the music where it is until SetMusicState 2 (or 0)
     /// [documented: SetMusicState].
     paused: bool,
@@ -483,6 +522,7 @@ impl Default for Music {
             marker: None,
             battle: Battle::default(),
             dead: false,
+            radio: false,
             incidental: None,
             reported: HashSet::new(),
             rng: SplitMix(0x6d75_7369),
@@ -496,6 +536,7 @@ impl Default for Music {
             stingers: 0,
             deaths: 0,
             level_ups: 0,
+            radio_holds: 0,
             paused: false,
         }
     }
@@ -860,7 +901,7 @@ fn play(
     mut sounds: MessageWriter<PlaySound>,
     state: Res<State<PlayState>>,
     mut assets: ResMut<Assets<LayeredMusic>>,
-    (main_menu, intro): (Option<Res<crate::main_menu::MainMenu>>, Option<Res<crate::intro::Intro>>),
+    (main_menu, intro, radio): (Option<Res<crate::main_menu::MainMenu>>, Option<Res<crate::intro::Intro>>, Option<Res<crate::radio::Radio>>),
     tweaks: Option<Res<crate::tweaks::TweakSettings>>,
     sfx: Option<Res<crate::sfx::Sfx>>,
     poker: Option<Res<crate::poker::PokerScreen>>,
@@ -1096,6 +1137,18 @@ fn play(
             music.stingers += 1;
         }
     }
+    // The Pip-Boy radio playing a station holds the place's music (`wanted_source`); it
+    // comes back, started again, when the radio stops.
+    let radio_on = radio.is_some_and(|r| r.pipboy_playing);
+    if radio_on != music.radio {
+        music.radio = radio_on;
+        if radio_on {
+            music.radio_holds += 1;
+            info!("music: the Pip-Boy radio plays: the place's music is held");
+        } else {
+            info!("music: the Pip-Boy radio stopped: the place's music comes back");
+        }
+    }
     let battle_set = music.battle.set.and_then(|s| places.forms.sets.get(&s));
     let recovering = !music.battle.active && battle_set.is_some_and(|s| music.battle.ended.is_some_and(|e| now - e < s.times[2].max(0.0)));
 
@@ -1113,15 +1166,11 @@ fn play(
             wanted_type(places.forms.music.get(&of_cell.or_else(of_world)?)?)
         })
     };
-    let wanted = if music.dead {
-        None
-    } else if battle_loop {
-        battle_set.map(wanted_battle)
-    } else if recovering {
-        None
-    } else {
-        // Also during a battle set's wait before its loop.
-        place(music)
+    let battle_in_place = music.battle.active && music.battle.set.is_none() && place_set.is_some_and(|s| s.kind == MediaSetKind::Dungeon);
+    let wanted = match wanted_source(music.dead, battle_loop, recovering, music.radio, battle_in_place) {
+        Heard::Silent => None,
+        Heard::Battle => battle_set.map(wanted_battle),
+        Heard::Place => place(music),
     };
 
     // A change of music: what plays fades out, what is wanted starts. A battle loop
@@ -1160,8 +1209,9 @@ fn play(
         }
     }
 
-    // Incidental phrases where nothing plays.
-    let silent = music.current.is_none() && !music.battle.active && !recovering && !music.dead;
+    // Incidental phrases where nothing plays, nor the Pip-Boy radio [hypothesis: as the
+    // place's music, observer check 250].
+    let silent = music.current.is_none() && !music.battle.active && !recovering && !music.dead && !music.radio;
     match region.and_then(|r| Some((r.form_id, places.forms.sets.get(&r.incidental?)?))).filter(|_| silent && in_game) {
         Some((r, set)) => {
             let day = incidental_day(hour);
@@ -1227,7 +1277,7 @@ fn play(
 fn report(mut exit: MessageReader<AppExit>, music: Option<Res<Music>>) {
     if let (Some(_), Some(m)) = (exit.read().last(), music) {
         info!(
-            "music summary: {} started, {} changes of layers, {} files not played, {} battles ({} battle loops started), {} intro and outro sounds, {} script requests, {} incidental phrases, {} death sounds, {} level-up music{}",
+            "music summary: {} started, {} changes of layers, {} files not played, {} battles ({} battle loops started), {} intro and outro sounds, {} script requests, {} incidental phrases, {} death sounds, {} level-up music, {} held by the Pip-Boy radio{}",
             m.started,
             m.layer_changes,
             m.failed,
@@ -1238,6 +1288,7 @@ fn report(mut exit: MessageReader<AppExit>, music: Option<Res<Music>>) {
             m.incidentals,
             m.deaths,
             m.level_ups,
+            m.radio_holds,
             m.current.as_ref().map_or(String::new(), |t| format!("; playing {}", t.name))
         );
     }
@@ -1420,6 +1471,23 @@ mod tests {
         assert!(!wanted_type(&MusicType { form_id: 9, edid: None, file: Some("scr\\b.mp3".into()), db: -7.74 }).unwrap().looping);
         // No file ("1NoMusic"): nothing to play.
         assert!(wanted_type(&MusicType::default()).is_none());
+    }
+
+    #[test]
+    fn the_pipboy_radio_holds_the_place_music() {
+        use Heard::{Battle as B, Place as P, Silent as S};
+        // (dead, battle loop, recovering, radio, battle in the place's dungeon set)
+        assert_eq!(wanted_source(false, false, false, false, false), P);
+        // The radio on: the place's music is held (#3311); off again, it comes back.
+        assert_eq!(wanted_source(false, false, false, true, false), S);
+        // Battle music still comes in over the radio, a battle set's loop or the battle
+        // layer of the place's dungeon set.
+        assert_eq!(wanted_source(false, true, false, true, false), B);
+        assert_eq!(wanted_source(false, false, false, true, true), P);
+        // The rest as before: nothing while dead or while a battle set recovers.
+        assert_eq!(wanted_source(true, true, false, false, true), S);
+        assert_eq!(wanted_source(false, false, true, false, false), S);
+        assert_eq!(wanted_source(false, true, false, false, false), B);
     }
 
     #[test]
