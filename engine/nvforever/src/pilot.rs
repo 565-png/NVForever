@@ -2386,6 +2386,23 @@ fn beeping_speaker(g: &Game, speakers: &[FormId], feet: [f32; 3]) -> Option<Form
         .map(|(r, _)| r)
 }
 
+/// Every other speaker still counting the player in, switched off where it is: the
+/// collar's 10 s run on while any one does, so a second one in range used up the rest
+/// after the first one's five seconds (Christine's floor, round 24 [observed]).
+fn silence_the_rest(p: &mut Pilot, h: &mut Hands) {
+    let list = p.speakers.clone().unwrap_or_default();
+    for _ in 0..8 {
+        let feet = h.feet();
+        let Some(next) = h.game(|g| beeping_speaker(g, &list, feet)).flatten() else { break };
+        let done = h.script.rt.as_mut().map(|rt| with_world(rt, h.sim, |rt| rt.activate_as_player(next)));
+        info!("pilot: step {}: the speaker {next} counts the player in too: switched off where it is: {}", p.i, outcome(done.as_ref()));
+        p.errands.retain(|e| !matches!(e, Errand::Silence(s) if *s == next));
+        if h.game(|g| g.ref_var_named(next, "binradius") == Some(1.0)) == Some(true) {
+            break;
+        }
+    }
+}
+
 /// Whether actor `a` is running away: on a Flee Not Combat package, or fleeing in its
 /// fight (a Cowardly actor flees at once: Mr. Soren, whose `StartCombat player` is his way
 /// out, was shot before his flee package came, round 16 [observed]).
@@ -4070,6 +4087,7 @@ fn run_errand(p: &mut Pilot, h: &mut Hands) -> bool {
             let done = h.script.rt.as_mut().map(|rt| with_world(rt, h.sim, |rt| rt.activate_as_player(speaker)));
             info!("pilot: step {}: the speaker {speaker} is not reached in {SILENCE_SECS:.0} s: switched off where it is (a stand-in for a shot at it): {}", p.i, outcome(done.as_ref()));
             p.headless("silence (a speaker out of reach)");
+            silence_the_rest(p, h);
             return true;
         }
     }
