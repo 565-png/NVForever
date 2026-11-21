@@ -152,3 +152,55 @@ fn runaway_tree_stays_within_limits() {
     assert!(g.leaves.len() <= crate::generate::MAX_LEAVES);
     assert!(Curve::parse(&format!("BezierSpline 0 1 0 {{ {} 0 }}", usize::MAX)).is_err());
 }
+
+/// A made-up bush for the shape probe (speedtree.md §7, #3126): a 0.3 trunk carrying
+/// stems 0.3-0.4 long at 0-10° from the plane across it (near level), each with cards.
+fn flat_bush() -> Tree {
+    let mut f = File::default();
+    f.str(1000, "__IdvSpt_02_").tag(1002).str(2000, "Bush.tga").f32(2001, 600.0).u8(2002, 0);
+    f.u32(2005, 77).u32(1014, 3).level([0.3, 0.3], 0.02, [-90.0, -90.0], 30.0);
+    f.level([0.3, 0.4], 0.01, [0.0, 10.0], 20.0).level([0.0, 0.0], 0.001, [90.0, 90.0], 0.0);
+    f.tag(1015).u32(1006, 1).tag(1007).u8(4000, 0).floats(4001, &[1.0; 3]).f32(4002, 0.1);
+    f.str(4003, "Leaf.dds").floats(4004, &[0.5, 0.3, 0.0]).floats(4005, &[0.2, 0.15, 0.0]);
+    f.floats(4006, &[10.0, 7.5, 0.0]).f32(4007, 1.0).tag(1008);
+    Tree::parse(&f.0).unwrap()
+}
+
+#[test]
+fn probe_extents_follow_the_renderers_rule() {
+    use crate::probe::{extents, Cards};
+    let g = generate(&flat_bush());
+    let full = extents(&g, Cards::Full);
+    // Full cards measure exactly what the renderer scales by.
+    assert_eq!((full.width(), full.top), (g.width(), g.top()));
+    let pivots = extents(&g, Cards::Pivots);
+    let wood = extents(&g, Cards::None);
+    assert!(pivots.width() < full.width() && pivots.top < full.top, "{pivots:?} {full:?}");
+    assert!(wood.top <= full.top && wood.width() > 0.0);
+    // Level stems on a 0.3 trunk: wider than tall.
+    assert!(full.aspect() > 1.5, "{full:?}");
+}
+
+#[test]
+fn probe_readings() {
+    use crate::probe::{apply, readings, shapes, Reading};
+    let t = flat_bush();
+    assert_eq!(apply(&t, Reading::AsIs), t);
+    // Three levels: one wood level grows from another (level 1).
+    assert_eq!(
+        readings(&t),
+        [Reading::AsIs, Reading::AngleFromAxis(1), Reading::NoLengthSpread, Reading::NoBend, Reading::FrequencyOverSpan]
+    );
+    let axis = apply(&t, Reading::AngleFromAxis(1));
+    assert_eq!((axis.levels[1].angle().min, axis.levels[1].angle().max), (90.0, 80.0));
+    assert_eq!(axis.levels[0], t.levels[0]);
+    let span = apply(&t, Reading::FrequencyOverSpan);
+    assert!((span.levels[1].frequency - 20.0 * 0.8).abs() < 1e-5);
+    let s = shapes(&t);
+    assert_eq!(s, shapes(&t), "deterministic");
+    assert_eq!(s[0].full.width(), generate(&t).width());
+    // Stems 0-10° off the axis instead of off the plane: a column, not a plate.
+    assert!(s[1].full.aspect() < 0.7 * s[0].full.aspect(), "{:?} vs {:?}", s[1].full, s[0].full);
+    // Fewer children over the 0.2-1.0 span.
+    assert!(s[4].leaves < s[0].leaves, "{} vs {}", s[4].leaves, s[0].leaves);
+}

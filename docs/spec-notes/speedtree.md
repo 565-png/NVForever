@@ -107,7 +107,13 @@ measured from the plane across the parent, the generated trees come out at
 |---|---|---|
 | WastelandShrub01 | 0.891 : 0.617 = 1.44 | 1.28 |
 | WhiteOak01 | 0.611 : 0.990 = 0.62 | 0.63 |
-| EuonymusBush01 | 0.846 : 0.650 = 1.30 | 2.19 (open question) |
+| EuonymusBush01 | 0.846 : 0.650 = 1.30 | 2.19 (open question, §7) |
+
+"Generated" is the generated tree's width (the larger of its x and y spans, leaf cards at
+their full width) over its height (up to the cards' top edges): what the renderer scales
+by (§5). `fnvtool spt shape "<Data>/Fallout - Meshes.bsa"` prints it for every tree (row
+`as_is`, `full_cards.aspect`) beside the other measures and readings of §7; the smoke
+scenario `spt-shape` checks the three rows.
 
 Reading 6013/6014 as child counts instead gave WastelandShrub01 about 20 leaf cards and
 EuonymusBush01 four, against the dense crowns of their billboards; measuring the angle
@@ -197,10 +203,46 @@ distant tree pictures; not applied.
 
 - Meanings of 2001/2003/2006/2007; the remaining curves (6001-6003, 6017).
 - Whether the frequency counts over the whole branch or only [6010, 6011].
-- EuonymusBush01 comes out too wide (§4); WhiteOak01's OBND (1567 high) is twice its
-  billboard (768).
+- EuonymusBush01 comes out too wide (§4, #3126; below); WhiteOak01's OBND (1567 high)
+  is twice its billboard (768).
 - How SNAM seeds beyond the first are used (WhiteOak01 has five: variants per reference?).
 - Leaf curvature and leaf angles (CNAM), 3000-3010, 9000-9014; whether dimming also
   depends on depth into the crown, not only height; the `.spt` wind section
   (16000s); the wind direction and how the original maps the CNAM speeds.
 - Fronds (13000/14000 sections).
+
+### EuonymusBush01's width (#3126) [hypothesis]
+
+The generated bush is 2.19 times as wide as tall, its billboard 1.30 (§4); in the planters
+of Tenpenny Tower and the Citadel (TTW) it shows as a flat, spread-out crown. This note
+records no level parameters of EuonymusBush01 (only WastelandShrub01's, §4), so the
+cause cannot be read off the generator alone. Candidates, each with what it predicts in
+`fnvtool spt shape` (`fnv_spt::probe`; the readings are edits of the parsed parameters,
+the generator is unchanged):
+
+| Candidate | Row / measure that shows it |
+|---|---|
+| Leaf cards large next to the crown: their full width (transparent margins included) widens the tree more than their height raises it | `as_is`, `card_pivots.aspect` near 1.30 while `full_cards.aspect` is 2.19 |
+| One side against the larger side: the billboard is one view, the width the larger of two spans; a crown of few stems is lopsided | `as_is`, `full_cards.x` and `.y` far apart |
+| The 6007 angle of one level measured from the parent's axis, not from the plane across it (for all levels at once it made WastelandShrub01 a column, §4) | `angle_from_axis_level_1`, `angle_from_axis_level_2` |
+| The 6004 length spread (± variance, in tree sizes) letting a few long stems set the width | `no_length_spread` |
+| The 6000 bend | `no_bend` |
+| 6012 counted over [6010, 6011] only (changes density more than shape) | `frequency_over_span` |
+
+The check, one command with the base game's meshes archive (fnvtool built from the root
+workspace): `fnvtool spt shape "<Data>/Fallout - Meshes.bsa"`, or the smoke scenario
+`spt-shape`. Expected: the `as_is` full-card aspects as in §4 (WastelandShrub01 1.28,
+WhiteOak01 0.63, EuonymusBush01 2.19; other figures mean the generator changed since the
+table). A candidate is supported when its row gives EuonymusBush01 1.17-1.43 (within
+10 % of 1.30) and keeps WastelandShrub01 within 1.27-1.61 and WhiteOak01 within
+0.56-0.68 under the same reading; the generator then takes that reading and the
+scenario's `known_failing` mark goes. If no row does, the next readings need a generator
+change rather than a parameter edit (a child's length as a fraction of its parent's, not
+of the tree; one of the unread curves 6001-6003 pulling branches up or down), and the
+`levels` part of the output (EuonymusBush01's curves, counts and leaf card sizes) belongs
+in §4 beside WastelandShrub01's for comparison.
+
+Separate from the aspect: the renderer sets the tree's larger side to the whole BNAM size
+(§5), while the billboards' opaque part covers 0.85-0.99 of the square (§4). If the
+billboard shows the tree at the BNAM size, the original bush is about 0.85 × BNAM wide,
+so even with the right aspect NVForever's would be about 18 % larger [hypothesis].
