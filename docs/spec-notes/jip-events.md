@@ -139,6 +139,8 @@ runs only where the game fires it (`Game::jip_event`):
 | crafting | the recipe menu made an item: once per output, with all of it (`Game::item_crafted`) [hypothesis: the page does not say how a recipe made several times is reported] | #1408 |
 | locationdiscover | the engine found a map marker, with the marker reference (`Game::challenge_marker_found`) | #1408 |
 | dialogtopic | a dialogue line is spoken (`dialogue.rs` `speak` and `game.rs` `say_line`), with `this = speaker` and `arg0 = info` when matched by an INFO filter or `topic` when matched by a topic/wildcard filter [documented; hypothesis: unfiltered/wildcard passes topic] | authored controls |
+| pctargetchange | the actor under the player's reticle changes (`crosshair_events.rs` `Game::set_crosshair_ref`, `jip_events.rs` `Game::sync_pc_target` / `Game::set_pc_target`, using `crosshair_far` within `fAutoAimMaxDistance`, default 1800, else `crosshair_ref`), with no calling reference and `arg0` the new actor reference or `0` (null) when cleared or aimed at a non-actor [documented: SetOnPCTargetChangeEventHandler, Auto Aim Settings] | #2272 |
+| triggerdown, triggerup | the existing key-event frame entry point (`jip_events.rs` `Game::jip_keys` and `Game::set_pad_triggers`), comparing left (`0`) and right (`1`) controller trigger state (`pad.triggers >= 30/255` or `pad.held_triggers`) on press/release edges, with exact filter matching (`0` is left trigger, not a wildcard) and no calling reference [documented: SetOnTriggerDownEventHandler, SetOnTriggerUpEventHandler, XInput `XINPUT_GAMEPAD_TRIGGER_THRESHOLD`; hypothesis: analog threshold 30/255] | #2272 |
 
 Not fired yet: criticalhit, fireweapon, reloadweapon, animaction, playgroup,
-fasttravel, pctargetchange, triggerdown/up.
+fasttravel.

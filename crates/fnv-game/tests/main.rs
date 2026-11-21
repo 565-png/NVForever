@@ -63,6 +63,7 @@ mod jg_nif;
 mod jg10;
 mod jg3;
 mod jip_main_loop_zero;
+mod jip_target_and_trigger_events;
 mod jlm_dropped_refs;
 mod jg4;
 mod jg5;
