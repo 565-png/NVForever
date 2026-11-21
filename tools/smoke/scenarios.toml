@@ -4688,10 +4688,10 @@ expect = [
 
 [[scenario]]
 name = "music-under-pipboy-radio"
-source = "#3311 (audio.md §13.2 item 9): the Goodsprings music is turned down to silence while the Pip-Boy radio plays Mojave Music Radio (on at 12 s) and fades back in, the same track, when it is turned off (26 s)"
+source = "#3311 (audio.md §13.2 item 9): the Goodsprings music is turned down to silence while the Pip-Boy radio plays Mojave Music Radio (tuned to it by name at 12 s, as with the add-ons loaded another station comes first) and fades back in, the same track, when it is turned off (26 s)"
 areas = ["audio", "music", "radio"]
 paths = ["engine/nvf-play/src/music.rs", "engine/nvf-play/src/radio.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_RADIO = "12:on,26:off" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_RADIO = "12:tune=vCountryRadio,26:off" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-69000,3500,8900", "--hour", "12"]
 run_seconds = 45
 expect = [
