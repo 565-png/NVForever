@@ -29524,6 +29524,22 @@ expect = [
 ]
 
 [[scenario]]
+name = "pipboy-stats-perks-not-playable"
+source = "[documented] GECK wiki Category:Perk: Hidden keeps a perk off the interface, Playable is the level-up menu's; issue 3118: perks given by scripts (challenge perks, implants) are not Playable and are listed"
+note = "the aid gives Lord Death (0015EAE4, a challenge perk, DATA 00 00 03 00 00), the Strength Implant (0014C069) and Intense Training (00044CB1, Playable) before the page opens; the hand-built Perks tab lists all three in name order and down walks them. A --cell start has no perks of its own (tiles-stats-perks counts 2 rows from two)."
+areas = ["ui", "menus", "pipboy"]
+paths = ["engine/nvf-play/src/pipboy/stats/read.rs", "engine/nvf-play/src/pipboy/stats/mod.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_AIDS_FROM_SCRIPTS = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PIPBOY_STATS = "20:perk=0015EAE4,20.05:perk=0014C069,20.1:perk=00044CB1,29:down,30:down", NVF_PLAY_TEST_PIPBOY = "25:open,26:page=stats,27:tab=3,32:close" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720"]
+run_seconds = 35
+expect = [
+  { re = 'pipboy stats: LVL .*; \d+ S\.P\.E\.C\.I\.A\.L\., \d+ skills, 3 perks,', min = 1, label = "three perks listed: the two that are not Playable with the Playable one" },
+  { re = 'pipboy stats: Perks: Intense Training( \d+)? selected', min = 1, label = "the Playable perk, first by name" },
+  { re = 'pipboy stats: Perks: Lord Death( \d+)? selected', min = 1, label = "the challenge perk (not Playable, not Hidden) is a row" },
+  { re = 'pipboy stats: Perks: Strength Implant( \d+)? selected', min = 1, label = "the implant (not Playable, not Hidden) is a row" },
+]
+
+[[scenario]]
 name = "tiles-stats-perks-off"
 source = "[design] pipboy.md section 5.1.2: without the switch the Perks tab is the hand-built one: nothing of the tile page runs"
 note = "the same steps and times as tiles-stats-perks, at the hand-built places. Shots to compare with it."
