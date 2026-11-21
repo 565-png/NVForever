@@ -1270,7 +1270,9 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   with bright cracked regions, mean 80/255) showed the mask as a frosted grey-white
   sheen, brighter at night with the brighter night ambient; in game the panes are dark
   [observed, owner's screenshot]. The windows' environment map (slot 4
-  `shinybright_e.dds`, mask slot 5 `_m`, window-environment flag) is not drawn yet.
+  `shinybright_e.dds`, mask slot 5 `_m`, window-environment flag) is drawn since #2462
+  ("Window glass and environment maps" below; shapes without the window flag since
+  #2841, "Environment maps on other shapes").
 - **Hair** [observed, `characters\hair\hairbun.nif`]: both shapes have a
   NiMaterialProperty with specular colour (0, 0, 0) and glossiness 10, and a
   BSShaderPPLightingProperty with shader flags 0x82040101 — Specular (bit 0), Alpha
