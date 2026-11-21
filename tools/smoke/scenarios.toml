@@ -6410,9 +6410,23 @@ forbid = [
 ]
 
 [[scenario]]
+name = "trap-pitching-machine-fires"
+source = "issue 3128: a pitching machine's FireWeapon TrapBaseball throws its balls from the model's ProjectileNode; started from its own origin they hit the machine at once"
+note = "TestTraps' pitching machine 0x00165268 (TrapPitchingMachine01) at (3140, 7777, 8449); activated for the plate 0x0016526C with the OnActivate flag (Activate 0016526C 1; without it the console's Activate plays the default Open and the script never runs) at 8 s, its script plays Forward and fires TrapBaseball every 0.5 s, 12 balls. The player stands 600 units in front of it."
+areas = ["traps", "combat"]
+paths = ["crates/fnv-game/src/functions/fighting.rs", "crates/fnv-game/src/nif_blocks.rs", "engine/nvf-play/src/combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "8:00165268.activate 0016526C 1;8.5:close" }
+args = ["--cell", "TestTraps", "--pos=3140,8377,8460", "--heading", "180", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { re = 'combat: FireWeapon: 0x00165268 fires', min = 3, label = "the machine fires its balls" },
+  { re = 'combat: FireWeapon: 0x00165268 fires TrapBaseball from \(-?\d+, -?\d+, (?P<n>-?\d+)\)', range = [8500, 8540], label = "the balls leave its ProjectileNode, about 70 units above its origin (8449), not its origin" },
+]
+
+[[scenario]]
 name = "grenade-bouquet-self-damage"
 source = "[design] #1819; docs/spec-notes/combat-rules.md, object destruction: Cap Damage stops the first crossing hit, then self-damage must pass it; the issue's supplied data lists bouquet 0016526B at health 20 with stages 98/95/75 percent"
-note = "In TestTraps the player moves onto plate 0016526C, the activate parent of bouquet 0016526B. Require all three stages, its stage explosion and disabled/destroyed state; a loose model or resting wreck alone is insufficient. [hypothesis] The issue's roughly 4.6 seconds follows from its data; ordered logs allow frame scheduling variation without requiring that duration."
+note = "In TestTraps the player moves onto plate 0016526C, the activate parent of bouquet 0016526B. GetDestructionStage counts the last stage (index 2) from 1, so 3 (#3053). Require all three stages, its stage explosion and disabled/destroyed state; a loose model or resting wreck alone is insufficient. [hypothesis] The issue's roughly 4.6 seconds follows from its data; ordered logs allow frame scheduling variation without requiring that duration."
 areas = ["traps", "scripts", "combat"]
 paths = ["crates/fnv-game/src/combat.rs", "crates/fnv-game/src/functions/objects.rs", "engine/nvf-play/src/combat.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "8:moveto:player:0x0016526C", NVF_PLAY_TEST_CONSOLE = "22:0016526B.getdestructionstage;0016526B.getdisabled;0016526B.getdestroyed;22.5:close" }
@@ -6424,7 +6438,7 @@ order = [[
   "combat: 0x0016526B destruction stage 0 -> 1",
   "combat: 0x0016526B destruction stage 1 -> 2, destroyed, disabled, 1 explosion(s)",
   "combat: explosion GrenadeFragExplosion at ",
-  "console: GetDestructionStage on 0x0016526B >> 2.00",
+  "console: GetDestructionStage on 0x0016526B >> 3.00",
   "console: GetDisabled on 0x0016526B >> 1.00",
   "console: GetDestroyed on 0x0016526B >> 1.00",
 ]]
@@ -17551,6 +17565,21 @@ expect = [
   { re = 'creature pace: \S+ 0x000CE9E7 walks \d+ and runs (?P<n>\d+) units/s', range = [1, 100000], label = "the ghoul's speeds" },
   { re = 'npc combat: .*0x000CE9E7 attacks .* on the run from', label = "it begins a blow on the run" },
   { re = 'npc combat summary:.*? (?P<n>\d+) blows', range = [2, 100000], label = "blows in the npc combat summary" },
+]
+
+[[scenario]]
+name = "pipboy-script-effect-names"
+source = "[documented] GECK wiki Base Effect: a Script effect flagged Display Name Only shows its name; issue 3119: Psycho's card and STATS > EFF said nothing"
+note = "Psycho (ALCH 00015166) is added at 9 s; ITEMS > Aid is opened at 13.5 s and walked down row by row (the start carries other aid items; each row's card is logged as it is selected); the drop aid uses Psycho at 19 s; STATS > Status > EFF is opened at 23-24 s. Its effect PsychoMagicEffect (MGEF 000679F4) is a Script effect named \"Damage +25%\" with Display Name Only [observed: FalloutNV.esm, #3119]."
+areas = ["pipboy", "aid"]
+paths = ["engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy/stats/read.rs", "crates/fnv-game/src/aid.rs", "crates/fnv-game/src/data.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:call:player:AddItem:Psycho:1", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=items,13.5:tab=2,14:key=down,14.4:key=down,14.8:key=down,15.2:key=down,15.6:key=down,16:key=down,16.4:key=down,17:close,22:open,23:page=stats,23.5:tab=0,27:close", NVF_PLAY_TEST_DROP = "19:00015166:use", NVF_PLAY_TEST_PIPBOY_STATS = "24:sub=2" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages"]
+run_seconds = 30
+expect = [
+  { re = 'pipboy items: Psycho selected: .*effects: Some\("Damage \+25%"\)', min = 1, label = "the card names the Script effect" },
+  { re = 'aid: the player used Psycho', label = "Psycho is used" },
+  { re = 'pipboy stats: LVL .*, [1-9]\d* effects,', min = 1, label = "STATS lists an effect while Psycho lasts (none before #3119)" },
 ]
 
 [[scenario]]
@@ -33945,3 +33974,31 @@ forbid = [
   { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
 ]
 note = "The same field with the setting off: the index is never built (no 'authored materials: N sets' line), the material path loads no pbr file (the fixture's own check reads the generated files first), the plain, lit, dark and flat panels draw the same and the reference (its game normal map) differs from them."
+
+[[scenario]]
+name = "glass-mccarran-observation"
+source = "docs/spec-notes/nif.md §6 \"Window glass and environment maps\" (issue #2462, owner's playtest 2026-11-14: the interrogation room's window at Camp McCarran has no visible glass): CampMCTermInt02, the window 000FB2F4 (vwindow01.nif, Window_Environment_Mapping, ShinyBright_e.dds) seen from the observation side, south of it, looking north into the interrogation room; one frame in target/smoke (glass_mccarran_south.png)"
+areas = ["rendering"]
+paths = ["engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/texture.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "8:glass_mccarran_south.png" }
+args = ["--play", "--cell", "CampMCTermInt02", "--pos=112,1200,18672", "--heading", "35", "--no-voice", "--no-messages"]
+run_seconds = 10
+manual = "glass_mccarran_south.png: the window in the wall ahead shows a pane: grey streaks of reflection over the room beyond, which stays readable through it"
+expect = [
+  { re = 'vwindow01\.nif: 1 shape\(s\) with a window environment map \(textures.effects.ShinyBright_e\.dds, scale 1\.00, over the blend\): VWindow01:0', label = "the pane is drawn with its environment map, added over its blend" },
+  { re = 'test aid: screenshot .*glass_mccarran_south\.png', label = "the observation-side frame is saved" },
+]
+
+[[scenario]]
+name = "glass-mccarran-interrogation"
+source = "docs/spec-notes/nif.md §6 \"Window glass and environment maps\" (issue #2462): the same window seen from inside the interrogation room, north of it, looking south at the dark lockers behind it, where the owner saw no pane at all; one frame in target/smoke (glass_mccarran_north.png)"
+areas = ["rendering"]
+paths = ["engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/texture.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "8:glass_mccarran_north.png" }
+args = ["--play", "--cell", "CampMCTermInt02", "--pos=112,1700,18672", "--heading", "145", "--no-voice", "--no-messages"]
+run_seconds = 10
+manual = "glass_mccarran_north.png: the window ahead shows a pane over the dark lockers beyond (reflection streaks), not an empty opening"
+expect = [
+  { re = 'vwindow01\.nif: 1 shape\(s\) with a window environment map \(textures.effects.ShinyBright_e\.dds, scale 1\.00, over the blend\): VWindow01:0', label = "the pane is drawn with its environment map, added over its blend" },
+  { re = 'test aid: screenshot .*glass_mccarran_north\.png', label = "the interrogation-side frame is saved" },
+]
