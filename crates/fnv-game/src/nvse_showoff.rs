@@ -44,7 +44,8 @@ pub struct ShowOffState {
     /// SetAllyTemp's and SetEnemyTemp's reactions: (faction, other) to 0 neutral, 1 enemy,
     /// 2 ally, 3 friend (`functions::actor::reaction`).
     pub temp_reactions: std::collections::HashMap<(FormId, FormId), i64>,
-    /// SetRadiationExtraData's levels, by reference (`Game::tick_radiation`).
+    /// SetRadiationExtraData's levels, by reference (`Game::radiation_markers_in`),
+    /// carried across same-run loads in `Game::Session`.
     pub radiation: std::collections::HashMap<FormId, f32>,
     /// The plugin (lower case) that started each aux timer, by owner and name
     /// (ClearShowoffSavedData, `nvse_showoff4`).

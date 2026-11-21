@@ -29,7 +29,8 @@ pub struct LutanaState {
     /// (`Game::services`, `Game::aggro_radius`).
     pub services: HashMap<FormId, u32>,
     pub aggro_radius: HashMap<FormId, u32>,
-    /// SetRadius on a reference (its XRDS).
+    /// SetRadius on a reference (its XRDS), read by `GetRadius` and
+    /// `Game::radiation_markers_in`, and carried across same-run loads in `Game::Session`.
     pub ref_radius: HashMap<FormId, f32>,
     /// SetDefaultMessageTime's seconds.
     pub message_time: Option<f64>,
@@ -793,7 +794,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             if let Some(l) = form(args, 0) {
                 XVal::Num(record_num(g, l, "DATA", "radius").unwrap_or(0.0))
             } else if let Some(r) = subject {
-                let own = g.other.lutana.ref_radius.get(&r).copied().or_else(|| g.world.placed.get(r).and_then(|p| p.radius));
+                let own = g.ref_radius(r);
                 let b = base(g, r);
                 let light = || (g.data.sig(b) == Some(*b"LIGH")).then(|| record_num(g, b, "DATA", "radius")).flatten();
                 XVal::Num(own.map(|x| crate::nvse::record_float(f64::from(x))).or_else(light).unwrap_or(0.0))
