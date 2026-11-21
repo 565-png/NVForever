@@ -1974,4 +1974,29 @@ mod tests {
         // The two lists read as closed without their resources.
         assert!(lists_closed(None, None));
     }
+
+    #[test]
+    fn a_clipped_inventory_row_with_vertical_text_offset_stays_clipped_by_the_list_window() {
+        let with_offset = |x: String| {
+            x.replace(
+                r#"<hotrect name="IM_InventoryListTemplateRect"><target>&true;</target>"#,
+                r#"<hotrect name="IM_InventoryListTemplateRect"><target>&true;</target><clips>&true;</clips>"#,
+            )
+            .replace(
+                r#"<text name="ListItemText"></text>"#,
+                r#"<text name="ListItemText"><y>16</y></text>"#,
+            )
+        };
+        let (mut ui, mut t) = (tree_changed(with_offset), InventoryTiles::default());
+        run(&mut ui, Some(shown(4, 0)), &mut t).expect("clipped inventory row with vertical text offset should stay inside list clipwindow");
+        let row0_text = list::child(&ui, rows(&t)[0].tile, ROW_TEXT).unwrap();
+        let piece = t.pieces.iter().find(|p| p.tile == row0_text).expect("row 0 text piece");
+        let clip = piece.clip.expect("list clipwindow clip");
+        assert_eq!(clip.height, 200.0, "clip must be the 200-unit IM_InventoryList window, not the row box");
+        // Narrowing the list window itself still rejects the page.
+        let list_id = ui.find_tile(LIST).unwrap();
+        ui.set_trait(list_id, "width", Value::Num(15.0));
+        ui.update();
+        assert_eq!(run(&mut ui, Some(shown(4, 0)), &mut t), Err("no row shows whole".to_string()));
+    }
 }
