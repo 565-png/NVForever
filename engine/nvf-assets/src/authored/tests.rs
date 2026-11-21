@@ -651,7 +651,8 @@ fn the_game_height_line_names_every_count() {
     let shape = format!("{}, {} layers", parallax_method_name(parallax_method()), parallax_layers());
     assert_eq!(
         s.game_line(0.03),
-        format!("depth 0.03 ({shape}); 5 material builds drew a NIF's own height map (texture-set slot 3, shader flag 11), 2 left it flat (alpha-tested, blended, double-sided, decal, unlit, refracting or without tangents), 1 could not load it, 3 drew an authored _p in its place; 4 later copies dropped one")
+        format!("depth 0.03 ({shape}); 2 material builds draw a NIF's own height map (texture-set slot 3, shader flag 11), 3 more had it replaced by an authored _p, 2 left it flat (alpha-tested, blended, double-sided, decal, unlit, refracting, a holes effect or without tangents on the drawn mesh), 1 could not load it; 4 later copies dropped one")
     );
-    assert_eq!(s.game_line(0.0), "off (NVF_GAME_PARALLAX_DEPTH=0)");
+    let off = Stats::default();
+    assert_eq!(off.game_line(0.0), format!("off (NVF_GAME_PARALLAX_DEPTH=0) ({shape}); 0 material builds draw a NIF's own height map (texture-set slot 3, shader flag 11), 0 more had it replaced by an authored _p, 0 left it flat (alpha-tested, blended, double-sided, decal, unlit, refracting, a holes effect or without tangents on the drawn mesh), 0 could not load it; 0 later copies dropped one"));
 }

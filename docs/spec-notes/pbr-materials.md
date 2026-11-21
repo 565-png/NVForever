@@ -352,24 +352,37 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   the engine sets a depth map, but for the game's own height maps (below), which are height
   too.
 - [design] **The game's own height maps** (#2979; docs/spec-notes/nif.md §6 "Parallax height
-  maps"). A NIF shape whose BSShaderPPLightingProperty sets BSShaderFlags bit 11 and names a
-  texture in slot 3 draws it as a height map through the same march, with the same method
-  and layers (and their switches), at the game depth 0.015 [hypothesis until observer check
-  #250; `authored::GAME_PARALLAX_DEPTH`, switch `NVF_GAME_PARALLAX_DEPTH=<0..0.08>`, 0 draws
-  none and loads none]. It takes the same shapes as a set's height map (the gate above; a
-  shape that may not draw it does not load the file) and applies **whatever the Authored
-  materials setting**, since it is the game's material, not a set's
+  maps", which keeps the format, the asset-survey counts and what is not known of the
+  original apart from this). What NVForever implements: a NIF shape whose
+  BSShaderPPLightingProperty sets BSShaderFlags bit 11 and names a texture in slot 3 draws
+  it as a height map through the same march, with the same method and layers (and their
+  switches), **on by default** at the game depth 0.015. That default and the method are
+  **provisional** [hypothesis]: they stand until observer check #250 (how the original's
+  relief looks) and a frame-cost measurement on a parallax-heavy view; nothing here says the
+  original draws them this way (`authored::GAME_PARALLAX_DEPTH`, switch
+  `NVF_GAME_PARALLAX_DEPTH=<0..0.08>`, 0 draws none and loads none). It takes the same
+  shapes as a set's height map (the gate above: by default **opaque only**; alpha-tested
+  shapes only under `NVF_PBR_PARALLAX_MASK=1`), with tangents on the **drawn** mesh: a copy
+  made from an actor part's kept mesh for a texture swap or a record's texture set
+  (`Tangents::Keep`) takes a height map, the game's or a set's, only when that mesh already
+  has tangents, since the actor draws the original mesh and tangents made on the copy never
+  reach it. A shape that may not draw it does not load the file. It applies **whatever the
+  Authored materials setting**, since it is the game's material, not a set's
   (`authored::apply_game_height`). Precedence: it is put on before the legacy look is taken,
   so it is that look's parallax baseline (`LegacyLook::parallax`); a set's `_p` (authored or
   height-only) is put over it as an overlay and **wins**; a set without `_p` leaves it
   drawn; taking a set off (a swap's `retexture`, `restore`, `make_legacy`) puts it back.
-  Later copies that stop qualifying (fades, holes, cloaks) drop it as they drop an overlay
-  (`recheck_height` now acts on any depth map); unlit copies clear it. The format is not
-  judged: the maps are read as they load, red channel [hypothesis: the shipped maps are
-  grey DXT1]. `NVF_PBR_VIEW=height` shows them like a set's. The exit line `game height
-  maps summary: ...` (printed whatever the setting) counts the builds that drew one, left it
-  flat, could not load it or drew a set's `_p` in its place, and later copies that dropped
-  one; smoke scenario `game-parallax-repconn`.
+  Later copies that stop qualifying (fades, cloaks, and any copy with an effect shader's
+  holes set-up for its whole life, 255 included, since the holes then open by animation
+  alone) drop it as they drop an overlay (`recheck_height` acts on any depth map;
+  `height_gate`); unlit copies clear it. The format is not judged: the maps are read as they
+  load, red channel [hypothesis: the shipped maps are grey DXT1]. `NVF_PBR_VIEW=height`
+  shows them like a set's. The exit line `game height maps summary: ...` (printed whatever
+  the setting) gives the depth or "off", then the builds that still draw the game's map,
+  those where a set's `_p` replaced it, those left flat, those that could not load it, and
+  later copies that dropped one; smoke scenarios `game-parallax-repconn` (authored sets off,
+  switches pinned, a non-zero drawn count) and its control `game-parallax-repconn-off`
+  (depth 0, nothing drawn).
 - [design] **Signed `_p` is refused** (one warning per file; an authored set keeps its other
   maps), as `fnvtool pbr check` refuses it ("Compression and sizes"); so is a `_p` whose file
   is in any format other than those the validator allows for it (BC4 unsigned, DXT1/BC1,

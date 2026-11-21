@@ -143,7 +143,9 @@ pub const PARALLAX_MASK_ENV: &str = "NVF_PBR_PARALLAX_MASK";
 /// convincing on a 512 floor map in the authored tests (docs/spec-notes/pbr-materials.md
 /// "Height maps: guidance for pack authors"). The shader property's stored `parallax_scale`
 /// ("a multiplier for the strength", the same wiki page) and `parallax_max_passes` are not
-/// read]. The depth switch ([`game_parallax_depth`]) changes it for a run.
+/// read]. On by default; the value is provisional until that check and a frame-cost
+/// measurement on a parallax-heavy view. The depth switch ([`game_parallax_depth`]) changes
+/// it for a run.
 pub const GAME_PARALLAX_DEPTH: f32 = 0.015;
 
 /// The environment variable of the game depth switch ([`game_parallax_depth`]).
@@ -879,7 +881,11 @@ pub fn height_alpha(alpha_mode: AlphaMode, mask: bool) -> Result<(), HeightSkip>
 
 /// Whether `material` may draw a height map now, its drawn mesh having tangents (`tangents`):
 /// opaque (or alpha-tested under the alpha-tested switch: [`height_alpha`]), single-sided,
-/// not a decal, lit, not refracting, without holes [design, the stage 4 review A3]. Why: the
+/// not a decal, lit, not refracting, without holes [design, the stage 4 review A3]. A copy
+/// with any holes set-up (a holes value at or above 0, 255 included, or a holes texture) is
+/// refused for its whole life: an effect shader's holes start at 255 (none eaten yet) and
+/// fall later by animation alone (nvforever `effect_shaders.rs` `animate_material`), which
+/// asks this gate no more (#2979 review). Why: the
 /// depth prepass, the shadow passes and the holes test read alpha at the unshifted texture
 /// coordinates, so a cut-out's or a blend's coverage would not follow the shifted texels (the
 /// switch keeps an alpha-tested shape's cut at the unshifted coordinates in the main pass too,
@@ -889,7 +895,7 @@ pub fn height_alpha(alpha_mode: AlphaMode, mask: bool) -> Result<(), HeightSkip>
 /// ([`retexture`]) and when a copy changes how it draws ([`recheck_height`]).
 pub fn height_gate(material: &crate::NifMaterial, tangents: bool) -> Result<(), HeightSkip> {
     let (b, e) = (&material.base, &material.extension);
-    if b.unlit || e.refract || (e.holes.x >= 0.0 && e.holes.x < 255.0) {
+    if b.unlit || e.refract || e.holes.x >= 0.0 || e.holes_texture.is_some() {
         Err(HeightSkip::Other)
     } else if let Err(why) = height_alpha(b.alpha_mode, parallax_mask()) {
         Err(why)
@@ -909,7 +915,14 @@ pub fn height_gate(material: &crate::NifMaterial, tangents: bool) -> Result<(), 
 /// set leaves the material the game's own, the authored mark clear). Counts a skip by its
 /// reason. Whether it was put on.
 pub fn apply_height(material: &mut crate::NifMaterial, height: &Parallax, legacy: &LegacyLook) -> Result<(), HeightSkip> {
-    match height_gate(material, legacy.tangents) {
+    apply_height_with(material, height, legacy.tangents)
+}
+
+/// [`apply_height`] with the drawn mesh's tangents given (`tangents`): a material build, which
+/// knows whether its tangents reach the drawn mesh (`nif_spawn::shape_material_with`: not
+/// those made on a copy of a drawn mesh).
+pub fn apply_height_with(material: &mut crate::NifMaterial, height: &Parallax, tangents: bool) -> Result<(), HeightSkip> {
+    match height_gate(material, tangents) {
         Ok(()) => {
             height.put(&mut material.base);
             material.extension.height_overlay = true;
@@ -1220,18 +1233,19 @@ impl Stats {
 
 impl Stats {
     /// The game height maps' summary line (without its prefix), `depth` the run's game depth.
+    /// The first count is of the builds that still draw the game's map after a set's `_p`
+    /// replaced it on some (drawn minus replaced); a depth of 0 says "off" and counts nothing.
     pub fn game_line(&self, depth: f32) -> String {
-        if depth <= 0.0 {
-            return format!("off ({GAME_PARALLAX_DEPTH_ENV}=0)");
-        }
+        let state = if depth > 0.0 { format!("depth {depth}") } else { format!("off ({GAME_PARALLAX_DEPTH_ENV}=0)") };
+        let replaced = Self::get(&self.game_height_replaced);
         format!(
-            "depth {depth} ({}, {} layers); {} material builds drew a NIF's own height map (texture-set slot 3, shader flag 11), {} left it flat (alpha-tested, blended, double-sided, decal, unlit, refracting or without tangents), {} could not load it, {} drew an authored _p in its place; {} later copies dropped one",
+            "{state} ({}, {} layers); {} material builds draw a NIF's own height map (texture-set slot 3, shader flag 11), {} more had it replaced by an authored _p, {} left it flat (alpha-tested, blended, double-sided, decal, unlit, refracting, a holes effect or without tangents on the drawn mesh), {} could not load it; {} later copies dropped one",
             parallax_method_name(parallax_method()),
             parallax_layers(),
-            Self::get(&self.game_height_drawn),
+            Self::get(&self.game_height_drawn).saturating_sub(replaced),
+            replaced,
             Self::get(&self.game_height_flat),
             Self::get(&self.game_height_not_loaded),
-            Self::get(&self.game_height_replaced),
             Self::get(&self.game_height_dropped),
         )
     }

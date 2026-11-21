@@ -336,7 +336,14 @@ fn height_map_eligibility_honours_the_mask_switch_and_shape_constraints() {
     let mut source = SetTextures::new(Some((KEY, s.clone())));
     let mut copy = triangle();
     let (m, _) = shape_material_with(&bare(), &mut copy, &mut source, Tangents::Keep);
-    assert!(m.base.depth_map.is_some() && copy.attribute(Mesh::ATTRIBUTE_TANGENT).is_some(), "a copy of a drawn mesh without tangents has them generated");
+    // A copy of a drawn mesh without tangents: tangents made on the copy would never reach the
+    // drawn mesh, so the height map stays off and none are made for it (#2979 review).
+    assert!(m.base.depth_map.is_none() && copy.attribute(Mesh::ATTRIBUTE_TANGENT).is_none(), "a copy of a drawn mesh without tangents takes no height map");
+    assert!(m.base.metallic_roughness_texture.is_some(), "the rest of the set still applies");
+    let mut copy = triangle();
+    copy.generate_tangents().unwrap();
+    let (m, _) = shape_material_with(&bare(), &mut copy, &mut source, Tangents::Keep);
+    assert!(m.base.depth_map.is_some(), "a copy of a drawn mesh that has tangents takes it");
     assert_eq!(crate::authored::height_gate(&m, false), Err(crate::authored::HeightSkip::NoTangents), "without tangents on the mesh the gate refuses");
 }
 
@@ -519,3 +526,52 @@ fn copies_that_stop_being_eligible_drop_the_games_own_height_map() {
         assert!(cloak.base.depth_map.is_none(), "setting on={on}: a refracting copy");
     }
 }
+
+/// #2979 review: an actor's texture-set copy (`Tangents::Keep`, the actor draws the original
+/// mesh) whose record gives a flagged shape a slot-3 map: the material takes it only where the
+/// drawn mesh has tangents, and no tangents are made on the copy for it; mesh and material
+/// are judged together.
+#[test]
+fn a_copy_of_a_drawn_mesh_takes_the_games_height_map_only_with_its_own_tangents() {
+    if crate::authored::game_parallax_depth() <= 0.0 {
+        return;
+    }
+    // No game normal map, so nothing else asks for tangents.
+    let mut bare = flagstones(true);
+    bare.textures[1].clear();
+    let mut source = SetTextures::with(None);
+    let mut drawn = triangle();
+    let (m, _) = shape_material_with(&bare, &mut drawn, &mut source, Tangents::Keep);
+    assert!(drawn.attribute(Mesh::ATTRIBUTE_TANGENT).is_none(), "no tangents made on the copy");
+    assert!(m.base.depth_map.is_none(), "the drawn mesh has no tangents: no height map");
+    assert!(!source.by_path.contains_key(&fnv_vfs::texture_path(r"architecture\mccarran\flagstone_p.dds")), "and it is not loaded");
+    let mut drawn = triangle();
+    drawn.generate_tangents().unwrap();
+    let (m, _) = shape_material_with(&bare, &mut drawn, &mut source, Tangents::Keep);
+    assert!(drawn.attribute(Mesh::ATTRIBUTE_TANGENT).is_some() && m.base.depth_map.is_some(), "with its own tangents the copy takes it");
+}
+
+/// #2979 review: an effect shader's holes start at 255 (nothing eaten yet) and fall by
+/// animation alone, which asks the height gate no more; a holes copy therefore drops its
+/// height map (the game's or a set's) from the start, whatever the alpha-tested switch.
+#[test]
+fn a_holes_copy_drops_its_height_map_before_the_holes_open() {
+    let mut scratch = Assets::<Image>::default();
+    let h = height(&mut scratch, 0.05);
+    let mut sources: Vec<(SetTextures, Props)> = vec![(SetTextures::with(Some((KEY, PbrSet::HeightOnly(crate::authored::HeightSet { stem: r"textures\pbr\walls\brick".into(), height: h })))), wall())];
+    if crate::authored::game_parallax_depth() > 0.0 {
+        sources.push((SetTextures::with(None), flagstones(true)));
+    }
+    for (mut source, props) in sources {
+        let (m, _) = shape_material_with(&props, &mut triangle(), &mut source, Tangents::Generate);
+        assert!(m.base.depth_map.is_some());
+        for (x, texture) in [(255.0, true), (255.0, false), (-1.0, true)] {
+            let mut holed = m.clone();
+            holed.extension.holes = Vec4::new(x, 4.0, 0.0, 0.0);
+            holed.extension.holes_texture = texture.then(Handle::default);
+            assert_eq!(crate::authored::height_gate(&holed, true), Err(crate::authored::HeightSkip::Other), "holes {x}, texture {texture}");
+            assert!(crate::authored::recheck_height(&mut holed) && holed.base.depth_map.is_none(), "holes {x}, texture {texture}");
+        }
+    }
+}
+

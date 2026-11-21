@@ -989,6 +989,12 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
     let missing = if base.is_none() { diffuse.cloned() } else { None };
     let has_uv = mesh.attribute(Mesh::ATTRIBUTE_UV_0).is_some();
     let had_tangents = mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some();
+    // A copy of a drawn mesh (`Tangents::Keep`: an actor part's kept CPU mesh, for a texture
+    // swap or a record's texture set) only serves to make the material; the actor goes on
+    // drawing the original mesh, so tangents made on the copy never reach the draw. A height
+    // map (a set's or the game's own) is put on such a material only when the mesh already
+    // has them: Bevy marches no parallax on a mesh without tangents (#2979 review).
+    let height_mesh_ok = !matches!(tangents, Tangents::Keep) || had_tangents;
     let normal = normal.filter(|_| has_uv && tangents.add_to(mesh));
     let (normal, unmasked) = normal.map_or((None, false), |(h, unmasked)| (Some(h), unmasked));
     let cut = blend_cut(props, mesh);
@@ -1027,6 +1033,7 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
     // alpha-tested), single-sided, non-decal shape (`crate::authored::height_gate`, asked
     // again of the built material): only such a shape gains tangents for one.
     let height_wanted = height.is_some()
+        && height_mesh_ok
         && crate::authored::height_alpha(alpha_mode, crate::authored::parallax_mask()).is_ok()
         && !props.double_sided
         && !props.decal;
@@ -1037,6 +1044,7 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
     let game_slot = game_height_slot(props).filter(|_| crate::authored::game_parallax_depth() > 0.0);
     let game_height_wanted = game_slot.is_some()
         && has_uv
+        && height_mesh_ok
         && props.refraction.is_none()
         && crate::authored::height_alpha(alpha_mode, crate::authored::parallax_mask()).is_ok()
         && !props.double_sided
@@ -1118,7 +1126,7 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
     // replaces it: `crate::authored::apply_height`).
     let game_height = game_slot.map(|slot| {
         let image = if game_height_wanted { textures.texture(slot, false) } else { None };
-        crate::authored::apply_game_height(&mut material, image, game_height_wanted, tangents)
+        crate::authored::apply_game_height(&mut material, image, game_height_wanted, tangents && height_mesh_ok)
     });
     // The authored set last, over the legacy values chosen above and after the extension's
     // `emissive_rule` is assigned (its w lane carries the mark). Shapes that may take a set
@@ -1142,7 +1150,7 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
         // The height map over either kind of set (a height-only set changes nothing else and
         // leaves the mark clear).
         if let Some(height) = height {
-            if crate::authored::apply_height(&mut material, height, &legacy).is_ok() {
+            if crate::authored::apply_height_with(&mut material, height, tangents && height_mesh_ok).is_ok() {
                 crate::authored::note_height_built(authored.is_none());
                 if game_height == Some(crate::authored::GameHeight::Drawn) {
                     crate::authored::note_game_height_replaced();
@@ -2090,6 +2098,103 @@ mod tests {
         assert!(!is_decal(0xffff_ffff & !(1 << 26 | 1 << 27)));
         // The flags reach the material's properties from the shader property.
         assert!(!Props::default().decal);
+    }
+
+    /// A BSShaderPPLightingProperty like [`lit_shader`] with `flags` and the texture set at
+    /// block `set`.
+    fn lit_shader_with(flags: u32, set: u32) -> Vec<u8> {
+        let mut out = vec![];
+        words(&mut out, &[u32::MAX, 0, u32::MAX]);
+        out.extend(1u16.to_le_bytes());
+        words(&mut out, &[1, flags, 0]);
+        floats(&mut out, &[1.0]);
+        words(&mut out, &[3, set]);
+        floats(&mut out, &[0.0]);
+        words(&mut out, &[0]);
+        floats(&mut out, &[4.0, 1.0]);
+        out
+    }
+
+    /// A BSShaderTextureSet of these slots.
+    fn texture_set(slots: &[&str]) -> Vec<u8> {
+        let mut out = vec![];
+        words(&mut out, &[slots.len() as u32]);
+        for s in slots {
+            words(&mut out, &[s.len() as u32]);
+            out.extend(s.as_bytes());
+        }
+        out
+    }
+
+    /// Every texture asked for, with its sRGB flag, as handles made on demand.
+    #[derive(Default)]
+    struct RecordTextures {
+        images: Assets<Image>,
+        asked: Vec<(String, bool)>,
+    }
+    impl TextureSource for RecordTextures {
+        fn texture(&mut self, raw_path: &str, srgb: bool) -> Option<Handle<Image>> {
+            self.asked.push((raw_path.to_string(), srgb));
+            Some(self.images.add(Image::default()))
+        }
+        fn lacks_alpha(&self, _: &Handle<Image>) -> bool {
+            true
+        }
+        fn alpha_is_mask(&self, _: &str) -> bool {
+            false
+        }
+        fn resolve(&self, raw_path: &str) -> String {
+            fnv_vfs::texture_path(raw_path)
+        }
+        fn pbr_set(&mut self, _: &str) -> Option<crate::authored::PbrSet> {
+            None
+        }
+        fn authored_on(&self) -> bool {
+            false
+        }
+    }
+
+    /// #2979: bit 11 decoded from a synthetic BSShaderPPLightingProperty with a texture set
+    /// (no game data) marks the shape; its slot 3 is loaded as linear data (sRGB off) and put
+    /// on as the depth map. Without the bit the slot is neither loaded nor drawn.
+    #[test]
+    fn a_decoded_parallax_flag_loads_slot_3_as_linear_height() {
+        let schema = fnv_nif::Schema::load_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/nif")).unwrap();
+        let slots = [r"textures\test\floor.dds", r"textures\test\floor_n.dds", "", r"textures\test\floor_p.dds", "", ""];
+        let build = |flags: u32| {
+            let bytes = nif(
+                &[
+                    ("BSFadeNode", node(0, &[1])),
+                    ("NiTriStrips", strips(1, &[2], 4)),
+                    ("BSShaderPPLightingProperty", lit_shader_with(flags, 3)),
+                    ("BSShaderTextureSet", texture_set(&slots)),
+                    ("NiTriStripsData", square(0.0)),
+                ],
+                &["Floor", "Floor:0"],
+            );
+            let file = NifFile::parse(&bytes, Some(&schema)).unwrap();
+            let dec = Decoded::new(&file, &bytes, &schema);
+            let objects = scene_objects(&file, &dec);
+            let by_block: HashMap<usize, &SceneObject> = objects.iter().map(|o| (o.block, o)).collect();
+            let shape = objects.iter().find(|o| !o.is_node).unwrap();
+            shape_props(&file, &dec, shape, &by_block)
+        };
+        let flagged = build(1 << 11);
+        assert!(flagged.parallax, "bit 11 decoded");
+        assert_eq!(game_height_slot(&flagged), Some(slots[3]));
+        let plain = build(0);
+        assert!(!plain.parallax && game_height_slot(&plain).is_none());
+        if crate::authored::game_parallax_depth() <= 0.0 {
+            return;
+        }
+        let mut source = RecordTextures::default();
+        let (m, _) = shape_material_with(&flagged, &mut crate::texture::bc5_tests::triangle(), &mut source, Tangents::Generate);
+        assert!(source.asked.contains(&(slots[3].to_string(), false)), "slot 3 asked for as linear: {:?}", source.asked);
+        assert!(!source.asked.contains(&(slots[3].to_string(), true)), "never as sRGB");
+        assert!(m.base.depth_map.is_some());
+        let mut source = RecordTextures::default();
+        let (m, _) = shape_material_with(&plain, &mut crate::texture::bc5_tests::triangle(), &mut source, Tangents::Generate);
+        assert!(!source.asked.iter().any(|(p, _)| p == slots[3]) && m.base.depth_map.is_none(), "unflagged: slot 3 not loaded");
     }
 
     #[test]
