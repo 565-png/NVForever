@@ -302,8 +302,15 @@ pub(crate) fn find_target(
     // when furniture is under the crosshair.
     let is_furniture = |id: u32| sim.base_of(id).and_then(|b| sim.forms.get(b)).is_some_and(|b| matches!(b.data, BaseData::Furniture));
     let furniture_seen = hit.and_then(|h| h.form_id).into_iter().chain(bounds.iter().map(|b| b.0)).any(is_furniture);
-    // Furniture boxes may yield to what lies in them (`pick::set_aside_enclosing`, #3323).
-    let furniture: std::collections::HashSet<u32> = if furniture_seen { bounds.iter().map(|b| b.0).filter(|&id| is_furniture(id)).collect() } else { Default::default() };
+    // Beds among the boxes (FURN marker flags with Sleep, bit 31, furniture.md §1) may
+    // yield to what lies in them (`pick::set_aside_enclosing`, #3323).
+    let beds: std::collections::HashSet<u32> = match script.as_deref().and_then(|s| s.rt.as_ref()) {
+        Some(rt) if furniture_seen => {
+            let bed = |id: u32| sim.base_of(id).and_then(|b| rt.game.data.furniture.get(&b)).is_some_and(|f| f & fnv_game::package::furniture::SLEEP != 0);
+            bounds.iter().map(|b| b.0).filter(|&id| bed(id)).collect()
+        }
+        _ => Default::default(),
+    };
     let sleepers: HashMap<u32, u32> = match script.as_deref().and_then(|s| s.rt.as_ref()) {
         Some(rt) if furniture_seen => rt
             .game
@@ -371,7 +378,7 @@ pub(crate) fn find_target(
     };
     // A bed's box does not hide the suitcase lying in it (`pick::set_aside_enclosing`,
     // #3323), cut off at the raw first hit, not a door promoted from behind it.
-    let bounds = pick::set_aside_enclosing(hit, &bounds, REACH, |id| furniture.contains(&id), |id| describe_once(id).is_some());
+    let bounds = pick::set_aside_enclosing(hit, &bounds, REACH, |id| beds.contains(&id), |id| describe_once(id).is_some());
     let hit = pick::door_behind(hit, behind, |id| describe_once(id).is_some());
     let picked = pick::choose_precise_first(hit, bounds, REACH, |id| describe_once(id).is_some());
     // How far the sleeper's body is from the eye: its posed bones (`crate::hitvol::ActorParts`,
