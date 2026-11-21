@@ -3396,3 +3396,14 @@ already talking takes over at once, same topic or another; nothing is queued or 
      moving ones, and the change from walking to standing can let one creature
      pass briefly into the other. Both are left for the follow-up on the character
      controller's movement path.
+
+## Added 2026-11-21 (what GetDestructionStage counts, #3053)
+
+247. **Does GetDestructionStage give the stage counted from 1 (DSTD index + 1) or the
+     stage's DSTD damage-stage field?** (P2; #3053, scripts.md.) The wiki says it returns
+     "the current Damage Stage" [documented: GECK wiki GetDestructionStage]. Counting from
+     0 cannot be it: Zeta's generator core tests 8 with eight stages, the Brain waits for 7
+     with seven [observed: their scripts and DEST]. Ours: index + 1 [hypothesis]; the
+     damage-stage field fits every case found too. They differ on Point Lookout's
+     DLC04DarMuckBubble (0x0A012C5E: index 1, damage stage 3, at 40 %): damage one to under
+     40 % with the console (`DamageObject`) and print `GetDestructionStage` (2 or 3).
