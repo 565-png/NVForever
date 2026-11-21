@@ -6709,6 +6709,21 @@ forbid = [
 ]
 
 [[scenario]]
+name = "pipboy-holotape-fixed-speaker"
+source = "issue 3022 (holotapes.md section 3): Dead Money's Dog Command Tape names Dog as its speaker while its line is God's (ANAM); its one file is in God's voice folder, and the tape plays it"
+note = "NVDLC01DogCommandNote is given by the console at 8 s and picked at 15 s; its FormID 0100DFCF assumes Dead Money is the first plugin after FalloutNV.esm (the owner's install, as fnvtool reads it). INFO 0100DFC7 has one response, 2.88 s."
+areas = ["pipboy", "audio"]
+paths = ["engine/nvf-play/src/holotape.rs", "crates/fnv-voice/src/bank.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "8:addnote NVDLC01DogCommandNote;8.3:close", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=data,14:tab=3,15:note=0100DFCF,22:close" }
+args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--size", "1280x720"]
+run_seconds = 26
+expect = [
+  { re = 'holotape: NVDLC01DogCommandNote plays .* said by NVDLC01Dog, 1 responses', label = "the tape is picked and its line found" },
+  { text = 'holotape: playing sound\voice\deadmoney.esm\nvdlc01creatureuniquegod\nvdlc01dog_nvdlc01dogdialo_0000dfc7_1.ogg', label = "God's file plays" },
+  { text = "holotape: no file for", count = 0, label = "no response is skipped" },
+]
+
+[[scenario]]
 name = "pipboy-holotape"
 source = "ESM gap audit row 14 (docs/spec-notes/holotapes.md §3, §4): a Voice note (holotape) picked in the Pip-Boy's Notes list plays its line's voice files, one response after another; picked again it pauses, again it goes on, and it keeps playing with the Pip-Boy put away (owner 2026-10-27)"
 areas = ["pipboy", "audio"]
