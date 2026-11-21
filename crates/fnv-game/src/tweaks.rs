@@ -679,6 +679,9 @@ pub struct Tweaks {
     /// `bReloadingWithNoAmmoSwapsAmmoTypes`: reloading with none of the ammo in use left
     /// swaps to another carried type.
     pub empty_reload_swaps_ammo: bool,
+    /// `bMenuSearch`: Stewie menu search-bar tile publication (`ui_search_bar`) on
+    /// supported menus.
+    pub menu_search: bool,
 }
 
 /// The factor on a vendor's repair price under the Barter Affects Repair Costs tweak:
@@ -1042,6 +1045,7 @@ impl Default for Tweaks {
             marker_shift_removes: false,
             marker_removed_on_it: false,
             empty_reload_swaps_ammo: false,
+            menu_search: false,
         }
     }
 }

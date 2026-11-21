@@ -61,24 +61,36 @@ and has no additional runtime result; these are headless consumer checks.
 
 ## Tile publication
 
-[documented: Stewie's Tweaks menu search prefabs; workload observation of Pip-Boy UI
-Tweaks script offset propagation across `InventoryMenu\IM_SearchBar`,
-`StatsMenu\SM_SearchBar`, and `MapMenu\MM_SearchBar`] Stewie's menu search attaches a
-`<text>` search-bar tile under supported menu roots via prefabs under
-`menus\prefabs\lStewieAl\MenuSearch\`:
+[documented: public shipped Stewie Tweaks loose XML prefab files under
+`Data/menus/prefabs/lStewieAl/MenuSearch/` — zero DLL inspection; workload observation of
+Pip-Boy UI Tweaks script offset propagation across `InventoryMenu\IM_SearchBar`,
+`StatsMenu\SM_SearchBar`, and `MapMenu\MM_SearchBar`] When `bMenuSearch` is enabled,
+Stewie's menu search attaches a `<text>` search-bar tile under supported menus via the
+shipped loose XML prefabs under `Data/menus/prefabs/lStewieAl/MenuSearch/`:
 
-| Menu | Class ID | Tile name | VFS prefab path |
-|---|---:|---|---|
-| `InventoryMenu` | 1002 | `IM_SearchBar` | `menus\prefabs\lStewieAl\MenuSearch\Inventory.xml` |
-| `StatsMenu` | 1003 | `SM_SearchBar` | `menus\prefabs\lStewieAl\MenuSearch\Stats.xml` |
-| `MapMenu` | 1023 | `MM_SearchBar` | `menus\prefabs\lStewieAl\MenuSearch\Map.xml` |
-| `BarterMenu` | 1053 | `BM_SearchBar` | `menus\prefabs\lStewieAl\MenuSearch\Barter.xml` |
-| `ContainerMenu` | 1008 | `CM_SearchBar` | `menus\prefabs\lStewieAl\MenuSearch\Container.xml` |
-| `RecipeMenu` | 1077 | `RM_SearchBar` | `menus\prefabs\lStewieAl\MenuSearch\Recipe.xml` |
-| `LevelUpMenu` | 1027 | `BM_SearchBar` | `menus\prefabs\lStewieAl\MenuSearch\LevelUp.xml` |
+| Prefab file (`Data/menus/prefabs/lStewieAl/MenuSearch/...`) | Tile name | Target menu (Class ID) | Notes |
+|---|---|---|---|
+| `Barter.xml` | `BM_SearchBar` | `BarterMenu` (1053) | Standalone menu root |
+| `Container.xml` | `CM_SearchBar` | `ContainerMenu` (1008) | Standalone menu root |
+| `Inventory.xml` | `IM_SearchBar` | `InventoryMenu` (1002) | Always-loaded Pip-Boy menu root |
+| `LevelUp.xml` | `BM_SearchBar` | `LevelUpMenu` (1027) | `LevelUp.xml` itself defines `BM_SearchBar` upstream (not a copy error) |
+| `Map.xml` | `MM_SearchBar` | `MapMenu` (1023) | Always-loaded Pip-Boy menu root |
+| `Recipe.xml` | `RM_SearchBar` | `RecipeMenu` (1077) | Standalone menu root |
+| `SaveLoad.xml` | `RM_SearchBar` | Save/Load panel (`StartMenu`, 1013) | Sub-panel prefab, not a standalone menu root class; documented for provenance and not injected onto `StartMenu` root |
+| `Stats.xml` | `SM_SearchBar` | `StatsMenu` (1003) | Always-loaded Pip-Boy menu root |
 
-[design] `fnv_game::ui_search_bar::publish_for_menu` runs during `ui_loading::load`
-(persistent menus) and `ui_loading::sync` (transient menus):
+[design] `fnv_game::ui_search_bar::publish_for_menu` is gated behind
+`ui_search_bar::menu_search_enabled(game)` during `ui_loading::load` (persistent menus)
+and `ui_loading::sync` (transient menus):
+
+- **Off by default (`bMenuSearch = 0`):** no search-bar tiles are injected and vanilla
+  menu tile trees and tile counts remain completely unchanged.
+- **Enabled (`bMenuSearch = 1`):** checked via `Game::tweaks.menu_search` (authoritative
+  when engine settings are bound via `Game::bind_stewie_stat_settings`), falling back to
+  `[Tweaks] bMenuSearch` in `NVSE\Plugins\nvse_stewie_tweaks.ini` for unbound headless
+  runs.
+
+When enabled, `publish_for_menu` follows this precedence:
 
 1. If `<Menu>/<Tile>` already exists, it is kept as-is and only missing default traits
    are materialized.

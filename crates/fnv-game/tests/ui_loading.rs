@@ -107,8 +107,7 @@ fn open_close_and_inject_again() {
     assert!(g.ui_tree.menu("Trade").is_none());
     g.menu = Some(menus::BARTER);
     let report = ui_loading::sync(&mut g, false, false);
-    // 2 XML tiles (Trade + Row) plus the published Stewie BM_SearchBar tile.
-    assert_eq!(report.changes, ["built BarterMenu (menus\\added\\trade.xml, 3 tiles)"]);
+    assert_eq!(report.changes, ["built BarterMenu (menus\\added\\trade.xml, 2 tiles)"]);
     assert!(report.warnings.is_empty());
     let root = g.ui_tree.menu("Trade").unwrap();
     assert_eq!(g.ui_tree.tile(root).get("depth"), Some(&Value::Num(42.0)));
@@ -285,8 +284,7 @@ fn startup_and_rebuild() {
     let src = files();
     let paths = src.files.keys().cloned().collect::<Vec<_>>();
     let report = ui_loading::load(&mut g, Box::new(src), paths.clone());
-    // 12 XML tiles across 6 always-loaded menus + 3 search-bar tiles (InventoryMenu, MapMenu, StatsMenu).
-    assert_eq!((report.menus, report.tiles), (6, 15));
+    assert_eq!((report.menus, report.tiles), (6, 12));
     assert_eq!((report.game_strings, report.game_strings_unresolved), (1, 0));
     assert_eq!(report.warning_count(), 1);
     assert_eq!(report.warnings["menus\\prefabs\\probe.xml"].len(), 1);
@@ -380,6 +378,83 @@ fn vfs_source_owns_strings_and_reads_files() {
 }
 
 #[test]
+fn menu_search_bar_tiles_are_gated_by_b_menu_search_tweak() {
+    use fnv_game::{
+        game::{menus, RunCtx},
+        tweaks::Tweaks,
+        ui_search_bar,
+    };
+    use fnv_script::vm::XVal;
+
+    let f = fixture();
+    let src_with_container = || {
+        lifetime_files().with(
+            "menus/added/container.xml",
+            r#"<menu name="ContainerMenu"><class>&ContainerMenu;</class></menu>"#,
+        )
+    };
+
+    // Default / bMenuSearch=0: zero search-bar tiles injected on load or sync; vanilla tile counts stay unchanged.
+    let mut g_off = Game::new(&f.data, World::new(&f.forms, &f.refs, SimConfig::default()), GameConfig::default());
+    assert!(!ui_search_bar::menu_search_enabled(&g_off));
+    assert!(g_off.mod_files.write_bytes("NVSE/Plugins/nvse_stewie_tweaks.ini", b"[Tweaks]\nbMenuSearch=0\n"));
+    assert!(!ui_search_bar::menu_search_enabled(&g_off));
+    let src = src_with_container();
+    let paths = src.files.keys().cloned().collect::<Vec<_>>();
+    let report_off = ui_loading::load(&mut g_off, Box::new(src), paths);
+    assert_eq!((report_off.menus, report_off.tiles), (6, 12));
+    for path in ["InventoryMenu\\IM_SearchBar", "StatsMenu\\SM_SearchBar", "MapMenu\\MM_SearchBar"] {
+        let loaded = g_off
+            .run_query(&format!("Begin Function {{ }}\nSetFunctionValue (IsComponentLoaded \"{path}\")\nEnd\n"), RunCtx::default())
+            .unwrap();
+        assert_eq!(loaded, XVal::Num(0.0), "{path} must not be injected when bMenuSearch=0");
+    }
+    g_off.menu = Some(menus::BARTER);
+    let barter_off = ui_loading::sync(&mut g_off, false, false);
+    assert_eq!(barter_off.changes, ["built BarterMenu (menus\\added\\trade.xml, 2 tiles)"]);
+    assert!(g_off.ui_tree.find_tile("Trade/BM_SearchBar").is_none());
+    g_off.menu = Some(1008);
+    ui_loading::sync(&mut g_off, false, false);
+    assert!(g_off.ui_tree.find_tile("ContainerMenu/CM_SearchBar").is_none());
+
+    // Unbound INI bMenuSearch=1 enables search-bar tile publication on both load and sync.
+    let mut g_ini = Game::new(&f.data, World::new(&f.forms, &f.refs, SimConfig::default()), GameConfig::default());
+    assert!(g_ini.mod_files.write_bytes("NVSE/Plugins/nvse_stewie_tweaks.ini", b"[Tweaks]\nbMenuSearch=1\n"));
+    assert!(ui_search_bar::menu_search_enabled(&g_ini));
+    let src = src_with_container();
+    let paths = src.files.keys().cloned().collect::<Vec<_>>();
+    let report_ini = ui_loading::load(&mut g_ini, Box::new(src), paths);
+    assert_eq!((report_ini.menus, report_ini.tiles), (6, 15));
+    assert!(g_ini.ui_tree.find_tile("InventoryMenu/IM_SearchBar").is_some());
+    assert!(g_ini.ui_tree.find_tile("StatsMenu/SM_SearchBar").is_some());
+    assert!(g_ini.ui_tree.find_tile("MapMenu/MM_SearchBar").is_some());
+    g_ini.menu = Some(menus::BARTER);
+    let barter_on = ui_loading::sync(&mut g_ini, false, false);
+    assert_eq!(barter_on.changes, ["built BarterMenu (menus\\added\\trade.xml, 3 tiles)"]);
+    assert!(g_ini.ui_tree.find_tile("Trade/BM_SearchBar").is_some());
+
+    // Bound engine settings take authority over a stale INI file: menu_search=false suppresses injection,
+    // and menu_search=true enables it without needing an INI file.
+    let mut g_bound = Game::new(&f.data, World::new(&f.forms, &f.refs, SimConfig::default()), GameConfig::default());
+    assert!(g_bound.mod_files.write_bytes("NVSE/Plugins/nvse_stewie_tweaks.ini", b"[Tweaks]\nbMenuSearch=1\n"));
+    g_bound.bind_stewie_stat_settings(&Tweaks { menu_search: false, ..Default::default() });
+    assert!(!ui_search_bar::menu_search_enabled(&g_bound));
+    let src = src_with_container();
+    let paths = src.files.keys().cloned().collect::<Vec<_>>();
+    let report_bound_off = ui_loading::load(&mut g_bound, Box::new(src), paths);
+    assert_eq!((report_bound_off.menus, report_bound_off.tiles), (6, 12));
+    assert!(g_bound.ui_tree.find_tile("InventoryMenu/IM_SearchBar").is_none());
+
+    g_bound.bind_stewie_stat_settings(&Tweaks { menu_search: true, ..Default::default() });
+    assert!(ui_search_bar::menu_search_enabled(&g_bound));
+    let src = src_with_container();
+    let paths = src.files.keys().cloned().collect::<Vec<_>>();
+    let report_bound_on = ui_loading::load(&mut g_bound, Box::new(src), paths);
+    assert_eq!((report_bound_on.menus, report_bound_on.tiles), (6, 15));
+    assert!(g_bound.ui_tree.find_tile("InventoryMenu/IM_SearchBar").is_some());
+}
+
+#[test]
 fn menu_search_bar_tiles_publish_builtin_and_script_offset_copy() {
     use fnv_game::{
         game::{menus, RunCtx},
@@ -389,6 +464,7 @@ fn menu_search_bar_tiles_publish_builtin_and_script_offset_copy() {
 
     let f = fixture();
     let mut g = Game::new(&f.data, World::new(&f.forms, &f.refs, SimConfig::default()), GameConfig::default());
+    g.tweaks.menu_search = true;
     let src = lifetime_files().with(
         "menus/added/container.xml",
         r#"<menu name="ContainerMenu"><class>&ContainerMenu;</class></menu>"#,
@@ -454,6 +530,7 @@ fn menu_search_bar_vfs_prefab_takes_precedence_and_preserves_siblings() {
 
     let f = fixture();
     let mut g = Game::new(&f.data, World::new(&f.forms, &f.refs, SimConfig::default()), GameConfig::default());
+    g.tweaks.menu_search = true;
     let src = files().with(
         "menus/prefabs/lStewieAl/MenuSearch/Inventory.xml",
         r#"<text name="IM_SearchBar">
