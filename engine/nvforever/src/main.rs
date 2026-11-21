@@ -1061,6 +1061,15 @@ fn parse_smoothing(value: &str) -> Result<nvf_play::smooth_terrain::Smoothing, S
 #[global_allocator]
 static ALLOCATOR: crash::SaysWhenEmpty = crash::SaysWhenEmpty;
 
+/// The Mod Organizer 2 folders this run reads, for the reports' redaction (#3152): the
+/// `--mo2` instance (or the one that started this process) with its mods and overwrite
+/// folders.
+fn report_mo2_folders(args: &Args) -> Vec<(std::path::PathBuf, &'static str)> {
+    let Some(instance) = args.mo2.clone().or_else(fnv_install::mo2::instance_dir) else { return Vec::new() };
+    let layout = fnv_install::mo2::Layout::open(&instance, args.profile.as_deref()).ok();
+    reports::mo2_folders(&instance, layout.as_ref())
+}
+
 fn main() -> AppExit {
     // Started as this run's exit watcher (exit_watch.rs): wait for the game's process, no game.
     if exit_watch::run_if_watcher() {
@@ -1916,7 +1925,7 @@ fn main() -> AppExit {
     .add_systems(Startup, (crash::report_start, report_archives))
     .add_systems(Startup, move || cpu_placed.report())
     .add_plugins(start_times::StartTimesPlugin)
-    .add_plugins(reports::ReportsPlugin { plugins: args.plugins.clone(), data: args.data().to_path_buf(), mo2: fnv_install::mo2::usvfs_loaded(), handoff: args.handoff.is_some(), start_kind: if args.load.is_some() { "save_load" } else { "new_game" } })
+    .add_plugins(reports::ReportsPlugin { plugins: args.plugins.clone(), data: args.data().to_path_buf(), mo2: fnv_install::mo2::usvfs_loaded(), mo2_folders: report_mo2_folders(&args), handoff: args.handoff.is_some(), start_kind: if args.load.is_some() { "save_load" } else { "new_game" } })
     .add_systems(Last, (crash::note_place, crash::test_device_lost, events_log::note_context, stray_commands::report))
     // After Bevy's window-closed exit, which writes AppExit in Last too: before it, closing
     // the window left no clean-exit line and the run was reported as a native crash (#2203).

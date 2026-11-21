@@ -95,8 +95,9 @@ fn redact_with(text: &str, folders: &[(String, &'static str)]) -> String {
 }
 
 /// The folders [`redact`] hides for this run, longest (innermost) first; a root or a drive
-/// is left out, as it would hide every path.
-fn folders_to_hide(data: &Path, exe_dir: Option<&Path>) -> Vec<(String, &'static str)> {
+/// is left out, as it would hide every path. `mo2`: the Mod Organizer 2 folders of a
+/// `--mo2` run ([`mo2_folders`]).
+fn folders_to_hide(data: &Path, exe_dir: Option<&Path>, mo2: &[(PathBuf, &'static str)]) -> Vec<(String, &'static str)> {
     let data = std::path::absolute(data).unwrap_or_else(|_| data.to_path_buf());
     let mut v: Vec<(String, &'static str)> = Vec::new();
     let mut add = |p: &Path, shown: &'static str| {
@@ -113,7 +114,21 @@ fn folders_to_hide(data: &Path, exe_dir: Option<&Path>) -> Vec<(String, &'static
     if let Some(exe) = exe_dir {
         add(exe, "<NVForever>");
     }
+    for (folder, shown) in mo2 {
+        add(&std::path::absolute(folder).unwrap_or_else(|_| folder.clone()), shown);
+    }
     v.sort_by_key(|(f, _)| std::cmp::Reverse(f.len()));
+    v
+}
+
+/// The folders of a `--mo2` run for [`ReportsPlugin::mo2_folders`]: the instance, and its
+/// mods and overwrite folders, which the instance's INI may put elsewhere.
+pub fn mo2_folders(instance: &Path, layout: Option<&fnv_install::mo2::Layout>) -> Vec<(PathBuf, &'static str)> {
+    let mut v = vec![(instance.to_path_buf(), "<MO2>")];
+    if let Some(l) = layout {
+        v.push((l.mods.clone(), "<MO2 mods>"));
+        v.push((l.overwrite.clone(), "<MO2 overwrite>"));
+    }
     v
 }
 
@@ -400,6 +415,10 @@ pub struct ReportsPlugin {
     pub plugins: Vec<String>,
     pub data: PathBuf,
     pub mo2: bool,
+    /// The Mod Organizer 2 folders of a `--mo2` run and what each is written as in a
+    /// report (the instance, its mods and overwrite folders): they are often outside the
+    /// home folder and can carry a name (#3152).
+    pub mo2_folders: Vec<(PathBuf, &'static str)>,
     /// A load handed over from an earlier run (kept for the log; it collects and sends as any run).
     pub handoff: bool,
     /// What this run's start loads: `save_load` (`--load`) or `new_game`; it names the start's
@@ -467,7 +486,7 @@ impl Plugin for ReportsPlugin {
         );
         delete::add_row(app);
         let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
-        let _ = HIDDEN_FOLDERS.set(folders_to_hide(&self.data, exe_dir.as_deref()));
+        let _ = HIDDEN_FOLDERS.set(folders_to_hide(&self.data, exe_dir.as_deref(), &self.mo2_folders));
         // A hand report needs no opt-in (§3.3): the form and the snapshot it sends are
         // there whatever the choice.
         form::add(app);
@@ -1024,7 +1043,7 @@ mod tests {
         let (root, s) = if cfg!(windows) { (r"D:\", r"\") } else { ("/", "/") };
         let p = |parts: &[&str]| format!("{root}{}", parts.join(s));
         let data = p(&["Games", "Alex Smith", "Fallout New Vegas", "Data"]);
-        let f = super::folders_to_hide(std::path::Path::new(&data), Some(std::path::Path::new(&p(&["Tools", "NVForever"]))));
+        let f = super::folders_to_hide(std::path::Path::new(&data), Some(std::path::Path::new(&p(&["Tools", "NVForever"]))), &[]);
         let r = |t: &str| super::redact_with(t, &f);
         assert_eq!(r(&format!("loaded {data}{s}FalloutNV.esm")), format!("loaded <Data>{s}FalloutNV.esm"));
         // Any case, either separator.
@@ -1033,7 +1052,27 @@ mod tests {
         assert_eq!(r(&format!("exe {}{s}nvforever.exe", p(&["Tools", "NVForever"]))), format!("exe <NVForever>{s}nvforever.exe"));
         assert_eq!(r("nothing here"), "nothing here");
         // A root or a drive is never hidden whole.
-        assert!(super::folders_to_hide(std::path::Path::new(&p(&["Data"])), None).iter().all(|(p, _)| p.len() > 3));
+        assert!(super::folders_to_hide(std::path::Path::new(&p(&["Data"])), None, &[]).iter().all(|(p, _)| p.len() > 3));
+    }
+
+    /// A `--mo2` run hides the instance and its mods and overwrite folders, wherever the
+    /// instance's INI puts them (#3152).
+    #[test]
+    fn reports_hide_the_mo2_folders() {
+        let (root, s) = if cfg!(windows) { (r"E:\", r"\") } else { ("/", "/") };
+        let p = |parts: &[&str]| format!("{root}{}", parts.join(s));
+        let path = |parts: &[&str]| std::path::PathBuf::from(p(parts));
+        let instance = path(&["Alex Smith", "MO2"]);
+        // The mods folder under the instance, the overwrite folder somewhere else.
+        let folders = vec![(instance.clone(), "<MO2>"), (instance.join("mods"), "<MO2 mods>"), (path(&["Alex Smith", "ow"]), "<MO2 overwrite>")];
+        let f = super::folders_to_hide(std::path::Path::new(&p(&["Games", "FNV", "Data"])), None, &folders);
+        let r = |t: &str| super::redact_with(t, &f);
+        assert_eq!(r(&format!("read {}{s}mods{s}A Mod{s}a.esp", instance.display())), format!("read <MO2 mods>{s}A Mod{s}a.esp"));
+        assert_eq!(r(&format!("ini {}{s}ModOrganizer.ini", instance.display())), format!("ini <MO2>{s}ModOrganizer.ini"));
+        assert_eq!(r(&format!("wrote {}{s}x.txt", p(&["Alex Smith", "ow"]))), format!("wrote <MO2 overwrite>{s}x.txt"));
+        assert!(!r(&format!("{} and {}", instance.display(), p(&["Alex Smith", "ow", "y"]))).contains("Alex"));
+        // Without a layout only the instance is named.
+        assert_eq!(super::mo2_folders(&instance, None), [(instance, "<MO2>")]);
     }
 
     use super::*;
