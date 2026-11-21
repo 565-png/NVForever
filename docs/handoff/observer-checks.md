@@ -3396,3 +3396,13 @@ already talking takes over at once, same topic or another; nothing is queued or 
      moving ones, and the change from walking to standing can let one creature
      pass briefly into the other. Both are left for the follow-up on the character
      controller's movement path.
+
+## Added 2026-11-21 (script effects shown by name, #3119)
+
+245. **How do the ITEMS card and STATS > EFF write a Script effect flagged Display Name
+     Only?** (P3; #3119, pipboy.md §5.) The GECK wiki says such an effect shows its name
+     and that the names of several are put together [documented: GECK wiki Base Effect];
+     it does not say where or how. Ours: after the value changes, comma-separated
+     ("STR +2, Damage +25%"), the EFF line titled with the item's name [hypothesis]. With a
+     Psycho, a Cateye and a Steady carried, read the ITEMS > Aid card of each; use the
+     Psycho and read STATS > Status > EFF while it lasts; a screenshot of each answers it.
