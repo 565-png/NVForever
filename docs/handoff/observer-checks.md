@@ -3475,11 +3475,12 @@ already talking takes over at once, same topic or another; nothing is queued or 
      `NVDLC01HologramAggressive` red) are additive membranes with "Edge Effect Inverse"
      [observed: the maintainer's decode in #3017]. Ours since #3017: the edge darkens the
      rim instead of adding a pale one, the membrane stays on through SetActorAlpha and
-     fades with the actor's alpha (gone at 0), and two script-played shaders on one
-     hologram are both drawn [hypothesis, each]. In the Sierra Madre casino (or the Villa),
+     fades with the actor's alpha (gone at 0), and a later hologram colour played on a
+     hologram ends the earlier one [hypothesis, each]. In the Sierra Madre casino (or the Villa),
      take one 1280 x 720 frame of one hostile hologram calm (blue, the player beyond 600
      units), noticing (yellow, within 600) and attacking (red); then (a) whether the rim
      of each is darker or brighter than the middle; (b) during a flicker (the hologram
      blinks out), whether the coloured glow stays visible while the body is gone; (c) after
      a save loaded with the hologram in combat (its ability script plays the red shader
-     without stopping the blue one), whether one colour shows or a blue-red mix.
+     without stopping the blue one), whether one colour shows or a blue-red mix. Ours
+     shows red alone (a later hologram colour replaces the earlier one) [hypothesis].
