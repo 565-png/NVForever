@@ -34,6 +34,7 @@ mod csty_session;
 mod crippled_limbs_data;
 mod dead_on_spawn;
 mod death_items;
+mod destruction_stage_blocks;
 mod dialogue_data;
 mod dialogue;
 mod difficulty;
@@ -153,6 +154,7 @@ fn every_test_file_is_built() {
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
+mod callable_identity;
 mod em_clearance;
 mod preactivation_events;
 mod preactivation_mutation;
