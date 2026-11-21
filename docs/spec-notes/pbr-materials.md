@@ -36,7 +36,7 @@ These choices are settled; pack authors and later versions can rely on them.
 | Reading members' pixels | `_orm` (linear) and `_n` (two-channel normal role, `TextureUsage::NormalTwoChannel`) **implemented** (stage 3); `_p` (linear, unsigned only) **implemented** (stage 4); `_albedo` stays reserved |
 | Reading BC7 and BC4 files (DDS with the DX10 header, or legacy `BC4U` / `BC4S`) | stage 1 of #2981 (`crates/fnv-dds`) |
 | Drawing a surface with its set (ORM, normal) | **implemented** in source (stage 3) [documented: `engine/nvf-assets/src/nif_spawn.rs` `shape_material`, `authored.rs` `retexture`]; the setting Authored materials (`authored-materials`, on by default, read at the start; `--graphics-only no-authored-materials`). Its check is the field test `pbr-authored-field` (below). A sample pack was drawn in the game with the setting off and on by the main session as of head `bebd7841a` (pictures not committed; they show the pack's own values, and no reference look exists to judge them by); those pictures are owed again after the fixes that followed that head |
-| Height maps (`_p`, parallax) | **implemented** (stage 4, below: "Height maps"). The game's own height slot (#2979) is not read |
+| Height maps (`_p`, parallax) | **implemented** (stage 4, below: "Height maps"). The game's own height slot (#2979) is drawn too, and a set's `_p` replaces it (below: "The game's own height maps") |
 | Metallic | read with the ORM but **held at 0** (stage 3, implemented) until the engine has a reflection source (stage 5) |
 | A pack validator (`fnvtool pbr check`, `fnvtool pbr selftest`) | **implemented** (`crates/fnvtool/src/pbr_check.rs`, docs/cli-contract.md `fnv.pbr.check/1`) |
 
@@ -349,7 +349,27 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   depth (white deepest). The engine inverts once, in the vendored
   `engine/vendor/bevy_pbr/src/render/parallax_mapping.wesl` `sample_depth_map` (both its
   bindless and its ordinary sample, `1 - r`; engine/vendor/README.md). No other material in
-  the engine sets a depth map.
+  the engine sets a depth map, but for the game's own height maps (below), which are height
+  too.
+- [design] **The game's own height maps** (#2979; docs/spec-notes/nif.md §6 "Parallax height
+  maps"). A NIF shape whose BSShaderPPLightingProperty sets BSShaderFlags bit 11 and names a
+  texture in slot 3 draws it as a height map through the same march, with the same method
+  and layers (and their switches), at the game depth 0.015 [hypothesis until observer check
+  #250; `authored::GAME_PARALLAX_DEPTH`, switch `NVF_GAME_PARALLAX_DEPTH=<0..0.08>`, 0 draws
+  none and loads none]. It takes the same shapes as a set's height map (the gate above; a
+  shape that may not draw it does not load the file) and applies **whatever the Authored
+  materials setting**, since it is the game's material, not a set's
+  (`authored::apply_game_height`). Precedence: it is put on before the legacy look is taken,
+  so it is that look's parallax baseline (`LegacyLook::parallax`); a set's `_p` (authored or
+  height-only) is put over it as an overlay and **wins**; a set without `_p` leaves it
+  drawn; taking a set off (a swap's `retexture`, `restore`, `make_legacy`) puts it back.
+  Later copies that stop qualifying (fades, holes, cloaks) drop it as they drop an overlay
+  (`recheck_height` now acts on any depth map); unlit copies clear it. The format is not
+  judged: the maps are read as they load, red channel [hypothesis: the shipped maps are
+  grey DXT1]. `NVF_PBR_VIEW=height` shows them like a set's. The exit line `game height
+  maps summary: ...` (printed whatever the setting) counts the builds that drew one, left it
+  flat, could not load it or drew a set's `_p` in its place, and later copies that dropped
+  one; smoke scenario `game-parallax-repconn`.
 - [design] **Signed `_p` is refused** (one warning per file; an authored set keeps its other
   maps), as `fnvtool pbr check` refuses it ("Compression and sizes"); so is a `_p` whose file
   is in any format other than those the validator allows for it (BC4 unsigned, DXT1/BC1,

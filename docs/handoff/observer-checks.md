@@ -3466,3 +3466,24 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the room side while strafing past, to see whether the streaks move with the view.
      Streaks moving with the view as bright as the frame agree with ours; a pane that is
      only a faint grey film, or nothing, says the reflection is weighted by alpha.
+
+## Added 2026-11-21 (the game's own parallax height maps, #2979)
+
+250. **How deep is the original's parallax on shapes with a slot-3 height map, and is it one
+     offset or stepped?** (P2; #2979, nif.md §6 "Parallax height maps", pbr-materials.md
+     "The game's own height maps".) Since #2979 a lit shape with BSShaderFlags bit 11 and a
+     slot-3 texture draws it as parallax at 0.015 UV units with relief mapping (8 layers, 4
+     refinement steps), not faded with distance, kept flat on decals, blends, cut-outs and
+     double-sided shapes [hypothesis on all of it]. The GECK wiki calls bit 11 alone "pretty
+     weak" [documented: GECK wiki "NIF Shader Properties"]. In the original, take frames of
+     (a) a McCarran flagstone floor and (b) a rubble pile (one of the seven `_p` texture sets nif.md §6 "Normal maps" lists),
+     each at
+     a steep view (looking almost straight down) and a shallow one (eye height, the surface
+     running away from the camera), close (under 2 m) and far (about 15 m). Compare with
+     NVForever at the same views, once at the default and once with
+     `NVF_GAME_PARALLAX_DEPTH=0` (flat). Read: how far a stone's edge moves between the
+     steep and shallow frames (in texels of the floor texture), whether stones hide the
+     grout behind them at the shallow view (stepped or occlusion mapping) or only slide
+     (a single offset), whether the relief is gone in the far frames (a distance fade), and
+     whether the concrete impact decal shows any relief. The depth switch (0 to 0.08) and
+     `NVF_PBR_PARALLAX_METHOD=occlusion|relief:<n>` let the default be fitted to the frames.

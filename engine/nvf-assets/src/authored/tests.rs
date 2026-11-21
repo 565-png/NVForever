@@ -617,3 +617,41 @@ fn alpha_tested_and_blended_shapes_are_refused_apart() {
     assert_eq!(height_alpha(AlphaMode::Mask(0.5), false), Err(HeightSkip::AlphaTested));
     assert_eq!(height_alpha(AlphaMode::Mask(0.5), true), Ok(()));
 }
+
+/// #2979: the game depth switch takes a depth in the scalar file's range, 0 included (no
+/// game height map); garbage and out-of-range text keep the default.
+#[test]
+fn the_game_depth_switch_takes_0_to_0_08() {
+    assert_eq!(parse_game_parallax_depth("0.05"), Ok(0.05));
+    assert_eq!(parse_game_parallax_depth(" 0 "), Ok(0.0));
+    assert_eq!(parse_game_parallax_depth("0.08"), Ok(0.08));
+    for bad in ["0.1", "-0.01", "NaN", "inf", "deep", ""] {
+        assert!(parse_game_parallax_depth(bad).is_err(), "{bad}");
+    }
+    let depth = |text: Option<&str>| switch_value(GAME_PARALLAX_DEPTH_ENV, text, GAME_PARALLAX_DEPTH, parse_game_parallax_depth, |d| format!("{d}"), |_| false);
+    assert_eq!(depth(None), (GAME_PARALLAX_DEPTH, SwitchLog::Quiet));
+    assert!(matches!(depth(Some("0")), (0.0, SwitchLog::Taken(_))));
+    assert!(matches!(depth(Some("0.5")), (d, SwitchLog::Refused(_)) if d == GAME_PARALLAX_DEPTH));
+    assert!(fnv_pbr::PARALLAX_DEPTH_RANGE.contains(&GAME_PARALLAX_DEPTH) && GAME_PARALLAX_DEPTH > 0.0);
+    if std::env::var_os(GAME_PARALLAX_DEPTH_ENV).is_none() {
+        assert_eq!(game_parallax_depth(), GAME_PARALLAX_DEPTH);
+    }
+}
+
+/// #2979: the game height maps' exit line reads its counts back, and says when the switch
+/// turned them off.
+#[test]
+fn the_game_height_line_names_every_count() {
+    let s = Stats::default();
+    for (c, n) in [(&s.game_height_drawn, 5), (&s.game_height_flat, 2), (&s.game_height_not_loaded, 1), (&s.game_height_replaced, 3), (&s.game_height_dropped, 4)] {
+        for _ in 0..n {
+            Stats::add(c);
+        }
+    }
+    let shape = format!("{}, {} layers", parallax_method_name(parallax_method()), parallax_layers());
+    assert_eq!(
+        s.game_line(0.03),
+        format!("depth 0.03 ({shape}); 5 material builds drew a NIF's own height map (texture-set slot 3, shader flag 11), 2 left it flat (alpha-tested, blended, double-sided, decal, unlit, refracting or without tangents), 1 could not load it, 3 drew an authored _p in its place; 4 later copies dropped one")
+    );
+    assert_eq!(s.game_line(0.0), "off (NVF_GAME_PARALLAX_DEPTH=0)");
+}

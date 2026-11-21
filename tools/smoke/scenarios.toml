@@ -34214,6 +34214,24 @@ forbid = [
 note = "The same field with the setting off: the index is never built (no 'authored materials: N sets' line), the material path loads no pbr file (the fixture's own check reads the generated files first), the plain, lit, dark and flat panels draw the same and the reference (its game normal map) differs from them."
 
 [[scenario]]
+name = "game-parallax-repconn"
+source = "[design, #2979] docs/spec-notes/nif.md §6 \"Parallax height maps\", docs/spec-notes/pbr-materials.md \"The game's own height maps\": REPCONN HQ's shapes whose texture set names a height map (slot 3) with shader flag bit 11 get it as a depth map; depth and method [hypothesis] until observer check 250; a frame in target/smoke (game_parallax_repconn.png)"
+areas = ["renderer", "textures", "nif"]
+paths = ["engine/nvf-assets/src/authored.rs", "engine/nvf-assets/src/authored/", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/nif_spawn/", "engine/nvf-assets/src/model.rs", "engine/vendor/bevy_pbr/src/render/parallax_mapping.wesl"]
+env = { NVF_PLAY_TEST_SHOTS = "8:game_parallax_repconn.png" }
+args = ["--cell", "RepconHQ01", "--play", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { re = 'game height maps summary: depth 0\.015 \(relief:4, 8 layers\); [1-9]\d* material builds drew a NIF.s own height map \(texture-set slot 3, shader flag 11\)', count = 1, label = "REPCONN HQ's flagged shapes draw their slot-3 height maps" },
+  { re = 'game height maps summary: .*, 0 could not load it,', count = 1, label = "every slot-3 height map asked for loads" },
+]
+forbid = [
+  { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
+]
+note = "The count is of material builds, not distinct shapes (a model built twice counts twice). RepconHQ01 was picked from the REPCONN HQ `_p` texture set nif.md §6 lists, without a survey of the cell [hypothesis]: if the count is 0 there, move the scenario to a cell whose meshes name one of the 20 shipped height textures (397 of the 510 shapes are under meshes\\dungeons)."
+manual = "Open game_parallax_repconn.png beside a run with NVF_GAME_PARALLAX_DEPTH=0: floors and rubble with height maps show relief, nothing else changes."
+
+[[scenario]]
 name = "pbr-authored-field-height"
 source = "[design, #2981 stage 4] docs/spec-notes/pbr-materials.md: a generated height-only set's _p drawn as parallax on a tilted panel beside its control; engineering comparator policy (first, generous thresholds), not original-game pixels"
 areas = ["renderer", "textures", "nif"]

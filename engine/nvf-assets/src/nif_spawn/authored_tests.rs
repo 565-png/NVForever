@@ -405,3 +405,117 @@ fn the_unlit_cleanup_leaves_parallax_settings_it_did_not_put_on() {
     crate::authored::restore(&mut authored, &look);
     assert_eq!((authored.base.parallax_depth_scale, authored.base.max_parallax_layer_count), (0.2, 32.0));
 }
+
+/// A lit shape whose texture set names a height map in slot 3, with the parallax flag
+/// (BSShaderFlags bit 11) when `flag` (#2979).
+fn flagstones(flag: bool) -> Props {
+    Props {
+        textures: vec![r"architecture\mccarran\flagstone.dds".into(), r"architecture\mccarran\flagstone_n.dds".into(), String::new(), r"architecture\mccarran\flagstone_p.dds".into()],
+        parallax: flag,
+        ..Default::default()
+    }
+}
+
+const FLAGSTONE_KEY: &str = r"textures\architecture\mccarran\flagstone.dds";
+
+/// #2979: slot 3 is drawn as the game's own height map only with the parallax flag, at the
+/// game depth, with the set height maps' method and layers, whatever the Authored materials
+/// setting; it is the game's material (no overlay mark), so the legacy look keeps it. Shapes
+/// that may draw no height map stay flat and load no file; a bare shape gains tangents for it.
+#[test]
+fn the_games_own_height_map_is_drawn_on_flagged_shapes() {
+    let depth = crate::authored::game_parallax_depth();
+    if depth <= 0.0 {
+        return; // NVF_GAME_PARALLAX_DEPTH=0 in this test's environment: nothing to draw.
+    }
+    for on in [true, false] {
+        let mut source = SetTextures::with(None);
+        source.on = on;
+        let (m, _) = shape_material_with(&flagstones(true), &mut triangle(), &mut source, Tangents::Generate);
+        let p = source.handle(r"architecture\mccarran\flagstone_p.dds");
+        assert_eq!(Parallax::of(&m.base), Parallax::game(p.clone()), "setting on={on}: the slot-3 map at the game depth");
+        assert_eq!(m.base.parallax_depth_scale, depth);
+        assert!(!crate::authored::height_on(&m), "the game's own map is no overlay");
+        assert!(!crate::authored::is_authored(&m));
+        assert_eq!(m.extension.legacy.as_ref().map(|l| l.parallax.depth_map.clone()), on.then_some(Some(p)), "the legacy look's baseline holds it");
+    }
+    // No flag, or an empty slot: flat.
+    let mut source = SetTextures::with(None);
+    let (m, _) = shape_material_with(&flagstones(false), &mut triangle(), &mut source, Tangents::Generate);
+    assert!(m.base.depth_map.is_none(), "slot 3 without the flag is not drawn");
+    let mut empty = flagstones(true);
+    empty.textures[3].clear();
+    let (m, _) = shape_material_with(&empty, &mut triangle(), &mut source, Tangents::Generate);
+    assert!(m.base.depth_map.is_none());
+    // The shapes a set's height map is refused on refuse the game's too, without loading it.
+    for (why, props) in [
+        ("alpha blended", Props { alpha: Some((0x10ED, 0)), ..flagstones(true) }),
+        ("double-sided", Props { double_sided: true, ..flagstones(true) }),
+        ("decal", Props { decal: true, ..flagstones(true) }),
+        ("refracting", Props { refraction: Some(0.2), ..flagstones(true) }),
+    ] {
+        let mut source = SetTextures::with(None);
+        let mut mesh = triangle();
+        let (m, _) = shape_material_with(&props, &mut mesh, &mut source, Tangents::Generate);
+        assert!(m.base.depth_map.is_none(), "{why}: flat");
+        assert!(!source.by_path.contains_key(&fnv_vfs::texture_path(r"architecture\mccarran\flagstone_p.dds")), "{why}: the height map is not loaded");
+    }
+    // A shape without a game normal map gains tangents for its height map.
+    let mut bare = flagstones(true);
+    bare.textures[1].clear();
+    let mut mesh = triangle();
+    let (m, _) = shape_material_with(&bare, &mut mesh, &mut SetTextures::with(None), Tangents::Generate);
+    assert!(m.base.depth_map.is_some() && mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_some());
+}
+
+/// #2979 and #2981: a set's `_p` wins over the game's slot-3 map; a set without `_p` leaves
+/// the game's map drawn; taking the set off puts the game's map back.
+#[test]
+fn an_authored_height_map_wins_over_the_games_own() {
+    if crate::authored::game_parallax_depth() <= 0.0 {
+        return;
+    }
+    let mut scratch = Assets::<Image>::default();
+    let authored_p = height(&mut scratch, 0.06);
+    let mut with_p = set(&mut scratch, false, Scalars::default());
+    with_p.height = Some(authored_p.clone());
+    for s in [PbrSet::Authored(with_p.clone()), PbrSet::HeightOnly(crate::authored::HeightSet { stem: with_p.stem.clone(), height: authored_p.clone() })] {
+        let mut source = SetTextures::with(Some((FLAGSTONE_KEY, s.clone())));
+        let (mut m, _) = shape_material_with(&flagstones(true), &mut triangle(), &mut source, Tangents::Generate);
+        let game = Parallax::game(source.handle(r"architecture\mccarran\flagstone_p.dds"));
+        assert_eq!(Parallax::of(&m.base), authored_p, "{}: the set's _p is drawn", s.stem());
+        let legacy = m.extension.legacy.clone().unwrap();
+        assert_eq!(legacy.parallax, game, "the game's map is the legacy baseline");
+        crate::authored::take_off(&mut m, &legacy);
+        assert_eq!(Parallax::of(&m.base), game, "taken off: the game's map is back");
+    }
+    let no_p = set(&mut scratch, true, Scalars::default());
+    let mut source = SetTextures::new(Some((FLAGSTONE_KEY, no_p)));
+    let (m, _) = shape_material_with(&flagstones(true), &mut triangle(), &mut source, Tangents::Generate);
+    assert!(crate::authored::is_authored(&m));
+    assert_eq!(m.base.depth_map, Some(source.handle(r"architecture\mccarran\flagstone_p.dds")), "a set without _p keeps the game's map");
+}
+
+/// #2979: copies that stop qualifying (a fade, a cloak) drop the game's own height map as
+/// they drop a set's; an opaque copy keeps it.
+#[test]
+fn copies_that_stop_being_eligible_drop_the_games_own_height_map() {
+    if crate::authored::game_parallax_depth() <= 0.0 {
+        return;
+    }
+    for on in [true, false] {
+        let mut source = SetTextures::with(None);
+        source.on = on;
+        let (m, _) = shape_material_with(&flagstones(true), &mut triangle(), &mut source, Tangents::Generate);
+        let mut kept = m.clone();
+        assert!(!crate::authored::recheck_height(&mut kept), "still opaque");
+        assert!(kept.base.depth_map.is_some());
+        let mut fading = m.clone();
+        fading.base.alpha_mode = AlphaMode::Blend;
+        assert!(crate::authored::recheck_height(&mut fading), "setting on={on}");
+        assert!(fading.base.depth_map.is_none());
+        let mut cloak = m.clone();
+        refraction_material(&mut cloak, 0.2, 0.0);
+        assert!(cloak.base.depth_map.is_none(), "setting on={on}: a refracting copy");
+    }
+}

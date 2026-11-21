@@ -127,6 +127,10 @@ pub(crate) struct Props {
     /// Glow map: texture-set slot 2 of a BSShaderPPLightingProperty without the face-gen
     /// or hair flag (docs/spec-notes/nif.md §6, "Emissive light").
     glow: Option<String>,
+    /// BSShaderFlags bit 11 "Parallax_Shader_Index_15" of a BSShaderPPLightingProperty
+    /// [documented: nif.xml]: texture-set slot 3 is then drawn as the shape's height map
+    /// ([`game_height_slot`], #2979).
+    parallax: bool,
     glossiness: Option<f32>,
     /// BSShaderFlags bit 0 "Specular" of the shader property [documented: nif.xml].
     specular: bool,
@@ -273,6 +277,24 @@ fn glow_map(shader_flags: i64, textures: &[String]) -> Option<String> {
     textures.get(2).filter(|t| !t.is_empty()).cloned()
 }
 
+/// Whether a BSShaderPPLightingProperty's flags ask for parallax: BSShaderFlags bit 11
+/// "Parallax_Shader_Index_15" [documented: nif.xml BSShaderFlags]. Bit 28
+/// "Parallax_Occlusion" is not asked: no shape of the base game or its DLC sets it, and all
+/// 510 shapes with a slot-3 texture set bit 11 [observed: the per-shape survey of upstream
+/// issue #2979, counts only; docs/spec-notes/nif.md §6 "Parallax height maps"].
+pub(crate) fn parallax_flag(shader_flags: i64) -> bool {
+    shader_flags & (1 << 11) != 0
+}
+
+/// The game's own height map of a shape (#2979): texture-set slot 3 ("height"
+/// [documented: nif.xml BSShaderTextureSet]) of a BSShaderPPLightingProperty with the
+/// parallax flag ([`parallax_flag`]); `None` without the flag or with an empty slot. Read
+/// from the slots as they stand, so a record's texture set (`Props::use_texture_set`, TXST
+/// TX04 into slot 3) and the first-person forms replace it as they replace the others.
+pub(crate) fn game_height_slot(props: &Props) -> Option<&str> {
+    props.textures.get(3).filter(|t| props.parallax && !props.unlit && !t.is_empty()).map(String::as_str)
+}
+
 /// The shape is a decal: BSShaderFlags bit 26 "Decal_Single_Pass" or bit 27
 /// "Dynamic_Decal_Single_Pass" [documented: nif.xml BSShaderFlags]. 2,130 visible shapes
 /// in `Fallout - Meshes.bsa` set one (41 only bit 26, none only bit 27): dirt, stains,
@@ -393,11 +415,16 @@ fn apply_property(file: &NifFile, dec: &Decoded, r: i32, p: &mut Props) {
         p.fire_period = fire_period(flags, s.int("refraction_fire_period"));
         p.lod_building = s.int("shader_flags_2").unwrap_or(0) & (1 << 2) != 0;
         p.falloff = None;
+        p.parallax = false;
         let lit = dec.is_a(r as usize, "BSShaderPPLightingProperty");
         p.window_env = (lit && window_env_flags(flags)).then(|| s.float("environment_map_scale").unwrap_or(1.0));
     }
     match ty {
-        "BSShaderPPLightingProperty" => p.glow = glow_map(s.int("shader_flags").unwrap_or(0), &p.textures),
+        "BSShaderPPLightingProperty" => {
+            let flags = s.int("shader_flags").unwrap_or(0);
+            p.glow = glow_map(flags, &p.textures);
+            p.parallax = parallax_flag(flags);
+        }
         "BSShaderNoLightingProperty" => {
             p.unlit = true;
             if let Some(f) = s.text("file_name") {
@@ -1003,12 +1030,23 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
         && crate::authored::height_alpha(alpha_mode, crate::authored::parallax_mask()).is_ok()
         && !props.double_sided
         && !props.decal;
-    // The final normal is chosen before the tangents are settled: a set's `_n` or `_p` on a
-    // shape without a normal map needs tangents on the drawn mesh, given here from `tangents`
-    // (kept, stored or generated, as for the game's own normal map).
+    // The game's own height map (#2979: texture-set slot 3 with the parallax flag), whatever
+    // the Authored materials setting; the same shapes as a set's height map
+    // (`crate::authored::height_gate`), and none at a game depth of 0 (the development
+    // switch, `crate::authored::game_parallax_depth`). Loaded only for a shape that may draw it.
+    let game_slot = game_height_slot(props).filter(|_| crate::authored::game_parallax_depth() > 0.0);
+    let game_height_wanted = game_slot.is_some()
+        && has_uv
+        && props.refraction.is_none()
+        && crate::authored::height_alpha(alpha_mode, crate::authored::parallax_mask()).is_ok()
+        && !props.double_sided
+        && !props.decal;
+    // The final normal is chosen before the tangents are settled: a set's `_n` or `_p`, or the
+    // game's height map, on a shape without a normal map needs tangents on the drawn mesh,
+    // given here from `tangents` (kept, stored or generated, as for the game's normal map).
     let tangents = if normal.is_some() {
         true
-    } else if (authored.is_some_and(|s| s.normal.is_some()) || height_wanted) && !had_tangents {
+    } else if (authored.is_some_and(|s| s.normal.is_some()) || height_wanted || game_height_wanted) && !had_tangents {
         has_uv && tangents.add_to(mesh)
     } else {
         had_tangents
@@ -1075,6 +1113,13 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
     // Object LOD atlases hold near-black colour where their alpha is 0 (see
     // `shape_alpha_mode`); a soft edge would draw a little of it around every cut-out.
     material.extension.hard_edges = props.lod_building;
+    // The game's own height map, before the legacy look is taken (it is part of the game's
+    // material, so a set taken off later puts it back) and before any set (a set's `_p`
+    // replaces it: `crate::authored::apply_height`).
+    let game_height = game_slot.map(|slot| {
+        let image = if game_height_wanted { textures.texture(slot, false) } else { None };
+        crate::authored::apply_game_height(&mut material, image, game_height_wanted, tangents)
+    });
     // The authored set last, over the legacy values chosen above and after the extension's
     // `emissive_rule` is assigned (its w lane carries the mark). Shapes that may take a set
     // keep their legacy look for later swaps (`crate::authored::LegacyLook`).
@@ -1099,6 +1144,9 @@ pub(crate) fn shape_material_with(props: &Props, mesh: &mut Mesh, textures: &mut
         if let Some(height) = height {
             if crate::authored::apply_height(&mut material, height, &legacy).is_ok() {
                 crate::authored::note_height_built(authored.is_none());
+                if game_height == Some(crate::authored::GameHeight::Drawn) {
+                    crate::authored::note_game_height_replaced();
+                }
             }
         }
         material.extension.legacy = Some(legacy);
@@ -2042,6 +2090,22 @@ mod tests {
         assert!(!is_decal(0xffff_ffff & !(1 << 26 | 1 << 27)));
         // The flags reach the material's properties from the shader property.
         assert!(!Props::default().decal);
+    }
+
+    #[test]
+    fn parallax_takes_bit_11_and_slot_3() {
+        assert!(parallax_flag(1 << 11) && parallax_flag(0x8200_0901));
+        assert!(!parallax_flag(1 << 28), "Parallax_Occlusion alone is not asked");
+        assert!(!parallax_flag(0x8200_0101));
+        let set = |t: &[&str], parallax: bool| Props { textures: t.iter().map(|s| s.to_string()).collect(), parallax, ..Default::default() };
+        assert_eq!(game_height_slot(&set(&["d.dds", "d_n.dds", "", "d_p.dds"], true)), Some("d_p.dds"));
+        assert_eq!(game_height_slot(&set(&["d.dds", "d_n.dds", "", "d_p.dds"], false)), None);
+        assert_eq!(game_height_slot(&set(&["d.dds", "d_n.dds", "", ""], true)), None);
+        assert_eq!(game_height_slot(&set(&["d.dds", "d_n.dds"], true)), None);
+        // A record's texture set replaces slot 3 like any other slot.
+        let mut p = set(&["d.dds", "d_n.dds", "", "d_p.dds"], true);
+        p.use_texture_set(&[None, None, None, Some("other_p.dds".into()), None, None]);
+        assert_eq!(game_height_slot(&p), Some(r"textures\other_p.dds"));
     }
 
     #[test]
