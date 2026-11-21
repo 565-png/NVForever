@@ -3406,3 +3406,17 @@ already talking takes over at once, same topic or another; nothing is queued or 
      ("STR +2, Damage +25%"), the EFF line titled with the item's name [hypothesis]. With a
      Psycho, a Cateye and a Steady carried, read the ITEMS > Aid card of each; use the
      Psycho and read STATS > Status > EFF while it lasts; a screenshot of each answers it.
+
+## Added 2026-11-21 (Ammo Use 0 on a ranged weapon, #3023)
+
+246. **Does a ranged weapon with Ammo Use 0 fire without spending or carrying its ammo,
+     and does it ever reload?** (P2; #3023.) The GECK wiki calls Ammo Use "the amount of
+     ammo used per shot" [documented: GECK wiki Weapons] and says nothing of 0. Of the
+     base game's and the add-ons' 502 WEAP records, 25 have Ammo Use 0; all but one are
+     melee weapons or detonators without a projectile; the one ranged weapon is Lonesome
+     Road's Laser Detonator (NVDLC04WeapSonicDetonator, automatic, clip 1, Fire Rate 10,
+     Microfusion Breeder ammo) [observed: `fnvtool combat form` over the six masters].
+     Ours: no round is spent, so it fires at its rate with no reload and needs none carried
+     [hypothesis]. In the Divide, hold the trigger on one of the laser targets for 5 s with
+     and without Microfusion Breeder rounds carried: count the beams (a video at 30 fps
+     does it), watch for a reload, and read the ammo count before and after.
