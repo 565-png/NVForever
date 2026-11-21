@@ -158,7 +158,7 @@ fn equipped(g: &mut Game, actor: FormId, mask: u32) -> Vec<(FormId, fnv_sim::inv
         if slots == 0 {
             continue;
         }
-        let pick = if mask & SLOT_BITS == 0 { !g.world.effective_non_playable(item) } else { slots & mask & SLOT_BITS != 0 };
+        let pick = if mask & SLOT_BITS == 0 { !g.is_item_non_playable(item) } else { slots & mask & SLOT_BITS != 0 };
         if pick {
             out.push((item, extra));
         }
