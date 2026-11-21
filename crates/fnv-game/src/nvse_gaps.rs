@@ -35,8 +35,6 @@ pub struct GapsState {
     pub gravity: HashMap<FormId, f64>,
     /// ToggleBipedSlotVisibility's hidden slots.
     pub hidden_slots: HashSet<u32>,
-    /// SetPackageFlag's general flags, by package.
-    pub package_flags: HashMap<FormId, u32>,
     /// SetPerkLevel's levels.
     pub perk_levels: HashMap<FormId, u8>,
     /// SetPerkFlag's flags: (perk, flag ID 0 trait, 1 playable, 2 hidden).
@@ -998,19 +996,20 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "getskeletonmodel" => XVal::Str(form(args, 0).or(subject).map(|f| crate::nvse_nx::skeleton_model(g, f)).unwrap_or_default()),
         "getownerofcell" => XVal::Ref(form(args, 0).and_then(|c| g.data.cells.get(&c)).and_then(|c| c.owner).map_or(0, |o| o.0)),
         // PKDT general flags bit by bit [observed: gaps7, Doc's sandbox 9 and 21 set];
-        // SetPackageFlag returns 0, for the session [observed: gaps8].
+        // SetPackageFlag returns 0, for the session [observed: gaps8], through
+        // `Game::change_package` so every reader of `Game::package_def` sees it.
         "getpackageflag" | "setpackageflag" => {
             let p = form(args, 0).unwrap_or(FormId(0));
             let k = num(args, 1, -1.0);
             if !(0.0..32.0).contains(&k) {
                 return Some(Ok(zero));
             }
-            let Some(def) = g.data.package_defs.get(&p) else { return Some(Ok(zero)) };
-            let flags = g.gaps.package_flags.get(&p).copied().unwrap_or(def.flags);
+            let Some(def) = g.package_def(&p) else { return Some(Ok(zero)) };
+            let flags = def.flags;
             let old = flags >> (k as u32) & 1;
             if name == "setpackageflag" {
                 let new = if num(args, 2, 0.0) != 0.0 { flags | 1 << (k as u32) } else { flags & !(1 << (k as u32)) };
-                g.gaps.package_flags.insert(p, new);
+                g.change_package(p, |d| d.flags = new);
                 return Some(Ok(zero));
             }
             XVal::Num(f64::from(old))
