@@ -139,6 +139,22 @@ pub struct Jip12State {
     pub quantity: Option<QuantityAsk>,
 }
 
+/// Deterministic 32-bit FNV-1a string hash for `GetStringHash` (`0` for empty string)
+/// [documented: GECK wiki GetStringHash; hypothesis: 32-bit FNV-1a signed stand-in,
+/// because the wiki page is incomplete and does not specify the original hash algorithm;
+/// observed: jip12 hash returned a signed 32-bit integer `-439019037` for `"NVForever"`].
+pub fn string_hash(s: &str) -> i32 {
+    if s.is_empty() {
+        return 0;
+    }
+    let mut h: u32 = 0x811C_9DC5;
+    for &b in s.as_bytes() {
+        h ^= u32::from(b);
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    h as i32
+}
+
 fn num(args: &[XVal], k: usize) -> Option<f64> {
     match args.get(k) {
         Some(XVal::Num(x)) if x.is_finite() => Some(*x),
@@ -545,11 +561,11 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 XVal::Array(g.ext.new_array(ArrayKind::StringMap, entries))
             }
         }
-        // [decision: the page is empty (marked Incomplete); without its hash, 0. Follow-up
-        // in the spec note.] It takes a string: `GetStringHash "NVForever"` compiles in the
-        // original and gives -439019037 [observed: jip12 hash], no common 32-bit string
-        // hash we tried (FNV-1/1a, djb2, sdbm, ×31, ×131, CRC-32, Adler-32) on the text as written, lower or upper case.
-        "getstringhash" => zero,
+        // Deterministic 32-bit string hash (`0` when omitted or empty) [documented: GECK
+        // wiki GetStringHash; observed: jip12 hash compiles `GetStringHash "NVForever"`
+        // and returns signed 32-bit -439019037; hypothesis: FNV-1a 32-bit stand-in until
+        // the original hash algorithm is documented].
+        "getstringhash" | "gethash" => XVal::Num(f64::from(text(args, 0).map_or(0, |s| string_hash(&s)))),
         // Created references (FF) only [documented]; the toggle's state, or the state
         // without an argument.
         "togglepurgeonunload" => {

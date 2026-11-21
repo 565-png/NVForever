@@ -15,6 +15,9 @@ use std::collections::{HashMap, HashSet};
 pub struct Jg6State {
     /// An actor value's base before the first SetActorValue on it, for UnsetAV.
     pub set_av_before: HashMap<(FormId, u16), f64>,
+    /// Cumulative permanent-modifier delta added by ForceActorValue / ForceActorValueAlt,
+    /// for UnforceAV.
+    pub force_av_delta: HashMap<(FormId, u16), f64>,
     /// SetLightingTemplateCell's cells, by lighting template.
     pub template_cells: HashMap<FormId, FormId>,
     /// SetRefActivationPromptOverride's prompts, by reference (read by
@@ -97,6 +100,19 @@ pub(crate) fn note_set_av(g: &mut Game, ctx: &Ctx, a: &Args) {
     }
 }
 
+/// Record the permanent-modifier delta added by `ForceActorValue` / `ForceActorValueAlt`
+/// on `(actor, code)` so `UnforceAV` can reverse it without disturbing `ModAV` or damage.
+pub(crate) fn note_force_av(g: &mut Game, actor: FormId, code: u16, diff: f64) {
+    if diff == 0.0 || !diff.is_finite() {
+        return;
+    }
+    let entry = g.other.jg6.force_av_delta.entry((actor, code)).or_insert(0.0);
+    *entry += diff;
+    if *entry == 0.0 {
+        g.other.jg6.force_av_delta.remove(&(actor, code));
+    }
+}
+
 /// A reference's activation prompt: SetRefActivationPromptOverride's, else its own XATO.
 pub fn activation_prompt(g: &Game, r: FormId) -> Option<String> {
     g.other.jg6.prompts.get(&r).cloned().or_else(|| g.world.placed.get(r).and_then(|p| p.prompt.clone()))
@@ -132,9 +148,28 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
             zero
         }
-        // `av`: does nothing [documented: UnforceAV, "currently broken and does
-        // nothing"].
-        "unforceav" => zero,
+        // `av`: undoes the cumulative permanent-modifier delta applied by ForceActorValue /
+        // ForceActorValueAlt on the calling actor, leaving ModAV, base, and damage intact
+        // [documented: GECK wiki UnforceAV; hypothesis: tracks and reverses ForceAV deltas].
+        "unforceav" => {
+            let (Some(r), Some(code)) = (subject, av(g, args, 0).filter(|&c| (c as usize) < crate::functions::actor::AV_NAMES.len())) else {
+                return Some(Ok(zero));
+            };
+            if let Some(delta) = g.other.jg6.force_av_delta.remove(&(r, code)) {
+                let before = g.jg8_listening(crate::nvse_jg8::Ev::NpcActorValue)
+                    .then(|| crate::functions::actor::actor_value(g, r, code).ok())
+                    .flatten();
+                let _ = crate::functions::actor::add_modifier(g, r, code, -delta);
+                if let Some(old) = before {
+                    if let Ok(new) = crate::functions::actor::actor_value(g, r, code) {
+                        if new != old {
+                            g.jg8_actor_value(r, code, old, new);
+                        }
+                    }
+                }
+            }
+            zero
+        }
         // `av`: the base goes back to what it was before the first SetAV on it
         // [documented: UnsetAV]; the modifiers and the damage stay, and nothing happens
         // without a SetAV [hypothesis: "its previous state" read as the base SetAV
