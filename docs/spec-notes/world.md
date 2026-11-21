@@ -1844,30 +1844,41 @@ Textures2.bsa`, `Fallout - Misc.bsa`, DLC archives]:
   [hypothesis]; nothing showed the object blocks' reach to be wrong.
 - **A chunk without its diffuse** (#3096): a player's report showed the distant hills
   north and east of Goodsprings (about -67758, 2867) flat white at night, shaded only by
-  their slopes, until the player came closer [observed: report R-ZXT6AC4J's screenshot;
-  no log]. In the renderer a material whose diffuse is named but not yet in the image
-  store is not drawn at all, while one whose diffuse is missing (not named, or failed to
-  load) draws white [documented: Bevy's `AsBindGroup` derive, where a texture handle not
-  in the store retries and `None` takes the white fallback image; `nvf_assets::nif_spawn`
+  their slopes [observed: report R-ZXT6AC4J's screenshot; no log]; that they took on
+  their textures once the player came closer is the player's own account, not seen. In
+  the renderer a material whose diffuse is named but not yet in the image store is not
+  drawn at all, while one whose diffuse is missing (not named, or failed to load) draws
+  white [documented: Bevy's `AsBindGroup` derive, where a texture handle not in the
+  store retries and `None` takes the white fallback image; `nvf_assets::nif_spawn`
   leaves the diffuse `None` when its file does not load]. White at night fits a missing
   diffuse with the normal map still there: an albedo of 1 under the moon and ambient,
   several times the terrain textures', shaded by the model-space normal map; nothing in
-  the chunk material differs at night [hypothesis]. Coming closer swaps the chunk for a
-  finer level, generated terrain or loaded cells, each with other textures. The stock
-  files load (1,360 DXT1 diffuse textures, above), so a file missing or unreadable in
-  that install is the likely cause [hypothesis: the report carries no log]. The renderer's
-  rules since then [design]: a game chunk is drawn, and the chunks it replaces go, only
-  once every shape it draws (the ones with UVs whose triangles the loaded cells do not
-  all cut out) has its diffuse in the image store; while one is on its way the old
-  chunks stay drawn. A chunk whose model failed or whose drawn shape has no diffuse is
-  held: logged once ("terrain chunk level L xX yY held without its diffuse texture",
-  with the chunk's file and the texture's error), and its parent, the next coarser chunk
-  over it, is drawn in its place and in place of the chosen chunks inside the parent,
-  so the drawn chunks still never overlap; a held parent gives way to its own parent,
-  and a held level-32 chunk draws nothing. A held level-4 chunk whose generated chunk
-  is ready is drawn generated. A chunk with nothing to draw (no file, no textured
-  shape, every triangle cut out) is not held. The exit log's "distant LOD terrain
-  surfaces" line counts the held chunks and the shapes drawn without a diffuse (0
+  the chunk material differs at night [hypothesis]. Coming closer would swap the chunk
+  for a finer level, generated terrain or loaded cells, each with other textures. The
+  stock files load (1,360 DXT1 diffuse textures, above), so a file missing or unreadable
+  in that install is the likely cause [hypothesis: the report carries no log]. The
+  renderer's rules since then [design]: a game chunk is spawned, and the chunks it
+  replaces go, only once every shape it draws (the ones with UVs whose triangles the
+  loaded cells do not all cut out) has its diffuse in the image store; while one is on
+  its way the old chunks stay drawn. A chunk whose model failed or whose drawn shape has
+  no diffuse is held: never drawn, logged once ("terrain chunk level L xX yY held
+  without its diffuse texture", with the chunk's file and the texture's error), and
+  asked again whenever the loaded cells change which of its cells are cut out (a bad
+  shape cut out no longer holds it). Its ancestors are asked, nearest first, whether
+  they draw over its area with their own textures; the first that does stands in for it
+  and for the chosen chunks inside it ("terrain chunk level L' … drawn over held level L
+  …", logged once it shows), so the drawn chunks never overlap. An ancestor with no
+  file, nothing textured or held itself is passed over and never counts as covering;
+  until a stand-in is found the chunks beside the held one stay, and its own area shows
+  whatever outgoing chunk still lies over it, or nothing. A held level-4 chunk whose
+  generated chunk is ready is drawn generated. A chunk with nothing to draw (no file, no
+  textured shape, every triangle cut out) is not held. Old and new chunks never draw
+  over each other: a chunk spawned while a visible outgoing chunk lies over it stays
+  hidden until that one goes, which happens once every drawn chunk over its area is
+  spawned, so the replacements show together; before #3096 the replacements showed as
+  each came in, over the outgoing chunk still drawn. Distant water follows the drawn
+  chunks (a stand-in's whole area). The exit log's "distant LOD terrain surfaces" line
+  counts the held chunks, the stand-ins and the shapes drawn without a diffuse (0
   expected); smoke scenarios `lod-night-diffuse` and `lod-missing-diffuse`.
 - How the game hides LOD under loaded cells, and exactly when it switches levels, is not
   known; the renderer's rules are [hypothesis] (layer3.md, `engine/nvforever/src/lod.rs`).

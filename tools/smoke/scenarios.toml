@@ -358,7 +358,7 @@ expect = [
 
 [[scenario]]
 name = "lod-night-diffuse"
-source = "#3096 (player report R-ZXT6AC4J): north of Goodsprings (-67758, 2867) at night the distant hills to the north and east were drawn flat white until the player came closer. A game terrain chunk is now drawn only with its diffuse texture in the image store (engine/nvforever/src/lod.rs, world.md §7): no terrain shape is drawn without one, and a chunk held for lack of one names its path and reason in a 'held without its diffuse texture' line"
+source = "#3096 (player report R-ZXT6AC4J): north of Goodsprings (-67758, 2867) at night the distant hills to the north and east were drawn flat white (the player wrote that they turned right on coming closer). A game terrain chunk is now drawn only with its diffuse texture in the image store (engine/nvforever/src/lod.rs, world.md §7): no terrain shape is drawn without one, and a chunk held for lack of one names its path and reason in a 'held without its diffuse texture' line"
 note = "UNRUN when written (2026-11-21). The report's own cause is not pinned: a held chunk here on stock data would show it (its line names the texture and the error); the expectations hold either way"
 areas = ["renderer"]
 paths = ["engine/nvforever/src/lod.rs"]
@@ -374,7 +374,7 @@ manual = "lod_night_north/east: the distant hills are as dark as the near ground
 
 [[scenario]]
 name = "lod-missing-diffuse"
-source = "#3096: with every level-8 terrain chunk's diffuse reading as missing (test aid NVF_PLAY_TEST_BROKEN_FILES), those chunks are held, never drawn white, and their level-16 parents are drawn over their areas instead (engine/nvforever/src/lod.rs draw_list, world.md §7)"
+source = "#3096: with every level-8 terrain chunk's diffuse reading as missing (test aid NVF_PLAY_TEST_BROKEN_FILES), those chunks are held, never drawn white, and their level-16 parents, asked first whether they draw with their own diffuse, stand in over their areas (engine/nvforever/src/lod.rs TerrainBook, world.md §7)"
 note = "UNRUN when written (2026-11-21). Texture names: textures\\landscape\\lod\\<world>\\diffuse\\<world>.n.level<L>.x<X>.y<Y>.dds [observed, world.md §7]"
 areas = ["renderer"]
 paths = ["engine/nvforever/src/lod.rs"]
@@ -382,10 +382,10 @@ env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_BROKE
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67758,2867,8900", "--hour", "23"]
 run_seconds = 18
 expect = [
-  { re = 'distant LOD: terrain chunk level 8 x-?\d+ y-?\d+ held without its diffuse texture \(.*not in any archive\); level 16 x-?\d+ y-?\d+ drawn over its area instead', label = "a level-8 chunk without its diffuse is held, the texture's error named, its parent drawn instead" },
+  { re = 'distant LOD: terrain chunk level 8 x-?\d+ y-?\d+ held without its diffuse texture \(.*not in any archive\); never drawn', label = "a level-8 chunk without its diffuse is held, the texture's error named" },
+  { re = 'distant LOD: terrain chunk level 16 x-?\d+ y-?\d+ drawn over held level 8 x-?\d+ y-?\d+', label = "its level-16 parent, which has its own diffuse, is drawn over its area once asked" },
   { re = 'distant LOD terrain surfaces: (\d+) chunks held', range = [1, 100000], label = "level-8 chunks held" },
-  { re = 'distant LOD at the end: LOD chunks \d+ \(levels 4/8/16/32: \d+/(\d+)/', range = [0, 0], label = "no level-8 chunk is drawn at the end: each gave way to its level-16 parent" },
-  { re = 'distant LOD at the end: LOD chunks \d+ \(levels 4/8/16/32: \d+/\d+/(\d+)/', range = [1, 100000], label = "level-16 chunks are drawn" },
+  { re = 'distant LOD at the end: LOD chunks \d+ \(levels 4/8/16/32: \d+/(\d+)/', range = [0, 0], label = "no level-8 chunk is drawn at the end (held ones never are; the others gave way to their stand-ins)" },
   { re = 'distant LOD terrain surfaces: .*, (\d+) shapes drawn without a diffuse texture', range = [0, 0], label = "none drawn without its diffuse" },
 ]
 forbid = ["drawn without its diffuse texture"]
