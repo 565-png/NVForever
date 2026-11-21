@@ -549,6 +549,9 @@ enum Errand {
     Take { from: FormId, item: FormId, count: i32, lying: bool },
     /// Use the entry of a terminal that works a locked door.
     Terminal { reference: FormId, base: FormId, item: usize, door: u32 },
+    /// Switch off a speaker whose noise sets the player's collar counting down: Dead
+    /// Money's radios and speakers ([`beeping_speaker`]).
+    Silence(FormId),
 }
 
 /// A walk to a place.
@@ -721,6 +724,8 @@ struct Pilot {
     /// looking for one.
     stuck_talk: Option<f64>,
     talk_picks: u8,
+    /// The conversation `talk_picks` and `stuck_talk` count for (`Game::dialogue_serial`).
+    talk_serial: u32,
     /// A `say_info` with no known way to its line: the step and the topics already tried
     /// in that conversation, as a player tries what is on offer.
     explored: (usize, Vec<FormId>),
@@ -779,6 +784,10 @@ struct Pilot {
     defend: Option<(Fight, Walk)>,
     defend_from: f64,
     threat_check: f64,
+    /// The references whose script counts the collar's radios ([`beeping_speaker`]),
+    /// found once; and when to look for a beeping one next.
+    speakers: Option<Vec<FormId>>,
+    speaker_check: f64,
     title: String,
     given: Vec<Json>,
     actions: Vec<Action>,
@@ -836,6 +845,7 @@ impl Pilot {
             went_along: None,
             stuck_talk: None,
             talk_picks: 0,
+            talk_serial: 0,
             explored: (usize::MAX, Vec::new()),
             across: None,
             trigger_rewalks: 0,
@@ -865,6 +875,8 @@ impl Pilot {
             defend: None,
             defend_from: 0.0,
             threat_check: 0.0,
+            speakers: None,
+            speaker_check: 0.0,
             title: String::new(),
             given: Vec::new(),
             actions: Vec::new(),
@@ -2334,9 +2346,38 @@ fn threat(g: &Game, friend: Option<FormId>, feet: [f32; 3], given_up: &[FormId])
         // OnHit turned the Van Graffs hostile and failed Birds of a Feather (round 13
         // [observed]).
         .filter(|(a, _)| !fleeing(g, **a))
+        // Not one no weapon can hurt (Invulnerable, a ghost, a child): a player walks
+        // past. Dead Money's casino holograms are Invulnerable (CREA 0x0100B04A ACBS
+        // [observed]); the bot fought them, and a flamer blast on Dog set off the gas
+        // trap whose script kills the player (SCPT 0x01010DAB, round 17 [observed]).
+        .filter(|(a, _)| !g.is_immune(**a))
         .filter_map(|(a, _)| where_is(g, *a).map(|(cell, pos)| (*a, cell, pos)))
         .filter(|(_, _, pos)| hdist(*pos, feet) < THREAT_RANGE)
         .min_by(|a, b| hdist(a.2, feet).total_cmp(&hdist(b.2, feet)))
+}
+
+/// The placed references whose base's script counts the player into a collar radio's
+/// radius: it declares `binradius`, `bactive` and `bdestroyed` (Dead Money's speaker
+/// script, SCPT 0x01006E8E [observed: `fnvtool script decompile`]).
+fn speakers(g: &Game) -> Vec<FormId> {
+    let counts = |base: FormId| {
+        g.data.script_of_base(base).and_then(|s| g.data.script(s)).is_some_and(|s| ["binradius", "bactive", "bdestroyed"].iter().all(|v| s.var_index(v).is_some()))
+    };
+    let mut bases: std::collections::HashMap<FormId, bool> = std::collections::HashMap::new();
+    g.world.placed.refs.values().filter(|pl| *bases.entry(pl.base).or_insert_with(|| counts(pl.base))).map(|pl| pl.id).collect()
+}
+
+/// Of `speakers`, the nearest one counting the player into its radius, still on and not
+/// destroyed: the one the player's collar beeps for. Its OnActivate by the player switches
+/// it off and counts the player out (SCPT 0x01006E8E [observed]), as a player does.
+fn beeping_speaker(g: &Game, speakers: &[FormId], feet: [f32; 3]) -> Option<FormId> {
+    let on = |r: FormId, v: &str| g.ref_var_named(r, v) == Some(1.0);
+    speakers
+        .iter()
+        .filter(|r| on(**r, "binradius") && on(**r, "bactive") && !on(**r, "bdestroyed") && g.world.is_enabled(**r).unwrap_or(true))
+        .filter_map(|r| where_is(g, *r).map(|(_, pos)| (*r, hdist(pos, feet))))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(r, _)| r)
 }
 
 /// Whether actor `a` is running away: on a Flee Not Combat package, or fleeing in its
@@ -2748,8 +2789,25 @@ fn leave_talk(p: &mut Pilot, h: &mut Hands, go_along: bool) -> bool {
         return false;
     }
     let serial = h.game(|g| g.dialogue_serial).unwrap_or(0);
+    // A new conversation counts its picks afresh: ED-E's at step 53 of Camarader-E used
+    // all twelve, and the next one at step 85 was given up at once with its Goodbye two
+    // picks down (round 17 [observed]).
+    if p.talk_serial != serial {
+        (p.talk_serial, p.stuck_talk, p.talk_picks) = (serial, None, 0);
+    }
     if go_along && p.went_along != Some(serial) {
-        let pick = h.game(|g| g.dialogue_choices().iter().position(|c| !c.goodbye && !c.darkened && !choice_to_avoid(g, c))).flatten();
+        // When every choice is a Goodbye, the one whose line runs a script is the one that
+        // does what stands in the way: The Fort's gate starts Lucullus's conversation, and
+        // "I'm ready to return to Cottonwood Cove." (a Goodbye with a result script) is the
+        // ride, "Goodbye." leaves the player at the gate (round 17 [observed]).
+        let pick = h
+            .game(|g| {
+                let cs = g.dialogue_choices();
+                cs.iter().position(|c| !c.goodbye && !c.darkened && !choice_to_avoid(g, c)).or_else(|| {
+                    cs.iter().all(|c| c.goodbye || c.darkened).then(|| cs.iter().position(|c| c.goodbye && !c.darkened && !choice_to_avoid(g, c) && g.data.infos.get(&c.info).is_some_and(|d| d.begin.is_some() || d.end.is_some()))).flatten()
+                })
+            })
+            .flatten();
         if let Some(i) = pick {
             p.went_along = Some(serial);
             let text = h.game(|g| g.dialogue_choices().get(i).map(|c| g.choice_text(c).to_string())).flatten().unwrap_or_default();
@@ -4000,6 +4058,12 @@ fn run_errand(p: &mut Pilot, h: &mut Hands) -> bool {
         }
     }
     match &errand {
+        Errand::Silence(speaker) => {
+            let speaker = *speaker;
+            let done = h.script.rt.as_mut().map(|rt| with_world(rt, h.sim, |rt| rt.activate_as_player(speaker)));
+            info!("pilot: step {}: switches off the beeping speaker {speaker}: {}", p.i, outcome(done.as_ref()));
+            true
+        }
         Errand::Search(body) => {
             let body = *body;
             let taken = h.game(|g| {
@@ -4840,6 +4904,22 @@ fn drive(
             }
         }
     }
+    // A speaker that sets the collar counting down is switched off first, as a player
+    // does when the collar beeps (Dead Money).
+    if *state.get() == PlayState::Playing && p.defend.is_none() && p.errand.is_none() && p.now >= p.speaker_check {
+        p.speaker_check = p.now + 1.0;
+        if p.speakers.is_none() {
+            p.speakers = h.game(|g| speakers(g));
+        }
+        let feet = h.feet();
+        let list = p.speakers.clone().unwrap_or_default();
+        if let Some(speaker) = h.game(|g| beeping_speaker(g, &list, feet)).flatten() {
+            if !p.errands.iter().any(|e| matches!(e, Errand::Silence(s) if *s == speaker)) {
+                info!("pilot: step {}: the collar beeps near speaker {speaker}: switched off before the step goes on", p.i);
+                p.errands.push_front(Errand::Silence(speaker));
+            }
+        }
+    }
     // Errands (module notes): the one in hand, else the next, before the step goes on.
     if *state.get() != PlayState::Dialogue && p.defend.is_none() {
         if p.errand.is_none() {
@@ -4847,7 +4927,7 @@ fn drive(
                 let feet = h.feet();
                 let world = h.world;
                 let target = match &next {
-                    Errand::Search(r) | Errand::Take { from: r, .. } | Errand::Terminal { reference: r, .. } => *r,
+                    Errand::Search(r) | Errand::Take { from: r, .. } | Errand::Terminal { reference: r, .. } | Errand::Silence(r) => *r,
                 };
                 let place = h.game(|g| where_is(g, target)).flatten().and_then(|(cell, pos)| Some(Place { space: crate::nav::space_of_cell(world, cell?.0)?, pos }));
                 if let Some(place) = place {

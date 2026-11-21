@@ -63,6 +63,8 @@
     {"op": "advance_seconds", "seconds": 6},
     {"op": "get_quest", "quest": "NVDLC01MQ01a", "fields": ["stage", "done.30"], "label": "Dog quest 30 (tape found)"},
     {"op": "note", "text": "The player plays the tape near Dog (still in the trigger). The tape is a Voice note whose line's end script turns Dog into God and sets stage 40. The runner's play_note runs the line's scripts (hard stall in the game: nvf-play's holotape player plays the voice only and does not yet call Game::holotape_script)."},
+    {"op": "note", "text": "Back by Dog's cage first: the tape's end script sets stage 40 only while his bark trigger counts the player in (bPlayerInRange, INFO 0x0100DFC7 [observed: script decompile]); the tape lies in another room, and played there in round 18 the quest stayed at 30 [observed]."},
+    {"op": "trigger_enter", "trigger": "scripted:NVDLC01DogBarkTriggerScript", "event": "inside"},
     {"op": "play_note", "note": "NVDLC01DogCommandNote", "label": "the command tape played"},
     {"op": "advance_seconds", "seconds": 1},
     {"op": "get_quest", "quest": "NVDLC01MQ01a", "fields": ["stage", "done.40"], "label": "Dog quest 40 (God in control)"},
