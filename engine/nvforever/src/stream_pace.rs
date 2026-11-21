@@ -27,9 +27,13 @@
 //! after it used to take their own in full all the same. Now all of them together get
 //! [`FRAME_SHARE`] of the frame's own length: a job is given what is left of that, or its
 //! own budget if that is less, and never under [`LEAST_SLICE`] of its own, so one that
-//! runs late in the frame still moves every frame. The allowance applies only above the
-//! reference rate (while the budgets are scaled): at 60 fps half the frame (8.3 ms) is less
+//! runs late in the frame still moves every frame. The allowance applies only while the
+//! budgets are scaled (see [`PACED_BELOW`]): at 60 fps half the frame (8.3 ms) is less
 //! than the budgets' sum (13 ms), so at 60 fps or less every job keeps its whole budget.
+//!
+//! Whether to follow the frame rate at all is judged by the whole frames, streaming work
+//! included, with a margin ([`PACED_BELOW`], about 63 fps): a machine held to 60 fps by
+//! vsync keeps every budget whole however much streaming work its frames hold.
 //!
 //! `NVF_STREAM_PACE=0` keeps the budgets as they were at every frame rate, to compare;
 //! `NVF_STREAM_PACE=scale` follows the frame rate without the shared allowance.
@@ -47,6 +51,12 @@ pub const LEAST_SCALE: f32 = 0.25;
 pub const FRAME_SHARE: f32 = 0.5;
 /// [design] The least a job gets of its own budget once the frame's allowance is used up.
 pub const LEAST_SLICE: f32 = 0.25;
+/// [design] The budgets follow the frame rate only while the frames themselves (streaming
+/// work included) are shorter than this share of [`REFERENCE_FRAME`]: about 63 fps. A
+/// machine held to 60 fps by vsync has 16.7 ms frames whatever its streaming work, and its
+/// frames less that work are shorter than 1/60 s; without this margin they would scale its
+/// budgets and turn the shared allowance on at 60 fps (#3132 review).
+pub const PACED_BELOW: f32 = 0.95;
 /// Frames the median is taken over [design: about half a second at 120 fps].
 const WINDOW: usize = 64;
 /// [design] A longer frame is a stall or a load, not a frame rate: left out of the median.
@@ -102,6 +112,8 @@ pub struct StreamPace {
     share: f32,
     /// The recent frames' lengths less their streaming work, seconds (a ring).
     own: [f32; WINDOW],
+    /// The same frames' whole lengths, seconds (the same ring).
+    raw: [f32; WINDOW],
     next: usize,
     filled: usize,
     /// Nanoseconds of streaming work reported since the last [`StreamPace::frame`].
@@ -125,7 +137,7 @@ impl Default for StreamPace {
 
 impl StreamPace {
     pub fn new(mode: Mode) -> Self {
-        Self { mode, scale: 1.0, share: FRAME_SHARE, allowance: None, held_back: AtomicBool::new(false), capped: 0, own: [0.0; WINDOW], next: 0, filled: 0, spent: AtomicU64::new(0), frames: 0, scaled: 0, scale_sum: 0.0, least: 1.0 }
+        Self { mode, scale: 1.0, share: FRAME_SHARE, allowance: None, held_back: AtomicBool::new(false), capped: 0, own: [0.0; WINDOW], raw: [0.0; WINDOW], next: 0, filled: 0, spent: AtomicU64::new(0), frames: 0, scaled: 0, scale_sum: 0.0, least: 1.0 }
     }
 
     /// What is left of the frame's shared allowance (`None`: there is none).
@@ -188,27 +200,22 @@ impl StreamPace {
             return;
         }
         self.own[self.next] = (frame - spent).max(0.0);
+        self.raw[self.next] = frame;
         self.next = (self.next + 1) % WINDOW;
         self.filled = (self.filled + 1).min(WINDOW);
         self.capped += u64::from(self.held_back.swap(false, Ordering::Relaxed));
-        // Until half the window is in, the budgets are what they were.
-        let known = self.filled >= WINDOW / 2;
-        let own = self.median();
-        self.scale = if self.mode != Mode::Off && known { scale_for(own) } else { 1.0 };
-        // Only above the reference rate: at 60 fps half the frame (8.3 ms) is less than the
-        // budgets' sum (13 ms) and would hold jobs back that were whole before.
-        self.allowance = (self.mode == Mode::Shared && known && self.scale < 1.0).then(|| Duration::from_secs_f32(own * self.share));
+        // Until half the window is in, the budgets are what they were; and at about 60 fps
+        // or less, judged by the whole frames ([`PACED_BELOW`]).
+        let paced = self.mode != Mode::Off && self.filled >= WINDOW / 2 && median(&self.raw[..self.filled]) < REFERENCE_FRAME * PACED_BELOW;
+        let own = median(&self.own[..self.filled]);
+        self.scale = if paced { scale_for(own) } else { 1.0 };
+        // Only while paced: at 60 fps half the frame (8.3 ms) is less than the budgets' sum
+        // (13 ms) and would hold jobs back that were whole before.
+        self.allowance = (self.mode == Mode::Shared && paced && self.scale < 1.0).then(|| Duration::from_secs_f32(own * self.share));
         self.frames += 1;
         self.scaled += u64::from(self.scale < 1.0);
         self.scale_sum += f64::from(self.scale);
         self.least = self.least.min(self.scale);
-    }
-
-    fn median(&self) -> f32 {
-        let mut recent = self.own;
-        let recent = &mut recent[..self.filled];
-        let middle = recent.len() / 2;
-        *recent.select_nth_unstable_by(middle, f32::total_cmp).1
     }
 
     fn summary(&self) -> String {
@@ -218,6 +225,15 @@ impl StreamPace {
             self.mode.name(), (1.0 / REFERENCE_FRAME).round(), self.frames, self.scaled, self.least, self.capped,
         )
     }
+}
+
+/// The median of recent frames' lengths (not empty).
+fn median(frames: &[f32]) -> f32 {
+    let mut recent = [0.0; WINDOW];
+    let recent = &mut recent[..frames.len()];
+    recent.copy_from_slice(frames);
+    let middle = recent.len() / 2;
+    *recent.select_nth_unstable_by(middle, f32::total_cmp).1
 }
 
 /// A streaming job's time on the main thread, reported when it goes out of scope
@@ -380,6 +396,27 @@ mod tests {
             pace.frame(1.0 / fps, false);
             assert!(pace.summary().ends_with("a job held to the frame's allowance in 0"), "{fps} fps: {}", pace.summary());
         }
+    }
+
+    #[test]
+    fn held_to_sixty_by_vsync_streaming_work_changes_nothing() {
+        // Every frame 16.67 ms (or a little under: the display's clock) with 2 to 9 ms of
+        // streaming reported in it: the frames less that work are well under 1/60 s.
+        for (frame, work) in [(1.0 / 60.0, 2), (1.0 / 60.0, 9), (0.0166, 5), (1.0 / 62.0, 4)] {
+            let mut pace = StreamPace::new(Mode::Shared);
+            for _ in 0..WINDOW {
+                pace.spent(Duration::from_millis(work));
+                pace.frame(frame, false);
+            }
+            assert_eq!(pace.scale(), 1.0, "{frame} s, {work} ms");
+            pace.spent(Duration::from_millis(10));
+            assert_eq!(pace.time(Duration::from_millis(4)), Duration::from_millis(4), "{frame} s, {work} ms");
+            assert_eq!(pace.count(24), 24);
+        }
+        // Clearly faster than the margin (66 fps), it follows the frame rate again.
+        let mut pace = StreamPace::new(Mode::Shared);
+        settled(&mut pace, 1.0 / 66.0);
+        assert!(pace.scale() < 1.0);
     }
 
     #[test]

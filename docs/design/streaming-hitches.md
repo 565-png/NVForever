@@ -464,7 +464,15 @@ over 7.3 ms led more than a handful of them.
   the last 64 frames, each less the streaming work its jobs reported, so a stretch of
   crossings does not raise its own budgets; frames behind a loading screen and frames over
   100 ms are left out, the budgets are whole behind a loading screen (no scale, no
-  allowance; the median is kept for after it), and whole until 32 frames are in. A machine at
+  allowance; the median is kept for after it), and whole until 32 frames are in. Whether
+  the budgets follow the frame rate at all is judged by the median of the whole frames,
+  streaming work included, against 95 % of 1/60 s (`PACED_BELOW`, about 63 fps): a machine
+  held to 60 fps by vsync has 16.7 ms frames whatever its streaming work, and judged by
+  its frames less that work it would scale its budgets at 60 fps (#3132 re-review). The
+  shared allowance below keeps the streaming in a paced frame to about half its own
+  length, so a fast machine's frames stay under the margin while it streams; one at about
+  95 fps that spends its whole allowance in most frames can cross it and is then back to
+  whole budgets (main's behaviour) until the crossings are over [design, not measured]. A machine at
   150 fps does the streaming work of one at 60 fps a second, in slices 0.4 times the size.
   Scaled: `world.rs` `SPAWN_BUDGET`, `TAKE_IN_BUDGET`, `DESPAWN_PER_FRAME`; `readahead.rs`
   `PREPARE_BUDGET`; `lod.rs` `REBUILD_BUDGET_MS`; `water.rs` `SURFACE_READS_PER_FRAME`;
@@ -493,7 +501,7 @@ over 7.3 ms led more than a handful of them.
   below take these on.
 - **The jobs share the frame** (`stream_pace.rs` `FRAME_SHARE`, `LEAST_SLICE`) [design]. A
   job that ran over its budget on one piece used to leave the jobs after it their own in
-  full. Above 60 fps (while the budgets are scaled) all of them together now get half the
+  full. Above about 63 fps (while the budgets are scaled) all of them together now get half the
   frame's own length (3.3 ms at 150 fps); at 60 fps or less there is no allowance, since
   half a 60 fps frame (8.3 ms) is less than the budgets' sum (13 ms) and would hold jobs
   back that were whole before (#3132 review). A job is given what is left of
