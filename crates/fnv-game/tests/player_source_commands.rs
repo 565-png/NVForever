@@ -10,7 +10,10 @@ const OTHER_REP: FormId = FormId(0x851);
 const EXPELLED_FAC: FormId = FormId(0x870);
 const OTHER_FAC: FormId = FormId(0x871);
 const NPC: FormId = FormId(0x300);
+const ESSENTIAL_NPC: FormId = FormId(0x301);
+const REMOTE_NPC: FormId = FormId(0x302);
 const ROOM: FormId = FormId(0x200);
+const REMOTE_ROOM: FormId = FormId(0x201);
 struct Fixture { data: GameData, forms: FormStore, refs: RefTable }
 
 fn fixture() -> Fixture {
@@ -21,8 +24,12 @@ fn fixture() -> Fixture {
     let rep = |id, name| record(b"REPU", 0, id, &[sub(b"EDID", z(name)), sub(b"DATA", 20f32.to_le_bytes().to_vec())]);
     let fac = |id, name| record(b"FACT", 0, id, &[sub(b"EDID", z(name))]);
     let placed = record(b"ACHR", 0, NPC.0, &[sub(b"EDID", z("ProgressionNeighborRef")), sub(b"NAME", 0x800u32.to_le_bytes().to_vec()), sub(b"DATA", vec![0; 24])]);
+    let placed_essential = record(b"ACHR", 0, ESSENTIAL_NPC.0, &[sub(b"EDID", z("ProgressionEssentialRef")), sub(b"NAME", 0x800u32.to_le_bytes().to_vec()), sub(b"DATA", vec![0; 24])]);
+    let placed_remote = record(b"ACHR", 0, REMOTE_NPC.0, &[sub(b"EDID", z("ProgressionRemoteRef")), sub(b"NAME", 0x800u32.to_le_bytes().to_vec()), sub(b"DATA", vec![0; 24])]);
     let cell = record(b"CELL", 0, ROOM.0, &[sub(b"EDID", z("ProgressionRoom"))]);
-    let children = group(ROOM.0.to_le_bytes(), 6, &group(ROOM.0.to_le_bytes(), 9, &placed));
+    let children = group(ROOM.0.to_le_bytes(), 6, &group(ROOM.0.to_le_bytes(), 9, &[placed, placed_essential].concat()));
+    let remote_cell = record(b"CELL", 0, REMOTE_ROOM.0, &[sub(b"EDID", z("ProgressionRemoteRoom"))]);
+    let remote_children = group(REMOTE_ROOM.0.to_le_bytes(), 6, &group(REMOTE_ROOM.0.to_le_bytes(), 9, &placed_remote));
     // World::formula_capacity requires both carry settings, as in the aid fixture.
     let settings = [
         record(b"GMST", 0, 0x860, &[sub(b"EDID", z("fAVDCarryWeightsBase")), sub(b"DATA", 150f32.to_le_bytes().to_vec())]),
@@ -33,7 +40,7 @@ fn fixture() -> Fixture {
         top(b"FACT", &[fac(EXPELLED_FAC.0, "ExpelledFaction"), fac(OTHER_FAC.0, "OtherFaction")].concat()),
         top(b"NPC_", &[npc(7, "Player", 5), npc(0x800, "ProgressionNeighbor", 8)].concat()),
         top(b"REPU", &[rep(REP.0, "ProgressionRep"), rep(OTHER_REP.0, "ProgressionOtherRep")].concat()),
-        top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat()))),
+        top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children, remote_cell, remote_children].concat()))),
     ].concat();
     let plugins = vec![Plugin::parse(&bytes, "PlayerSourceControls.esm".into()).unwrap()];
     let order = LoadOrder::new(&plugins).unwrap();
@@ -223,6 +230,8 @@ fn focused_vanilla_census_keeps_source_support_separate_from_native_encoding() {
         ("ModPCAttribute", "ModPCAttribute Strength 0"),
         ("RemoveReputationExact", "RemoveReputationExact ProgressionRep 0 0.25"),
         ("SetPCExpelled", "SetPCExpelled ExpelledFaction 0"),
+        ("ShowNameMenu", "ShowNameMenu"),
+        ("KillAllActors", "KillAllActors"),
     ] {
         assert!(g.data.table.unnumbered.contains_key(&name.to_ascii_lowercase()));
         assert_eq!(g.data.table.by_name(name), None, "native encoding is unmeasured");
@@ -232,8 +241,8 @@ fn focused_vanilla_census_keeps_source_support_separate_from_native_encoding() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/script/functions.json");
     let catalogue = serde_json::from_str(&std::fs::read_to_string(root).unwrap()).unwrap();
     let (console, other) = functions::console::unhandled_unused(&catalogue);
-    assert_eq!((console.len(), other.len()), (33, 88));
-    for name in ["AdvancePCLevel", "ModPCAttribute", "RemoveReputationExact", "SetPCExpelled", "GetPCExpelled"] {
+    assert_eq!((console.len(), other.len()), (33, 87));
+    for name in ["AdvancePCLevel", "ModPCAttribute", "RemoveReputationExact", "SetPCExpelled", "GetPCExpelled", "ShowNameMenu", "KillAllActors"] {
         assert!(!console.iter().chain(&other).any(|n| n == name));
     }
 }
@@ -315,4 +324,66 @@ fn set_and_get_pc_expelled_track_membership_ctda_persistence_and_guards() {
     let before = restored.events.len();
     assert_eq!(restored.eval_conditions(std::slice::from_ref(&c_null), Some(FormId::PLAYER_REF), None, "null")[0].value, 0.0);
     assert!(!restored.events[before..].iter().any(|e| matches!(e.kind, EventKind::CallFailed { .. })));
+}
+
+#[test]
+fn show_name_menu_opens_the_name_menu_and_guards_receivers() {
+    let f = fixture();
+    let mut g = game(&f);
+
+    // Invalid/empty receivers must fail without opening the menu.
+    runtime_failure(&mut g, "ref empty\nempty.ShowNameMenu", "shownamemenu called on no reference");
+    runtime_failure(&mut g, "ref r\nlet r := 0x123456\nr.ShowNameMenu", "invalid calling reference");
+    assert_eq!(g.menu, None);
+
+    // Omitted receiver opens menus::NAME (1051) and emits MenuOpened once.
+    success(&mut g, "ShowNameMenu");
+    assert_eq!(g.menu, Some(fnv_game::game::menus::NAME));
+    assert_eq!(success(&mut g, "SetFunctionValue (MenuMode 1051)"), XVal::Num(1.0));
+    let opened = g.events.iter().filter(|e| matches!(e.kind, EventKind::MenuOpened { menu: fnv_game::game::menus::NAME })).count();
+    assert_eq!(opened, 1);
+
+    // Calling again while already open preserves existing Game::open_menu deduplication.
+    success(&mut g, "ProgressionNeighborRef.ShowNameMenu");
+    assert_eq!(g.menu, Some(fnv_game::game::menus::NAME));
+    assert_eq!(g.events.iter().filter(|e| matches!(e.kind, EventKind::MenuOpened { menu: fnv_game::game::menus::NAME })).count(), 1);
+}
+
+#[test]
+fn source_kill_all_actors_and_alias_share_the_loaded_area_kill_pass() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.loaded_cells.insert(ROOM);
+    success(&mut g, "ProgressionEssentialRef.SetActorRefEssential 1");
+
+    // Invalid receiver or killer must fail without killing or knocking out any loaded actor.
+    runtime_failure(&mut g, "ref empty\nempty.KillAllActors", "killallactors called on no reference");
+    runtime_failure(&mut g, "ref k\nlet k := 0x123456\nKillAllActors k", "invalid killer reference");
+    runtime_failure(&mut g, "KillAllActors \"bad\"", "KillAllActors killer argument must be a reference");
+    assert!(!g.is_dead(NPC) && !g.is_dead(ESSENTIAL_NPC) && !g.is_dead(REMOTE_NPC));
+
+    // KillAllActors with explicit killer kills loaded non-essential actors, knocks out
+    // essential ones, attributes the killer, and spares the player and unloaded cells.
+    success(&mut g, "KillAllActors Player");
+    assert!(g.is_dead(NPC), "loaded non-essential actor must be killed");
+    assert_eq!(success(&mut g, "SetFunctionValue (ProgressionNeighborRef.IsKiller Player)"), XVal::Num(1.0));
+    assert!(!g.is_dead(ESSENTIAL_NPC), "essential actor must be knocked out, not killed");
+    assert!(g.is_out_cold(ESSENTIAL_NPC) && g.knockout(ESSENTIAL_NPC).is_some(), "essential actor must enter unconscious state");
+    assert!(!g.is_dead(FormId::PLAYER_REF), "player must never be killed by KillAllActors");
+    assert!(!g.is_dead(REMOTE_NPC), "actor in an unloaded cell must be spared");
+
+    // Alias KillAll (0 args) and empty-ref optional killer both execute the same pass cleanly.
+    let mut g2 = game(&f);
+    g2.loaded_cells.insert(ROOM);
+    success(&mut g2, "ref k\nKillAll k");
+    assert!(g2.is_dead(NPC));
+    assert_eq!(success(&mut g2, "SetFunctionValue (ProgressionNeighborRef.IsKiller Player)"), XVal::Num(0.0));
+    assert!(!g2.is_dead(REMOTE_NPC));
+
+    // Console `kill_all_actors` keeps its formatted summary via the shared pass.
+    let mut g3 = game(&f);
+    g3.loaded_cells.insert(ROOM);
+    success(&mut g3, "ProgressionEssentialRef.SetActorRefEssential 1");
+    let lines = functions::console::kill_all_actors(&mut g3, &functions::console::ConsoleCtx::default(), &[]).unwrap();
+    assert_eq!(lines, vec!["KillAllActors >> 1 killed, 1 essential knocked out"]);
 }

@@ -20,6 +20,13 @@ original-game parity remain unverified.
   `iFlag == 0`. `GetPCExpelled FactionID` (`0x10C1`, CTDA condition index `193`,
   `ptFaction`) returns `1` when the player is expelled from `FactionID` and `0`
   otherwise.
+- [documented: GECK wiki, [ShowNameMenu](https://geckwiki.com/index.php?title=ShowNameMenu)]
+  `ShowNameMenu` takes no arguments and opens the player name-entry menu (menu
+  code `1051`, `menus::NAME`).
+- [documented: GECK wiki, [KillAllActors](https://geckwiki.com/index.php?title=KillAllActors)]
+  `KillAllActors [Killer]` (alias `KillAll`) kills every living, present actor
+  in the loaded area except the player, knocking out essential actors instead;
+  the optional `Killer` reference takes credit for the kill.
 
 ## NVForever mapping and open questions
 
@@ -50,6 +57,16 @@ original-game parity remain unverified.
   when the player stands inside a faction-owned interior cell, native
   `SetPCExpelled` bytecode argument encoding, and original-game non-faction /
   receiver edge cases remain uncaptured and are not implemented here.
+- [design] `ShowNameMenu` calls `Game::open_menu(menus::NAME)`, reusing the same
+  name-entry menu path as `GetPlayerName`. `KillAllActors` and its alias
+  `KillAll` call the shared loaded-area kill pass
+  `functions::console::kill_all_actors_in_loaded` (also used by console
+  `killall`), accepting an omitted or empty `Killer` reference as `None`, a
+  loaded/placed/player reference as `Some(killer)`, and rejecting unknown or
+  non-reference killer arguments without mutating actors. [hypothesis] Native
+  GECK bytecode argument encoding, whether `ShowNameMenu` suppresses or closes
+  an active `ShowTextInputMenu`, and original-game invalid-killer / receiver
+  edge cases remain uncaptured.
 - [hypothesis: selected portable source convention] These global player commands
   ignore a valid explicit receiver and never redirect the mutation to that receiver.
   An explicit empty/invalid receiver fails before dispatch, rather than being
