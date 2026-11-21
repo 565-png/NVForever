@@ -4688,23 +4688,25 @@ expect = [
 
 [[scenario]]
 name = "music-under-pipboy-radio"
-source = "#3311 (audio.md §13.2 item 9): the Goodsprings music fades out while the Pip-Boy radio plays Mojave Music Radio (on at 12 s) and starts again when it is turned off (26 s)"
+source = "#3311 (audio.md §13.2 item 9): the Goodsprings music is turned down to silence while the Pip-Boy radio plays Mojave Music Radio (on at 12 s) and fades back in, the same track, when it is turned off (26 s)"
 areas = ["audio", "music", "radio"]
 paths = ["engine/nvf-play/src/music.rs", "engine/nvf-play/src/radio.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_RADIO = "12:on,26:off" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-69000,3500,8900", "--hour", "12"]
 run_seconds = 45
 expect = [
-  { re = 'music summary: 2 started, .*\b1 held by the Pip-Boy radio', label = "music summary: 2 started, … 1 held by the Pip-Boy radio" },
+  { re = 'music summary: 1 started, .*\b1 held by the Pip-Boy radio; playing musSetLOCDesExplBothABC day', label = "music summary: 1 started (not started again), … 1 held by the Pip-Boy radio; playing musSetLOCDesExplBothABC day" },
+  { text = "musSetLOCDesExplBothABC day fades out", count = 0, label = "the track is not dropped under the radio" },
+  { re = "the Pip-Boy tuned to vCountryRadio playing ", label = "the station really plays" },
 ]
 order = [[
   "music: musSetLOCDesExplBothABC day started, layers outer+middle+inner",
   "pipboy radio: on, tuned to vCountryRadio",
   "music: the Pip-Boy radio plays: the place's music is held",
-  "music: musSetLOCDesExplBothABC day fades out",
+  "music: the place's music is silent (Pip-Boy radio)",
   "pipboy radio: off",
   "music: the Pip-Boy radio stopped: the place's music comes back",
-  "music: musSetLOCDesExplBothABC day started, layers outer+middle+inner",
+  "music: the place's music is back at full level (Pip-Boy radio)",
 ]]
 
 [[scenario]]
@@ -4712,13 +4714,14 @@ name = "radio-jukebox"
 launch = "saloon-jukebox"
 source = "CLAUDE.md: after radio changes, the saloon jukebox switched off at 14 s and on at 22 s (docs/spec-notes/radio.md §6: the programme runs on from when first heard, at the scripts' first frame, so it comes back about 22 s in; the aids count from the same frame since the start's loading screen, #703)"
 areas = ["radio", "audio"]
-paths = ["crates/fnv-world/src/radio.rs", "crates/fnv-game/src/radio.rs", "engine/nvf-play/src/radio.rs"]
+paths = ["crates/fnv-world/src/radio.rs", "crates/fnv-game/src/radio.rs", "engine/nvf-play/src/radio.rs", "engine/nvf-play/src/music.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00107D73", NVF_PLAY_TEST_ACTIVATE = "14,22" }
 args = ["--cell", "GSProspectorSaloonInterior", "--play", "--no-voice"]
 run_seconds = 40
 expect = [
   "00109087 (vCountryRadio) is destroyed: silent",
   "radio summary: 1 receivers heard, 1 songs started, 0 DJ lines, 0 lines without a file; receivers switched 3 times, 1 on at exit",
+  { text = "music: the Pip-Boy radio plays", count = 0, label = "a world receiver alone does not turn the music down (#3311)" },
 ]
 order = [[
   { re = '00107D73 tuned to vCountryRadio playing (?P<f>sound\\songs\\radionv\\.*_mono\.ogg)', label = "00107D73 tuned to vCountryRadio playing sound\\songs\\radionv\\…_mono.ogg" },
@@ -4783,7 +4786,7 @@ order = [[
 name = "radio-pipboy"
 source = "CLAUDE.md: after radio changes, the Pip-Boy radio with a script-started broadcast (radio.md §8)"
 areas = ["radio", "audio", "pipboy"]
-paths = ["crates/fnv-world/src/radio.rs", "crates/fnv-game/src/radio.rs", "engine/nvf-play/src/radio.rs"]
+paths = ["crates/fnv-world/src/radio.rs", "crates/fnv-game/src/radio.rs", "engine/nvf-play/src/radio.rs", "engine/nvf-play/src/music.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "2:enable:RNVTARef,2:enable:vNCREmergencyRadioTARef,2:start:vNCREmergencyRadio", NVF_PLAY_TEST_RADIO = "4:next,12:next,20:previous,28:tune=vNCREmergencyRadioTA,52:off" }
 args = ["--cell", "Goodsprings", "--play"]
 run_seconds = 60
@@ -4798,7 +4801,13 @@ expect = [
   "pipboy radio summary: off at exit",
   { re = 'pipboy radio loudness \(RMS as played, before the Radio and master volumes\): songs (?P<n>[\d.]+)', range = [0.01, 1], label = "songs play at full level, not 12 dB down (#1077)" },
   { re = '(?P<n>\d+) conversations started by scripts', range = [2, 1e9], label = "2 or more conversations started by scripts" },
+  { re = 'music summary: .*\b[1-9]\d* held by the Pip-Boy radio', label = "the Pip-Boy radio held the place's music (#3311)" },
 ]
+order = [[
+  "pipboy radio: on, tuned to vCountryRadio",
+  "music: the Pip-Boy radio plays: the place's music is held",
+  "pipboy radio summary: off at exit",
+]]
 
 [[scenario]]
 name = "radio-rnv-voice-off"

@@ -49,10 +49,12 @@
 //!   name]. No music plays while the player is dead; alive again, the place's music
 //!   comes back [design].
 //! - **The Pip-Boy radio** (`crate::radio::Radio::pipboy_playing`): while it plays a
-//!   station the place's music fades out over its fade time and no incidental phrase
-//!   plays; when the radio stops (off, out of range) the place's music starts again from
-//!   its beginning. Battle music still comes in over the radio, and music scripts ask for
-//!   plays beside it [hypothesis: observer check 250; #3311].
+//!   station the place's music (and its outgoing crossfades) is turned down to silence
+//!   over [`RADIO_FADE`] and no incidental phrase plays; it plays on unheard, so when the
+//!   radio stops (off, out of range) it fades back in where it has got to. Only what the
+//!   mixer hears changes: the player's volume, SetMusicState's pause and the layers are
+//!   left as they are. Battle music (a battle loop, a dungeon set in a battle) and the
+//!   music scripts ask for keep their level [hypothesis: observer check 250; #3311].
 //! - Music goes on in menus and behind loading screens [design].
 //! - Not built: the main menu's music (no main menu yet; `SMainMenuMusicTrack`), the
 //!   controllers' retrigger delay and `NAM1` (not understood), `IsMusicPlaying`-style
@@ -378,33 +380,32 @@ pub fn hold_layers(wanted: [bool; 3], playing: [bool; 3], on_since: [f32; 3], mi
     [0, 1, 2].map(|k| wanted[k] || (playing[k] && now - on_since[k] < min_on))
 }
 
-/// Where the music heard comes from ([`wanted_source`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Heard {
-    Silent,
-    /// A battle set's loop.
-    Battle,
-    /// The place's music: its marker's set (a dungeon set plays a battle's layer too), else
-    /// the cell's or worldspace's music type.
-    Place,
+/// Seconds the place's music takes to fade out under the Pip-Boy radio, and to come
+/// back after it [design].
+const RADIO_FADE: f32 = DEFAULT_FADE;
+
+/// The share of its level a track keeps under the Pip-Boy radio: the place's music
+/// (`place`: a location or dungeon set or the cell's or worldspace's music type) is
+/// turned down to `duck` (1 with the radio off, 0 under it, eased over [`RADIO_FADE`]),
+/// except a dungeon set while it plays a battle (`battle`); a battle set's loop and the
+/// music scripts ask for (`place` false) keep theirs [hypothesis: observer check 250;
+/// #3311, a player's report that the music should stop while the radio is on].
+pub fn radio_share(place: bool, battle: bool, duck: f32) -> f32 {
+    if place && !battle {
+        duck.clamp(0.0, 1.0)
+    } else {
+        1.0
+    }
 }
 
-/// What is wanted: nothing while the player is dead, the battle set's loop once it is
-/// due, silence while a battle set recovers, else the place's music. While the Pip-Boy
-/// radio plays a station (`radio`) the place's music is held silent, unless a battle
-/// plays it (`battle_in_place`: a battle where the place's dungeon set plays its battle
-/// layer); battle music still comes in over the radio [hypothesis: observer check 250;
-/// #3311, a player's report that the music should stop while the radio is on].
-pub fn wanted_source(dead: bool, battle_loop: bool, recovering: bool, radio: bool, battle_in_place: bool) -> Heard {
-    if dead {
-        Heard::Silent
-    } else if battle_loop {
-        Heard::Battle
-    } else if recovering || (radio && !battle_in_place) {
-        Heard::Silent
-    } else {
-        // Also during a battle set's wait before its loop.
-        Heard::Place
+/// One frame of a track: each layer's fade moved on by `dt` and its level handed to the
+/// mixer at `volume` (the player's music volume and the conversation tweak) times
+/// `share` ([`radio_share`]). The share changes what the mixer hears only, so the track
+/// plays on with its layers' fades and the player's volume as they were.
+fn mix(t: &mut Track, dt: f32, volume: f32, share: f32) {
+    for k in 0..3 {
+        t.level[k] = fade_step(t.level[k], t.target[k], dt, t.fade);
+        t.levels[k].store((t.level[k] * t.gain[k] * volume * share).to_bits(), Ordering::Relaxed);
     }
 }
 
@@ -444,6 +445,9 @@ struct Track {
     /// When each layer last came in (real seconds).
     on_since: [f32; 3],
     layer_names: [&'static str; 3],
+    /// The place's music (a set or the cell's or worldspace's type), which the Pip-Boy
+    /// radio turns down ([`radio_share`]); false for a battle loop and script music.
+    place: bool,
 }
 
 #[derive(Component)]
@@ -485,8 +489,13 @@ pub struct Music {
     battle: Battle,
     /// The player is dead: no music plays.
     dead: bool,
-    /// The Pip-Boy radio plays a station: the place's music is held ([`wanted_source`]).
+    /// The Pip-Boy radio plays a station: the place's music is turned down
+    /// ([`radio_share`]).
     radio: bool,
+    /// How much of the place's music the Pip-Boy radio leaves, 0-1, and the end of its
+    /// fade last logged.
+    duck: f32,
+    duck_logged: f32,
     /// When the next incidental phrase is due, and the region it is for.
     incidental: Option<(u32, f32)>,
     reported: HashSet<String>,
@@ -523,6 +532,8 @@ impl Default for Music {
             battle: Battle::default(),
             dead: false,
             radio: false,
+            duck: 1.0,
+            duck_logged: 1.0,
             incidental: None,
             reported: HashSet::new(),
             rng: SplitMix(0x6d75_7369),
@@ -754,6 +765,7 @@ impl Music {
             min_on: w.min_on,
             on_since: [now; 3],
             layer_names: w.layers,
+            place: false,
         };
         let layers: Vec<&str> = (0..3).filter(|&k| w.on[k] && w.files[k].is_some()).map(|k| w.layers[k]).collect();
         t.layer_names = w.layers;
@@ -1137,8 +1149,8 @@ fn play(
             music.stingers += 1;
         }
     }
-    // The Pip-Boy radio playing a station holds the place's music (`wanted_source`); it
-    // comes back, started again, when the radio stops.
+    // The Pip-Boy radio playing a station turns the place's music down (`radio_share`);
+    // it plays on unheard and fades back in where it has got to when the radio stops.
     let radio_on = radio.is_some_and(|r| r.pipboy_playing);
     if radio_on != music.radio {
         music.radio = radio_on;
@@ -1166,11 +1178,15 @@ fn play(
             wanted_type(places.forms.music.get(&of_cell.or_else(of_world)?)?)
         })
     };
-    let battle_in_place = music.battle.active && music.battle.set.is_none() && place_set.is_some_and(|s| s.kind == MediaSetKind::Dungeon);
-    let wanted = match wanted_source(music.dead, battle_loop, recovering, music.radio, battle_in_place) {
-        Heard::Silent => None,
-        Heard::Battle => battle_set.map(wanted_battle),
-        Heard::Place => place(music),
+    let wanted = if music.dead {
+        None
+    } else if battle_loop {
+        battle_set.map(wanted_battle)
+    } else if recovering {
+        None
+    } else {
+        // Also during a battle set's wait before its loop.
+        place(music)
     };
 
     // A change of music: what plays fades out, what is wanted starts. A battle loop
@@ -1188,7 +1204,8 @@ fn play(
             if matches!(w.key, Key::Battle(_)) {
                 music.battle_sets += 1;
             }
-            let t = music.start(&mut commands, &data.vfs, &mut assets, w, now);
+            let mut t = music.start(&mut commands, &data.vfs, &mut assets, w, now);
+            t.place = !matches!(w.key, Key::Battle(_));
             music.current = Some(t);
         }
     }
@@ -1259,11 +1276,26 @@ fn play(
     // The player's tweak turns the music down in a conversation [design: docs/design/tweaks.md].
     let talk = if *state.get() == PlayState::Dialogue { tweaks.as_ref().map_or(1.0, |t| t.dialogue_music_volume) } else { 1.0 };
     let volume = if settings.play && !front { settings.volume.max(0.0) * talk } else { 0.0 };
-    for t in music.current.iter_mut().chain(music.script.iter_mut()).chain(music.leaving.iter_mut()) {
-        for k in 0..3 {
-            t.level[k] = fade_step(t.level[k], t.target[k], dt, t.fade);
-            t.levels[k].store((t.level[k] * t.gain[k] * volume).to_bits(), Ordering::Relaxed);
+    // The Pip-Boy radio's share of the place's music, eased; the ends of its fade logged.
+    music.duck = fade_step(music.duck, if music.radio { 0.0 } else { 1.0 }, dt, RADIO_FADE);
+    for end in [0.0, 1.0] {
+        if (music.duck - end).abs() < 1e-4 && music.duck_logged != end {
+            music.duck_logged = end;
+            info!("music: the place's music is {} (Pip-Boy radio)", if end == 0.0 { "silent" } else { "back at full level" });
         }
+    }
+    // A dungeon set playing a battle keeps its level, as battle music does.
+    let battle_in_place = music.battle.active && music.battle.set.is_none() && place_set.is_some_and(|s| s.kind == MediaSetKind::Dungeon);
+    let duck = music.duck;
+    if let Some(t) = music.current.as_mut() {
+        mix(t, dt, volume, radio_share(t.place, battle_in_place, duck));
+    }
+    if let Some(t) = music.script.as_mut() {
+        mix(t, dt, volume, 1.0);
+    }
+    // Outgoing crossfades too.
+    for t in &mut music.leaving {
+        mix(t, dt, volume, radio_share(t.place, false, duck));
     }
     music.leaving.retain(|t| {
         let over = t.level.iter().all(|l| *l <= 0.0);
@@ -1473,21 +1505,64 @@ mod tests {
         assert!(wanted_type(&MusicType::default()).is_none());
     }
 
+    fn track(place: bool) -> Track {
+        Track {
+            key: Key::Type(1),
+            name: "t".into(),
+            entity: None,
+            waiting: None,
+            levels: Arc::new([AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)]),
+            level: [1.0, 0.0, 0.0],
+            target: [1.0, 0.0, 0.0],
+            gain: [0.5, 1.0, 1.0],
+            fade: 3.0,
+            min_on: 0.0,
+            on_since: [0.0; 3],
+            layer_names: ONE_LAYER,
+            place,
+        }
+    }
+
+    /// What the mixer is told for the first layer of `t`.
+    fn heard(t: &Track) -> f32 {
+        f32::from_bits(t.levels[0].load(Ordering::Relaxed))
+    }
+
     #[test]
-    fn the_pipboy_radio_holds_the_place_music() {
-        use Heard::{Battle as B, Place as P, Silent as S};
-        // (dead, battle loop, recovering, radio, battle in the place's dungeon set)
-        assert_eq!(wanted_source(false, false, false, false, false), P);
-        // The radio on: the place's music is held (#3311); off again, it comes back.
-        assert_eq!(wanted_source(false, false, false, true, false), S);
-        // Battle music still comes in over the radio, a battle set's loop or the battle
-        // layer of the place's dungeon set.
-        assert_eq!(wanted_source(false, true, false, true, false), B);
-        assert_eq!(wanted_source(false, false, false, true, true), P);
-        // The rest as before: nothing while dead or while a battle set recovers.
-        assert_eq!(wanted_source(true, true, false, false, true), S);
-        assert_eq!(wanted_source(false, false, true, false, false), S);
-        assert_eq!(wanted_source(false, true, false, false, false), B);
+    fn the_pipboy_radio_turns_the_place_music_down_and_back() {
+        let settings = MusicSettings { play: true, volume: 0.6 };
+        let mut place = track(true);
+        let mut script = track(false);
+        let mut battle = track(false);
+        battle.key = Key::Battle(2);
+        let mut duck = 1.0;
+        let frames = |n: usize, radio: bool, duck: &mut f32, tracks: [&mut Track; 3]| {
+            let [place, script, battle] = tracks;
+            for _ in 0..n {
+                *duck = fade_step(*duck, if radio { 0.0 } else { 1.0 }, 0.1, RADIO_FADE);
+                for t in [&mut *place, &mut *script, &mut *battle] {
+                    let share = radio_share(t.place, false, *duck);
+                    mix(t, 0.1, settings.volume, share);
+                }
+            }
+        };
+        frames(1, false, &mut duck, [&mut place, &mut script, &mut battle]);
+        assert!((heard(&place) - 0.3).abs() < 1e-6, "audible before the radio");
+        // The radio on: the place's music fades to silence over RADIO_FADE (#3311)...
+        frames(15, true, &mut duck, [&mut place, &mut script, &mut battle]);
+        assert!(heard(&place) > 0.0 && heard(&place) < 0.3, "halfway down");
+        frames(20, true, &mut duck, [&mut place, &mut script, &mut battle]);
+        assert_eq!(heard(&place), 0.0, "silent under the radio");
+        // ...while it plays on, its own fade untouched; battle and script music keep theirs.
+        assert_eq!(place.level, [1.0, 0.0, 0.0]);
+        assert!((heard(&script) - 0.3).abs() < 1e-6 && (heard(&battle) - 0.3).abs() < 1e-6);
+        // The radio off: back where it was; the player's volume never changed.
+        frames(35, false, &mut duck, [&mut place, &mut script, &mut battle]);
+        assert!((heard(&place) - 0.3).abs() < 1e-6, "audible again");
+        assert_eq!(settings.volume, 0.6);
+        // A dungeon set playing a battle keeps its level under the radio.
+        assert_eq!(radio_share(true, true, 0.0), 1.0);
+        assert_eq!(radio_share(true, false, 0.0), 0.0);
     }
 
     #[test]

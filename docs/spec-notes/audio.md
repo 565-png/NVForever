@@ -789,15 +789,18 @@ Counts are of FalloutNV.esm alone [observed] unless they say otherwise.
    effects volume) and are not played with music off [design].
 9. **The Pip-Boy radio** (#3311): while it plays a station (on, tuned to a station
    received here, sound on, not at the poker table; `radio::Radio::pipboy_playing`) the
-   place's music (its marker's set, else the cell's or worldspace's type) fades out over
-   its fade time and no incidental phrase plays; when the radio stops or the station is
-   no longer received, the place's music starts again from its beginning, fading in.
-   Battle music still comes in over the radio (a battle set's loop, or the battle layer
-   of the place's dungeon set, whose other layers play with it then), and script music
-   (item 7), the death and level-up music play as before [hypothesis: a player's report
-   says the music should stop while the radio is on; what the original does with battle
-   music, fades and the return is observer check 250; design: started again, not held
-   where it was].
+   place's music (its marker's set, else the cell's or worldspace's type, and its
+   outgoing crossfades) is turned down to silence over 3 s and no incidental phrase
+   plays; it plays on unheard, so when the radio stops or the station is no longer
+   received it fades back in over 3 s where it has got to. Only the level the mixer is
+   given changes: the player's Music volume, SetMusicState's pause and the layers stay
+   as they were. A world receiver (a placed radio, a jukebox, an actor made a radio)
+   does not turn the music down. Battle music keeps its level over the radio (a battle
+   set's loop, or the place's dungeon set while it plays a battle), and so do script
+   music (item 7) and the death and level-up music [hypothesis: a player's report says
+   the music should stop while the radio is on; battle music, how fast it goes, and
+   whether it resumes or starts again are observer check 250; design: the 3 s fades,
+   resumed rather than started again].
 
 Seen [observed 2026-10-11, `nvforever --play`, the owner's load order]:
 - Standing next to Violet (`--cell Goodsprings --pos=-46800,65000,4600 --hour 12`):
