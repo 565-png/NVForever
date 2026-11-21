@@ -98,8 +98,12 @@ import bevy_pbr::{
 import nvf_assets::nif_surface_bindings::{NifSurface, nif_surface, standard_material, holes_alpha, facegen_size, facegen_texel, base_color_texel, base_color_texel_level, base_color_size, normal_map_texel};
 @if(NVF_PBR_VIEW_OCCLUSION && !PREPASS_PIPELINE) import nvf_assets::nif_surface_bindings::occlusion_texel;
 @if(NVF_PBR_VIEW_OCCLUSION && !PREPASS_PIPELINE) import bevy_pbr::render::pbr_types::STANDARD_MATERIAL_FLAGS_OCCLUSION_TEXTURE_BIT;
+@if(NVF_PBR_VIEW_HEIGHT && !PREPASS_PIPELINE) import nvf_assets::nif_surface_bindings::height_texel;
+@if(NVF_PBR_VIEW_HEIGHT && !PREPASS_PIPELINE) import bevy_pbr::render::pbr_types::STANDARD_MATERIAL_FLAGS_DEPTH_MAP_BIT;
+@if(NVF_PBR_PARALLAX_MASK && !PREPASS_PIPELINE) import bevy_pbr::render::pbr_types as parallax_mask_types;
 @if(MESH_TERRAIN_BLEND) import nvf_assets::nif_surface_bindings::{mesh_terrain_lookup, mesh_terrain_view, mesh_terrain_shading, mesh_terrain_unlit_view, mesh_terrain_diagnostic, mesh_terrain_blend_normal, mesh_terrain_target_colour, mesh_terrain_target_normal, mesh_terrain_face_up, MeshTerrainInputs, LOOKUP_SUCCESS, LAND_ROUGHNESS, LAND_REFLECTANCE};
 @if(MESH_TERRAIN_BLEND && !PREPASS_PIPELINE) import bevy_pbr::render::pbr_types::STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
+@if(!NIF_SURFACE_BLEND) import nvf_assets::nif_surface_bindings::{env_cube_texel, env_mask_texel};
 
 // Main-pass geometry uses the render viewport, which can be smaller than the
 // display attachment when FSR is enabled. Transmission remains a full-size texture.
@@ -556,6 +560,20 @@ fn nif_fragment(
     // (#2981). No surface is rougher than 1; Bevy raises the low end to 0.089 where the
     // highlight's shape needs it, and 0 here only keeps a signed map's negative out.
     pbr_input.material.perceptual_roughness = clamp(pbr_input.material.perceptual_roughness, 0.0, 1.0);
+    // NVF_PBR_PARALLAX_MASK (nvf-assets authored.rs `parallax_mask`, a development switch, off
+    // unless NVF_PBR_PARALLAX_MASK=1 at the start): an alpha-tested shape may carry a height
+    // map. Its alpha (material x vertex x texel) is read again at the unshifted coordinates,
+    // as nif_prepass.wesl, Bevy's prepass and the shadow passes read it, and replaces the
+    // shifted texel's alpha for the tests below, so the main pass cuts what the depth prepass
+    // cut (its equal-depth test then finds every kept fragment) and the soft edges come from
+    // the same alpha. The colour, normal and ORM inside the cut stay the shifted texels'.
+    @if(NVF_PBR_PARALLAX_MASK && !PREPASS_PIPELINE && VERTEX_UVS_A) if (pbr_input.material.flags & parallax_mask_types::STANDARD_MATERIAL_FLAGS_DEPTH_MAP_BIT) != 0u && (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS) == parallax_mask_types::STANDARD_MATERIAL_FLAGS_ALPHA_MODE_MASK && (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u {
+        let unshifted_standard = standard_material(in.instance_index);
+        let unshifted_uv = (unshifted_standard.uv_transform * vec3(in.uv, 1.0)).xy;
+        var unshifted_alpha = unshifted_standard.base_color.a * base_color_texel(in.instance_index, unshifted_uv, view.mip_bias).a;
+        @if(NVF_PBR_PARALLAX_MASK && !PREPASS_PIPELINE && VERTEX_UVS_A && VERTEX_COLORS) unshifted_alpha *= vin.color.a;
+        pbr_input.material.base_color.a = unshifted_alpha;
+    }
     // NVF_PBR_VIEW (nvf-assets authored.rs `PbrView`, a debug view, off unless NVF_PBR_VIEW is
     // set at the start): one material input, taken here, right after the standard material's
     // sampling and before the mesh terrain blend, and written over the colour at the end.
@@ -569,6 +587,13 @@ fn nif_fragment(
         pbr_view = vec3(occlusion_texel(in.instance_index, occlusion_uv, view.mip_bias));
     }
     @if(NVF_PBR_VIEW_NORMAL && !PREPASS_PIPELINE) pbr_view = 0.5 + 0.5 * pbr_input.N;
+    // The height map as stored (the original height, not the inverted depth the march
+    // reads), at the unshifted coordinates; dark blue where the material has none.
+    @if(NVF_PBR_VIEW_HEIGHT && !PREPASS_PIPELINE) pbr_view = vec3(0.0, 0.0, 0.3);
+    @if(NVF_PBR_VIEW_HEIGHT && !PREPASS_PIPELINE && VERTEX_UVS_A) if (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_DEPTH_MAP_BIT) != 0u {
+        let height_uv = (standard_material(in.instance_index).uv_transform * vec3(in.uv, 1.0)).xy;
+        pbr_view = vec3(height_texel(in.instance_index, height_uv, view.mip_bias));
+    }
     @if(NVF_PBR_VIEW_AUTHORED && !PREPASS_PIPELINE) {
         let view_brightness = 0.25 + 0.75 * dot(pbr_input.material.base_color.rgb, vec3(0.2126, 0.7152, 0.0722));
         pbr_view = select(vec3(0.5), vec3(1.0, 0.45, 0.05), surface.emissive_rule.w > 0.5) * view_brightness;
@@ -725,6 +750,26 @@ fn nif_fragment(
         @if(NVF_PBR_METALLIC) let removed = select(1.0, 1.0 - saturate(m.metallic), surface.emissive_rule.w > 0.5);
         @if(NVF_PBR_METALLIC) out.color = vec4(max(out.color.rgb - view.exposure * ambient_spec * removed, vec3(0.0)), out.color.a);
         @if(!PREPASS_PIPELINE && !TONEMAP_IN_SHADER && !BLEND_MULTIPLY) out.color = vec4(hot_light(out.color.rgb, hot_e), out.color.a);
+        // Window environment map (nif_material.rs NifSurface::env; docs/spec-notes/nif.md
+        // §6 "Window glass and environment maps"): the cube read in the view direction
+        // reflected about the normal, × the scale × the mask, added to the lit colour. The
+        // game is Z-up and the cube's faces are laid out Y-up: the game-space direction
+        // (x, y, z) is looked up as (x, z, y), which from Bevy's Y-up world space
+        // (x, z, -y of the game) is (x, y, -z) [hypothesis]. A premultiplied shape (a
+        // blended one that reflects) has its colour multiplied by its alpha first, so the
+        // reflection lies over the blend whatever the alpha [hypothesis]. Not in the blend
+        // type (nif_surface_blend.rs): it has no environment bindings, and a shape that
+        // reflects is never given it (nvforever mesh_terrain_blend.rs `material_reasons`).
+        @if(!NIF_SURFACE_BLEND) if surface.env.x > 0.0 {
+            let r = reflect(-pbr_input.V, pbr_input.N);
+            var mask = 1.0;
+            @if(VERTEX_UVS_A) if surface.env.y > 0.5 {
+                mask = env_mask_texel(in.instance_index, (standard_material(in.instance_index).uv_transform * vec3(in.uv, 1.0)).xy);
+            }
+            let reflection = env_cube_texel(in.instance_index, vec3(r.x, r.y, -r.z)) * surface.env.x * mask;
+            let premultiplied = (pbr_input.material.flags & STANDARD_MATERIAL_FLAGS_ALPHA_MODE_RESERVED_BITS) == STANDARD_MATERIAL_FLAGS_ALPHA_MODE_PREMULTIPLIED;
+            out.color = vec4(select(out.color.rgb, out.color.rgb * out.color.a, premultiplied) + reflection, out.color.a);
+        }
     } else {
         out.color = pbr_input.material.base_color;
         // An unlit shape with a non-black emissive colour is drawn at its emissive light:
