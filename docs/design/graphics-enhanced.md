@@ -618,8 +618,9 @@ over the frames instead of by alpha to coverage.
   it, and the pass runs only on a view that carries the marker this frame (log: `taa: off for
   a view: its pass state and history dropped`). Before, the pass went on blending the history
   frozen at the switch into every frame (a faint still picture over the view under FSR or DLSS
-  until a load). Turned on again, the history starts over on the first frame (`taa: on for a
-  view: its history starts over`).
+  until a load). Turned on again, the history starts over on its first pass that runs
+  (`taa: on for a view: its history starts over` is logged when the view's state is made,
+  which can be a frame or more before, while the pipeline compiles).
 - Looks [observed 2026-10-12, Goodsprings noon, standing, and walking while turning 40 degrees a
   second]: edges as smooth as MSAA 4x standing still, plants' cut-outs smoother; textures a
   little softer standing still and clearly softer while the view moves (the usual TAA trade);

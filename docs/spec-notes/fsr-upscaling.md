@@ -32,11 +32,13 @@ Design and measurements: [fsr-upscaling](../design/fsr-upscaling.md).
   the same frame (#2955; `taa.rs` `drop_stale`). Bevy removes only the extracted marker from
   the render-world entity, which lives on [documented: bevy_extract 0.20.1
   `sync_component.rs`, the removal observer removes `SyncComponent::Target`, by default the
-  component itself]. Native TAA draws when TAA is the anti-aliasing choice and the
+  component itself]. Native TAA is enabled when TAA is the anti-aliasing choice and the
   effective upscaler is Off (`upscaler.rs` `effective_temporal`, `graphics.rs` `apply`): a
   requested upscaler that cannot run (FSR unsupported, DLSS unavailable) leaves native TAA
   on, but DLSS requested while FSR draws and Streamline is not loaded keeps FSR drawing until
-  a restart, and TAA stays off. TAA turned on again starts its history over.
+  a restart, and TAA stays off. TAA turned on again starts its history over on its first
+  pass that runs (while its pipeline still compiles, `prepare` has already logged `taa: on`
+  and the pass skips the frame).
 - [engineering choice] Vulkan only to begin with. Other backends keep native rendering.
   No frame generation.
 

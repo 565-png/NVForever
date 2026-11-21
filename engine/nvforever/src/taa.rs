@@ -26,7 +26,7 @@
 //! over: `graphics.rs` `apply`), the camera keeps its render-world entity and Bevy's sync
 //! takes only [`TemporalAa`] off it; the pass's own state on that entity is dropped the
 //! same frame ([`drop_stale`], #2955), and the pass runs only on a view that still carries
-//! [`TemporalAa`]. Turned on again, its history starts over on the first frame.
+//! [`TemporalAa`]. Turned on again, its history starts over on its first pass that runs.
 
 use crate::fly::FlyCam;
 use bevy::core_pipeline::prepass::ViewPrepassTextures;
@@ -439,11 +439,31 @@ mod tests {
     /// world's preparation and runs before `prepare`.
     #[test]
     fn the_render_world_drops_the_stale_state_before_prepare() {
-        use std::any::TypeId;
         let mut world = World::new();
         let mut schedule = Schedule::default();
         schedule.add_systems(prepare_systems());
-        schedule.initialize(&mut world).expect("the preparation's schedule builds");
+        assert_drops_before_prepare(&mut world, &mut schedule);
+    }
+
+    /// The `Render` schedule [`TaaPlugin`] itself registers, on a render sub-app without a
+    /// GPU: registering `prepare` without `drop_stale` (or before it) fails here.
+    #[test]
+    fn the_plugin_registers_drop_stale_before_prepare() {
+        let mut app = App::new();
+        app.init_resource::<bevy::asset::io::embedded::EmbeddedAssetRegistry>();
+        app.insert_sub_app(RenderApp, bevy::app::SubApp::new());
+        app.add_plugins(TaaPlugin);
+        let render = app.sub_app_mut(RenderApp);
+        render.world_mut().resource_scope(|world, mut schedules: Mut<Schedules>| {
+            let schedule = schedules.get_mut(Render).expect("TaaPlugin adds systems to Render");
+            assert_drops_before_prepare(world, schedule);
+        });
+    }
+
+    /// `drop_stale::<TaaView>` and `prepare` are both in `schedule`, the first before.
+    fn assert_drops_before_prepare(world: &mut World, schedule: &mut Schedule) {
+        use std::any::TypeId;
+        schedule.initialize(world).expect("the preparation's schedule builds");
         let order: Vec<TypeId> = schedule.systems().expect("initialized").map(|(_, system)| system.system_type()).collect();
         let at = |id: TypeId| order.iter().position(|t| *t == id);
         let drop = at(IntoSystem::into_system(drop_stale::<TaaView>).system_type()).expect("drop_stale::<TaaView> is not in the preparation");
