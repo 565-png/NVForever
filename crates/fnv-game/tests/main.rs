@@ -159,6 +159,7 @@ fn every_test_file_is_built() {
 }
 
 mod callable_identity;
+mod default_open;
 mod em_clearance;
 mod is_in_kill_cam;
 mod preactivation_events;

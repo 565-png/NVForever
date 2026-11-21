@@ -1232,11 +1232,11 @@ fn open_locked_in_place_door_allows_arrival_despite_script_refusal() {
 fn open_locked_in_place_doors_reach_actor_path_parameters() {
     // [design, #2716] Synthetic barrier across cell A, using a fixture reference:
     // exercise closed, script-opened, untouched default-open, and script-closed states.
-    for mode in ["closed", "script", "default", "closed-default"] {
+    for mode in ["closed", "script", "default", "closed-default", "set-default-open", "clear-default-open"] {
         let mut f = fixture();
         let placed = f.refs.refs.get_mut(&FormId(M1)).unwrap();
         placed.lock = Some(fnv_sim::refs::Lock { level: 255, key: None, leveled: false });
-        placed.open_by_default = matches!(mode, "default" | "closed-default");
+        placed.open_by_default = matches!(mode, "default" | "closed-default" | "clear-default-open");
         let mut s = sim(&f, &[R_TRAVEL]);
         s.nav.set_in_place_doors(vec![fnv_nav::InPlaceDoor {
             door: M1,
@@ -1250,11 +1250,14 @@ fn open_locked_in_place_doors_reach_actor_path_parameters() {
         assert!(s.game.world.peek(FormId(M1)).is_none());
         if matches!(mode, "script" | "closed-default") {
             s.game.set_ref_open(FormId(M1), mode == "script").unwrap();
+        } else if matches!(mode, "set-default-open" | "clear-default-open") {
+            s.game.world.set_default_open(FormId(M1), mode == "set-default-open").unwrap();
+            assert!(s.game.world.peek(FormId(M1)).is_none(), "SetDefaultOpen does not materialize an untouched door");
         }
         s.run(1.0);
         let events = s.events(R_TRAVEL);
-        if matches!(mode, "closed" | "closed-default") {
-            assert!(events.iter().any(|e| matches!(e, AiEvent::Unreachable { .. })), "{events:?}");
+        if matches!(mode, "closed" | "closed-default" | "clear-default-open") {
+            assert!(events.iter().any(|e| matches!(e, AiEvent::Unreachable { .. })), "{mode}: {events:?}");
         } else {
             assert!(events.iter().any(|e| matches!(e, AiEvent::Trip { .. })), "{mode}: {events:?}");
             assert!(!events.iter().any(|e| matches!(e, AiEvent::Unreachable { .. })), "{mode}: {events:?}");

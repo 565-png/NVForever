@@ -2560,7 +2560,7 @@ impl Ai {
         // Open locked doors do not refuse nav triangles [hypothesis,
         // docs/spec-notes/navmesh.md; observer check 206].
         params.open_doors.extend(self.locked_doors.iter().copied().filter(|&d| {
-            game.world.peek(FormId(d)).is_none() && game.world.placed.get(FormId(d)).is_some_and(|r| r.open_by_default)
+            game.world.peek(FormId(d)).is_none() && game.world.default_open(FormId(d))
         }));
         params.open_doors.extend(game.world.changed().filter(|(_, s)| s.open).map(|(id, _)| id.0));
         // A creature flagged "Can't Open Doors" [documented: GECK wiki
