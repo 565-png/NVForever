@@ -3471,16 +3471,21 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 250. **What does the Pip-Boy radio do to the music?** (P2; #3311, audio.md §13.2 item 9,
      radio.md §8.) A player's report says the place's music should stop while the radio
-     is on. Ours: while the Pip-Boy plays a station the place's music is turned down to
-     silence over 3 s and plays on unheard, no incidental phrase plays, battle music
-     keeps its level over the radio, a placed radio leaves the music alone, and the
-     place's music fades back in over 3 s where it has got to when the radio is turned
-     off [hypothesis]. In Goodsprings at noon
+     is on. Ours: while the Pip-Boy plays its station (a line or song sounding now or
+     within 8 s) the place's music is turned down to silence over 3 s and plays on
+     unheard, battle music keeps its level over the radio, a placed radio leaves the
+     music alone, and the place's music fades back in over 3 s where it has got to when
+     the radio is turned off [hypothesis]. In Goodsprings at noon
      (`player.setpos x -69000`, `y 3500`, `z 8900`), with the music playing, turn the
      Pip-Boy radio on to Mojave Music Radio: does the music fade or cut, and how fast?
      Turn the radio off: does the music come back at once, after a wait, or only on the
      next place, and does it resume or start its track again? With the radio on, let
      Violet's dogs see the player (north of town): does the battle music play over the
-     radio, and does the radio go quiet under it?
-     Also whether the radio out of range (static only), or with the Radio volume at 0,
-     still keeps the music away.
+     radio, and does the radio go quiet under it? Then two cases apart, which ours
+     treats differently: (a) at the edge of a Radius station's range, where the station
+     is still received but heard as nearly all static (Black Mountain Radio near
+     `x -47300`, `y 5300`, `z 9000`, radio.md §8), does the music stay away (ours: yes,
+     the station's songs still sound under the static)? (b) walked out of reception
+     altogether, the Pip-Boy still on, does the music come back (ours: yes)? Last, with
+     the Radio volume at 0 and a station playing: is the music still turned down (ours:
+     no)?

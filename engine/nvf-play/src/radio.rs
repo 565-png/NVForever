@@ -117,6 +117,10 @@ const RETRY: f64 = 5.0;
 const GAP: f64 = 0.5;
 /// Something joining a response later than this many seconds into it seeks to there.
 const JOIN: f64 = 0.25;
+/// Seconds the Pip-Boy radio still counts as playing for the music after its station's
+/// last line or song stopped sounding: the gaps between lines (`GAP`), a file still
+/// being read, a station asking again (`RETRY`) [design: #3311].
+pub const MUSIC_HOLD: f64 = 8.0;
 /// The keys of the Pip-Boy and its static among the receivers.
 const PIPBOY: u32 = u32::MAX;
 const PIPBOY_STATIC: u32 = u32::MAX - 1;
@@ -462,10 +466,11 @@ pub struct Radio {
     pub refused: u32,
     pub conversations: u32,
     pub conversations_ignored: u32,
-    /// The Pip-Boy radio plays a station now: on, tuned to one received here, sound on,
-    /// not at the poker table. The place's music is held while it does (`crate::music`,
-    /// #3311).
+    /// The Pip-Boy radio plays a station now ([`pipboy_holds_music`]). The place's music is
+    /// turned down while it does (`crate::music`, #3311).
     pub pipboy_playing: bool,
+    /// The radios' clock when the Pip-Boy last sounded one of its station's lines or songs.
+    pipboy_line_at: Option<f64>,
     /// The Skip Radio Song key was pressed (`crate::tweaks`): the Pip-Boy's station ends
     /// the line it is saying now [design: docs/design/tweaks.md].
     pub skip: bool,
@@ -774,7 +779,7 @@ fn play(
     mut script: ResMut<ScriptState>,
     mut sim: ResMut<SimState>,
     (loc, state, paused, pw, table): (Res<Location>, Res<State<PlayState>>, Res<Paused>, Res<PlayWorld>, Res<TableStation>),
-    (player, intro, mut cover): (Option<Res<Player>>, Option<Res<crate::intro::Intro>>, Option<ResMut<crate::sound_cover::SoundCover>>),
+    (player, intro, mut cover, volumes): (Option<Res<Player>>, Option<Res<crate::intro::Intro>>, Option<ResMut<crate::sound_cover::SoundCover>>, Option<Res<crate::audio_out::SoundVolumes>>),
     data: Option<Res<nvf_assets::GameData>>,
     (mut assets, mut panned): (ResMut<Assets<RadioSound>>, ResMut<Assets<Panned<RadioSound>>>),
     // The sinks held with the radios: not those fading out after a stop (audio_out).
@@ -931,7 +936,9 @@ fn play(
             heard.push((PIPBOY, base, 1.0 - share, true, None));
         }
     }
-    radio.pipboy_playing = settings.play && table.is_none() && pip_station.is_some() && pip_share.is_some();
+    // Heard at all: on, tuned to a station received here, sound on, not at the poker table.
+    let pip_heard = settings.play && settings.volume > 0.0 && table.is_none() && pip_station.is_some() && pip_share.is_some();
+    let radio_volume = volumes.as_ref().map_or(1.0, |v| v.get(SoundCategory::Radio));
 
     // The Skip Radio Song key: the Pip-Boy's station, received, ends its line now, so the
     // line's end script runs and the station's own order picks the next. Not a
@@ -1160,6 +1167,12 @@ fn play(
         }
         radio.playing.insert(w.key, Playing { entity, level, meter, track: w.track.clone(), song: w.response.is_some_and(|(_, _, song)| song) });
     }
+    // The Pip-Boy plays its station for the music when one of the station's lines or songs
+    // sounds (not static alone, not a line without a file), bridged over the gaps.
+    if radio.playing.get(&PIPBOY).is_some_and(|p| matches!(p.track, Track::Line { .. })) {
+        radio.pipboy_line_at = Some(now);
+    }
+    radio.pipboy_playing = pipboy_holds_music(pip_heard, radio_volume, radio.pipboy_line_at, now);
     // The Pip-Boy station's loudness as played, for the exit summary (#1077).
     if let Some((song, loud)) = radio.playing.get(&PIPBOY).map(|p| (p.song, f32::from_bits(p.meter.load(Ordering::Relaxed)) * f32::from_bits(p.level.load(Ordering::Relaxed)))).filter(|(_, l)| *l > 0.0) {
         let slot = &mut radio.loudness[usize::from(!song)];
@@ -1180,6 +1193,15 @@ fn play(
             _ => {}
         }
     }
+}
+
+/// Whether the Pip-Boy radio counts as playing for the music (#3311): heard at all
+/// (`heard`: on, tuned to a station received here, sound on, not at the poker table), the
+/// player's Radio volume above 0 (`radio_volume`), and one of its station's lines or songs
+/// sounded within [`MUSIC_HOLD`] seconds (`line_at`, on the radios' clock `now`). Static
+/// alone and a station with nothing to play leave the music alone [design].
+pub fn pipboy_holds_music(heard: bool, radio_volume: f32, line_at: Option<f64>, now: f64) -> bool {
+    heard && radio_volume > 0.0 && line_at.is_some_and(|t| now - t < MUSIC_HOLD)
 }
 
 fn report(mut exit: MessageReader<AppExit>, radio: Res<Radio>, script: Res<ScriptState>, places: Option<Res<RadioPlaces>>) {
@@ -1323,6 +1345,21 @@ mod tests {
         // Without a mono file, the named file.
         assert_eq!(receiver_file("sound\\songs\\radio\\x.mp3", have), "sound\\songs\\radio\\x.mp3");
         assert_eq!(receiver_file("sound\\voice\\a.ogg", have), "sound\\voice\\a.ogg");
+    }
+
+    #[test]
+    fn the_pipboy_holds_the_music_only_while_its_station_sounds() {
+        // A line sounding now, or in the gap after one: the music is held.
+        assert!(pipboy_holds_music(true, 0.5, Some(10.0), 10.0));
+        assert!(pipboy_holds_music(true, 0.5, Some(10.0), 10.0 + MUSIC_HOLD - 0.1));
+        // Nothing played for longer than the hold, or nothing ever (static alone, a station
+        // with no file to play): the music comes back.
+        assert!(!pipboy_holds_music(true, 0.5, Some(10.0), 10.0 + MUSIC_HOLD));
+        assert!(!pipboy_holds_music(true, 0.5, None, 10.0));
+        // The Radio volume at 0 (Music on, a station tuned and playing): the music stays.
+        assert!(!pipboy_holds_music(true, 0.0, Some(10.0), 10.0));
+        // Not heard (off, out of range, at the poker table): never, whatever played.
+        assert!(!pipboy_holds_music(false, 0.5, Some(10.0), 10.0));
     }
 
     #[test]
