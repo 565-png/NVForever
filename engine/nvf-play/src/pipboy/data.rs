@@ -514,10 +514,11 @@ pub struct DataState {
     /// Where the left button went down on a map, and how far the pointer has moved since
     /// (a click asks to travel or places the custom marker, a drag does neither).
     press: Option<(Vec2, f32)>,
-    /// A click on a map this frame ([`travel_ask`], #3324), resolved once the map is drawn
-    /// against the highlight box as drawn then ([`take_click`]): a fast-travel question for the
-    /// World Map's marker under it, else Place Marker's question of the place under it.
-    map_click: bool,
+    /// A click on map tab `.0` this frame ([`travel_ask`], #3324), resolved once the map is laid
+    /// out for good against the highlight box as drawn then ([`take_click`]): companions
+    /// summoned, a fast-travel question for the World Map's marker under it, else Place Marker's
+    /// question of the place under it.
+    map_click: Option<usize>,
     /// The question box over the map: fast travel's (`travel`) or Place Marker's.
     popup: Option<Popup>,
     /// The pointer on the page this frame, whatever the input device (the question box's
@@ -905,7 +906,11 @@ pub fn draw(
         let tab = match (body, st.prepared.as_ref()) {
             (Some((_, b)), Some(p)) if p.view.tab == b.tab => b.tab,
             _ => {
-                // Drawn from its tiles (or not shown): its refit, if any, is done.
+                // Drawn from its tiles (or not shown): its refit, if any, is done, so the frame's
+                // click is taken now, against the highlight box as laid out for good (#3324).
+                if let Some(s) = take_click(st, &mut game, input.keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])) {
+                    input.summon.write(s);
+                }
                 flush_travel(st, &mut input);
                 return;
             }
@@ -914,15 +919,18 @@ pub fn draw(
         // (the tile page fell back this frame): gathered again in the hand-built window, so what
         // is drawn and where the pointer is read agree. No input is taken again.
         let pointer = screen.as_deref().and_then(|s| s.pointer).filter(|_| !input.bindings.as_ref().is_some_and(|b| b.device == InputDevice::Controller));
-        let view = match refit_hand_built(st, tab, &game, pointer) {
-            Some(v) => {
-                if let Some(p) = st.prepared.as_mut() {
-                    p.view = v.clone();
-                }
-                v
-            }
+        let mut view = match refit_hand_built(st, tab, &game, pointer) {
+            Some(v) => v,
             None => st.prepared.as_ref().map(|p| p.view.clone()).unwrap_or_else(|| unreachable!()),
         };
+        // The frame's click, against the map as drawn here (#3324).
+        if let Some(s) = take_click(st, &mut game, input.keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])) {
+            input.summon.write(s);
+        }
+        view.popup = st.popup.clone();
+        if let Some(p) = st.prepared.as_mut() {
+            p.view = view.clone();
+        }
         flush_travel(st, &mut input);
         view
     } else {
@@ -997,7 +1005,7 @@ fn step(st: &mut DataState, open: Option<usize>, screen: Option<&PipBoyScreen>, 
         // no click or drag on the map the page comes back to (#3324).
         st.press = None;
         st.drag_from = None;
-        st.map_click = false;
+        st.map_click = None;
         input.wheel.clear();
         input.menu.clear();
         return None;
@@ -1043,10 +1051,16 @@ fn step(st: &mut DataState, open: Option<usize>, screen: Option<&PipBoyScreen>, 
     // it was, and with it the Travel hint's marker (#1897).
     let on_map = pointer.filter(|_| !on_button(st, tab, pointer));
     let mut view = build(st, tab, &lists, game, on_map, pointer.is_some());
-    // A click on a map is resolved against the highlight box as just drawn, at the pointer in
-    // this frame's view (#3324).
-    take_click(st, tab, game, input.keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]));
-    view.popup = st.popup.clone();
+    // A click on a map is resolved against the highlight box as drawn for good (#3324): here for
+    // the hand-built page; the page drawn from the file may lay the map out again (its refit,
+    // `DataState::refit_map`, or the fall back to the hand-built window), so with the early
+    // preparation [`draw`] takes it once that is done.
+    if early.is_none() {
+        if let Some(s) = take_click(st, game, input.keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight])) {
+            input.summon.write(s);
+        }
+        view.popup = st.popup.clone();
+    }
     // The hints are logged when they change from what was last shown: the hand-built drawing's
     // last view, or with the early preparation the last one prepared.
     let last = if early.is_some() { st.last_view.as_ref() } else { st.shown.as_ref() };
@@ -1781,13 +1795,9 @@ fn take_input(st: &mut DataState, tab: usize, l: &Lists, game: &mut Game, input:
     // asks to travel there (`travel`); so does the controller's A (the confirm button) on a
     // highlighted marker [observed: the original; docs/design/controller.md §3].
     let mouse = (input.buttons.just_pressed(MouseButton::Left), input.buttons.just_released(MouseButton::Left));
-    // The player's Map Selectable Companions tweak: a click on companions summons them,
-    // not a travel [design: docs/design/tweaks.md].
-    let summon_click = tab == WORLD && mouse.1 && !st.companions_under.is_empty() && !on_button(st, tab, pointer) && st.press.is_some_and(|(_, moved)| moved <= CLICK_SLOP);
-    if summon_click {
-        st.press = None;
-        input.summon.write(SummonCompanions(st.companions_under.clone()));
-    } else if let Some(m) = travel_ask(st, tab, pointer, mouse, travel) {
+    // A click on the map is taken once it is drawn ([`take_click`]): the Map Selectable
+    // Companions tweak's summon, a travel or Place Marker.
+    if let Some(m) = travel_ask(st, tab, pointer, mouse, travel) {
         st.travel_pending = Some(m);
     }
     // Dragging a map moves the point at its middle: the left button held down on it (not
@@ -2130,6 +2140,18 @@ fn choose(p: &mut Popup, hold: &mut BoxHold, pointer: Option<Vec2>, b: &BoxInput
 /// ([`marker::Words`]). Under the player's No Place Marker Popup tweak it answers at once
 /// ([`marker::quick`]) [design: docs/design/tweaks.md].
 fn place_marker(st: &mut DataState, tab: usize, game: &mut Game, shift: bool) {
+    // A map that cannot be drawn now (no place, or a worldspace without map data: entered on
+    // this frame, before the map was built) has nothing under its box, whatever another map left
+    // there (#3324).
+    let shown = game.location.is_some()
+        && match tab {
+            WORLD => map_of(st, game).is_some(),
+            LOCAL => game.player.is_some(),
+            _ => false,
+        };
+    if !shown {
+        blank_map(st, tab);
+    }
     let Some(at) = st.spot.get(tab).copied().flatten() else {
         info!("pipboy map: Place Marker: no place under the highlight box");
         return;
@@ -2148,30 +2170,56 @@ fn place_marker(st: &mut DataState, tab: usize, game: &mut Game, shift: bool) {
     st.popup = Some(Popup::marker(ask, text, buttons));
 }
 
-/// A click on a map this frame ([`DataState::map_click`]), taken once the map is drawn, so it
-/// reads the highlight box as drawn on the frame the button was let go (#3324): on the World
-/// Map with a marker under the box it asks to travel there and makes it the Travel target;
-/// away from any marker (the Local Map: anywhere) it drops the Travel target and asks Place
-/// Marker's question of the place under the box ([`place_marker`]) [design; the original's
-/// gesture is a hypothesis, docs/handoff/observer-checks.md]. A map with no place under the
-/// box (a worldspace without map data) takes no click.
-fn take_click(st: &mut DataState, tab: usize, game: &mut Game, shift: bool) {
-    if !std::mem::take(&mut st.map_click) || !(tab == LOCAL || tab == WORLD) || st.popup.is_some() {
-        return;
+/// A click on a map this frame ([`DataState::map_click`]), taken once the map is laid out for
+/// good, so it reads the highlight box as drawn on the frame the button was let go (#3324):
+/// - on the World Map with companions under the box and the player's Map Selectable
+///   Companions tweak on, it summons them (returned for the caller to send) [design:
+///   docs/design/tweaks.md];
+/// - else on the World Map with a marker under the box it asks to travel there and makes it the
+///   Travel target;
+/// - else (the Local Map: anywhere) it drops the Travel target and asks Place Marker's question
+///   of the place under the box ([`place_marker`]); a map with no place under the box (a
+///   worldspace without map data) takes no click.
+///
+/// The click wins over Enter (or A, the Travel hint) in the same frame: the travel those asked
+/// is dropped, or becomes the click's own, so one question is asked [design]. The original's
+/// mouse gesture is a hypothesis (docs/handoff/observer-checks.md).
+fn take_click(st: &mut DataState, game: &mut Game, shift: bool) -> Option<SummonCompanions> {
+    let tab = st.map_click.take()?;
+    if !(tab == LOCAL || tab == WORLD) || st.popup.is_some() {
+        return None;
     }
+    let name = if tab == WORLD { "world" } else { "local" };
     let under = if tab == WORLD { st.cursor_marker } else { None };
+    if tab == WORLD && !st.companions_under.is_empty() {
+        drop_travel(st);
+        return Some(SummonCompanions(st.companions_under.clone()));
+    }
     if tab == WORLD {
         st.travel_marker = under;
     }
-    let name = if tab == WORLD { "world" } else { "local" };
     match under {
         Some(m) => st.travel_pending = Some(m),
-        None if st.spot[tab].is_none() => info!("pipboy map: a click on the {name} map: no place under the highlight box"),
         None => {
-            info!("pipboy map: a click on the {name} map away from any marker: Place Marker");
-            place_marker(st, tab, game, shift);
+            drop_travel(st);
+            if st.spot[tab].is_none() {
+                info!("pipboy map: a click on the {name} map: no place under the highlight box");
+            } else {
+                info!("pipboy map: a click on the {name} map away from any marker: Place Marker");
+                place_marker(st, tab, game, shift);
+            }
         }
     }
+    None
+}
+
+/// A fast-travel question asked this frame (Enter, A, the Travel hint) not sent: a click took
+/// the frame ([`take_click`]).
+fn drop_travel(st: &mut DataState) {
+    if let Some(m) = st.travel_pending.take() {
+        info!("pipboy data: fast travel to {} not asked: a click on the map took the frame", FormId(m));
+    }
+    st.travel_redrawn = false;
 }
 
 /// Do what the answer to Place Marker's question says, on the game's marker (the one
@@ -2550,8 +2598,8 @@ fn travel_ask(st: &mut DataState, tab: usize, pointer: Option<Vec2>, (pressed, r
     }
     if released {
         if let Some((_, moved)) = st.press.take().filter(|_| !over_button) {
-            if moved <= CLICK_SLOP {
-                st.map_click = in_window(map_window(st, tab), pointer).is_some();
+            if moved <= CLICK_SLOP && in_window(map_window(st, tab), pointer).is_some() {
+                st.map_click = Some(tab);
             }
         }
     }
@@ -2860,6 +2908,7 @@ fn blank_map(st: &mut DataState, tab: usize) -> MapShown {
     if tab == WORLD {
         st.cursor_marker = None;
         st.travel_marker = None;
+        st.companions_under.clear();
     }
     empty_map()
 }
@@ -4858,18 +4907,18 @@ mod tests {
         let mut game = game.get_mut(&mut world).unwrap();
         assert_eq!(travel_ask(&mut st, WORLD, on_map, (true, false), false), None);
         assert_eq!(travel_ask(&mut st, WORLD, on_map, (false, true), false), None);
-        take_click(&mut st, WORLD, &mut game, false);
+        take_click(&mut st, &mut game, false);
         assert_eq!((st.travel_pending.take(), st.travel_marker), (Some(7), Some(7)));
         // Enter in the same frame as that click still asks once.
         assert_eq!(travel_ask(&mut st, WORLD, on_map, (true, false), false), None);
         assert_eq!(travel_ask(&mut st, WORLD, on_map, (false, true), true), Some(7));
-        take_click(&mut st, WORLD, &mut game, false);
+        take_click(&mut st, &mut game, false);
         assert_eq!(st.travel_pending.take(), Some(7));
         // A click away from any marker drops the target.
         st.cursor_marker = None;
         travel_ask(&mut st, WORLD, on_map, (true, false), false);
         assert_eq!(travel_ask(&mut st, WORLD, on_map, (false, true), false), None);
-        take_click(&mut st, WORLD, &mut game, false);
+        take_click(&mut st, &mut game, false);
         assert_eq!((st.travel_pending, st.travel_marker), (None, None));
     }
 
@@ -4891,39 +4940,47 @@ mod tests {
         let moved = Some(MAIN.min + MAP.min + Vec2::new(100.0 + CLICK_SLOP + 4.0, 300.0));
         let mut st = DataState::default();
         assert_eq!(travel_ask(&mut st, WORLD, p, (true, false), false), None);
-        assert!(!st.map_click, "the press alone is no click");
+        assert_eq!(st.map_click, None, "the press alone is no click");
         assert_eq!(travel_ask(&mut st, WORLD, p, (false, true), false), None);
-        assert!(st.map_click, "the click, taken once the map is drawn");
-        st.map_click = false;
+        assert_eq!(st.map_click, Some(WORLD), "the click, taken once the map is drawn");
+        st.map_click = None;
         // A drag: moved past the slop while held, or in the release's frame.
         travel_ask(&mut st, WORLD, p, (true, false), false);
         travel_ask(&mut st, WORLD, moved, (false, false), false);
         travel_ask(&mut st, WORLD, p, (false, true), false);
-        assert!(!st.map_click, "moved away and back: a drag");
+        assert_eq!(st.map_click, None, "moved away and back: a drag");
         travel_ask(&mut st, LOCAL, p, (true, false), false);
         travel_ask(&mut st, LOCAL, moved, (false, true), false);
-        assert!(!st.map_click, "the pointer moved in the release's frame: a drag");
+        assert_eq!(st.map_click, None, "the pointer moved in the release's frame: a drag");
         // The Local Map: a click, and Enter never travels there.
         st.travel_marker = Some(5);
         travel_ask(&mut st, LOCAL, p, (true, false), false);
         assert_eq!(travel_ask(&mut st, LOCAL, p, (false, true), true), None);
-        assert!(st.map_click);
-        st.map_click = false;
+        assert_eq!(st.map_click, Some(LOCAL));
+        st.map_click = None;
         // A press on a hint over the map is the hint's.
         let hint = Rect::from_center_size(p.unwrap(), Vec2::splat(40.0));
         st.button_rects = (WORLD, vec![hint]);
         travel_ask(&mut st, WORLD, p, (true, false), false);
         travel_ask(&mut st, WORLD, p, (false, true), false);
-        assert!(!st.map_click);
+        assert_eq!(st.map_click, None);
         // No map on Quests.
         travel_ask(&mut st, QUESTS, p, (true, false), false);
         travel_ask(&mut st, QUESTS, p, (false, true), false);
-        assert!(!st.map_click && st.press.is_none());
+        assert!(st.map_click.is_none() && st.press.is_none());
     }
 
     /// The page's frame as `draw` runs it with `MapMenu` off (the hand-built page; open while the
-    /// Pip-Boy shows DATA, as its body is there then), or `prepare` with it on.
+    /// Pip-Boy shows DATA, as its body is there then), or with it on `prepare` and then `draw`
+    /// (no body: the tile page drew, and the frame's click and travel are taken there).
     fn page_frame(w: &mut World, tiles: bool) {
+        page_prepare(w, tiles);
+        page_finish(w, tiles);
+    }
+
+    /// The first half of [`page_frame`]: the preparation (with `MapMenu` on, before the tile page
+    /// lays the map out).
+    fn page_prepare(w: &mut World, tiles: bool) {
         use bevy::ecs::system::RunSystemOnce;
         fn hand_built(mut st: ResMut<DataState>, pip: Res<PipBoy>, screen: Option<Res<PipBoyScreen>>, mut game: Game, mut input: Input, mut images: ResMut<Assets<Image>>) {
             let open = (pip.open() && pip.page == Page::Data).then(|| pip.tab());
@@ -4934,8 +4991,24 @@ mod tests {
         } else {
             w.run_system_once(hand_built).unwrap();
         }
+    }
+
+    /// The second half of [`page_frame`]: with `MapMenu` on `draw` after the tile page; then the
+    /// frame's input is let go.
+    fn page_finish(w: &mut World, tiles: bool) {
+        use bevy::ecs::system::RunSystemOnce;
+        if tiles {
+            w.run_system_once(draw).unwrap();
+        }
         w.resource_mut::<ButtonInput<MouseButton>>().clear();
         w.resource_mut::<ButtonInput<KeyCode>>().clear();
+    }
+
+    /// The fast-travel question asked: still pending (the hand-built frame here sends nothing),
+    /// or sent by `draw`; taken.
+    fn travel_asked(w: &mut World) -> Option<u32> {
+        let sent: Vec<FastTravelAsk> = w.resource_mut::<Messages<FastTravelAsk>>().drain().collect();
+        w.resource_mut::<DataState>().travel_pending.take().or(sent.last().map(|a| a.0))
     }
 
     /// A page world on the World Map of worldspace 1 (a 2048 picture, the player at its middle,
@@ -4996,9 +5069,6 @@ mod tests {
             let marker::MarkerAsk::Set(spot) = ask else { panic!("tiles {tiles}: {ask:?}") };
             assert_eq!(answers, 2);
             assert!((spot.pos[0] - x).abs() < 0.5 && (spot.pos[1] - MAP_FEET[1]).abs() < 0.5 && spot.space == 1, "tiles {tiles}: {spot:?}");
-            if tiles {
-                assert!(st.prepared.as_ref().is_some_and(|p| p.view.popup.is_some()), "the frame's view carries the question");
-            }
             // The box is modal: a click under it places nothing more.
             mouse(&mut w, true);
             page_frame(&mut w, tiles);
@@ -5055,13 +5125,14 @@ mod tests {
                 w.resource_mut::<PipBoyScreen>().pointer = Some(mid + Vec2::new(up, 0.0));
                 mouse(&mut w, false);
                 page_frame(&mut w, tiles);
+                let travel = travel_asked(&mut w);
                 let st = w.resource::<DataState>();
                 assert_eq!(st.cursor_marker, travels.then_some(0x42), "tiles {tiles}: the box as let go");
                 if travels {
-                    assert_eq!(st.travel_pending, Some(0x42), "tiles {tiles}: pressed off the marker, let go on it: travel");
+                    assert_eq!(travel, Some(0x42), "tiles {tiles}: pressed off the marker, let go on it: travel");
                     assert!(st.popup.is_none(), "tiles {tiles}: and no Place Marker question");
                 } else {
-                    assert_eq!(st.travel_pending, None, "tiles {tiles}: pressed on the marker, let go off it: no travel");
+                    assert_eq!(travel, None, "tiles {tiles}: pressed on the marker, let go off it: no travel");
                     assert!(matches!(asked(st).0, marker::MarkerAsk::Set(_)), "tiles {tiles}: Place Marker's question");
                 }
             }
@@ -5082,18 +5153,21 @@ mod tests {
             assert!(w.resource::<DataState>().spot[WORLD].is_some(), "tiles {tiles}: worldspace 1's map, a place under the box");
             w.resource_mut::<DataState>().cursor_marker = Some(0x42);
             w.resource_mut::<DataState>().travel_marker = Some(0x42);
+            w.resource_mut::<DataState>().companions_under = vec![FormId(9)];
             // Worldspace 2 has no map data.
             w.resource_mut::<DataState>().maps.insert(2, None);
             w.resource_mut::<Location>().world = 2;
             page_frame(&mut w, tiles);
             let st = w.resource::<DataState>();
             assert_eq!((st.spot[WORLD], st.cursor_marker, st.travel_marker), (None, None, None), "tiles {tiles}: nothing left from worldspace 1");
+            assert!(st.companions_under.is_empty(), "tiles {tiles}: no companions left under the box");
             mouse(&mut w, true);
             page_frame(&mut w, tiles);
             mouse(&mut w, false);
             page_frame(&mut w, tiles);
+            let travel = travel_asked(&mut w);
             let st = w.resource::<DataState>();
-            assert!(st.popup.is_none() && st.custom.is_none() && st.travel_pending.is_none(), "tiles {tiles}: the click takes nothing");
+            assert!(st.popup.is_none() && st.custom.is_none() && travel.is_none(), "tiles {tiles}: the click takes nothing");
         }
     }
 
@@ -5122,9 +5196,109 @@ mod tests {
             w.resource_mut::<PipBoyScreen>().pointer = Some(at);
             mouse(&mut w, false);
             page_frame(&mut w, tiles);
+            let travel = travel_asked(&mut w);
             let st = w.resource::<DataState>();
-            assert!(st.popup.is_none() && st.travel_pending.is_none(), "tiles {tiles}: no click");
+            assert!(st.popup.is_none() && travel.is_none(), "tiles {tiles}: no click");
             assert_eq!(st.centre[WORLD], centre, "tiles {tiles}: no drag");
+        }
+    }
+
+    /// #3324 (review): with `MapMenu` on, the tile page may lay the map out again after the
+    /// preparation (its refit, `DataState::refit_map`, here crossing the snap boundary), so the
+    /// click is taken after that: let go 43 right of a marker (off it as prepared) and refitted
+    /// onto it, it asks to travel and puts up no question; let go 38 right (on it as prepared) and
+    /// refitted off it, it asks Place Marker's question and no travel.
+    #[test]
+    fn a_click_reads_the_highlight_after_the_tile_refit() {
+        let marker = read::Marker { form: 0x42, world: 1, pos: MAP_FEET, name: "Here".into(), kind: 1, flags: 0, radius: 0.0, reputation: None };
+        let window = layout_window(true);
+        let mid = window.min + MAP_MID;
+        for (off, refit_on, travels) in [(43.0, true, true), (38.0, false, false)] {
+            let mut w = map_world(true, window, mid + Vec2::new(off, 0.0), vec![marker.clone()]);
+            page_frame(&mut w, true);
+            mouse(&mut w, true);
+            page_frame(&mut w, true);
+            mouse(&mut w, false);
+            page_prepare(&mut w, true);
+            assert_eq!(w.resource::<DataState>().cursor_marker, (off < SNAP).then_some(0x42), "as prepared");
+            assert!(w.resource::<DataState>().popup.is_none(), "nothing asked before the tile page laid the map out");
+            // The tile page's refit: the box picked again in the window it drew.
+            {
+                let mut st = w.resource_mut::<DataState>();
+                let view = MapView::world(window, st.centre[WORLD].unwrap(), Vec2::splat(2048.0), st.magnify[WORLD].max(ZOOM.0));
+                let want = MAP_MID + Vec2::new(off, 0.0);
+                let (cursor, picked) = if refit_on { (MAP_MID, Some(0x42)) } else { (want, None) };
+                st.refit_map(WORLD, view, want, cursor, picked, &[0x42]);
+            }
+            page_finish(&mut w, true);
+            let travel = travel_asked(&mut w);
+            let st = w.resource::<DataState>();
+            if travels {
+                assert_eq!(travel, Some(0x42), "refitted onto the marker: travel");
+                assert!(st.popup.is_none(), "and no Place Marker question");
+            } else {
+                assert_eq!(travel, None, "refitted off the marker: no travel");
+                assert!(matches!(asked(st).0, marker::MarkerAsk::Set(_)), "Place Marker's question");
+            }
+        }
+    }
+
+    /// #3324 (review): the Map Selectable Companions tweak's summon is the same click, taken with
+    /// the box as drawn: companions under it are summoned, before a travel or Place Marker, and
+    /// the travel Enter asked in the frame is dropped; a blank map has no companions under it.
+    #[test]
+    fn a_click_on_companions_summons_them_as_drawn() {
+        let (mut world, mut game) = blank_game();
+        let mut game = game.get_mut(&mut world).unwrap();
+        let mut st = DataState { map_click: Some(WORLD), companions_under: vec![FormId(9)], cursor_marker: Some(7), travel_pending: Some(5), ..DataState::default() };
+        let summoned = take_click(&mut st, &mut game, false);
+        assert_eq!(summoned.map(|s| s.0), Some(vec![FormId(9)]));
+        assert_eq!((st.travel_pending, st.map_click), (None, None));
+        assert!(st.popup.is_none());
+        // No click this frame: nothing summoned.
+        assert!(take_click(&mut st, &mut game, false).is_none());
+        blank_map(&mut st, WORLD);
+        assert!(st.companions_under.is_empty());
+    }
+
+    /// #3324 (review): Enter and a click on an empty spot in the same frame (the Travel target
+    /// kept from a marker the box left): the click wins, Place Marker asks and no travel is
+    /// asked [design]. Both layouts.
+    #[test]
+    fn a_click_wins_over_enter_in_the_same_frame() {
+        let marker = read::Marker { form: 0x42, world: 1, pos: MAP_FEET, name: "Here".into(), kind: 1, flags: 0, radius: 0.0, reputation: None };
+        for tiles in [false, true] {
+            let window = layout_window(tiles);
+            let mut w = map_world(tiles, window, window.min + MAP_MID + Vec2::new(80.0, 0.0), vec![marker.clone()]);
+            page_frame(&mut w, tiles);
+            w.resource_mut::<DataState>().travel_marker = Some(0x42);
+            mouse(&mut w, true);
+            page_frame(&mut w, tiles);
+            assert_eq!(w.resource::<DataState>().travel_marker, Some(0x42), "tiles {tiles}: the Travel target kept");
+            mouse(&mut w, false);
+            w.resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Enter);
+            page_frame(&mut w, tiles);
+            assert_eq!(travel_asked(&mut w), None, "tiles {tiles}: Enter's travel dropped");
+            assert!(matches!(asked(w.resource::<DataState>()).0, marker::MarkerAsk::Set(_)), "tiles {tiles}: the click's question");
+        }
+    }
+
+    /// #3324 (review): X on the first frame in a worldspace without map data (before its blank map
+    /// is built) finds no place, not the one the map shown before left. Both layouts.
+    #[test]
+    fn place_marker_on_the_first_frame_of_a_blank_map_finds_no_place() {
+        for tiles in [false, true] {
+            let window = layout_window(tiles);
+            let mut w = map_world(tiles, window, window.min + MAP_MID + Vec2::new(50.0, 0.0), Vec::new());
+            page_frame(&mut w, tiles);
+            assert!(w.resource::<DataState>().spot[WORLD].is_some());
+            w.resource_mut::<DataState>().maps.insert(2, None);
+            w.resource_mut::<Location>().world = 2;
+            w.resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::KeyX);
+            page_frame(&mut w, tiles);
+            let st = w.resource::<DataState>();
+            assert!(st.popup.is_none() && st.custom.is_none(), "tiles {tiles}: no question, nothing placed");
+            assert_eq!(st.spot[WORLD], None);
         }
     }
 
@@ -5137,7 +5311,7 @@ mod tests {
                 Some(MAIN.min + MAP.min + Vec2::new(100.0, 300.0)), false);
             // As `step` takes the click once the map is drawn (not drawn here: the marker stays
             // under the box).
-            take_click(&mut st, WORLD, &mut game, false);
+            take_click(&mut st, &mut game, false);
         }
         let (mut app, pad) = playing_app(InputDevice::KeyboardMouse);
         app.insert_resource(DataState { cursor_marker: Some(7), ..default() })

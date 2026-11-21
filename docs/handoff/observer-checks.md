@@ -3458,7 +3458,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 258. **What does a left click on an empty spot of the Pip-Boy's World Map and Local Map do
      with the keyboard and mouse?** (P2; #3324, pipboy.md Place Marker; numbered 258 in a
      batch where 250 and 257 were taken the same night, renumber at merge.) The capture of
-     2026-11-10 showed placement with the X button only [observed]; a player reports the
+     2026-11-10 showed placement with the X button [observed]; a player reports the
      original places it with the mouse, and how is [hypothesis]. Ours [design]: a click
      (press and release within 6 units) away from any marker does what X does (the same
      question box, or under the No Place Marker Popup tweak an answer at once), of the place
