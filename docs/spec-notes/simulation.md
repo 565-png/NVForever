@@ -738,6 +738,16 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
     searched; with no such box the body is picked by its box as before (#3125) [design].
     The console's click keeps the plain nearest rule. Collision on the trigger layer (12)
     does not block the ray [hypothesis].
+  - **A bed someone lies on yields to the sleeper**: when the target chosen above is a bed
+    an actor other than the player is on (a bed marker, IDs 1 to 9, at any stage of
+    getting on, sleeping or getting off; furniture.md §2), the target is that actor, at
+    the bed's distance, logged `by Occupant`; activating it wakes it and the conversation
+    follows once it is up (`ByHand::Woken`). A sleeper that cannot be activated now leaves
+    the bed the target. A free bed is the target as before, and a bed in use offers the
+    player nothing, being one user per reference (furniture.md §5, item 3) [design, #3231:
+    the bed's box encloses the mattress, so the ray enters it before the sleeper's rough
+    box, and the bed won; what the original targets on a sleeper is not captured]. Chairs
+    and benches are not included: a bench's free seat stays usable beside a sitter.
   - **What is offered**: references the simulation considers present (not taken, enabled)
     whose base is an item, container, door, actor or placed explosive with a weapon to
     give; activators and furniture only with a display name (FULL) [hypothesis: unnamed

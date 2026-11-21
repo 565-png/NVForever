@@ -47,6 +47,9 @@ pub fn door_behind(first: Option<RayHit>, behind: Option<RayHit>, mut activatabl
 pub enum Source {
     Collision,
     Bounds,
+    /// The ray picked a bed someone lies on, and the target is the sleeper
+    /// ([`to_occupant`]); the distance is the bed's.
+    Occupant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -104,6 +107,22 @@ pub fn choose_precise_first(
         return precise;
     }
     choose(hit, all.iter().map(|b| (b.0, b.1)), reach, accept)
+}
+
+/// A bed an actor lies on (or is getting onto or off) yields the crosshair to that actor
+/// [design, #3231: what the original targets is not captured]. The ray enters the bed's
+/// box, which encloses the mattress, before the sleeper's, and the sleeper's render box is
+/// rough (its bind-pose bounds, not the lying body), so without this the bed was the
+/// target, refused as in use, and the sleeper could not be woken and talked to. A bed is
+/// one user per reference (docs/spec-notes/furniture.md §5), so nothing the player could
+/// use is lost. `occupant` names the actor on a bed reference (not the player);
+/// `accept` is [`choose`]'s. A sleeper that cannot be activated now leaves the bed.
+pub fn to_occupant(picked: Option<Pick>, occupant: impl FnOnce(u32) -> Option<u32>, accept: impl FnOnce(u32) -> bool) -> Option<Pick> {
+    let p = picked?;
+    match occupant(p.form_id) {
+        Some(actor) if actor != p.form_id && accept(actor) => Some(Pick { form_id: actor, source: Source::Occupant, ..p }),
+        _ => Some(p),
+    }
 }
 
 /// Distance along a ray (`origin`, unit `dir`, world space) at which it enters a box
@@ -215,6 +234,29 @@ mod tests {
         let actor = RayHit { form_id: Some(8), distance: 70.0 };
         let p = choose_precise_first(Some(actor), [(8, 65.0, true)], REACH, ANY).unwrap();
         assert_eq!((p.form_id, p.source), (8, Source::Collision));
+    }
+
+    /// #3231: Elder Lyons asleep in his bed. The ray enters the bed's box (20) before
+    /// his rough box (8), and the bed's precise box wins; the bed then yields to him.
+    #[test]
+    fn a_bed_in_use_yields_to_its_sleeper() {
+        let (bed, lyons, crate_) = (20, 8, 4);
+        let on = |id: u32| (id == bed).then_some(lyons);
+        let picked = choose_precise_first(None, [(bed, 67.0, false), (lyons, 80.0, true)], REACH, ANY);
+        assert_eq!(picked.unwrap().form_id, bed);
+        assert_eq!(to_occupant(picked, on, ANY), Some(Pick { form_id: lyons, distance: 67.0, source: Source::Occupant }));
+        // By the bed's collision as well.
+        let hit = Some(RayHit { form_id: Some(bed), distance: 150.0 });
+        assert_eq!(to_occupant(choose_precise_first(hit, [], REACH, ANY), on, ANY).unwrap().form_id, lyons);
+        // A free bed stays the bed.
+        let free = choose_precise_first(None, [(bed, 67.0, false)], REACH, ANY);
+        assert_eq!(to_occupant(free, |_| None, ANY), free);
+        // A sleeper that cannot be activated now (interaction disabled) leaves the bed.
+        assert_eq!(to_occupant(picked, on, |id| id != lyons), picked);
+        // Something else picked, or nothing: unchanged.
+        let item = choose(None, [(crate_, 50.0)], REACH, ANY);
+        assert_eq!(to_occupant(item, on, ANY), item);
+        assert_eq!(to_occupant(None, on, ANY), None);
     }
 
     #[test]

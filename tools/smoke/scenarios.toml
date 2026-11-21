@@ -3455,6 +3455,26 @@ order = [[
 ]]
 
 [[scenario]]
+name = "sleeper-crosshair-talk"
+source = "issue #3231 (simulation.md §5, crosshair activation): a bed someone lies on yields the crosshair to the sleeper (pick::to_occupant); E on it wakes the sleeper and the conversation follows, instead of the bed refused as in use [design]"
+note = "as wake-to-talk, but by the crosshair: Easy Pete laid on his bed (00176ACE) at 2:00, the view turned to the bed's collision body at 30 s and E pressed at 32 s. Before the fix the bed was the target and `furniture: the player cannot use 00176ACE: in use` was all that happened"
+areas = ["furniture", "dialogue"]
+paths = ["engine/nvf-play/src/activate/pick.rs", "engine/nvf-play/src/activate.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_NEAR = "00176ACE", NVF_PLAY_TEST_SCRIPT = "3:moveto:EasyPeteRef:0x00176ACE:0:60:0", NVF_PLAY_TEST_CONTROL = "30:aimref=00176ACE", NVF_PLAY_TEST_ACTIVATE = "32" }
+args = ["--cell", "GSHouseInterior03", "--play", "--hour", "2", "--npc-packages", "EasyPeteRef", "--no-voice"]
+run_seconds = 60
+expect = [
+  { text = "furniture: the player cannot use 00176ACE", count = 0, label = "the bed is never what E uses while he lies on it" },
+]
+order = [[
+  { text = "furniture: 00104C80 is on 00176ACE", label = "Easy Pete asleep on his bed" },
+  { re = 'target 0x00104C80 .*\(Talk\) by (Occupant|Bounds|Collision)', label = "the crosshair on his bed offers Talk to him" },
+  { re = 'activate 0x00104C80 .*: asleep, it wakes and gets up before talking', label = "E wakes him" },
+  { text = "furniture: 00104C80 gets off 00176ACE", label = "woken, he gets off the bed" },
+  { re = 'dialogue: .* is up after .*: the player talks to it', label = "and the conversation follows" },
+]]
+
+[[scenario]]
 name = "actor-values"
 kind = "tool"
 source = "CLAUDE.md: after actor value changes, fnvtool actor values (docs/spec-notes/actor-values.md §3.1, §7)"
