@@ -2,19 +2,21 @@
  "format": "nvf.damage.matrix/1",
  "name": "damage_parity",
  "issue": 3163,
- "note": "One hit at a time with one weapon on one actor record, at the same spot in the original and in NVForever (tools/capture/damage_parity.py; docs: tools/capture/README.md). FormIDs are FalloutNV.esm's [observed: fnvtool esm inventory]. The aim heights `z` are units above the target's feet: 85 and 120 for people as the dismember_odds campaign aimed [observed 2026-10-25]; the creatures' are guesses to tune on the first run [hypothesis]. A row is judged by where the hit landed, not by where it was aimed.",
+ "note": "One hit at a time with one weapon on one actor record, at the same spot in the original and in NVForever (tools/capture/damage_parity.py; docs: tools/capture/README.md). FormIDs are FalloutNV.esm's [observed: fnvtool esm inventory]. The aim heights `z` are units above the target's feet: 85 and 120 for people as the dismember_odds campaign aimed [observed 2026-10-25]; the creatures' are guesses to tune on the first run [hypothesis]. A row is judged by where the hit landed, not by where it was aimed. `nvf_kill`: the radscorpions placed in the runway's cell and the cells east, west and north of it [observed: fnvtool world refs], dead in the save `nvfairport`; NVForever's run starts from the data, so it kills them first. `eye`: the original's muzzle height standing [observed 2026-10-25, dismember_odds]; `nvf_eye`: NVForever's eye height (engine/nvf-play/src/player.rs EYE_HEIGHT).",
  "save": "nvfairport",
  "place": {
   "marker": "0x0013DA13",
   "offset": [851, 228, 40],
   "nvf_args": ["--cell", "Goodsprings", "--pos=37000,-117160,6180", "--heading", "0"],
-  "distance": 300
+  "distance": 300,
+  "nvf_kill": ["0x0014DEE2", "0x00162975", "0x00162976", "0x00162977", "0x0014DEC9", "0x00162978", "0x0014DEDA", "0x0014DEDB", "0x0014DEC3", "0x0014DE86", "0x00162984", "0x00162985"]
  },
  "shooter": {
   "level": 50,
   "values": {"Guns": 50, "EnergyWeapons": 50, "Explosives": 50, "Strength": 5, "Luck": 5},
   "remove_perks": ["0x00094EBA"],
-  "eye": 120
+  "eye": 120,
+  "nvf_eye": 112
  },
  "hits": 4,
  "target_health": 5000,
@@ -31,19 +33,19 @@
   {"key": "plasma", "weapon": "0x00004344", "ammo": "0x00004485", "note": "Plasma Rifle, Microfusion Cell"}
  ],
  "targets": [
-  {"key": "wastelander", "base": "0x0002E29D", "edid": "WastelanderAM", "aims": [{"name": "torso", "z": 85, "nvf": "aimnpc"}, {"name": "head", "z": 120, "nvf": "aimnpc=0.93"}]},
-  {"key": "powder_ganger", "base": "0x00101C8C", "edid": "PowderGanger3GunAM", "aims": [{"name": "torso", "z": 85, "nvf": "aimnpc"}, {"name": "head", "z": 120, "nvf": "aimnpc=0.93"}]},
-  {"key": "fiend", "base": "0x000F1C4F", "edid": "Fiend3RifleAM", "aims": [{"name": "torso", "z": 85, "nvf": "aimnpc"}, {"name": "head", "z": 120, "nvf": "aimnpc=0.93"}]},
-  {"key": "ncr_trooper", "base": "0x000FE239", "edid": "NCRTrooperAM", "aims": [{"name": "torso", "z": 85, "nvf": "aimnpc"}, {"name": "head", "z": 120, "nvf": "aimnpc=0.93"}]},
-  {"key": "ranger_veteran", "base": "0x00179AF6", "edid": "NCRRangerVeteranCM", "aims": [{"name": "torso", "z": 85, "nvf": "aimnpc"}, {"name": "head", "z": 120, "nvf": "aimnpc=0.93"}]},
-  {"key": "bos_paladin", "base": "0x000E27E2", "edid": "HVBrotherhoodOfSteelPaladinCM", "aims": [{"name": "torso", "z": 85, "nvf": "aimnpc"}, {"name": "head", "z": 120, "nvf": "aimnpc=0.93"}]},
-  {"key": "coyote", "base": "0x000E584E", "edid": "CrCoyote", "aims": [{"name": "body", "z": 35, "nvf": "aimactor"}]},
-  {"key": "gecko", "base": "0x0010CD73", "edid": "NVCrGecko", "aims": [{"name": "body", "z": 45, "nvf": "aimactor"}]},
-  {"key": "bighorner", "base": "0x00108020", "edid": "NVCrBigHorner", "aims": [{"name": "body", "z": 70, "nvf": "aimactor"}]},
-  {"key": "cazador", "base": "0x000E584D", "edid": "NVCrCazador", "aims": [{"name": "body", "z": 60, "nvf": "aimactor"}]},
-  {"key": "nightkin", "base": "0x0007EA29", "edid": "CrSuperMutantNightkin", "aims": [{"name": "body", "z": 100, "nvf": "aimactor"}]},
-  {"key": "protectron", "base": "0x000A592B", "edid": "CrProtectronArmy", "aims": [{"name": "body", "z": 80, "nvf": "aimactor"}]},
-  {"key": "sentry_bot", "base": "0x000A5C6F", "edid": "CrSentryBotMGArmy", "aims": [{"name": "body", "z": 90, "nvf": "aimactor"}]},
-  {"key": "deathclaw_alpha", "base": "0x000E584F", "edid": "CrDeathClawAlpha", "aims": [{"name": "body", "z": 110, "nvf": "aimactor"}]}
+  {"key": "wastelander", "base": "0x0002E29D", "edid": "WastelanderAM", "aims": [{"name": "torso", "z": 85}, {"name": "head", "z": 120}]},
+  {"key": "powder_ganger", "base": "0x00101C8C", "edid": "PowderGanger3GunAM", "aims": [{"name": "torso", "z": 85}, {"name": "head", "z": 120}]},
+  {"key": "fiend", "base": "0x000F1C4F", "edid": "Fiend3RifleAM", "aims": [{"name": "torso", "z": 85}, {"name": "head", "z": 120}]},
+  {"key": "ncr_trooper", "base": "0x000FE239", "edid": "NCRTrooperAM", "aims": [{"name": "torso", "z": 85}, {"name": "head", "z": 120}]},
+  {"key": "ranger_veteran", "base": "0x00179AF6", "edid": "NCRRangerVeteranCM", "aims": [{"name": "torso", "z": 85}, {"name": "head", "z": 120}]},
+  {"key": "bos_paladin", "base": "0x000E27E2", "edid": "HVBrotherhoodOfSteelPaladinCM", "aims": [{"name": "torso", "z": 85}, {"name": "head", "z": 120}]},
+  {"key": "coyote", "base": "0x000E584E", "edid": "CrCoyote", "aims": [{"name": "body", "z": 35}]},
+  {"key": "gecko", "base": "0x0010CD73", "edid": "NVCrGecko", "aims": [{"name": "body", "z": 45}]},
+  {"key": "bighorner", "base": "0x00108020", "edid": "NVCrBigHorner", "aims": [{"name": "body", "z": 70}]},
+  {"key": "cazador", "base": "0x000E584D", "edid": "NVCrCazador", "aims": [{"name": "body", "z": 60}]},
+  {"key": "nightkin", "base": "0x0007EA29", "edid": "CrSuperMutantNightkin", "aims": [{"name": "body", "z": 100}]},
+  {"key": "protectron", "base": "0x000A592B", "edid": "CrProtectronArmy", "aims": [{"name": "body", "z": 80}]},
+  {"key": "sentry_bot", "base": "0x000A5C6F", "edid": "CrSentryBotMGArmy", "aims": [{"name": "body", "z": 90}]},
+  {"key": "deathclaw_alpha", "base": "0x000E584F", "edid": "CrDeathClawAlpha", "aims": [{"name": "body", "z": 110}]}
  ]
 }

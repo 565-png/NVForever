@@ -24,7 +24,8 @@ How a hit is read:
   the equipped weapon, as in the dismember_odds campaign (TapControl does nothing in an
   unfocused game) [hypothesis: FireWeapon's damage is a normal shot's; a row that fits
   no skill and condition says otherwise].
-- NVForever: the player's own shots (`NVF_PLAY_TEST_CONTROL` aim and fire, no spread);
+- NVForever: the player's own shots (`NVF_PLAY_TEST_LOOK` at the same heights, then
+  `NVF_PLAY_TEST_CONTROL` fire, no spread);
   each hit is the log line `combat: hit <target> on <part> for <dealt> (DT <dt>), health
   <after>/<max>`, one per projectile.
 
@@ -111,8 +112,8 @@ def load_matrix(path=MATRIX):
     for t in m["targets"]:
         aims = t.get("aims") or []
         if fid(t.get("base")) is None or not 1 <= len(aims) <= 2 or not all(
-                isinstance(a.get("name"), str) and isinstance(a.get("z"), (int, float)) and isinstance(a.get("nvf"), str) for a in aims):
-            raise InputError(f"{path}: target {t['key']} needs a base FormID and one or two aims (name, z, nvf)")
+                isinstance(a.get("name"), str) and isinstance(a.get("z"), (int, float)) for a in aims):
+            raise InputError(f"{path}: target {t['key']} needs a base FormID and one or two aims (name, z)")
     if not (isinstance(m.get("hits"), int) and m["hits"] >= 1):
         raise InputError(f"{path}: hits must be a whole number, 1 or more")
     return m
@@ -308,10 +309,19 @@ def original_rows(m, sources):
 
 # --------------------------------------------------------------------------- NVForever
 
-def ref_of(k):
-    """The k-th reference created in a run: created FormIDs count up from 0xFF000000
-    [observed: tools/smoke/scenarios.toml, combat-script-values]."""
-    return f"0x{0xFF000000 + k:08X}"
+def ref_of(target):
+    """The target as the test aids name it: the newest reference created from its base
+    (`fnv_sim::actions::CREATED_PREFIX`). Its FormID is not known ahead: projectiles and
+    dropped items are created references too [observed 2026-11-21: the targets of one run
+    were FF000000, FF000009, FF000022, …]."""
+    return "created:" + target["base"]
+
+
+def pitch_of(m, z):
+    """The view's pitch in degrees (negative looks down) from NVForever's eye to a point
+    `z` above the feet of a target `distance` away on level ground: the original's aim
+    script does the same sum from its own muzzle height."""
+    return math.degrees(math.atan2(z - m["shooter"]["nvf_eye"], m["place"]["distance"]))
 
 
 def nvf_plan(m, w):
@@ -319,10 +329,12 @@ def nvf_plan(m, w):
     sh, dist = m["shooter"], m["place"]["distance"]
     script = [f"2:set_av:player:{name}:{value:g}" for name, value in sh["values"].items()]
     script.append(f"2:call:player:SetLevel:{sh['level']}")
-    control = ["3:weapon", "4:condition=100"]
+    # the actors placed near the spot, dead in the original's save
+    script += [f"1:kill:{r}" for r in m["place"].get("nvf_kill") or []]
+    control, look = ["3:weapon", "4:condition=100"], []
     t = NVF_START
-    for k, target in enumerate(m["targets"]):
-        r = ref_of(k)
+    for target in m["targets"]:
+        r = ref_of(target)
         script += [f"{t:g}:call:player:PlaceAtMe:{target['base']}:1:{dist}:0",
                    f"{t + 1:g}:call:{r}:SetRestrained:1", f"{t + 1:g}:set_av:{r}:Health:{m['target_health']}",
                    f"{t + 1:g}:moveto:{r}:player:0:{dist}:0", f"{t + 1.2:g}:call:{r}:SetAngle:z:0",
@@ -334,7 +346,8 @@ def nvf_plan(m, w):
             for i in range(m["hits"]):
                 at = t + 0.5 + i * NVF_SHOT
                 # `fire` presses Use, the second lets it go: one shot of a weapon that is not automatic
-                control += [f"{at:g}:{aim['nvf']}", f"{at + 0.3:g}:fire", f"{at + 0.45:g}:fire"]
+                look.append(f"{at:g}:0:{pitch_of(m, aim['z']):.2f}")
+                control += [f"{at + 0.3:g}:fire", f"{at + 0.45:g}:fire"]
             t += 0.5 + m["hits"] * NVF_SHOT
             control.append(f"{t:g}:reload")
             t += NVF_RELOAD
@@ -342,7 +355,8 @@ def nvf_plan(m, w):
         t += NVF_AFTER
     env = {"NVF_PLAY_TEST_GOD": "1", "NVF_PLAY_TEST_SCRIPT_MENUS": "1", "NVF_PLAY_TEST_NO_SPREAD": "1",
            "NVF_PLAY_TEST_EQUIP": f"{fid(w['weapon']):08X}", "NVF_PLAY_TEST_GIVE": f"{fid(w['ammo']):08X}:400",
-           "NVF_PLAY_TEST_SCRIPT": ",".join(script), "NVF_PLAY_TEST_CONTROL": ",".join(control)}
+           "NVF_PLAY_TEST_SCRIPT": ",".join(script), "NVF_PLAY_TEST_CONTROL": ",".join(control),
+           "NVF_PLAY_TEST_LOOK": ",".join(look)}
     args = list(m["place"]["nvf_args"]) + ["--play", "--hour", "12", "--no-voice", "--no-messages"]
     return env, args, math.ceil(t + 5)
 

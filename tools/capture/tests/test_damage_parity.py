@@ -137,12 +137,19 @@ class NVForever(unittest.TestCase):
         self.assertEqual(sum(c.endswith(":fire") for c in control), 2 * shots)  # pressed and let go
         script = env["NVF_PLAY_TEST_SCRIPT"].split(",")
         self.assertEqual(sum(":PlaceAtMe:" in s for s in script), len(m["targets"]))
-        self.assertIn(f":call:{dp.ref_of(len(m['targets']) - 1)}:Disable", script[-1])
-        times = [float(s.split(":")[0]) for s in script[len(m["shooter"]["values"]) + 1:]]
+        self.assertIn(f":call:created:{m['targets'][-1]['base']}:Disable", script[-1])
+        self.assertEqual(sum(":kill:" in s for s in script), len(m["place"]["nvf_kill"]))
+        times = [float(s.split(":")[0]) for s in script if ":kill:" not in s][len(m["shooter"]["values"]) + 1:]
         self.assertEqual(times, sorted(times))
         self.assertGreater(seconds, times[-1])
         self.assertIn("--play", args)
         self.assertEqual(env["NVF_PLAY_TEST_EQUIP"], "000E3778")
+        look = [x.split(":") for x in env["NVF_PLAY_TEST_LOOK"].split(",")]
+        self.assertEqual(len(look), shots)
+        # the wastelander: torso below the eye, head above it
+        self.assertLess(float(look[0][2]), 0)
+        self.assertGreater(float(look[m["hits"]][2]), 0)
+        self.assertEqual({x[1] for x in look}, {"0"})
 
     def test_the_scenarios_file_is_one_the_smoke_runner_loads(self):
         from smoke import scenarios
