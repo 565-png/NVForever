@@ -14,7 +14,12 @@ What exists already and is reused, not rewritten:
   check at start for an earlier run that ended with no clean exit and no crash report (a
   native crash, a kill), crash reports for panics (`crash-<time>-<pid>.txt`: thread,
   message, location, backtrace, command line, cell and position), and `redact`, which
-  writes the player's home folder as `%USERPROFILE%` (#1710).
+  writes the player's home folder as `%USERPROFILE%` (#1710). Off Windows it also
+  hides the removable-drive mounts under the player's name (`/run/media/<user>`,
+  `/media/<user>`); one list (`crash::name_folders`) feeds it, the reports and the Linux
+  signal handler. A report also writes the Data, game and NVForever folders and, on a
+  Mod Organizer 2 run, the instance and its mods and overwrite folders as names
+  (`<Data>`, `<MO2 mods>`, ...) (#3152).
 - [documented: `docs/design/frame-telemetry.md`] Bounded frame telemetry (JSONL schema 1),
   a developer aid behind `NVF_PLAY_TEST_FRAME_TELEMETRY`. Its schema is a model for the
   performance part below, but it stays a developer aid; nothing below turns it on.
@@ -73,7 +78,7 @@ menu, on a player's start only (not with `--data`, `NVFOREVER_DATA`, a test aid 
 > NVForever can send a report after each session: the build, your PC's hardware and
 > settings, your mod list, how it ran, the game's log and any problems it noticed.
 > No personal details, no saves.
-> You can change this at any time in Settings → Gameplay → Reports.
+> You can change this at any time in Settings → Gameplay → Bug Reports.
 >
 > [ Send reports ]  [ Not now ]   *What is sent?* (opens §3 in the browser)
 
@@ -96,7 +101,8 @@ Endpoint=           ; empty = the project's server; set for a self-hosted one
 
 - `InstallId` is random, made at opt-in, not derived from hardware or account. Turning
   reports off and on again makes a new one (the old one is unlinked).
-- Settings → Gameplay → Reports (`engine/nvf-play/src/settings_layout.rs`): a toggle
+- Settings → Gameplay → Bug Reports (`crates/nvf-settings-layout/src/lib.rs` `SECTIONS`;
+  the launcher shows the same rows): a toggle
   (Send reports) and "Delete my reports" (§6); "Open reports folder" and the last sent
   time are designed but not built. The hand report (§3.3) is opened from the
   pause menu's "Report a bug", not from Settings.

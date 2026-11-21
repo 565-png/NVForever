@@ -1,5 +1,5 @@
 //! The glowing parts of a model, for the distant lights of statics (nvforever
-//! `distant_lights.rs`, docs/design/graphics-enhanced.md §3.17, #3013): an enhanced-look
+//! `distant_lights.rs`, docs/design/graphics-enhanced.md §3.22, #3013): an enhanced-look
 //! feature of NVForever's own, not a fact about the original game.
 //!
 //! A model qualifies by its shapes' properties, as the renderer already reads them

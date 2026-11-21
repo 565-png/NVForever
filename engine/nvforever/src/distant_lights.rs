@@ -1,4 +1,4 @@
-//! Distant lights at night (`distant-lights`, docs/design/graphics-enhanced.md §3.17,
+//! Distant lights at night (`distant-lights`, docs/design/graphics-enhanced.md §3.22,
 //! #3013): an enhanced-look switch of NVForever's own, off by default and in both presets,
 //! never a parity item. Nothing here is a fact about the original game; every number is an
 //! engineering choice, judged by eye [design].

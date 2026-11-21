@@ -273,6 +273,20 @@ not visible in the data and stays **[hypothesis]** until the in-game captures of
   the 72 h cell respawn (`iHoursToRespawnCell`) applies to containers with the Respawns
   flag, measured from leaving the cell, between 70 and 74 hours [observed]. Narrowed by
   the scenario above (2026-10-09): between 71.0 and 73.1 hours, hours not midnights.
+- **AddItem on a container nothing has read yet**: a placed container's inventory is
+  rolled from its CNTO the first time anything touches it, and an AddItem is such a
+  touch, so the item joins the authored contents and nothing rolls them again over it
+  later. Only a respawn or a merchant restock (both above) replaces them [design;
+  test `add_item_before_a_container_is_read_is_kept`]. Issue #3021 looked like a lost
+  AddItem and was not one: in Old World Blues the Basic Infiltration Test terminal
+  (OldWorldBlues.esm TERM 0x0100BB5A item 0) puts the X-13 Document in
+  `X13TestSafeREF`. When a test robot detects the player, the quest script
+  (SCPT 0x01010918) sets `bDetected` and activates `X13FAILREF`, whose
+  `NVDLC03X13FailureSwitchSCRIPT` (SCPT 0x01014FFC) does `X13TestSafeREF.RemoveItem` of
+  the document [observed: decompiled]. The quest pilot's run of 2026-11-19 was seen by
+  a robobrain 9 s after the AddItem ("Test failed. You have been spotted by a patrol.")
+  and that script then ran [observed: the pilot log, 02:34:07.84]. The empty safe was
+  the authored result of a failed test.
 - **Non-playable items**: ARMO BMDT general flag bit 6 is "Non-Playable" [documented:
   xEdit wbBMDT, `schemas/fnv/objects.json`]. `PipBoy` (Pip-Boy 3000, 0x00015038) and
   `PipBoyGlove` (Pip-Boy Glove, 0x00025B83) carry it [observed: `fnvtool esm decode`].
@@ -717,8 +731,13 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
     whose render bounds (each mesh's box in its own space) the ray enters before the first
     collision hit of any kind, so walls and table tops hide what is behind them; a box the
     eye is inside does not count; ties go to the collision hit [hypothesis: many small
-    items have no collision, yet the game lets the player pick them up]. Collision on the
-    trigger layer (12) does not block the ray [hypothesis].
+    items have no collision, yet the game lets the player pick them up]. An actor's render
+    box is rough (a skinned mesh's bind-pose bounds, which do not follow a body lying on
+    the floor [hypothesis]): any other box the ray enters before the first collision hit
+    wins over it, nearer or not, so an item beside a body is taken rather than the body
+    searched; with no such box the body is picked by its box as before (#3125) [design].
+    The console's click keeps the plain nearest rule. Collision on the trigger layer (12)
+    does not block the ray [hypothesis].
   - **What is offered**: references the simulation considers present (not taken, enabled)
     whose base is an item, container, door, actor or placed explosive with a weapon to
     give; activators and furniture only with a display name (FULL) [hypothesis: unnamed
