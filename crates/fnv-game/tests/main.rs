@@ -161,5 +161,6 @@ fn every_test_file_is_built() {
 mod callable_identity;
 mod em_clearance;
 mod is_in_kill_cam;
+mod no_unequip;
 mod preactivation_events;
 mod preactivation_mutation;

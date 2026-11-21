@@ -439,8 +439,14 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             let vals = vec![XVal::Ref(item.0), XVal::Num(full * cond), XVal::Num(f64::from(mods))];
             list(g, vals)
         }
-        // On an inventory reference [observed: data2, the pistol's 0].
-        "getnounequip" => zero,
+        // On an inventory reference of a currently equipped item: 1 when the world holds a
+        // NoUnequip lock (EquipItem / EquipItemAlt NoUnequipFlag or SetNoUnequip 1), else 0
+        // [documented: GECK wiki GetNoUnequip; observed: data2, unlocked pistol reads 0].
+        "getnounequip" => {
+            let Some((actor, item)) = subject.and_then(|r| g.temp_item(r)) else { return Some(Ok(zero)) };
+            let equipped = g.world.peek(actor).and_then(|s| s.inventory.as_ref()).is_some_and(|inv| inv.is_equipped(item));
+            yes(equipped && g.world.equip_lock(actor, item) == Some(fnv_sim::world::EquipLock::NoUnequip))
+        }
         // ACTI WNAM; none leaves it [observed: data2].
         "setactivatorwatertype" => {
             if let (Some(w), Some(f)) = (form(args, 0), form(args, 1)) {
