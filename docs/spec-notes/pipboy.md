@@ -1510,19 +1510,24 @@ fonts) and the owner's five DATA screenshots (§1), compared at 1280 × 720 with
     marker's texture coordinates equal the box's middle within 0.001), no does
     nothing. With a marker placed it asks with three answers, in this order: move (to
     the highlight box's spot), remove, leave (it stays).
-  - **With the mouse** (#3324): a click on a map away from any marker (the left button
-    pressed and let go on the map's window, the pointer moving no more than 6 units
-    between, as a travel click) asks the same question as X, of the place under the
-    highlight box at the pointer, read in the map as drawn that frame (its pan and zoom,
-    the window the page drawn from the file published). On the World Map a click with
-    a marker under the highlight box asks to travel instead and places nothing; the
-    Local Map has no travel, so a click anywhere on it asks (on a door or marker the
-    box has taken, of its spot, as X there). A press that moved further is a drag and
-    asks nothing; a press on a hint over the map is the hint's; with a question box up
-    the box takes every click (`data.rs::travel_ask`, `step`) [design]. That the
-    original places the custom marker with a left click on an empty spot of either map,
-    and whether it asks first, is [hypothesis]: no capture clicked an empty spot
-    (docs/handoff/observer-checks.md #258). Log: `pipboy map: a click on the <world|local>
+  - **With the mouse** (#3324) [design]: a click on a map away from any marker (the left
+    button pressed and let go on the map's window, the pointer moving no more than 6
+    units between, as a travel click) does what X does there, of the place under the
+    highlight box at the pointer: it asks the question above, or under the player's No
+    Place Marker Popup tweak answers at once as X does (docs/design/tweaks.md). The
+    click is read once the map is drawn on the frame the button is let go (its pan and
+    zoom, the window the page drawn from the file published, the highlight box as it
+    stands then): on the World Map, with a marker under the box then, it asks to travel
+    there instead and places nothing. The Local Map has no travel, so a click anywhere
+    on it places (on a door or marker the box has taken, at its spot, as X there). A
+    press that moved further is a drag and does neither; a press on a hint over the map
+    is the hint's; with a question box up the box takes every click; a map that cannot
+    be drawn (a worldspace without map data) takes none, nothing being under its box; a
+    press held while DATA closes (another page, the Pip-Boy down) is let go with it
+    (`data.rs::travel_ask`, `take_click`, `step`). The capture above placed the marker
+    with X only [observed]; how the original's mouse places it (a left click on an
+    empty spot, whether it asks first) is [hypothesis] (docs/handoff/observer-checks.md
+    #258). Log: `pipboy map: a click on the <world|local>
     map away from any marker: Place Marker`, then Place Marker's own lines.
   - The words are game settings by name: `sSetMarkerQuestion` (no marker yet),
     `sMoveMarkerQuestion` (one placed), `sYes`, `sNo`, `sMoveMarker`, `sRemoveMarker`,

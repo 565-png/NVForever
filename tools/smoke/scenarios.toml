@@ -30947,7 +30947,7 @@ expect = [
   { text = "pipboy map: custom marker removed", count = 1, label = "Down and Enter take the second answer, once" },
   { text = "pipboy map: a click on the local map away from any marker: Place Marker", count = 1, label = "#3324: the real left click on the Local Map drawn from its tiles asks Place Marker's question" },
   { re = 'pipboy map: a click on the world map', count = 0, label = "#3324: the press dragged on the World Map asks nothing" },
-  { re = 'fast travel: asks', count = 0, label = "and no travel" },
+  { re = 'fast travel: (asks ".+" \(0x[0-9A-F]{8}\)|to .+ refused)', count = 0, label = "and no travel asked or refused" },
   { re = 'pipboy data: question box over the tiles \(2 answers\)', min = 2, label = "the click's question painted over the tiles too" },
   { text = "tiles: MapMenu draws quests from tiles", min = 1, label = "Quests drawn from its file after the maps" },
 ]
@@ -30996,7 +30996,7 @@ expect = [
   { text = "pipboy map: a click on the world map away from any marker: Place Marker", count = 1, label = "#3324: the real left click on an empty spot asks Place Marker's question; the drag after it asks nothing" },
   { re = 'pipboy map: Place Marker asks ".+" \(2 answers\)', count = 2, label = "X's question with no marker, and the click's" },
   { re = 'pipboy map: custom marker placed at \(-?\d+, -?\d+\) in 0x[0-9A-F]{8}', count = 2, label = "X's Yes, and the click's Yes" },
-  { re = 'fast travel: asks', count = 0, label = "the click on an empty spot asks no travel" },
+  { re = 'fast travel: (asks ".+" \(0x[0-9A-F]{8}\)|to .+ refused)', count = 0, label = "the click on an empty spot asks no travel, nor is one refused" },
 ]
 order = [[
   "pipboy map: custom marker placed at",

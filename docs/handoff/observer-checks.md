@@ -3458,11 +3458,12 @@ already talking takes over at once, same topic or another; nothing is queued or 
 258. **What does a left click on an empty spot of the Pip-Boy's World Map and Local Map do
      with the keyboard and mouse?** (P2; #3324, pipboy.md Place Marker; numbered 258 in a
      batch where 250 and 257 were taken the same night, renumber at merge.) The capture of
-     2026-11-10 placed the custom marker with the X button only [observed]; a player
-     reports the original places it with the mouse [hypothesis until seen]. Ours: a click
-     (press and release within 6 units) away from any marker asks the same question box as
-     X, of the place under the highlight box; a click on a World Map marker asks to travel;
-     a right click does nothing [hypothesis]. On the World Map at 1280x720, click once an
+     2026-11-10 showed placement with the X button only [observed]; a player reports the
+     original places it with the mouse, and how is [hypothesis]. Ours [design]: a click
+     (press and release within 6 units) away from any marker does what X does (the same
+     question box, or under the No Place Marker Popup tweak an answer at once), of the place
+     under the highlight box; a click with a World Map marker under the box asks to travel;
+     a right click does nothing. On the World Map at 1280x720, click once an
      empty spot well away from any marker, once a spot about 20 px from one (inside the
      highlight box's reach), and once with the right button; repeat on the Local Map, once
      on a door icon. Screenshot each result: whether a box asks (and its words) or the
