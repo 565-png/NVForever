@@ -621,10 +621,24 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "getdestructiondatanumstages" => XVal::Num(form(args, 0).and_then(|f| g.destruction(f)).map_or(0, |d| d.stages.len()) as f64),
         // ---- weapons ----
         // ShowOff's index into DNAM flags1 [observed: gaps4, the 10mm pistol reads 0 on
-        // 0–5 and SetWeaponFlag 5 1 reads back 1; hypothesis: flags1's bits].
-        "weaponhasflag" | "setweaponflag" => {
-            let set = name == "setweaponflag";
-            let w = form(args, if set { 2 } else { 1 }).or_else(|| subject.and_then(|r| crate::functions::items::equipped_weapon(g, r)));
+        // 0–5 and SetWeaponFlag 5 1 reads back 1; documented: WeaponHasFlag /
+        // SetWeaponFlag aliases GetWeaponHasFlag / SetWeaponHasFlag, calling reference
+        // weaponRefr or optional weapon baseForm].
+        "weaponhasflag" | "getweaponhasflag" | "setweaponflag" | "setweaponhasflag" => {
+            let set = matches!(name, "setweaponflag" | "setweaponhasflag");
+            let resolve_weapon = |g: &Game, f: FormId| -> Option<FormId> {
+                if let Some((_, it)) = g.temp_item(f) {
+                    return (g.data.sig(g.unclone(it)) == Some(*b"WEAP")).then_some(it);
+                }
+                if g.data.sig(g.unclone(f)) == Some(*b"WEAP") {
+                    return Some(f);
+                }
+                crate::functions::base_of(g, f).filter(|&b| g.data.sig(g.unclone(b)) == Some(*b"WEAP"))
+            };
+            let w = match form(args, if set { 2 } else { 1 }) {
+                Some(f) => resolve_weapon(g, f),
+                None => subject.and_then(|r| resolve_weapon(g, r).or_else(|| crate::functions::items::equipped_weapon(g, r))),
+            };
             let Some(w) = w else { return Some(Ok(zero)) };
             let flags = match crate::nvse::record_value(g, w, "DNAM", "flags1") {
                 Some(XVal::Num(x)) => x as u64,
@@ -639,6 +653,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
             let new = if num(args, 1, 0.0) != 0.0 { flags | 1 << (k as u64) } else { flags & !(1 << (k as u64)) };
             g.field_overrides.insert((w, "DNAM/flags1".into()), XVal::Num(new as f64));
+            g.playable_overrides.remove(&w);
             zero
         }
         "getweaponsound" | "setweaponsound" => {
@@ -712,7 +727,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // PROJ DATA flags bit by bit, and the explosion [observed: gaps6, the 10mm
         // projectile's flags 141 read 1 0 1 1 0 0; a null explosion does not clear it].
         "getprojectileflag" | "setprojectileflag" => {
-            let Some(f) = form(args, 0) else { return Some(Ok(zero)) };
+            let Some(f) = form(args, 0).filter(|&f| g.data.sig(g.unclone(f)) == Some(*b"PROJ")) else {
+                return Some(Ok(zero));
+            };
             let flags = match crate::nvse::record_value(g, f, "DATA", "flags") {
                 Some(XVal::Num(x)) => x as u64,
                 _ => 0,
