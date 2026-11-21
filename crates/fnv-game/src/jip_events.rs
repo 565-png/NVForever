@@ -31,6 +31,8 @@ pub struct JipEvents {
     pub keys_held: std::collections::BTreeSet<u16>,
     /// Last 28-control event snapshot; shared by both control-event interfaces.
     pub controls_held: u32,
+    /// Last gamepad button mask snapshot (XInput bits), for OnButtonDown/OnButtonUp.
+    pub buttons_held: u32,
     /// ScriptWait: the waiting block of each script instance (one at a time
     /// [documented: ScriptWait]); not saved [hypothesis, as the registrations].
     pub waits: std::collections::HashMap<crate::game::InstKey, Waiting>,
@@ -470,18 +472,22 @@ impl Game<'_> {
         })
     }
 
-    /// Each frame (`Game::tick`): the key-down and key-up events of the keys and mouse
-    /// buttons pressed and let go since the last frame, by DirectX scancode (256 + n for
-    /// the mouse) [documented: SetOnKeyDownEventHandler, SetOnKeyUpEventHandler; the
-    /// handler gets the key]. The keys held are the player's whatever DisableKey says, as
-    /// the events "still run even if the key has been disabled" [documented:
-    /// SetOnKeyDownEventHandler].
-    /// Both control-event interfaces follow the same frame entry point, after key
-    /// callbacks, against a snapshot taken before callbacks (control-input-events.md).
+    /// Each frame (`Game::tick` and `Game::page_tick`): key-down/key-up events by
+    /// DirectX scancode (256 + n for the mouse) for both JIP (`SetOnKeyDownEventHandler`
+    /// / `SetOnKeyUpEventHandler`) and named `SetEventHandler` (`OnKeyDown` / `OnKeyUp`,
+    /// plain or `:code`) [documented: GECK wiki SetOnKeyDownEventHandler, OnKeyDown,
+    /// OnKeyUp]. The keys held are the player's whatever DisableKey says, as JIP's
+    /// events "still run even if the key has been disabled" [documented:
+    /// SetOnKeyDownEventHandler; hypothesis for SetEventHandler OnKeyDown/OnKeyUp].
+    /// Both control-event interfaces and gamepad button events (`OnButtonDown` /
+    /// `OnButtonUp`, plain or `:bitmask`) follow the same frame entry point against
+    /// snapshots taken before callbacks (control-input-events.md, ext-events.md).
     pub(crate) fn jip_keys(&mut self) {
         let controls = self.input.controls_for_events();
+        let buttons = self.jip2.told.pad.buttons | self.jip2.told.pad.held_buttons;
         self.jip_key_edges();
         self.control_edges(controls);
+        self.button_edges(buttons);
     }
 
     fn control_edges(&mut self, now: u32) {
@@ -511,14 +517,67 @@ impl Game<'_> {
         }
         let now = self.input.held.clone();
         let before = std::mem::replace(&mut self.jip.keys_held, now.clone());
-        if self.jip.handlers.iter().all(|h| h.event != "keydown" && h.event != "keyup") {
+        let jip = self.jip.handlers.iter().any(|h| h.event == "keydown" || h.event == "keyup");
+        let named = self.handlers.iter().any(|h| {
+            h.event == "onkeydown"
+                || h.event == "onkeyup"
+                || h.event.starts_with("onkeydown:")
+                || h.event.starts_with("onkeyup:")
+        });
+        if !jip && !named {
             return;
         }
         for &k in now.difference(&before) {
-            self.jip_event("keydown", None, vec![XVal::Num(f64::from(k))]);
+            let code = XVal::Num(f64::from(k));
+            if jip {
+                self.jip_event("keydown", None, vec![code.clone()]);
+            }
+            if named {
+                self.dispatch_event("OnKeyDown", vec![code.clone()], None);
+                self.dispatch_event(&format!("OnKeyDown:{k}"), vec![code], None);
+            }
         }
         for &k in before.difference(&now) {
-            self.jip_event("keyup", None, vec![XVal::Num(f64::from(k))]);
+            let code = XVal::Num(f64::from(k));
+            if jip {
+                self.jip_event("keyup", None, vec![code.clone()]);
+            }
+            if named {
+                self.dispatch_event("OnKeyUp", vec![code.clone()], None);
+                self.dispatch_event(&format!("OnKeyUp:{k}"), vec![code], None);
+            }
+        }
+    }
+
+    fn button_edges(&mut self, now: u32) {
+        let before = std::mem::replace(&mut self.jip.buttons_held, now);
+        let changed = now ^ before;
+        if changed == 0 {
+            return;
+        }
+        let named = self.handlers.iter().any(|h| {
+            h.event == "onbuttondown"
+                || h.event == "onbuttonup"
+                || h.event.starts_with("onbuttondown:")
+                || h.event.starts_with("onbuttonup:")
+        });
+        if !named {
+            return;
+        }
+        for bit in 0..u32::BITS {
+            let mask = 1u32 << bit;
+            if changed & mask == 0 {
+                continue;
+            }
+            let down = now & mask != 0;
+            let args = vec![XVal::Num(f64::from(mask))];
+            self.dispatch_event(if down { "OnButtonDown" } else { "OnButtonUp" }, args.clone(), None);
+            let prefix = if down { "onbuttondown:" } else { "onbuttonup:" };
+            self.dispatch_event_matching(
+                |ev| ev.strip_prefix(prefix).and_then(|s| s.parse::<u32>().ok()).is_some_and(|m| m & mask != 0),
+                args,
+                None,
+            );
         }
     }
 

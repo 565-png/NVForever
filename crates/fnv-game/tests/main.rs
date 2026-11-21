@@ -50,6 +50,7 @@ mod functions;
 mod game_clock;
 mod title_menu_group;
 mod jip_remove_filters;
+mod key_button_events;
 mod hit_effects_data;
 mod hit_effects;
 mod idles_holstered;
