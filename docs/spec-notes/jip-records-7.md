@@ -40,8 +40,14 @@ for wrong-type `SetAmmoProjectile` rejection and clone-of-clone isolation remain
 | SetProjectileMuzzleFlash `projectile path` | NAM1, the muzzle flash model |
 | SetExplosionTraitNumeric `explosion trait value` | DATA: 0 force, 1 damage, 2 radius, 3 IS radius, 4 radiation level, 5 dissipation time, 6 radiation radius, 7 sound level [documented] |
 
-The engine's projectiles and explosions still read the records as loaded (follow-up: the
-game's projectile and explosion data through the session's changes).
+The engine's projectiles and explosions still read most fields as loaded; session
+`DATA/speed`, `DATA/impact_force`, and `DATA/flags` overrides (`SetProjectileTraitNumeric`,
+`SetProjectileFlag`) are exposed clone-first through `Game::projectile_launch_traits`,
+`Game::projectile_flags_override`, `Game::projectile_flags`, and
+`Game::projectile_can_be_disabled`, and `fnv_combat::data::ProjectileStats::apply_flags`
+(alongside `WeaponStats::apply_flags1` for `WEAP` `DNAM/flags1`) projects bitmasks onto
+typed combat records [design] (follow-up: wire the remaining engine projectile, weapon,
+and explosion readers through these views).
 
 ## 3. Impact data and materials
 

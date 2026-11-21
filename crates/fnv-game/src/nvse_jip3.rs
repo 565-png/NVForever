@@ -233,12 +233,14 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let flags = crate::nvse::record_value(g, b, "ACBS", "template_flags").and_then(|v| v.num().ok()).unwrap_or(0.0) as u64;
             yes(flags & (num(args, 0, 0.0) as u64) != 0)
         }
-        // The base's Immobile flag (ACBS bit 23) [documented: GetIsImmobile, "incapable of
+        // The base's Immobile flag (CREA ACBS bit 23) [documented: GetIsImmobile, "incapable of
         // moving"; the bit, the schema's ACBS flags].
         "getisimmobile" => {
-            let Some(b) = form(args, 0).or_else(|| subject.map(|r| crate::functions::base_of(g, r).unwrap_or(r))) else { return Some(Ok(zero)) };
-            let flags = crate::nvse::record_value(g, b, "ACBS", "flags").and_then(|v| v.num().ok()).unwrap_or(0.0) as u64;
-            yes(flags & (1 << 23) != 0)
+            let Some(b) = form(args, 0).or(subject).map(|r| g.actor_flags_target(r)) else { return Some(Ok(zero)) };
+            if g.data.sig(g.unclone(b)) == Some(*b"NPC_") {
+                return Some(Ok(zero));
+            }
+            yes(g.actor_base_flags_raw(b) & (1 << crate::actor_values::acbs::IMMOBILE) != 0)
         }
         // LU `list`: the calling actor's race is in the form list [documented: IsRaceInList].
         "israceinlist" => {

@@ -10,13 +10,14 @@ use fnv_sim::FormId;
 use serde_json::Value as Json;
 use std::collections::HashMap;
 
-/// The supported session-only numeric edits needed when a new shot is created.
+/// The supported session-only edits needed when a new shot is created.
 /// `original` supplies the typed record; the requested clone retains its own identity.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectileLaunchTraits {
     pub original: FormId,
     pub speed: Option<f32>,
     pub impact_force: Option<f32>,
+    pub flags: Option<u16>,
 }
 
 /// AMMO DATA flag bits [documented: schemas/fnv/objects.json `AMMO.DATA.flags`].
@@ -613,9 +614,51 @@ impl Game<'_> {
         }
     }
 
-    /// Only speed/impact-force overrides, with the same clone-first/original fallback
-    /// as the record getters. Absent edits leave the typed consumer's values alone.
-    /// The finite conversion guard is an engineering boundary for physical values.
+    /// Session `DATA/flags` override for a `PROJ` (clone-first, original fallback),
+    /// from `SetProjectileFlag`. Returns `None` for non-projectiles, absent edits, or
+    /// non-finite values [design].
+    pub fn projectile_flags_override(&self, projectile: FormId) -> Option<u16> {
+        let original = self.unclone(projectile);
+        if self.data.sig(original) != Some(*b"PROJ") {
+            return None;
+        }
+        let key = "DATA/flags".to_string();
+        match self.field_overrides.get(&(projectile, key.clone())).or_else(|| self.field_overrides.get(&(original, key))) {
+            Some(XVal::Num(n)) if n.is_finite() => Some((n.trunc() as i64 as u64 & 0xFFFF) as u16),
+            _ => None,
+        }
+    }
+
+    /// Effective `DATA/flags` bitmask for a `PROJ` (session override first, else
+    /// authored record; `0` when the projectile has no `DATA`), or `None` for
+    /// non-projectiles.
+    pub fn projectile_flags(&self, projectile: FormId) -> Option<u16> {
+        let original = self.unclone(projectile);
+        if self.data.sig(original) != Some(*b"PROJ") {
+            return None;
+        }
+        match crate::nvse::record_value(self, projectile, "DATA", "flags") {
+            Some(XVal::Num(n)) if n.is_finite() => Some((n.trunc() as i64 as u64 & 0xFFFF) as u16),
+            _ => Some(0),
+        }
+    }
+
+    /// Effective projectile `Can Be Disabled` state (`DATA/flags` bit 5), honoring
+    /// live `SetProjectileFlag` overrides before `FormStore`.
+    pub fn projectile_can_be_disabled(&self, projectile: FormId) -> bool {
+        if let Some(flags) = self.projectile_flags_override(projectile) {
+            return flags & (1 << 5) != 0;
+        }
+        matches!(
+            self.world.forms.get(self.unclone(projectile)).map(|b| &b.data),
+            Some(fnv_sim::forms::BaseData::Projectile { can_be_disabled: true, .. })
+        )
+    }
+
+    /// Speed, impact-force, and `DATA/flags` overrides, with the same clone-first /
+    /// original fallback as the record getters. Absent edits leave the typed consumer's
+    /// values alone. The finite conversion guard is an engineering boundary for physical
+    /// values.
     pub fn projectile_launch_traits(&self, projectile: FormId) -> Option<ProjectileLaunchTraits> {
         let original = self.unclone(projectile);
         if self.data.sig(original) != Some(*b"PROJ") {
@@ -628,7 +671,12 @@ impl Game<'_> {
                 _ => None,
             }
         };
-        Some(ProjectileLaunchTraits { original, speed: number("speed"), impact_force: number("impact_force") })
+        Some(ProjectileLaunchTraits {
+            original,
+            speed: number("speed"),
+            impact_force: number("impact_force"),
+            flags: self.projectile_flags_override(projectile),
+        })
     }
 
     fn set_field(&mut self, f: FormId, sub: &str, path: &str, v: XVal) {
