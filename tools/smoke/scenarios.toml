@@ -16894,19 +16894,36 @@ expect = [
 forbid = [{ text = "player: stops swimming", label = "swims on over the deepening bed" }]
 
 [[scenario]]
+name = "lakelurk-idle-pose"
+source = "issue #2980 (a lakelurk stands in a T-pose until it fights): the placed lakelurks of Boulder Beach, calm and idle, play the mirelurk king's standing idle (mtidle.kf) on their base layer; the pose watch (NVF_PLAY_TEST_POSE_WATCH, swimming.rs) says what each plays and whether it has a character; no lakelurk has a base layer fault (locomotion.rs base_fault)"
+note = "Boulder Beach shore (as wade-in-swim), the lakelurks kept unaware (NVF_PLAY_TEST_UNSEEN), the player walking east to the waterline at 6-8 s. Not run yet: which placed lakelurks load here and how near they stand is not checked; a lakelurk reference near the shore (fnvtool world refs) would let the player walk right up to one. The pose-watch lines are the evidence for #2980's cause: an idle lakelurk without a character on mtidle.kf at weight 1 with nothing over it rules out its base layer"
+areas = ["actors", "creatures", "physics"]
+paths = ["engine/nvforever/src/swimming.rs", "engine/nvforever/src/locomotion.rs", "engine/nvforever/src/idles.rs", "engine/nvforever/src/body_weapons.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_MOVE = "6:1:0,8:0:0", NVF_PLAY_TEST_POSE_WATCH = "lakelurk" }
+args = ["--play", "--pos=56992,37536,2745", "--heading", "90", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  { re = 'pose watch: Creature [0-9A-E][0-9A-F]{7} \w*[Ll]akelurk\w*: layer 0 \S*mirelurkking.mtidle\.kf \(weight 1\.00\)', label = "a placed lakelurk plays its standing idle on its base layer" },
+]
+forbid = [{ re = 'actor base layer fault: Creature [0-9A-F]{8} \w*[Ll]akelurk', label = "no lakelurk lacks a base clip or has a non-finite one" }]
+
+[[scenario]]
 name = "lakelurk-rests-on-bed"
-source = "issue #2980 (docs/spec-notes/physics.md §6.6, Actors standing on the bed): a lakelurk on a lake bed deeper than wade_depth swims from its first step, held at the bed; standing still there it plays its standing idle (mtidle.kf), not its swimming idle (engine/nvforever/src/swimming.rs rests_on_bed). Every actor has a clip on its base layer (locomotion.rs base_fault)"
-note = "the player swims out from the Boulder Beach shore as wade-in-swim (about x 58300 at 14 s, the bed about 250-300 under the lake's 2600, the player at about 118 under it), then a lakelurk is placed at the player (created_spots puts it on the bed below); NVF_PLAY_TEST_UNSEEN keeps it and the beach's lakelurks unaware. The positions are worked out from physics.md §6.6, not yet run"
+source = "issue #2980 (docs/spec-notes/physics.md §6.6, Actors standing on the bed): a lakelurk with a live character (following the player into Lake Mead) on a bed deeper than wade_depth swims, held at the bed; standing still there it plays its standing idle (mtidle.kf), not its swimming idle (engine/nvforever/src/swimming.rs rests_now)"
+note = "the player swims out from the Boulder Beach shore as wade-in-swim and the beach's lakelurks, not kept unaware, follow it in and fight it at the bed (god mode). Not run yet: that a lakelurk keeps its character while it stands still to fight (residents.rs takes it from idle actors) is not checked"
 areas = ["physics", "actors", "creatures"]
 paths = ["engine/nvforever/src/swimming.rs", "engine/nvforever/src/locomotion.rs", "crates/fnv-phys/src/character.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_MOVE = "10:1:0,14:0:0", NVF_PLAY_TEST_SCRIPT = "15:call:player:PlaceAtMe:NVCrLakelurk:1" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_MOVE = "10:1:0,14:0:0", NVF_PLAY_TEST_POSE_WATCH = "lakelurk" }
 args = ["--play", "--pos=56992,37536,2745", "--heading", "90", "--hour", "12", "--no-voice", "--no-messages"]
-run_seconds = 26
+run_seconds = 30
 expect = [
-  { re = 'swimming: FF[0-9A-F]{6} rests on the bed under water: it stands on its standing clips', label = "the placed lakelurk stands on the bed on its standing idle, not its swimming idle (#2980)" },
-  { re = 'swimming summary: .* (?P<n>\d+) stood still on the bed', range = [1, 100], label = "counted in the summary" },
+  { re = 'swimming: [0-9A-F]{8} rests on the bed under water: it stands on its standing clips', label = "a lakelurk with a character comes to rest on the bed" },
+  { re = 'pose watch: Creature [0-9A-F]{8} \w*[Ll]akelurk\w*: layer 0 \S*mirelurkking.mtidle\.kf .*; a character, swimming, resting on the bed', label = "resting on the bed it plays its standing idle on its base layer (#2980)" },
 ]
-forbid = [{ text = "actor has no base clip", label = "every actor has a clip on its base layer (else its body falls to the bind pose)" }]
+forbid = [
+  { re = 'pose watch: Creature [0-9A-F]{8} \w*[Ll]akelurk\w*: layer 0 \S*swimidle\.kf .*resting on the bed', label = "never its swimming idle on the base layer while it rests on the bed" },
+  { re = 'actor base layer fault: Creature [0-9A-F]{8} \w*[Ll]akelurk', label = "no lakelurk lacks a base clip or has a non-finite one" },
+]
 
 [[scenario]]
 name = "caravan-currency"

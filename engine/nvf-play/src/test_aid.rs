@@ -103,6 +103,11 @@
 //!   placed reference with a dynamic body for that long after its cell loads — offsets,
 //!   turns, speeds and the overlaps found after the first step (physics.md §4.3.1).
 //!
+//! - `NVF_PLAY_TEST_POSE_WATCH=<text>[,<text>...]` (nvforever's `swimming.rs`): a line
+//!   whenever what a watched actor plays changes (its name contains a text, any case):
+//!   its base layer's clip and weight, its set, its idle layers, whether it has a
+//!   character and whether that swims and rests on the bed (#2980).
+//!
 //! With any `NVF_PLAY_TEST_*` variable set the run is unattended ([`Unattended`]): the
 //! cursor is not grabbed, so the desktop's mouse neither leaves the user nor turns the
 //! view (as with `--auto-walk`). Not the aids that only measure ([`MEASURING_AIDS`]:

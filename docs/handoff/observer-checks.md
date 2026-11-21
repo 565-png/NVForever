@@ -3426,16 +3426,20 @@ already talking takes over at once, same topic or another; nothing is queued or 
 250. **How does a creature that swims stand on a lake bed deeper than it is tall?**
      (P3; #2980, physics.md §6.6 "Actors standing on the bed".) Ours since #2980: an
      actor whose character swims (on the ground with its feet 115 or more under the
-     surface) but stands still with its feet on the bed plays its standing idle
-     (`mirelurkking\mtidle.kf` for a lakelurk); moving, its swimming clips
-     [hypothesis]. Before, it held its swimming idle (`swimidle.kf`) on the bottom, which
-     a player read as a T-pose. At Boulder Beach (Lake Mead, surface 2600), from the
-     shore at (56992, 37536) walk east to about x 58300 (feet about 250 under the
-     surface), `tgm` on, `placeatme 00145EDB` (CrLakelurkCG), and look at it for 10 s
-     (with `tai` if it moves at once); then `tai` again and walk away so it follows. A lakelurk standing on
-     the bottom in its standing idle agrees with ours; one held in the floating swim
-     pose (limbs out, slow loop) says the original keeps the swimming idle at rest,
-     and one that rises to float near the surface says swimming actors have buoyancy.
+     surface; only an actor on its way or fighting has a character) but stands still
+     with its feet on the bed plays its standing idle (`mirelurkking\mtidle.kf` for a
+     lakelurk); moving, its swimming clips [hypothesis]. Before, it held its swimming
+     idle (`swimidle.kf`) there; that this is the T-pose a player reported for idle
+     lakelurks is [hypothesis] too (an idle one has no character, so never swims). At
+     Boulder Beach (Lake Mead, surface 2600), from the shore at (56992, 37536) walk east
+     to about x 58300 (feet about 250 under the surface), `tgm` on, `placeatme 00145EDB`
+     (CrLakelurkCG), and look at it for 10 s (with `tai` if it moves at once); then `tai`
+     again and let it come at you, and watch it whenever it stands still on the bottom.
+     A lakelurk standing on the bottom in its standing idle agrees with ours; one held in
+     the floating swim pose (limbs out, slow loop) says the original keeps the swimming
+     idle at rest, and one that rises to float near the surface says swimming actors
+     have buoyancy. Note also how an idle lakelurk on the shore looks before it is alerted
+     (a T-pose there in the original would make #2980 the original's own look).
 
 ## Added 2026-11-21 (what GetDestructionStage counts, #3053)
 

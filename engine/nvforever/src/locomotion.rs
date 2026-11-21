@@ -496,7 +496,7 @@ pub struct Locomotion {
     under: Under,
     /// Times "moves with no movement clip" was logged for this actor (once).
     clipless_logged: u8,
-    /// Whether "has no base clip" was logged for this actor ([`Locomotion::base_fault`], once).
+    /// Whether "actor base layer fault" was logged for this actor ([`Locomotion::base_fault`], once).
     baseless_logged: bool,
 }
 
@@ -856,22 +856,36 @@ impl Locomotion {
         }
     }
 
-    /// What leaves the actor's body to its bind pose under its other layers after
-    /// [`Locomotion::layers`] filled `player`: no clip on the base layer (layer 0, its
-    /// movement clip: the set it plays from has no clip for the move), or a weight or
-    /// phase there that is not a finite number (`BlendPlayer` then falls back to the
-    /// bind transform). `None` when the base layer is sound. A diagnostic (#2980: a
-    /// creature in a T-pose until it fought, when the aim and attack clips covered
-    /// the base layer).
+    /// The file of `clip` when it is one of the clips of the set the actor plays from or
+    /// of the set it fades out of (for the log).
+    pub fn clip_path(&self, clip: &Arc<BoundClip>) -> Option<&str> {
+        [Some(&self.set), self.prev_set.as_ref()].into_iter().flatten().flat_map(|s| s.clips.values()).find(|c| Arc::ptr_eq(&c.bound, clip)).map(|c| c.path.as_str())
+    }
+
+    /// A fault of the actor's base layer (layer 0, its movement clip) after
+    /// [`Locomotion::layers`] filled `player`: no clip there (the set it plays from has
+    /// no clip for the move), or a weight or phase there that is not a finite number.
+    /// Says what layer 1 (the clip fading out) holds then. `None` when the base layer is
+    /// sound. What the body shows follows from the other layers and `BlendPlayer`'s
+    /// rules (a node no clip drives keeps its bind transform; a non-finite mix falls
+    /// back to it); this only reports the layer. A diagnostic (#2980: a creature that
+    /// looked T-posed until it fought, when the aim and attack clips covered its base
+    /// layer).
     pub fn base_fault(&self, player: &BlendPlayer) -> Option<String> {
         let mv = self.blend.cur.mv;
+        let fading = || {
+            player.layers[1].as_ref().map_or_else(
+                || "nothing on layer 1".to_string(),
+                |l| format!("layer 1 {} at weight {}", self.clip_path(&l.clip).map_or_else(|| format!("sequence {:?}", l.clip.clip.name), str::to_string), l.weight),
+            )
+        };
         match &player.layers[0] {
             None => {
                 let idle = self.set.clips.get(&Move::Idle).map_or("none", |c| c.path.as_str());
-                Some(format!("no {} clip in its {} set ({} clips, idle {idle})", mv.group(), self.posture_name(), self.set.clips.len()))
+                Some(format!("no {} clip in its {} set ({} clips, idle {idle}); {}", mv.group(), self.posture_name(), self.set.clips.len(), fading()))
             }
             Some(l) if !l.weight.is_finite() || !l.phase.is_finite() => {
-                Some(format!("its {} clip in its {} set has weight {} and phase {}", mv.group(), self.posture_name(), l.weight, l.phase))
+                Some(format!("its {} clip in its {} set has weight {} and phase {}; {}", mv.group(), self.posture_name(), l.weight, l.phase, fading()))
             }
             Some(_) => None,
         }
@@ -1107,7 +1121,7 @@ fn drive_one(item: &mut ActorAnimItem<'_, '_>, written: bool, dt: f32, now: f32,
     cost.turn_frames += u64::from(lo.blend.cur.mv.is_turn());
     lo.layers(player);
     if let Some(fault) = lo.base_fault_news(player) {
-        warn!("actor has no base clip: {}: {fault}; its body falls back to the bind pose under its other layers", name.map_or("actor", |n| n.as_str()));
+        warn!("actor base layer fault: {}: {fault}", name.map_or("actor", |n| n.as_str()));
     }
     let drawn = crate::attack_anims::drawn(weapon.as_deref());
     if let Some(w) = weapon.as_mut() {
@@ -1613,14 +1627,14 @@ mod tests {
         lo.set = lo.posture_set();
         lo.layers(&mut player);
         assert!(player.layers[0].is_none());
-        assert_eq!(lo.base_fault_news(&player).as_deref(), Some("no Idle clip in its swimming set (4 clips, idle none)"));
+        assert_eq!(lo.base_fault_news(&player).as_deref(), Some("no Idle clip in its swimming set (4 clips, idle none); nothing on layer 1"));
         assert_eq!(lo.base_fault_news(&player), None, "told once");
         assert!(lo.base_fault(&player).is_some());
         // A weight that is not a finite number.
         let mut lo = Locomotion::new(stand.clone(), 0.0);
         lo.layers(&mut player);
         player.layers[0].as_mut().expect("idle").weight = f32::NAN;
-        assert_eq!(lo.base_fault(&player).as_deref(), Some("its Idle clip in its standing set has weight NaN and phase 0"));
+        assert_eq!(lo.base_fault(&player).as_deref(), Some("its Idle clip in its standing set has weight NaN and phase 0; nothing on layer 1"));
     }
 
     #[test]
