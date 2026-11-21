@@ -133,14 +133,17 @@ pub struct LodSettings {
     /// `[TerrainManager] fSplitDistanceMult`: coarser chunks split while the camera is
     /// nearer than this × their side.
     pub split: f32,
-    /// `[TerrainManager] fTreeLoadDistance`: distant tree billboards within (treelod.rs);
-    /// 0 draws none.
+    /// `[TerrainManager] fTreeLoadDistance`: distant tree billboards within at the start
+    /// (treelod.rs; the Tree distance slider then sets a part of `far`, #3016); 0 draws none.
     pub trees: f32,
 }
 
+/// [`LodSettings::far`]'s default (`--lod-distance`).
+pub const DEFAULT_FAR: f32 = 125_000.0;
+
 impl Default for LodSettings {
     fn default() -> LodSettings {
-        LodSettings { far: 125_000.0, terrain_far: 250_000.0, near: 50_000.0, split: 1.5, trees: 40_000.0 }
+        LodSettings { far: DEFAULT_FAR, terrain_far: 250_000.0, near: 50_000.0, split: 1.5, trees: 40_000.0 }
     }
 }
 
@@ -388,6 +391,13 @@ impl LodState {
     /// Changes whenever [`LodState::chosen_chunks`] is replaced.
     pub fn choice(&self) -> u64 {
         self.choice
+    }
+
+    /// Tests: the chunks `update_lod` would have chosen (counts as a new choice).
+    #[cfg(test)]
+    pub fn choose_for_test(&mut self, chunks: Vec<Chunk>) {
+        self.chosen = chunks;
+        self.choice += 1;
     }
 }
 
