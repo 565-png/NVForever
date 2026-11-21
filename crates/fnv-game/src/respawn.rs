@@ -159,6 +159,14 @@ impl Game<'_> {
         // Made anew: at its level now, its leveled pick and carried items with it.
         self.refix_level(r);
         let _ = self.world.reset_inventory(r);
+        // A new pick may run another script (template flag "Script"): its instance
+        // starts fresh, and a ScriptWait of the old script's ends [design, #3228].
+        let key = crate::game::InstKey::Ref { reference: r };
+        let script = self.ref_script(r);
+        if self.instances.get(&key).is_some_and(|i| i.script != script) {
+            self.instances.remove(&key);
+            self.jip.waits.remove(&key);
+        }
         // The layer that moves actors starts it again from its authored place.
         self.teleported.insert(r);
     }
@@ -170,7 +178,11 @@ impl Game<'_> {
     /// those that respawned, after the reset and before their OnLoad [hypothesis: the
     /// order; the wiki ties the blocks to the cell's reset, not to respawning].
     pub(crate) fn cell_reset_blocks(&mut self, cell: FormId) {
-        let refs = self.data.scripted_by_cell.get(&cell).cloned().unwrap_or_default();
+        let mut refs = self.data.scripted_by_cell.get(&cell).cloned().unwrap_or_default();
+        // Actors scripted only through their template too (#3228).
+        refs.extend(self.template_scripted_in(cell));
+        refs.sort();
+        refs.dedup();
         for r in refs {
             if self.present(r) {
                 self.ref_event(r, crate::game::event::ON_RESET, Some(fnv_script::vm::Value::Ref(r.0)), None);

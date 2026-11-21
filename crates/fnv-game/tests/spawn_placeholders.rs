@@ -1,16 +1,18 @@
 //! Leveled spawns' placeholder creatures (docs/spec-notes/dead-on-spawn.md §4.1, #3228,
 //! #3139): a placed creature whose base takes its script, stats and base data from a
 //! leveled list (template flags "Script", "Stats", "Base Data") runs the script of the
-//! list's pick. A placeholder pick (Health 0, Respawn, Is Ghost, a script whose OnLoad
-//! kills it and sets it destroyed) starts dead, comes back alive at a cell reset (its
-//! Respawn flag) and its OnLoad kills it again at once. On a synthetic plugin (no game
-//! data); the last test reads the master when `FNVLAB_DATA_DIR` is set.
+//! list's pick. Actors scripted only through their template get OnLoad and OnReset, not
+//! the per-frame blocks (scripts.md §7.1). A placeholder pick (Health 0, Respawn, Is
+//! Ghost, a script whose OnLoad kills it and sets it destroyed) starts dead, comes back
+//! alive at a cell reset (its Respawn flag) and its OnLoad kills it again at once; a
+//! loaded save that holds one alive kills it at the first frame. On a synthetic plugin
+//! (no game data); the last test reads the master when `FNVLAB_DATA_DIR` is set.
 
 use crate::common;
 
 use common::*;
 use fnv_esm::{LoadOrder, Plugin, Schema};
-use fnv_game::game::{event, Game, GameConfig};
+use fnv_game::game::{event, Game, GameConfig, InstKey};
 use fnv_game::GameData;
 use fnv_script::FunctionTable;
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
@@ -29,10 +31,27 @@ const OWN_SCRIPTED: u32 = 0x843;
 const PLAIN: u32 = 0x844;
 const PLAIN_LIST: u32 = 0x845;
 const PLAIN_SPAWN: u32 = 0x846;
+/// A list whose pick moves with the player's level: CREA_A at level 1, CREA_B at 10.
+const MIXED_LIST: u32 = 0x847;
+const CREA_A: u32 = 0x848;
+const CREA_B: u32 = 0x849;
+const MIXED_SPAWN: u32 = 0x84A;
+/// An actor with its own script whose template list has only a level-50 entry: at a
+/// low level the list yields none and the actor itself is the source of the script.
+const FALLBACK: u32 = 0x84B;
+const HIGH_LIST: u32 = 0x84C;
+const FALLBACK_SPAWN: u32 = 0x84D;
 const PLACEHOLDER_SCRIPT: u32 = 0x850;
+const SCRIPT_A: u32 = 0x851;
+const SCRIPT_B: u32 = 0x852;
+const FALLBACK_SCRIPT: u32 = 0x853;
 const SPAWN_REF: u32 = 0x300;
 const OWN_SCRIPTED_REF: u32 = 0x301;
 const PLAIN_SPAWN_REF: u32 = 0x302;
+const MIXED_REF: u32 = 0x303;
+/// The placeholder list placed directly (a root list as the base).
+const ROOT_LIST_REF: u32 = 0x304;
+const FALLBACK_REF: u32 = 0x305;
 const CELL_A: u32 = 0x200;
 const CELL_B: u32 = 0x201;
 const KILL_ACTOR: u16 = 0x108B;
@@ -58,9 +77,12 @@ fn crea_data(health: i16) -> fnv_esm::raw::Subrecord {
     sub(b"DATA", [vec![0u8, 50, 50, 50], health.to_le_bytes().to_vec(), vec![0; 2], 0i16.to_le_bytes().to_vec(), vec![1; 7]].concat())
 }
 
-fn list(fid: u32, edid: &str, entry: u32) -> Vec<u8> {
-    let lvlo = [1i16.to_le_bytes().to_vec(), vec![0; 2], entry.to_le_bytes().to_vec(), 1i16.to_le_bytes().to_vec(), vec![0; 2]].concat();
-    record(b"LVLC", 0, fid, &[sub(b"EDID", z(edid)), sub(b"LVLD", vec![0]), sub(b"LVLF", vec![0]), sub(b"LVLO", lvlo)])
+fn list(fid: u32, edid: &str, entries: &[(i16, u32)]) -> Vec<u8> {
+    let mut subs = vec![sub(b"EDID", z(edid)), sub(b"LVLD", vec![0]), sub(b"LVLF", vec![0])];
+    for (level, entry) in entries {
+        subs.push(sub(b"LVLO", [level.to_le_bytes().to_vec(), vec![0; 2], entry.to_le_bytes().to_vec(), 1i16.to_le_bytes().to_vec(), vec![0; 2]].concat()));
+    }
+    record(b"LVLC", 0, fid, &subs)
 }
 
 fn glob(fid: u32, edid: &str, v: f32) -> Vec<u8> {
@@ -76,21 +98,46 @@ fn cell(fid: u32, edid: &str, refs: &[u8]) -> Vec<u8> {
     [c, group(fid.to_le_bytes(), 6, &group(fid.to_le_bytes(), 9, refs))].concat()
 }
 
+/// An object script whose OnLoad sets its variable `index` (Integer) to `value`; both
+/// variables 1 and 2 are declared.
+fn marking_script(fid: u32, edid: &str, index: u16, value: &str) -> Vec<u8> {
+    let body = set(var(b's', index), ex(&[a(value)]));
+    record(b"SCPT", 0, fid, &[vec![sub(b"EDID", z(edid))], unit(0, &script(&[(event::ON_LOAD, None, body), (event::GAME_MODE, None, set(var(b's', 3), ex(&[a("1")])))]), &[(1, "nA", 1), (2, "nB", 1), (3, "nFrame", 1)], &[])].concat())
+}
+
 fn plugin_bytes() -> Vec<u8> {
     // Begin OnLoad: Kill, SetDestroyed 1, as the masters' placeholder script does.
     let on_load = [st(KILL_ACTOR, &le16(0)), st(SET_DESTROYED, &[le16(1), vec![b'n'], 1i32.to_le_bytes().to_vec()].concat())].concat();
-    let scpt = record(b"SCPT", 0, PLACEHOLDER_SCRIPT, &[vec![sub(b"EDID", z("PlaceholderScript"))], unit(0, &script(&[(event::ON_LOAD, None, on_load)]), &[], &[])].concat());
-    let scri = |s: u32| sub(b"SCRI", s.to_le_bytes().to_vec());
-    let tplt = |t: u32| sub(b"TPLT", t.to_le_bytes().to_vec());
-    let creatures = [
-        record(b"CREA", 0, PLACEHOLDER, &[sub(b"EDID", z("TestVoidPlaceholder")), acbs(RESPAWN | IS_GHOST, 0), scri(PLACEHOLDER_SCRIPT), crea_data(0)]),
-        record(b"CREA", 0, SPAWN, &[sub(b"EDID", z("TestSpawnTier1Small75")), acbs(0, STATS | BASE_DATA | SCRIPT), tplt(LIST), crea_data(50)]),
-        record(b"CREA", 0, OWN_SCRIPTED, &[sub(b"EDID", z("TestScriptedCritter")), acbs(0, 0), scri(PLACEHOLDER_SCRIPT), crea_data(0)]),
-        record(b"CREA", 0, PLAIN, &[sub(b"EDID", z("TestCalf")), acbs(RESPAWN, 0), crea_data(20)]),
-        record(b"CREA", 0, PLAIN_SPAWN, &[sub(b"EDID", z("TestSpawnCalf")), acbs(0, STATS | BASE_DATA | SCRIPT), tplt(PLAIN_LIST), crea_data(20)]),
+    let scpts = [
+        record(b"SCPT", 0, PLACEHOLDER_SCRIPT, &[vec![sub(b"EDID", z("PlaceholderScript"))], unit(0, &script(&[(event::ON_LOAD, None, on_load)]), &[], &[])].concat()),
+        marking_script(SCRIPT_A, "TestScriptA", 1, "5"),
+        marking_script(SCRIPT_B, "TestScriptB", 2, "7"),
+        marking_script(FALLBACK_SCRIPT, "TestFallbackScript", 2, "9"),
     ]
     .concat();
-    let lists = [list(LIST, "TestEncSmall75", PLACEHOLDER), list(PLAIN_LIST, "TestEncCalf", PLAIN)].concat();
+    let scri = |s: u32| sub(b"SCRI", s.to_le_bytes().to_vec());
+    let tplt = |t: u32| sub(b"TPLT", t.to_le_bytes().to_vec());
+    let spawn_flags = STATS | BASE_DATA | SCRIPT;
+    let creatures = [
+        record(b"CREA", 0, PLACEHOLDER, &[sub(b"EDID", z("TestVoidPlaceholder")), acbs(RESPAWN | IS_GHOST, 0), scri(PLACEHOLDER_SCRIPT), crea_data(0)]),
+        record(b"CREA", 0, SPAWN, &[sub(b"EDID", z("TestSpawnTier1Small75")), acbs(0, spawn_flags), tplt(LIST), crea_data(50)]),
+        record(b"CREA", 0, OWN_SCRIPTED, &[sub(b"EDID", z("TestScriptedCritter")), acbs(0, 0), scri(PLACEHOLDER_SCRIPT), crea_data(0)]),
+        record(b"CREA", 0, PLAIN, &[sub(b"EDID", z("TestCalf")), acbs(RESPAWN, 0), crea_data(20)]),
+        record(b"CREA", 0, PLAIN_SPAWN, &[sub(b"EDID", z("TestSpawnCalf")), acbs(0, spawn_flags), tplt(PLAIN_LIST), crea_data(20)]),
+        record(b"CREA", 0, CREA_A, &[sub(b"EDID", z("TestCritterA")), acbs(RESPAWN, 0), scri(SCRIPT_A), crea_data(10)]),
+        record(b"CREA", 0, CREA_B, &[sub(b"EDID", z("TestCritterB")), acbs(RESPAWN, 0), scri(SCRIPT_B), crea_data(10)]),
+        record(b"CREA", 0, MIXED_SPAWN, &[sub(b"EDID", z("TestSpawnMixed")), acbs(0, spawn_flags), tplt(MIXED_LIST), crea_data(10)]),
+        record(b"CREA", 0, FALLBACK, &[sub(b"EDID", z("TestFallback")), acbs(0, SCRIPT), tplt(HIGH_LIST), scri(FALLBACK_SCRIPT), crea_data(10)]),
+        record(b"CREA", 0, FALLBACK_SPAWN, &[sub(b"EDID", z("TestSpawnFallback")), acbs(0, SCRIPT), tplt(FALLBACK), crea_data(10)]),
+    ]
+    .concat();
+    let lists = [
+        list(LIST, "TestEncSmall75", &[(1, PLACEHOLDER)]),
+        list(PLAIN_LIST, "TestEncCalf", &[(1, PLAIN)]),
+        list(MIXED_LIST, "TestEncMixed", &[(1, CREA_A), (10, CREA_B)]),
+        list(HIGH_LIST, "TestEncHigh", &[(50, PLAIN)]),
+    ]
+    .concat();
     let globs = [
         glob(0x900, "GameYear", 2281.0),
         glob(0x901, "GameMonth", 9.0),
@@ -99,12 +146,20 @@ fn plugin_bytes() -> Vec<u8> {
         glob(0x904, "GameDaysPassed", 1.0),
     ]
     .concat();
-    let refs = [placed(SPAWN_REF, SPAWN), placed(OWN_SCRIPTED_REF, OWN_SCRIPTED), placed(PLAIN_SPAWN_REF, PLAIN_SPAWN)].concat();
+    let refs = [
+        placed(SPAWN_REF, SPAWN),
+        placed(OWN_SCRIPTED_REF, OWN_SCRIPTED),
+        placed(PLAIN_SPAWN_REF, PLAIN_SPAWN),
+        placed(MIXED_REF, MIXED_SPAWN),
+        placed(ROOT_LIST_REF, LIST),
+        placed(FALLBACK_REF, FALLBACK_SPAWN),
+    ]
+    .concat();
     let cells = [cell(CELL_A, "TestHerdCell", &refs), cell(CELL_B, "TestAwayCell", &[])].concat();
     [
         tes4(),
         top(b"GLOB", &globs),
-        top(b"SCPT", &scpt),
+        top(b"SCPT", &scpts),
         top(b"CREA", &creatures),
         top(b"LVLC", &lists),
         top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &cells))),
@@ -144,25 +199,57 @@ fn destroyed(g: &Game, r: u32) -> bool {
     g.extra.get(&FormId(r)).is_some_and(|e| e.destroyed)
 }
 
-/// A reference whose base gets its script only through a leveled list's pick counts as
-/// scripted (its OnLoad runs at a cell load); one whose list can give no script does not.
+fn local(g: &Game, r: u32, i: u16) -> f64 {
+    g.var(InstKey::Ref { reference: FormId(r) }, i).num()
+}
+
+/// Leave the herd's cell for 72 h and come back: the cell resets.
+fn reset_herd_cell(g: &mut Game) {
+    g.player_entered(Some(FormId(CELL_B)));
+    g.world.advance_hours(72.0).unwrap();
+    g.player_entered(Some(FormId(CELL_A)));
+}
+
+/// A reference whose base gets its script only through its template chain is indexed
+/// apart from those with their own script: through a list's pick, a list placed
+/// directly, or an actor on the chain kept when its list yields no entry. One whose
+/// chain can give no script is not indexed.
 #[test]
-fn a_script_from_the_leveled_pick_makes_the_reference_scripted() {
+fn a_script_from_the_template_chain_is_indexed() {
     let f = fixture();
-    assert!(f.data.base_may_run_script(FormId(SPAWN)), "the list's placeholder has a script");
-    assert!(f.data.base_may_run_script(FormId(OWN_SCRIPTED)));
-    assert!(!f.data.base_may_run_script(FormId(PLAIN_SPAWN)), "the list's calf has none");
-    assert_eq!(f.data.scripted_by_cell.get(&FormId(CELL_A)), Some(&vec![FormId(SPAWN_REF), FormId(OWN_SCRIPTED_REF)]));
+    let d = &f.data;
+    assert!(d.script_through_template(FormId(SPAWN)), "the list's placeholder has a script");
+    assert!(d.script_through_template(FormId(LIST)), "a root list placed directly");
+    assert!(d.script_through_template(FormId(FALLBACK_SPAWN)), "the fallback actor on the chain has one");
+    assert!(d.script_through_template(FormId(MIXED_SPAWN)));
+    assert!(!d.script_through_template(FormId(PLAIN_SPAWN)), "the list's calf has none");
+    assert!(!d.script_through_template(FormId(OWN_SCRIPTED)), "its own script, no template");
+    assert_eq!(d.scripted_by_cell.get(&FormId(CELL_A)), Some(&vec![FormId(OWN_SCRIPTED_REF)]));
+    assert_eq!(d.template_scripted_by_cell.get(&FormId(CELL_A)), Some(&vec![FormId(SPAWN_REF), FormId(MIXED_REF), FormId(ROOT_LIST_REF), FormId(FALLBACK_REF)]));
     let g = game(&f);
     assert_eq!(g.ref_script(FormId(SPAWN_REF)), Some(FormId(PLACEHOLDER_SCRIPT)));
+    assert_eq!(g.ref_script(FormId(ROOT_LIST_REF)), Some(FormId(PLACEHOLDER_SCRIPT)));
+    assert_eq!(g.ref_script(FormId(FALLBACK_REF)), Some(FormId(FALLBACK_SCRIPT)), "the level-50 entry is out of reach: the fallback's own");
     assert_eq!(g.ref_script(FormId(PLAIN_SPAWN_REF)), None);
+}
+
+/// Scripted only through the template: OnLoad runs, GameMode does not [design].
+#[test]
+fn template_scripted_actors_get_on_load_but_not_game_mode() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.player_entered(Some(FormId(CELL_A)));
+    assert_eq!(local(&g, MIXED_REF, 1), 5.0, "OnLoad of the level-1 pick's script ran");
+    assert_eq!(local(&g, FALLBACK_REF, 2), 9.0, "OnLoad of the fallback's script ran");
+    g.frames(3);
+    assert_eq!(local(&g, MIXED_REF, 3), 0.0, "its GameMode block does not run");
 }
 
 /// The placeholder is laid out dead by a new game (Health 0 from the pick), comes back
 /// alive at a cell reset (Respawn from the pick, "Base Data") and is killed and set
-/// destroyed by its OnLoad in the same load: never alive when anything else runs (#3228:
-/// before, its OnLoad never ran and it stayed alive at health 1, fought and hit the
-/// player).
+/// destroyed by its OnLoad in the same load (#3228: before, its OnLoad never ran and it
+/// stayed alive at health 1, fought and hit the player).
 #[test]
 fn a_placeholder_brought_back_by_a_cell_reset_is_killed_by_its_on_load() {
     let f = fixture();
@@ -178,16 +265,57 @@ fn a_placeholder_brought_back_by_a_cell_reset_is_killed_by_its_on_load() {
     // The calf of the plain spawn is killed, to come back alive with it.
     assert!(g.kill(FormId(PLAIN_SPAWN_REF), Some(FormId::PLAYER_REF)));
 
-    g.player_entered(Some(FormId(CELL_B)));
-    g.world.advance_hours(72.0).unwrap();
-    g.player_entered(Some(FormId(CELL_A)));
+    reset_herd_cell(&mut g);
     let resets = g.take_cell_resets();
     assert_eq!(resets.len(), 1);
-    assert_eq!(resets[0].respawned, vec![spawn, FormId(PLAIN_SPAWN_REF)], "both were recreated");
+    assert!(resets[0].respawned.contains(&spawn) && resets[0].respawned.contains(&FormId(PLAIN_SPAWN_REF)), "both were recreated: {:?}", resets[0].respawned);
     assert!(g.is_dead(spawn), "the recreated placeholder's OnLoad killed it again");
     assert!(destroyed(&g, SPAWN_REF), "and set it destroyed (the reset had cleared that)");
     assert!(g.extra[&spawn].killer.is_none());
     assert!(!g.is_dead(FormId(PLAIN_SPAWN_REF)), "a real creature of a spawn stays alive");
+}
+
+/// A reset that picks another entry of a mixed list, whose script differs, starts the
+/// reference's script instance afresh: the old script's variables do not carry over.
+#[test]
+fn a_reset_that_changes_the_pick_starts_a_fresh_script_instance() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.player_entered(Some(FormId(CELL_A)));
+    let key = InstKey::Ref { reference: FormId(MIXED_REF) };
+    assert_eq!(g.ref_script(FormId(MIXED_REF)), Some(FormId(SCRIPT_A)));
+    assert_eq!(local(&g, MIXED_REF, 1), 5.0);
+    assert!(g.kill(FormId(MIXED_REF), Some(FormId::PLAYER_REF)));
+    // The player has grown: the reset's pick reads level 20, the level-10 entry.
+    g.player.level = Some(20);
+    reset_herd_cell(&mut g);
+    assert!(!g.is_dead(FormId(MIXED_REF)), "back alive");
+    assert_eq!(g.ref_script(FormId(MIXED_REF)), Some(FormId(SCRIPT_B)));
+    assert_eq!(g.instances.get(&key).and_then(|i| i.script), Some(FormId(SCRIPT_B)));
+    assert_eq!(local(&g, MIXED_REF, 1), 0.0, "script A's variable is gone");
+    assert_eq!(local(&g, MIXED_REF, 2), 7.0, "script B's OnLoad ran on the fresh instance");
+}
+
+/// A save from before the fix holds a placeholder alive in a loaded cell: the cells stay
+/// loaded through the restore, and its OnLoad runs at the first frame after it.
+#[test]
+fn a_restored_live_placeholder_is_killed_at_the_first_frame() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.player_entered(Some(FormId(CELL_A)));
+    // As an older build left it: alive, never destroyed.
+    g.extra.remove(&FormId(SPAWN_REF));
+    assert!(!g.is_dead(FormId(SPAWN_REF)));
+    let s = g.snapshot();
+    let world = World::restore(&f.forms, &f.refs, &s.sim).unwrap();
+    let mut back = Game::restore(&f.data, world, GameConfig::default(), &s).unwrap();
+    assert!(!back.is_dead(FormId(SPAWN_REF)), "nothing runs inside the restore");
+    back.frames(1);
+    assert!(back.is_dead(FormId(SPAWN_REF)), "its OnLoad killed it");
+    assert!(destroyed(&back, SPAWN_REF));
+    assert_eq!(local(&back, MIXED_REF, 1), 5.0, "the living mixed spawn ran its OnLoad again, unchanged");
 }
 
 fn data_dir() -> Option<PathBuf> {
@@ -203,8 +331,11 @@ fn data_dir() -> Option<PathBuf> {
 }
 
 /// The masters: the Camp Golf herd of #3228 (0x00168D44–0x00168D51, bighorner and
-/// bloatfly spawns whose lists hold `VCrILikeOblivionChancedSpawns`) is scripted through
-/// its picks. Prints how many references count as scripted only through a template.
+/// bloatfly spawns whose lists hold `VCrILikeOblivionChancedSpawns`) is indexed through
+/// its picks. Prints the herd's references whose pick is the placeholder (the picks are
+/// seeded by the reference, and every entry of these lists is level 1, so a new game
+/// and a reset pick the same) and how many references are indexed through a template,
+/// by script.
 #[test]
 fn the_camp_golf_herd_runs_its_placeholder_script() {
     let Some(dir) = data_dir() else { return };
@@ -215,20 +346,27 @@ fn the_camp_golf_herd_runs_its_placeholder_script() {
         .filter(|&r| f.refs.get(r).is_some_and(|p| f.data.template_sources_any_pick(p.base, |a| a.template_script).contains(&placeholder)))
         .collect();
     assert!(herd.len() >= 4, "the herd's spawns that may be the placeholder: {herd:?}");
-    let scripted: std::collections::BTreeSet<FormId> = f.data.scripted_by_cell.values().flatten().copied().collect();
+    let indexed: std::collections::BTreeSet<FormId> = f.data.template_scripted_by_cell.values().flatten().copied().collect();
     for r in &herd {
-        assert!(scripted.contains(r), "{r} may be the placeholder: its OnLoad must run");
+        assert!(indexed.contains(r), "{r} may be the placeholder: its OnLoad must run");
     }
-    let through: Vec<FormId> = scripted.iter().copied().filter(|&r| f.refs.get(r).is_some_and(|p| f.data.script_of_base(p.base).is_none())).collect();
-    eprintln!("{} scripted references, {} of them through a template's script", scripted.len(), through.len());
+    let picked: Vec<String> = herd
+        .iter()
+        .filter(|&&r| f.data.template_source(f.refs.get(r).unwrap().base, r, |a| a.template_script).is_some_and(|(id, _)| id == placeholder))
+        .map(|r| r.to_string())
+        .collect();
+    eprintln!("herd references whose pick is the placeholder: {}", picked.join(" "));
+    let direct: usize = f.data.scripted_by_cell.values().map(Vec::len).sum();
+    eprintln!("{direct} references scripted by their own base, {} through a template only", indexed.len());
     // By the scripts their picks may run (a reference may count under several).
     let mut by_script: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for r in &through {
+    for r in &indexed {
         let base = f.refs.get(*r).unwrap().base;
-        let scripts: std::collections::BTreeSet<FormId> = f.data.template_sources_any_pick(base, |a| a.template_script).into_iter().filter_map(|s| f.data.script_of_base(s)).collect();
+        let scripts: std::collections::BTreeSet<FormId> = f.data.template_chain_any_pick(base, |a| a.template_script).into_iter().filter_map(|s| f.data.script_of_base(s)).collect();
         for s in scripts {
             let game_mode = f.data.script(s).is_some_and(|u| u.has_block(event::GAME_MODE));
-            *by_script.entry(format!("{}{}", f.data.name(s), if game_mode { " (GameMode)" } else { "" })).or_default() += 1;
+            let on_load = f.data.script(s).is_some_and(|u| u.has_block(event::ON_LOAD));
+            *by_script.entry(format!("{}{}{}", f.data.name(s), if on_load { " (OnLoad)" } else { "" }, if game_mode { " (GameMode)" } else { "" })).or_default() += 1;
         }
     }
     for (s, n) in &by_script {

@@ -5455,6 +5455,40 @@ impl<'a> Game<'a> {
             .collect()
     }
 
+    /// Actors placed in `cell` that are scripted only through their template
+    /// ([`crate::data::GameData::template_scripted_by_cell`]), still there and not
+    /// deleted, in FormID order: they get the lifecycle blocks OnLoad and OnReset, not
+    /// the per-frame ones (docs/spec-notes/scripts.md §7.1) [design].
+    pub(crate) fn template_scripted_in(&self, cell: FormId) -> Vec<FormId> {
+        self.data
+            .template_scripted_by_cell
+            .get(&cell)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|&r| self.cell_of(r) == Some(cell) && self.world.peek(r).is_none_or(|s| !s.deleted()))
+            .collect()
+    }
+
+    /// After a save is restored: the living actors of the loaded cells that are scripted
+    /// only through their template and whose script has an OnLoad block run it at the
+    /// start of the next frame (`pending_onload`). The cells stay loaded through a
+    /// restore, so no cell load runs it; a save from before #3228 holds leveled spawns'
+    /// placeholders that never ran theirs and are alive (docs/spec-notes/dead-on-spawn.md
+    /// §4.1) [design; hypothesis: the original runs OnLoad when a reference's 3D loads,
+    /// a loaded save's too]. References scripted by their own base are left as before.
+    fn queue_template_onloads(&mut self) {
+        let cells: Vec<FormId> = self.loaded_cells.iter().copied().collect();
+        for c in cells {
+            for r in self.template_scripted_in(c) {
+                let has = self.ref_script(r).and_then(|s| self.data.script(s)).is_some_and(|u| u.has_block(event::ON_LOAD));
+                if has && !self.is_dead(r) && !self.pending_onload.contains(&r) {
+                    self.pending_onload.push(r);
+                }
+            }
+        }
+    }
+
     /// The cells loaded around `cell`: the cell itself for an interior; for an exterior,
     /// the 5×5 cells around it [hypothesis: the uGridsToLoad default of 5].
     pub fn cells_around(&self, cell: FormId) -> BTreeSet<FormId> {
@@ -5517,6 +5551,11 @@ impl<'a> Game<'a> {
                 let mut refs = self.scripted_refs_in(&BTreeSet::from([c]));
                 // MoveTo lists a scripted player as moved; no cell loads the player.
                 refs.retain(|&r| r != FormId::PLAYER_REF);
+                // Actors scripted only through their template run OnLoad too (#3228).
+                let mut templated = self.template_scripted_in(c);
+                templated.retain(|r| !refs.contains(r));
+                refs.extend(templated);
+                refs.sort();
                 // The extender's OnLoad handlers hear the unscripted references too.
                 let others = if all { self.refs_in_cell(c, false).into_iter().filter(|r| !refs.contains(r)).collect() } else { Vec::new() };
                 (refs, others)
@@ -6771,6 +6810,8 @@ impl<'a> Game<'a> {
         }
         // Crime enmities an older save holds undated start their cooldown now (#2467).
         g.date_crimes();
+        // Template-scripted actors' OnLoad after a load (#3228).
+        g.queue_template_onloads();
         let pos: u128 = s.rng_word_pos.parse().map_err(|_| format!("bad rng_word_pos {:?}", s.rng_word_pos))?;
         g.rng.set_word_pos(pos);
         Ok(g)

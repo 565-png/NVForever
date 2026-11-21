@@ -105,11 +105,15 @@ Code: `crates/fnv-game/src/respawn.rs` (from `Game::set_loaded`),
 - In the masters the village's seven Fiends and the burned bodies around it have the flag
   and come back, and so do killed creatures of leveled spawns (`VSpawnTier3CazadorSmall50`
   …) [observed: `corpse-respawn` run, 2026-10-12].
-- A recreated actor runs its OnLoad with the rest of the cell, after the reset and its
-  OnReset blocks (`Game::set_loaded`); a script that kills it there (the placeholders of
-  §4.1) leaves it dead again before anything else runs.
+- A recreated actor runs its OnLoad with the rest of the cell (`Game::set_loaded`):
+  after the reset, the cell's OnReset blocks and the outfitting of its actors, before
+  the cell's next frame and before the engine draws the reset. A script that kills it
+  there (the placeholders of §4.1) leaves it dead again before any per-frame block, AI
+  or combat step runs [design: the order of `set_loaded`]. A recreated actor whose new
+  pick runs another script (template flag "Script", a mixed list) starts that script's
+  instance afresh, the old one's variables and a ScriptWait of it dropped [design].
 
-### 4.1 The leveled spawns' placeholder creature [2026-11-21, #3228, #3139]
+### 4.1 The leveled spawns' placeholder creature [2026-11-21, #3228; #3139]
 
 What the records hold [observed: `fnvtool esm decode`, FalloutNV.esm]:
 
@@ -140,21 +144,46 @@ What the records hold [observed: `fnvtool esm decode`, FalloutNV.esm]:
   kills it as the cell loads; it is a corpse of no shapes, Health 0 also laying it out dead
   at a new game (§1), and its Respawn flag brings it back alive at a cell reset (§4) only
   for the same OnLoad to kill it again.
-- **In NVForever** (`GameData::base_may_run_script`, scripts.md §7.1): a placed actor
-  whose base takes its script from a template counts as scripted when any pick of its
-  list carries a script, so the placeholder's OnLoad runs at each load of its cell, the
-  reset one included. Before, only references whose own base has `SCRI` were scripted:
-  the placeholder's OnLoad never ran, a reset left it alive at health 1, and as a herd
-  mate (the same base) it heard its herd's alarms, ran OnStartCombat, hit the player for
-  0.3 and kept the detection meter at Caution, unseen and, a ghost, unhurt (#3228,
-  #3139). Its corpse is drawn and ragdolled as before (§3, physics.md §4.3).
-- The same rule reaches every template script [observed: data test
+- **In NVForever** (`GameData::script_through_template`, scripts.md §7.1): a placed
+  actor whose base has no script of its own but may run one through its template chain
+  (a list's pick, a list placed directly, or an actor on the way kept when its list
+  yields no entry) gets the lifecycle blocks OnLoad and OnReset, so the placeholder's
+  OnLoad runs at each load of its cell, the reset one included. Before, only references
+  whose own base has `SCRI` got them: the placeholder's OnLoad never ran, a reset left
+  it alive at health 1, and as a herd mate (the same base) it heard its herd's alarms,
+  ran OnStartCombat, hit the player for 0.3 and kept the detection meter at Caution,
+  unseen and, a ghost, unhurt (#3228). Its corpse is drawn and ragdolled as before (§3,
+  physics.md §4.3).
+- **A loaded save** keeps its cells loaded, so no cell load runs OnLoad: after a restore
+  the living actors of the loaded cells that are scripted only through their template
+  and whose script has an OnLoad block run it at the first frame
+  (`Game::queue_template_onloads`). A save from an earlier build that holds a
+  placeholder alive so has it dead and destroyed at once [design; hypothesis: the
+  original runs OnLoad when a reference's 3D loads, a loaded save's too]. References
+  scripted by their own base get no OnLoad on a load, as before.
+- **Not the per-frame blocks** [design]: an actor scripted only through its template
+  runs no GameMode (or other per-frame) block, until running a list pick's per-frame
+  script is checked against the original. The wiki's "Use Script" (Template Data: "Uses
+  the Script of the ActorBase") is the reason a later change may widen it. The blocks
+  the engine sends to one reference (OnDeath, OnStartCombat, OnHit …) already read the
+  template's script (`Game::ref_script`).
+- How far the rule reaches [observed: data test
   `spawn_placeholders::the_camp_golf_herd_runs_its_placeholder_script`, FalloutNV.esm
-  alone]: 1,359 of the 8,956 scripted references are scripted only through a template,
-  1,157 of them by `OblivionSpawnTestScript`; the rest by 17 other scripts, three with a
-  GameMode block that now runs in loaded cells (`vGlowingOneSCRIPT` 81 references,
-  `CrNightkinSCRIPT` 4, `GunRunnerGuardScript` 3). OnDeath and the other blocks the
-  engine sends to one reference already read the template's script (`Game::ref_script`).
+  alone]: 1,359 references are indexed through a template only (7,597 by their own
+  base), 1,157 of them whose chain may give `OblivionSpawnTestScript`; the rest may give
+  17 other scripts, six of them with an OnLoad block (`VHDLegionaryScript` 32
+  references, `VBSRefugeeSCRIPT` 11, `CrNightkinSCRIPT` 4, `SlaveScript` 2,
+  `VVault21FluffNPCSelf01` 1) and three with a GameMode block that does not run
+  (`vGlowingOneSCRIPT` 81, `CrNightkinSCRIPT` 4, `GunRunnerGuardScript` 3). At Camp Golf
+  the herd's spawns 0x00168D45, 47, 4C, 4D, 4F and 50 pick the placeholder (the pick is
+  seeded by the reference and every entry is level 1, so a new game and a reset pick the
+  same).
+- #3139's attached log does not show a placeholder at work: its Caution came from two
+  ravens (`VCrTier0Raven` 0x0016177A and 0x0016177D, in the same faction, Unaggressive)
+  in a combat state carried over in the save ("Lost → Combat"), a separate cause not
+  fixed here [observed: the issue's log]. The placeholder OnLoads in it ran on
+  references already dead. The name the player gives ("vControlOblivionChanceSpawns") is
+  most likely the placeholder's Editor ID [hypothesis].
 - What a ghost does is unchanged: nobody attacks or detects it as an enemy, and it may
   still attack [documented: GECK wiki SetGhost notes, "Enemies of this calling ref will
   not go into combat or detect an actor with this flag", "*Can* inflict damage";
