@@ -728,13 +728,12 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             g.field_overrides.insert((f, "DATA/flags".into()), XVal::Num(new as f64));
             zero
         }
-        "getprojectileexplosion" => match form(args, 0).and_then(|f| crate::nvse::record_value(g, f, "DATA", "explosion")) {
-            Some(XVal::Ref(r)) => XVal::Ref(r),
-            _ => XVal::Ref(0),
-        },
+        "getprojectileexplosion" => XVal::Ref(form(args, 0).and_then(|f| g.projectile_traits(f)).and_then(|t| t.explosion).map_or(0, |e| e.0)),
         "setprojectileexplosion" => {
             if let (Some(f), Some(e)) = (form(args, 0), form(args, 1)) {
-                g.field_overrides.insert((f, "DATA/explosion".into()), XVal::Ref(e.0));
+                if g.data.sig(g.unclone(f)) == Some(*b"PROJ") && g.data.sig(g.unclone(e)) == Some(*b"EXPL") {
+                    g.field_overrides.insert((f, "DATA/explosion".into()), XVal::Ref(e.0));
+                }
             }
             zero
         }
