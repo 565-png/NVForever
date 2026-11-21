@@ -28,6 +28,7 @@
 //! in the home and passes `fnv_install::guard_write`.
 
 pub mod anomaly;
+pub mod asset_sources;
 pub mod snapshot;
 mod controls;
 mod delete;
@@ -808,11 +809,15 @@ fn detect(
     real: Res<Time<Real>>,
     loading: Option<Res<nvf_play::loading::Loading>>,
     intent: Option<Res<nvf_play::player::MoveIntent>>,
-    (locks, seat): (Option<Res<nvf_play::control::ControlLocks>>, Option<Res<nvf_play::furniture::PlayerSeat>>),
+    (locks, seat, world): (Option<Res<nvf_play::control::ControlLocks>>, Option<Res<nvf_play::furniture::PlayerSeat>>, Option<Res<crate::world::WorldData>>),
     voice: Option<Res<nvf_play::voice::VoiceState>>,
     memory: Option<Res<crate::memory_budget::MemoryBudget>>,
     mut c: ResMut<Collector>,
 ) {
+    // Whose record names each model file, listed once on a thread of its own (#3045).
+    if let Some(world) = &world {
+        anomaly::list_model_sources(world.lo);
+    }
     let c = &mut *c;
     let t_s = c.started.elapsed().as_secs();
     let loading_now = loading.as_ref().is_some_and(|l| l.active());
