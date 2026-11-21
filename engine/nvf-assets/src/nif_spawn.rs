@@ -2123,7 +2123,7 @@ mod tests {
     }
 
     /// A BSShaderTextureSet of these slots.
-    fn texture_set(slots: &[&str]) -> Vec<u8> {
+    fn texture_set_bytes(slots: &[&str]) -> Vec<u8> {
         let mut out = vec![];
         words(&mut out, &[slots.len() as u32]);
         for s in slots {
@@ -2174,7 +2174,7 @@ mod tests {
                     ("BSFadeNode", node(0, &[1])),
                     ("NiTriStrips", strips(1, &[2], 4)),
                     ("BSShaderPPLightingProperty", lit_shader_with(flags, 3)),
-                    ("BSShaderTextureSet", texture_set(&slots)),
+                    ("BSShaderTextureSet", texture_set_bytes(&slots)),
                     ("NiTriStripsData", square(0.0)),
                 ],
                 &["Floor", "Floor:0"],
