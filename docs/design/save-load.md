@@ -161,8 +161,9 @@ body    u32 length + zstd(JSON or postcard) of SaveBody
   `RefState::made_at` (where a created reference was made, its editor location, #2278;
   saved since 0.8.0) is another, with a fill-in on the load: a created actor of an older
   save, which has none, takes the place it was saved at (`World::made_at_from_saved_place`,
-  #3042) [decision: the nearest fact the save holds; such actors stood still before
-  #2278]. N stays: every actor `World::place` makes has one, so a missing one marks the
+  #3042) [decision: the nearest fact the save holds, an approximation of where it was
+  made, since combat, following or a scripted MoveTo may have moved it before the save].
+  N stays: every actor `World::place` makes has one, so a missing one marks the
   older save; dropped items have none by design and get none.
 - Encoding: JSON keeps saves inspectable and is what the tests already use; size is the
   question. Measure a long session's snapshot first: if compressed JSON stays in the low

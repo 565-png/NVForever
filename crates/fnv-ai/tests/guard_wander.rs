@@ -814,5 +814,14 @@ fn a_created_actor_keeps_where_it_was_made_across_a_save_and_load() {
     let entry = old["sim"]["refs"].as_object_mut().unwrap().get_mut(&format!("{made}")).expect("the actor's entry");
     assert!(entry.as_object_mut().unwrap().remove("made_at").is_some());
     let game = load(&old);
-    assert_eq!(editor_place_of(&game, made), Some(fnv_nav::Place { space: Space::Interior(YARD), pos: FAR }), "the place it was saved at");
+    let saved_place = fnv_nav::Place { space: Space::Interior(YARD), pos: FAR };
+    assert_eq!(editor_place_of(&game, made), Some(saved_place), "the place it was saved at");
+    // Its package resolves there too: the guard wanders round the saved place.
+    let mut legacy = Sim { game, ai: Ai::new(AiConfig { walk_speed: 100.0, run_speed: 400.0, ..AiConfig::default() }), nav: nav() };
+    legacy.ai.add(&legacy.game, made).unwrap();
+    legacy.run(60.0);
+    let events = legacy.ai.events.iter().filter(|e| e.actor == made).map(|e| &e.event).collect::<Vec<_>>();
+    assert!(!format!("{events:?}").contains("no editor location"), "{events:?}");
+    let sb = legacy.ai.agents[&made].sandbox.as_ref().expect("the older save's guard wander");
+    assert_eq!(sb.area(), (saved_place, RADIUS));
 }

@@ -2467,9 +2467,9 @@ impl<'a> World<'a> {
     /// A created actor of a save written before [`RefState::made_at`] existed (#2278
     /// came with 0.8.0) has no creation place, and kept none in every save after: its
     /// packages near the editor location failed after each load (#3042). It takes the
-    /// place it was saved at, the nearest fact the save holds [decision: those actors
-    /// stood still before #2278, as those packages failed for them, so for most the saved
-    /// place is where they were made; one that walked off is anchored where it stood].
+    /// place it was saved at, the nearest fact the save holds [decision]. That is only an
+    /// approximation of where it was made: combat, following someone or a scripted MoveTo
+    /// may have moved it before the save, and then it is anchored where it stood.
     /// Only actors (NPC_, CREA and the leveled actor lists placed as themselves), because
     /// a dropped item has no creation place by design ([`World::drop_item`]); every actor
     /// [`World::place`] makes has one, so `None` on a present created actor marks the
