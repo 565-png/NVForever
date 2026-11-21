@@ -31,10 +31,11 @@ spread (follow-up: combat's ammo effects through `Game::ammo_effects`).
 | SetProjectileTraitNumeric `projectile trait value` | DATA: 0 type, 1 gravity, 2 speed, 3 range, 4 tracer chance, 5 explosion proximity, 6 explosion timer, 7 muzzle flash duration, 8 fade duration, 9 impact force, 10-12 rotation x/y/z, 13 bouncy mult; 14 the detection sound level (VNAM) [documented: the page's table] |
 | SetProjectileLight `projectile [light]` | DATA's light; left out, none [documented] |
 | SetProjectileMuzzleFlash `projectile path` | NAM1, the muzzle flash model |
-| SetExplosionTraitNumeric `explosion trait value` | DATA: 0 force, 1 damage, 2 radius, 3 IS radius, 4 radiation level, 5 dissipation time, 6 radiation radius, 7 sound level [documented] |
+| SetExplosionTraitNumeric `explosion trait value` | DATA: 0 force, 1 damage, 2 radius, 3 IS radius, 4 radiation level, 5 dissipation time, 6 radiation radius, 7 sound level [documented]; accepts `TempCloneForm` `EXPL` clones and feeds `Game::explosion_traits`, `Game::add_explosion_radiation_zone`, `Game::explosive_from_explosion`, `Game::explosion_hit_damage`, and `Game::explosion_placed` radius overrides [design] |
 
-The engine's projectiles and explosions still read the records as loaded (follow-up: the
-game's projectile and explosion data through the session's changes).
+The engine's projectiles and explosions still read the records as loaded (follow-up:
+engine visual/audio/blast consumers through `Game::explosion_traits` and projectile
+session changes).
 
 ## 3. Impact data and materials
 

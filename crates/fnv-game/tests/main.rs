@@ -42,6 +42,7 @@ mod dialogue;
 mod difficulty;
 mod effect_updates;
 mod experience;
+mod explosion_overrides;
 mod player_source_commands;
 mod pipboy_mode;
 mod extender_conditions;

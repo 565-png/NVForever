@@ -102,6 +102,13 @@ impl Game<'_> {
         out
     }
 
+    /// Resolve an `EXPL` form's live damage (`Game::explosion_traits`, including
+    /// `SetExplosionTraitNumeric` trait 1) and run `ShowOff:OnExplosionHit` on `target`.
+    pub fn explosion_hit_damage(&mut self, explosion: FormId, target: FormId) -> Option<f64> {
+        let damage = f64::from(self.explosion_traits(explosion)?.damage);
+        Some(self.explosion_hit(target, damage))
+    }
+
     /// The stop handlers of an aux timer that ran out or was stopped with its event: each
     /// gets the timer's name and its owner [documented: SetOnAuxTimerStopHandler; observed:
     /// showoff1, once when a 0.1 s timer ran out and once on AuxTimerStop 1, the owner the

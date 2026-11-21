@@ -434,7 +434,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // SetProjectileSound]. A form that is not a sound changes nothing [hypothesis].
         "setexplosionsound" | "setprojectilesound" => {
             let expl = name == "setexplosionsound";
-            let f = of_sig(g, form(args, 0), if expl { b"EXPL" } else { b"PROJ" });
+            let f = form(args, 0).filter(|&f| g.data.sig(g.unclone(f)) == Some(if expl { *b"EXPL" } else { *b"PROJ" }));
             let key = match (expl, index(args, 1)) {
                 (true, Some(1)) => "DATA/sound_1",
                 (true, Some(2)) => "DATA/sound_2",
@@ -443,7 +443,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 (false, Some(3)) => "DATA/sound_disable",
                 _ => "",
             };
-            if let (Some(f), Some(s), false) = (f, of_sig(g, form(args, 2), b"SOUN"), key.is_empty()) {
+            let s = form(args, 2).filter(|&s| g.data.sig(g.unclone(s)) == Some(*b"SOUN"));
+            if let (Some(f), Some(s), false) = (f, s, key.is_empty()) {
                 g.field_overrides.insert((f, key.into()), XVal::Ref(s.0));
             }
             zero

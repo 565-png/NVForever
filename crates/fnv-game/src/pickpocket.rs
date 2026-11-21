@@ -356,6 +356,14 @@ impl Game<'_> {
         }
     }
 
+    /// Build a planted [`Explosive`] payload from an `EXPL` form (or `TempCloneForm` of
+    /// one) using its live session traits (`Game::explosion_traits`, respecting
+    /// `SetExplosionTraitNumeric` damage and `SetExplosionTraitForm` `EITM` overrides).
+    pub fn explosive_from_explosion(&self, explosion: FormId, resist: Option<u16>) -> Option<Explosive> {
+        let t = self.explosion_traits(explosion)?;
+        Some(Explosive { damage: f64::from(t.damage), resist, enchantment: t.enchantment })
+    }
+
     /// The player placed `item` in `victim`'s pocket, a live explosive (the engine knows
     /// the weapons' projectiles; `blast` its explosion): it goes live, one per call. Not
     /// on a child or an essential actor: it stays an ordinary item there [documented:
