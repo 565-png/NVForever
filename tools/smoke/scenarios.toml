@@ -18189,10 +18189,10 @@ order = [[
 [[scenario]]
 name = "compass-tick-place"
 source = "#3310: the hand-built compass's actor ticks stood a little low; their bar now ends 22 units down the compass window, where the HUD file's tick box puts the original's (docs/spec-notes/hud.md §11, engine/nvf-play/src/compass.rs TICK_TOP)"
-note = "as compass-sneaking-npc: Ringo is brought 300 units north of the player (heading north, in the compass's window) at 3 s, a frame at 6 s shows his amber tick; StartCombat sets him on the god-mode player at 8 s and a frame at 10 s shows the red tick. Look at the frames: each bar ends a few pixels above the strip's doubled line, not on it"
+note = "as compass-sneaking-npc: Ringo is brought 300 units north of the player (heading north, in the compass's window) at 3 s, the HUD hand-built (NVF_PLAY_TEST_TILE_MENUS empty: no tile menus), a frame at 6 s shows his amber tick; StartCombat sets him on the god-mode player at 8 s and a frame at 10 s shows the red tick. Look at the frames: each bar ends a few pixels above the strip's doubled line, not on it"
 areas = ["hud"]
 paths = ["engine/nvf-play/src/compass.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:RingoRef:player:0:300:0,8:call:RingoRef:StartCombat:player", NVF_PLAY_TEST_SHOTS = "6,10" }
+env = { NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:RingoRef:player:0:300:0,8:call:RingoRef:StartCombat:player", NVF_PLAY_TEST_SHOTS = "6,10" }
 args = ["--play", "--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--hour", "12", "--no-voice", "--size", "1280x720"]
 run_seconds = 13
 expect = [

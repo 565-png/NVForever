@@ -1032,7 +1032,7 @@ mod tests {
             let bar_end = top + TICK_BAR_ROWS / 32.0 * h;
             assert!((bar_end - 22.0).abs() < 1e-4, "{mark:?}: the bar ends at {bar_end}");
             assert!(top >= 0.0 && bar_end <= strip_line - 3.0, "{mark:?}: {top} .. {bar_end}");
-            assert_eq!((w, h), (TICK_SIZE, TICK_SIZE), "the size stays");
+            assert_eq!((w, h), (26.0, 26.0), "the size stays");
             // The bar's middle stays on the bearing.
             assert!((x + TICK_MIDDLE * w - (COMPASS_HEADING + 12.5)).abs() < 1e-4);
         }
