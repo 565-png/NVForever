@@ -746,6 +746,15 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
     the floor [hypothesis]): any other box the ray enters before the first collision hit
     wins over it, nearer or not, so an item beside a body is taken rather than the body
     searched; with no such box the body is picked by its box as before (#3125) [design].
+    A box that holds, along the ray, the whole stretch through another reference's precise
+    box (one the player can activate, itself entered before the first collision hit) is
+    set aside: a bed's box runs from the floor to the top of its headboard and encloses
+    what lies on the mattress, so the ray entered it before a suitcase lying there and the
+    bed won (#3323, the Bison Steve Hotel's upper floors) [design; what the original
+    targets is not captured, the report says the suitcase can be looted there]. Only boxes
+    are set aside: the mattress's collision hit still picks the bed, a wall before the
+    suitcase still hides it, two boxes over the same stretch both stay, and an actor's
+    rough box sets nothing aside (a sleeper's bed still yields to the sleeper, below).
     The console's click keeps the plain nearest rule. Collision on the trigger layer (12)
     does not block the ray [hypothesis].
   - **A bed someone lies on yields to the sleeper**: when the target chosen above is a bed

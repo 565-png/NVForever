@@ -3453,6 +3453,19 @@ already talking takes over at once, same topic or another; nothing is queued or 
      "Say Once first" from "later quest first" (the second case has the earlier quest win)
      is worth a frame.
 
+## Added 2026-11-21 (a suitcase lying on a bed, #3323)
+
+250. **Is a suitcase lying on a bed the crosshair's target, from every aim at it?** (P3;
+     #3323, simulation.md §5 crosshair activation.) A player reports the suitcase on a bed
+     in the Bison Steve Hotel's upper floors can be looted in the original [observed: the
+     report, not captured]. Ours since #3323: a render box that wholly holds another
+     activatable reference's box along the ray is set aside, so the suitcase wins wherever
+     the ray passes through its box before the mattress [hypothesis]. Stand beside that
+     bed and sweep the crosshair over the suitcase's lid, its side, its edge against the
+     mattress and the bare mattress beside it, logging `GetCrosshairRef` at each: the
+     suitcase on every aim at it and the bed off it agree with ours; the bed on the
+     suitcase's edge or side says the original asks for a hit on the suitcase itself.
+
 ## Added 2026-11-15 (the Camp McCarran observation window, #2462)
 
 249. **How does the observation window at Camp McCarran look from each side?** (P3;

@@ -3654,6 +3654,24 @@ order = [[
   { re = 'dialogue: .* is up after [0-9.]+ s: the player talks to it', label = "and the conversation follows, him off the bed" },
 ]]
 
+# MAIN SESSION: the cell (BisonSteve02 is a guess for "Bison Steve Hotel Upper Floors"),
+# the GOTO point and the LOOK angles below are placeholders: find the suitcase lying on a
+# bed there (fnvtool), stand the player beside the bed, aim down at the suitcase's lid,
+# then drop the two known_failing marks.
+[[scenario]]
+name = "bed-suitcase-target"
+source = "issue #3323 (simulation.md §5, crosshair activation): a suitcase lying on a bed at the Bison Steve Hotel is the target, not the bed whose render box (floor to headboard) encloses it (pick::set_aside_enclosing) [design]"
+note = "The player stands beside the bed and looks down at the suitcase's lid; E at 30 s opens its container menu. Before the fix the bed, its box entered first along the ray, was the target (`target 0x... Bed (Activate)`). A target line on the bed after the fix means the aim missed the suitcase or a wall stands before it: check the aim, do not loosen the line"
+areas = ["activate", "furniture"]
+paths = ["engine/nvf-play/src/activate/pick.rs", "engine/nvf-play/src/activate.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_GOTO = "25:0:0:0", NVF_PLAY_TEST_LOOK = "27:0:-60", NVF_PLAY_TEST_ACTIVATE = "30" }
+args = ["--cell", "BisonSteve02", "--play", "--no-voice"]
+run_seconds = 36
+expect = [
+  { re = 'target 0x[0-9A-F]{8} Suitcase \(Open[^)]*\) by (Collision|Bounds)', label = "the crosshair on the suitcase lying on the bed", known_failing = "#3323: the suitcase's place is not filled in yet (main session)" },
+  { re = 'menu: open Container\(0x[0-9A-F]{8}\) "Suitcase"', label = "E opens the suitcase", known_failing = "#3323: the suitcase's place is not filled in yet (main session)" },
+]
+
 [[scenario]]
 name = "actor-values"
 kind = "tool"

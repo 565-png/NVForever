@@ -283,10 +283,10 @@ pub(crate) fn find_target(
         if sc.distance(o) - sr > REACH {
             return None;
         }
-        Some((r.0, pick::ray_box(o, d, &t, c, h)?))
+        Some((r.0, pick::ray_box_span(o, d, &t, c, h)?))
     });
     // An actor's box is rough (`pick::choose_precise_first`, #3125).
-    let bounds: Vec<(u32, f32, bool)> = bounds.map(|(id, d)| (id, d, sim.is_actor(id))).collect();
+    let bounds: Vec<(u32, f32, f32, bool)> = bounds.map(|(id, (d, out))| (id, d, out, sim.is_actor(id))).collect();
     if let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) {
         rt.game.senses.reticle = Some(fnv_game::functions::senses::Reticle { start: eye, dir, hit: far });
         if rt.game.other.jip13.reticle_node != far_node {
@@ -368,6 +368,8 @@ pub(crate) fn find_target(
             .clone()
     };
     let hit = pick::door_behind(hit, behind, |id| describe_once(id).is_some());
+    // A bed's box does not hide the suitcase lying in it (`pick::set_aside_enclosing`, #3323).
+    let bounds = pick::set_aside_enclosing(hit, &bounds, REACH, |id| describe_once(id).is_some());
     let picked = pick::choose_precise_first(hit, bounds, REACH, |id| describe_once(id).is_some());
     // How far the sleeper's body is from the eye: its posed bones (`crate::hitvol::ActorParts`,
     // which follow the lying body), else its render boxes (rough: the bind pose).
