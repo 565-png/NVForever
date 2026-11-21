@@ -847,13 +847,11 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
                 _ => c("red") + c("green") * 256.0 + c("blue") * 65536.0,
             })
         }
-        // The ACBS flags' low and high 16 bits [hypothesis from the names].
+        // The ACBS flags' low and high 16 bits [documented: GetActorBaseFlagsLow, GetActorBaseFlagsHigh].
         "getactorbaseflagslow" | "getactorbaseflagshigh" => {
-            let bits = match field(g, item(g, 0).unwrap_or(FormId(0)), "ACBS", "flags") {
-                Some(XVal::Num(x)) => x as u64,
-                _ => 0,
-            };
-            XVal::Num(if name.ends_with("low") { (bits & 0xFFFF) as f64 } else { (bits >> 16) as f64 })
+            let b = as_form(args.first()).or(subject).map(|f| g.actor_flags_target(f)).unwrap_or(FormId(0));
+            let bits = g.actor_base_flags_raw(b);
+            XVal::Num(f64::from(if name.ends_with("low") { bits & 0xFFFF } else { bits >> 16 }))
         }
         // AI packages of the reference's base: the "AI Packages" template's list whenever
         // the flag is set, the base's own list beside it unread [documented: GetPackageCount;

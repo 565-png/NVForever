@@ -361,7 +361,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             let r = form(args, 1).or(subject).unwrap_or(FormId(0));
             let b = base(g, r);
             let b = g.template_source(b, r, |d| d.template_base).map_or(b, |(s, _)| s);
-            let flags = crate::nvse::record_value(g, b, "ACBS", "flags").and_then(|v| v.num().ok()).unwrap_or(0.0) as u64;
+            let flags = u64::from(g.actor_base_flags_raw(b));
             let k = num(args, 0, -1.0);
             yes((0.0..32.0).contains(&k) && flags >> (k as u64) & 1 != 0)
         }
@@ -417,15 +417,12 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // ACBS flags, the low 16 bits; the setter for the session [observed: data2,
         // Sunny 17, Boone 144, Doc and the player 0; Sunny + 8 reads 25 and back].
         "getactorbaseflagslow" => {
-            let b = form(args, 0).or(subject).map(|f| base(g, f)).unwrap_or(FormId(0));
-            let flags = crate::nvse::record_value(g, b, "ACBS", "flags").and_then(|v| v.num().ok()).unwrap_or(0.0) as u64;
-            XVal::Num((flags & 0xFFFF) as f64)
+            let b = form(args, 0).or(subject).map(|f| g.actor_flags_target(f)).unwrap_or(FormId(0));
+            XVal::Num(f64::from(g.actor_base_flags_raw(b) & 0xFFFF))
         }
         "setactorbaseflagslow" => {
-            if let Some(b) = form(args, 1).or(subject).map(|f| base(g, f)) {
-                let flags = crate::nvse::record_value(g, b, "ACBS", "flags").and_then(|v| v.num().ok()).unwrap_or(0.0) as u64;
-                let new = (flags & !0xFFFF) | (num(args, 0, 0.0).max(0.0) as u64 & 0xFFFF);
-                g.field_overrides.insert((b, "ACBS/flags".into()), XVal::Num(new as f64));
+            if let Some(b) = form(args, 1).or(subject).map(|f| g.actor_flags_target(f)) {
+                g.set_actor_base_flags(b, false, (num(args, 0, 0.0).max(0.0) as u64 & 0xFFFF) as u16);
             }
             zero
         }

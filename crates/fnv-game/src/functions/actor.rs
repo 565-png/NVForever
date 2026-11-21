@@ -877,7 +877,7 @@ pub fn essential_flagged(g: &Game, r: FormId) -> bool {
     let base = base_of(g, r);
     let base_flag = base
         .and_then(|b| g.forms.essential.get(&b).copied())
-        .unwrap_or_else(|| g.base_data_def(r).is_some_and(|d| d.essential));
+        .unwrap_or_else(|| g.base_data_source(r).is_some_and(|(id, d)| g.acbs_flag(id, d, crate::actor_values::acbs::ESSENTIAL, |d| d.essential)));
     base_flag || g.extra.get(&r).and_then(|e| e.essential).unwrap_or(false)
 }
 

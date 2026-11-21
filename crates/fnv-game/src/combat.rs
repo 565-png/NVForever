@@ -278,8 +278,8 @@ impl Game<'_> {
         if let Some(l) = self.extra.get(&r).and_then(|e| e.level) {
             return l as f64;
         }
-        let Some(d) = self.stats_def(r) else { return 1.0 };
-        if d.pc_level_mult {
+        let Some((id, d)) = self.stats_source(r) else { return 1.0 };
+        if self.acbs_flag(id, d, crate::actor_values::acbs::PC_LEVEL_MULT, |d| d.pc_level_mult) {
             let l = (self.player_level() * d.level_raw as f64 / 1000.0).round().max(d.calc_min as f64);
             if d.calc_max > 0 {
                 l.min(d.calc_max as f64)
@@ -295,7 +295,7 @@ impl Game<'_> {
     /// Maximum health before any script changed it (see the module notes).
     pub fn max_health(&mut self, r: FormId) -> f64 {
         let level = self.actor_level(r);
-        let Some(d) = self.stats_def(r) else { return 100.0 };
+        let Some((id, d)) = self.stats_source(r) else { return 100.0 };
         // The permanent value, as before the other actor values were read
         // [hypothesis: whether damage to Endurance lowers the maximum].
         let end = actor::actor_value_base(self, r, crate::actor_values::ENDURANCE);
@@ -308,7 +308,8 @@ impl Game<'_> {
         if &d.sig == b"CREA" {
             return (d.base_health as f64).max(1.0);
         }
-        let by_level = if d.autocalc { (level - 1.0).max(0.0) * setting(self, "fAVDNPCHealthLevelMult", 5.0) } else { 0.0 };
+        let autocalc = self.acbs_flag(id, d, crate::actor_values::acbs::AUTOCALC, |d| d.autocalc);
+        let by_level = if autocalc { (level - 1.0).max(0.0) * setting(self, "fAVDNPCHealthLevelMult", 5.0) } else { 0.0 };
         (d.base_health as f64 + (end - 1.0).max(0.0) * setting(self, "fAVDNPCHealthEnduranceMult", 5.0) + by_level).max(1.0)
     }
 
@@ -330,7 +331,7 @@ impl Game<'_> {
     /// Whether `r`'s base has "No Low Level Processing": its AI is not updated outside
     /// the loaded area [documented: GECK wiki Category:NPC].
     pub fn no_low_level_processing(&self, r: FormId) -> bool {
-        self.base_data_def(r).is_some_and(|d| d.no_low_level)
+        self.base_data_source(r).is_some_and(|(id, d)| self.acbs_flag(id, d, crate::actor_values::acbs::NO_LOW_LEVEL, |d| d.no_low_level))
     }
 
     /// Lay out the corpses of a new game: every placed actor that starts dead
@@ -357,7 +358,9 @@ impl Game<'_> {
     /// ghosted player is still hurt: "Though NPCs and creatures can not be damaged in this
     /// state, the player can" [documented: GECK wiki SetGhost notes].
     pub fn is_immune(&self, r: FormId) -> bool {
-        let invulnerable = self.base_data_def(r).is_some_and(|d| d.invulnerable);
+        let invulnerable = self
+            .base_data_source(r)
+            .is_some_and(|(id, d)| &d.sig == b"CREA" && self.acbs_flag(id, d, crate::actor_values::acbs::INVULNERABLE, |d| d.invulnerable));
         let ghost = r != FormId::PLAYER_REF && self.is_ghost(r);
         invulnerable || ghost || self.actor_race(r).is_some_and(|race| self.data.child_races.contains(&race))
     }
