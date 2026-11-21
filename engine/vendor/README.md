@@ -308,9 +308,9 @@ Two more for the ALC shadows' (once Lamp shadows) performance pass (2026-11-18, 
   `despawned with their light hidden` count shows how often it happens]. Its regression
   tests are not ported (the engine workspace does not run the vendored crates' tests). Only
   while the hold is active (as last frame's `prepare_lights` saw it): with the ALC shadows
-  row Off it is upstream's two lines. It helps any shadowed light, so it could be made
-  unconditional on the maintainer's word. Drop this with the first Bevy release that has
-  #26480.
+  row Off it is upstream's two lines. It stays behind the row until upstream merges
+  #26480 [design, #3077: the maintainer's decision of 2026-11-21]; drop it with the first
+  Bevy release that has #26480.
 - **Light view counts** (`NVForever light view counts`, `src/render/light.rs` and
   `src/lib.rs`): `nvf_count_light_views` (render world, `RenderSystems::Prepare`, after
   `prepare_lights`) counts the point and spot light shadow views alive and those with a
