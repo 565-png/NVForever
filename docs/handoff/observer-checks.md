@@ -3456,14 +3456,19 @@ already talking takes over at once, same topic or another; nothing is queued or 
 ## Added 2026-11-21 (a suitcase lying on a bed, #3323)
 
 250. **Is a suitcase lying on a bed the crosshair's target, from every aim at it?** (P3;
-     #3323, simulation.md §5 crosshair activation.) A player reports the suitcase on a bed
-     in the Bison Steve Hotel's upper floors can be looted in the original [observed: the
-     report, not captured]. Ours since #3323: a render box that wholly holds another
-     activatable reference's box along the ray is set aside, so the suitcase wins wherever
-     the ray passes through its box before the mattress [hypothesis]. Stand beside that
-     bed and sweep the crosshair over the suitcase's lid, its side, its edge against the
-     mattress and the bare mattress beside it, logging `GetCrosshairRef` at each: the
-     suitcase on every aim at it and the bed off it agree with ours; the bed on the
+     #3323, simulation.md §5 crosshair activation.) A player reports the Suitcase
+     0x000AFA24 lying on BedQueenRight 0x000D72C7 in BisonSteve02 can be looted in the
+     original [reported: the player's issue, not captured]. Ours since #3323: a
+     furniture's render box that wholly holds an activatable reference's box along the
+     ray, before the first collision hit, is set aside, so the suitcase wins wherever the
+     ray passes through its whole box inside the bed's; an aim that leaves the bed's box
+     first, or meets the bed's collision before the suitcase's box, still picks the bed
+     [hypothesis]. Stand beside that bed and sweep the crosshair over the suitcase's lid,
+     its side, its edge against the mattress and the bare mattress beside it. At each aim
+     write down the HUD prompt (Open Suitcase or the bed's) and what E does (the
+     suitcase's container menu or the bed's sleep/wait menu); log `GetCrosshairRef`
+     separately, as it may name the collision hit rather than the prompt's reference.
+     The suitcase on every aim at it and the bed off it agree with ours; the bed on the
      suitcase's edge or side says the original asks for a hit on the suitcase itself.
 
 ## Added 2026-11-15 (the Camp McCarran observation window, #2462)

@@ -111,24 +111,32 @@ pub fn choose_precise_first(
     choose(hit, all.iter().map(|b| (b.0, b.1)), reach, accept)
 }
 
-/// Render boxes (reference, entry, exit, rough) without those that hold, along the ray,
-/// the whole stretch through another reference's precise box (not an actor's rough one,
-/// [`choose_precise_first`]) that is itself a candidate (entered before the collision
-/// hit, within `reach`) and can be activated (`accept`): the
-/// furniture's box set aside, the thing lying in it stays [design, #3323]. A bed's box
-/// runs from the floor to the top of its headboard and encloses what lies on the
-/// mattress, so the ray enters it before a suitcase lying there and the bed, nearest,
-/// won though the suitcase was what the crosshair was on. Only a box is set aside, never
-/// a collision hit: the mattress still picks the bed, and a wall in front still hides the
-/// suitcase. Two boxes over the same stretch both stay; a sleeper's rough box sets no bed's
-/// aside, so [`to_occupant`] still sees the bed. The result is
-/// [`choose_precise_first`]'s input.
-pub fn set_aside_enclosing(hit: Option<RayHit>, boxes: &[(u32, f32, f32, bool)], reach: f32, mut accept: impl FnMut(u32) -> bool) -> Vec<(u32, f32, bool)> {
+/// Render boxes (reference, entry, exit, rough) without those of furniture (`furniture`)
+/// that hold, along the ray, the whole stretch through another reference's precise box
+/// (not an actor's rough one, [`choose_precise_first`]) that is itself a candidate
+/// (entered before `hit`, the first collision hit as the ray met it, within `reach`) and
+/// can be activated (`accept`): the furniture's box set aside, the thing lying in it
+/// stays [design, #3323]. A bed's box runs from the floor to the top of its headboard and
+/// encloses what lies on the mattress, so the ray enters it before a suitcase lying there
+/// and the bed, nearest, won though the suitcase was what the crosshair was on. Only a
+/// furniture's box is set aside: another activator's (a switch panel) keeps priority over
+/// a smaller one behind it. Never a collision hit: the mattress still picks the bed, and
+/// a wall in front still hides the suitcase. `hit` is the raw first hit, not a door
+/// promoted from behind it (`door_behind`), so nothing behind the wall sets a box aside.
+/// Two boxes over the same stretch both stay; a sleeper's rough box sets no bed's aside,
+/// so [`to_occupant`] still sees the bed. The result is [`choose_precise_first`]'s input.
+pub fn set_aside_enclosing(
+    hit: Option<RayHit>,
+    boxes: &[(u32, f32, f32, bool)],
+    reach: f32,
+    furniture: impl Fn(u32) -> bool,
+    mut accept: impl FnMut(u32) -> bool,
+) -> Vec<(u32, f32, bool)> {
     let limit = hit.map_or(reach, |h| h.distance.min(reach));
     let mut kept = Vec::with_capacity(boxes.len());
     for &(id, enter, exit, rough) in boxes {
         let holds = |&&(other, e, x, r): &&(u32, f32, f32, bool)| other != id && !r && (0.0..=limit).contains(&e) && enter <= e && x <= exit && (enter < e || x < exit);
-        if !boxes.iter().filter(holds).any(|b| accept(b.0)) {
+        if !furniture(id) || !boxes.iter().filter(holds).any(|b| accept(b.0)) {
             kept.push((id, enter, rough));
         }
     }
@@ -326,8 +334,9 @@ mod tests {
         let lyons = 8;
         let (bed_box, case_box) = ((BED, 60.0, 140.0, false), (SUITCASE, 98.0, 102.0, false));
         let at = |id: u32, distance: f32| Some(RayHit { form_id: Some(id), distance });
+        let furniture = |id: u32| id == BED;
         let pick = |hit: Option<RayHit>, boxes: &[(u32, f32, f32, bool)], accept: fn(u32) -> bool| {
-            choose_precise_first(hit, set_aside_enclosing(hit, boxes, REACH, accept), REACH, accept)
+            choose_precise_first(hit, set_aside_enclosing(hit, boxes, REACH, furniture, accept), REACH, accept)
         };
         // Before: the bed's box, entered first, won.
         let all = [bed_box, case_box].map(|b| (b.0, b.1, b.3));
@@ -354,6 +363,24 @@ mod tests {
         assert_eq!(picked.unwrap().form_id, BED);
         let p = to_occupant(picked, |id| (id == BED).then_some((lyons, 90.0)), REACH, ANY).unwrap();
         assert_eq!((p.form_id, p.source), (lyons, Source::Occupant));
+        // Only furniture yields: a switch panel's box (30, an activator) from 50 to 130
+        // keeps priority over a smaller activator's (31) behind it.
+        assert_eq!(pick(None, &[(30, 50.0, 130.0, false), (31, 80.0, 90.0, false)], ANY).unwrap().form_id, 30);
+    }
+
+    /// #3323 review: the cutoff for setting a box aside is the raw first hit (a wall at
+    /// 80), not the door promoted from 94 behind it (`door_behind`): a suitcase box behind
+    /// the wall (85 to 90) inside a door's box (furniture here, 65 to 120) leaves the door.
+    #[test]
+    fn nothing_behind_the_wall_sets_a_box_aside() {
+        const DOOR: u32 = 2;
+        let (raw, door) = (Some(RayHit { form_id: None, distance: 80.0 }), Some(RayHit { form_id: Some(DOOR), distance: 94.0 }));
+        let boxes = [(DOOR, 65.0, 120.0, false), (5, 85.0, 90.0, false)];
+        let kept = set_aside_enclosing(raw, &boxes, REACH, |_| true, ANY);
+        assert_eq!(choose_precise_first(door, kept, REACH, ANY), Some(Pick { form_id: DOOR, distance: 65.0, source: Source::Collision }));
+        // With the promoted hit as the cutoff the suitcase would win.
+        let kept = set_aside_enclosing(door, &boxes, REACH, |_| true, ANY);
+        assert_eq!(choose_precise_first(door, kept, REACH, ANY).unwrap().form_id, 5);
     }
 
     #[test]

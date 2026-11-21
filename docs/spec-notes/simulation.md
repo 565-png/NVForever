@@ -746,15 +746,23 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
     the floor [hypothesis]): any other box the ray enters before the first collision hit
     wins over it, nearer or not, so an item beside a body is taken rather than the body
     searched; with no such box the body is picked by its box as before (#3125) [design].
-    A box that holds, along the ray, the whole stretch through another reference's precise
-    box (one the player can activate, itself entered before the first collision hit) is
-    set aside: a bed's box runs from the floor to the top of its headboard and encloses
-    what lies on the mattress, so the ray entered it before a suitcase lying there and the
-    bed won (#3323, the Bison Steve Hotel's upper floors) [design; what the original
-    targets is not captured, the report says the suitcase can be looted there]. Only boxes
-    are set aside: the mattress's collision hit still picks the bed, a wall before the
-    suitcase still hides it, two boxes over the same stretch both stay, and an actor's
-    rough box sets nothing aside (a sleeper's bed still yields to the sleeper, below).
+    A furniture's box (FURN) that holds, along the ray, the whole stretch through another
+    reference's precise box (one the player can activate, itself entered before the first
+    collision hit as the ray met it, not a door found behind that hit) is set aside: a
+    bed's box runs from the floor to the top of its headboard and encloses what lies on
+    the mattress, so the ray entered it before a suitcase lying there and the bed won
+    (#3323: the Suitcase 0x000AFA24 on BedQueenRight 0x000D72C7 in BisonSteve02
+    [documented: FalloutNV.esm]) [design; reported: the player's issue says the suitcase
+    can be looted in the original, not captured]. The render boxes are each drawn mesh's
+    bounds, not the base's OBND (SuitCase02's OBND is all zeros [documented:
+    FalloutNV.esm]). The suitcase wins only when the ray passes through its whole box
+    inside the bed's: an aim that leaves the bed's box first (the suitcase hanging over
+    the bed's edge) still picks the bed, and so does a bed collision hit before the
+    suitcase's box. Only furniture yields: another activator's box keeps priority over a
+    smaller one behind it. Collision hits are never set aside: the mattress still picks
+    the bed, a wall before the suitcase still hides it, two boxes over the same stretch
+    both stay, and an actor's rough box sets nothing aside (a sleeper's bed still yields
+    to the sleeper, below).
     The console's click keeps the plain nearest rule. Collision on the trigger layer (12)
     does not block the ray [hypothesis].
   - **A bed someone lies on yields to the sleeper**: when the target chosen above is a bed
