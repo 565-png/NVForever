@@ -735,19 +735,25 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
             zero
         }
-        // Returns 0 either way [observed: gaps2]; GetCombatDisabled reads it [observed:
-        // gaps3].
+        // Disables/enables combat for the calling actor: combat-disabled actors never
+        // enter combat (though others may still attack them, and UseWeapon / Use Weapon
+        // packages still work); reset on every save load [documented: GECK wiki
+        // SetCombatDisabled]. Returns 0 either way [observed: gaps2]; GetCombatDisabled
+        // reads it [observed: gaps3].
         "setcombatdisabled" => {
             if let Some(r) = subject {
                 if num(args, 0, 0.0) != 0.0 {
                     g.gaps.combat_disabled.insert(r);
+                    if r != FormId::PLAYER_REF {
+                        g.stop_combat(r);
+                    }
                 } else {
                     g.gaps.combat_disabled.remove(&r);
                 }
             }
             zero
         }
-        "getcombatdisabled" => yes(subject.is_some_and(|r| g.gaps.combat_disabled.contains(&r))),
+        "getcombatdisabled" => yes(subject.is_some_and(|r| g.combat_disabled(r))),
         // The reference's (or the base's) script has a block of that ID [observed: gaps2,
         // Doc's GameMode (0) reads 1; hypothesis: the IDs are the compiled block codes].
         "hasscriptblock" => {

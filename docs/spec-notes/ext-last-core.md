@@ -163,3 +163,16 @@ existing needs-tracking switch is unchanged.
 encoding remain capture work. Source compiler support is exercised independently
 of numeric bytecode admission. Native command identity is insufficient evidence for
 an argument decoder or CTDA mapping.
+
+## 9. SetCombatDisabled / GetCombatDisabled (`nvse_gaps.rs`)
+
+[documented: https://geckwiki.com/index.php?title=SetCombatDisabled]
+`actor.SetCombatDisabled 0/1` disables or re-enables combat for the calling actor:
+a combat-disabled actor never enters combat with other actors (though others may
+still attack it, and `UseWeapon` / `Use Weapon` packages are unaffected), and the
+state resets on every saved-game load (kept out of both `GameSnapshot` and
+`Game::Session`). `SetCombatDisabled` returns 0 [observed: gaps2] and
+`GetCombatDisabled` reads the flag [observed: gaps3]. [hypothesis] Enabling
+`SetCombatDisabled 1` on an actor already in combat immediately stops its active
+combat (`Game::stop_combat`) and suppresses ally/provocation alarms (`awareness.rs`,
+`combat_group.rs`, `provocation.rs`).
