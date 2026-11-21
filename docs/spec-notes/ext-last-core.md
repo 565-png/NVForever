@@ -15,7 +15,7 @@ the HUD captures in hud.md §14 [observed]. Changes last for the session unless 
 | SetNPCWeight `weight [npc]` | the NPC base's NAM7 [documented] | GetNPCWeight |
 | SetActorBaseFlagsHigh `flags [npc]` | the ACBS flags' high 16 bits, the low ones kept [documented] | GetActorBaseFlagsHigh |
 | SetOwningFactionRequiredRank `rank` | the rank a reference's owning faction needs (XRNK) [documented] | GetOwningFactionRequiredRank |
-| SetPackageTargetDistance `package value` (alias SetPackageTargetCount) | the package target's count or distance, for every reader, the AI too [documented] | GetPackageTargetDistance |
+| SetPackageTargetDistance `package value` (alias SetPackageTargetCount) | the package target's count or distance, for every reader, the AI too (`Game::package_def`) [documented]; authored package edits (`SetPackageFlag`, `SetPackageLocation*`, `SetPackageTarget*`) are carried across same-run loads in `Game::Session` and not saved [hypothesis] | GetPackageTargetDistance |
 | SetRefCount `count` | a placed stack's count [documented]; an inventory reference's stack is left alone [hypothesis] | GetRefCount |
 | SetCurrentQuest `quest` | the active quest, "identical to ForceActiveQuest" [documented] | GetCurrentQuest |
 | SetStringGameSettingEx `"Name\|Value"` | a string game setting, as SetStringSetting [documented; the page calls it broken and its replacement working] | GetStringGameSetting |
