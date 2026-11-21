@@ -1585,7 +1585,8 @@ mod tests {
     fn the_camera_sees_bodies_in_view_and_clear() {
         // Fred Wilks' body 193 units ahead of the camera, as in the report; one behind
         // the camera; one in view with a wall between.
-        let camera = Some(([1964.0, -1393.0, 570.0], [0.0, -1.0]));
+        let eye = [1964.0, -1393.0, 570.0];
+        let camera = Some((eye, [0.0, -1.0]));
         let fred = (0x060393EA, [1896.0, -1574.0, 454.0]);
         let behind = (2, [1964.0, -1200.0, 460.0]);
         let walled = (3, [2100.0, -1600.0, 460.0]);
@@ -1597,7 +1598,7 @@ mod tests {
         assert_eq!(seen, vec![FormId(fred.0)]);
         // The line is cast from the camera to where the body lies, not to a standing
         // actor's chest; the body behind the camera is never asked.
-        assert_eq!(asked, vec![(camera.unwrap().0, [fred.1, fred.1]), (camera.unwrap().0, [walled.1, walled.1])]);
+        assert_eq!(asked, vec![(eye, [fred.1, fred.1]), (eye, [walled.1, walled.1])]);
         assert!(bodies_seen(None, &[fred], |_| panic!("no camera, no rays")).is_empty());
         // Where the physics knows nothing of the body: a little above its origin.
         assert_eq!(body_point(None, 7, [10.0, 20.0, 30.0]), [10.0, 20.0, 30.0 + BODY_LIFT]);
