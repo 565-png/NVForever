@@ -100,14 +100,15 @@ mod tests {
 
     #[test]
     fn an_actor_behind_is_picked_only_when_nothing_else_is_and_it_talks() {
-        let behind = Some(Behind { actor: 9, distance: 120.0, through: 3 });
+        let found = Behind { actor: 9, distance: 120.0, through: 3 };
+        let behind = Some(found);
         let (p, via) = talk_through(None, behind, 150.0, |_| true);
         assert_eq!(p, Some(Pick { form_id: 9, distance: 120.0, source: Source::Collision }));
         assert_eq!(via, Some(3));
         // Not one to talk to (a body, a pocket, a hostile actor): nothing.
         assert_eq!(talk_through(None, behind, 150.0, |_| false), (None, None));
         // Out of reach: nothing.
-        assert_eq!(talk_through(None, Some(Behind { distance: 151.0, ..behind.unwrap() }), 150.0, |_| true), (None, None));
+        assert_eq!(talk_through(None, Some(Behind { distance: 151.0, ..found }), 150.0, |_| true), (None, None));
         // Something offered before the bars wins.
         let item = Pick { form_id: 4, distance: 20.0, source: Source::Bounds };
         assert_eq!(talk_through(Some(item), behind, 150.0, |_| true), (Some(item), None));
