@@ -59,7 +59,44 @@ three ignored. Both strict Clippy checks and all seven required checks passed.
 This later documentation-only successor preserves all executable/fixture bytes
 and has no additional runtime result; these are headless consumer checks.
 
-Physical Control-F/text input, search-bar admission and publication, foreign UI
+## Tile publication
+
+[documented: Stewie's Tweaks menu search prefabs; workload observation of Pip-Boy UI
+Tweaks script offset propagation across `InventoryMenu\IM_SearchBar`,
+`StatsMenu\SM_SearchBar`, and `MapMenu\MM_SearchBar`] Stewie's menu search attaches a
+`<text>` search-bar tile under supported menu roots via prefabs under
+`menus\prefabs\lStewieAl\MenuSearch\`:
+
+| Menu | Class ID | Tile name | VFS prefab path |
+|---|---:|---|---|
+| `InventoryMenu` | 1002 | `IM_SearchBar` | `menus\prefabs\lStewieAl\MenuSearch\Inventory.xml` |
+| `StatsMenu` | 1003 | `SM_SearchBar` | `menus\prefabs\lStewieAl\MenuSearch\Stats.xml` |
+| `MapMenu` | 1023 | `MM_SearchBar` | `menus\prefabs\lStewieAl\MenuSearch\Map.xml` |
+| `BarterMenu` | 1053 | `BM_SearchBar` | `menus\prefabs\lStewieAl\MenuSearch\Barter.xml` |
+| `ContainerMenu` | 1008 | `CM_SearchBar` | `menus\prefabs\lStewieAl\MenuSearch\Container.xml` |
+| `RecipeMenu` | 1077 | `RM_SearchBar` | `menus\prefabs\lStewieAl\MenuSearch\Recipe.xml` |
+| `LevelUpMenu` | 1027 | `BM_SearchBar` | `menus\prefabs\lStewieAl\MenuSearch\LevelUp.xml` |
+
+[design] `fnv_game::ui_search_bar::publish_for_menu` runs during `ui_loading::load`
+(persistent menus) and `ui_loading::sync` (transient menus):
+
+1. If `<Menu>/<Tile>` already exists, it is kept as-is and only missing default traits
+   are materialized.
+2. Otherwise, if `menus\prefabs\lStewieAl\MenuSearch\<Menu>.xml` exists in the VFS, it
+   is injected via `Ui::inject_file` so mod overrides, XML expressions, and sibling
+   tiles (such as search-icon tiles reading `sibling(IM_SearchBar)`) take precedence
+   without redistributing any mod assets.
+3. Otherwise, a clean-room hidden `<text>` fallback tile is injected with default
+   traits (`string` `""`, `visible` `0`, `x`/`y`/`width`/`height`/`_OffsetX`/`_OffsetY`
+   `0`) so scripts querying or writing `_OffsetX`/`_OffsetY` or search text succeed
+   without `-999` failures. Missing default traits are materialized only when absent,
+   never overwriting explicit XML traits or expressions.
+
+[hypothesis] Defaulting missing `_OffsetX`/`_OffsetY`/`x`/`y`/`width`/`height` traits
+to `0` and `visible` to `0` when no prefab file is installed is a clean-room fallback
+not separately observed in the original game without Stewie's prefabs.
+`ui_search_bar::write_query` and `ui_search_bar::read_offsets` provide the core bridge
+for engine search-bar sync; physical Control-F/text input, renderer wiring, foreign UI
 write ownership, repair key routing and original-mod startup remain separate
 integration work. No replacement barter UI, provider-version increase, parser or
 compiler change, native numeric admission or full Stewie/mod support is claimed.

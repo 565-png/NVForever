@@ -135,6 +135,7 @@ pub fn sync(game: &mut Game<'_>, paused: bool, main_menu: bool) -> LifetimeRepor
         drop(span);
         match result {
             Ok((path, root)) => {
+                crate::ui_search_bar::publish_for_menu(&mut game.ui_tree, files, root, Some(code));
                 let mut count = 0;
                 let mut stack = vec![root];
                 while let Some(id) = stack.pop() {
@@ -267,6 +268,8 @@ pub fn load(game: &mut Game<'_>, files: Box<dyn Source + Send + Sync>, paths: im
                 if *name == "HUDMainMenu" {
                     crate::ui_hud::build(&mut ui);
                 }
+                let code = class_code(&ui, root);
+                crate::ui_search_bar::publish_for_menu(&mut ui, files.as_ref(), root, code);
                 report.menus += 1;
                 let mut stack = vec![root];
                 while let Some(id) = stack.pop() {
