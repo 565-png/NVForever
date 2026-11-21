@@ -743,7 +743,15 @@ impl Locomotion {
             self.prev_set = None;
         }
         let before = self.blend.cur.mv;
+        // While another set's pose fades out, a creature does not set off at once
+        // (`Blend::set_off_at_once`): that would start the walk from the clip fading in
+        // and drop the other set's, still showing, in one frame; the walk waits for the
+        // fade's end (a blend time) [design, #2980: a lakelurk setting off from the bed
+        // part way through its swimming idle's fade into the standing one].
+        let at_once = self.blend.set_off_at_once;
+        self.blend.set_off_at_once = at_once && self.prev_set.is_none();
         self.blend.step(choice, dt, |m| set.info(m));
+        self.blend.set_off_at_once = at_once;
         let dir = fnv_actor::jump::dir_index(fnv_actor::jump::jump_dir(self.velocity));
         let land_len = self.set.jump.get(true, dir).map(|c| c.clip.length());
         self.jump.step(self.in_air, dt, land_len);

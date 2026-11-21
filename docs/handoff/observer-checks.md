@@ -3426,7 +3426,8 @@ already talking takes over at once, same topic or another; nothing is queued or 
 250. **How does a creature that swims stand on a lake bed deeper than it is tall?**
      (P3; #2980, physics.md §6.6 "Actors standing on the bed".) Ours since #2980: an
      actor whose character swims (on the ground with its feet 115 or more under the
-     surface; only an actor on its way or fighting has a character) but stands still
+     surface; only an actor on its way has a character, not one that stands idle or
+     holds its ground in a fight) but stands still
      with its feet on the bed plays its standing idle (`mirelurkking\mtidle.kf` for a
      lakelurk); moving, its swimming clips [hypothesis]. Before, it held its swimming
      idle (`swimidle.kf`) there; that this is the T-pose a player reported for idle
