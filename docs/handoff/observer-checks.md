@@ -3466,3 +3466,20 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the room side while strafing past, to see whether the streaks move with the view.
      Streaks moving with the view as bright as the frame agree with ours; a pane that is
      only a faint grey film, or nothing, says the reflection is weighted by alpha.
+
+## Added 2026-11-21 (melee creatures and a player who backs away, #3256)
+
+250. **How often is a player who backs away hit by a melee creature?** (P1: the owner's
+     playtest of 2026-11-21 found it far too easy to back away; #3256, combat-rules.md
+     "Knockback".) Ours [observed: main 069ef9bde, 12 s of backing away at a run]: a feral
+     ghoul 11 to 12 blows, a coyote 6 to 7, a young gecko 2 to 3 (10 on a standing
+     player), because each blow knocks the player back about 50 units and the gecko gains
+     only 13 units a second. In the original, on open flat ground (the Searchlight Airport
+     runway serves), let one creature at a time attack: a young gecko, a coyote, a feral
+     ghoul and a person with a melee weapon. For each, count the blows that take health
+     over 12 s (a) standing still, (b) holding the back key at a run, (c) at a walk
+     (Caps Lock). Note also whether a blow moves the player (knockback), and whether the
+     creature stops and starts on the way at a walk. Counts near ours for the gecko mean
+     the difference from a standing player is the original's too; counts near the standing
+     ones mean the original closes the gap in a way ours does not (a lunge from further
+     off, a faster chase, or no knockback on the player).
