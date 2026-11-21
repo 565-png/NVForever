@@ -17521,6 +17521,37 @@ expect = [
 ]
 
 [[scenario]]
+name = "pipboy-items-heading-heal"
+source = "issue 3120: a Stimpak used from ITEMS > Aid heals a frame after the list changes; the hand-built page's heading draws the new HP with the Pip-Boy still open"
+note = "Health 200 less 60 is 140; the Stimpak at potency 1.3 (Medicine 15) gives 39, so 179 (aid-items). The drop aid opens ITEMS at 16 s, selects the Stimpak (00015169; the start carries other aid items) and uses it, closing half a second later. Without the fix the heading is logged at 140 after the use and not again."
+areas = ["pipboy", "aid"]
+paths = ["engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/tiles/inventory_menu.rs", "engine/nvf-play/src/pipboy/stats/read.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:damage:player:Health:60,9.4:call:player:AddItem:Stimpak:1", NVF_PLAY_TEST_DROP = "16:00015169:use" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages"]
+run_seconds = 23
+expect = [
+  { text = "pipboy items: heading HP 140/200", min = 1, label = "the page opens on the damaged HP" },
+  { re = 'aid: the player used Stimpak .*Health 140 → 179', label = "the Stimpak heals" },
+  { text = "pipboy items: heading HP 179/200", min = 1, label = "the heading draws the healed HP, the Pip-Boy still open" },
+]
+order = [["pipboy items: heading HP 140/200", { re = 'aid: the player used Stimpak' }, "pipboy items: heading HP 179/200"]]
+
+[[scenario]]
+name = "tiles-items-heading-heal"
+source = "issue 3120: with [UI] TileMenus=InventoryMenu the tile page writes the healed HP after a Stimpak is used from ITEMS > Aid"
+note = "the same steps as pipboy-items-heading-heal on the tile page."
+areas = ["pipboy", "aid", "ui", "menus"]
+paths = ["engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/tiles/inventory_menu.rs", "engine/nvf-play/src/pipboy/stats/read.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "InventoryMenu", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:damage:player:Health:60,9.4:call:player:AddItem:Stimpak:1", NVF_PLAY_TEST_DROP = "16:00015169:use" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages"]
+run_seconds = 23
+expect = [
+  { re = 'tiles: InventoryMenu page from tiles: .*HP 140/200,', min = 1, label = "the tile page opens on the damaged HP" },
+  { re = 'tiles: InventoryMenu page from tiles: .*HP 179/200,', min = 1, label = "the tile page writes the healed HP, the Pip-Boy still open" },
+]
+order = [[{ re = 'HP 140/200,' }, { re = 'aid: the player used Stimpak' }, { re = 'tiles: InventoryMenu page from tiles: .*HP 179/200,' }]]
+
+[[scenario]]
 name = "pipboy-aid-effects"
 source = "owner's playtest list 7 items 5, 20 and 33 (docs/spec-notes/aid-items.md §14, pipboy.md §5): an aid item's EFFECTS are the effects whose conditions pass for the player, one line per value (Programmer's Digest one Science +10 without Comprehension or Retention, the Blood Pack HP +1 without Hematophage, the Stimpak one HP line); the ITEMS heading reads HP and DT; a skill book is listed on the Aid tab"
 areas = ["pipboy"]

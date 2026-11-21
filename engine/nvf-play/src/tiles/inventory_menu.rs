@@ -905,7 +905,16 @@ fn pass(p: &mut ItemsPage<'_, '_>, late: bool) -> Option<Result<TileId, String>>
     if w.waits(tab, device, tree, changed) {
         return Some(Err(w.reason.clone()));
     }
-    let due = stale || changed;
+    // The heading's HP and DT changed with nothing else (an aid item's heal a frame after
+    // the list changed, a heal over time, a wear change): written again (#3120).
+    let refigured = !stale && !changed && model.is_some() && {
+        let (hp, dt) = match p.sim.as_mut() {
+            Some(sim) => items::heading(sim.bypass_change_detection(), Some(&mut *script), p.sources.combat.as_deref()),
+            None => ("--".into(), "--".into()),
+        };
+        p.tiles.written.shown.as_ref().is_some_and(|s| s.figures[1] != hp || s.figures[2] != dt)
+    };
+    let due = stale || changed || refigured;
     // With the model gone (the Pip-Boy going down) the page stays as it was last written.
     let new = model.filter(|_| due).and_then(|m| {
         if p.forms.is_none() {
@@ -917,12 +926,11 @@ fn pass(p: &mut ItemsPage<'_, '_>, late: bool) -> Option<Result<TileId, String>>
         let selected = m.selected_row(Side::Player);
         // No DPS on this page, as the hand-built one (`items::draw`).
         let card = selected.map(|r| Info { dps: None, ..items::info_of(r, combat, sim, forms.as_mut(), Some(&mut *script)) });
-        let hp = crate::pipboy::stats::read::player_hp(sim, Some(&mut *script));
-        let dt = combat.map(|c| crate::combat::target_armor(c, Some(&mut *script), sim, FormId::PLAYER_REF).0);
+        let (hp, dt) = items::heading(sim, Some(&mut *script), combat);
         let caps = sim.world.item_count(FormId::PLAYER_REF, crate::menu::model::CAPS).unwrap_or(0);
         // Whole units cut off, not rounded [observed: private job run07_repair_menu, 1280x720, one case; as the container's].
         let wg = m.encumbrance.as_ref().map_or_else(|_| "--".to_string(), |e| format!("{:.0}/{:.0}", e.weight.floor(), e.capacity));
-        let figures = [wg, items::hp_text(hp), items::dt_text(dt), caps.to_string()];
+        let figures = [wg, hp, dt, caps.to_string()];
         let offer = repair::current(active, sim, Some(&*script));
         let last = p.tiles.written.shown.as_ref().and_then(|s| s.repair.word);
         let upkeep = crate::pipboy::labels::label(MAINTAIN_SETTING, REPAIR_UPKEEP);
