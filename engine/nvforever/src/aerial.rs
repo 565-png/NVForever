@@ -1,4 +1,4 @@
-//! Aerial perspective (`aerial-perspective`, docs/design/graphics-enhanced.md §3.17, #2993):
+//! Aerial perspective (`aerial-perspective`, docs/design/graphics-enhanced.md §3.18, #2993):
 //! an enhanced-look switch, off by default and in every preset, never a parity item. Far
 //! scenery takes on the sky's colours with distance instead of fading to the one fog colour:
 //! bluer with distance under a blue sky, warmer under a dusk sky, brighter toward the sun, so
