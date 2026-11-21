@@ -79,23 +79,14 @@
 //! untextured second shape in each chunk (flat at the water height) is not drawn; the
 //! water planes cover it [hypothesis: a water LOD surface].
 //!
-//! A game terrain chunk is drawn only with its own diffuse texture (#3096) [design]: a
-//! material whose diffuse failed to load has none and draws white. A player's report
-//! showed distant hills flat white at night [observed: report R-ZXT6AC4J's screenshot],
-//! and the player wrote that they turned right on coming closer. So a chunk is spawned,
-//! and the chunks it replaces go, only once every shape it draws has its diffuse in the
-//! image store ([`Surface`]); while one is on its way the old chunks stay drawn. When one
-//! is missing, or the model failed, the chunk is held: never drawn, logged once with the
-//! path and the texture's error, and asked again when the loaded cells change its cut.
-//! Its ancestors are then asked, nearest first, whether they draw over its area with
-//! their own textures; the first that does stands in for it and for the chosen chunks
-//! inside it ([`draw_list`]), and an ancestor with no file or nothing textured never
-//! does, so the chunks beside a held one stay until a real stand-in is found. A chunk
-//! that has nothing to draw (no file, no textured shape, every triangle cut out by the
-//! loaded cells) is not held. A chunk spawned while a visible outgoing chunk lies over
-//! it stays hidden until that one goes, which is when every drawn chunk over its area is
-//! in: the replacements take over together and old and new never draw over each other
-//! ([`TerrainBook::settle`]).
+//! Diffuse textures (#3096) [design]: a game terrain chunk is spawned, and counts as
+//! covering the chunks it replaces, only once no shape it draws waits for its diffuse
+//! ([`Surface`]); until then the old chunks stay drawn. A shape whose diffuse is missing
+//! (not named, or its file failed to load, a failure that is not retried) would draw
+//! white, so it is drawn with a neutral fallback colour instead ([`fallback_material`]),
+//! logged once per chunk with the texture's path and error, and the chunk counts as
+//! covering like any other. A player's report showed distant hills flat white at night
+//! [observed: report R-ZXT6AC4J's screenshot]; its cause is not confirmed.
 
 use crate::fade;
 use crate::lodgen::{self, Baker, GenJob};
@@ -286,9 +277,6 @@ struct TerrainEntities {
     key: TerrainKey,
     /// Drawn: `Some(true)` generated, `Some(false)` the game's, `None` nothing (no file).
     drawn: Option<bool>,
-    /// Spawned hidden under a visible outgoing chunk over its area, shown when that one
-    /// goes ([`TerrainBook::settle`]).
-    hidden: bool,
 }
 
 /// One object block's entities.
@@ -323,12 +311,11 @@ pub struct LodState {
     squares: Vec<Grid>,
     /// Counts the times `chosen` was replaced (water.rs redoes its cells when it moves).
     choice: u64,
-    /// Chunks already reported as drawn without a diffuse (each logged once).
-    unguarded: HashSet<Chunk>,
-    /// What the diffuse checks did over the run (logged at the exit).
-    pub surfaces: SurfaceStats,
-    /// The terrain chunks drawn, outgoing and held ([`TerrainBook`]).
-    book: TerrainBook,
+    terrain: HashMap<Chunk, TerrainEntities>,
+    /// Chunks no longer chosen, kept drawn until every chosen chunk over their area is
+    /// spawned: those wait for their models on worker threads, and dropping the old ones
+    /// at once left holes in the distant terrain meanwhile (#1052 review).
+    outgoing: HashMap<Chunk, TerrainEntities>,
     block_entities: HashMap<Grid, BlockEntities>,
     /// Shading-fixed meshes of whole (untrimmed) game terrain chunks, per chunk and shape.
     meshes: HashMap<Chunk, Vec<Option<Handle<Mesh>>>>,
@@ -351,6 +338,14 @@ pub struct LodState {
     pub terrain_rebuilds: usize,
     /// What the object-block loop did since the start (logged at the exit).
     pub block_stats: BlockStats,
+    /// What the diffuse checks did since the start (#3096, logged at the exit).
+    pub surfaces: SurfaceStats,
+    /// Fallback-colour copies of terrain materials whose diffuse is missing, by material.
+    fallback: HashMap<AssetId<NifMaterial>, Handle<NifMaterial>>,
+    /// Chunks already logged as drawn with the fallback colour, and as drawn while a
+    /// diffuse was still on its way.
+    warned: HashSet<Chunk>,
+    unguarded: HashSet<Chunk>,
 }
 
 /// Object-block work over a run, for the exit log (stress runs and smoke read it).
@@ -388,24 +383,22 @@ pub struct BlockStats {
 /// The diffuse checks of game terrain chunks over a run (#3096), for the exit log.
 #[derive(Default, Clone, Copy, Debug)]
 pub struct SurfaceStats {
-    /// Chunks held because a shape they draw has no usable diffuse or their model failed
-    /// (each counted once), and of those the coarsest ones, which draw nothing.
-    pub held: usize,
-    pub left_out: usize,
+    /// Chunks drawn with the fallback colour for a missing diffuse (each counted once), and
+    /// the shapes spawned with it.
+    pub fallback_chunks: usize,
+    pub fallback_shapes: usize,
     /// Frames a chunk waited for its diffuse to reach the image store (one per chunk and
     /// frame).
     pub texture_waits: usize,
-    /// Terrain shapes spawned without a usable diffuse: they would draw white (0 expected).
+    /// Terrain shapes spawned while their diffuse was still on its way (0 expected).
     pub drawn_without_diffuse: usize,
-    /// Stand-ins shown over held chunks (each pair once).
-    pub stood_in: usize,
 }
 
 impl SurfaceStats {
     pub fn describe(&self) -> String {
         format!(
-            "{} chunks held without their diffuse texture ({} coarsest ones, nothing coarser), {} stand-ins drawn over held chunks, {} waits for a chunk's textures, {} shapes drawn without a diffuse texture",
-            self.held, self.left_out, self.stood_in, self.texture_waits, self.drawn_without_diffuse
+            "{} chunks drawn with the fallback colour ({} shapes), {} waits for a chunk's textures, {} shapes drawn without a diffuse texture",
+            self.fallback_chunks, self.fallback_shapes, self.texture_waits, self.drawn_without_diffuse
         )
     }
 }
@@ -425,15 +418,14 @@ impl BlockStats {
 impl LodState {
     /// The terrain chunks' entities (shadow_probe.rs).
     pub fn terrain_entities(&self) -> impl Iterator<Item = Entity> + '_ {
-        self.book.drawn.values().chain(self.book.outgoing.values()).flat_map(|t| t.entities.iter().copied())
+        self.terrain.values().chain(self.outgoing.values()).flat_map(|t| t.entities.iter().copied())
     }
 
-    /// The terrain chunks drawn for the camera's cell: those chosen ([`select_chunks`]),
-    /// with a held chunk's covering ancestor standing for it ([`draw_list`], #3096); none
-    /// while distant LOD is off or before the first update. Distant water (water.rs)
-    /// covers the cells under them, so it ends where the terrain does.
+    /// The terrain chunks chosen for the camera's cell ([`select_chunks`]; none while
+    /// distant LOD is off or before the first update). Distant water (water.rs) covers
+    /// the cells under them, so it ends where the terrain does.
     pub fn chosen_chunks(&self) -> &[Chunk] {
-        &self.book.draw
+        &self.chosen
     }
 
     /// Changes whenever [`LodState::chosen_chunks`] is replaced.
@@ -441,10 +433,9 @@ impl LodState {
         self.choice
     }
 
-    /// Tests: the chunks `update_lod` would have chosen and drawn (counts as a new choice).
+    /// Tests: the chunks `update_lod` would have chosen (counts as a new choice).
     #[cfg(test)]
     pub fn choose_for_test(&mut self, chunks: Vec<Chunk>) {
-        self.book.draw = chunks.clone();
         self.chosen = chunks;
         self.choice += 1;
     }
@@ -594,9 +585,8 @@ impl LodState {
             chosen: Vec::new(),
             squares: Vec::new(),
             choice: 0,
-            unguarded: HashSet::new(),
-            surfaces: SurfaceStats::default(),
-            book: TerrainBook::default(),
+            terrain: HashMap::new(),
+            outgoing: HashMap::new(),
             block_entities: HashMap::new(),
             meshes: HashMap::new(),
             pieces: HashMap::new(),
@@ -609,6 +599,10 @@ impl LodState {
             blocks: 0,
             terrain_rebuilds: 0,
             block_stats: BlockStats::default(),
+            surfaces: SurfaceStats::default(),
+            fallback: HashMap::new(),
+            warned: HashSet::new(),
+            unguarded: HashSet::new(),
         }
     }
 
@@ -628,9 +622,8 @@ impl LodState {
         self.enabled = enabled;
         self.centre = None;
         self.chosen.clear();
-        self.book.draw.clear();
         self.choice += 1;
-        for (_, t) in self.book.drawn.drain().chain(self.book.outgoing.drain()) {
+        for (_, t) in self.terrain.drain().chain(self.outgoing.drain()) {
             despawn_all(commands, t.entities);
         }
         for (_, b) in self.block_entities.drain() {
@@ -797,7 +790,8 @@ enum Diffuse {
     /// Named, not in the image store yet (decoded on a worker, put in by the main thread);
     /// the renderer skips such a material until it is.
     Loading,
-    /// None: not named, or it failed to load. The material would draw white.
+    /// None: not named, or it failed to load (cached, not tried again). The material
+    /// would draw with Bevy's white fallback image.
     Missing,
 }
 
@@ -811,61 +805,81 @@ fn diffuse_of(material: Option<&NifMaterial>, images: &Assets<Image>) -> Diffuse
     }
 }
 
-/// Whether a game terrain chunk (its model prepared) can be drawn with its own textures
-/// (#3096, module docs).
+/// Where a game terrain chunk's textures stand, its model prepared (#3096, module docs).
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Surface {
     /// Every shape it draws has its diffuse.
     Ready,
-    /// A shape's diffuse is on its way: wait, the old chunks stay drawn.
+    /// A shape's diffuse is on its way: not spawned yet, the old chunks stay drawn.
     Pending,
     /// Nothing to draw: no textured shape, or every one cut out by the loaded cells.
     Empty,
-    /// Held: its model did not load, or a shape it draws has no diffuse (why).
+    /// A shape it draws has no diffuse: drawn with the fallback colour (why).
     Failed(String),
 }
 
-/// The surface of a chunk whose model is `shapes` (the drawable ones; `None`: the model
-/// did not load). `cut_away`: the loaded cells cut every triangle of the shape out, so it
-/// draws nothing whatever its textures (asked only of shapes not ready).
-fn surface<S>(shapes: Option<&[S]>, diffuse: impl Fn(&S) -> Diffuse, cut_away: impl Fn(&S) -> bool) -> Surface {
-    let Some(shapes) = shapes else { return Surface::Failed("its model did not load".into()) };
+/// The surface of a chunk whose drawable shapes are `shapes`. `cut_away`: the loaded cells
+/// cut every triangle of the shape out, so it draws nothing whatever its textures (asked
+/// only of shapes not ready).
+fn surface<S>(shapes: &[S], diffuse: impl Fn(&S) -> Diffuse, cut_away: impl Fn(&S) -> bool) -> Surface {
     let mut drawn = false;
     let mut loading = false;
+    let mut missing = false;
     for s in shapes {
         let d = diffuse(s);
         if d != Diffuse::Ready && cut_away(s) {
             continue;
         }
         drawn = true;
-        match d {
-            Diffuse::Ready => {}
-            Diffuse::Loading => loading = true,
-            Diffuse::Missing => return Surface::Failed("a shape it draws has no diffuse texture (none named, or it failed to load)".into()),
-        }
+        loading |= d == Diffuse::Loading;
+        missing |= d == Diffuse::Missing;
     }
-    if !drawn {
-        Surface::Empty
-    } else if loading {
+    if loading {
         Surface::Pending
-    } else {
+    } else if missing {
+        Surface::Failed("a shape it draws has no diffuse texture (none named, or it failed to load)".into())
+    } else if drawn {
         Surface::Ready
+    } else {
+        Surface::Empty
     }
 }
 
 /// [`surface`] of a game chunk's prepared model, drawn with the fully drawn cells `trim`
 /// cut out (`None`: whole).
-fn chunk_surface(model: Option<&PreparedModel>, materials: &Assets<NifMaterial>, images: &Assets<Image>, trim: Option<&HashSet<Grid>>) -> Surface {
-    let shapes: Option<Vec<&PreparedShape>> = model.map(|m| m.shapes.iter().filter(|s| s.cpu.as_deref().is_some_and(drawable)).collect());
-    let root = model.map_or(Affine3A::IDENTITY, |m| m.root);
+fn chunk_surface(model: &PreparedModel, materials: &Assets<NifMaterial>, images: &Assets<Image>, trim: Option<&HashSet<Grid>>) -> Surface {
+    let shapes: Vec<&PreparedShape> = model.shapes.iter().filter(|s| s.cpu.as_deref().is_some_and(drawable)).collect();
     surface(
-        shapes.as_deref(),
+        &shapes,
         |s| diffuse_of(materials.get(&s.material), images),
         |s| {
             let (Some(full), Some(m)) = (trim, s.cpu.as_deref()) else { return false };
-            terrain_mesh(m, Some((&(root * s.transform), full)), 0.0).is_none()
+            terrain_mesh(m, Some((&(model.root * s.transform), full)), 0.0).is_none()
         },
     )
+}
+
+/// Whether a chunk with this surface is spawned now (and so counts as covering the chunks
+/// it replaces): all but one whose diffuse is still on its way (#3096).
+fn admit(surface: &Surface) -> bool {
+    *surface != Surface::Pending
+}
+
+/// Whether the chosen chunks over outgoing chunk `o` are all spawned (`spawned`): only
+/// then does it go.
+fn covered(o: Chunk, chosen: &[Chunk], spawned: impl Fn(&Chunk) -> bool) -> bool {
+    chosen.iter().filter(|&&ch| chunks_overlap(ch, o)).all(spawned)
+}
+
+/// The material a terrain shape whose diffuse is missing is drawn with (#3096): its own,
+/// with the generated LOD's colour for a missing base texture (`lodgen::NO_BASE_SRGB`, as
+/// terrain.rs draws one) as its base colour and no base texture, instead of white.
+fn fallback_material(m: &NifMaterial) -> NifMaterial {
+    let mut f = m.clone();
+    let [r, g, b] = lodgen::NO_BASE_SRGB;
+    f.base.base_color = Color::srgba(r, g, b, m.base.base_color.alpha());
+    f.base.base_color_texture = None;
+    f
 }
 
 /// The texture failure reported for chunk `(l, x, y)`'s diffuse ("<path>: <error>", the
@@ -881,461 +895,6 @@ fn diffuse_failure(failures: &[String], world: &str, (l, x, y): Chunk) -> Option
             f.contains(world) && f.contains(&name) && f.contains(".dds") && !f.contains("\\normals\\")
         })
         .cloned()
-}
-
-/// The next coarser chunk over a chunk (on the grid from `o`).
-fn parent((l, x, y): Chunk, o: Grid) -> Chunk {
-    (2 * l, align(x, o.0, 2 * l), align(y, o.1, 2 * l))
-}
-
-/// The terrain chunks drawn for the `chosen` ones (#3096): a held chunk (`held`) gives way
-/// to its nearest ancestor known to draw over its area with its own textures (`covers`),
-/// passing over ancestors that cannot (no file, nothing textured, held themselves). That
-/// ancestor stands for every chosen chunk inside it, so the drawn chunks never overlap.
-/// A held chunk with no such ancestor (yet) stays, drawing nothing, and the chunks beside
-/// it stay as they are. Chosen order is kept.
-fn draw_list(chosen: &[Chunk], o: Grid, held: impl Fn(&Chunk) -> bool, covers: impl Fn(&Chunk) -> bool) -> Vec<Chunk> {
-    let top = LEVELS[LEVELS.len() - 1];
-    let mut promoted: HashSet<Chunk> = HashSet::new();
-    for c in chosen.iter().filter(|c| held(c)) {
-        let mut a = *c;
-        while a.0 < top {
-            a = parent(a, o);
-            if covers(&a) {
-                promoted.insert(a);
-                break;
-            }
-        }
-    }
-    if promoted.is_empty() {
-        return chosen.to_vec();
-    }
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-    for &c in chosen {
-        // The coarsest promoted chunk over it stands for it.
-        let (mut a, mut stand) = (c, c);
-        loop {
-            if promoted.contains(&a) {
-                stand = a;
-            }
-            if a.0 >= top {
-                break;
-            }
-            a = parent(a, o);
-        }
-        if seen.insert(stand) {
-            out.push(stand);
-        }
-    }
-    out
-}
-
-/// Drawn chunks no longer in `want` go to `outgoing`, kept drawn until covered
-/// ([`covered`]); outgoing ones wanted again come back as they were (their key is checked
-/// before they are used).
-fn retarget(terrain: &mut HashMap<Chunk, TerrainEntities>, outgoing: &mut HashMap<Chunk, TerrainEntities>, want: &HashSet<Chunk>) {
-    let gone: Vec<Chunk> = terrain.keys().filter(|ch| !want.contains(ch)).copied().collect();
-    for ch in gone {
-        if let Some(t) = terrain.remove(&ch) {
-            outgoing.insert(ch, t);
-        }
-    }
-    let back: Vec<Chunk> = outgoing.keys().filter(|ch| want.contains(ch)).copied().collect();
-    for ch in back {
-        if let Some(t) = outgoing.remove(&ch) {
-            terrain.insert(ch, t);
-        }
-    }
-}
-
-/// Whether the drawn chunks over outgoing chunk `o` are all spawned (`spawned`): only then
-/// does it go. A chunk waiting for its model or textures, or held, is not spawned.
-fn covered(o: Chunk, draw: &[Chunk], spawned: impl Fn(&Chunk) -> bool) -> bool {
-    draw.iter().filter(|&&ch| chunks_overlap(ch, o)).all(spawned)
-}
-
-/// The fully drawn cells inside a chunk, sorted: what it is cut for ([`TerrainKey::full`]).
-fn cut_of(full: &HashSet<Grid>, chunk: Chunk) -> Vec<Grid> {
-    let mut cut: Vec<Grid> = full.iter().filter(|&&c| in_chunk(c, chunk)).copied().collect();
-    cut.sort_unstable();
-    cut
-}
-
-/// A held chunk: the cut its verdict was given for, and why.
-struct Held {
-    cut: Vec<Grid>,
-    reason: String,
-}
-
-/// What [`TerrainBook::advance`] did with a drawn-list chunk.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Advance {
-    /// Drawn already for this key.
-    Kept,
-    /// Its model or a diffuse is on its way.
-    Waited,
-    /// Held; `first` when it was never held before (logged then).
-    Held { first: bool },
-    Spawned,
-    /// Ready, but the frame's budget is spent.
-    OverBudget,
-}
-
-/// The terrain chunks' bookkeeping (#3096, module docs): which are drawn, outgoing and
-/// held, and which coarser chunks can stand for a held one. `update_lod` drives it; its
-/// decisions take no entities, so tests run them frame by frame.
-#[derive(Default)]
-struct TerrainBook {
-    /// Chunks spawned for the drawn list (their entities, maybe hidden).
-    drawn: HashMap<Chunk, TerrainEntities>,
-    /// Chunks no longer drawn, kept until every drawn chunk over their area is spawned:
-    /// those wait for their models on worker threads, and dropping the old ones at once
-    /// left holes in the distant terrain meanwhile (#1052 review).
-    outgoing: HashMap<Chunk, TerrainEntities>,
-    /// The chunks drawn ([`draw_list`]).
-    draw: Vec<Chunk>,
-    /// Held chunks ([`Surface::Failed`]).
-    held: HashMap<Chunk, Held>,
-    /// Ancestors of held chunks asked whether they can stand for them: the cut asked for,
-    /// and whether they draw over their area with their own textures ([`Surface::Ready`]).
-    fallbacks: HashMap<Chunk, (Vec<Grid>, bool)>,
-    /// Held chunks already logged, and stand-ins already logged (stand-in, held).
-    warned: HashSet<Chunk>,
-    stood_in: HashSet<(Chunk, Chunk)>,
-}
-
-impl TerrainBook {
-    /// Recompute the drawn list from `chosen` ([`draw_list`]; `gen_ok`: a held level-4
-    /// chunk drawn generated instead) and move the entities to match; whether it changed.
-    fn redraw(&mut self, chosen: &[Chunk], o: Grid, gen_ok: impl Fn(&Chunk) -> bool) -> bool {
-        let (held, fallbacks) = (&self.held, &self.fallbacks);
-        let draw = draw_list(chosen, o, |c| held.contains_key(c) && !gen_ok(c), |a| fallbacks.get(a).is_some_and(|f| f.1));
-        if draw == self.draw {
-            return false;
-        }
-        retarget(&mut self.drawn, &mut self.outgoing, &draw.iter().copied().collect());
-        self.draw = draw;
-        true
-    }
-
-    /// Held chosen chunks whose cut changed since their verdict: asked again
-    /// ([`TerrainBook::recheck`]), as the loaded cells may now cut their bad shape out.
-    fn stale_holds(&self, chosen: &[Chunk], cut_of: impl Fn(Chunk) -> Vec<Grid>) -> Vec<Chunk> {
-        chosen.iter().copied().filter(|c| self.held.get(c).is_some_and(|h| h.cut != cut_of(*c))).collect()
-    }
-
-    /// A held chunk asked again for its new cut (`surface`; `None`: not known now).
-    fn recheck(&mut self, chunk: Chunk, cut: &[Grid], surface: Option<Surface>) {
-        match surface {
-            Some(Surface::Failed(reason)) => {
-                self.held.insert(chunk, Held { cut: cut.to_vec(), reason });
-            }
-            Some(Surface::Ready | Surface::Empty) => {
-                self.held.remove(&chunk);
-            }
-            None | Some(Surface::Pending) => {}
-        }
-    }
-
-    /// The ancestors to ask whether they can stand for a held chosen chunk: per held chunk,
-    /// the nearest one without a verdict for its current cut, unless one that can stand
-    /// in comes first.
-    fn wanted_fallbacks(&self, chosen: &[Chunk], o: Grid, gen_ok: impl Fn(&Chunk) -> bool, cut_of: impl Fn(Chunk) -> Vec<Grid>) -> Vec<Chunk> {
-        let top = LEVELS[LEVELS.len() - 1];
-        let mut out = Vec::new();
-        for c in chosen.iter().filter(|c| self.held.contains_key(c) && !gen_ok(c)) {
-            let mut a = *c;
-            while a.0 < top {
-                a = parent(a, o);
-                match self.fallbacks.get(&a).filter(|f| f.0 == cut_of(a)) {
-                    Some((_, true)) => break,
-                    Some((_, false)) => continue,
-                    None => {
-                        if !out.contains(&a) {
-                            out.push(a);
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-        out
-    }
-
-    /// The verdict on a fallback (`surface`, for `cut`; `None`: not known yet).
-    fn note_fallback(&mut self, chunk: Chunk, cut: &[Grid], surface: Option<Surface>) {
-        match surface {
-            None | Some(Surface::Pending) => {}
-            Some(s) => {
-                self.fallbacks.insert(chunk, (cut.to_vec(), s == Surface::Ready));
-            }
-        }
-    }
-
-    /// Whether a visible outgoing chunk lies over `chunk`: a chunk spawned now stays hidden
-    /// until that one goes, so the old and the new never draw over each other.
-    fn under_visible_outgoing(&self, chunk: Chunk) -> bool {
-        self.outgoing.iter().any(|(&o, t)| !t.hidden && chunks_overlap(o, chunk))
-    }
-
-    /// A drawn-list chunk that needs nothing asked for `key`: drawn for it already
-    /// ([`Advance::Kept`]), or held for its cut (not asked again until the cut changes; an
-    /// old entry of it comes back for despawning). `None`: ask its surface and
-    /// [`TerrainBook::advance`].
-    fn settled(&mut self, chunk: Chunk, key: &TerrainKey) -> Option<(Advance, Option<TerrainEntities>)> {
-        if self.drawn.get(&chunk).is_some_and(|t| t.key == *key) {
-            return Some((Advance::Kept, None));
-        }
-        if !key.generated && self.held.get(&chunk).is_some_and(|h| h.cut == key.full) {
-            return Some((Advance::Held { first: false }, self.drawn.remove(&chunk)));
-        }
-        None
-    }
-
-    /// A drawn-list chunk not [`TerrainBook::settled`], given its surface for `key`
-    /// (`None` while its model is prepared): spawned (`spawn(hidden)`) only when ready or
-    /// empty, else waited for or held (never drawn). The entities it replaced or held back
-    /// come back for despawning.
-    fn advance(&mut self, chunk: Chunk, key: &TerrainKey, surface: Option<Surface>, can_spawn: bool, spawn: impl FnOnce(bool) -> TerrainEntities) -> (Advance, Option<TerrainEntities>) {
-        match surface {
-            None | Some(Surface::Pending) => (Advance::Waited, None),
-            Some(Surface::Failed(reason)) => {
-                self.held.insert(chunk, Held { cut: key.full.clone(), reason });
-                (Advance::Held { first: self.warned.insert(chunk) }, self.drawn.remove(&chunk))
-            }
-            Some(Surface::Ready | Surface::Empty) => {
-                self.held.remove(&chunk);
-                if !can_spawn {
-                    return (Advance::OverBudget, None);
-                }
-                let old = self.drawn.remove(&chunk);
-                let hidden = self.under_visible_outgoing(chunk);
-                let mut t = spawn(hidden);
-                t.hidden = hidden;
-                self.drawn.insert(chunk, t);
-                (Advance::Spawned, old)
-            }
-        }
-    }
-
-    /// End of a frame: outgoing chunks go once the drawn chunks over them are all spawned
-    /// (hidden ones at once: they draw nothing), and hidden drawn chunks no visible
-    /// outgoing chunk lies over are shown, so a chunk's replacements take over together.
-    /// The entities to despawn, and those to show.
-    fn settle(&mut self) -> (Vec<TerrainEntities>, Vec<Entity>) {
-        let drawn = &self.drawn;
-        let done: Vec<Chunk> = self.outgoing.iter().filter(|(&o, t)| t.hidden || covered(o, &self.draw, |ch| drawn.contains_key(ch))).map(|(&o, _)| o).collect();
-        let gone = done.into_iter().filter_map(|o| self.outgoing.remove(&o)).collect();
-        let visible: Vec<Chunk> = self.outgoing.iter().filter(|(_, t)| !t.hidden).map(|(&o, _)| o).collect();
-        let mut show = Vec::new();
-        for (&ch, t) in self.drawn.iter_mut().filter(|(_, t)| t.hidden) {
-            if !visible.iter().any(|&o| chunks_overlap(o, ch)) {
-                t.hidden = false;
-                show.extend(t.entities.iter().copied());
-            }
-        }
-        (gone, show)
-    }
-
-    /// Stand-ins now shown over held chosen chunks and not reported before: (stand-in,
-    /// held).
-    fn new_stand_ins(&mut self, chosen: &[Chunk]) -> Vec<(Chunk, Chunk)> {
-        let mut out = Vec::new();
-        for &h in chosen.iter().filter(|c| self.held.contains_key(c)) {
-            let Some(&a) = self.draw.iter().find(|&&a| a.0 > h.0 && chunks_overlap(a, h)) else { continue };
-            let shown = self.drawn.get(&a).is_some_and(|t| !t.hidden && !t.entities.is_empty());
-            if shown && self.stood_in.insert((a, h)) {
-                out.push((a, h));
-            }
-        }
-        out
-    }
-}
-
-/// What a frame's terrain pass ([`terrain_pass`]) asks of the world: `update_lod`'s models
-/// and entities, or a test's fakes.
-trait TerrainWorld {
-    /// The fully drawn cells inside a chunk ([`cut_of`]).
-    fn cut(&self, chunk: Chunk) -> Vec<Grid>;
-    /// Whether a level-4 chunk is drawn from its generated chunk (ready near the camera).
-    fn generated(&self, chunk: Chunk) -> bool;
-    /// A game chunk's surface with its cut cells cut out; `None` while its model is
-    /// prepared on a worker thread.
-    fn surface(&mut self, chunk: Chunk, cut: &[Grid]) -> Option<Surface>;
-    /// Whether the frame's rebuild budget is spent after `spawned` chunks.
-    fn over_budget(&self, spawned: usize) -> bool;
-    fn spawn(&mut self, chunk: Chunk, key: TerrainKey, hidden: bool) -> TerrainEntities;
-    fn despawn(&mut self, t: TerrainEntities);
-    fn show(&mut self, entities: Vec<Entity>);
-    /// A chunk held for the first time, and why.
-    fn held(&mut self, chunk: Chunk, reason: &str);
-    /// A stand-in shown over a held chunk for the first time.
-    fn stood_in(&mut self, by: Chunk, held: Chunk);
-    /// A chunk waited a frame: for its model (`model`), else for its textures.
-    fn waited(&mut self, model: bool);
-}
-
-/// What a terrain pass did: whether any entity changed, and whether the drawn list did.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-struct PassOutcome {
-    changed: bool,
-    redrawn: bool,
-    spawned: usize,
-}
-
-/// One frame of the terrain chunks (#3096): ask held chunks again whose cut changed and
-/// look for ancestors that can stand in for them, redraw, then advance every chunk of the
-/// drawn list ([`TerrainBook::settled`], [`TerrainBook::advance`]) within the budget, and
-/// settle the outgoing and hidden chunks ([`TerrainBook::settle`]). `gen_ok`: a held level-4
-/// chunk drawn generated instead.
-fn terrain_pass(book: &mut TerrainBook, chosen: &[Chunk], o: Grid, gen_ok: impl Fn(&Chunk) -> bool, w: &mut impl TerrainWorld) -> PassOutcome {
-    let mut out = PassOutcome::default();
-    if !book.held.is_empty() {
-        for h in book.stale_holds(chosen, |c| w.cut(c)) {
-            let cut = w.cut(h);
-            let s = w.surface(h, &cut);
-            book.recheck(h, &cut, s);
-        }
-        for a in book.wanted_fallbacks(chosen, o, &gen_ok, |c| w.cut(c)) {
-            let cut = w.cut(a);
-            let s = w.surface(a, &cut);
-            book.note_fallback(a, &cut, s);
-        }
-    }
-    out.redrawn |= book.redraw(chosen, o, &gen_ok);
-    let mut newly_held = false;
-    for chunk in book.draw.clone() {
-        let key = TerrainKey { full: w.cut(chunk), generated: w.generated(chunk) };
-        let (step, old) = match book.settled(chunk, &key) {
-            Some(r) => r,
-            None => {
-                let surface = if key.generated { Some(Surface::Ready) } else { w.surface(chunk, &key.full) };
-                match &surface {
-                    None => w.waited(true),
-                    Some(Surface::Pending) => w.waited(false),
-                    _ => {}
-                }
-                let can_spawn = !w.over_budget(out.spawned);
-                let r = book.advance(chunk, &key, surface, can_spawn, |hidden| w.spawn(chunk, key.clone(), hidden));
-                if let (Advance::Held { first: true }, Some(h)) = (r.0, book.held.get(&chunk)) {
-                    w.held(chunk, &h.reason);
-                }
-                r
-            }
-        };
-        if let Some(old) = old {
-            w.despawn(old);
-            out.changed = true;
-        }
-        match step {
-            Advance::OverBudget => break,
-            Advance::Spawned => {
-                out.spawned += 1;
-                out.changed = true;
-            }
-            Advance::Held { first } => newly_held |= first,
-            Advance::Kept | Advance::Waited => {}
-        }
-    }
-    let (gone, show) = book.settle();
-    out.changed |= !gone.is_empty() || !show.is_empty();
-    for t in gone {
-        w.despawn(t);
-    }
-    if !show.is_empty() {
-        w.show(show);
-    }
-    for (by, h) in book.new_stand_ins(chosen) {
-        w.stood_in(by, h);
-    }
-    if newly_held {
-        // Their stand-ins are looked for from the next frame (the old chunks stay meanwhile).
-        out.redrawn |= book.redraw(chosen, o, &gen_ok);
-    }
-    out
-}
-
-/// [`TerrainWorld`] for `update_lod`: the game's models, the entities, the budget.
-struct LodWorld<'a, 'w, 's, 'm> {
-    commands: &'a mut Commands<'w, 's>,
-    lod: &'a mut LodState,
-    models: &'a mut ModelCtx<'m>,
-    root: Entity,
-    full: &'a HashSet<Grid>,
-    near_gen: &'a dyn Fn(&Grid) -> bool,
-    started: std::time::Instant,
-}
-
-impl TerrainWorld for LodWorld<'_, '_, '_, '_> {
-    fn cut(&self, chunk: Chunk) -> Vec<Grid> {
-        cut_of(self.full, chunk)
-    }
-    fn generated(&self, (l, x, y): Chunk) -> bool {
-        l == LEVEL && (self.near_gen)(&(x, y)) && self.lod.gen.as_ref().is_some_and(|g| g.ready.contains_key(&(x, y)))
-    }
-    fn surface(&mut self, chunk: Chunk, cut: &[Grid]) -> Option<Surface> {
-        let path = self.lod.terrain_path(chunk);
-        game_surface(self.models, &path, self.full, !cut.is_empty())
-    }
-    fn over_budget(&self, spawned: usize) -> bool {
-        spawned > 0 && self.started.elapsed().as_secs_f32() * 1000.0 >= REBUILD_BUDGET_MS
-    }
-    fn spawn(&mut self, chunk: Chunk, key: TerrainKey, hidden: bool) -> TerrainEntities {
-        let t = spawn_terrain(self.commands, self.root, self.lod, self.models, chunk, key, self.full);
-        if hidden {
-            for &e in &t.entities {
-                self.commands.entity(e).insert(Visibility::Hidden);
-            }
-        }
-        self.lod.terrain_rebuilds += 1;
-        t
-    }
-    fn despawn(&mut self, t: TerrainEntities) {
-        despawn_all(self.commands, t.entities);
-    }
-    fn show(&mut self, entities: Vec<Entity>) {
-        for e in entities {
-            self.commands.entity(e).insert(Visibility::Inherited);
-        }
-    }
-    fn held(&mut self, chunk: Chunk, reason: &str) {
-        let (l, x, y) = chunk;
-        let path = self.lod.terrain_path(chunk);
-        let reason = diffuse_failure(&self.models.textures.failures, &self.lod.world_name, chunk).unwrap_or_else(|| reason.to_string());
-        warn!("distant LOD: terrain chunk level {l} x{x} y{y} held without its diffuse texture ({path}: {reason}); never drawn, an ancestor that draws its area stands in once one is found");
-        self.lod.surfaces.held += 1;
-        self.lod.surfaces.left_out += usize::from(l >= LEVELS[LEVELS.len() - 1]);
-    }
-    fn stood_in(&mut self, (pl, px, py): Chunk, (l, x, y): Chunk) {
-        info!("distant LOD: terrain chunk level {pl} x{px} y{py} drawn over held level {l} x{x} y{y}");
-        self.lod.surfaces.stood_in += 1;
-    }
-    fn waited(&mut self, model: bool) {
-        if model {
-            self.lod.block_stats.terrain_waited += 1;
-        } else {
-            self.lod.surfaces.texture_waits += 1;
-        }
-    }
-}
-
-/// The surface of the game chunk at `path` with the fully drawn cells `full` (cut out when
-/// `trimmed`); `None` while its model is prepared on a worker thread. No file: empty.
-fn game_surface(models: &mut ModelCtx, path: &str, full: &HashSet<Grid>, trimmed: bool) -> Option<Surface> {
-    if !models.data.vfs.exists(path) {
-        return Some(Surface::Empty);
-    }
-    let model = models.model_with_cpu_ready(path)?;
-    Some(chunk_surface(model.as_deref(), &models.materials, &models.images, trimmed.then_some(full)))
-}
-
-/// The generated chunks ready near the camera, when any chunk is held (else none needed).
-fn gen_ready(lod: &LodState, near_gen: impl Fn(&Grid) -> bool) -> HashSet<Grid> {
-    match (&lod.gen, lod.book.held.is_empty()) {
-        (Some(g), false) => g.ready.keys().copied().filter(|sq| near_gen(sq)).collect(),
-        _ => HashSet::new(),
-    }
 }
 
 /// The masks of the level-4 squares holding `cells` (cell, fully drawn; on the grid from
@@ -1388,9 +947,24 @@ pub fn update_lod(
         lod.squares = block_squares(p, &s, o);
         let finest: Vec<Grid> = lod.chosen.iter().filter(|ch| ch.0 == LEVEL).map(|ch| (ch.1, ch.2)).filter(near_gen).collect();
         schedule_generated(&mut lod, centre_chunk, &finest);
+        let chosen: HashSet<Chunk> = lod.chosen.iter().copied().collect();
         let squares: HashSet<Grid> = lod.squares.iter().copied().collect();
+        lod.meshes.retain(|ch, _| chosen.contains(ch));
         lod.pieces.retain(|sq, _| squares.contains(sq));
         lod.put_off_runs.retain(|sq, _| squares.contains(sq));
+        let gone: Vec<Chunk> = lod.terrain.keys().filter(|ch| !chosen.contains(ch)).copied().collect();
+        for ch in gone {
+            if let Some(t) = lod.terrain.remove(&ch) {
+                lod.outgoing.insert(ch, t);
+            }
+        }
+        // Outgoing chunks chosen again are drawn as they were (their key is checked below).
+        let back: Vec<Chunk> = lod.outgoing.keys().filter(|ch| chosen.contains(ch)).copied().collect();
+        for ch in back {
+            if let Some(t) = lod.outgoing.remove(&ch) {
+                lod.terrain.insert(ch, t);
+            }
+        }
         let gone: Vec<Grid> = lod.block_entities.keys().filter(|sq| !squares.contains(sq)).copied().collect();
         for sq in gone {
             if let Some(b) = lod.block_entities.remove(&sq) {
@@ -1402,38 +976,76 @@ pub fn update_lod(
     // drawn, per level-4 square.
     let full: HashSet<Grid> = drawn.full();
     let masks = block_masks(&drawn.cells(true), o);
-    // The terrain chunks (#3096, TerrainBook): the drawn list follows the chosen chunks
-    // and the held ones; chunks no longer drawn go outgoing, outgoing ones drawn again
-    // come back as they were. The bookkeeping and the chosen list are taken out while
-    // chunks spawn (spawn_terrain takes the state).
     let mut changed = false;
     let started = std::time::Instant::now();
-    let gen_ready = gen_ready(&lod, near_gen);
-    let gen_ok = |c: &Chunk| c.0 == LEVEL && gen_ready.contains(&(c.1, c.2));
-    let mut book = std::mem::take(&mut lod.book);
+    let mut rebuilt = 0usize;
+    let over_budget = |rebuilt: usize| rebuilt > 0 && started.elapsed().as_secs_f32() * 1000.0 >= REBUILD_BUDGET_MS;
     let chosen = std::mem::take(&mut lod.chosen);
-    let had_outgoing = !book.outgoing.is_empty();
-    let pass = {
-        let mut w = LodWorld { commands: &mut commands, lod: &mut lod, models: &mut models, root, full: &full, near_gen: &near_gen, started };
-        terrain_pass(&mut book, &chosen, o, gen_ok, &mut w)
-    };
-    lod.chosen = chosen;
-    if had_outgoing {
-        let kept = book.outgoing.len();
+    for &chunk in &chosen {
+        let mut cut: Vec<Grid> = full.iter().filter(|&&c| in_chunk(c, chunk)).copied().collect();
+        cut.sort_unstable();
+        let generated = chunk.0 == LEVEL
+            && near_gen(&(chunk.1, chunk.2))
+            && lod.gen.as_ref().is_some_and(|g| g.ready.contains_key(&(chunk.1, chunk.2)));
+        let key = TerrainKey { full: cut, generated };
+        if lod.terrain.get(&chunk).is_some_and(|t| t.key == key) {
+            continue;
+        }
+        // The game's chunk model is prepared on a worker thread, as object blocks' are
+        // (below), and its diffuse textures must be in the image store (#3096); the old
+        // chunk stays drawn until they are. A missing diffuse is drawn with the fallback
+        // colour (spawn_terrain), logged here once per chunk.
+        if !generated {
+            let tp = lod.terrain_path(chunk);
+            if models.data.vfs.exists(&tp) {
+                let Some(model) = models.model_with_cpu_ready(&tp) else {
+                    lod.block_stats.terrain_waited += 1;
+                    continue;
+                };
+                // A model that did not load draws nothing, as before.
+                let trim = (!key.full.is_empty()).then_some(&full);
+                let surface = model.as_deref().map_or(Surface::Empty, |m| chunk_surface(m, &models.materials, &models.images, trim));
+                if !admit(&surface) {
+                    lod.surfaces.texture_waits += 1;
+                    continue;
+                }
+                if let Surface::Failed(why) = surface {
+                    if lod.warned.insert(chunk) {
+                        let (l, x, y) = chunk;
+                        let reason = diffuse_failure(&models.textures.failures, &lod.world_name, chunk).unwrap_or_else(|| format!("{tp}: {why}"));
+                        warn!("distant LOD: terrain chunk level {l} x{x} y{y} drawn with the fallback colour: {reason}");
+                        lod.surfaces.fallback_chunks += 1;
+                    }
+                }
+            }
+        }
+        if over_budget(rebuilt) {
+            break;
+        }
+        rebuilt += 1;
+        if let Some(old) = lod.terrain.remove(&chunk) {
+            despawn_all(&mut commands, old.entities);
+        }
+        let spawned = spawn_terrain(&mut commands, root, &mut lod, &mut models, chunk, key, &full);
+        lod.terrain.insert(chunk, spawned);
+        lod.terrain_rebuilds += 1;
+        changed = true;
+    }
+    // Drop the outgoing chunks whose area the chosen chunks now cover.
+    if !lod.outgoing.is_empty() {
+        let terrain = &lod.terrain;
+        let done: Vec<Chunk> = lod.outgoing.keys().copied().filter(|&o| covered(o, &chosen, |ch| terrain.contains_key(ch))).collect();
+        for ch in done {
+            if let Some(t) = lod.outgoing.remove(&ch) {
+                despawn_all(&mut commands, t.entities);
+            }
+        }
+        let kept = lod.outgoing.len();
         let st = &mut lod.block_stats;
         st.outgoing_frames += 1;
         st.outgoing_most = st.outgoing_most.max(kept);
     }
-    lod.book = book;
-    changed |= pass.changed;
-    if pass.redrawn {
-        let want: HashSet<Chunk> = lod.book.draw.iter().copied().collect();
-        lod.meshes.retain(|ch, _| want.contains(ch));
-        // Distant water follows the drawn chunks.
-        lod.choice += 1;
-    }
-    let mut rebuilt = pass.spawned;
-    let over_budget = |rebuilt: usize| rebuilt > 0 && started.elapsed().as_secs_f32() * 1000.0 >= REBUILD_BUDGET_MS;
+    lod.chosen = chosen;
     let squares = std::mem::take(&mut lod.squares);
     let blocks_started = std::time::Instant::now();
     let mut blocks_this_frame = 0usize;
@@ -1523,9 +1135,9 @@ pub fn update_lod(
     st.slow_updates += usize::from(update_ms > SLOW_UPDATE_MS);
     if changed {
         let game = |t: &&TerrainEntities| t.drawn == Some(false);
-        lod.chunks = lod.book.drawn.values().filter(game).count();
-        lod.levels = std::array::from_fn(|i| lod.book.drawn.iter().filter(|(ch, t)| ch.0 == LEVELS[i] && t.drawn.is_some()).count());
-        lod.generated = lod.book.drawn.values().filter(|t| t.drawn == Some(true)).count();
+        lod.chunks = lod.terrain.values().filter(game).count();
+        lod.levels = std::array::from_fn(|i| lod.terrain.iter().filter(|(ch, t)| ch.0 == LEVELS[i] && t.drawn.is_some()).count());
+        lod.generated = lod.terrain.values().filter(|t| t.drawn == Some(true)).count();
         lod.blocks = lod.block_entities.values().filter(|b| b.drawn).count();
     }
 }
@@ -1551,7 +1163,7 @@ fn spawn_terrain(
 ) -> TerrainEntities {
     let (level, cx, cy) = chunk;
     let overlaps = !key.full.is_empty();
-    let mut out = TerrainEntities { entities: Vec::new(), key, drawn: None, hidden: false };
+    let mut out = TerrainEntities { entities: Vec::new(), key, drawn: None };
     let generated = lod.gen.as_ref().filter(|_| out.key.generated);
     if let Some((gen, gc)) = generated.and_then(|g| g.ready.get(&(cx, cy)).map(|c| (g, c))) {
         let mesh = if overlaps {
@@ -1592,14 +1204,6 @@ fn spawn_terrain(
             let Some(Some(m)) = lod.meshes[&chunk].get(i) else { continue };
             m.clone()
         };
-        // `update_lod` lets a chunk through only with its diffuse (#3096); a shape drawn
-        // without one would be white, so it is counted and logged (0 expected).
-        if diffuse_of(models.materials.get(&s.material), &models.images) != Diffuse::Ready {
-            lod.surfaces.drawn_without_diffuse += 1;
-            if lod.unguarded.insert(chunk) {
-                warn!("distant LOD: terrain chunk level {level} x{cx} y{cy} drawn without its diffuse texture (shape {i})");
-            }
-        }
         // Push LOD terrain behind loaded terrain where both exist. Its normal map is
         // in model space (green = north, module docs), so it must not get the
         // green flip that tangent-space NIF normal maps need.
@@ -1609,7 +1213,31 @@ fn spawn_terrain(
                 mat.base.flip_normal_map_y = false;
             }
         }
-        out.entities.push(spawn_entity(commands, root, mesh, s.material.clone(), Transform::from_matrix(Mat4::from(st)), None));
+        // A missing diffuse would draw white: the fallback colour instead (#3096). The gate
+        // in `update_lod` leaves none still on its way; one would be counted (0 expected).
+        let material = match diffuse_of(models.materials.get(&s.material), &models.images) {
+            Diffuse::Ready => s.material.clone(),
+            Diffuse::Missing => {
+                lod.surfaces.fallback_shapes += 1;
+                match lod.fallback.get(&s.material.id()) {
+                    Some(h) => h.clone(),
+                    None => {
+                        let Some(f) = models.materials.get(&s.material).map(fallback_material) else { continue };
+                        let h = models.materials.add(f);
+                        lod.fallback.insert(s.material.id(), h.clone());
+                        h
+                    }
+                }
+            }
+            Diffuse::Loading => {
+                lod.surfaces.drawn_without_diffuse += 1;
+                if lod.unguarded.insert(chunk) {
+                    warn!("distant LOD: terrain chunk level {level} x{cx} y{cy} drawn without its diffuse texture (shape {i}, still loading)");
+                }
+                s.material.clone()
+            }
+        };
+        out.entities.push(spawn_entity(commands, root, mesh, material, Transform::from_matrix(Mat4::from(st)), None));
     }
     out.drawn = Some(false);
     out
@@ -2184,24 +1812,24 @@ mod tests {
     /// A shape for [`surface`]: its diffuse, and whether the loaded cells cut it all out.
     type Fake = (Diffuse, bool);
 
-    fn surface_of(shapes: Option<&[Fake]>) -> Surface {
+    fn surface_of(shapes: &[Fake]) -> Surface {
         surface(shapes, |s: &Fake| s.0, |s: &Fake| s.1)
     }
 
     #[test]
     fn surface_of_a_chunk() {
         use Diffuse::*;
-        assert_eq!(surface_of(Some(&[(Ready, false), (Ready, false)])), Surface::Ready);
-        assert_eq!(surface_of(Some(&[(Ready, false), (Loading, false)])), Surface::Pending);
-        assert!(matches!(surface_of(Some(&[(Loading, false), (Missing, false)])), Surface::Failed(_)), "missing wins over loading");
-        assert!(matches!(surface_of(None), Surface::Failed(_)), "the model did not load");
-        // Nothing textured to draw: legitimately empty, not a failure.
-        assert_eq!(surface_of(Some(&[])), Surface::Empty);
-        // Fully trimmed by the loaded cells: empty whatever its diffuse.
-        assert_eq!(surface_of(Some(&[(Missing, true), (Loading, true)])), Surface::Empty);
+        assert_eq!(surface_of(&[(Ready, false), (Ready, false)]), Surface::Ready);
+        assert_eq!(surface_of(&[(Ready, false), (Loading, false)]), Surface::Pending);
+        assert_eq!(surface_of(&[(Loading, false), (Missing, false)]), Surface::Pending, "waits for what is on its way first");
+        assert!(matches!(surface_of(&[(Missing, false), (Ready, false)]), Surface::Failed(_)));
+        // Nothing textured to draw: empty, not failed.
+        assert_eq!(surface_of(&[]), Surface::Empty);
+        // Fully trimmed by the loaded cells: empty whatever its diffuse, never failed.
+        assert_eq!(surface_of(&[(Missing, true), (Loading, true)]), Surface::Empty);
         // Partly trimmed: the cut shape no longer matters, the drawn one does.
-        assert_eq!(surface_of(Some(&[(Missing, true), (Ready, false)])), Surface::Ready);
-        assert!(matches!(surface_of(Some(&[(Missing, false), (Ready, true)])), Surface::Failed(_)));
+        assert_eq!(surface_of(&[(Missing, true), (Ready, false)]), Surface::Ready);
+        assert!(matches!(surface_of(&[(Missing, false), (Ready, true)]), Surface::Failed(_)));
     }
 
     #[test]
@@ -2224,48 +1852,60 @@ mod tests {
         };
         let white = mat(&mut materials, None);
         let textured = mat(&mut materials, Some(images.add(Image::default())));
+        let loading = mat(&mut materials, Some(images.reserve_handle()));
         // The untextured water shape (no UVs) is never drawn, so its lack of a diffuse
-        // does not hold the chunk.
+        // does not count.
         let model = PreparedModel { shapes: vec![shape(quad(true), textured.clone()), shape(quad(false), white.clone())], ..default() };
-        assert_eq!(chunk_surface(Some(&model), &materials, &images, None), Surface::Ready);
+        assert_eq!(chunk_surface(&model, &materials, &images, None), Surface::Ready);
+        let model = PreparedModel { shapes: vec![shape(quad(true), loading)], ..default() };
+        assert_eq!(chunk_surface(&model, &materials, &images, None), Surface::Pending);
         let model = PreparedModel { shapes: vec![shape(quad(true), white.clone())], ..default() };
-        assert!(matches!(chunk_surface(Some(&model), &materials, &images, None), Surface::Failed(_)));
-        // Cell (0, 0) loaded: the quad's east triangle still draws, so it is still held.
+        assert!(matches!(chunk_surface(&model, &materials, &images, None), Surface::Failed(_)));
+        // Cell (0, 0) loaded: the quad's east triangle still draws.
         let cell = square((0, 0), (0, 0));
-        assert!(matches!(chunk_surface(Some(&model), &materials, &images, Some(&cell)), Surface::Failed(_)));
+        assert!(matches!(chunk_surface(&model, &materials, &images, Some(&cell)), Surface::Failed(_)));
         // Cells (0, 0) to (2, 0) loaded: every triangle is cut out, nothing is drawn.
         let cells = square((0, 0), (2, 0));
-        assert_eq!(chunk_surface(Some(&model), &materials, &images, Some(&cells)), Surface::Empty);
-        assert!(matches!(chunk_surface(None, &materials, &images, None), Surface::Failed(_)));
+        assert_eq!(chunk_surface(&model, &materials, &images, Some(&cells)), Surface::Empty);
+    }
+
+    /// The camera comes closer: a level-16 chunk gives way to four level-8 quarters. One
+    /// whose diffuse is on its way is not spawned, so the level-16 chunk stays drawn (no
+    /// untextured quarter, no hole); one whose diffuse failed is spawned (with the fallback
+    /// colour) and counts as covering, as a ready one does (#3096).
+    #[test]
+    fn loading_keeps_the_outgoing_chunk_failed_covers() {
+        use Diffuse::*;
+        let coarse: Chunk = (16, 0, 0);
+        let quarters = [(8, 0, 0), (8, 8, 0), (8, 0, 8), (8, 8, 8)];
+        let spawn_with = |of: &dyn Fn(Chunk) -> Surface| -> HashSet<Chunk> { quarters.iter().copied().filter(|&q| admit(&of(q))).collect() };
+        let ready = |_: Chunk| surface_of(&[(Ready, false)]);
+        let one_loading = |q: Chunk| if q == quarters[1] { surface_of(&[(Loading, false)]) } else { ready(q) };
+        let spawned = spawn_with(&one_loading);
+        assert!(!spawned.contains(&quarters[1]), "not spawned while its diffuse loads");
+        assert!(!covered(coarse, &quarters, |c| spawned.contains(c)), "the outgoing chunk stays drawn");
+        let one_failed = |q: Chunk| if q == quarters[1] { surface_of(&[(Missing, false)]) } else { ready(q) };
+        let spawned = spawn_with(&one_failed);
+        assert!(spawned.contains(&quarters[1]), "a failed diffuse is drawn (fallback colour)");
+        assert!(covered(coarse, &quarters, |c| spawned.contains(c)), "and covers like a ready one");
+        let one_trimmed = |q: Chunk| if q == quarters[1] { surface_of(&[(Missing, true)]) } else { ready(q) };
+        assert_eq!(one_trimmed(quarters[1]), Surface::Empty);
+        assert!(covered(coarse, &quarters, |c| spawn_with(&one_trimmed).contains(c)));
     }
 
     #[test]
-    fn held_chunks_give_way_to_coarser_ones() {
-        let o = (0, 0);
-        let quarters = [(8, 0, 0), (8, 8, 0), (8, 0, 8), (8, 8, 8)];
-        let mut chosen = quarters.to_vec();
-        chosen.push((16, 16, 0));
-        let all = |_: &Chunk| true;
-        let none = |_: &Chunk| false;
-        assert_eq!(draw_list(&chosen, o, none, all), chosen, "nothing held: the chosen chunks");
-        // One quarter held, its parent known to draw: the parent stands for all four, once,
-        // where the first was.
-        let held: HashSet<Chunk> = [(8, 8, 0)].into();
-        assert_eq!(draw_list(&chosen, o, |c| held.contains(c), all), vec![(16, 0, 0), (16, 16, 0)]);
-        // The parent cannot draw (no file, or held): the grandparent covers both level-16
-        // squares.
-        assert_eq!(draw_list(&chosen, o, |c| held.contains(c), |a| a.0 == 32), vec![(32, 0, 0)]);
-        // No ancestor known to draw (yet): the held chunk stays and its siblings stay.
-        assert_eq!(draw_list(&chosen, o, |c| held.contains(c), none), chosen);
-        // A held coarsest chunk stays (it draws nothing).
-        assert_eq!(draw_list(&[(32, -32, 0)], o, all, all), vec![(32, -32, 0)]);
-        // On Freeside's grid (origin (-10, -8)) parents align to the origin.
-        assert_eq!(parent((4, -6, -8), (-10, -8)), (8, -10, -8));
-        assert_eq!(parent((8, -2, 0), (-10, -8)), (16, -10, -8));
-        // Finer chosen chunks inside a promoted parent go with it.
-        let chosen = vec![(4, 0, 0), (4, 4, 0), (4, 0, 4), (4, 4, 4), (8, 8, 0), (8, 0, 8), (8, 8, 8)];
-        let held: HashSet<Chunk> = [(8, 8, 8)].into();
-        assert_eq!(draw_list(&chosen, o, |c| held.contains(c), all), vec![(16, 0, 0)]);
+    fn fallback_colour_is_not_white() {
+        let mut images = Assets::<Image>::default();
+        let normal = images.add(Image::default());
+        let m = nif_material(StandardMaterial { base_color_texture: None, normal_map_texture: Some(normal.clone()), ..default() });
+        let f = fallback_material(&m);
+        assert!(f.base.base_color_texture.is_none());
+        assert_ne!(f.base.base_color, Color::WHITE, "never Bevy's white");
+        let c = f.base.base_color.to_srgba();
+        let [r, g, b] = lodgen::NO_BASE_SRGB;
+        assert!((c.red - r).abs() < 1e-6 && (c.green - g).abs() < 1e-6 && (c.blue - b).abs() < 1e-6, "the generated LOD's missing-base colour");
+        assert_eq!(f.base.normal_map_texture, Some(normal), "the normal map still shades it");
+        assert_eq!(f.base.depth_bias, m.base.depth_bias);
     }
 
     #[test]
@@ -2279,193 +1919,6 @@ mod tests {
         assert!(f.contains("\\diffuse\\") && f.ends_with("not in any archive"), "{f}");
         assert!(diffuse_failure(&failures, "wastelandnv", (8, -24, 0)).is_none());
         assert!(diffuse_failure(&failures, "freesideworld", (8, -16, 0)).is_none());
-    }
-
-    /// A [`TerrainWorld`] of fakes for [`terrain_pass`]: each chunk's surface (Ready unless
-    /// set; `None`: its model still preparing), the fully drawn cells, and what was logged.
-    #[derive(Default)]
-    struct FakeWorld {
-        surfaces: HashMap<Chunk, Option<Surface>>,
-        full: HashSet<Grid>,
-        held: Vec<Chunk>,
-        stood_in: Vec<(Chunk, Chunk)>,
-    }
-
-    impl TerrainWorld for FakeWorld {
-        fn cut(&self, chunk: Chunk) -> Vec<Grid> {
-            cut_of(&self.full, chunk)
-        }
-        fn generated(&self, _: Chunk) -> bool {
-            false
-        }
-        fn surface(&mut self, chunk: Chunk, _: &[Grid]) -> Option<Surface> {
-            self.surfaces.get(&chunk).cloned().unwrap_or(Some(Surface::Ready))
-        }
-        fn over_budget(&self, _: usize) -> bool {
-            false
-        }
-        fn spawn(&mut self, chunk: Chunk, key: TerrainKey, _: bool) -> TerrainEntities {
-            // An empty chunk spawns no entity, as spawn_terrain draws nothing for it.
-            let empty = self.surfaces.get(&chunk) == Some(&Some(Surface::Empty));
-            TerrainEntities { entities: if empty { Vec::new() } else { vec![Entity::PLACEHOLDER] }, key, drawn: Some(false), hidden: false }
-        }
-        fn despawn(&mut self, _: TerrainEntities) {}
-        fn show(&mut self, _: Vec<Entity>) {}
-        fn held(&mut self, chunk: Chunk, _: &str) {
-            self.held.push(chunk);
-        }
-        fn stood_in(&mut self, by: Chunk, held: Chunk) {
-            self.stood_in.push((by, held));
-        }
-        fn waited(&mut self, _: bool) {}
-    }
-
-    /// The chunks drawing now: drawn or outgoing, shown, with entities.
-    fn visible(b: &TerrainBook) -> Vec<Chunk> {
-        b.drawn.iter().chain(b.outgoing.iter()).filter(|(_, t)| !t.hidden && !t.entities.is_empty()).map(|(&c, _)| c).collect()
-    }
-
-    /// One frame of the production pass, then the claims: no two visible chunks overlap,
-    /// and no held chunk is drawn.
-    fn pass(b: &mut TerrainBook, chosen: &[Chunk], w: &mut FakeWorld) {
-        terrain_pass(b, chosen, (0, 0), |_| false, w);
-        let v = visible(b);
-        for (i, &a) in v.iter().enumerate() {
-            for &c in &v[i + 1..] {
-                assert!(!chunks_overlap(a, c), "{a:?} and {c:?} both drawn");
-            }
-        }
-        assert!(b.drawn.keys().all(|c| !b.held.contains_key(c)), "a held chunk is never drawn");
-    }
-
-    /// A book with `drawn` drawn and shown.
-    fn book_with(drawn: Chunk) -> TerrainBook {
-        let mut b = TerrainBook { draw: vec![drawn], ..default() };
-        b.drawn.insert(drawn, TerrainEntities { entities: vec![Entity::PLACEHOLDER], key: TerrainKey::default(), drawn: Some(false), hidden: false });
-        b
-    }
-
-    /// The camera comes closer: a level-16 chunk splits into four level-8 quarters, one of
-    /// which waits for its diffuse and then lacks it. The ready quarters stay hidden while
-    /// the coarse chunk draws (they take over together), the coarse chunk is never retired
-    /// before its area is covered, and once the bad quarter is held the coarse chunk, which
-    /// draws, stands in for all four (#3096).
-    #[test]
-    fn coarse_pending_missing_ready() {
-        let coarse: Chunk = (16, 0, 0);
-        let quarters = [(8, 0, 0), (8, 8, 0), (8, 0, 8), (8, 8, 8)];
-        let bad = quarters[1];
-        let mut w = FakeWorld::default();
-        w.surfaces.insert(bad, Some(Surface::Pending));
-        let mut b = book_with(coarse);
-        for _ in 0..3 {
-            pass(&mut b, &quarters, &mut w);
-            assert_eq!(visible(&b), vec![coarse], "the coarse chunk draws while a quarter waits; the ready ones wait hidden");
-        }
-        // Its diffuse turns out missing: held, logged once; the coarse chunk is asked
-        // whether it draws, then stands in for the four.
-        w.surfaces.insert(bad, Some(Surface::Failed("missing".into())));
-        for _ in 0..3 {
-            pass(&mut b, &quarters, &mut w);
-            assert_eq!(visible(&b), vec![coarse], "the coarse chunk was never retired");
-        }
-        assert_eq!(w.held, vec![bad]);
-        assert_eq!(b.draw, vec![coarse]);
-        assert!(b.drawn.contains_key(&coarse) && b.outgoing.is_empty(), "the quarters it covers are retired");
-        assert_eq!(w.stood_in, vec![(coarse, bad)], "the stand-in is reported once it draws");
-        // The other way: the waiting quarter's diffuse comes in, all four replace it at once.
-        let mut w = FakeWorld::default();
-        w.surfaces.insert(bad, Some(Surface::Pending));
-        let mut b = book_with(coarse);
-        pass(&mut b, &quarters, &mut w);
-        assert_eq!(visible(&b), vec![coarse]);
-        w.surfaces.remove(&bad);
-        pass(&mut b, &quarters, &mut w);
-        let mut v = visible(&b);
-        v.sort_unstable();
-        let mut q = quarters.to_vec();
-        q.sort_unstable();
-        assert_eq!(v, q, "the four take over together");
-        assert!(b.outgoing.is_empty());
-    }
-
-    /// A held level-8 chunk whose level-16 parent has no file (empty) and whose grandparent
-    /// is not known yet: its three healthy siblings stay drawn, nothing is promoted, and
-    /// the absent parent never counts as covering them.
-    #[test]
-    fn absent_parent_keeps_the_siblings() {
-        let quarters = [(8, 0, 0), (8, 8, 0), (8, 0, 8), (8, 8, 8)];
-        let bad = quarters[1];
-        let mut w = FakeWorld::default();
-        w.surfaces.insert(bad, Some(Surface::Failed("missing".into())));
-        w.surfaces.insert((16, 0, 0), Some(Surface::Empty));
-        w.surfaces.insert((32, 0, 0), None);
-        let mut b = TerrainBook::default();
-        for _ in 0..4 {
-            pass(&mut b, &quarters, &mut w);
-        }
-        assert_eq!(b.draw, quarters.to_vec(), "no stand-in yet");
-        for q in quarters.iter().filter(|&&q| q != bad) {
-            assert!(visible(&b).contains(q), "{q:?} stays drawn");
-        }
-        assert!(!b.drawn.contains_key(&bad));
-        assert!(w.stood_in.is_empty());
-        // The grandparent turns out to draw: it stands in for the whole level-16 square.
-        w.surfaces.insert((32, 0, 0), Some(Surface::Ready));
-        for _ in 0..3 {
-            pass(&mut b, &quarters, &mut w);
-        }
-        assert_eq!(b.draw, vec![(32, 0, 0)]);
-        assert_eq!(visible(&b), vec![(32, 0, 0)]);
-        assert_eq!(w.stood_in, vec![((32, 0, 0), bad)]);
-    }
-
-    /// A chunk held for one healthy and one missing-diffuse shape is asked again when the
-    /// loaded cells change its cut: once its bad shape is cut out it is drawn again in
-    /// place of its stand-in, and it is logged only once.
-    #[test]
-    fn hold_is_asked_again_when_the_cut_changes() {
-        let quarters = [(8, 0, 0), (8, 8, 0), (8, 0, 8), (8, 8, 8)];
-        let bad = quarters[1];
-        let mut w = FakeWorld::default();
-        w.surfaces.insert(bad, Some(Surface::Failed("missing".into())));
-        let mut b = book_with((16, 0, 0));
-        for _ in 0..3 {
-            pass(&mut b, &quarters, &mut w);
-        }
-        assert_eq!(b.draw, vec![(16, 0, 0)]);
-        // A cell of it loads and cuts its bad shape out: asked again, it is ready.
-        w.full.insert((9, 1));
-        w.surfaces.remove(&bad);
-        for _ in 0..3 {
-            pass(&mut b, &quarters, &mut w);
-        }
-        assert!(b.held.is_empty());
-        assert_eq!(b.draw, quarters.to_vec());
-        assert!(quarters.iter().all(|q| visible(&b).contains(q)));
-        // Its cut changes again and the bad shape is drawn again: held, not logged twice.
-        w.full.clear();
-        w.surfaces.insert(bad, Some(Surface::Failed("missing".into())));
-        for _ in 0..3 {
-            pass(&mut b, &quarters, &mut w);
-        }
-        assert_eq!(b.draw, vec![(16, 0, 0)]);
-        assert_eq!(w.held, vec![bad], "logged once");
-    }
-
-    /// A chunk whose cells are all loaded draws nothing: it is empty, not held, and the
-    /// coarse chunk it replaces goes.
-    #[test]
-    fn fully_trimmed_chunk_is_not_held() {
-        let coarse: Chunk = (8, 0, 0);
-        let quarters = [(4, 0, 0), (4, 4, 0), (4, 0, 4), (4, 4, 4)];
-        let mut w = FakeWorld::default();
-        w.surfaces.insert(quarters[0], Some(surface_of(Some(&[(Diffuse::Missing, true)]))));
-        let mut b = book_with(coarse);
-        pass(&mut b, &quarters, &mut w);
-        assert!(b.held.is_empty());
-        assert!(quarters.iter().all(|q| b.drawn.contains_key(q)));
-        assert!(!visible(&b).contains(&coarse) && b.outgoing.is_empty());
     }
 
     #[test]
