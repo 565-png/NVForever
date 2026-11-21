@@ -1127,17 +1127,24 @@ impl AlphaDrawing<'_, '_> {
             // system runs after the fade's, `nvf_play::PlaySet::Sync`, with the commands
             // applied between, but does not count on it).
             let removed = faded.is_some_and(|f| !materials.contains(f.original.id()));
-            let worn = || fading.map_or_else(|| nvf_assets::nif_material::plain_material(mat, drawing).clone(), |f| f.original().clone());
+            let worn = || nvf_assets::nif_material::plain_material(mat, drawing).clone();
+            // Only for a removed original: a new copy made while a fade runs copies the
+            // fade's copy the mesh wears, as before.
+            let handed_back = || fading.map_or_else(worn, |f| f.original().clone());
             match (want, faded) {
                 (None, None) => {}
                 (None, Some(f)) => {
-                    let back = if removed { worn() } else { f.original.clone() };
+                    let back = if removed { handed_back() } else { f.original.clone() };
                     commands.entity(e).insert(MeshMaterial3d(back)).remove::<Faded>();
                     changed.entry(rv.0).or_insert((1.0, 0)).1 += 1;
                 }
                 (Some(a), Some(f)) if f.alpha == a && f.made_from == f.original.id() && !removed => {}
                 (Some(a), f) => {
-                    let original = f.filter(|_| !removed).map(|f| f.original.clone()).unwrap_or_else(worn);
+                    let original = match f {
+                        Some(f) if !removed => f.original.clone(),
+                        Some(_) => handed_back(),
+                        None => worn(),
+                    };
                     let key = (original.id(), (a * 256.0).round() as u16);
                     let copy = match st.faded.get(&key) {
                         Some(h) => h.clone(),
