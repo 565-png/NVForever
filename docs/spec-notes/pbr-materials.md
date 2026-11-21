@@ -11,6 +11,21 @@ choice, marked **[design]**; facts about the texture formats cite their source
 Version 1. Pack authors may rely on the layout, member names, channels and scalar keys
 below; a later version adds to them without changing their meaning.
 
+## Decided (maintainer, 2026-11-20, #3104)
+
+These choices are settled; pack authors and later versions can rely on them.
+
+- [design, owner 2026-11-20, #3104] **Member names**: `<stem>_orm.dds`, `<stem>_n.dds`,
+  `<stem>_p.dds` and `<stem>.toml`, with `<stem>_albedo.dds` reserved; the extension is not
+  part of the stem, so `foo.dds` and `foo.tga` in one folder share one set (Layout, below).
+- [design, owner 2026-11-20, #3104] **Normal map green points down**, the game's own
+  convention, so a pack can start from the game's normal maps (Channels, below).
+- [design, owner 2026-11-20, #3104] **DDS only**: members are DDS files; KTX2 is not read.
+- [design, owner 2026-11-20, #3104] `GameData.vfs` stays a public field
+  (`engine/nvf-assets/src/data.rs`); code that replaces the virtual file system goes
+  through `GameData::set_vfs`, which drops the cached index of sets so it is rebuilt from
+  the new one.
+
 ## What the engine implements at this stage
 
 | Part | State |
