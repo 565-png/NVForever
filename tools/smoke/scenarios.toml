@@ -18699,6 +18699,23 @@ expect = [
 order = [["pipboy hotkeys: key 3 held", "hotkeys: slot 3 holds", "moved from slot 3", "slot 2 is Ammo Swap", "cannot be hotkeyed", "hotkeys: slot 4: equipped"]]
 
 [[scenario]]
+name = "dismember-quarry-deathclaws"
+source = "issue 3026: a player's 0.8.x log had the gore of two of seven dismembered Quarry Junction Deathclaws come to rest 7,000 to 700,000 units from the corpse; every piece should come to rest near its trunk"
+note = "The player (god mode) stands on the high ground south-west of the QJDeathclawAmbusher references 000E6307 and 000E631C of the player's log; they charge, and the hit aid explodes each head with an overkill sniper shot at 12 and 12.6 s, beside the player and about 900 units above the quarry floor (also the young Deathclaw 000E745F at 14 s, its body out of reach). Corpses and pieces roll down to the floor together, 1,300 to 1,700 units from where they started (seen 2026-11-21); the at-rest line measures from the corpse, so the pieces end within a few hundred units of it."
+areas = ["combat"]
+paths = ["engine/nvforever/src/dismember.rs", "engine/nvf-play/src/dismember.rs", "crates/fnv-phys/src/gore.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_HIT = "12:0x000E6307:5000:WeapSniperRifle:limb=PerceptionCondition,12.6:0x000E631C:5000:WeapSniperRifle:limb=PerceptionCondition,14:0x000E745F:5000:WeapSniperRifle:limb=PerceptionCondition" }
+args = ["--play", "--world", "WastelandNV", "--pos=-21500,21300,5900", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 40
+expect = [
+  { re = 'dismember: .* 0x000E6307: Head exploded', label = "the first Deathclaw's head explodes" },
+  { re = 'dismember: .* 0x000E631C: Head exploded', label = "the second's too" },
+  { re = 'dismember: gore of 000E6307 at rest: \d+ pieces lie \d+ to (?P<n>\d+) units', range = [0, 1500], label = "every piece of the first comes to rest within 1,500 units of its trunk" },
+  { re = 'dismember: gore of 000E631C at rest: \d+ pieces lie \d+ to (?P<n>\d+) units', range = [0, 1500], label = "and of the second" },
+  { re = 'dismember: gore piece \d+ of \S+ (left the loaded cells|fell through the ground)', count = 0, label = "no piece leaves the loaded cells or falls through the ground here" },
+]
+
+[[scenario]]
 name = "dismember-geckos"
 source = "creature dismemberment (docs/spec-notes/dismemberment.md §2.6): creatures go by their own body part data (CREA PNAM). NVGecko's head is severable and explodable (no replacement model; GoreBits01 debris), its legs severable only; the gecko skins have partitions and meat caps [observed: FalloutNV.esm BPTD, nvgecko.nif]"
 note = "the player stands among the Goodsprings geckos (VERGSGecko2/3REF, gecko 4 moved beside them); the hit aid kills gecko 2 with a sniper rifle on the head (overkill: explodes), kills gecko 3 with a machete and chops its corpse's head and left foreleg (Dismember Only, 50 % each, seeded rolls), and KillActor explodes gecko 4's head"
