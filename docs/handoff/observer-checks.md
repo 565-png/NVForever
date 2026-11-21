@@ -3466,3 +3466,23 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the room side while strafing past, to see whether the streaks move with the view.
      Streaks moving with the view as bright as the frame agree with ours; a pane that is
      only a faint grey film, or nothing, says the reflection is weighted by alpha.
+
+## Added 2026-11-21 (is the HUD's condition bar see-through, #3309)
+
+250. **Does the world show through the HUD's weapon condition bar in the original?** (P3;
+     #3309, hud.md §4 and §14.7.) A player report says the original draws the bar with
+     transparent parts and NVForever's is solid (the report's screenshot is NVForever's:
+     the fill reads (175, 125, 45) and the ground (100, 71, 26) over a bright sky, so both
+     are opaque there [observed: the screenshot attached to #3309]). Against it: on the
+     private shots `hud_corners2` c0 and c4 the original's fill is 175/255 and its ground
+     an opaque 100/255 of the HUD's colour [observed: hud.md §14.7], the file gives the
+     ground the plain picture `solid.dds` with no `alpha` [documented: hudtemplates.xml]
+     and the fill's picture `vats_bar.dds` has an opaque block [observed: the texture,
+     hud.md §14.7]. Both NVForever drawings draw that. At 1280 x 720 with HUD Opacity
+     (the Display page's slider, [documented: GECK wiki, Complete List of GameSettings,
+     `sHUDOpacity`]) at its highest, a weapon at about three quarters' condition, take one
+     frame with the bright sky behind the bottom right corner and one with dark ground
+     there: fill and ground reading the same in both say opaque (ours); reading
+     differently, the two frames give their alpha. Then one frame with the slider lower:
+     does HUD Opacity fade the bar with the rest of the HUD (the setting is not built in
+     NVForever, hud.md §7)? And what is the slider's default?

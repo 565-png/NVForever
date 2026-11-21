@@ -206,7 +206,10 @@ original at 1920 x 1080 (`Target healthbar`, 1.125 pixels to the unit) `[observe
   long and 20 high [documented: the size], the bar at brightness 175 over an opaque
   ground at 100 [observed: §14.7, the original's 175/255 and 100/255 of the HUD's colour;
   T12e]; until T12e the bar at 255 over the bar's colour at a quarter's alpha
-  [hypothesis: as `meter.xml`'s ground]. The bar ends 17 before the divider (x 130–190)
+  [hypothesis: as `meter.xml`'s ground]. A player report (#3309) says the original's
+  bar has transparent parts; the shots of §14.7 show it opaque, the files give it no
+  `alpha`, and it stays opaque until observer check 250 says otherwise [design].
+  The bar ends 17 before the divider (x 130–190)
   [observed: §14, read through xNVSE and on its screenshot; 10 before stood 7 too far
   right],
   "CND" ending 11 before it, and its bottom stands 2 above the line "CND" stands on
