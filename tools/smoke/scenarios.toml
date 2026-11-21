@@ -33960,3 +33960,31 @@ forbid = [
   { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
 ]
 note = "The same field with the setting off: the index is never built (no 'authored materials: N sets' line), the material path loads no pbr file (the fixture's own check reads the generated files first), the plain, lit, dark and flat panels draw the same and the reference (its game normal map) differs from them."
+
+[[scenario]]
+name = "glass-mccarran-observation"
+source = "docs/spec-notes/nif.md §6 \"Window glass and environment maps\" (issue #2462, owner's playtest 2026-11-14: the interrogation room's window at Camp McCarran has no visible glass): CampMCTermInt02, the window 000FB2F4 (vwindow01.nif, Window_Environment_Mapping, ShinyBright_e.dds) seen from the observation side, south of it, looking north into the interrogation room; one frame in target/smoke (glass_mccarran_south.png)"
+areas = ["rendering"]
+paths = ["engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/texture.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "8:glass_mccarran_south.png" }
+args = ["--play", "--cell", "CampMCTermInt02", "--pos=112,1200,18672", "--heading", "35", "--no-voice", "--no-messages"]
+run_seconds = 10
+manual = "glass_mccarran_south.png: the window in the wall ahead shows a pane: grey streaks of reflection over the room beyond, which stays readable through it"
+expect = [
+  { re = 'vwindow01\.nif: 1 shape\(s\) with a window environment map \(textures.effects.ShinyBright_e\.dds, scale 1\.00, over the blend\): VWindow01:0', label = "the pane is drawn with its environment map, added over its blend" },
+  { re = 'test aid: screenshot .*glass_mccarran_south\.png', label = "the observation-side frame is saved" },
+]
+
+[[scenario]]
+name = "glass-mccarran-interrogation"
+source = "docs/spec-notes/nif.md §6 \"Window glass and environment maps\" (issue #2462): the same window seen from inside the interrogation room, north of it, looking south at the dark lockers behind it, where the owner saw no pane at all; one frame in target/smoke (glass_mccarran_north.png)"
+areas = ["rendering"]
+paths = ["engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/texture.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SHOTS = "8:glass_mccarran_north.png" }
+args = ["--play", "--cell", "CampMCTermInt02", "--pos=112,1700,18672", "--heading", "145", "--no-voice", "--no-messages"]
+run_seconds = 10
+manual = "glass_mccarran_north.png: the window ahead shows a pane over the dark lockers beyond (reflection streaks), not an empty opening"
+expect = [
+  { re = 'vwindow01\.nif: 1 shape\(s\) with a window environment map \(textures.effects.ShinyBright_e\.dds, scale 1\.00, over the blend\): VWindow01:0', label = "the pane is drawn with its environment map, added over its blend" },
+  { re = 'test aid: screenshot .*glass_mccarran_north\.png', label = "the interrogation-side frame is saved" },
+]
