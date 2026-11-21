@@ -508,14 +508,17 @@ menu's (`dialogue_menu.rs`).
   box's top is the window's top, where the tile HUD draws it. [observed: the
   screenshot, a crop resized to about 2.28 pixels a unit (N and NE 292 pixels apart;
   1.125 a unit at 1920 x 1080, §4)] The hand-built bar fades in over about 18 units and
-  ends solid on the strip's upper line, about 26 units down the window.
+  ends solid on the strip's upper line.
   [hypothesis] The tick picture's bar is its top 22 of 32 texel rows (18 units at 26/32
-  of a unit a row; as the corner bars' `hud_tick_mark.dds`'s 22-row block, §3; the
-  window's top then lies where the left bracket's line at texels 66-70 puts it, a
-  check), and the original draws it a texel a unit in its box: its bar ends 22 down the
-  window, about 4 above the strip's upper line, where the hand-built's ended on it. The
-  row count, the strip line's 26 and that alignment are all this hypothesis, not
-  measured on the original.
+  of a unit a row; as the corner bars' `hud_tick_mark.dds`'s 22-row block, §3). Then
+  the window's top lies 9 units over where the bar's fade starts (the old `TICK_TOP`),
+  which puts the strip's upper line about 26 units down the window (inferred from that
+  origin, not measured; the left bracket's line at texels 66-70 falls where this origin
+  puts it, a check), and the original, drawing the picture a texel a unit in its box,
+  ends its bar 22 down the window, about 4 above the strip's upper line, where the
+  hand-built's ended on it. The row count, the window origin, the strip line's 26 and
+  that alignment are all this hypothesis; observer check 257 measures the original's
+  bar against the strip's line on a raw 1920 x 1080 frame.
   [design] NVForever keeps the fitted 26-unit size and the bar's middle on the bearing
   and stands the hand-built tick so its bar ends at 22 (`compass::TICK_BAR_END`,
   `TICK_TOP` 4.125): 4.9 units higher than before, for neutral, hostile and companion

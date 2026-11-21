@@ -18189,12 +18189,12 @@ order = [[
 [[scenario]]
 name = "compass-tick-place"
 source = "#3310: the hand-built compass's actor ticks stood a little low; their bar now ends 22 units down the compass window, where the HUD file's tick box puts the original's (docs/spec-notes/hud.md §11, engine/nvf-play/src/compass.rs TICK_TOP)"
-note = "as compass-sneaking-npc: Ringo is brought 300 units north of the player (heading north, in the compass's window) at 3 s, the HUD hand-built (NVF_PLAY_TEST_TILE_MENUS empty: no tile menus), a frame at 6 s shows his amber tick; StartCombat sets him on the god-mode player at 8 s and a frame at 10 s shows the red tick. Look at the frames: each bar ends a few pixels above the strip's doubled line, not on it"
+note = "as compass-sneaking-npc: the HUD hand-built (NVF_PLAY_TEST_TILE_MENUS empty: no tile menus); Ringo is brought 300 units north of the player (heading north, in the compass's window) at 9 s, after the scripts' start (about 6.5 s; earlier steps are moved later by script_events::delay_late_aids while the shots keep their time), a frame at 12 s shows his amber tick; StartCombat sets him on the god-mode player at 14 s and a frame at 17 s shows the red tick. Look at the frames: each bar ends a few pixels above the strip's doubled line, not on it"
 areas = ["hud"]
 paths = ["engine/nvf-play/src/compass.rs"]
-env = { NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:RingoRef:player:0:300:0,8:call:RingoRef:StartCombat:player", NVF_PLAY_TEST_SHOTS = "6,10" }
+env = { NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "9:moveto:RingoRef:player:0:300:0,14:call:RingoRef:StartCombat:player", NVF_PLAY_TEST_SHOTS = "12,17" }
 args = ["--play", "--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--hour", "12", "--no-voice", "--size", "1280x720"]
-run_seconds = 13
+run_seconds = 20
 expect = [
   { re = 'compass: Actor tick drawn 26 x 26 at y 4\.125 of the window, its bar ending at 22\.0', label = "a neutral actor's tick, its bar ending at 22" },
   { re = 'compass: Hostile tick drawn 26 x 26 at y 4\.125 of the window, its bar ending at 22\.0', label = "a hostile actor's red tick in the same place" },
