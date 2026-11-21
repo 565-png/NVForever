@@ -3,6 +3,18 @@
   "title": "Headless fail path: Cato Hostilius killed by the player where he waits west of Hoover Dam, before Kimball arrives; Arizona Killer (VMQ03b) fails at 120",
   "given": [
     {
+      "kind": "ref",
+      "ref": "NellisMainGateREF",
+      "locked": false
+    },
+    {
+      "kind": "quest",
+      "quest": "VFreeformNellis",
+      "vars": {
+        "iNellisFrontGateStart": 2
+      }
+    },
+    {
       "kind": "menu",
       "menu": 1001,
       "open": false

@@ -3,6 +3,18 @@
   "title": "Headless fail path: the player leaves Hoover Dam during Kimball's visit; You'll Know It When It Happens (VMQ03a) fails at 120",
   "given": [
     {
+      "kind": "ref",
+      "ref": "NellisMainGateREF",
+      "locked": false
+    },
+    {
+      "kind": "quest",
+      "quest": "VFreeformNellis",
+      "vars": {
+        "iNellisFrontGateStart": 2
+      }
+    },
+    {
       "kind": "quest",
       "quest": "VMQ01",
       "running": false,

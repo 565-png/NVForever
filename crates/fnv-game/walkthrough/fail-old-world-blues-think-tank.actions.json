@@ -1216,6 +1216,20 @@
       "label": "MQ04 60"
     },
     {
+      "op": "note",
+      "text": "As in old-world-blues: stand-in for a player who times the patrols or has built for stealth. The pilot walks one path and does not wait out a robobrain's round, so its Sneak is set to 100 and it goes crouched to the safe (round 15: running, seen by robobrain 0300B936 at 542 units; the failure switch then empties the safe)."
+    },
+    {
+      "op": "set_av",
+      "of": "player",
+      "name": "Sneak",
+      "value": 100
+    },
+    {
+      "op": "player_sneak",
+      "sneaking": true
+    },
+    {
       "op": "move_player",
       "to": "X13TestSafeREF"
     },
@@ -1223,6 +1237,10 @@
       "op": "remove_all_items",
       "from": "X13TestSafeREF",
       "to": "player"
+    },
+    {
+      "op": "player_sneak",
+      "sneaking": false
     },
     {
       "op": "advance_seconds",

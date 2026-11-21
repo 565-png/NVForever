@@ -3,6 +3,7 @@
   "plugins": ["FalloutNV.esm", "DeadMoney.esm"],
   "title": "Headless Dead Money Act 3 fight branch (DeadMoney.esm): the heist chain with Dog killed in the kitchen (NVDLC01MQ03a 60), Curtain Call as the heist chain walks it, Christine killed in the suites (NVDLC01MQ03c 30); docs/handoff/mq-walkthrough-2026-10-27.md",
   "given": [
+    {"kind": "place", "ref": "player", "cell": "NVDLC01Lobby", "pos": [2848, 2400, 7200]},
     {"kind": "menu", "menu": 1001, "open": false},
     {"kind": "quest", "quest": "VCG01", "running": false, "completed": true, "stage": 200, "done": [200]},
     {"kind": "quest", "quest": "NVDLC01MQ00", "running": false, "completed": true, "stage": 100, "done": [10, 100]},
@@ -28,9 +29,12 @@
   ],
   "actions": [
     {"op": "note", "text": "The first part is the Dead Money heist chain's own (dead-money-heist.actions.json); this branch kills Dog in the kitchen instead of the deal (Put the Beast Down 60) and Christine in the suites (Last Luxuries 30). It ends there: Heist of the Centuries needs all three Act 3 quests done."},
-    {"op": "call", "line": "NVDLC01DeanREF.MoveTo NVDLC01DeanTheaterScaffMarker"},
-    {"op": "call", "line": "NVDLC01ChristineRef.MoveTo NVDLC01ChristineSuitesMarker"},
-    {"op": "call", "line": "NVDLC01DogREF.MoveTo NVDLC01DogKitchenMarker"},
+    {"op": "note", "text": "Placed in NVDLC01Lobby as the heist chain is (given): part 1's knockout leaves the player there; without it the pilot started from wherever the campaign left the player and walked the companions' MoveTos from the Mojave (round 15: steps 1-3 timed out, 240 s each [observed: pilot log]). Dean, Christine and Dog reach their wings by NVDLC01MQ02 stage 50's script (MoveTo), not by a walk: their packages for those markers apply only once they are in NVDLC01Suites / NVDLC01Restaurant [observed: round 12 triage]. Done as the script does them."},
+    {"op": "call", "line": "NVDLC01DeanREF.MoveTo NVDLC01DeanTheaterScaffMarker", "label": "script: NVDLC01MQ02 stage 50"},
+    {"op": "call", "line": "NVDLC01ChristineRef.MoveTo NVDLC01ChristineSuitesMarker", "label": "script: NVDLC01MQ02 stage 50"},
+    {"op": "call", "line": "NVDLC01DogREF.MoveTo NVDLC01DogKitchenMarker", "label": "script: NVDLC01MQ02 stage 50"},
+    {"op": "note", "text": "The casino switch is inside the Electrical Closet (NVDLC01ElectricalCloset: lock level 255, no key [observed: DeadMoney.esm REFR 0x010059C4 XLOC]). Its one opener is the Unlock Electrical Closet Door entry of the upstairs Security Management Control Terminal (HoloCasinoTerminalBSecurity, NVDLC01HoloCasinoTerminalB, Hard; the entry's script is NVDLC01ElectricalCloset.unlock [observed: TERM 0x0100636F]). The way up to it runs about 2200 units inside the 768-unit radius of a destructible speaker (NVDLC01SpeakerDest 0x0100D50A, health 1): a player shoots the speaker, hacks the terminal and picks the entry. Stand-in: the entry's own line (no hacking game, no speaker). Without it the player went the long way to the terminal, stood in the speaker's radius and the collar went off (rounds 15, both Act 3 chains [observed: pilot logs]); the headless run needs no door, its MoveTo goes through it."},
+    {"op": "call", "line": "NVDLC01ElectricalCloset.Unlock", "label": "the closet unlocked from the security terminal"},
     {"op": "move_player", "to": "scripted:NVDLC01CasinoSwitchScript"},
     {"op": "note", "text": "Put the Beast Down (NVDLC01MQ03a). The player throws the casino floor's switch (OnActivate): the holograms go down, the three wings unlock, and MQ03a 10 starts Curtain Call and Last Luxuries (MQ03b and MQ03c 10)."},
     {"op": "player_activate", "target": "scripted:NVDLC01CasinoSwitchScript"},

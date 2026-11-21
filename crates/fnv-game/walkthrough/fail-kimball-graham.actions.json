@@ -3,6 +3,18 @@
   "title": "Headless fail path: Captain Graham killed by the player before Kimball's visit; You'll Know It When It Happens (VMQ03a) and For the Republic, Part 2 (VMQ05) fail at 200",
   "given": [
     {
+      "kind": "ref",
+      "ref": "NellisMainGateREF",
+      "locked": false
+    },
+    {
+      "kind": "quest",
+      "quest": "VFreeformNellis",
+      "vars": {
+        "iNellisFrontGateStart": 2
+      }
+    },
+    {
       "kind": "quest",
       "quest": "VMQ01",
       "running": false,
