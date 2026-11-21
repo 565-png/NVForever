@@ -358,7 +358,7 @@ expect = [
 
 [[scenario]]
 name = "distant-objects"
-source = "[design, #3014] docs/design/graphics-enhanced.md §3.18 (engine/nvforever/src/distant_objects.rs): started with --graphics-only distant-objects-12 at Goodsprings noon, the distant objects come on at a reach of 12 cells once, and the exit summary counts the cells judged and the references drawn beyond the loaded cells, without a rendering or validation error. Whether they sit where the LOD leaves holes, with no doubling, is checked in pictures by hand"
+source = "[design, #3014] docs/design/graphics-enhanced.md §3.21 (engine/nvforever/src/distant_objects.rs): started with --graphics-only distant-objects-12 at Goodsprings noon, the distant objects come on at a reach of 12 cells once, and the exit summary counts the cells judged and the references drawn beyond the loaded cells, without a rendering or validation error. Whether they sit where the LOD leaves holes, with no doubling, is checked in pictures by hand"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/distant_objects.rs", "engine/nvforever/src/lod.rs", "crates/fnv-world/tests/visible_when_distant.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
@@ -382,7 +382,7 @@ forbid = [
 
 [[scenario]]
 name = "distant-objects-switch"
-source = "[design, #3014] docs/design/graphics-enhanced.md §3.18 (engine/nvforever/src/distant_objects.rs): the settings page's Distant objects row goes to 12 cells while the game runs at Goodsprings noon, the distant objects come on and stream in; then to 8 cells (the far ones fade out) and Off, without a rendering or validation error; the exit summary is logged as they were on"
+source = "[design, #3014] docs/design/graphics-enhanced.md §3.21 (engine/nvforever/src/distant_objects.rs): the settings page's Distant objects row goes to 12 cells while the game runs at Goodsprings noon, the distant objects come on and stream in; then to 8 cells (the far ones fade out) and Off, without a rendering or validation error; the exit summary is logged as they were on"
 areas = ["renderer", "graphics", "settings"]
 paths = ["engine/nvforever/src/distant_objects.rs", "engine/nvforever/src/settings.rs", "crates/nvf-settings-layout/src/lib.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:12,24:28", NVF_PLAY_TEST_SETTINGS = "11:distant-objects=12 cells,25:distant-objects=8 cells,26.5:distant-objects=Off" }
@@ -410,7 +410,7 @@ forbid = [
 
 [[scenario]]
 name = "distant-objects-with-ring"
-source = "[design, #3014] docs/design/graphics-enhanced.md §3.18 (engine/nvforever/src/distant_objects.rs, full_detail.rs): started with --graphics-only full-detail-9x9,distant-objects-12 at Goodsprings noon, the full-detail ring and the distant objects beyond it both come on and both log their exit summaries, without a rendering or validation error"
+source = "[design, #3014] docs/design/graphics-enhanced.md §3.21 (engine/nvforever/src/distant_objects.rs, full_detail.rs): started with --graphics-only full-detail-9x9,distant-objects-12 at Goodsprings noon, the full-detail ring and the distant objects beyond it both come on and both log their exit summaries, without a rendering or validation error"
 areas = ["renderer", "graphics"]
 paths = ["engine/nvforever/src/distant_objects.rs", "engine/nvforever/src/full_detail.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
