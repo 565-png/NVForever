@@ -1805,6 +1805,10 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
     // Shapes without any property beside shaded ones: editor geometry (`Props::is_helper`).
     let shaded = shaded_model(&file, &dec);
     let mut editor_shapes: Vec<String> = Vec::new();
+    // Shapes drawn with a window environment map, and how (nif.md §6 "Window glass and
+    // environment maps").
+    let mut env_shapes: Vec<String> = Vec::new();
+    let mut env_how = String::new();
     for o in objects.iter().filter(|o| !o.is_node) {
         // Walk to the root: accumulate the transform below the root's own and look
         // for hidden ancestors.
@@ -1879,6 +1883,11 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
         });
         // The normal map's tangents: those the file stores (crate::tangents).
         let (material, _missing) = shape_material_with(&props, &mut mesh, sink, crate::tangents::Tangents::Stored(&stored));
+        if material.extension.env.x > 0.0 {
+            let over = if matches!(material.base.alpha_mode, AlphaMode::Premultiplied) { "over the blend" } else { "added" };
+            env_how = format!("{}, scale {:.2}, {over}", props.textures.get(4).map_or("-", String::as_str), material.extension.env.x);
+            env_shapes.push(shape_name.clone());
+        }
         if let Some(VertexAttributeValues::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) {
             for v in p {
                 let q = (out.root * t).transform_point3(Vec3::from_array(*v));
@@ -1960,6 +1969,9 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
     }
     if !editor_shapes.is_empty() {
         info!("{path}: {} editor shape(s) without any property left out: {}", editor_shapes.len(), editor_shapes.join(", "));
+    }
+    if !env_shapes.is_empty() {
+        info!("{path}: {} shape(s) with a window environment map ({env_how}): {}", env_shapes.len(), env_shapes.join(", "));
     }
     if !swaps.is_empty() {
         info!("{path}: texture swap: {} entr(ies), {} shape(s) retextured: {}", swaps.len(), swapped.len(), swapped.join(", "));

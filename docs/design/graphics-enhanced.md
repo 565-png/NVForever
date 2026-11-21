@@ -1447,7 +1447,8 @@ billboard holder that turns it to the camera (#2549; `excluded-billboard`, last 
 reasons' order, merge of upstream main f4dbc82f8). A material is left out
 for Add, Multiply, Premultiplied or AlphaToCoverage alpha, unlit, refraction, first person,
 depth write, transmission, falloff, holes, FaceGen, the Pip-Boy screen, linear add, soft
-edges or a non-finite depth bias; ordinary Blend, a finite depth bias, the lit decal flag,
+edges, a non-finite depth bias or a window environment map (#2462;
+`excluded-environment-map`: the blend type has no environment bindings); ordinary Blend, a finite depth bias, the lit decal flag,
 Mask and an alpha cut are admitted and keep their descriptors exactly. A material owned for
 the moment by a fade, an effect shader or a material override never blends; the owner's
 restore brings the blend back. Never by asset name.

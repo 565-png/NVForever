@@ -168,10 +168,10 @@ fn composed_production_blend_module_validates_with_key_on_and_off() {
             }
             // Round 9 reuses origin.z; round 6's enabled width and ordinary layouts stay fixed.
             // #2551 added the ordinary `terrain` row (144 bytes); the blend's three rows follow.
-            assert_eq!(surface_sizes, vec![if blend { 192 } else { 144 }]);
+            assert_eq!(surface_sizes, vec![if blend { 192 } else { 160 }], "the ordinary type alone has #2462's env row after the 144 bytes");
             // The blend type reuses the ordinary table and slots (nif_surface_blend.rs notes);
             // round 10a's bindless blend row is longer by the palette's 400 entries.
-            if bindless { assert_eq!(index_sizes, vec![if blend { 16 + 4 * nvf_assets::nif_surface_blend::PALETTE_ENTRIES as u32 } else { 16 }]); }
+            if bindless { assert_eq!(index_sizes, vec![if blend { 16 + 4 * nvf_assets::nif_surface_blend::PALETTE_ENTRIES as u32 } else { 28 }], "the ordinary row: four entries, then the window environment map's three (#2462)"); }
             assert_eq!(nvf_assets::nif_surface_blend::PALETTE_ENTRIES, 400, "nif_surface_bindings.wesl spells out array<u32, 400>");
             if !bindless {
                 let bound = |binding| module.global_variables.iter().any(|(_, v)| v.binding.as_ref().is_some_and(|b| b.group == 3 && b.binding == binding));
@@ -845,7 +845,7 @@ fn shader_detail_composes_height_blending_and_anti_tiling_as_the_near_draw() {
 /// material groups the aid creates (from the production types' resource tables, where
 /// every texture becomes a binding without bindless, and the composed capture shader).
 /// The view and mesh groups are the mesh pipeline's, as for every ordinary material:
-/// the blend type equals the ordinary NIF type's count (also per composed group in
+/// the blend type has the ordinary NIF type's count less #2462's two (also per composed group in
 /// `complete_nif_forward_and_prepass_compose_with_both_interfaces`); the capture binds
 /// one texture; the folded TerrainMaterial's group alone exceeds the limit, so it is used
 /// only where TerrainMaterials::folds found bindless textures, and every other draw is
@@ -861,7 +861,7 @@ fn material_groups_fit_a_16_texture_stage_without_bindless() {
     // (nif_surface_blend.rs: round 10a's palette exists only in the bindless table).
     let blend = standard + textures(nvf_assets::nif_surface_blend::NifSurfaceBlendColour::bindless_descriptor());
     let folded = standard + textures(crate::terrain::TerrainLayers::bindless_descriptor());
-    assert_eq!(blend, ordinary, "the blend adds no texture to the ordinary NIF material group");
+    assert_eq!(blend + 2, ordinary, "the blend adds no texture to the ordinary NIF material group; it lacks the two of the window environment map (#2462: the cube and the mask)");
     assert!(ordinary <= STAGE_LIMIT);
     assert!(folded > STAGE_LIMIT, "{folded}: the folded material needs bindless textures");
     let capture = texture_bindings(&capture_source(true, true)).len();
