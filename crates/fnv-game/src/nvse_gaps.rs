@@ -969,7 +969,26 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }).unwrap_or_default();
             if refs.is_empty() { zero } else { list(g, refs) }
         }
-        "getfollowers" | "getdetectingactors" => zero,
+        // Actors currently following the calling reference (`Follow` / `Accompany` package)
+        // [documented: GECK wiki GetFollowers; observed: gaps7, ar_Null when empty].
+        "getfollowers" => {
+            let followers = subject.map(|leader| g.followers_of(leader)).unwrap_or_default();
+            if followers.is_empty() {
+                zero
+            } else {
+                list(g, followers.into_iter().map(|f| XVal::Ref(f.0)).collect())
+            }
+        }
+        // Actors currently detecting the calling actor (`Band::Detected` in `g.detection.pairs`)
+        // [documented: GECK wiki GetDetectingActors; observed: gaps7, ar_Null when empty].
+        "getdetectingactors" => {
+            let detectors = subject.map(|target| g.detecting_actors(target)).unwrap_or_default();
+            if detectors.is_empty() {
+                zero
+            } else {
+                list(g, detectors.into_iter().map(|f| XVal::Ref(f.0)).collect())
+            }
+        }
         // The first member of the list the actor carries [observed: gaps7, the player
         // with the 10mm ammo list gives Ammo10mm, with a list it has none of 0].
         "pickfromlist" => {

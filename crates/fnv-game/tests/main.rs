@@ -164,6 +164,7 @@ fn every_test_file_is_built() {
 
 mod callable_identity;
 mod em_clearance;
+mod followers_and_detecting_actors;
 mod form_override_queries;
 mod is_in_kill_cam;
 mod no_unequip;
