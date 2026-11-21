@@ -328,6 +328,8 @@ pub const TERMINAL_INPUT_SECS: f64 = 0.6;
 /// How near its marker an awaited actor has arrived, and the hours waited for it.
 pub const ARRIVED: f32 = 500.0;
 pub const WAIT_HOURS: u32 = 24;
+/// How long the walk to a beeping speaker may take before it is left ([`Errand::Silence`]).
+pub const SILENCE_SECS: f64 = 15.0;
 /// Seconds an errand may take.
 pub const ERRAND_SECS: f64 = 90.0;
 /// Seconds a message box nobody waits for stays up before the pilot closes it.
@@ -788,6 +790,8 @@ struct Pilot {
     /// found once; and when to look for a beeping one next.
     speakers: Option<Vec<FormId>>,
     speaker_check: f64,
+    /// Speakers not reached in [`SILENCE_SECS`]: left, as a player walks out of their range.
+    speakers_left: Vec<FormId>,
     title: String,
     given: Vec<Json>,
     actions: Vec<Action>,
@@ -877,6 +881,7 @@ impl Pilot {
             threat_check: 0.0,
             speakers: None,
             speaker_check: 0.0,
+            speakers_left: Vec::new(),
             title: String::new(),
             given: Vec::new(),
             actions: Vec::new(),
@@ -4037,6 +4042,17 @@ fn find_item(g: &Game, item: FormId, feet: [f32; 3]) -> Option<(FormId, Option<F
 fn run_errand(p: &mut Pilot, h: &mut Hands) -> bool {
     use nvf_play::terminal::{AidPick, TerminalInput};
     let Some((errand, mut w, began, mut stage)) = p.errand.take() else { return true };
+    // A speaker not reached at once is left: the collar's count runs on meanwhile, and a
+    // player out of its reach walks out of its range instead. Gala's walk to one in the
+    // Villa was 8651 units round a building; the collar went off on the way (round 19
+    // [observed]).
+    if let Errand::Silence(speaker) = errand {
+        if p.now - began > SILENCE_SECS {
+            info!("pilot: step {}: the speaker {speaker} is not reached in {SILENCE_SECS:.0} s: left, the step goes on (out of its range)", p.i);
+            p.speakers_left.push(speaker);
+            return true;
+        }
+    }
     if p.now - began > ERRAND_SECS {
         info!("pilot: step {}: errand given up after {ERRAND_SECS:.0} s: {errand:?}", p.i);
         if h.terminal.0.is_some() {
@@ -4912,7 +4928,8 @@ fn drive(
             p.speakers = h.game(|g| speakers(g));
         }
         let feet = h.feet();
-        let list = p.speakers.clone().unwrap_or_default();
+        let left = p.speakers_left.clone();
+        let list: Vec<FormId> = p.speakers.clone().unwrap_or_default().into_iter().filter(|s| !left.contains(s)).collect();
         if let Some(speaker) = h.game(|g| beeping_speaker(g, &list, feet)).flatten() {
             if !p.errands.iter().any(|e| matches!(e, Errand::Silence(s) if *s == speaker)) {
                 info!("pilot: step {}: the collar beeps near speaker {speaker}: switched off before the step goes on", p.i);

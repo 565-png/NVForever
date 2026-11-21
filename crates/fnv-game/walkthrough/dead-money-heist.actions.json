@@ -53,6 +53,8 @@
     {"op": "note", "text": "The player shuts the kitchen's three gas valves (each a message box, button 1); with all three shut and Dog alive, stage 40."},
     {"op": "note", "text": "The player crouches through the kitchen: Dog must not see it (\"Don't let him spot you!\"; seen, his script sets off his collar and the gas, SCPT 0x0100F121). Seen at a run, round 18 [observed]."},
     {"op": "player_sneak", "sneaking": true},
+    {"op": "note", "text": "A player who goes through the kitchen unseen sneaks well: seen before the three valves are shut, Dog kills himself and the gas burns the player (SCPT 0x0100F121 [observed]). Crouched at Sneak 17 the bot was seen at 713 units in round 19 [observed]; Sneak raised as a stand-in for a stealthy character."},
+    {"op": "set_av", "name": "Sneak", "value": 100},
     {"op": "move_player", "to": "NVDLC01KitchenValve1REF"},
     {"op": "player_activate", "target": "NVDLC01KitchenValve1REF"},
     {"op": "press_button", "button": 1},
