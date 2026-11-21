@@ -880,7 +880,6 @@ pub(crate) struct AlphaDrawing<'w, 's> {
     #[allow(clippy::type_complexity)]
     drawn: Query<'w, 's, (Entity, &'static RefVisual, Option<&'static MeshMaterial3d<NifMaterial>>, Option<&'static crate::mesh_terrain_blend::BlendShape>, Option<&'static Faded>, Option<&'static nvf_assets::nif_material::MaterialOverride>), Without<Overlay>>,
     /// The meshes of `drawn` still wearing a see-through copy.
-    #[allow(clippy::type_complexity)]
     still_faded: Query<'w, 's, (), (With<Faded>, With<RefVisual>, Without<Overlay>)>,
 }
 

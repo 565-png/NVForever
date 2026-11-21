@@ -852,12 +852,10 @@ pub fn face_billboards(
         if d.x * d.x + d.y * d.y > 1e-6 {
             // Written only when it differs: a write marks the transform changed, which
             // dirties the billboard's cell for propagation and sends it over the cell's
-            // children [design: bevy_transform 0.20.1 src/systems.rs :112, :705-720]. An
-            // exact compare: the same eye and place give the same bits, any turn differs.
-            let rotation = Quat::from_rotation_z(d.y.atan2(d.x));
-            if t.rotation != rotation {
-                t.rotation = rotation;
-            }
+            // children [design: bevy_transform's `mark_dirty_trees` and
+            // `propagate_parent_transforms`]. An exact compare: the same eye and place give
+            // the same bits, any turn differs.
+            t.map_unchanged(|t| &mut t.rotation).set_if_neq(Quat::from_rotation_z(d.y.atan2(d.x)));
         }
     }
 }
