@@ -1,4 +1,4 @@
-//! Distant objects (#3014; docs/design/graphics-enhanced.md §3.18): with the settings
+//! Distant objects (#3014; docs/design/graphics-enhanced.md §3.21): with the settings
 //! page's Distant objects row at 8 or 12 cells, static scenery the distant LOD blocks do
 //! not hold is drawn beyond the loaded cells (and beyond the full-detail ring,
 //! full_detail.rs), out to that many grid steps from the camera's cell: from the
