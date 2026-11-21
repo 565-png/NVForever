@@ -706,6 +706,9 @@ impl MagicEffectDef {
     /// "FX Persist": the effect shader's persistent part shows while the effect lasts
     /// [documented: xEdit MGEF flags; GECK wiki EffectShader].
     pub const FX_PERSIST: u32 = 1 << 10;
+    /// "Display Name Only": a Script effect, which shows nothing by default, shows its
+    /// name [documented: GECK wiki Base Effect; schema `gameplay.json` MGEF flags bit 13].
+    pub const DISPLAY_NAME_ONLY: u32 = 1 << 13;
     /// "No Death Dispel": the effect goes on after its target dies [documented: xEdit
     /// MGEF flags; hypothesis: without it the effect ends at the death,
     /// docs/spec-notes/hit-effects.md §4].
@@ -713,6 +716,13 @@ impl MagicEffectDef {
 
     pub fn has(&self, flag: u32) -> bool {
         self.flags & flag != 0
+    }
+
+    /// Whether the interface names this effect where it shows no value: a Script effect
+    /// flagged Display Name Only (Psycho's "Damage +25%", Cateye's "Low-Light Vision")
+    /// [documented: GECK wiki Base Effect; #3119].
+    pub fn shows_name(&self) -> bool {
+        self.archetype == ARCHETYPE_SCRIPT && self.has(Self::DISPLAY_NAME_ONLY)
     }
 }
 
@@ -2424,6 +2434,25 @@ impl GameData {
             None => Vec::new(),
         };
         idx.into_iter().filter_map(|i| self.load_order.get(usize::from(i)).cloned()).collect()
+    }
+
+    /// Whether `form` is overridden by at least one plugin after its defining plugin in
+    /// the load order (`IsFormOverridden`).
+    pub fn is_form_overridden(&self, form: FormId) -> bool {
+        self.form_overrides.get(&form).is_some_and(|v| v.len() > 1)
+    }
+
+    /// The load-order index of the winning (last) plugin that defines or overrides
+    /// `form` (`GetFormOverrideIndex`), or `None` when `form` is not known from any
+    /// plugin in `GameData`.
+    pub fn form_override_index(&self, form: FormId) -> Option<u8> {
+        if let Some(last) = self.form_overrides.get(&form).and_then(|v| v.last().copied()) {
+            return Some(last);
+        }
+        if (form.0 >> 24) < 0xFE && self.sig(form).is_some() {
+            return Some((form.0 >> 24) as u8);
+        }
+        None
     }
 
     pub fn by_edid(&self, edid: &str) -> Option<FormId> {
