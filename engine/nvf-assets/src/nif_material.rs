@@ -565,7 +565,8 @@ pub struct NifSurface {
     /// docs/spec-notes/nif.md §6 "Window glass and environment maps", "Environment maps on
     /// other shapes"): x the scale of the reflection (0: none), y how the mask is read
     /// (`env_map::MaskMode`: 0 none, 1 [`env_mask`](Self::env_mask)'s red channel, 2 the
-    /// normal map's alpha), z and w the camera distances over which it fades out (both 0:
+    /// alpha of [`env_mask`](Self::env_mask), which then holds the game's own normal map),
+    /// z and w the camera distances over which it fades out (both 0:
     /// no fade). The reflection, the cube read in the reflected view direction × the scale
     /// × the mask × the fade, is added to the lit colour; on a premultiplied shape (a
     /// blended window shape that reflects) after the colour is multiplied by its alpha, on

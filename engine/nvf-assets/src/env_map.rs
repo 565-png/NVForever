@@ -137,7 +137,9 @@ pub(crate) enum MaskMode {
     Full = 0,
     /// The slot-5 mask's red channel (#2669).
     Slot5 = 1,
-    /// The normal map's alpha (the debug switch's variant).
+    /// The normal map's alpha (the debug switch's variant): the game's own normal map is
+    /// bound as the mask and its alpha read, so an authored set's `_n`, which replaces the
+    /// drawn normal map (`crate::authored::apply`), does not change the comparison.
     NormalAlpha = 2,
 }
 

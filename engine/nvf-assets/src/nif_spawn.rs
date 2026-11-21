@@ -1008,6 +1008,9 @@ fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl Text
         let cube = textures.texture(&crate::texture::cube_path(&e.cube), true)?;
         let mask = e.mask.as_deref().filter(|_| has_uv).and_then(|m| textures.texture(m, false));
         let mode = crate::env_map::mask_mode(mask.is_some(), aids.no_mask, has_uv && normal.is_some() && !unmasked)?;
+        // The normal-alpha variant reads the game's own normal map, bound in the mask's
+        // slot: an authored set may replace the drawn normal map later (`crate::authored`).
+        let mask = if mode == crate::env_map::MaskMode::NormalAlpha { normal.clone() } else { mask };
         Some((e, cube, mask, mode))
     });
     // Premultiplied only where the set's blend rule asks for it (`env_map::env_alpha_mode`:
@@ -2146,6 +2149,108 @@ mod tests {
         words(&mut out, &[0]);
         floats(&mut out, &[4.0, 1.0]);
         out
+    }
+
+    /// BSShaderPPLightingProperty as [`lit_shader`], with these shader flags,
+    /// `environment_map_scale` and its texture set at block `set`.
+    fn lit_shader_env(flags: u32, scale: f32, set: u32) -> Vec<u8> {
+        let mut out = vec![];
+        words(&mut out, &[u32::MAX, 0, u32::MAX]);
+        out.extend(1u16.to_le_bytes());
+        words(&mut out, &[1, flags, 0]);
+        floats(&mut out, &[scale]);
+        words(&mut out, &[3, set]);
+        floats(&mut out, &[0.0]);
+        words(&mut out, &[0]);
+        floats(&mut out, &[4.0, 1.0]);
+        out
+    }
+
+    /// BSShaderTextureSet: these paths, slot by slot.
+    fn texture_set_block(paths: &[&str]) -> Vec<u8> {
+        let mut out = vec![];
+        words(&mut out, &[paths.len() as u32]);
+        for p in paths {
+            words(&mut out, &[p.len() as u32]);
+            out.extend(p.as_bytes());
+        }
+        out
+    }
+
+    /// The properties of the one shape of a synthetic model whose lit shader has `flags`
+    /// and scale 1.5, with a full texture set (diffuse, normal, cube in slot 4, mask in
+    /// slot 5), read through `shape_props` / `apply_property`.
+    fn env_model_props(flags: u32) -> Props {
+        let schema = fnv_nif::Schema::load_dir(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/nif")).unwrap();
+        let bytes = nif(
+            &[
+                ("BSFadeNode", node(0, &[1])),
+                ("NiTriStrips", strips(1, &[2], 4)),
+                ("BSShaderPPLightingProperty", lit_shader_env(flags, 1.5, 3)),
+                ("BSShaderTextureSet", texture_set_block(&["textures\\b.dds", "textures\\b_n.dds", "", "", "textures\\effects\\chrome_e.dds", "textures\\b_m.dds"])),
+                ("NiTriStripsData", square(0.0)),
+            ],
+            &["Bottle", "Bottle:0"],
+        );
+        let file = NifFile::parse(&bytes, Some(&schema)).unwrap();
+        let dec = Decoded::new(&file, &bytes, &schema);
+        let objects = scene_objects(&file, &dec);
+        let by_block: HashMap<usize, &SceneObject> = objects.iter().map(|o| (o.block, o)).collect();
+        let shape = objects.iter().find(|o| !o.is_node).expect("the shape");
+        shape_props(&file, &dec, shape, &by_block)
+    }
+
+    /// #2841's gate end to end: a lit shader property with Environment_Mapping (bit 7)
+    /// alone, decoded from a file, gives a material that binds the slot-4 cube and the
+    /// slot-5 mask at the property's scale; with the window flag too it is a window shape;
+    /// without bit 7 nothing is bound. Restoring the both-bits gate fails the first case.
+    /// Fixtures written for the test.
+    #[test]
+    fn decoded_bit_7_shader_binds_cube_mask_and_scale() {
+        let props = env_model_props(1 << 7);
+        assert_eq!(props.env, Some(crate::env_map::EnvFlags { scale: 1.5, window: false, light_fade: false }));
+        let mut tri = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        tri.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
+        tri.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+        let d = crate::env_map::EnvAids::default();
+        let (m, _) = shape_material_inner(&props, &mut tri.clone(), &mut AllTextures, Tangents::Generate, &d);
+        assert!(m.extension.env_cube.is_some() && m.extension.env_mask.is_some(), "cube and mask bound");
+        assert_eq!((m.extension.env.x, m.extension.env.y), (1.5, 1.0), "the scale and the slot-5 mask");
+        assert_eq!((m.extension.env_how.z, m.extension.env_how.w), (0.0, 1.0), "a reflecting shape, not a window");
+        let window = env_model_props((1 << 7) | (1 << 21));
+        let (w, _) = shape_material_inner(&window, &mut tri.clone(), &mut AllTextures, Tangents::Generate, &d);
+        assert_eq!(w.extension.env_how.z, 1.0, "both flags: a window shape");
+        let plain = env_model_props(1 << 21);
+        assert_eq!(plain.env, None);
+        let (n, _) = shape_material_inner(&plain, &mut tri, &mut AllTextures, Tangents::Generate, &d);
+        assert!(n.extension.env_cube.is_none() && n.extension.env_mask.is_none());
+        assert_eq!(n.extension.env, Vec4::ZERO);
+    }
+
+    /// The normal-alpha debug variant binds the game's own normal map as the mask (read by
+    /// its alpha), so an authored set that replaces the drawn normal map later
+    /// (`crate::authored::apply`) cannot change what the comparison reads. Fixtures written
+    /// for the test; the mesh keeps its own tangents.
+    #[test]
+    fn normal_alpha_variant_binds_the_legacy_normal_as_mask() {
+        let mut tri = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+        tri.insert_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
+        tri.insert_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32, 0.0], [1.0, 0.0], [0.0, 1.0]]);
+        tri.insert_attribute(Mesh::ATTRIBUTE_TANGENT, vec![[1.0f32, 0.0, 0.0, 1.0]; 3]);
+        let whiskey = Props {
+            shader: true,
+            has_properties: true,
+            env: Some(crate::env_map::EnvFlags { scale: 1.0, window: false, light_fade: false }),
+            textures: texture_set(&["w.dds", "w_n.dds", "", "", "textures\\effects\\shinydull_e.dds", ""]),
+            ..default()
+        };
+        let variant = crate::env_map::EnvAids { no_mask: crate::env_map::NoMask::NormalAlpha, ..default() };
+        let (m, _) = shape_material_inner(&whiskey, &mut tri.clone(), &mut AllTextures, Tangents::Keep, &variant);
+        assert_eq!(m.extension.env.y, 2.0, "read by alpha");
+        assert!(m.base.normal_map_texture.is_some());
+        assert_eq!(m.extension.env_mask, m.base.normal_map_texture, "the legacy normal map is the mask");
+        let (full, _) = shape_material_inner(&whiskey, &mut tri, &mut AllTextures, Tangents::Keep, &crate::env_map::EnvAids::default());
+        assert_eq!((full.extension.env.y, full.extension.env_mask.is_none()), (0.0, true), "by default: no mask, full strength");
     }
 
     /// The lounge chair's set-up (`furniture\loungechair_tops.nif`): a seat shape with a

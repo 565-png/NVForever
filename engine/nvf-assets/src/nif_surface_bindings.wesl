@@ -57,7 +57,8 @@ struct NifSurface {
     // texture repeat of a landscape material, 0 on every other shape; y, z, w unused.
     terrain: vec4<f32>,
     // Environment map (nif_material.rs NifSurface::env): x the scale (0: none), y the mask
-    // (0 none, 1 the mask's red, 2 the normal map's alpha), z and w the fade distances
+    // (0 none, 1 the mask's red, 2 the mask's alpha: the game's normal map bound as the
+    // mask, a debug switch's variant), z and w the fade distances
     // (both 0: no fade). After `terrain`, as in NifSurfaceUniform; the blend type has none
     // (nif_surface_blend.rs: its uniform goes on with its own rows here).
     @if(!NIF_SURFACE_BLEND) env: vec4<f32>,
@@ -1026,12 +1027,14 @@ fn holes_alpha(instance_index: u32, uv: vec2<f32>) -> f32 {
     @if(!BINDLESS) return textureSampleLevel(env_mask, env_sampler, uv, 0.0).r;
 }
 
-// The normal map's alpha at `uv`, at its top level (the environment mask of a debug
-// switch's variant, env_map.rs NVF_PLAY_DEBUG_ENV_NO_MASK=normal-alpha).
-@if(!NIF_SURFACE_BLEND) fn env_normal_alpha(instance_index: u32, uv: vec2<f32>) -> f32 {
-    @if(BINDLESS) let i = material_indices[material_slot(instance_index)];
-    @if(BINDLESS) return textureSampleLevel(bindless_textures_2d[i.normal_map_texture], bindless_samplers_filtering[i.normal_map_sampler], uv, 0.0).a;
-    @if(!BINDLESS) return textureSampleLevel(pbr_bindings::normal_map_texture, pbr_bindings::normal_map_sampler, uv, 0.0).a;
+// The environment mask's alpha at `uv`, at its top level: in a debug switch's variant
+// (env_map.rs NVF_PLAY_DEBUG_ENV_NO_MASK=normal-alpha) the mask slot holds the game's own
+// normal map (nif_spawn.rs `shape_material_inner`), so an authored set that replaces the
+// drawn normal map does not change what is read here.
+@if(!NIF_SURFACE_BLEND) fn env_mask_alpha(instance_index: u32, uv: vec2<f32>) -> f32 {
+    @if(BINDLESS) let i = nif_indices[material_slot(instance_index)];
+    @if(BINDLESS) return textureSampleLevel(bindless_textures_2d[i.env_mask], bindless_samplers_filtering[i.env_sampler], uv, 0.0).a;
+    @if(!BINDLESS) return textureSampleLevel(env_mask, env_sampler, uv, 0.0).a;
 }
 
 // The size of the FaceGen offset image.

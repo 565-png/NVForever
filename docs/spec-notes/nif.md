@@ -1432,9 +1432,11 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
     which channel of the mask is read, or whether the diffuse colour, the Specular flag or
     the glossiness changes the reflection.
 
-  Measured in the data files [observed: a survey of the visible, textured
-  BSShaderPPLightingProperty shapes of the base and DLC archives' models, 2026-11-16;
-  the survey's tables are not committed]: 5,437 shapes in 2,251 models set
+  Counted in the data files [documented: asset survey, 2026-11-16: every visible,
+  textured BSShaderPPLightingProperty shape of the base and DLC archives' models, decoded
+  with fnv-nif's schema reader and its texture sets resolved through the archives (DDS
+  headers read for cube and channel facts); a count of the data, not something seen
+  running; the survey's tables are not committed]: 5,437 shapes in 2,251 models set
   Environment_Mapping without the window flag (940 shapes in 558 models set both). Of the
   5,437, 5,207 (95.8 %) name a slot-4 file that is a cube map; 214 name none (the wine
   bottle `clutter\food\winebottle01.nif`, dog eyes, the Pimp-Boy), 6 name a flat
@@ -1510,7 +1512,10 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   and so is object LOD block geometry (LOD_Building) without the window flag, which
   stands beyond the loaded cells, farther than `fEnvMapLOD2` [design]; window shapes keep
   #2462's gate there too. A slot-4 file that is a flat texture (6 shapes) is reported once
-  as an info line, not a warning. The window flag stays a property of its own on the
+  as an info line, not a warning. A reflecting exterior STAT or SCOL shape is not given
+  the opt-in mesh-terrain blend (off by default in both looks), which has no
+  environment bindings: the reflection, the original's own effect, wins over
+  NVForever's addition [design; docs/design/graphics-enhanced.md "Selection"]. The window flag stays a property of its own on the
   material, so the two sets can take different cube orientations. The same wiki page says
   Lighting30ShaderProperty, "a pixel shader 3.0 upgrade to BSShaderPPLightingProperty",
   also has its "cubemap orientation … flipped", and that it is "Used by the engine for
