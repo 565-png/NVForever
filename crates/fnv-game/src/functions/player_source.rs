@@ -7,13 +7,15 @@ use fnv_script::vm::{ArgValue, Value, XVal};
 use fnv_sim::FormId;
 
 pub(crate) fn handles(name: &str) -> bool {
-    ["AdvancePCLevel", "AdvLevel", "ModPCAttribute", "RemoveReputationExact"].iter().any(|n| n.eq_ignore_ascii_case(name))
+    ["AdvancePCLevel", "AdvLevel", "ModPCAttribute", "RemoveReputationExact", "SetPCExpelled"]
+        .iter()
+        .any(|n| n.eq_ignore_ascii_case(name))
 }
 
 pub(crate) fn call(g: &mut Game, ctx: &Ctx, receiver: Option<Value>, name: &str, values: &[XVal]) -> Option<Result<XVal, String>> {
     let count = match name {
         "advancepclevel" | "advlevel" => 0,
-        "modpcattribute" => 2,
+        "modpcattribute" | "setpcexpelled" => 2,
         "removereputationexact" => 3,
         _ => return None,
     };
@@ -51,6 +53,7 @@ pub(crate) fn call(g: &mut Game, ctx: &Ctx, receiver: Option<Value>, name: &str,
                 }
             }
             "removereputationexact" => { reputation::remove_reputation_exact(g, ctx, &a)?; }
+            "setpcexpelled" => { actor::set_pc_expelled(g, &a)?; }
             _ => unreachable!(),
         }
         Ok(XVal::Num(0.0))
