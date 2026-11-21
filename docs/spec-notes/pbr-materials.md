@@ -357,7 +357,7 @@ game beyond the field test below [documented: `engine/nvf-assets/src/authored.rs
   BSShaderPPLightingProperty sets BSShaderFlags bit 11 and names a texture in slot 3 draws
   it as a height map through the same march, with the same method and layers (and their
   switches), **on by default** at the game depth 0.015. That default and the method are
-  **provisional** [hypothesis]: they stand until observer check #250 (how the original's
+  **provisional** [hypothesis]: they stand until observer check #261 (how the original's
   relief looks) and a frame-cost measurement on a parallax-heavy view; nothing here says the
   original draws them this way (`authored::GAME_PARALLAX_DEPTH`, switch
   `NVF_GAME_PARALLAX_DEPTH=<0..0.08>`, 0 draws none and loads none). It takes the same

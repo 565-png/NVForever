@@ -137,7 +137,7 @@ pub const PARALLAX_MASK_ENV: &str = "NVF_PBR_PARALLAX_MASK";
 /// The depth a NIF's own height map (texture-set slot 3 with shader flag bit 11, upstream
 /// issue #2979; `nif_spawn::game_height_slot`) is drawn at, in UV units: 0.015, half the
 /// authored default ([`fnv_pbr::DEFAULT_PARALLAX_DEPTH`]) [hypothesis: how deep the original
-/// draws these maps is not observed (docs/handoff/observer-checks.md #250). The GECK wiki
+/// draws these maps is not observed (docs/handoff/observer-checks.md #261). The GECK wiki
 /// calls bit 11's effect "pretty weak" without bit 28 "Parallax_Occlusion" [documented:
 /// GECK wiki "NIF Shader Properties"], which no shipped shape sets, and 0.015 looked
 /// convincing on a 512 floor map in the authored tests (docs/spec-notes/pbr-materials.md

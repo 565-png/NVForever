@@ -3469,7 +3469,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-21 (the game's own parallax height maps, #2979)
 
-250. **How deep is the original's parallax on shapes with a slot-3 height map, and is it one
+261. **How deep is the original's parallax on shapes with a slot-3 height map, and is it one
      offset or stepped?** (P2; #2979, nif.md §6 "Parallax height maps", pbr-materials.md
      "The game's own height maps".) What NVForever implements since #2979 [design]: a lit
      shape with BSShaderFlags bit 11 and a slot-3 texture draws it as parallax, on by
