@@ -3399,7 +3399,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-21 (Ammo Use 0 on a ranged weapon, #3023)
 
-245. **Does a ranged weapon with Ammo Use 0 fire without spending or carrying its ammo,
+246. **Does a ranged weapon with Ammo Use 0 fire without spending or carrying its ammo,
      and does it ever reload?** (P2; #3023.) The GECK wiki calls Ammo Use "the amount of
      ammo used per shot" [documented: GECK wiki Weapons] and says nothing of 0. Of the
      base game's and the add-ons' 502 WEAP records, 25 have Ammo Use 0; all but one are
