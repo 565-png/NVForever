@@ -575,17 +575,24 @@ addition of NVForever's own until observer check 250 answers it [hypothesis: it 
 - [design] **One march.** Six layers in one draw rule out a march per layer. The folded
   draw marches once, Bevy's steep parallax with the occlusion refinement (the vendored
   `parallaxed_uv`'s steps, view vector, tangent frame and signs, as on NIF shapes), over one
-  blended depth: each layer's height by its ordered share (painted opacity x the layer
-  diffuse's alpha, read once at the plain coordinate, laid over the earlier layers as the
-  ordinary blend lays them), the base and a layer without a height map at height 1 (flat at
-  the surface: no depth). Then every texture of the quadrant, the base's and the layers',
-  diffuse and normal map, ordinary or anti-tiled, is read at the one moved coordinate.
-  Flat at the surface rather than mid-height so that the shift falls to nothing as a
-  height-mapped layer's share does, with no jump at its edge. Height blending, when on,
+  blended depth: the sum over the layers of share x the layer's own depth x (1 - height),
+  the share the layer's ordered share (painted opacity x the layer diffuse's alpha, read
+  once at the plain coordinate, laid over the earlier layers as the ordinary blend lays
+  them); the base and a layer without a height map add no depth (flat at the surface).
+  Then every texture of the quadrant, the base's and the layers', diffuse and normal map,
+  is read at the one moved coordinate. Flat at the surface rather than mid-height so that
+  the shift falls to nothing as a height-mapped layer's share does. Edges: where the
+  shares and heights agree on both sides (the painted opacities of one LAND grid, the same
+  textures), the depth sum agrees too, since each layer brings its own depth and an
+  unpainted layer (share 0) adds nothing; what remains at a quadrant edge is the march's
+  step count, which follows the common scale (next item) and can differ by a step's
+  rounding [hypothesis: not visible; not yet seen]. Height blending, when on,
   still weighs the colours by brightness; its weights do not reshape the march (a later
   stage may let a real height map stand in for brightness there).
-- [design] **Depth and steps.** One depth per quadrant material: the largest of its layers'
-  sets' depths. At most 8 steps (`PARALLAX_LAYERS`; fewer than a shape's march, as every step
+- [design] **Depth and steps.** Each layer keeps its own set's depth; the march's scale is the
+  deepest of a quadrant's layers, each layer's depth taken over it (`parallax_scales`), so a
+  0.02 layer moves as far beside a 0.08 layer that is not painted there as alone (the test
+  `a_layer_moves_as_far_whatever_else_its_quadrant_holds`). At most 8 steps (`PARALLAX_LAYERS`; fewer than a shape's march, as every step
   reads up to six height maps), fewer as the view steepens. The height maps are read at the
   level their screen footprint asks for (not the top level, as the shapes' march reads),
   with the base texture's sampler.
@@ -599,12 +606,21 @@ addition of NVForever's own until observer check 250 answers it [hypothesis: it 
   and the layers past the folded ones when the texture repeat does not divide the cell
   (none at the game's 256). A layer drawn on its own over a shifted folded base does not
   follow the base's shift: a seam that only those configurations show.
+- [design] **Not with anti-tiling.** While Terrain anti-tiling is on, a quadrant draws no
+  parallax (its pipeline key leaves it off): anti-tiling reads every texture at two or three
+  offset and turned places taken from the world, and a march at the plain coordinate would
+  measure other texels than the ones drawn. Sharing the taps would multiply every march
+  step's reads by the taps' count; left for a later stage.
 - [design] **The switch.** Settings row Terrain parallax (`terrain-parallax`, Graphics ›
   Detail and Distance), off by default and in both presets until its cost is measured
-  (whether a look turns it on is the maintainer's call); greyed while Authored materials is
-  off; `--graphics-only terrain-parallax`. A folded material without a height map keeps
-  its old pipeline with the switch on, so without a ground pack nothing changes (smoke
-  `terrain-parallax-no-pack`).
+  (whether a look turns it on is the maintainer's call); greyed while the Authored materials
+  row is off, and while the row is on but the run started without it (no height map loads
+  until the next start: "After a restart"); `--graphics-only terrain-parallax`. A folded
+  material without a height map keeps its old pipeline with the switch on and is not
+  touched when the switch flips, so without a ground pack nothing changes, the mesh terrain
+  blend's captures included (smoke `terrain-parallax-no-pack`). With a pack, the flips edit
+  only the materials with height maps, and the mesh terrain blend passes over those edits
+  (`PipelineOnlyEdits`): nothing it captures reads the switch.
 - **Not done in stage 1:** a generated-ground field test that judges a readback (shift on a
   tilted view, none head-on: the PBR field builds its own panels, not the landscape); the
   frame-time cost with and without the switch at a ground-heavy and a layer-heavy place;

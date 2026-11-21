@@ -2595,7 +2595,7 @@ forbid = [
 
 [[scenario]]
 name = "terrain-parallax-no-pack"
-source = "[design, #3322] engine/nvforever/src/terrain.rs \"Parallax\", docs/spec-notes/pbr-materials.md \"Terrain layers: parallax\": the Terrain parallax switch (off by default and in both presets) on from the start and flipped off and on while the game runs, over data with no ground height maps: the folded materials record it, none holds a height map, and no TERRAIN_PARALLAX pipeline is ever asked for, so the picture is the one without the switch. What a ground pack's relief looks like needs a generated ground set (no aid yet: the PBR field builds its own panels, not the landscape)"
+source = "[design, #3322] engine/nvforever/src/terrain.rs \"Parallax\", docs/spec-notes/pbr-materials.md \"Terrain layers: parallax\": the Terrain parallax switch (off by default and in both presets) on from the start, beside Terrain height blending so the folded main-pass pipelines can be told apart in the pipeline log (they carry TERRAIN_HEIGHT_BLEND), and flipped off and on while the game runs, over data with no ground height maps: no folded material holds a height map, none is edited by the flips, and no folded pipeline carries TERRAIN_PARALLAX, so the picture is the one without the switch. What a ground pack's relief looks like needs a generated ground set (no aid yet: the PBR field builds its own panels, not the landscape)"
 areas = ["renderer", "graphics", "terrain", "settings"]
 paths = [
   "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvforever/src/terrain_surface.rs",
@@ -2603,20 +2603,21 @@ paths = [
   "engine/nvf-play/src/settings_layout.rs", "crates/nvf-settings-layout/src/lib.rs",
   "engine/nvf-assets/src/texture.rs", "engine/nvf-assets/src/authored.rs",
 ]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_DEFS = "1", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:terrain-parallax,13:terrain-parallax" }
-args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "terrain-parallax"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_PIPELINE_DEFS = "1", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:terrain-parallax,13:terrain-parallax" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "terrain-height-blend,terrain-parallax"]
 run_seconds = 20
 expect = [
   "authored materials: on",
   { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "the GPU folds the layers (bindless), so the folded materials are the ones the switch reaches" },
+  { re = 'pipeline \d+ shader-defs: .*TERRAIN_HEIGHT_BLEND', label = "a folded terrain main-pass pipeline was logged with its definitions (so the absence of TERRAIN_PARALLAX below means something)" },
 ]
 order = [[
-  { re = 'graphics: light glow, terrain parallax$', label = "the switch is on from the start (Authored materials on, as --graphics-only leaves it)" },
+  { re = 'graphics: light glow, terrain height blending, terrain parallax$', label = "the switch is on from the start (Authored materials on, as --graphics-only leaves it)" },
   { re = 'terrain: parallax on \(\d+ folded quadrant materials, 0 with height maps, 0 changed', label = "on from the first frame: every material made with it, none holding a height map" },
   "settings: terrain-parallax off",
-  { re = 'terrain: parallax off \([1-9]\d* folded quadrant materials, 0 with height maps, [1-9]\d* changed', label = "switching off flipped the loaded folded materials" },
+  { re = 'terrain: parallax off \([1-9]\d* folded quadrant materials, 0 with height maps, 0 changed', label = "switching off: the loaded folded materials exist, none is edited (no height map, no key to change)" },
   "settings: terrain-parallax on",
-  { re = 'terrain: parallax on \([1-9]\d* folded quadrant materials, 0 with height maps, [1-9]\d* changed', label = "flipped on again" },
+  { re = 'terrain: parallax on \([1-9]\d* folded quadrant materials, 0 with height maps, 0 changed', label = "on again, still nothing edited" },
 ]]
 forbid = [
   { re = 'shader-defs: .*TERRAIN_PARALLAX', label = "no material without a height map takes the parallax pipeline" },

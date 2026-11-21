@@ -209,7 +209,7 @@ fn bake_copy(material: &mut TerrainMaterial) {
     for normal in [&mut e.normal0, &mut e.normal1, &mut e.normal2, &mut e.normal3, &mut e.normal4, &mut e.normal5] { *normal = None; }
     for height in [&mut e.height0, &mut e.height1, &mut e.height2, &mut e.height3, &mut e.height4, &mut e.height5] { *height = None; }
     e.parallax = false;
-    e.parallax_depth = 0.0;
+    e.parallax_depths = [0.0; crate::terrain::FOLDED_LAYERS];
     material.base.fog_enabled = false;
     material.base.normal_map_texture = None;
 }
@@ -1452,9 +1452,18 @@ pub fn refresh_captures(
     ordinary: Res<Assets<nvf_assets::NifMaterial>>,
     folded_events: Option<Res<Messages<AssetEvent<TerrainMaterial>>>>,
     ordinary_events: Option<Res<Messages<AssetEvent<nvf_assets::NifMaterial>>>>,
+    mut pipeline_only: Option<ResMut<crate::terrain::PipelineOnlyEdits>>,
     mut cursors: Local<CaptureEvents>,
 ) {
-    let folded_changed: HashSet<_> = folded_events.as_ref().map(|e| cursors.folded.read(e).filter_map(modified_asset).collect()).unwrap_or_default();
+    // #3322 review: the parallax switch's edits change no input of a capture (the bake
+    // copy and the detail never read it): passed over, one event per edit; a material
+    // edited otherwise in the same frame sends its own event and is still refreshed.
+    let mut surface_edit = |event: &AssetEvent<TerrainMaterial>| {
+        let id = modified_asset(event)?;
+        let pipeline = matches!(event, AssetEvent::Modified { .. }) && pipeline_only.as_deref_mut().is_some_and(|p| p.take(id));
+        (!pipeline).then_some(id)
+    };
+    let folded_changed: HashSet<_> = folded_events.as_ref().map(|e| cursors.folded.read(e).filter_map(&mut surface_edit).collect()).unwrap_or_default();
     let ordinary_changed: HashSet<_> = ordinary_events.as_ref().map(|e| cursors.ordinary.read(e).filter_map(modified_asset).collect()).unwrap_or_default();
     for mut cell in &mut cells {
         // Component edits/replacement also refresh the derived dependency list. Preserve

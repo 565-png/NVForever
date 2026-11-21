@@ -33,14 +33,14 @@
 // Without it both paths above are as they were.
 //
 // TERRAIN_PARALLAX (the Terrain parallax switch, terrain.rs "Parallax", [design, #3322];
-// only for a material that holds an authored height map): before the surface is set up,
-// one march over the layers' heights, blended by the ordered shares of the painted
-// opacity x the layer texture's alpha (read once at the plain coordinate), the base and a
-// layer without a height map counting as flat (PARALLAX_FLAT), moves the texture
-// coordinate; then every
-// texture (the base's and the layers', diffuse and normal map, anti-tiled or not) is read at
-// the one moved coordinate. Faded out with distance (the material's values), none on a
-// surface seen head-on. Only the main pass; without it every path above is as it was.
+// only for a material that holds an authored height map, and never with TERRAIN_ANTI_TILING,
+// whose taps the march does not share): before the surface is set up, one march over the
+// blended depth, each layer's share (ordered shares of the painted opacity x the layer
+// texture's alpha, read once at the plain coordinate) x its own set's depth x (1 - its
+// height), the base and a layer without a height map adding no depth, moves the texture
+// coordinate; then every texture (the base's and the layers', diffuse and normal map) is
+// read at the one moved coordinate. Faded out with distance (the material's values), none
+// on a surface seen head-on. Only the main pass; without it every path above is as it was.
 
 import bevy_pbr::{
     render::forward_io::{VertexOutput, FragmentOutput},
@@ -78,9 +78,13 @@ struct TerrainLayers {
     tile: vec4<f32>,
     // Start-up comparison parameters: depth, gain, source (global 0 / local 1), reserved.
     height: vec4<f32>,
-    // Parallax: the march's depth (texture-coordinate units, 0 without a height map), its
-    // most steps, the distances its fade starts and ends at (terrain.rs PARALLAX_FADE).
+    // Parallax: the march's scale (the deepest held layer's depth, texture-coordinate
+    // units, 0 without a height map), its most steps, the distances its fade starts and
+    // ends at (terrain.rs PARALLAX_FADE).
     parallax: vec4<f32>,
+    // Each layer's own depth (0 without a height map): layers 0 to 3, then 4 and 5.
+    depths_low: vec4<f32>,
+    depths_high: vec4<f32>,
 }
 
 // The extension's index table (indices 50-69 of TerrainLayers' bindless attribute).
@@ -330,15 +334,19 @@ fn layer_normal(k: u32, instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
 // Parallax's reads and march [design, #3322]. Explicit levels only (the march loops and
 // branches per fragment): the level from the footprint taken at the top of fragment(),
 // log2 of texture-coordinate units per pixel, and each texture's own size.
-// The height of the base and of a layer without a height map: flat at the surface (1, the
-// top of the 0 low to 1 high range), so it adds no depth: the shift falls to nothing as
-// the layers with height maps fade out, with no jump at their edges or at a quadrant drawn
-// without folded layers (terrain.rs "Parallax").
-@if(TERRAIN_PARALLAX) const PARALLAX_FLAT: f32 = 1.0;
-
 @if(TERRAIN_PARALLAX) fn parallax_values(instance_index: u32) -> vec4<f32> {
     @if(BINDLESS) return terrain_layers[terrain_indices[material_slot(instance_index)].layers].parallax;
     @if(!BINDLESS) return terrain_layer_values.parallax;
+}
+
+// Each layer's depth over the march's scale (0 for a layer without a height map), so a
+// layer moves the coordinate as far as its own set's depth asks whatever the deepest layer
+// of its quadrant is: the same layer joins up across a quadrant edge.
+@if(TERRAIN_PARALLAX) fn parallax_scales(instance_index: u32, depth: f32) -> array<f32, 6> {
+    @if(BINDLESS) let l = terrain_layers[terrain_indices[material_slot(instance_index)].layers];
+    @if(!BINDLESS) let l = terrain_layer_values;
+    let s = 1.0 / max(depth, 1e-6);
+    return array<f32, 6>(l.depths_low.x * s, l.depths_low.y * s, l.depths_low.z * s, l.depths_low.w * s, l.depths_high.x * s, l.depths_high.y * s);
 }
 
 @if(TERRAIN_PARALLAX) fn parallax_level(size: vec2<u32>, footprint: f32) -> f32 {
@@ -399,20 +407,19 @@ fn layer_normal(k: u32, instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
     }
 }
 
-// The march's depth (1 - height) of the blended surface at `uv`: the base's share (index 0)
-// and each of the `n` layers' (index k + 1) by its height map's height or PARALLAX_FLAT.
-@if(TERRAIN_PARALLAX) fn parallax_depth_at(instance_index: u32, uv: vec2<f32>, w: array<f32, 7>, n: u32, bits: u32, footprint: f32) -> f32 {
-    var height = w[0] * PARALLAX_FLAT;
+// The march's depth of the blended surface at `uv`, on the march's scale: each of the `n`
+// layers' share (index k + 1) x its scale x (1 - its height map's height). The base and a
+// layer without a height map (scale 0) add none: flat at the surface, so the shift falls to
+// nothing as the layers with height maps fade out, with no jump at their edges or at a
+// quadrant drawn without folded layers (terrain.rs "Parallax").
+@if(TERRAIN_PARALLAX) fn parallax_depth_at(instance_index: u32, uv: vec2<f32>, w: array<f32, 7>, n: u32, scale: array<f32, 6>, footprint: f32) -> f32 {
+    var depth = 0.0;
     for (var k = 0u; k < n; k += 1u) {
-        if w[k + 1u] > 0.0 {
-            var h = PARALLAX_FLAT;
-            if (bits & (1u << k)) != 0u {
-                h = layer_height(k, instance_index, uv, footprint);
-            }
-            height += w[k + 1u] * h;
+        if w[k + 1u] > 0.0 && scale[k] > 0.0 {
+            depth += w[k + 1u] * scale[k] * (1.0 - layer_height(k, instance_index, uv, footprint));
         }
     }
-    return 1.0 - height;
+    return depth;
 }
 
 // How far the texture coordinate `uv` moves: Bevy's steep parallax with the occlusion
@@ -436,10 +443,10 @@ fn layer_normal(k: u32, instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
         }
     }
     let w = terrain_ordered_shares(paint, n);
-    let bits = (layer_counts(instance_index).y >> 8u) & 0x3fu;
+    let scale = parallax_scales(instance_index, values.x);
     var relief = false;
     for (var k = 0u; k < n; k += 1u) {
-        if w[k + 1u] > 0.0 && (bits & (1u << k)) != 0u {
+        if w[k + 1u] > 0.0 && scale[k] > 0.0 {
             relief = true;
         }
     }
@@ -455,15 +462,15 @@ fn layer_normal(k: u32, instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
     let delta = values.x * fade * layer_depth * Vt.xy * vec2(1.0, -1.0) / steepness;
     var shift = vec2(0.0);
     var current = 0.0;
-    var depth = parallax_depth_at(instance_index, uv, w, n, bits, footprint);
+    var depth = parallax_depth_at(instance_index, uv, w, n, scale, footprint);
     for (var i = 0; depth > current && i <= i32(layer_count); i += 1) {
         current += layer_depth;
         shift += delta;
-        depth = parallax_depth_at(instance_index, uv + shift, w, n, bits, footprint);
+        depth = parallax_depth_at(instance_index, uv + shift, w, n, scale, footprint);
     }
     let previous = shift - delta;
     let next_depth = depth - current;
-    let previous_depth = parallax_depth_at(instance_index, uv + previous, w, n, bits, footprint) - current + layer_depth;
+    let previous_depth = parallax_depth_at(instance_index, uv + previous, w, n, scale, footprint) - current + layer_depth;
     let gap = next_depth - previous_depth;
     let weight = select(0.0, next_depth / gap, abs(gap) > 1e-6);
     return mix(shift, previous, weight);
@@ -524,9 +531,7 @@ fn fragment(
     var in = vertex;
     // Anti-tiling's footprint first, while every fragment of the quad runs (screen
     // derivatives; nothing has been discarded or branched on yet).
-    @if(TERRAIN_ANTI_TILING && !TERRAIN_PARALLAX) let fp = terrain_footprint(in.world_position, layer_repeat(in.instance_index), standard_material(in.instance_index).uv_transform);
-    // With parallax the footprint's place moves with the texture coordinate (below).
-    @if(TERRAIN_ANTI_TILING && TERRAIN_PARALLAX) var fp = terrain_footprint(in.world_position, layer_repeat(in.instance_index), standard_material(in.instance_index).uv_transform);
+    @if(TERRAIN_ANTI_TILING) let fp = terrain_footprint(in.world_position, layer_repeat(in.instance_index), standard_material(in.instance_index).uv_transform);
     // Parallax's footprint, likewise before any branch: log2 of texture-coordinate units per
     // pixel at the plain coordinate (the one worked out below), with the view's mip bias.
     @if(TERRAIN_PARALLAX) var parallax_footprint = 0.0;
@@ -578,12 +583,10 @@ fn fragment(
     }
     // Parallax: the coordinate moved before the surface is set up, so the base's read by the
     // standard set-up and every later read take the moved place (the landscape's texture
-    // transform is the identity, terrain.rs tests; anti-tiling's place, world over the
-    // repeat, runs the same way as the mesh's over the tile).
+    // transform is the identity, terrain.rs tests). Never with anti-tiling (terrain.rs
+    // `TerrainLayersKey`), whose reads take their place from the world, not from `in.uv`.
     @if(TERRAIN_PARALLAX && VERTEX_UVS_A && VERTEX_TANGENTS) {
-        let parallax_uv_shift = parallax_shift(in.instance_index, in.uv, in.world_position.xyz, calculate_tbn_mikktspace(in.world_normal, in.world_tangent), opacity, min(layer_counts(in.instance_index).x, 6u), parallax_footprint);
-        in.uv += parallax_uv_shift;
-        @if(TERRAIN_ANTI_TILING) fp.uv += parallax_uv_shift;
+        in.uv += parallax_shift(in.instance_index, in.uv, in.world_position.xyz, calculate_tbn_mikktspace(in.world_normal, in.world_tangent), opacity, min(layer_counts(in.instance_index).x, 6u), parallax_footprint);
     }
 
     @if(!TERRAIN_ANTI_TILING) var pbr_input = pbr_input_from_standard_material(in, is_front);

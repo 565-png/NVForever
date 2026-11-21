@@ -1267,12 +1267,13 @@ fn register_graphics(app: &mut App) {
             |w| w.resource::<Graphics>().terrain_anti_tiling,
             |w, on| w.resource_mut::<Graphics>().terrain_anti_tiling = on,
         ),
-        // #3322: needs Authored materials (nvf_settings_layout NEEDS), whose height maps it
-        // draws; switched while the game runs (terrain.rs `sync_parallax`).
+        // #3322: needs Authored materials (nvf_settings_layout NEEDS, for the next start) and
+        // the run's state of it (`parallax_status`), whose height maps it draws; switched
+        // while the game runs (terrain.rs `sync_parallax`).
         (
             "terrain-parallax",
             "Terrain parallax",
-            "On: ground textures a texture pack gives height maps for (textures\\pbr\\) show depth near you, for some GPU time. Without such a pack nothing changes. Not in the original.",
+            "On: ground textures a texture pack gives height maps for (textures\\pbr\\) show depth near you, for some GPU time. Without such a pack nothing changes.",
             "--graphics-only",
             |w| w.resource::<Graphics>().terrain_parallax,
             |w, on| w.resource_mut::<Graphics>().terrain_parallax = on,
@@ -1340,7 +1341,19 @@ fn register_graphics(app: &mut App) {
     for (key, label, note, switches, get, set) in switches {
         add_setting(app, Setting { key, group: GROUP_GRAPHICS, label, note, switches, get, set, slider: None });
     }
+    nvf_play::settings::set_disabled_status(app, "terrain-parallax", |w| parallax_status(nvf_assets::authored::enabled(), w.get_resource::<Graphics>().is_some_and(|g| g.authored_materials)));
 }
+
+/// The Terrain parallax row's status while the run's Authored materials state (`session`,
+/// nvf_assets `authored::enabled`, fixed at the start) is off but its row (`row`) is on: no
+/// height map can load until the next start [design, #3322 review]. With the row off the
+/// shared NEEDS rule says why instead.
+pub(crate) fn parallax_status(session: bool, row: bool) -> Option<&'static str> {
+    (!session && row).then_some(PARALLAX_RESTART)
+}
+
+/// What the Terrain parallax row says while Authored materials waits for the next start.
+pub(crate) const PARALLAX_RESTART: &str = "After a restart (Authored Materials)";
 
 /// The Authored materials row's note (#2981): it takes effect at the next start, as the run's
 /// state is fixed before the first material (main.rs).
@@ -2915,6 +2928,26 @@ dlss-model=Preset K
         assert!(settings.list().iter().all(|s| !s.note.contains("--")), "no Graphics row's note names a switch");
         assert_eq!(nvf_play::settings::note_switches(FPS_COUNTER_SWITCHES), ["--fps"]);
         assert!(nvf_play::settings::note_switches(FPS_SPLIT_SWITCHES).is_empty());
+    }
+
+    /// #3322 review: the Terrain parallax row follows the run's Authored materials state:
+    /// greyed with a restart note while the row is on but the run started without it; the
+    /// shared NEEDS rule while the row is off; free while both are on.
+    #[test]
+    fn the_terrain_parallax_row_waits_for_a_restart_of_authored_materials() {
+        assert_eq!(parallax_status(false, true), Some(PARALLAX_RESTART));
+        assert_eq!(parallax_status(true, true), None);
+        assert_eq!(parallax_status(false, false), None, "the NEEDS rule says it");
+        assert_eq!(parallax_status(true, false), None, "the NEEDS rule says it");
+        assert!(PARALLAX_RESTART.len() <= 40);
+        let mut app = rows_app();
+        let settings = app.world().resource::<nvf_play::settings::Settings>();
+        let i = row(&app, "terrain-parallax");
+        assert_eq!(settings.disabled_status(app.world(), i), None, "Authored materials on, as this run's");
+        app.world_mut().resource_mut::<Graphics>().authored_materials = false;
+        let settings = app.world().resource::<nvf_play::settings::Settings>();
+        assert_eq!(settings.disabled_status(app.world(), i), Some("Needs Authored Materials."));
+        assert!(!settings.list()[i].note.contains("original"), "whether the original draws relief is a hypothesis");
     }
 
     /// #2661: the mesh terrain blend's row stands among the Graphics switches, off in a
