@@ -3466,3 +3466,20 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the room side while strafing past, to see whether the streaks move with the view.
      Streaks moving with the view as bright as the frame agree with ours; a pane that is
      only a faint grey film, or nothing, says the reflection is weighted by alpha.
+
+## Added 2026-11-21 (Dead Money's hologram colours, #3017)
+
+250. **How does a Dead Money hologram look in each threat state, and does its membrane
+     fade with its flicker?** (P2; #3017, effect-shaders.md §4, §5, §9.) The three shaders
+     (`NVDLC01HologramNeutral` blue, `NVDLC01HologramAttention` yellow,
+     `NVDLC01HologramAggressive` red) are additive membranes with "Edge Effect Inverse"
+     [observed: the maintainer's decode in #3017]. Ours since #3017: the edge darkens the
+     rim instead of adding a pale one, the membrane stays on through SetActorAlpha and
+     fades with the actor's alpha (gone at 0), and two script-played shaders on one
+     hologram are both drawn [hypothesis, each]. In the Sierra Madre casino (or the Villa),
+     take one 1280 x 720 frame of one hostile hologram calm (blue, the player beyond 600
+     units), noticing (yellow, within 600) and attacking (red); then (a) whether the rim
+     of each is darker or brighter than the middle; (b) during a flicker (the hologram
+     blinks out), whether the coloured glow stays visible while the body is gone; (c) after
+     a save loaded with the hologram in combat (its ability script plays the red shader
+     without stopping the blue one), whether one colour shows or a blue-red mix.

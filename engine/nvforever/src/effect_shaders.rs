@@ -8,7 +8,8 @@
 //!   gets up to two overlays drawn on the same surface (its mesh, and its skin when it
 //!   has one): the fill (texture × colour, panned by the texture speed) and the edge
 //!   (the edge colour, faded in towards the outline by the NIF material's view-angle
-//!   falloff). Blended meshes (beards, lashes) get none: the overlays do not carry the
+//!   falloff; an "Edge Effect Inverse" over an additive fill darkens instead, #3017).
+//!   Blended meshes (beards, lashes) get none: the overlays do not carry the
 //!   mesh's texture alpha; nor do refracting ones (heat haze), which show no surface. Alpha-tested meshes (a robot's body, cut-out hair) get copies
 //!   cut by their own texture's alpha at their own cut (the holes test turned round,
 //!   `nvf_assets::nif_material` "Holes"; none when the shader has holes of its own),
@@ -31,9 +32,13 @@
 //! - **Ending**: a script's play with a duration ends after max(duration, one cycle),
 //!   without one when stopped; an effect's when the effect ends.
 //! - **Actor alpha**: the meshes of an actor with an alpha below 1 get blended copies of
-//!   their materials with the alpha multiplied in; 1 gives the originals back.
+//!   their materials with the alpha multiplied in; 1 gives the originals back. Their
+//!   effect shaders' overlays stay on (covered as the mesh's own material) and fade with
+//!   the alpha (#3017).
 //!
 //! Log: `effect shader: <EDID> on <who> (…)` when one starts, `… ends (…)` when it ends,
+//! `effect shader: <EDID> on <who> fades with its actor to <a>` when the actor's alpha
+//! changes under it,
 //! `effect shader: <EDID> holes on <n> meshes of <who> (…)`, `effect shader: <EDID> puts
 //! <n> add-on models of DEBR <id> on <who> (…)`, `actor alpha: <who> <a> (<n> meshes)`,
 //! and at exit `effect shaders summary: …`.
@@ -43,7 +48,7 @@ use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
 use fnv_game::data::MagicEffectDef;
 use fnv_sim::FormId;
-use fnv_world::effect_shader::{blend, Addons, EffectShader, Holes};
+use fnv_world::effect_shader::{blend, Addons, EffectShader, Holes, EDGE_INVERSE};
 use nvf_assets::material_anim::RigMaterials;
 use nvf_assets::model::ModelCtx;
 use nvf_assets::nif_material::nif_material;
@@ -127,6 +132,7 @@ impl Active {
             holes_texture: None,
             holed: HashMap::new(),
             addons: Vec::new(),
+            faded_by: 1.0,
         }
     }
 }
@@ -174,6 +180,8 @@ pub(crate) struct Active {
     /// The add-on models put on the reference: (entity above the model, rig root that
     /// fades it); empty until the reference is drawn.
     addons: Vec<(Entity, Option<Entity>)>,
+    /// The actor alpha the overlays were last faded by (1: none), for the log (#3017).
+    faded_by: f32,
 }
 
 impl Active {
@@ -365,6 +373,39 @@ fn edge_falloff(fall_off: f32) -> Vec4 {
     Vec4::new(1.0, 2.0 * half - 1.0, 0.0, 1.0)
 }
 
+/// Whether the edge darkens the mesh rather than lighting it: "Edge Effect Inverse" makes
+/// the edge's blend "inverted relative to the fill effect", so with an additive fill the
+/// edge darkens "rather than lighten[s] the mesh" [documented: GECK wiki EffectShader,
+/// Edge Effect]. Only that case, the wiki's example, is drawn inverted; with any other
+/// fill blend the edge stays as it was [design: the wiki does not say what the inverse of
+/// an alpha-blended or multiplied fill is] (effect-shaders.md §4, #3017).
+fn edge_darkens(s: &EffectShader) -> bool {
+    s.flags & EDGE_INVERSE != 0 && matches!(alpha_mode(s), AlphaMode::Add)
+}
+
+/// The edge overlay: the edge colour at the edge alpha, faded in towards the outline. An
+/// inverse edge over an additive fill is drawn multiplied by 1 - colour, so where it
+/// shows the mesh behind loses the edge colour times the alpha: destination × (1 - alpha
+/// × colour), the nearest the renderer's blends come to subtracting the colour [design:
+/// Bevy has no subtractive blend; on a bright surface the two agree, on a dark one
+/// subtracting darkens more].
+fn edge_material(s: &EffectShader) -> NifMaterial {
+    let mut m = overlay_material(s, s.edge_color, None, Some(edge_falloff(s.edge_fall_off)));
+    if edge_darkens(s) {
+        let c = linear(s.edge_color);
+        m.base.base_color = Color::linear_rgba(1.0 - c.red, 1.0 - c.green, 1.0 - c.blue, 0.0);
+        m.base.alpha_mode = AlphaMode::Multiply;
+    }
+    m
+}
+
+/// An overlay's alpha: the record's cycle at this moment times its actor's alpha
+/// (`SetActorAlpha`; none: 1), so a membrane fades out with the actor it covers
+/// [hypothesis: effect-shaders.md §5, #3017].
+fn overlay_alpha(cycle: f32, actor_alpha: Option<f32>) -> f32 {
+    cycle * actor_alpha.map_or(1.0, |a| a.clamp(0.0, 1.0))
+}
+
 fn overlay_material(s: &EffectShader, color: [u8; 3], texture: Option<Handle<Image>>, falloff: Option<Vec4>) -> NifMaterial {
     let mut m = nif_material(StandardMaterial {
         base_color: Color::from(linear(color)).with_alpha(0.0),
@@ -506,7 +547,7 @@ fn play(
             m
         };
         let fill = (s.has_membrane() && shows(&s.fill)).then(|| models.materials.add(with_holes(overlay_material(&s, s.fill_color, texture, None))));
-        let edge = (s.has_membrane() && shows(&s.edge)).then(|| models.materials.add(with_holes(overlay_material(&s, s.edge_color, None, Some(edge_falloff(s.edge_fall_off))))));
+        let edge = (s.has_membrane() && shows(&s.edge)).then(|| models.materials.add(with_holes(edge_material(&s))));
         let until = duration.map(|d| (d as f32).max(s.cycle()));
         st.played += 1;
         info!(
@@ -514,7 +555,11 @@ fn play(
             s.edid,
             game.data.name(FormId(on)),
             if fill.is_some() { "fill" } else { "no fill" },
-            if edge.is_some() { " and edge" } else { "" },
+            match (edge.is_some(), edge_darkens(&s)) {
+                (true, true) => " and darkening edge",
+                (true, false) => " and edge",
+                (false, _) => "",
+            },
             match (until, k) {
                 (Some(u), _) => format!("for {u:.1} s"),
                 (None, Source::Script(_)) => "until stopped".to_string(),
@@ -522,7 +567,7 @@ fn play(
                 (None, Source::Perk(..)) => "while the player aims (a companion perk)".to_string(),
             }
         );
-        st.active.insert(k, Active { on, shader: s, since: now, until, persist, fill, edge, cut: HashMap::new(), covered: HashMap::new(), coverage_state: HashMap::new(), camera_sees: None, holes_texture, holed: HashMap::new(), addons: Vec::new() });
+        st.active.insert(k, Active { on, shader: s, since: now, until, persist, fill, edge, cut: HashMap::new(), covered: HashMap::new(), coverage_state: HashMap::new(), camera_sees: None, holes_texture, holed: HashMap::new(), addons: Vec::new(), faded_by: 1.0 });
     }
 
     // [documented: #1323] Ends and starts must run even when no shader remains to draw.
@@ -673,15 +718,23 @@ fn play(
             let (scale, alpha) = ad.look(t, None);
             addon_look(&a.addons, scale, alpha, &mut transforms, &mut fades);
         }
+        // #3017: the overlays fade with their actor's alpha (Dead Money's holograms flicker
+        // theirs between 0, 0.7 and 1 while their membrane plays).
+        let actor_alpha = game.script_looks.alpha.get(&FormId(a.on)).copied();
+        let faded_by = overlay_alpha(1.0, actor_alpha);
+        if faded_by != a.faded_by {
+            info!("effect shader: {} on {} fades with its actor to {faded_by:.2}", a.shader.edid, game.data.name(FormId(a.on)));
+            a.faded_by = faded_by;
+        }
         // The cut copies (made only for shaders without holes) follow their originals.
         let fills = a.fill.iter().chain(a.cut.values().filter_map(|c| c[0].as_ref()));
         let [u, v] = a.shader.fill_speed;
         let uv = bevy::math::Affine2::from_translation(Vec2::new((u * t).fract(), (v * t).fract()));
         for fill in fills {
-            animate_material(&mut models.materials, fill, holes, Some(a.shader.fill.alpha(t, a.persist)), Some(uv));
+            animate_material(&mut models.materials, fill, holes, Some(overlay_alpha(a.shader.fill.alpha(t, a.persist), actor_alpha)), Some(uv));
         }
         for edge in a.edge.iter().chain(a.cut.values().filter_map(|c| c[1].as_ref())) {
-            animate_material(&mut models.materials, edge, holes, Some(a.shader.edge.alpha(t, a.persist)), None);
+            animate_material(&mut models.materials, edge, holes, Some(overlay_alpha(a.shader.edge.alpha(t, a.persist), actor_alpha)), None);
         }
     }
 }
@@ -714,6 +767,7 @@ pub(crate) fn cover(
     body_meshes: Query<(&Mesh3d, Option<&SkinnedMesh>, &MeshMaterial3d<NifMaterial>), (Without<Overlay>, Without<RefVisual>)>,
     layers: Query<&RenderLayers>,
     drawings: Query<&nvf_assets::nif_material::MaterialOverride>,
+    see_through: Query<&Faded>,
 ) {
     let st = &mut *st;
     type Drawn<'a> = (Entity, &'a Mesh3d, Option<&'a SkinnedMesh>, &'a Handle<NifMaterial>);
@@ -750,7 +804,16 @@ pub(crate) fn cover(
             // [design, #2557] Producers can publish a plain handle before PostUpdate
             // re-derives the cloak; ownership still suppresses overlays in that gap.
             let cloaked = drawing.is_some();
-            let own = a.holed.get(&e).map_or(plain, |(original, _)| original);
+            // #3017: a mesh drawn see-through for its actor's alpha (`Faded`) is covered as
+            // its own material: its blended copy counted as a blended mesh, and every time
+            // the alpha dropped below 1 the overlays came off (a Dead Money hologram's
+            // membrane went out whenever it flickered, and stayed out at 0.7). The
+            // overlays fade with the alpha instead (`play`).
+            let own = match (a.holed.get(&e), see_through.get(e).ok()) {
+                (Some((original, _)), _) => original,
+                (None, Some(f)) => &f.original,
+                (None, None) => plain,
+            };
             let state = (own.id(), cloaked);
             if a.coverage_state.insert(e, state) == Some(state) && a.covered.contains_key(&e) {
                 continue;
@@ -1263,5 +1326,145 @@ mod tests {
         let m = cut_by(with(AlphaMode::Add, 0.0), tex.clone(), 0.5);
         assert_eq!(m.extension.holes, Vec4::new(127.5, 0.0, 1.0, 0.0));
         assert_eq!(m.extension.holes_texture, Some(tex));
+    }
+
+    /// A synthetic hologram membrane (#3017, the shape of Dead Money's three hologram
+    /// shaders without their textures): additive fill (Source Alpha / Add / Source Alpha),
+    /// "Edge Effect Inverse", fill and edge showing at full alpha from the start.
+    fn hologram_membrane(edge_color: [u8; 3]) -> EffectShader {
+        let full = fnv_world::effect_shader::AlphaCycle { full: 1.0, persistent: 1.0, ..Default::default() };
+        EffectShader {
+            form_id: 1, edid: "SyntheticHologram".into(), flags: fnv_world::effect_shader::NO_PARTICLES | EDGE_INVERSE,
+            fill_texture: None, particle_texture: None,
+            source_blend: blend::SOURCE_ALPHA, blend_op: 1, z_test: 3,
+            dest_blend: blend::SOURCE_ALPHA, fill_color: [119, 218, 255],
+            fill: full, fill_speed: [-0.5, 0.0], edge_color,
+            edge: full, edge_fall_off: 0.95,
+            particles: None, holes: None, addons: None,
+        }
+    }
+
+    /// #3017: "Edge Effect Inverse" over an additive fill darkens the mesh by the edge colour
+    /// (multiplied by 1 - colour) instead of adding a pale rim; without the flag, or over an
+    /// alpha-blended fill, the edge is added as before.
+    #[test]
+    fn an_inverse_edge_over_an_additive_fill_darkens() {
+        let red = hologram_membrane([168, 130, 131]);
+        assert!(edge_darkens(&red));
+        let m = edge_material(&red);
+        assert_eq!(m.base.alpha_mode, AlphaMode::Multiply);
+        let c = linear([168, 130, 131]);
+        let got = m.base.base_color.to_linear();
+        for (g, want) in [(got.red, 1.0 - c.red), (got.green, 1.0 - c.green), (got.blue, 1.0 - c.blue)] {
+            assert!((g - want).abs() < 1e-5, "{g} != {want}");
+        }
+        assert_eq!(got.alpha, 0.0, "the cycle sets the alpha");
+        assert_eq!(m.extension.falloff, edge_falloff(0.95), "it still shows towards the outline");
+        // No inverse flag: the edge colour is added.
+        let mut plain = red.clone();
+        plain.flags &= !EDGE_INVERSE;
+        assert!(!edge_darkens(&plain));
+        assert_eq!(edge_material(&plain).base.alpha_mode, AlphaMode::Add);
+        assert_eq!(edge_material(&plain).base.base_color.to_linear().red, c.red);
+        // An alpha-blended fill (Source Inverted Alpha) keeps its edge as it was.
+        let mut blended = red.clone();
+        blended.dest_blend = blend::SOURCE_INVERTED_ALPHA;
+        assert!(!edge_darkens(&blended));
+        assert_eq!(edge_material(&blended).base.alpha_mode, AlphaMode::Blend);
+        // The fill is never touched by the flag.
+        assert_eq!(overlay_material(&red, red.fill_color, None, None).base.alpha_mode, AlphaMode::Add);
+    }
+
+    #[test]
+    fn overlay_alpha_is_the_cycle_times_the_actor_alpha() {
+        assert_eq!(overlay_alpha(0.9, None), 0.9);
+        assert_eq!(overlay_alpha(0.9, Some(1.0)), 0.9);
+        assert!((overlay_alpha(0.9, Some(0.7)) - 0.63).abs() < 1e-6);
+        assert_eq!(overlay_alpha(0.9, Some(0.0)), 0.0);
+        assert_eq!(overlay_alpha(0.5, Some(2.0)), 0.5);
+    }
+
+    /// #3017: a Dead Money hologram flickers its actor alpha (SetActorAlpha 0, 0.7, back to 1)
+    /// while its membrane plays. The see-through copy must not count as a blended mesh: the
+    /// overlays stay on the mesh (the same entities) through every alpha and after it.
+    #[test]
+    fn a_see_through_actor_keeps_its_membrane_overlays() {
+        let mut app = App::new();
+        app.init_resource::<Assets<NifMaterial>>()
+            .init_resource::<Shaders>()
+            .init_resource::<Alphas>()
+            .add_systems(Update, (|alpha: Res<Alphas>, mut drawing: AlphaDrawing| {
+                drawing.sync(&alpha.0);
+            }, cover).chain());
+        let original = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(nif_material(StandardMaterial::default()));
+        let fill = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(nif_material(StandardMaterial::default()));
+        let reference = 0xFF00_0003;
+        let mesh = app.world_mut().spawn((RefVisual(reference), Mesh3d(Handle::default()), MeshMaterial3d(original.clone()))).id();
+        let source = Source::Script(1);
+        app.world_mut().resource_mut::<Shaders>().active.insert(source, Active::membrane_for_test(reference, fill));
+        app.update();
+        let overlays = app.world().resource::<Shaders>().active[&source].covered[&mesh].clone();
+        assert_eq!(overlays.len(), 1, "the fill covers the opaque mesh");
+        for alpha in [0.0, 0.7, 0.0, 0.7] {
+            app.world_mut().resource_mut::<Alphas>().0.insert(FormId(reference), alpha);
+            app.update();
+            assert!(app.world().get::<Faded>(mesh).is_some(), "the mesh is drawn see-through at {alpha}");
+            assert_eq!(app.world().resource::<Shaders>().active[&source].covered[&mesh], overlays, "alpha {alpha}");
+            assert!(app.world().get_entity(overlays[0]).is_ok());
+        }
+        app.world_mut().resource_mut::<Alphas>().0.clear();
+        app.update();
+        app.update();
+        assert!(app.world().get::<Faded>(mesh).is_none());
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(mesh).unwrap().0, original);
+        assert_eq!(app.world().resource::<Shaders>().active[&source].covered[&mesh], overlays);
+        // A blended mesh of its own (hair) still gets none.
+        let hair = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(nif_material(StandardMaterial { alpha_mode: AlphaMode::Blend, ..default() }));
+        let strands = app.world_mut().spawn((RefVisual(reference), Mesh3d(Handle::default()), MeshMaterial3d(hair))).id();
+        app.world_mut().resource_mut::<Alphas>().0.insert(FormId(reference), 0.7);
+        app.update();
+        assert!(app.world().resource::<Shaders>().active[&source].covered[&strands].is_empty());
+        assert_eq!(app.world().resource::<Shaders>().active[&source].covered[&mesh], overlays);
+    }
+
+    /// #3017: the overlays' alpha is the record's cycle times the actor's script alpha, and
+    /// comes back with it.
+    #[test]
+    fn membrane_overlays_fade_with_their_actors_alpha() {
+        let (mut app, _files) = crate::outfits::tests::asset_fixture();
+        app.insert_resource(crate::outfits::tests::empty_world_data());
+        let forms = Box::leak(Box::default());
+        let refs = Box::leak(Box::default());
+        let mut game = crate::outfits::tests::game(fnv_sim::World::new(forms, refs, Default::default()));
+        let on = 0xFF00_0004;
+        game.script_looks.shaders.push(fnv_game::functions::misc::ShaderPlay { on: FormId(on), shader: FormId(1), duration: None, serial: 1 });
+        let fill = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(nif_material(StandardMaterial::default()));
+        let edge = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(nif_material(StandardMaterial::default()));
+        let mut active = Active::for_test(on, hologram_membrane([164, 206, 240]), 0.0, &[]);
+        active.fill = Some(fill.clone());
+        active.edge = Some(edge.clone());
+        app.init_resource::<Shaders>()
+            .init_resource::<Time>()
+            .insert_resource(PlaybackTestGame(game))
+            .add_systems(Update, (play, cover).chain());
+        app.world_mut().resource_mut::<Shaders>().active.insert(Source::Script(1), active);
+        let alphas = |app: &App| {
+            let materials = app.world().resource::<Assets<NifMaterial>>();
+            [&fill, &edge].map(|h| materials.get(h).unwrap().base.base_color.alpha())
+        };
+        app.update();
+        assert_eq!(alphas(&app), [1.0, 1.0]);
+        for a in [0.7, 0.0] {
+            app.world_mut().resource_mut::<PlaybackTestGame>().0.script_looks.alpha.insert(FormId(on), a);
+            app.update();
+            for got in alphas(&app) {
+                assert!((got - a).abs() < 1e-6, "actor alpha {a}: overlay alpha {got}");
+            }
+            assert_eq!(app.world().resource::<Shaders>().active[&Source::Script(1)].faded_by, a);
+        }
+        app.world_mut().resource_mut::<PlaybackTestGame>().0.script_looks.alpha.clear();
+        app.update();
+        assert_eq!(alphas(&app), [1.0, 1.0]);
+        assert!(app.world().resource::<Shaders>().active.contains_key(&Source::Script(1)), "the play goes on");
     }
 }
