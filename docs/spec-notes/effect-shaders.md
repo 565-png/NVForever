@@ -112,6 +112,17 @@ Read here as [hypothesis where marked]:
   (no fill) painted the player's hair flat orange with a bright rim and the head looked
   bald (owner's playtest, 2026-10-24; smoke `hair-under-fire`). Whether the original
   draws the membrane on hair, and through its alpha, is not known.
+- Except under a hologram colour (§9): Dead Money's hologram bodies are see-through by
+  their own materials, so this rule left them bare and their membrane never showed
+  [observed: `effect shaders summary: … 0 overlays drawn` in smoke runs of 2026-11-20
+  with `NVDLC01HologramNeutral` playing on HoloGalREF, HoloDudeREF, VaultHoloCREF and
+  NVDLC01HologramVendor2REF; `covers 8 meshes of CasinoHologramB` with no overlay in the
+  run of 2026-11-21]. Under one of the six hologram colours a blended or cut-out mesh
+  with a texture gets overlays cut where that texture's alpha is below its own cut or
+  8/255, one without a texture gets them whole [design: the membrane is the hologram's
+  look; `effect_shaders.rs::hologram_cover`]. The `covers` line counts the meshes given
+  overlays and those left bare: `(overlays on <k>; none on <b> blended or cut out, <c>
+  cloaked)`.
 - Blend: destination 2 (One) and 5 (Source Alpha) are drawn additively, 6 (Source
   Inverted Alpha) as ordinary blending, 9 (Dest Colour) multiplied [design over the
   documented blend factors; 5 + 5 is "source × alpha + destination × alpha", nearest to
@@ -197,6 +208,13 @@ Read here as [hypothesis where marked]:
   1 [documented: a code finding in `effect_shaders.rs::cover` at 069ef9bde, not seen on
   screen]. With the actor see-through, the overlays draw over a body that writes no
   depth, so both faces of the double-sided overlay show [design].
+- A see-through copy made while a fade (`nvf_play::fade`) draws the mesh is made from
+  the fade's copy, which the fade removes at its end, putting the mesh's own material
+  back. From then on that material is the copy's original: the next alpha's copy comes
+  from it and the release gives it back. Before #3017 the release gave the mesh the
+  removed copy, and the membrane's coverage stayed judged on it [documented: a code
+  finding in `effect_shaders.rs::AlphaDrawing::sync`]. The lobby starlet fades in for
+  2 s while it starts to flicker [observed: smoke run of 2026-11-21].
 - **Reset3DState** (12 calls) [documented: GECK wiki]: "clears any saved data
   regarding a reference's animation/Havok state", mainly to reset triggered traps; it
   does not move the reference back. Here: the reference's script animation state is
@@ -411,8 +429,11 @@ What runs here:
   drawn together, but for the hologram colours below [design:
   `misc::play_magic_shader_visuals`, `effect_shaders.rs::play`].
   So each threat step ends the old colour (`… ends (stopped)`) before the new one
-  starts; that the machine moves on these references in a running game is not yet seen
-  [hypothesis; smoke `dead-money-hologram-threat`].
+  starts. The machine moves in a running game [observed: smoke
+  `dead-money-hologram-threat`, run of 2026-11-21: CasinoHologramB yellow 0.3 s after
+  the player was put 450 units away, red about 7 s later with its StartCombat, yellow
+  about 7 s after the player was put 1500 units away, blue 7 s after that; one colour
+  in its set at every step].
 - The ability's replay plays Aggressive over a Neutral it never stopped, so in combat
   after a load both are played on one hologram; out of combat it plays Neutral over
   whatever colour a code holder's OnLoad has just restored. The script's shape suggests

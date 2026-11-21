@@ -10,7 +10,8 @@
 //!   (the edge colour, faded in towards the outline by the NIF material's view-angle
 //!   falloff; an "Edge Effect Inverse" over an additive fill darkens instead, #3017).
 //!   Blended meshes (beards, lashes) get none: the overlays do not carry the
-//!   mesh's texture alpha; nor do refracting ones (heat haze), which show no surface. Alpha-tested meshes (a robot's body, cut-out hair) get copies
+//!   mesh's texture alpha (but under a hologram colour, #3017: `hologram_cover`); nor do
+//!   refracting ones (heat haze), which show no surface. Alpha-tested meshes (a robot's body, cut-out hair) get copies
 //!   cut by their own texture's alpha at their own cut (the holes test turned round,
 //!   `nvf_assets::nif_material` "Holes"; none when the shader has holes of its own),
 //!   #1717. The player's are the meshes of its
@@ -138,6 +139,7 @@ impl Active {
             addons: Vec::new(),
             faded_by: 1.0,
             logged_fade: 1.0,
+            hologram: false,
         }
     }
 }
@@ -190,6 +192,9 @@ pub(crate) struct Active {
     pub(crate) faded_by: f32,
     /// `faded_by` as last logged with the live overlays (`cover`).
     logged_fade: f32,
+    /// One of the hologram colours (`fnv_game::functions::misc::hologram_colour`): its
+    /// blended and cut-out meshes are covered too (`hologram_cover`, #3017).
+    pub(crate) hologram: bool,
 }
 
 impl Active {
@@ -571,6 +576,7 @@ fn play(
         let fill = (s.has_membrane() && shows(&s.fill)).then(|| models.materials.add(with_holes(overlay_material(&s, s.fill_color, texture, None))));
         let edge = (s.has_membrane() && shows(&s.edge)).then(|| models.materials.add(with_holes(edge_material(&s))));
         let until = duration.map(|d| (d as f32).max(s.cycle()));
+        let hologram = fnv_game::functions::misc::hologram_colour(&game.data.load_order, Some(&s.edid), FormId(shader)).is_some();
         st.played += 1;
         info!(
             "effect shader: {} on {} ({}{}, {})",
@@ -589,7 +595,7 @@ fn play(
                 (None, Source::Perk(..)) => "while the player aims (a companion perk)".to_string(),
             }
         );
-        st.active.insert(k, Active { on, shader: s, since: now, until, persist, fill, edge, cut: HashMap::new(), covered: HashMap::new(), coverage_state: HashMap::new(), camera_sees: None, holes_texture, holed: HashMap::new(), addons: Vec::new(), faded_by: 1.0, logged_fade: 1.0 });
+        st.active.insert(k, Active { on, shader: s, since: now, until, persist, fill, edge, cut: HashMap::new(), covered: HashMap::new(), coverage_state: HashMap::new(), camera_sees: None, holes_texture, holed: HashMap::new(), addons: Vec::new(), faded_by: 1.0, logged_fade: 1.0, hologram });
     }
 
     // #3017: the script-played shaders on each reference, logged when the set changes
@@ -842,6 +848,8 @@ pub(crate) fn cover(
         a.covered.retain(|e, _| meshes.iter().any(|(m, ..)| m == e));
         a.coverage_state.retain(|e, _| meshes.iter().any(|(m, ..)| m == e));
         let before = a.covered.len();
+        // Meshes looked at this frame left without overlays: (blended or cut out, cloaked).
+        let mut bare = (0usize, 0usize);
         for &(e, mesh, skin, mat) in meshes {
             let drawing = drawings.get(e).ok();
             let plain = nvf_assets::nif_material::plain_material(mat, drawing);
@@ -868,14 +876,17 @@ pub(crate) fn cover(
                 }
             }
             if cloaked {
+                bare.1 += 1;
                 a.covered.insert(e, Vec::new());
                 continue;
             }
             // A blended mesh (beards, lashes) gets no overlay: drawn without the mesh's
             // texture alpha, it covered every card of the hair in the membrane's colour
             // and the head showed bald (owner's playtest, 2026-10-24). An alpha-tested
-            // one (a robot's body, #1717) gets overlays cut by its own texture.
-            let look = match materials.get(own).map(|m| cut_out_overlay(m, a.shader.holes.is_some())) {
+            // one (a robot's body, #1717) gets overlays cut by its own texture. A hologram
+            // colour covers blended and cut-out meshes too (#3017, `hologram_cover`).
+            let holes = a.shader.holes.is_some();
+            let look = match materials.get(own).map(|m| if a.hologram { hologram_cover(m, holes) } else { cut_out_overlay(m, holes) }) {
                 Some(Cover::Plain) | None => [a.fill.clone(), a.edge.clone()],
                 Some(Cover::CutBy(tex, cut)) => {
                     let key = (tex.id(), (cut * 255.0).round() as u8);
@@ -890,6 +901,7 @@ pub(crate) fn cover(
                         .clone()
                 }
                 Some(Cover::None) => {
+                    bare.0 += 1;
                     a.covered.insert(e, Vec::new());
                     continue;
                 }
@@ -912,7 +924,8 @@ pub(crate) fn cover(
         }
         let who = |on: u32| script.as_deref().and_then(|s| s.rt.as_ref()).map_or_else(|| format!("0x{on:08X}"), |rt| rt.game.data.name(FormId(on)));
         if a.covered.len() != before && before == 0 && !a.covered.is_empty() {
-            info!("effect shader: {} covers {} meshes of {}", a.shader.edid, a.covered.len(), who(a.on));
+            let with = a.covered.values().filter(|o| !o.is_empty()).count();
+            info!("effect shader: {} covers {} meshes of {} (overlays on {with}; none on {} blended or cut out, {} cloaked)", a.shader.edid, a.covered.len(), who(a.on), bare.0, bare.1);
         }
         // #3017: after this frame's coverage, so the count says whether the see-through
         // copy left the overlays on.
@@ -939,6 +952,33 @@ fn cut_out_overlay(m: &NifMaterial, shader_has_holes: bool) -> Cover {
         _ => Cover::None,
     }
 }
+
+/// How a hologram colour covers a mesh drawn with `m` (#3017): Dead Money's hologram
+/// bodies are drawn see-through by their own materials, which [`cut_out_overlay`] leaves
+/// bare (the membrane never showed on them: "0 overlays drawn" in smoke runs of
+/// 2026-11-20 and 2026-11-21 with their shaders playing [observed]). The membrane is
+/// their look, so a blended or cut-out mesh with a texture gets overlays cut where that
+/// texture's alpha is below its own cut or [`HOLOGRAM_BODY_CUT`], one without a texture
+/// gets them whole [design]. Refracting meshes and shaders with holes of their own keep
+/// the general rule.
+fn hologram_cover(m: &NifMaterial, shader_has_holes: bool) -> Cover {
+    let general = cut_out_overlay(m, shader_has_holes);
+    if general != Cover::None || m.extension.refract || shader_has_holes {
+        return general;
+    }
+    let own_cut = match m.base.alpha_mode {
+        AlphaMode::Mask(cut) => cut,
+        _ => 0.0,
+    };
+    match &m.base.base_color_texture {
+        Some(tex) => Cover::CutBy(tex.clone(), own_cut.max(m.extension.alpha_cut).max(HOLOGRAM_BODY_CUT)),
+        None => Cover::Plain,
+    }
+}
+
+/// The texture alpha below which a hologram's see-through body gets no membrane: only
+/// its empty texels [design, #3017].
+const HOLOGRAM_BODY_CUT: f32 = 8.0 / 255.0;
 
 /// An overlay material cut where `texture`'s alpha, at the mesh's own texture
 /// coordinates, is below `cut` (0-1): the holes test turned round (nif_material.rs
@@ -1071,15 +1111,23 @@ impl AlphaDrawing<'_, '_> {
         for (e, rv, mat, blend, faded, drawing) in &*drawn {
             let Some(mat) = nvf_assets::nif_surface_blend::source_material(mat, blend) else { continue };
             let want = alpha.get(&FormId(rv.0)).copied();
+            // #3017: the copy was made while a fade (`nvf_play::fade`) drew the mesh, from
+            // the fade's copy, which the fade removed at its end, putting the mesh's own
+            // material back on: that one is the original from now on. Without this the
+            // release gave the mesh the removed copy, and the effect shaders' coverage
+            // stayed judged on it.
+            let removed = faded.is_some_and(|f| !materials.contains(f.original.id()));
+            let worn = || nvf_assets::nif_material::plain_material(mat, drawing).clone();
             match (want, faded) {
                 (None, None) => {}
                 (None, Some(f)) => {
-                    commands.entity(e).insert(MeshMaterial3d(f.original.clone())).remove::<Faded>();
+                    let back = if removed { worn() } else { f.original.clone() };
+                    commands.entity(e).insert(MeshMaterial3d(back)).remove::<Faded>();
                     changed.entry(rv.0).or_insert((1.0, 0)).1 += 1;
                 }
-                (Some(a), Some(f)) if f.alpha == a && f.made_from == f.original.id() => {}
+                (Some(a), Some(f)) if f.alpha == a && f.made_from == f.original.id() && !removed => {}
                 (Some(a), f) => {
-                    let original = f.map(|f| f.original.clone()).unwrap_or_else(|| nvf_assets::nif_material::plain_material(mat, drawing).clone());
+                    let original = f.filter(|_| !removed).map(|f| f.original.clone()).unwrap_or_else(worn);
                     let key = (original.id(), (a * 256.0).round() as u16);
                     let copy = match st.faded.get(&key) {
                         Some(h) => h.clone(),
@@ -1632,5 +1680,91 @@ mod tests {
         assert_eq!(alphas(&app), [1.0, 1.0]);
         assert_eq!(alpha_of(&app, &player_fill), 1.0, "no see-through copy on the player's body: no fade");
         assert!(app.world().resource::<Shaders>().active.contains_key(&Source::Script(1)), "the play goes on");
+    }
+
+    /// #3017: a hologram colour covers its body's blended and cut-out meshes (cut by their
+    /// own texture), which the general rule leaves bare; refracting meshes stay bare.
+    #[test]
+    fn a_hologram_colour_covers_blended_and_cut_out_meshes() {
+        let tex = Handle::<Image>::default();
+        let with = |mode: AlphaMode, texture: bool, cut: f32| {
+            let mut m = nif_material(StandardMaterial { alpha_mode: mode, base_color_texture: texture.then(|| tex.clone()), ..default() });
+            m.extension.alpha_cut = cut;
+            m
+        };
+        let blended = with(AlphaMode::Blend, true, 0.0);
+        assert_eq!(cut_out_overlay(&blended, false), Cover::None, "hair and lashes keep the general rule");
+        assert_eq!(hologram_cover(&blended, false), Cover::CutBy(tex.clone(), HOLOGRAM_BODY_CUT));
+        assert_eq!(hologram_cover(&with(AlphaMode::Blend, true, 0.3), false), Cover::CutBy(tex.clone(), 0.3));
+        assert_eq!(hologram_cover(&with(AlphaMode::Blend, false, 0.0), false), Cover::Plain);
+        assert_eq!(hologram_cover(&with(AlphaMode::Opaque, true, 0.0), false), Cover::Plain);
+        assert_eq!(hologram_cover(&with(AlphaMode::Mask(0.5), true, 0.0), false), Cover::CutBy(tex.clone(), 0.5));
+        let mut haze = with(AlphaMode::Blend, true, 0.0);
+        haze.extension.refract = true;
+        assert_eq!(hologram_cover(&haze, false), Cover::None);
+        assert_eq!(hologram_cover(&blended, true), Cover::None, "a shader with holes of its own");
+    }
+
+    /// #3017: the hologram's see-through body (a blended mesh) wears the membrane, cut by its
+    /// texture; the same mesh under any other shader stays bare.
+    #[test]
+    fn a_hologram_body_wears_the_membrane() {
+        for hologram in [true, false] {
+            let mut app = App::new();
+            app.init_resource::<Assets<NifMaterial>>().init_resource::<Shaders>().add_systems(Update, cover);
+            let body = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(nif_material(StandardMaterial {
+                alpha_mode: AlphaMode::Blend,
+                base_color_texture: Some(Handle::default()),
+                ..default()
+            }));
+            let fill = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(nif_material(StandardMaterial::default()));
+            let reference = 0xFF00_0008;
+            let mesh = app.world_mut().spawn((RefVisual(reference), Mesh3d(Handle::default()), MeshMaterial3d(body))).id();
+            let mut active = Active::membrane_for_test(reference, fill);
+            active.hologram = hologram;
+            app.world_mut().resource_mut::<Shaders>().active.insert(Source::Script(1), active);
+            app.update();
+            let shaders = app.world().resource::<Shaders>();
+            let a = &shaders.active[&Source::Script(1)];
+            assert_eq!(a.covered[&mesh].len(), usize::from(hologram), "hologram {hologram}");
+            assert_eq!(a.cut.len(), usize::from(hologram), "the overlay is a copy cut by the body's texture");
+        }
+    }
+
+    /// #3017: the actor alpha's copy made while a fade drew the mesh comes from the fade's
+    /// copy, which the fade removes at its end, putting the mesh's own material back. From
+    /// then on the own material is the original: the next alpha's copy is made from it, the
+    /// release gives it back, and the membrane's coverage follows it.
+    #[test]
+    fn an_alpha_copy_made_during_a_fade_takes_the_material_the_fade_gives_back() {
+        let mut app = App::new();
+        app.init_resource::<Assets<NifMaterial>>()
+            .init_resource::<Shaders>()
+            .init_resource::<Alphas>()
+            .add_systems(Update, (|alpha: Res<Alphas>, mut drawing: AlphaDrawing| {
+                drawing.sync(&alpha.0);
+            }, cover).chain());
+        let own = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(nif_material(StandardMaterial::default()));
+        // The fade's see-through copy (no texture: covered whole once it is the original).
+        let fade_copy = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(nif_material(StandardMaterial { alpha_mode: AlphaMode::Blend, ..default() }));
+        let fill = app.world_mut().resource_mut::<Assets<NifMaterial>>().add(nif_material(StandardMaterial::default()));
+        let reference = 0xFF00_0009;
+        let mesh = app.world_mut().spawn((RefVisual(reference), Mesh3d(Handle::default()), MeshMaterial3d(fade_copy.clone()))).id();
+        app.world_mut().resource_mut::<Shaders>().active.insert(Source::Script(1), Active::membrane_for_test(reference, fill));
+        app.world_mut().resource_mut::<Alphas>().0.insert(FormId(reference), 0.0);
+        app.update();
+        assert_eq!(app.world().get::<Faded>(mesh).unwrap().original, fade_copy);
+        assert!(app.world().resource::<Shaders>().active[&Source::Script(1)].covered[&mesh].is_empty(), "blended while it fades");
+        // The fade ends: its copy goes and the mesh gets its own material back.
+        app.world_mut().resource_mut::<Assets<NifMaterial>>().remove(&fade_copy);
+        app.world_mut().entity_mut(mesh).insert(MeshMaterial3d(own.clone()));
+        app.update();
+        assert_eq!(app.world().get::<Faded>(mesh).unwrap().original, own, "the own material is the original now");
+        assert_ne!(app.world().get::<MeshMaterial3d<NifMaterial>>(mesh).unwrap().0, own, "drawn see-through again");
+        assert_eq!(app.world().resource::<Shaders>().active[&Source::Script(1)].covered[&mesh].len(), 1, "covered as its own material");
+        app.world_mut().resource_mut::<Alphas>().0.clear();
+        app.update();
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(mesh).unwrap().0, own, "the release gives back a material that exists");
+        assert_eq!(app.world().resource::<Shaders>().active[&Source::Script(1)].covered[&mesh].len(), 1);
     }
 }
