@@ -1253,6 +1253,26 @@ stretches drift downstream. Vanilla leaves the switch off. Enhanced turns it on.
 - More: docs/design/graphics-enhanced.md §3.13
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `terrain-parallax`: Terrain parallax
+
+- On the page: On: ground textures a texture pack gives height maps for (textures\pbr\)
+  show depth near you, for some GPU time. Without such a pack nothing changes. Not in the
+  original.
+- In full: [design, #3322] On: where a texture pack gives a landscape layer's texture a
+  height map (`_p` in its set under `textures\pbr\`, the format of
+  docs/spec-notes/pbr-materials.md), the ground near the camera shows that relief: one
+  march over the layers' heights, blended as the layers are, moves the texture coordinate
+  every ground texture is read at, fading out by 2048 units. The base texture of a quadrant
+  and layers without a height map count as flat. The shadows, the depth prepass, the
+  collision, the mesh terrain blend and the distant landscape keep the plain surface, and
+  so do layers drawn on their own (GPUs without bindless textures; a texture repeat that
+  does not divide the cell). Needs Authored materials (greyed while it is off). Off by
+  default and in both presets until its cost is measured (the maintainer's call); switches
+  at once, no restart.
+- Command-line switches: `--graphics-only` (`--graphics-only terrain-parallax`)
+- More: docs/spec-notes/pbr-materials.md "Terrain layers: parallax"
+- Registered in `engine/nvforever/src/settings.rs`
+
 ### `mesh-terrain-blend`: Blend meshes into ground
 
 - On the page: On: softens where outdoor roads, rocks and cliffs meet the landscape, giving

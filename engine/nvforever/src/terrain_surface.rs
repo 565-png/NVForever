@@ -200,12 +200,16 @@ pub enum CaptureDraw { Folded(Box<TerrainMaterial>), Single(SurfaceCaptureMateri
 /// returns the base colour only), no scorch, no fog. Round 10a review (second round):
 /// without the normal maps, which that colour never reads, so a removed normal map (a
 /// detail dependency, which masks and rebakes the cell) cannot keep the copy from being
-/// prepared and the replacement's receipt from ever arriving.
+/// prepared and the replacement's receipt from ever arriving. #3322: without the height maps
+/// and parallax for the same reason; the bake keeps the unshifted surface.
 fn bake_copy(material: &mut TerrainMaterial) {
     let e = &mut material.extension;
     e.surface_bake = true;
     e.burn = None;
     for normal in [&mut e.normal0, &mut e.normal1, &mut e.normal2, &mut e.normal3, &mut e.normal4, &mut e.normal5] { *normal = None; }
+    for height in [&mut e.height0, &mut e.height1, &mut e.height2, &mut e.height3, &mut e.height4, &mut e.height5] { *height = None; }
+    e.parallax = false;
+    e.parallax_depth = 0.0;
     material.base.fog_enabled = false;
     material.base.normal_map_texture = None;
 }

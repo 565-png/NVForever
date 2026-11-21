@@ -104,6 +104,30 @@
 //! Not anti-tiled: the depth prepass and the shadows (same depth either way), the normal
 //! prepass's normals (screen-space passes that read them keep the plain reads), and the
 //! distant LOD terrain's baked textures. Height blending stays within the folded draw.
+//!
+//! # Parallax
+//!
+//! [design, #3322; docs/spec-notes/pbr-materials.md "Terrain layers: parallax"] The settings
+//! switch Terrain parallax (`Graphics::terrain_parallax`, off by default and in both presets;
+//! it needs the run's Authored materials state) gives a folded material that holds at least
+//! one height map the pipeline `TERRAIN_PARALLAX` ([`TerrainLayersKey`]). The height maps are
+//! authored sets' `_p`, found by each folded layer's diffuse path as a NIF
+//! shape's diffuse finds its set (nvf_assets `TextureCache::authored_height`), and loaded
+//! with the material whenever the run's Authored materials state is on, so the switch flips
+//! the materials in place ([`sync_parallax`]) as height blending does. terrain.wesl marches
+//! once over the layers' heights blended by the ordered shares of painted opacity x the
+//! layer texture's alpha, then reads every texture at the one shifted coordinate; the march
+//! fades out between [`PARALLAX_FADE`]'s distances, well inside the loaded cells. A texture
+//! without a height map, and the base always, counts as flat at the surface (height 1): it
+//! adds no depth, so the shift falls to nothing where the layers with height maps fade out
+//! and nothing jumps at their edges or at the edge of a quadrant drawn without folded
+//! layers (the separate landscape material, unshifted). The base's own `_p` is not used in
+//! this first stage for that reason. Only the folded draw's main pass moves its texture coordinates:
+//! the depth prepass, the shadows, the collision, the blended layer draws past
+//! [`folded_layers`], the separate landscape materials (GPUs without bindless textures), the
+//! surface bake of the mesh terrain blend and the distant LOD keep the unshifted surface. A
+//! material without a height map keeps the old pipeline, so without a pack the switch
+//! changes nothing.
 
 use crate::world::WorldData;
 use fnv_esm::{LoadOrder, Schema as EsmSchema};
@@ -143,6 +167,9 @@ pub struct TerrainCache {
     pub folded_layers: usize,
     /// Layers drawn blended over a folded quadrant (past [`folded_layers`]), so far.
     pub overflow_layers: usize,
+    /// Folded materials made with at least one authored height map (module notes,
+    /// "Parallax"), so far.
+    pub parallax_materials: usize,
     pub quadrants_without_base: usize,
     pub layers: usize,
     /// Cells drawn on the smoothed surface and on the stored one (#2149).
@@ -194,7 +221,7 @@ const SURFACE_BAKE_SHADER: Handle<Shader> = uuid_handle!("6da97f8c-732c-4697-b34
 /// do (nvf_assets nif_material.rs "Bindless"), so quadrants still draw in one batch.
 #[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
 #[data(50, TerrainLayersUniform, binding_array(101))]
-#[bindless(limit(512), index_table(range(50..64), binding(100)))]
+#[bindless(limit(512), index_table(range(50..70), binding(100)))]
 #[bind_group_data(TerrainLayersKey)]
 pub struct TerrainLayers {
     /// [design] Dedicated unlit surface capture of a folded base, terrain_surface.rs
@@ -215,6 +242,12 @@ pub struct TerrainLayers {
     /// (the mesh's first texture coordinate then holds the fifth and sixth opacities);
     /// 0 when the mesh carries it.
     pub tile: f32,
+    /// Parallax (module notes, "Parallax"): selects the pipeline ([`TerrainLayersKey`]) when
+    /// the material holds a height map ([`TerrainLayers::holds_heights`]).
+    pub parallax: bool,
+    /// The march's depth in texture-coordinate units: the largest depth of the held height
+    /// maps' sets (0 without one) [design, #3322: one depth per material].
+    pub parallax_depth: f32,
     #[texture(51)]
     pub diffuse0: Option<Handle<Image>>,
     #[texture(52)]
@@ -243,19 +276,73 @@ pub struct TerrainLayers {
     /// scorched (terrain.wesl "Scorch"). `None`: no fires, nothing scorched.
     #[texture(63)]
     pub burn: Option<Handle<Image>>,
+    /// The authored height maps (`_p`, module notes "Parallax") of each folded layer's
+    /// diffuse, in the layers' order; `None` where the layer has none (flat for the march)
+    /// and always while the run's Authored materials state is off. The base has none: it
+    /// counts as flat (module notes).
+    #[texture(64)]
+    pub height0: Option<Handle<Image>>,
+    #[texture(65)]
+    pub height1: Option<Handle<Image>>,
+    #[texture(66)]
+    pub height2: Option<Handle<Image>>,
+    #[texture(67)]
+    pub height3: Option<Handle<Image>>,
+    #[texture(68)]
+    pub height4: Option<Handle<Image>>,
+    #[texture(69)]
+    pub height5: Option<Handle<Image>>,
+}
+
+impl TerrainLayers {
+    /// The layers' height maps in the layers' order.
+    pub fn heights(&self) -> [&Option<Handle<Image>>; FOLDED_LAYERS] {
+        [&self.height0, &self.height1, &self.height2, &self.height3, &self.height4, &self.height5]
+    }
+
+    /// Bit k set when layer k has a height map, among the layers drawn (the uniform's layer
+    /// count).
+    pub fn height_bits(&self) -> u32 {
+        let most = if self.tile > 0.0 { FOLDED_LAYERS } else { FOLDED_LAYERS_WITH_UV };
+        let held = self.count.min(most as u32) as usize;
+        self.heights().iter().take(held).enumerate().filter(|(_, h)| h.is_some()).fold(0u32, |b, (k, _)| b | 1 << k)
+    }
+
+    /// Whether the material holds a height map the march can read (and a depth to march).
+    pub fn holds_heights(&self) -> bool {
+        self.height_bits() != 0 && self.parallax_depth > 0.0
+    }
 }
 
 /// What terrain.wesl reads of a [`TerrainLayers`]: `counts` x the layer count, y a bit for
-/// each layer that has a normal map, z 1 when it has the burn map, w the feature bits
-/// ([`FEATURE_HEIGHT_BLEND`], [`FEATURE_ANTI_TILING`]); `tile` x [`TerrainLayers::tile`],
-/// y [`TerrainLayers::texture_repeat`]; `height` the start-up
-/// (depth, gain, source ID: global 0 / local 1, reserved) [design, #2550].
+/// each layer that has a normal map (bits 0 to 5) and, from bit [`HEIGHT_BITS_SHIFT`], a bit
+/// for each layer that has a height map ([`TerrainLayers::height_bits`]), z 1 when it has
+/// the burn map, w the feature bits ([`FEATURE_HEIGHT_BLEND`], [`FEATURE_ANTI_TILING`],
+/// [`FEATURE_PARALLAX`]); `tile` x [`TerrainLayers::tile`], y
+/// [`TerrainLayers::texture_repeat`]; `height` the start-up (depth, gain, source ID: global 0
+/// / local 1, reserved) [design, #2550]; `parallax` the march's depth
+/// ([`TerrainLayers::parallax_depth`]), its most layers ([`PARALLAX_LAYERS`]) and the
+/// distances its fade starts and ends at ([`PARALLAX_FADE`]) [design, #3322].
 #[derive(Clone, Default, ShaderType)]
 pub struct TerrainLayersUniform {
     pub counts: UVec4,
     pub tile: Vec4,
     pub height: Vec4,
+    pub parallax: Vec4,
 }
+
+/// Where the height-map bits start in `counts.y` ([`TerrainLayersUniform`]).
+pub const HEIGHT_BITS_SHIFT: u32 = 8;
+
+/// The most steps of the terrain parallax march, on a surface seen edge-on (one straight
+/// down) [design, #3322: every step reads up to seven height maps, so fewer than the NIF
+/// shapes' march takes].
+pub const PARALLAX_LAYERS: f32 = 8.0;
+
+/// The distances from the camera (world units) where the terrain parallax starts to fade and
+/// where it is gone [design, #3322: within the camera's own cell and its neighbours' near
+/// half, well inside the loaded cells; the texture repeats every 256 units].
+pub const PARALLAX_FADE: (f32, f32) = (1024.0, 2048.0);
 
 /// Start-up comparison parameters [design, #2550], independent of the on/off key.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -329,14 +416,21 @@ pub const FEATURE_HEIGHT_BLEND: u32 = 1;
 /// Bit of `counts.w` set while the material is anti-tiled (as [`FEATURE_HEIGHT_BLEND`]).
 pub const FEATURE_ANTI_TILING: u32 = 2;
 
+/// Bit of `counts.w` set while the material's pipeline marches its height maps (as
+/// [`FEATURE_HEIGHT_BLEND`]).
+pub const FEATURE_PARALLAX: u32 = 4;
+
 impl From<&TerrainLayers> for TerrainLayersUniform {
     fn from(l: &TerrainLayers) -> Self {
         let normals = [&l.normal0, &l.normal1, &l.normal2, &l.normal3, &l.normal4, &l.normal5];
         let bits = normals.iter().enumerate().filter(|(_, n)| n.is_some()).fold(0u32, |b, (i, _)| b | 1 << i);
         let most = if l.tile > 0.0 { FOLDED_LAYERS } else { FOLDED_LAYERS_WITH_UV };
-        let features = if l.height_blend { FEATURE_HEIGHT_BLEND } else { 0 } | if TerrainLayersKey::from(l).anti_tiling { FEATURE_ANTI_TILING } else { 0 };
+        let key = TerrainLayersKey::from(l);
+        let features = if l.height_blend { FEATURE_HEIGHT_BLEND } else { 0 } | if key.anti_tiling { FEATURE_ANTI_TILING } else { 0 } | if key.parallax { FEATURE_PARALLAX } else { 0 };
         let repeat = if nvf_assets::terrain_sampling::repeat_valid(l.texture_repeat) { l.texture_repeat } else { 0.0 };
-        TerrainLayersUniform { counts: UVec4::new(l.count.min(most as u32), bits, u32::from(l.burn.is_some()), features), tile: Vec4::new(l.tile.max(0.0), repeat, 0.0, 0.0), height: height_blend_params().uniform() }
+        let bits = bits | l.height_bits() << HEIGHT_BITS_SHIFT;
+        let parallax = Vec4::new(l.parallax_depth.max(0.0), PARALLAX_LAYERS, PARALLAX_FADE.0, PARALLAX_FADE.1);
+        TerrainLayersUniform { counts: UVec4::new(l.count.min(most as u32), bits, u32::from(l.burn.is_some()), features), tile: Vec4::new(l.tile.max(0.0), repeat, 0.0, 0.0), height: height_blend_params().uniform(), parallax }
     }
 }
 
@@ -350,11 +444,19 @@ pub struct TerrainLayersKey {
     /// terrain_surface.rs `bake_copy`): `SURFACE_BAKE`, with the two switches above as the
     /// near draw has them, so the colour cache holds what the near draw composes.
     pub surface_bake: bool,
+    /// Parallax asked for and a height map to march (module notes, "Parallax"); never on a
+    /// bake copy, whose colour stays the unshifted surface's.
+    pub parallax: bool,
 }
 
 impl From<&TerrainLayers> for TerrainLayersKey {
     fn from(l: &TerrainLayers) -> Self {
-        TerrainLayersKey { height_blend: l.height_blend, anti_tiling: l.anti_tiling && nvf_assets::terrain_sampling::repeat_valid(l.texture_repeat), surface_bake: l.surface_bake }
+        TerrainLayersKey {
+            height_blend: l.height_blend,
+            anti_tiling: l.anti_tiling && nvf_assets::terrain_sampling::repeat_valid(l.texture_repeat),
+            surface_bake: l.surface_bake,
+            parallax: l.parallax && !l.surface_bake && l.holds_heights(),
+        }
     }
 }
 
@@ -367,6 +469,18 @@ fn height_blend_def(descriptor: &mut RenderPipelineDescriptor, key: TerrainLayer
     }
     if let Some(fragment) = descriptor.fragment.as_mut() {
         fragment.shader_defs.push("TERRAIN_HEIGHT_BLEND".into());
+    }
+}
+
+/// terrain.wesl's switch for parallax, in the main pass only: the prepass and the shadows
+/// draw the unshifted surface (module notes, "Parallax").
+fn parallax_def(descriptor: &mut RenderPipelineDescriptor, key: TerrainLayersKey) {
+    use bevy::shader::ShaderDefVal;
+    if !key.parallax || key.surface_bake || descriptor.vertex.shader_defs.contains(&ShaderDefVal::from("PREPASS_PIPELINE")) {
+        return;
+    }
+    if let Some(fragment) = descriptor.fragment.as_mut() {
+        fragment.shader_defs.push("TERRAIN_PARALLAX".into());
     }
 }
 
@@ -389,6 +503,7 @@ impl MaterialExtension for TerrainLayers {
         nvf_assets::fade_prepass(descriptor, key.mesh_key);
         nvf_assets::depth_equal(descriptor, key.mesh_key);
         height_blend_def(descriptor, key.bind_group_data);
+        parallax_def(descriptor, key.bind_group_data);
         if key.bind_group_data.anti_tiling {
             nvf_assets::terrain_sampling::anti_tiling_defs(descriptor, false);
         }
@@ -409,7 +524,7 @@ impl Plugin for TerrainPlugin {
         // copy's pipeline (`SURFACE_BAKE`) ever imports it.
         load_internal_asset!(app, SURFACE_BAKE_SHADER, "terrain_surface.wesl", |s, _| Shader::from_wesl(s, "embedded://nvforever/terrain_surface.wesl"));
         bevy::asset::load_internal_asset!(app, WEIGHTS_SHADER, "terrain_weights.wesl", |s, _| bevy::shader::Shader::from_wesl(s, "embedded://nvforever/terrain_weights.wesl"));
-        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default()).add_systems(Startup, log_height_blend_params).add_systems(PostUpdate, (sync_height_blend, sync_anti_tiling));
+        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default()).add_systems(Startup, log_height_blend_params).add_systems(PostUpdate, (sync_height_blend, sync_anti_tiling, sync_parallax));
     }
 }
 
@@ -436,6 +551,39 @@ pub fn sync_height_blend(graphics: Option<Res<crate::graphics::Graphics>>, mut m
     if last.is_some() || want {
         info!(
             "terrain: height blending {} ({} folded quadrant materials, {} changed; layers drawn separately keep the ordered blend)",
+            if want { "on" } else { "off" },
+            materials.len(),
+            stale.len()
+        );
+    }
+    *last = Some(want);
+}
+
+/// Whether the settings ask for parallax (module notes, "Parallax"); false without the
+/// `Graphics` resource.
+fn parallax_wanted(graphics: Option<&crate::graphics::Graphics>) -> bool {
+    graphics.is_some_and(|g| g.terrain_parallax)
+}
+
+/// Parallax switched on or off: every folded material flipped in place (the pipeline
+/// follows its key, which stays off for a material without a height map), logged with how
+/// many there are, how many hold a height map and how many changed. New materials take the
+/// setting when they are made ([`TerrainCtx::folded_material`]).
+pub fn sync_parallax(graphics: Option<Res<crate::graphics::Graphics>>, mut materials: ResMut<Assets<TerrainMaterial>>, mut last: Local<Option<bool>>) {
+    let want = parallax_wanted(graphics.as_deref());
+    if *last == Some(want) {
+        return;
+    }
+    let stale: Vec<AssetId<TerrainMaterial>> = materials.iter().filter(|(_, m)| m.extension.parallax != want).map(|(id, _)| id).collect();
+    for id in &stale {
+        if let Some(mut m) = materials.get_mut(*id) {
+            m.extension.parallax = want;
+        }
+    }
+    if last.is_some() || want {
+        let heights = materials.iter().filter(|(_, m)| m.extension.holds_heights()).count();
+        info!(
+            "terrain: parallax {} ({} folded quadrant materials, {heights} with height maps, {} changed; layers drawn separately stay unshifted)",
             if want { "on" } else { "off" },
             materials.len(),
             stale.len()
@@ -560,6 +708,13 @@ impl TerrainCtx<'_, '_, '_> {
         a.textures.normal(path, &a.data, &mut a.images, a.formats.as_deref()).map(|(image, _)| image)
     }
 
+    /// The authored height map of a landscape texture and its set's depth (module notes,
+    /// "Parallax"): `None` without one, or while the run's Authored materials state is off.
+    fn height(&mut self, diffuse: &str) -> Option<(Handle<Image>, f32)> {
+        let a = &mut *self.assets;
+        a.textures.authored_height(diffuse, &a.data, &mut a.images, a.formats.as_deref())
+    }
+
     /// The lit surface of a landscape texture: diffuse and normal map. `None` for the
     /// diffuse path (an LTEX without a texture set) gives a plain grey.
     fn surface(&mut self, tex: Option<&str>) -> StandardMaterial {
@@ -602,11 +757,27 @@ impl TerrainCtx<'_, '_, '_> {
         let mut textures = textures.into_iter();
         let mut next = || textures.next().map_or((None, None), |(d, n)| (Some(d), n));
         let ((diffuse0, normal0), (diffuse1, normal1), (diffuse2, normal2), (diffuse3, normal3), (diffuse4, normal4), (diffuse5, normal5)) = (next(), next(), next(), next(), next(), next());
+        // The layers' authored height maps in their order (module notes, "Parallax"); none
+        // while the run's Authored materials state is off. The base's is not asked for.
+        let layer_heights: Vec<Option<(Handle<Image>, f32)>> = layers.iter().map(|l| self.height(l)).collect();
+        let (heights, parallax_depth) = layer_height_slots(layer_heights);
+        let [height0, height1, height2, height3, height4, height5] = heights;
         let burn = self.tm.burn.as_deref().map(|b| b.0.clone());
         let height_blend = height_blend_wanted(self.tm.graphics.as_deref());
         let anti_tiling = anti_tiling_wanted(self.tm.graphics.as_deref());
         let texture_repeat = self.tm.settings.tile;
-        let extension = TerrainLayers { count: layers.len() as u32, tile, height_blend, anti_tiling, texture_repeat, diffuse0, normal0, diffuse1, normal1, diffuse2, normal2, diffuse3, normal3, diffuse4, normal4, diffuse5, normal5, burn, ..default() };
+        let parallax = parallax_wanted(self.tm.graphics.as_deref());
+        let extension = TerrainLayers {
+            count: layers.len() as u32, tile, height_blend, anti_tiling, texture_repeat, parallax, parallax_depth,
+            diffuse0, normal0, diffuse1, normal1, diffuse2, normal2, diffuse3, normal3, diffuse4, normal4, diffuse5, normal5, burn,
+            height0, height1, height2, height3, height4, height5, ..default()
+        };
+        if extension.holds_heights() {
+            self.tm.cache.parallax_materials += 1;
+            if self.tm.cache.parallax_materials == 1 {
+                info!("terrain: first folded material with authored height maps: {} of {} layers (depth {parallax_depth})", extension.height_bits().count_ones(), layers.len());
+            }
+        }
         let base = self.surface(tex.as_deref());
         let h = self.tm.folded.add(TerrainMaterial { base, extension });
         self.tm.cache.folded.insert(key, h.clone());
@@ -633,6 +804,21 @@ impl TerrainCtx<'_, '_, '_> {
         self.tm.cache.layer.insert((tex, rank), h.clone());
         Some(h)
     }
+}
+
+/// The height-map slots of a folded material (each layer's in the layers' order, up to
+/// [`FOLDED_LAYERS`]; `None` for a layer without one) and the march's depth, the largest of
+/// their sets' depths (0 without a height map) [design, #3322].
+fn layer_height_slots(layers: Vec<Option<(Handle<Image>, f32)>>) -> ([Option<Handle<Image>>; FOLDED_LAYERS], f32) {
+    let mut slots: [Option<Handle<Image>>; FOLDED_LAYERS] = Default::default();
+    let mut depth = 0.0f32;
+    for (slot, height) in slots.iter_mut().zip(layers) {
+        if let Some((image, d)) = height {
+            *slot = Some(image);
+            depth = depth.max(d);
+        }
+    }
+    (slots, depth)
 }
 
 /// The landscape's StandardMaterial for a diffuse texture and normal map ([`TerrainCtx::surface`]).
@@ -1966,21 +2152,161 @@ mod tests {
     fn height_blending_selects_the_pipeline_and_the_feature_bit() {
         let off = TerrainLayers { count: 2, ..default() };
         let on = TerrainLayers { count: 2, height_blend: true, ..default() };
-        assert_eq!((TerrainLayersKey::from(&off), TerrainLayersKey::from(&on)), (TerrainLayersKey { height_blend: false, anti_tiling: false, surface_bake: false }, TerrainLayersKey { height_blend: true, anti_tiling: false, surface_bake: false }));
+        assert_eq!((TerrainLayersKey::from(&off), TerrainLayersKey::from(&on)), (TerrainLayersKey { height_blend: false, anti_tiling: false, surface_bake: false, parallax: false }, TerrainLayersKey { height_blend: true, anti_tiling: false, surface_bake: false, parallax: false }));
         assert_eq!((TerrainLayersUniform::from(&off).counts.w, TerrainLayersUniform::from(&on).counts.w), (0, FEATURE_HEIGHT_BLEND));
         assert_eq!(TerrainLayersUniform::from(&on).counts.truncate(), TerrainLayersUniform::from(&off).counts.truncate());
         let main = || RenderPipelineDescriptor { fragment: Some(bevy::render::render_resource::FragmentState { shader_defs: vec!["VERTEX_UVS_A".into()], ..default() }), ..default() };
         let has = |d: &RenderPipelineDescriptor| d.fragment.as_ref().unwrap().shader_defs.contains(&"TERRAIN_HEIGHT_BLEND".into());
         let mut d = main();
-        height_blend_def(&mut d, TerrainLayersKey { height_blend: true, anti_tiling: false, surface_bake: false });
+        height_blend_def(&mut d, TerrainLayersKey { height_blend: true, anti_tiling: false, surface_bake: false, parallax: false });
         assert!(has(&d));
         let mut d = main();
-        height_blend_def(&mut d, TerrainLayersKey { height_blend: false, anti_tiling: false, surface_bake: false });
+        height_blend_def(&mut d, TerrainLayersKey { height_blend: false, anti_tiling: false, surface_bake: false, parallax: false });
         assert!(!has(&d), "off: the pipeline there always was");
         let mut prepass = main();
         prepass.vertex.shader_defs.push("PREPASS_PIPELINE".into());
-        height_blend_def(&mut prepass, TerrainLayersKey { height_blend: true, anti_tiling: false, surface_bake: false });
+        height_blend_def(&mut prepass, TerrainLayersKey { height_blend: true, anti_tiling: false, surface_bake: false, parallax: false });
         assert!(!has(&prepass), "the prepass draws the same depth either way");
+    }
+
+    #[test]
+    fn parallax_needs_a_height_map_and_selects_the_main_pass_only() {
+        // #3322: the switch alone changes nothing; a held layer's height map and a depth do.
+        let image = Handle::<Image>::default();
+        let plain = TerrainLayers { count: 2, tile: 256.0, normal1: Some(image.clone()), ..default() };
+        let asked = TerrainLayers { parallax: true, ..plain.clone() };
+        assert!(!TerrainLayersKey::from(&asked).parallax, "no height map: the pipeline there always was");
+        assert_eq!(TerrainLayersUniform::from(&asked).counts, TerrainLayersUniform::from(&plain).counts);
+        let mapped = TerrainLayers { height1: Some(image.clone()), parallax_depth: 0.04, ..asked.clone() };
+        assert!(mapped.holds_heights() && TerrainLayersKey::from(&mapped).parallax);
+        let u = TerrainLayersUniform::from(&mapped);
+        assert_eq!(u.counts.y, 0b10 | 0b10 << HEIGHT_BITS_SHIFT, "layer 1's normal map and height map, each in its bits");
+        assert_eq!(u.counts.w, FEATURE_PARALLAX);
+        assert_eq!(u.parallax, Vec4::new(0.04, PARALLAX_LAYERS, PARALLAX_FADE.0, PARALLAX_FADE.1));
+        assert_eq!(TerrainLayersUniform::from(&mapped).counts.truncate(), TerrainLayersUniform::from(&TerrainLayers { parallax: false, ..mapped.clone() }).counts.truncate(), "the switch moves only the feature bit");
+        // Off with height maps held: the old pipeline, the height bits still recorded.
+        let off = TerrainLayers { parallax: false, ..mapped.clone() };
+        assert!(!TerrainLayersKey::from(&off).parallax && TerrainLayersUniform::from(&off).counts.w == 0);
+        // A height map past the layers drawn, or a depth of 0: nothing to march.
+        let past = TerrainLayers { count: 1, height3: Some(image.clone()), parallax_depth: 0.04, parallax: true, tile: 256.0, ..default() };
+        assert_eq!((past.height_bits(), past.holds_heights(), TerrainLayersKey::from(&past).parallax), (0, false, false));
+        let flat = TerrainLayers { parallax_depth: 0.0, ..mapped.clone() };
+        assert!(!TerrainLayersKey::from(&flat).parallax);
+        // The mesh terrain blend's bake copy keeps the unshifted surface.
+        assert!(!TerrainLayersKey::from(&TerrainLayers { surface_bake: true, ..mapped.clone() }).parallax);
+        // The pipeline: the main pass only, and only with the key.
+        let key = |parallax: bool, surface_bake: bool| TerrainLayersKey { height_blend: false, anti_tiling: false, surface_bake, parallax };
+        let main = || RenderPipelineDescriptor { fragment: Some(bevy::render::render_resource::FragmentState { shader_defs: vec!["VERTEX_UVS_A".into()], ..default() }), ..default() };
+        let has = |d: &RenderPipelineDescriptor| d.fragment.as_ref().unwrap().shader_defs.contains(&"TERRAIN_PARALLAX".into());
+        let mut d = main();
+        parallax_def(&mut d, key(true, false));
+        assert!(has(&d));
+        let mut d = main();
+        parallax_def(&mut d, key(false, false));
+        assert!(!has(&d), "off: the pipeline there always was");
+        let mut d = main();
+        parallax_def(&mut d, key(true, true));
+        assert!(!has(&d), "never on a bake copy");
+        let mut prepass = main();
+        prepass.vertex.shader_defs.push("PREPASS_PIPELINE".into());
+        parallax_def(&mut prepass, key(true, false));
+        assert!(!has(&prepass), "the prepass and the shadows draw the unshifted surface");
+        // Height blending's switch does not bring parallax in, nor the other way round.
+        let mut d = main();
+        height_blend_def(&mut d, key(true, false));
+        assert!(!has(&d) && d.fragment.as_ref().unwrap().shader_defs.len() == 1);
+    }
+
+    #[test]
+    fn height_maps_take_their_layers_slots_and_the_deepest_set_marches() {
+        // #3322: the layers' order; a layer without a height map keeps its slot empty.
+        let a: Handle<Image> = uuid_handle!("5a3e2b5c-3322-4c1e-8f00-000000000001");
+        let b: Handle<Image> = uuid_handle!("5a3e2b5c-3322-4c1e-8f00-000000000002");
+        let (slots, depth) = layer_height_slots(vec![None, Some((a.clone(), 0.02)), None, Some((b.clone(), 0.05))]);
+        assert_eq!(slots, [None, Some(a.clone()), None, Some(b.clone()), None, None]);
+        assert_eq!(depth, 0.05, "the deepest of the held sets");
+        let (slots, depth) = layer_height_slots(vec![None, None]);
+        assert!(slots.iter().all(Option::is_none) && depth == 0.0, "no height map: nothing to march");
+        let [height0, height1, height2, height3, height4, height5] = layer_height_slots(vec![None, Some((a.clone(), 0.02)), None, Some((b.clone(), 0.05))]).0;
+        let l = TerrainLayers { count: 4, tile: 256.0, parallax_depth: 0.05, height0, height1, height2, height3, height4, height5, ..default() };
+        assert_eq!(l.height_bits(), 0b1010, "bit k for layer k");
+        // Without the shader-worked coordinate four layers are drawn, so a fifth's map is not.
+        let carried = TerrainLayers { count: 6, tile: 0.0, height4: Some(a.clone()), parallax_depth: 0.05, ..default() };
+        assert_eq!(carried.height_bits(), 0);
+    }
+
+    #[test]
+    fn the_parallax_switch_flips_every_folded_material_in_place() {
+        use crate::graphics::{Graphics, Preset};
+        let mut app = App::new();
+        app.insert_resource(Graphics::preset(Preset::Vanilla));
+        app.insert_resource(Assets::<TerrainMaterial>::default());
+        app.add_systems(Update, sync_parallax);
+        let image = Handle::<Image>::default();
+        let mapped = TerrainMaterial { base: StandardMaterial::default(), extension: TerrainLayers { count: 1, tile: 256.0, height0: Some(image), parallax_depth: 0.04, ..default() } };
+        let plain = TerrainMaterial { base: StandardMaterial::default(), extension: TerrainLayers { count: 1, ..default() } };
+        let a = app.world_mut().resource_mut::<Assets<TerrainMaterial>>().add(mapped);
+        let b = app.world_mut().resource_mut::<Assets<TerrainMaterial>>().add(plain);
+        app.update();
+        let key = |app: &App, h: &Handle<TerrainMaterial>| TerrainLayersKey::from(&app.world().resource::<Assets<TerrainMaterial>>().get(h).unwrap().extension).parallax;
+        assert!(!key(&app, &a) && !key(&app, &b), "off by default");
+        assert!(!Graphics::preset(Preset::Enhanced).terrain_parallax, "and in the enhanced preset");
+        app.world_mut().resource_mut::<Graphics>().terrain_parallax = true;
+        app.update();
+        assert!(key(&app, &a), "a material with a height map takes the march");
+        assert!(!key(&app, &b), "one without keeps its pipeline");
+        assert!(app.world().resource::<Assets<TerrainMaterial>>().get(&b).unwrap().extension.parallax, "though it records the setting");
+        app.world_mut().resource_mut::<Graphics>().terrain_parallax = false;
+        app.update();
+        assert!(!key(&app, &a));
+        assert!(!parallax_wanted(None));
+    }
+
+    #[test]
+    fn parallax_moves_every_read_by_one_shift_and_none_head_on() {
+        // The shader's text: the coordinate moved once before the surface set-up, the
+        // anti-tiled place with it; the march's step proportional to the view vector's
+        // tangent part (none head-on); a missing map flat at the surface (no depth); the
+        // layers' shares the ordered shares of opacity x alpha.
+        let terrain = include_str!("terrain.wesl").replace("\r\n", "\n");
+        let shift = terrain.find("        in.uv += parallax_uv_shift;").expect("the coordinate moved");
+        assert!(shift < terrain.find("    @if(!TERRAIN_ANTI_TILING) var pbr_input = pbr_input_from_standard_material(in, is_front);").unwrap(), "before the standard set-up reads the base");
+        assert!(terrain.contains("        @if(TERRAIN_ANTI_TILING) fp.uv += parallax_uv_shift;"));
+        assert!(terrain.contains("    let delta = values.x * fade * layer_depth * Vt.xy * vec2(1.0, -1.0) / steepness;"));
+        assert!(terrain.contains("@if(TERRAIN_PARALLAX) const PARALLAX_FLAT: f32 = 1.0;"));
+        assert!(terrain.contains("    var height = w[0] * PARALLAX_FLAT;"), "the base counts as flat");
+        assert!(terrain.contains("            paint[k] = o * layer_alpha(k, instance_index, uv, footprint);"));
+        assert!(terrain.contains("    let w = terrain_ordered_shares(paint, n);"));
+        assert!(terrain.contains("@if(TERRAIN_PARALLAX && !TERRAIN_HEIGHT_BLEND) import nvforever::terrain_weights::terrain_ordered_shares;"));
+        // A CPU statement of the march (vendored parallax_mapping.wesl's, as terrain.wesl
+        // `parallax_shift` takes it): none head-on, none over flat ground, some when tilted.
+        let march = |depth_at: &dyn Fn(Vec2) -> f32, vt: Vec3| -> Vec2 {
+            let steepness = vt.z.abs().max(1e-3);
+            let layer_count = PARALLAX_LAYERS + (1.0 - PARALLAX_LAYERS) * steepness;
+            let layer_depth = 1.0 / layer_count;
+            let delta = 0.04 * layer_depth * Vec2::new(vt.x, -vt.y) / steepness;
+            let (mut shift, mut current, mut depth) = (Vec2::ZERO, 0.0, depth_at(Vec2::ZERO));
+            let mut i = 0;
+            while depth > current && i <= layer_count as i32 {
+                current += layer_depth;
+                shift += delta;
+                depth = depth_at(shift);
+                i += 1;
+            }
+            let previous = shift - delta;
+            let next_depth = depth - current;
+            let previous_depth = depth_at(previous) - current + layer_depth;
+            let gap = next_depth - previous_depth;
+            let weight = if gap.abs() > 1e-6 { next_depth / gap } else { 0.0 };
+            shift.lerp(previous, weight)
+        };
+        // A layer of share 0.6 with a height map of a ridge, over a flat base.
+        let ridged = |p: Vec2| 1.0 - (0.4 * 1.0 + 0.6 * (0.5 + 0.5 * (p.x * 40.0).sin()));
+        let head_on = Vec3::new(0.0, 0.0, -1.0);
+        let tilted = Vec3::new(0.6, 0.0, -0.8);
+        assert_eq!(march(&ridged, head_on), Vec2::ZERO, "none head-on");
+        assert_eq!(march(&|_| 0.0, tilted), Vec2::ZERO, "flat ground (every map missing) adds no depth: none");
+        assert!(march(&ridged, tilted).length() > 0.0, "some when tilted");
     }
 
     #[test]
@@ -2162,12 +2488,12 @@ mod tests {
     fn anti_tiling_selects_the_pipeline_the_feature_bit_and_the_repeat() {
         let off = TerrainLayers { count: 2, texture_repeat: 256.0, ..default() };
         let on = TerrainLayers { count: 2, texture_repeat: 256.0, anti_tiling: true, ..default() };
-        assert_eq!(TerrainLayersKey::from(&off), TerrainLayersKey { height_blend: false, anti_tiling: false, surface_bake: false });
-        assert_eq!(TerrainLayersKey::from(&on), TerrainLayersKey { height_blend: false, anti_tiling: true, surface_bake: false });
+        assert_eq!(TerrainLayersKey::from(&off), TerrainLayersKey { height_blend: false, anti_tiling: false, surface_bake: false, parallax: false });
+        assert_eq!(TerrainLayersKey::from(&on), TerrainLayersKey { height_blend: false, anti_tiling: true, surface_bake: false, parallax: false });
         assert_eq!((TerrainLayersUniform::from(&off).counts.w, TerrainLayersUniform::from(&on).counts.w), (0, FEATURE_ANTI_TILING));
         let both = TerrainLayers { height_blend: true, ..on.clone() };
         assert_eq!(TerrainLayersUniform::from(&both).counts.w, FEATURE_HEIGHT_BLEND | FEATURE_ANTI_TILING);
-        assert_eq!(TerrainLayersKey::from(&both), TerrainLayersKey { height_blend: true, anti_tiling: true, surface_bake: false });
+        assert_eq!(TerrainLayersKey::from(&both), TerrainLayersKey { height_blend: true, anti_tiling: true, surface_bake: false, parallax: false });
         // The repeat travels in tile.y, also where the mesh carries the coordinate (tile 0),
         // and the folding (tile.x, the layer count) is as before.
         let carried = TerrainLayersUniform::from(&TerrainLayers { count: 9, texture_repeat: 300.0, anti_tiling: true, ..default() });
@@ -2184,7 +2510,7 @@ mod tests {
         // the rest); height blending's are untouched.
         let main = || RenderPipelineDescriptor { fragment: Some(bevy::render::render_resource::FragmentState { shader_defs: vec!["VERTEX_UVS_A".into()], ..default() }), ..default() };
         let mut d = main();
-        height_blend_def(&mut d, TerrainLayersKey { height_blend: false, anti_tiling: true, surface_bake: false });
+        height_blend_def(&mut d, TerrainLayersKey { height_blend: false, anti_tiling: true, surface_bake: false, parallax: false });
         assert_eq!(d.fragment.as_ref().unwrap().shader_defs.len(), 1, "height blending's switch alone decides TERRAIN_HEIGHT_BLEND");
     }
 
@@ -2864,15 +3190,15 @@ mod tests {
             app.world_mut().run_system_once(crate::terrain_surface::refresh_captures).unwrap();
         };
         let (features, key, plain_layer, repeat) = state(&app);
-        assert_eq!((features, key, plain_layer, repeat), (default(), TerrainLayersKey { height_blend: false, anti_tiling: false, surface_bake: true }, true, 0.0), "both off at the start");
+        assert_eq!((features, key, plain_layer, repeat), (default(), TerrainLayersKey { height_blend: false, anti_tiling: false, surface_bake: true, parallax: false }, true, 0.0), "both off at the start");
         switch(&mut app, true);
         let (features, key, plain_layer, repeat) = state(&app);
         assert_eq!(features, nvf_assets::nif_surface_blend::DetailFeatures { height_blend: Some(height_blend_params().uniform()), anti_tiling: true, overflow_anti_tiling: 0b10, repeat: 256.0 });
-        assert_eq!(key, TerrainLayersKey { height_blend: true, anti_tiling: true, surface_bake: true }, "the folded copy bakes with the near draw's pipeline switches");
+        assert_eq!(key, TerrainLayersKey { height_blend: true, anti_tiling: true, surface_bake: true, parallax: false }, "the folded copy bakes with the near draw's pipeline switches");
         assert!(!plain_layer && repeat == 256.0, "the layer's copy reads anti-tiled at the near draw's repeat");
         switch(&mut app, false);
         let (features, key, plain_layer, repeat) = state(&app);
-        assert_eq!((features, key, plain_layer, repeat), (default(), TerrainLayersKey { height_blend: false, anti_tiling: false, surface_bake: true }, true, 0.0), "and back");
+        assert_eq!((features, key, plain_layer, repeat), (default(), TerrainLayersKey { height_blend: false, anti_tiling: false, surface_bake: true, parallax: false }, true, 0.0), "and back");
     }
 
     /// [design] Round 10a review, second round (P3): a quadrant captured (blend turned on,

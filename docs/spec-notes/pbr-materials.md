@@ -37,6 +37,7 @@ These choices are settled; pack authors and later versions can rely on them.
 | Reading BC7 and BC4 files (DDS with the DX10 header, or legacy `BC4U` / `BC4S`) | stage 1 of #2981 (`crates/fnv-dds`) |
 | Drawing a surface with its set (ORM, normal) | **implemented** in source (stage 3) [documented: `engine/nvf-assets/src/nif_spawn.rs` `shape_material`, `authored.rs` `retexture`]; the setting Authored materials (`authored-materials`, on by default, read at the start; `--graphics-only no-authored-materials`). Its check is the field test `pbr-authored-field` (below). A sample pack was drawn in the game with the setting off and on by the main session as of head `bebd7841a` (pictures not committed; they show the pack's own values, and no reference look exists to judge them by); those pictures are owed again after the fixes that followed that head |
 | Height maps (`_p`, parallax) | **implemented** (stage 4, below: "Height maps"). The game's own height slot (#2979) is not read |
+| Height maps on the landscape's texture layers | **implemented** in source, off by default (#3322 stage 1, below: "Terrain layers: parallax"); not yet seen running with a ground pack |
 | Metallic | read with the ORM but **held at 0** (stage 3, implemented) until the engine has a reflection source (stage 5) |
 | A pack validator (`fnvtool pbr check`, `fnvtool pbr selftest`) | **implemented** (`crates/fnvtool/src/pbr_check.rs`, docs/cli-contract.md `fnv.pbr.check/1`) |
 
@@ -202,8 +203,9 @@ not TOML is ignored whole with a warning. A UTF-8 byte order mark is accepted.
 - **Kept**: the base colour (the diffuse), the glow map, alpha blending and alpha testing (from
   the diffuse's alpha, as before), the decal flag, and environment maps once the engine draws
   them (it does not yet: `engine/nvf-assets/src/nif_material.wesl` header).
-- **Not covered in version 1**: actor skin, hair and FaceGen heads; terrain layers; distant
-  LOD; effects (unlit, additive, refraction, particles); the Pip-Boy and interface textures.
+- **Not covered in version 1**: actor skin, hair and FaceGen heads; terrain layers' `_orm`
+  and `_n` (their `_p` is drawn as parallax: "Terrain layers: parallax" below); distant LOD;
+  effects (unlit, additive, refraction, particles); the Pip-Boy and interface textures.
 
 ## How the engine lights a set
 
@@ -546,6 +548,68 @@ What holds for a texture swap while the shape fades, and what does not:
   This predates stage 3 and needs one
   owner of the drawn material (base opacity x actor alpha x fade); it is left for its own
   issue.
+
+## Terrain layers: parallax (#3322, stage 1)
+
+What the source does with ground height maps, as written; not seen running yet with a ground
+pack [documented: `engine/nvforever/src/terrain.rs` "Parallax", `TerrainCtx::folded_material`,
+`sync_parallax`, `parallax_def`; `engine/nvforever/src/terrain.wesl` `parallax_shift`;
+`engine/nvf-assets/src/texture.rs` `TextureCache::authored_height`, `authored.rs`
+`find_height`]. Whether the original draws any relief on its landscape is not known: an
+addition of NVForever's own until observer check 250 answers it [hypothesis: it draws none].
+
+- [design] **Source.** A landscape layer's height map is the `_p` of the set the index finds
+  for the layer's diffuse path (the LTEX's texture set's diffuse, resolved as a shape's
+  diffuse is: `\xbox\` to `\pc\` where the PC file exists), an authored set's or a
+  height-only set's, at its scalars' `parallax_depth` (the default where unset). Only the
+  `_p` is loaded: a ground texture's `_orm` and `_n` are not used on the landscape in this
+  stage. The same refusals as on shapes apply (signed, wrong format, sides not a multiple of
+  4, depth 0), with the same one warning per file. Loaded with the quadrant's folded
+  material whenever the run's Authored materials state is on, whether the switch is on or
+  not, so the switch flips while the game runs. The data's own height slot (a texture set's
+  `TX04`, which impact-decals.md records as the parallax slot for decals) is not read; how
+  many landscape texture sets name one is not counted yet (an `fnvtool` count is owed).
+- [design] **The base is flat.** A quadrant's base texture takes no height map in this stage:
+  a quadrant without painted layers is drawn by the separate landscape material, which
+  stays unshifted, and a moving base would break at that quadrant's edge.
+- [design] **One march.** Six layers in one draw rule out a march per layer. The folded
+  draw marches once, Bevy's steep parallax with the occlusion refinement (the vendored
+  `parallaxed_uv`'s steps, view vector, tangent frame and signs, as on NIF shapes), over one
+  blended depth: each layer's height by its ordered share (painted opacity x the layer
+  diffuse's alpha, read once at the plain coordinate, laid over the earlier layers as the
+  ordinary blend lays them), the base and a layer without a height map at height 1 (flat at
+  the surface: no depth). Then every texture of the quadrant, the base's and the layers',
+  diffuse and normal map, ordinary or anti-tiled, is read at the one moved coordinate.
+  Flat at the surface rather than mid-height so that the shift falls to nothing as a
+  height-mapped layer's share does, with no jump at its edge. Height blending, when on,
+  still weighs the colours by brightness; its weights do not reshape the march (a later
+  stage may let a real height map stand in for brightness there).
+- [design] **Depth and steps.** One depth per quadrant material: the largest of its layers'
+  sets' depths. At most 8 steps (`PARALLAX_LAYERS`; fewer than a shape's march, as every step
+  reads up to six height maps), fewer as the view steepens. The height maps are read at the
+  level their screen footprint asks for (not the top level, as the shapes' march reads),
+  with the base texture's sampler.
+- [design] **Fade.** Full strength up to 1024 units from the camera, none from 2048
+  (`PARALLAX_FADE`): inside the camera's cell and the near half of the next, well inside
+  the loaded cells. None head-on (the view vector's tangent part is zero).
+- [design] **What stays unshifted.** The depth prepass and the shadows (the main pass alone
+  gets `TERRAIN_PARALLAX`), the collision, the mesh terrain blend's surface bake and detail,
+  the distant landscape LOD, the separate landscape materials: a quadrant without folded
+  layers, every layer where the GPU has no bindless textures (`TerrainMaterials::folds`),
+  and the layers past the folded ones when the texture repeat does not divide the cell
+  (none at the game's 256). A layer drawn on its own over a shifted folded base does not
+  follow the base's shift: a seam that only those configurations show.
+- [design] **The switch.** Settings row Terrain parallax (`terrain-parallax`, Graphics ›
+  Detail and Distance), off by default and in both presets until its cost is measured
+  (whether a look turns it on is the maintainer's call); greyed while Authored materials is
+  off; `--graphics-only terrain-parallax`. A folded material without a height map keeps
+  its old pipeline with the switch on, so without a ground pack nothing changes (smoke
+  `terrain-parallax-no-pack`).
+- **Not done in stage 1:** a generated-ground field test that judges a readback (shift on a
+  tilted view, none head-on: the PBR field builds its own panels, not the landscape); the
+  frame-time cost with and without the switch at a ground-heavy and a layer-heavy place;
+  the `TX04` count; before/after pictures with a ground pack; the base's own `_p`; height
+  maps for the separate landscape materials.
 
 ## Load order: per file, so ship complete sets
 

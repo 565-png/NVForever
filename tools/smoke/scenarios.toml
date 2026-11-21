@@ -2594,6 +2594,39 @@ forbid = [
 ]
 
 [[scenario]]
+name = "terrain-parallax-no-pack"
+source = "[design, #3322] engine/nvforever/src/terrain.rs \"Parallax\", docs/spec-notes/pbr-materials.md \"Terrain layers: parallax\": the Terrain parallax switch (off by default and in both presets) on from the start and flipped off and on while the game runs, over data with no ground height maps: the folded materials record it, none holds a height map, and no TERRAIN_PARALLAX pipeline is ever asked for, so the picture is the one without the switch. What a ground pack's relief looks like needs a generated ground set (no aid yet: the PBR field builds its own panels, not the landscape)"
+areas = ["renderer", "graphics", "terrain", "settings"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvforever/src/terrain_surface.rs",
+  "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvforever/src/pipeline_gate.rs",
+  "engine/nvf-play/src/settings_layout.rs", "crates/nvf-settings-layout/src/lib.rs",
+  "engine/nvf-assets/src/texture.rs", "engine/nvf-assets/src/authored.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_DEFS = "1", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:terrain-parallax,13:terrain-parallax" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--graphics-only", "terrain-parallax"]
+run_seconds = 20
+expect = [
+  "authored materials: on",
+  { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "the GPU folds the layers (bindless), so the folded materials are the ones the switch reaches" },
+]
+order = [[
+  { re = 'graphics: light glow, terrain parallax$', label = "the switch is on from the start (Authored materials on, as --graphics-only leaves it)" },
+  { re = 'terrain: parallax on \(\d+ folded quadrant materials, 0 with height maps, 0 changed', label = "on from the first frame: every material made with it, none holding a height map" },
+  "settings: terrain-parallax off",
+  { re = 'terrain: parallax off \([1-9]\d* folded quadrant materials, 0 with height maps, [1-9]\d* changed', label = "switching off flipped the loaded folded materials" },
+  "settings: terrain-parallax on",
+  { re = 'terrain: parallax on \([1-9]\d* folded quadrant materials, 0 with height maps, [1-9]\d* changed', label = "flipped on again" },
+]]
+forbid = [
+  { re = 'shader-defs: .*TERRAIN_PARALLAX', label = "no material without a height map takes the parallax pipeline" },
+  { text = "first folded material with authored height maps", label = "the test data has no ground height maps (a pack in it would make this scenario's premise false)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the switch on" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (terrain parallax switched)" },
+  { text = "still being retried after", label = "a pipeline still retried at the cap (terrain parallax switched)" },
+]
+
+[[scenario]]
 name = "desert-haze"
 source = "[design, #2675] engine/nvforever/src/haze.rs, fog.rs GAME_FOG, docs/design/graphics-enhanced.md §3.16: the Desert haze switch (off by default and in every preset) turned on while the game runs outdoors at Goodsprings at noon writes the haze's figures, worked from the shown weather, into the fog and logs them; turned off it logs off; the shader edits it rides on (pbr_functions.wesl apply_fog, fog.wesl) are in place and every world pipeline compiles, without a rendering error"
 areas = ["renderer", "graphics", "settings"]
