@@ -430,3 +430,20 @@ correction preserves its exact text oracles and is unexecuted at correction
 authoring. No downstream hover or baseline success is inferred. Native ordering/null parity,
 actual death/VATS producer coverage and installed JLM acceptance remain open
 ([combat rules](spec-notes/combat-rules.md#19-source-queries-for-associated-dropped-weapons)).
+
+Water coverage and camera fog lifecycle: renderer-producer/camera-fog controls
+cover loaded-cell identity/radius invalidation and current-camera entry/exit.
+The plane producer retains unaffected meshes/materials; exit uses current weather or
+interior fog, after transform propagation and before reflection fog copying. This is
+bounded renderer work, not installed UnderwaterFX/Radiation Visuals acceptance or a
+claim that every reported flicker/cyan tint is resolved ([world](spec-notes/world.md)).
+
+
+Live image-space cinematic edits: a bounded renderer bridge applies session-assigned
+traits 37–50 to selected nonanimatable screen/lens modifiers without changing the
+immutable record cache or core getter/setter policy. Compiled-source grade controls
+cover getter-to-setter contrast/alpha round trips, updates, removal/re-entry,
+lens/animated isolation and checked restore. Revision-specific water and grade
+checks are recorded in PR #2861. Native animated edits and NAM3 alpha (trait 54) units,
+and installed Radiation Visuals/UnderwaterFX acceptance, remain open
+([image modifiers](spec-notes/image-modifiers.md)).
