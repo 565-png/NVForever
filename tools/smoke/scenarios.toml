@@ -13864,7 +13864,7 @@ order = [[
   { re = 'sound speed: 0\.\d\d -> 1\.00', label = "and come back to speed when it ends" },
 ]]
 expect = [
-  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied", known_failing = "#3283: no plugin of the base game holds fPlayerDeathReloadTime, so setgs answers 'No game setting'; the run starts no death recovery anyway (assisted-run policy)" },
   "death camera: the player died in first person: the body drops as a ragdoll, the view stays on its head",
   "player controls: all held, the player is dead",
   { re = 'death camera: the body is on the ground [\d.]+ s after the death', label = "the ragdoll comes to rest" },
@@ -13882,7 +13882,7 @@ env = { NVFOREVER_HOME = "death-fade-recovery-delay-home", NVF_PLAY_TEST_GOTO = 
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 22
 expect = [
-  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied", known_failing = "#3283: no plugin of the base game holds fPlayerDeathReloadTime, so setgs answers 'No game setting'; the run starts no death recovery anyway (assisted-run policy)" },
   "death camera: the player died in first person: the body drops as a ragdoll, the view stays on its head",
   { re = 'death camera: the screen starts fading to black (?P<n>[\d.]+) s after the death', range = [2.0, 2.3], label = "the fade starts about 2 s after the death" },
   { re = 'death camera: the screen is black (?P<n>[\d.]+) s after the death', range = [6.0, 6.3], label = "the screen is black about 6 s after the death" },
@@ -13898,7 +13898,7 @@ env = { NVFOREVER_HOME = "death-cam-third-recovery-delay-home", NVF_PLAY_TEST_GO
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700"]
 run_seconds = 22
 expect = [
-  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied", known_failing = "#3283: no plugin of the base game holds fPlayerDeathReloadTime, so setgs answers 'No game setting'; the run starts no death recovery anyway (assisted-run policy)" },
   "death camera: the player died in third person: the body drops as a ragdoll, the camera stays put and looks at it",
   { re = 'death camera: the body is on the ground [\d.]+ s after the death', label = "the ragdoll comes to rest" },
 ]
@@ -13951,7 +13951,7 @@ env = { NVFOREVER_HOME = "ragdoll-floats-recovery-delay-home", NVF_PLAY_TEST_MOV
 args = ["--play", "--pos=56992,37536,2745", "--heading", "90", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 50
 expect = [
-  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied", known_failing = "#3283: no plugin of the base game holds fPlayerDeathReloadTime, so setgs answers 'No game setting'; the run starts no death recovery anyway (assisted-run policy)" },
   "death camera: the player died in first person: the body drops as a ragdoll, the view stays on its head",
   { re = 'ragdoll: actor 00000014 floats at \(5\d{4}, 37\d{3}, [\d.]+\), its trunk (?P<n>-?\d+) units under the surface at 2600', range = [-25, 25], label = "the body comes to rest floating, its trunk at the lake's surface (6 under, 13 s after the death, 2026-10-25)" },
 ]
@@ -16822,7 +16822,7 @@ env = { NVFOREVER_HOME = "death-music-dobj-recovery-delay-home", NVF_PLAY_TEST_C
 args = ["--cell", "Goodsprings", "--play", "--hour", "12", "--no-voice", "--no-messages"]
 run_seconds = 16
 expect = [
-  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied" },
+  { re = 'console: fPlayerDeathReloadTime: \S+ -> 120', count = 1, label = "explicit loaded-GMST camera-only fixture delay is applied", known_failing = "#3283: no plugin of the base game holds fPlayerDeathReloadTime, so setgs answers 'No game setting'; the run starts no death recovery anyway (assisted-run policy)" },
   { re = 'music: the player died: the music stops, MUSDeath \(0x[0-9A-F]{8}\) plays', label = "the SOUN fallback plays: the DOBJ's death music names no shipped file" },
 ]
 forbid = [{ text = "death recovery:", label = "camera-only fixture does not dispatch recovery during its unchanged observation window" }, { text = "the default objects' death music", label = "no default objects' death music file in the shipped data" }]
@@ -18125,7 +18125,7 @@ env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SAMPLE = "2", NVF_PLAY_TEST_SCRIP
 args = ["--cell", "GSSchoolHouse", "--pos", "700,-900,3340", "--play", "--no-voice", "--no-messages"]
 run_seconds = 50
 expect = [
-  { re = 'NVCrGiantMantisNymph \S+: created at \(1101, -1875, 3339\), stands at \(-?\d+, -?\d+, 33[2-5]\d\)', min = 20, label = "the nymphs stand on the floor round the egg, not in it" },
+  { re = 'NVCrGiantMantisNymph \S+: created at \(1101, -1875, 3339\), stands at \(-?\d+, -?\d+, 33[2-5]\d\)', min = 20, label = "the nymphs stand on the floor round the egg, not in it", known_failing = "#3298: 12 since #3053 (GetDestructionStage counts from 1): the egg's script places 12 at stage 1 or 2, and the aid's one hit takes it through 2 and 3; whether the original gives 12 or 24 is observer check 247" },
   { text = "created where no free spot is near", count = 0, label = "every nymph found a spot" },
   { re = 'stress frames: .*1% low (?P<n>[\d.]+) ms', range = [0, 400], label = "no run of second-long frames (was 1,162 ms)" },
   { re = 'at most (?P<n>\d+) one-shots at once', range = [1, 64], label = "the footsteps are held to the voice limit" },
@@ -34212,6 +34212,118 @@ forbid = [
   { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
 ]
 note = "The same field with the setting off: the index is never built (no 'authored materials: N sets' line), the material path loads no pbr file (the fixture's own check reads the generated files first), the plain, lit, dark and flat panels draw the same and the reference (its game normal map) differs from them."
+
+[[scenario]]
+name = "pbr-reflect-field"
+source = "[design, #2981] docs/spec-notes/pbr-materials.md \"Reflections on authored materials\": generated authored sets on the real material path under a fixed asymmetric reflection cube; engineering comparator policy set from reasoning, not original-game pixels"
+areas = ["renderer", "textures", "nif"]
+paths = ["engine/nvf-assets/src/reflection_cube.rs", "engine/nvf-assets/src/reflection_cube/", "engine/nvf-assets/src/pbr_field.rs", "engine/nvf-assets/src/pbr_field/reflect.rs", "engine/nvf-assets/src/pbr_field/reflect/", "engine/nvf-assets/src/authored.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/", "engine/vendor/bevy_pbr/src/render/pbr_functions.wesl", "engine/vendor/bevy_pbr/src/light_probe/"]
+env = { NVF_PLAY_TEST_PBR_REFLECT_FIELD = "1", NVFOREVER_HOME = "pbr-field-home", NVF_PLAY_TEST_GOD = "1", NVF_PBR_METAL_GAIN = "" }
+# The Authored materials row pinned on, as in pbr-authored-field (the two share a home), and with it
+# Reflections on authored materials.
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--graphics-only", "authored-materials,authored-reflections"]
+run_seconds = 30
+timeout = 180
+expect = [
+  "authored materials: on",
+  { text = "authored reflections: on (", count = 1 },
+  { text = "lights: reflection gate installed", count = 1 },
+  { text = "pbr reflect field: actual NIF material source, 12 panels (metal20+X, …), switch on, gate Installed", count = 1 },
+  { text = "pbr reflect field: camera A's cube attached (switch on)", count = 1 },
+  { re = 'pbr reflect field: readback \d A \[metal20\+X=', count = 2, label = "each readback logs both cameras' panel means and the judged quantities" },
+  { text = "pbr reflect field: first rendered readback PASS", count = 1 },
+  { text = "pbr reflect field: second rendered readback PASS", count = 1 },
+  { text = "pbr reflect field: metals show the faces their reflections point at, rougher nearer the cube's mean, controls and the cube-less camera unchanged PASS", count = 1 },
+]
+order = [["pbr reflect field: camera A's cube attached", "pbr reflect field: first rendered readback PASS", "pbr reflect field: second rendered readback PASS", "pbr reflect field: metals show the faces their reflections point at"]]
+forbid = [
+  { re = '(?i)pbr reflect field:.*(FAIL|timeout|missing|wrong byte count)' },
+  { re = 'reflection gate.*(not found|not installed)' },
+  { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
+]
+note = "The reflections' fixed-cube field (the Reflections on authored materials row pinned on; the field's own cameras, not the world camera, whose cube is authored-reflections-sky's). Twelve panels (rows one and two white diffuse; row three the metal base colour: a dark bronze diffuse at the default metal gain 12 and the same at metal_gain = 1), two cameras of one pose (Bevy's default exposure, MSAA 4x, world-view ambient 0.6 with negative alpha, no sun): camera A carries a reflection cube with a different linear colour per world face (+X red, -X cyan, +Y green, -Y magenta, +Z blue, -Z yellow; each level mixed towards their grey mean by level/5), camera B none. Judged on camera A: the five tilted smooth metals (roughness 0.2) show the face their reflection points at (+X, -X, +Y, -Y, +Z: face orientation and Bevy's z flip), the head-on metals at roughness 0.2/0.5/0.9 lie nearer the neutral mean in chromaticity as roughness rises (the level rule), the smooth one clearly blue; the legacy and zero-reflectance controls equal camera B's; the dielectric does not darken; the lifted bronze is at least 1.6 times as bright as the gain-1 bronze (about 2.5 expected: the gain limited to 1/0.40 by the bronze's red) with the same chromaticity (within 0.04). On camera B every white panel is the same white under the ambient (metallic held at 0 without a cube) and the two bronze panels the same bronze. THE THRESHOLDS (the row-three ones too, #2981 metal base colour) (pbr_field/reflect.rs) ARE SET FROM REASONING, NOT FROM READBACKS: the main session must confirm them against the first real readbacks, and compare this run's camera B means (the readback line, B [...]) with pbr-reflect-field-off's, panel for panel: they should be equal. Each run reserves a new run-* child under pbr-field-home/pbr-reflect-field-output with both cameras' readbacks (.rgba, .ppm) and the comparator reports."
+manual = "Open readback-2-a.ppm: top row red, cyan, green, magenta, blue panels (tilted); middle row a duller blue, an almost grey panel, then three white-grey panels; bottom row a dull bronze-tinted blue panel and a darker one of the same tint. readback-2-b.ppm: ten identical grey panels in the top two rows, two identical bronze ones below."
+
+[[scenario]]
+name = "pbr-reflect-field-off"
+source = "[design, #2981] docs/spec-notes/pbr-materials.md \"Reflections on authored materials\": the row off, a reflection cube on a camera changes no panel (the reflection gate keeps it from every shader that did not opt in)"
+areas = ["renderer", "textures", "nif"]
+paths = ["engine/nvf-assets/src/reflection_cube.rs", "engine/nvf-assets/src/reflection_cube/", "engine/nvf-assets/src/pbr_field/reflect.rs", "engine/nvf-assets/src/pbr_field/reflect/", "engine/nvf-assets/src/authored.rs", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_material.wesl", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/", "engine/vendor/bevy_pbr/src/render/pbr_functions.wesl", "engine/vendor/bevy_pbr/src/light_probe/"]
+env = { NVF_PLAY_TEST_PBR_REFLECT_FIELD = "1", NVFOREVER_HOME = "pbr-field-home", NVF_PLAY_TEST_GOD = "1", NVF_PBR_METAL_GAIN = "" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--graphics-only", "authored-materials,no-authored-reflections"]
+run_seconds = 30
+timeout = 180
+expect = [
+  "authored materials: on",
+  { text = "authored reflections: off (setting)", count = 1 },
+  { text = "lights: reflection gate installed", count = 1 },
+  { text = "pbr reflect field: actual NIF material source, 12 panels (metal20+X, …), switch off, gate Installed", count = 1 },
+  { text = "pbr reflect field: camera A's cube attached (switch off)", count = 1 },
+  { re = 'pbr reflect field: readback \d A \[metal20\+X=', count = 2, label = "each readback logs both cameras' panel means with the switch off" },
+  { re = "pbr reflect field: first rendered readback PASS", count = 1, label = "first readback with the switch off" },
+  { re = "pbr reflect field: second rendered readback PASS", count = 1, label = "second readback with the switch off" },
+  { text = "pbr reflect field: switch off, the cube on camera A changes no panel PASS", count = 1 },
+]
+forbid = [
+  { re = '(?i)pbr reflect field:.*(FAIL|timeout|missing|wrong byte count)' },
+  { re = 'authored reflections: on' },
+  { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
+  { re = 'reflection gate.*(not found|not installed)', label = "the gate in place with the switch off too" },
+]
+note = "The reflection field with the Reflections on authored materials row off (--graphics-only no-authored-reflections): authored materials are built with metallic 0 and no NIF pipeline opts in, yet camera A still carries the filled cube (Bevy sets ENVIRONMENT_MAP for its pipelines), so every panel of camera A must equal camera B's: the reflection gate keeps the cube from shaders without the opt-in. Camera B is today's picture of these panels. Thresholds as in pbr-reflect-field (set from reasoning; the main session confirms them against the first real readbacks). Output under pbr-field-home/pbr-reflect-field-output."
+
+[[scenario]]
+name = "authored-reflections-sky"
+source = "[design, #2981] docs/spec-notes/pbr-materials.md \"Reflections on authored materials\": the world camera's reflection cube filled from the sky where the mount has authored sets; generated sets only (the reflection field's fixture written into a fresh folder of the run and mounted over every loose layer for the run), no game-derived file"
+areas = ["renderer", "textures", "sky"]
+paths = ["engine/nvforever/src/reflection_sky.rs", "engine/nvforever/src/reflection_sky/", "engine/nvf-assets/src/reflection_cube.rs", "engine/nvf-assets/src/reflection_cube/", "engine/nvf-assets/src/pbr_field/reflect.rs", "engine/nvf-assets/src/authored.rs", "engine/nvf-assets/src/data.rs", "crates/fnv-vfs/src/lib.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvforever/src/main.rs"]
+env = { NVF_PLAY_TEST_PBR_MOUNT_PACK = "1", NVFOREVER_HOME = "pbr-reflect-home", NVF_PLAY_TEST_GOD = "1" }
+# Both rows pinned on (a given switch wins over a saved row in a timed run).
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--graphics-only", "authored-materials,authored-reflections"]
+run_seconds = 20
+timeout = 180
+expect = [
+  { re = 'pbr mount pack: \d+ generated files written under ', count = 1, label = "the generated sets are in the run's own fresh folder, mounted with the game's" },
+  "authored materials: on",
+  { text = "authored reflections: on (", count = 1, label = "both rows on, so the run's reflections state is on" },
+  { text = "lights: reflection gate installed", count = 1 },
+  { re = 'authored materials: [1-9]\d* sets under ', count = 1, label = "the mount's index counts the generated sets" },
+  { re = "reflection sky: first fill of the world camera's cube \\(outdoors;", count = 1, label = "the first fill, from the exterior's sky" },
+  { re = 'reflection cube: attached to \S+ \(generation \d+', count = 1, label = "Bevy's component on the world camera once the fill is on the GPU" },
+  { re = 'reflection sky summary: [1-9]\d* fills \([1-9]\d* outdoors, 0 indoors\), \d+ checks skipped as unchanged', count = 1, label = "the exit summary counts the fills" },
+]
+order = [["reflection sky: first fill of the world camera's cube", "reflection cube: attached to", "reflection sky summary:"]]
+forbid = [
+  { re = 'pbr mount pack: FAIL' },
+  { re = 'reflection sky: off' },
+  { re = 'reflection gate.*(not found|not installed)', label = "the gate in place, or no cube could be attached" },
+  { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
+]
+note = "The world camera's reflection cube (#2981): the test aid NVF_PLAY_TEST_PBR_MOUNT_PACK writes the reflection field's generated sets (textures\\reflect\\, textures\\pbr\\reflect\\; no game shape uses them) into a fresh folder of the run, pbr-reflect-home/pbr-mount-pack/run-*, every file created new, and mounts it over every other loose layer for the run only (no mods folder is written), so the mount has authored sets; with both rows on and the gate installed the producer makes one cube for the world camera, fills it from Goodsprings' sky (the first-fill line logs the level-0 zenith, horizon and nadir texels and both hemisphere means: the units to check against the ambient), and Bevy's component goes on once the fill is on the GPU. Log lines only: nothing in the scene is authored, so no picture changes; pictures of a real pack are the main session's."
+
+[[scenario]]
+name = "authored-reflections-off"
+source = "[design, #2981] docs/spec-notes/pbr-materials.md \"Reflections on authored materials\": the row off, no cube is made although the mount has authored sets"
+areas = ["renderer", "textures", "sky"]
+paths = ["engine/nvforever/src/reflection_sky.rs", "engine/nvforever/src/reflection_sky/", "engine/nvf-assets/src/reflection_cube.rs", "engine/nvf-assets/src/pbr_field/reflect.rs", "engine/nvf-assets/src/data.rs", "crates/fnv-vfs/src/lib.rs", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/settings.rs", "engine/nvforever/src/main.rs"]
+env = { NVF_PLAY_TEST_PBR_MOUNT_PACK = "1", NVFOREVER_HOME = "pbr-reflect-home", NVF_PLAY_TEST_GOD = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--graphics-only", "authored-materials,no-authored-reflections"]
+run_seconds = 20
+timeout = 180
+expect = [
+  { re = 'pbr mount pack: \d+ generated files written under ', count = 1, label = "the mount has authored sets, so only the row keeps the cube away" },
+  "authored materials: on",
+  { text = "authored reflections: off (setting)", count = 1 },
+  { text = "reflection sky: off (setting); no reflection cube is made", count = 1 },
+  { text = "reflection sky summary: off (setting)", count = 1 },
+]
+forbid = [
+  { re = 'pbr mount pack: FAIL' },
+  { re = 'reflection sky: first fill' },
+  { re = 'reflection cube: attached' },
+  { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error' },
+]
+note = "The row off with the same generated sets in the mount: no cube is allocated or attached, the summary says off (setting). With the row off the NIF pipelines get no opt-in def and authored metallic stays 0, so the picture is the one before the reflections (the pull request's head a71e8f00a); that equality in pictures is the main session's check."
 
 [[scenario]]
 name = "pbr-authored-field-height"

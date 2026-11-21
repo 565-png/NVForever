@@ -7,7 +7,23 @@ use crate::game::{Game, RunCtx};
 use fnv_script::vm::{ArrayKind, XKey, XVal};
 use fnv_sim::FormId;
 use serde_json::Value as Json;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+/// Number of JIP LN weapon sound slots (`0..=13`: `SNAM` 0/1, `XNAM`, `NAM7`, `TNAM`,
+/// `NAM6`, `UNAM`, `NAM9`, `NAM8`, `WMS1` 0/1, `WMS2`, `YNAM`, `ZNAM`)
+/// [documented: GECK wiki GetWeaponSound / SetWeaponSound].
+pub const WEAPON_SOUND_SLOTS: usize = 14;
+
+/// A weapon's sound slots as scripts changed them this session
+/// ([`Game::weapon_sound_changes`]), indexed by JIP `soundID` `0..=13`.
+///
+/// - `None`: script left this slot at its authored record value.
+/// - `Some(None)`: script cleared this slot (`SetWeaponSound weap id` / null).
+/// - `Some(Some(sound))`: script replaced this slot with `sound` (a `SOUN` or cloned `SOUN`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WeaponSoundChange {
+    pub slots: [Option<Option<FormId>>; WEAPON_SOUND_SLOTS],
+}
 
 /// A placed radio station, as the engine reads it.
 #[derive(Debug, Clone)]
@@ -35,10 +51,6 @@ pub struct GapsState {
     pub gravity: HashMap<FormId, f64>,
     /// ToggleBipedSlotVisibility's hidden slots.
     pub hidden_slots: HashSet<u32>,
-    /// SetPerkLevel's levels.
-    pub perk_levels: HashMap<FormId, u8>,
-    /// SetPerkFlag's flags: (perk, flag ID 0 trait, 1 playable, 2 hidden).
-    pub perk_flags: HashMap<(FormId, u8), bool>,
     /// SetDestructionDataHealth's values.
     pub destruction_health: HashMap<FormId, i32>,
     /// References whose activation SetInteractionDisabled turned off.
@@ -97,6 +109,10 @@ pub struct GapsState {
     pub always_run_request: Option<bool>,
     /// RunScriptSnippet's snippets waiting: (frames left, source, reference).
     pub snippets: Vec<(u32, String, FormId)>,
+    /// Session weapon-sound overrides (`SetWeaponSound`, `SetPickupSound`/`SetPutdownSound`
+    /// on `WEAP`, plus `TempCloneForm` snapshots): `(weapon, slot 0..14) -> Some(SOUN)` or
+    /// `None` when cleared.
+    pub weapon_sounds: HashMap<(FormId, u8), Option<FormId>>,
 }
 
 fn form(args: &[XVal], k: usize) -> Option<FormId> {
@@ -126,10 +142,35 @@ fn yes(b: bool) -> XVal {
     XVal::Num(f64::from(u8::from(b)))
 }
 
+fn parse_json_form(v: Option<&Json>) -> Option<FormId> {
+    let s = v?.as_str()?.strip_prefix("0x")?;
+    let id = u32::from_str_radix(s, 16).ok()?;
+    (id != 0).then_some(FormId(id))
+}
+
 fn json_form(v: Option<&Json>) -> XVal {
-    match v.and_then(Json::as_str) {
-        Some(s) if s.starts_with("0x") => XVal::Ref(u32::from_str_radix(&s[2..], 16).unwrap_or(0)),
-        _ => XVal::Ref(0),
+    XVal::Ref(parse_json_form(v).map_or(0, |f| f.0))
+}
+
+fn parse_weapon_sound_slot(args: &[XVal], k: usize) -> Option<u8> {
+    match args.get(k)? {
+        XVal::Num(x) if x.is_finite() && x.fract() == 0.0 && (0.0..WEAPON_SOUND_SLOTS as f64).contains(x) => Some(*x as u8),
+        _ => None,
+    }
+}
+
+/// Parses `SetWeaponSound`'s optional `newSound` argument:
+/// - `Some(None)` when omitted or explicitly null (`0`) -> clear slot.
+/// - `Some(Some(id))` when a non-zero form/integer ID is supplied -> validate as `SOUN`.
+/// - `None` when a malformed non-null argument (string, negative/fractional number, etc.) is
+///   supplied -> reject without mutating state.
+fn parse_weapon_sound_arg(args: &[XVal], k: usize) -> Option<Option<FormId>> {
+    match args.get(k) {
+        None | Some(XVal::Ref(0)) => Some(None),
+        Some(XVal::Num(x)) if *x == 0.0 => Some(None),
+        Some(XVal::Ref(r)) => Some(Some(FormId(*r))),
+        Some(XVal::Num(x)) if x.is_finite() && *x >= 1.0 && *x <= u32::MAX as f64 && x.fract() == 0.0 => Some(Some(FormId(*x as u32))),
+        _ => None,
     }
 }
 
@@ -376,9 +417,10 @@ fn split_styled(t: &str) -> (String, Option<String>, Option<String>) {
     (rest.to_string(), icon, sound)
 }
 
-/// WEAP sound IDs of GetWeaponSound: the subrecord and which of its repeats [observed:
-/// gaps4, 0–2 the 10mm pistol's two SNAM then XNAM, 3 none on it; hypothesis: the rest in
-/// the record's order of sound fields].
+/// WEAP sound IDs of GetWeaponSound / SetWeaponSound (`0..=13`): the subrecord and which
+/// of its repeats [documented: GECK wiki GetWeaponSound, SetWeaponSound; xEdit
+/// wbDefinitionsFNV.pas WEAP; observed: gaps4, 0–2 the 10mm pistol's two SNAM then XNAM,
+/// 3 none on it].
 fn weapon_sound_sub(id: i64) -> Option<(&'static str, usize)> {
     Some(match id {
         0 => ("SNAM", 0),
@@ -393,8 +435,114 @@ fn weapon_sound_sub(id: i64) -> Option<(&'static str, usize)> {
         9 => ("WMS1", 0),
         10 => ("WMS1", 1),
         11 => ("WMS2", 0),
+        12 => ("YNAM", 0),
+        13 => ("ZNAM", 0),
         _ => return None,
     })
+}
+
+impl Game<'_> {
+    /// Whether `form` (or its `TempCloneForm` origin) is a `WEAP` base record.
+    pub(crate) fn is_weapon_form(&self, form: FormId) -> bool {
+        self.data.sig(self.unclone(form)) == Some(*b"WEAP")
+    }
+
+    /// Whether `form` (or its `TempCloneForm` origin) is a `SOUN` base record.
+    pub(crate) fn is_sound_form(&self, form: FormId) -> bool {
+        self.data.sig(self.unclone(form)) == Some(*b"SOUN")
+    }
+
+    /// Resolves `form` (a `WEAP` base form, `TempCloneForm` `WEAP`, placed weapon `REFR`, or
+    /// inventory weapon ref) to the `WEAP` form that owns its sound slots.
+    pub(crate) fn weapon_form(&self, form: FormId) -> Option<FormId> {
+        let resolved = crate::functions::base_of(self, form).unwrap_or(form);
+        self.is_weapon_form(resolved).then_some(resolved)
+    }
+
+    /// Effective `SOUN` assigned to weapon `weapon` at JIP sound slot `slot` (`0..=13`):
+    /// session override (`SetWeaponSound`, `SetPickupSound`, `SetPutdownSound`, or
+    /// `TempCloneForm` snapshot) first, else the authored `WEAP` record's subrecord.
+    pub fn weapon_sound(&self, weapon: FormId, slot: u8) -> Option<FormId> {
+        let (sub, k) = weapon_sound_sub(i64::from(slot))?;
+        let w = self.weapon_form(weapon)?;
+        if let Some(&ov) = self.gaps.weapon_sounds.get(&(w, slot)) {
+            return ov;
+        }
+        let orig = self.unclone(w);
+        parse_json_form(self.data.record_all(orig, sub).get(k).copied())
+    }
+
+    /// Session weapon-sound override directly stored for `weapon` and `slot` (`0..=13`),
+    /// including overrides snapshotted at `TempCloneForm` creation time:
+    /// - `None`: no session override on this weapon/slot.
+    /// - `Some(None)`: cleared this session.
+    /// - `Some(Some(sound))`: overridden to `sound` this session.
+    pub fn weapon_sound_override(&self, weapon: FormId, slot: u8) -> Option<Option<FormId>> {
+        self.gaps.weapon_sounds.get(&(weapon, slot)).copied()
+    }
+
+    /// Override or clear (`None`) JIP sound slot `slot` (`0..=13`) on `weapon` for the
+    /// session. Returns `true` when `weapon` resolves to a `WEAP`, `slot < 14`, and `sound`
+    /// is either `None` or a `SOUN` (or `TempCloneForm` `SOUN`); returns `false` without
+    /// mutating state otherwise.
+    pub fn set_weapon_sound(&mut self, weapon: FormId, slot: u8, sound: Option<FormId>) -> bool {
+        if weapon_sound_sub(i64::from(slot)).is_none() {
+            return false;
+        }
+        let Some(w) = self.weapon_form(weapon) else { return false };
+        if let Some(s) = sound {
+            if !self.is_sound_form(s) {
+                return false;
+            }
+        }
+        self.gaps.weapon_sounds.insert((w, slot), sound);
+        true
+    }
+
+    /// Snapshot any active session weapon-sound overrides (`0..=13`) from `source` onto
+    /// `clone` at `TempCloneForm` creation time. Pre-clone edits on `source` carry onto
+    /// `clone`, while later edits on `source` stay isolated from already-created clones.
+    pub(crate) fn snapshot_weapon_sounds(&mut self, source: FormId, clone: FormId) {
+        if !self.is_weapon_form(source) {
+            return;
+        }
+        for slot in 0..WEAPON_SOUND_SLOTS as u8 {
+            if let Some(&ov) = self.gaps.weapon_sounds.get(&(source, slot)) {
+                self.gaps.weapon_sounds.insert((clone, slot), ov);
+            }
+        }
+    }
+
+    /// The weapons whose sound slots scripts changed this session (`SetWeaponSound`,
+    /// `SetPickupSound`, `SetPutdownSound`, plus `TempCloneForm` snapshots), for an engine
+    /// consumer to apply over authored `WeaponFx` / item sounds
+    /// (docs/spec-notes/weapon-mods.md §9).
+    pub fn weapon_sound_changes(&self) -> BTreeMap<FormId, WeaponSoundChange> {
+        let mut out: BTreeMap<FormId, WeaponSoundChange> = BTreeMap::new();
+        for (&(weapon, slot), &sound) in &self.gaps.weapon_sounds {
+            let idx = usize::from(slot);
+            if idx < WEAPON_SOUND_SLOTS {
+                out.entry(weapon).or_default().slots[idx] = Some(sound);
+            }
+        }
+        out
+    }
+
+    /// A number that changes whenever [`Game::weapon_sound_changes`] would give something
+    /// else, read without building the map: an engine consumer can poll it every frame.
+    pub fn weapon_sound_stamp(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut n = 0u64;
+        let mut sum = 0u64;
+        for (&(weapon, slot), &sound) in &self.gaps.weapon_sounds {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (weapon.0, slot, sound.map(|f| f.0)).hash(&mut h);
+            // The map has no order: a sum of the entries' hashes does not depend on one.
+            sum = sum.wrapping_add(h.finish());
+            n += 1;
+        }
+        sum ^ n.rotate_left(32)
+    }
 }
 
 /// The functions of this file; `None` for any other name.
@@ -522,28 +670,38 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             zero
         }
         // ---- perks ----
-        // PERK DATA: 0 trait, 1 playable, 2 hidden [observed: gaps2, Toughness reads
-        // 0 1 0 0 0; hypothesis: the order of the flags on the page, 3 and on none].
+        // PERK DATA: 0 trait, 1 playable, 2 hidden [documented: GECK wiki GetPerkFlag /
+        // SetPerkFlag; observed: gaps2, Toughness reads 0 1 0 0 0; SetPerkFlag returns 0,
+        // gaps7]. Stored on `Game::perk_def` (`lu3.perk_edits`) so level-up, trait sheet,
+        // ITR eligibility, GetAllPerks, and revision checks read the change.
         "getperkflag" | "setperkflag" => {
             let f = form(args, 0).unwrap_or(FormId(0));
             let k = num(args, 1, -1.0) as i64;
-            let Some(p) = g.data.perks.get(&f) else { return Some(Ok(zero)) };
+            if name == "setperkflag" {
+                if matches!(k, 0..=2) {
+                    if let Some(p) = g.perk_def_mut(f) {
+                        let on = num(args, 2, 0.0) != 0.0;
+                        match k {
+                            0 => p.is_trait = on,
+                            1 => p.playable = on,
+                            2 => p.hidden = on,
+                            _ => {}
+                        }
+                    }
+                }
+                return Some(Ok(zero));
+            }
+            let Some(p) = g.perk_def(f) else { return Some(Ok(zero)) };
             let now = match k {
                 0 => p.is_trait,
                 1 => p.playable,
                 2 => p.hidden,
                 _ => return Some(Ok(zero)),
             };
-            let now = g.gaps.perk_flags.get(&(f, k as u8)).copied().unwrap_or(now);
-            // SetPerkFlag returns 0, for the session [observed: gaps7, 0 both ways].
-            if name == "setperkflag" {
-                g.gaps.perk_flags.insert((f, k as u8), num(args, 2, 0.0) != 0.0);
-                return Some(Ok(zero));
-            }
             yes(now)
         }
         // [observed: gaps3, Toughness 2 entries]
-        "getperkentrycount" => XVal::Num(form(args, 0).and_then(|f| g.data.perks.get(&f)).map_or(0, |p| p.entries.len()) as f64),
+        "getperkentrycount" => XVal::Num(form(args, 0).and_then(|f| g.perk_def(f)).map_or(0, |p| p.entries.len()) as f64),
         // Entry point 1, ability 5, quest stage 6; past the entries 0 [observed: gaps3 and
         // gaps5, Toughness/Lead Belly/Educated/Commando 1, Rad Resistance and Small Frame 5,
         // Intense Training 6].
@@ -613,18 +771,37 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
         }
         // YNAM [observed: gaps2, the 10mm pistol 000864D5, the stimpak none].
-        "getpickupsound" => match form(args, 0).and_then(|f| crate::nvse::record_value(g, f, "YNAM", "")) {
-            Some(XVal::Ref(r)) => XVal::Ref(r),
-            _ => XVal::Ref(0),
+        // WEAP shares live slot 12 with GetWeaponSound / SetWeaponSound.
+        "getpickupsound" => match form(args, 0) {
+            Some(f) if g.is_weapon_form(f) => XVal::Ref(g.weapon_sound(f, 12).map_or(0, |s| s.0)),
+            Some(f) => match crate::nvse::record_value(g, f, "YNAM", "") {
+                Some(XVal::Ref(r)) => XVal::Ref(r),
+                _ => XVal::Ref(0),
+            },
+            None => XVal::Ref(0),
         },
         // DEST stages [observed: gaps3, the 10mm pistol 0].
         "getdestructiondatanumstages" => XVal::Num(form(args, 0).and_then(|f| g.destruction(f)).map_or(0, |d| d.stages.len()) as f64),
         // ---- weapons ----
         // ShowOff's index into DNAM flags1 [observed: gaps4, the 10mm pistol reads 0 on
-        // 0–5 and SetWeaponFlag 5 1 reads back 1; hypothesis: flags1's bits].
-        "weaponhasflag" | "setweaponflag" => {
-            let set = name == "setweaponflag";
-            let w = form(args, if set { 2 } else { 1 }).or_else(|| subject.and_then(|r| crate::functions::items::equipped_weapon(g, r)));
+        // 0–5 and SetWeaponFlag 5 1 reads back 1; documented: WeaponHasFlag /
+        // SetWeaponFlag aliases GetWeaponHasFlag / SetWeaponHasFlag, calling reference
+        // weaponRefr or optional weapon baseForm].
+        "weaponhasflag" | "getweaponhasflag" | "setweaponflag" | "setweaponhasflag" => {
+            let set = matches!(name, "setweaponflag" | "setweaponhasflag");
+            let resolve_weapon = |g: &Game, f: FormId| -> Option<FormId> {
+                if let Some((_, it)) = g.temp_item(f) {
+                    return (g.data.sig(g.unclone(it)) == Some(*b"WEAP")).then_some(it);
+                }
+                if g.data.sig(g.unclone(f)) == Some(*b"WEAP") {
+                    return Some(f);
+                }
+                crate::functions::base_of(g, f).filter(|&b| g.data.sig(g.unclone(b)) == Some(*b"WEAP"))
+            };
+            let w = match form(args, if set { 2 } else { 1 }) {
+                Some(f) => resolve_weapon(g, f),
+                None => subject.and_then(|r| resolve_weapon(g, r).or_else(|| crate::functions::items::equipped_weapon(g, r))),
+            };
             let Some(w) = w else { return Some(Ok(zero)) };
             let flags = match crate::nvse::record_value(g, w, "DNAM", "flags1") {
                 Some(XVal::Num(x)) => x as u64,
@@ -639,21 +816,23 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
             let new = if num(args, 1, 0.0) != 0.0 { flags | 1 << (k as u64) } else { flags & !(1 << (k as u64)) };
             g.field_overrides.insert((w, "DNAM/flags1".into()), XVal::Num(new as f64));
+            g.playable_overrides.remove(&w);
             zero
         }
         "getweaponsound" | "setweaponsound" => {
-            let w = form(args, 0).unwrap_or(FormId(0));
-            let id = num(args, 1, -1.0) as i64;
-            let Some((sub, k)) = weapon_sound_sub(id) else { return Some(Ok(XVal::Ref(0))) };
-            let key = (w, format!("weaponsound/{id}"));
+            let Some(w) = form(args, 0) else {
+                return Some(Ok(if name == "setweaponsound" { zero } else { XVal::Ref(0) }));
+            };
+            let Some(slot) = parse_weapon_sound_slot(args, 1) else {
+                return Some(Ok(if name == "setweaponsound" { zero } else { XVal::Ref(0) }));
+            };
             if name == "setweaponsound" {
-                g.field_overrides.insert(key, XVal::Ref(form(args, 2).map_or(0, |f| f.0)));
+                if let Some(sound) = parse_weapon_sound_arg(args, 2) {
+                    g.set_weapon_sound(w, slot, sound);
+                }
                 return Some(Ok(zero));
             }
-            match g.field_overrides.get(&key) {
-                Some(v) => v.clone(),
-                None => json_form(g.data.record_all(w, sub).get(k).copied()),
-            }
+            XVal::Ref(g.weapon_sound(w, slot).map_or(0, |s| s.0))
         }
         // JohnnyGuitar's damage and DPS (`weapon_damage`, `weapon_target`).
         "getcalculatedweapondamage" => {
@@ -712,7 +891,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // PROJ DATA flags bit by bit, and the explosion [observed: gaps6, the 10mm
         // projectile's flags 141 read 1 0 1 1 0 0; a null explosion does not clear it].
         "getprojectileflag" | "setprojectileflag" => {
-            let Some(f) = form(args, 0) else { return Some(Ok(zero)) };
+            let Some(f) = form(args, 0).filter(|&f| g.data.sig(g.unclone(f)) == Some(*b"PROJ")) else {
+                return Some(Ok(zero));
+            };
             let flags = match crate::nvse::record_value(g, f, "DATA", "flags") {
                 Some(XVal::Num(x)) => x as u64,
                 _ => 0,
@@ -952,7 +1133,26 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }).unwrap_or_default();
             if refs.is_empty() { zero } else { list(g, refs) }
         }
-        "getfollowers" | "getdetectingactors" => zero,
+        // Actors currently following the calling reference (`Follow` / `Accompany` package)
+        // [documented: GECK wiki GetFollowers; observed: gaps7, ar_Null when empty].
+        "getfollowers" => {
+            let followers = subject.map(|leader| g.followers_of(leader)).unwrap_or_default();
+            if followers.is_empty() {
+                zero
+            } else {
+                list(g, followers.into_iter().map(|f| XVal::Ref(f.0)).collect())
+            }
+        }
+        // Actors currently detecting the calling actor (`Band::Detected` in `g.detection.pairs`)
+        // [documented: GECK wiki GetDetectingActors; observed: gaps7, ar_Null when empty].
+        "getdetectingactors" => {
+            let detectors = subject.map(|target| g.detecting_actors(target)).unwrap_or_default();
+            if detectors.is_empty() {
+                zero
+            } else {
+                list(g, detectors.into_iter().map(|f| XVal::Ref(f.0)).collect())
+            }
+        }
         // The first member of the list the actor carries [observed: gaps7, the player
         // with the 10mm ammo list gives Ammo10mm, with a list it has none of 0].
         "pickfromlist" => {
@@ -1122,15 +1322,17 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
             XVal::Num(f64::from(old))
         }
-        // PERK DATA min level; SetPerkLevel for the session [observed: gaps7, Bloody Mess
-        // 6, set to 8 and back].
+        // PERK DATA min level; SetPerkLevel for the session [documented: GECK wiki
+        // GetPerkLevel / SetPerkLevel; observed: gaps7, Bloody Mess 6, set to 8 and back].
+        // Stored on `Game::perk_def` (`lu3.perk_edits`) so level-up, requirement lines,
+        // and ITR eligibility read the change.
         "getperklevel" => {
             let p = form(args, 0).unwrap_or(FormId(0));
-            XVal::Num(g.gaps.perk_levels.get(&p).copied().or_else(|| g.data.perks.get(&p).map(|d| d.min_level)).map_or(0.0, f64::from))
+            XVal::Num(g.perk_def(p).map_or(0.0, |d| f64::from(d.min_level)))
         }
         "setperklevel" => {
-            if let Some(p) = form(args, 0) {
-                g.gaps.perk_levels.insert(p, num(args, 1, 0.0).clamp(0.0, 255.0) as u8);
+            if let Some(p) = form(args, 0).and_then(|p| g.perk_def_mut(p)) {
+                p.min_level = num(args, 1, 0.0).clamp(0.0, 255.0) as u8;
             }
             zero
         }
@@ -1572,7 +1774,12 @@ mod tests {
         assert_eq!(weapon_sound_sub(0), Some(("SNAM", 0)));
         assert_eq!(weapon_sound_sub(1), Some(("SNAM", 1)));
         assert_eq!(weapon_sound_sub(2), Some(("XNAM", 0)));
-        assert_eq!(weapon_sound_sub(12), None);
+        assert_eq!(weapon_sound_sub(9), Some(("WMS1", 0)));
+        assert_eq!(weapon_sound_sub(10), Some(("WMS1", 1)));
+        assert_eq!(weapon_sound_sub(11), Some(("WMS2", 0)));
+        assert_eq!(weapon_sound_sub(12), Some(("YNAM", 0)));
+        assert_eq!(weapon_sound_sub(13), Some(("ZNAM", 0)));
+        assert_eq!(weapon_sound_sub(14), None);
     }
 
     #[test]

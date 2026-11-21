@@ -915,6 +915,10 @@ pub struct PlayerState {
     /// a script clears them [design].
     #[serde(skip_serializing_if = "BTreeSet::is_empty", default)]
     pub enemy_of_script: BTreeSet<FormId>,
+    /// Factions the player has been expelled from (SetPCExpelled / GetPCExpelled)
+    /// [documented: GECK wiki SetPCExpelled, GetPCExpelled].
+    #[serde(skip_serializing_if = "BTreeSet::is_empty", default)]
+    pub expelled_from: BTreeSet<FormId>,
     /// SetInCharGen.
     #[serde(skip_serializing_if = "std::ops::Not::not", default)]
     pub in_chargen: bool,
@@ -2429,6 +2433,9 @@ pub struct Session {
     list_edits: std::collections::HashMap<FormId, Vec<FormId>>,
     /// Session-only `SetOwningFactionRequiredRank` overrides (`OtherState::owner_ranks`).
     owner_ranks: std::collections::HashMap<FormId, i32>,
+    /// Session-only perk definition edits (`Lu3State::perk_edits`: entries, `SetPerkLevel`,
+    /// `SetPerkFlag`, `LNSetIsPlayable`).
+    perk_edits: std::collections::HashMap<FormId, crate::data::PerkDef>,
     /// Session-only authored package overrides (`Game::package_overrides` for forms in
     /// `GameData::package_defs`: SetPackageFlag, SetPackageLocationRadius,
     /// SetPackageTargetDistance, etc.).
@@ -3856,7 +3863,7 @@ impl<'a> Game<'a> {
             .map(|(&id, &def)| (id, def.clone()))
             .collect();
         self.package_overrides.retain(|id, _| !self.data.package_defs.contains_key(id));
-        Session { handlers, main_loop, main_loop_registrars, jip_seq, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits), owner_ranks: std::mem::take(&mut self.other.owner_ranks), package_overrides }
+        Session { handlers, main_loop, main_loop_registrars, jip_seq, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits), owner_ranks: std::mem::take(&mut self.other.owner_ranks), perk_edits: std::mem::take(&mut self.lu3.perk_edits), package_overrides }
     }
 
     /// Take over what lasts for the session ([`Game::take_session`]).
@@ -3878,6 +3885,7 @@ impl<'a> Game<'a> {
         self.put_kept_calls(s.kept_calls);
         self.list_edits = s.list_edits;
         self.other.owner_ranks = s.owner_ranks;
+        self.lu3.perk_edits = s.perk_edits;
         for (id, def) in s.package_overrides {
             self.change_package(id, |d| *d = def);
         }
