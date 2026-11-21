@@ -328,8 +328,10 @@ pub const TERMINAL_INPUT_SECS: f64 = 0.6;
 /// How near its marker an awaited actor has arrived, and the hours waited for it.
 pub const ARRIVED: f32 = 500.0;
 pub const WAIT_HOURS: u32 = 24;
-/// How long the walk to a beeping speaker may take before it is left ([`Errand::Silence`]).
-pub const SILENCE_SECS: f64 = 15.0;
+/// How long the walk to a beeping speaker may take before it is left ([`Errand::Silence`]):
+/// the tape room's speaker at the police station took 18 s (round 18), and left at 15 s the
+/// collar went off beside it (round 20 [observed]).
+pub const SILENCE_SECS: f64 = 30.0;
 /// Seconds an errand may take.
 pub const ERRAND_SECS: f64 = 90.0;
 /// Seconds a message box nobody waits for stays up before the pilot closes it.
