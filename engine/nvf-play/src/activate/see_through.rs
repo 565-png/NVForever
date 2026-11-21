@@ -6,7 +6,7 @@
 //! The rule [design, docs/spec-notes/simulation.md §5 "Talking through bars"]: actors
 //! see through these layers [documented: GECK wiki "Collision layer": TRANSPARENT,
 //! TRANSPARENT SMALL, "Actors can see through this layer type"], and so may talk through
-//! them; the original's crosshair on them is not known (observer-checks.md #250). Only
+//! them; the original's crosshair on them is not known (observer-checks.md #251). Only
 //! Talk passes: items, containers, doors, bodies and pockets behind bars or a window stay
 //! out of reach, as render-bounds picks still count only before the first collision hit
 //! (`pick::choose`). A closed door hides what is behind it on any layer.

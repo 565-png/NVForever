@@ -3431,6 +3431,17 @@ already talking takes over at once, same topic or another; nothing is queued or 
      damage-stage field fits every case found too. They differ on Point Lookout's
      DLC04DarMuckBubble (0x0A012C5E: index 1, damage stage 3, at 40 %): damage one to under
      40 % with the console (`DamageObject`) and print `GetDestructionStage` (2 or 3).
+     A second case, in the base game and needing no console (#3298): the mantis egg in the
+     Goodsprings schoolhouse (0x0010AC54, V22MantisOotheca: health 1; stages index 0 at
+     100 %, index 1 at 99 % with Cap Damage and Destroy and 50 points a second of its own
+     damage, index 2 at 0 %; damage-stage fields 0, 1, 2 [observed: fnvtool esm decode]).
+     Its script places 12 nymphs (four `PlaceAtMe … 3`) on each OnDestructionStageChange
+     where `GetDestructionStage` is 1 or 2 [observed: fnvtool script decompile, SCPT
+     0x000EF406]. Shoot the egg once and count the nymphs. 12 says index + 1 (our two
+     stage changes, to index 1 and then 2, read 2 and 3). 24 does not settle it: the
+     damage-stage field gives it (the changes read 1 and 2), and so does index + 1 if
+     the original also runs the block for index 0 (reading 1, 2, 3). Ours: 12 since
+     #3053; the smoke scenario `mantis-egg-spawn` expected at least 20 before it.
 
 ## Added 2026-11-21 (greetings of two quests at equal priority, #3199, #3061)
 
@@ -3467,9 +3478,24 @@ already talking takes over at once, same topic or another; nothing is queued or 
      Streaks moving with the view as bright as the frame agree with ours; a pane that is
      only a faint grey film, or nothing, says the reflection is weighted by alpha.
 
+## Added 2026-11-21 (the angles SetNifBlockRotation sets on a drawn node, #3135, #3138)
+
+250. **Which way does SetNifBlockRotation turn a drawn node?** (P3; #3138,
+     [nif-blocks](../design/nif-blocks.md) Conventions.) NVForever takes a node's angles
+     as those of the transpose of the rotation it is drawn with [observed: the 10mm
+     pistol's ProjectileNode reads 90 0 90 in GetNifBlockRotation, its file matrix's rows
+     taken as columns], and so draws a set angle turned the other way from the plain
+     right-handed rotation [hypothesis: B42 True Leaning's lean right steps the view +22
+     along X and turns its nodes -18° about Y, a roll right only so]. In the original,
+     with a pistol drawn in first person, read `player.GetNifBlockTranslationAlt "Bip01 R
+     Hand" x y z 1 2` (the world place), run `player.SetNifBlockRotation "Bip01 Translate"
+     0 0 30 0 2`, wait a frame and read it again; do the same in NVForever from the same
+     place and heading. The hand moving the same way in both settles it. The reading
+     back, `player.GetNifBlockRotation "Bip01 Translate" "Z" 0 2`, should be 30 in both.
+
 ## Added 2026-11-21 (talking through cell bars, #3233)
 
-250. **Does the crosshair pass collision on the Transparent layer (3), and on Transparent
+251. **Does the crosshair pass collision on the Transparent layer (3), and on Transparent
      Small (26/28): can the player talk to, take, open or search what stands behind it?**
      (P2; #3233, simulation.md §5 "Talking through bars".) The wiki says nothing but
      projectiles passes Transparent and that actors see through it [documented: GECK wiki

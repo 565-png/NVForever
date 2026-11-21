@@ -774,7 +774,7 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
     [documented: GECK wiki "Collision layer", TRANSPARENT, TRANSPARENT SMALL];
     Transparent Small Anim by its name [hypothesis]); for the activation pick the wiki
     says only that nothing but projectiles passes Transparent, so the original's
-    crosshair on these layers is an observer question (observer-checks.md #250). The
+    crosshair on these layers is an observer question (observer-checks.md #251). The
     rule is kept narrow on purpose [design]: only Talk passes, so items, containers,
     doors, a body to search and a pocket to pick behind bars, a fence or a window stay
     out of reach (render-bounds picks still count only before the first collision hit,
