@@ -105,6 +105,54 @@ Code: `crates/fnv-game/src/respawn.rs` (from `Game::set_loaded`),
 - In the masters the village's seven Fiends and the burned bodies around it have the flag
   and come back, and so do killed creatures of leveled spawns (`VSpawnTier3CazadorSmall50`
   …) [observed: `corpse-respawn` run, 2026-10-12].
+- A recreated actor runs its OnLoad with the rest of the cell, after the reset and its
+  OnReset blocks (`Game::set_loaded`); a script that kills it there (the placeholders of
+  §4.1) leaves it dead again before anything else runs.
+
+### 4.1 The leveled spawns' placeholder creature [2026-11-21, #3228, #3139]
+
+What the records hold [observed: `fnvtool esm decode`, FalloutNV.esm]:
+
+- The leveled creature lists behind the `VSpawnTier…` bases mix a real creature with
+  `VCrILikeOblivionChancedSpawns` (CREA 0x00157B25) and set no chance none (LVLD 0):
+  `VEncTier1BigHornerSmall75` (0x0015C6CD) holds three entries of the bighorner calf
+  (0x0014F47E) and one of the placeholder, all at level 1; `VEncTier1BloatFlyMed50`
+  (0x0015C6C9) four bloatflies and three placeholders. The number in the Editor ID is
+  about the creature's share of the entries. The spawn bases (`VSpawnTier1BigHornerSmall75`
+  0x0015C648 …) take Traits, Stats, Factions, Actor Effect List, AI Data,
+  Model/Animation, Base Data, Inventory and Script from the list (template flags 991).
+- The placeholder: model `creatures\NVVoid\skeleton.nif` + `NVVoid.NIF` (no shapes,
+  #2753), base scale 0.1, Health 0, Damage 0, ACBS flags Respawn, Walks, No Low Level
+  Processing, No Blood Spray/Decal, Can't Open Doors and Is Ghost, Aggression
+  Unaggressive, Assistance Helps Nobody, Sound Level Silent, one faction
+  `VCrVoidCritterFaction` (FULL "Faction for Void Creatures Used in Chanced Spawns",
+  flagged Hidden from PC) and the script `OblivionSpawnTestScript` (0x00159603), whose
+  only block with a statement is `Begin OnLoad`: `Kill`, `SetDestroyed 1`, `Set bDead to
+  1` (a `MoveTo VVoidCreatureMarker01` and a `ResetCell VDoNotDelete` beside them are
+  commented out; the cell `VDONOTDELETE`, "Cell for Dead \"Void Creatures\"", and its
+  markers exist).
+- A leveled creature is used only as a template, and its dialog offers the calculate
+  flags, level and count, no chance none [documented: GECK wiki LeveledCreature, Leveled
+  Character Dialog].
+- So the placeholder is the list's "nothing" [hypothesis, from all of the above: a share
+  of no creature in a list that cannot give none, "chanced spawns" in the faction's name
+  and the Oblivion-style chance in the creature's]: whenever it is the pick, its OnLoad
+  kills it as the cell loads; it is a corpse of no shapes, Health 0 also laying it out dead
+  at a new game (§1), and its Respawn flag brings it back alive at a cell reset (§4) only
+  for the same OnLoad to kill it again.
+- **In NVForever** (`GameData::base_may_run_script`, scripts.md §7.1): a placed actor
+  whose base takes its script from a template counts as scripted when any pick of its
+  list carries a script, so the placeholder's OnLoad runs at each load of its cell, the
+  reset one included. Before, only references whose own base has `SCRI` were scripted:
+  the placeholder's OnLoad never ran, a reset left it alive at health 1, and as a herd
+  mate (the same base) it heard its herd's alarms, ran OnStartCombat, hit the player for
+  0.3 and kept the detection meter at Caution, unseen and, a ghost, unhurt (#3228,
+  #3139). Its corpse is drawn and ragdolled as before (§3, physics.md §4.3).
+- What a ghost does is unchanged: nobody attacks or detects it as an enemy, and it may
+  still attack [documented: GECK wiki SetGhost notes, "Enemies of this calling ref will
+  not go into combat or detect an actor with this flag", "*Can* inflict damage";
+  `Game::would_attack`]. Not checked against the original: that it runs this OnLoad for a
+  reference recreated by a reset, and the frame the corpse is back.
 - An encounter zone with "Never Resets" keeps its cells from resetting (2026-10-21,
   [encounter-zones](encounter-zones.md) §4).
 - Not done [documented, not built]: the bodies of

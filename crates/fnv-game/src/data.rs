@@ -2401,8 +2401,17 @@ impl GameData {
         d.greeting = d.by_edid("GREETING").filter(|t| d.topic_defs.contains_key(t));
         d.goodbye = d.by_edid("GOODBYE").filter(|t| d.topic_defs.contains_key(t));
         clock.lap("topics ordered and linked");
+        // An actor whose base takes its script from a template (template flag "Script")
+        // runs the template's script, its leveled pick's through a list [documented: GECK
+        // wiki GetActorTemplateFlag, "Use Script"; `Game::ref_script`], so a reference
+        // whose base may get one through any pick counts as scripted too: the leveled
+        // spawns' placeholder `VCrILikeOblivionChancedSpawns` kills itself in its OnLoad
+        // (docs/spec-notes/dead-on-spawn.md §4.1, #3228). Which pick it is, and so
+        // whether a script runs, is read per reference when a block would run.
+        let mut scripted_base: HashMap<FormId, bool> = HashMap::new();
         for (id, p) in &refs.refs {
-            if let (Some(cell), Some(_)) = (p.cell, d.script_of_base(p.base)) {
+            let Some(cell) = p.cell else { continue };
+            if *scripted_base.entry(p.base).or_insert_with(|| d.base_may_run_script(p.base)) {
                 d.scripted_by_cell.entry(cell).or_default().push(*id);
             }
         }
@@ -2419,6 +2428,20 @@ impl GameData {
     pub fn script_of_base(&self, base: FormId) -> Option<FormId> {
         let s = *self.form_script.get(&base)?;
         self.scripts.contains_key(&s).then_some(s)
+    }
+
+    /// Whether a reference placed with `base` may run a script: the base's own, or, for
+    /// an actor base with the template flag "Script", the script of an actor its
+    /// template chain can end at through any leveled pick
+    /// ([`GameData::template_sources_any_pick`]; `Game::ref_script` reads the pick).
+    pub fn base_may_run_script(&self, base: FormId) -> bool {
+        if self.script_of_base(base).is_some() {
+            return true;
+        }
+        if !self.actors.get(&base).is_some_and(|a| a.template_script && a.template.is_some()) {
+            return false;
+        }
+        self.template_sources_any_pick(base, |a| a.template_script).into_iter().any(|s| self.script_of_base(s).is_some())
     }
 
     pub fn script(&self, script: FormId) -> Option<&Compiled> {
