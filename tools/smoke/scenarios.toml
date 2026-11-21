@@ -17554,6 +17554,21 @@ expect = [
 ]
 
 [[scenario]]
+name = "pipboy-script-effect-names"
+source = "[documented] GECK wiki Base Effect: a Script effect flagged Display Name Only shows its name; issue 3119: Psycho's card and STATS > EFF said nothing"
+note = "Psycho (ALCH 00015166) is added at 9 s; ITEMS > Aid is opened at 13.5 s and walked down row by row (the start carries other aid items; each row's card is logged as it is selected); the drop aid uses Psycho at 19 s; STATS > Status > EFF is opened at 23-24 s. Its effect PsychoMagicEffect (MGEF 000679F4) is a Script effect named \"Damage +25%\" with Display Name Only [observed: FalloutNV.esm, #3119]."
+areas = ["pipboy", "aid"]
+paths = ["engine/nvf-play/src/pipboy/items.rs", "engine/nvf-play/src/pipboy/stats/read.rs", "crates/fnv-game/src/aid.rs", "crates/fnv-game/src/data.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:call:player:AddItem:Psycho:1", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=items,13.5:tab=2,14:key=down,14.4:key=down,14.8:key=down,15.2:key=down,15.6:key=down,16:key=down,16.4:key=down,17:close,22:open,23:page=stats,23.5:tab=0,27:close", NVF_PLAY_TEST_DROP = "19:00015166:use", NVF_PLAY_TEST_PIPBOY_STATS = "24:sub=2" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages"]
+run_seconds = 30
+expect = [
+  { re = 'pipboy items: Psycho selected: .*effects: Some\("Damage \+25%"\)', min = 1, label = "the card names the Script effect" },
+  { re = 'aid: the player used Psycho', label = "Psycho is used" },
+  { re = 'pipboy stats: LVL .*, [1-9]\d* effects,', min = 1, label = "STATS lists an effect while Psycho lasts (none before #3119)" },
+]
+
+[[scenario]]
 name = "pipboy-items-heading-heal"
 source = "issue 3120: a Stimpak used from ITEMS > Aid heals a frame after the list changes; the hand-built page's heading draws the new HP with the Pip-Boy still open"
 note = "Health 200 less 60 is 140; the Stimpak at potency 1.3 (Medicine 15) gives 39, so 179 (aid-items). The drop aid opens ITEMS at 16 s, selects the Stimpak (00015169; the start carries other aid items) and uses it, closing half a second later. Without the fix the heading is logged at 140 after the use and not again."
