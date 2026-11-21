@@ -333,6 +333,9 @@ Keys:
   `largest_side`, the largest width or height, `null` with none), `formats` (every format
   name read, sorted), `gpu_bytes_estimate` (the `payload_bytes` of every `_orm`, `_n` and
   `_p` without an error in a set that is authored or height only), `errors`, `warnings`.
+  Scalar values are not listed: a scalar file is only validated (`metal_gain`,
+  `parallax_depth`, `roughness_scale`, `reflectance`, docs/spec-notes/pbr-materials.md
+  "Scalars").
 - `selftest` (self-test only): `formats` (the clean set's), `expected`, `missing`,
   `unexpected` (each a list of `path`, `code`), `pass`, `verdict` (the last line).
 
