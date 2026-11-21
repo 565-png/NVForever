@@ -125,7 +125,10 @@ pub fn choose_precise_first(
 /// priority over a smaller activator behind it. Never a collision hit: the mattress still
 /// picks the bed, and a wall in front still hides the suitcase. `hit` is the raw first
 /// hit, not a door promoted from behind it (`door_behind`), so nothing behind the wall
-/// sets a box aside. Two boxes over the same stretch both stay; a sleeper's rough box
+/// sets a box aside. A box of the reference that `hit` strikes counts as entered before it
+/// whatever its entry: the ray demonstrably meets that reference, and its mesh's box may
+/// begin a hair past its collision (the Bison Steve suitcase: hit at 98.15, box from
+/// 98.2). Two boxes over the same stretch both stay; a sleeper's rough box
 /// sets no bed's aside, so [`to_occupant`] still sees the bed; nor does another bed's box
 /// (two beds never set each other aside). The result is
 /// [`choose_precise_first`]'s input.
@@ -142,7 +145,8 @@ pub fn set_aside_enclosing(
         if yielding.contains(&id) || !bed(id) {
             continue;
         }
-        let holds = |&&(other, e, x, r): &&(u32, f32, f32, bool)| other != id && !r && !bed(other) && (0.0..=limit).contains(&e) && enter <= e && x <= exit && (enter < e || x < exit);
+        let candidate = |other: u32, e: f32| (0.0..=limit).contains(&e) || (e >= 0.0 && e <= reach && hit.is_some_and(|h| h.form_id == Some(other)));
+        let holds = |&&(other, e, x, r): &&(u32, f32, f32, bool)| other != id && !r && !bed(other) && candidate(other, e) && enter <= e && x <= exit && (enter < e || x < exit);
         if boxes.iter().filter(holds).any(|b| accept(b.0)) {
             yielding.push(id);
         }
@@ -386,6 +390,22 @@ mod tests {
         let kept = set_aside_enclosing(None, &boxes, REACH, beds, ANY);
         assert_eq!(kept.len(), 4);
         assert_eq!(choose_precise_first(None, kept, REACH, ANY).unwrap().form_id, 21);
+    }
+
+    /// #3323, the smoke run at the Bison Steve (pick log): the suitcase's collision is
+    /// hit at 98.15, its box entered at 98.2, a hair past it, inside the bed's box
+    /// (96.9 to 189.6). The struck reference's box still counts: the suitcase wins.
+    #[test]
+    fn the_struck_reference_s_box_counts_though_it_begins_past_the_hit() {
+        let (bed, suitcase) = (0x000D72C7, 0x000AFA24);
+        let hit = Some(RayHit { form_id: Some(suitcase), distance: 98.15 });
+        let boxes = [(suitcase, 111.7, 130.8, false), (suitcase, 98.2, 114.8, false), (suitcase, 103.9, 104.0, false), (0x000E4B99, 186.5, 187.1, false), (bed, 96.9, 189.6, false), (bed, 130.8, 130.8, false), (0x000D7302, 188.4, 188.4, false)];
+        let kept = set_aside_enclosing(hit, &boxes, REACH, |id| id == bed, ANY);
+        assert!(kept.iter().all(|k| k.0 != bed), "{kept:?}");
+        assert_eq!(choose_precise_first(hit, kept, REACH, ANY), Some(Pick { form_id: suitcase, distance: 98.15, source: Source::Collision }));
+        // Another reference's box beginning past the hit is still hidden by it.
+        let wall = Some(RayHit { form_id: None, distance: 98.15 });
+        assert_eq!(set_aside_enclosing(wall, &boxes, REACH, |id| id == bed, ANY).len(), boxes.len());
     }
 
     /// #3323 review: the cutoff for setting a box aside is the raw first hit (a wall at
