@@ -147,6 +147,8 @@ mod projectile_launch_probe;
 mod projectile_launch_tests;
 #[cfg(test)]
 mod critical_damage_hit_tests;
+#[cfg(test)]
+mod world_blood_tests;
 
 /// The shooter's id for projectiles (the player has no hit volume).
 const PLAYER: ActorId = u64::MAX;
@@ -2682,7 +2684,7 @@ fn actor_material(s: &Sfx, script: Option<&ScriptState>, sim: &SimState, actor: 
 /// melee blows alike (item 24).
 fn impact_for(s: &Sfx, script: Option<&ScriptState>, sim: &SimState, weapon: FormId, actor: Option<ActorId>, material: Option<u32>) -> (Option<FormId>, &'static str) {
     let material = match actor {
-        Some(a) => actor_material(s, script, sim, a as u32),
+        Some(a) => actor_material(s, script, sim, actor_ref(a)),
         None => fnv_combat::fx::impact_material(material),
     };
     let set = s.forms.weapons.get(&weapon).and_then(|w| w.impact_dataset);
@@ -2714,39 +2716,62 @@ fn show_impact(s: &Sfx, script: Option<&ScriptState>, sim: &SimState, mut fx: Im
 /// impact point in the projectile direction"].
 pub const WORLD_BLOOD_REACH: f32 = 512.0;
 
-/// The splatter chance without the `fCombatEnvironmentBloodChance` game setting
-/// [hypothesis: observer check 251].
-pub const WORLD_BLOOD_CHANCE: f32 = 0.5;
+/// The splatter chance without the `fCombatEnvironmentBloodChance` game setting (the
+/// masters do not set it): its default [documented: GECK wiki
+/// FCombatEnvironmentBloodChance, 0.7500].
+pub const WORLD_BLOOD_CHANCE: f32 = 0.75;
 
 /// The chance (0..=1) that a shot on an actor leaves blood on the world: the game setting
-/// `fCombatEnvironmentBloodChance` [documented: GECK wiki ITR:OnWoundSpray names it as
-/// the roll], a value above 1 read as a percentage, one up to 1 as a fraction
-/// [hypothesis: observer check 251]; [`WORLD_BLOOD_CHANCE`] without it.
+/// `fCombatEnvironmentBloodChance`, a fraction [documented: GECK wiki
+/// FCombatEnvironmentBloodChance and ITR:OnWoundSpray], held to 0..=1;
+/// [`WORLD_BLOOD_CHANCE`] without it.
 pub fn blood_chance(setting: Option<f32>) -> f32 {
-    match setting {
-        Some(v) if v > 1.0 => (v / 100.0).min(1.0),
-        Some(v) => v.max(0.0),
-        None => WORLD_BLOOD_CHANCE,
+    setting.filter(|v| v.is_finite()).unwrap_or(WORLD_BLOOD_CHANCE).clamp(0.0, 1.0)
+}
+
+/// The reference a shot's actor id stands for: the player's for [`PLAYER`].
+fn actor_ref(a: ActorId) -> u32 {
+    if a == PLAYER {
+        FormId::PLAYER_REF.0
+    } else {
+        a as u32
     }
+}
+
+/// The impact a shot's blood leaves on the world ([`world_blood`]): the struck body part's
+/// blood spurt / decal impact data set (BPTD; the severable one, else the explodable
+/// [hypothesis: observer check 251]) [documented: GECK wiki Body Part; ITR:OnWoundSpray,
+/// "the body-part IPCT resolved for the hit limb"], its impact for the actor's Impact
+/// Material Type. Not the weapon's impact data set, whose organic slot may hold another
+/// effect (a flamer's scorch). None for a hit on the held weapon or a gore piece, a
+/// material not organic (organic, organic bug, organic glow) [design], or a part without
+/// such a set.
+pub fn splatter_impact(forms: &fnv_combat::fx::FxForms, part: Option<u8>, body: Option<&BodyPart>, material: &str) -> Option<FormId> {
+    if matches!(part, Some(crate::hitvol::WEAPON_PART | fnv_phys::gore::GORE_PART)) || !material.starts_with("organic") {
+        return None;
+    }
+    let body = body?;
+    forms.impact_id(body.severable_impact_dataset.or(body.explodable_impact_dataset)?, material)
 }
 
 /// The blood a shot on an actor leaves on the world (docs/spec-notes/impact-decals.md
 /// §4a): `hit` is the impact sent for the actor (its No Blood Decal flag and the armour
-/// tweak already in `no_decal`), `roll` in [0, 1) against `chance`. The first surface
-/// `surface` finds (from, unit direction, reach → point and normal) along the shot, else
-/// straight down from the hit, within [`WORLD_BLOOD_REACH`], gets the same impact as a
-/// decal only ([`ImpactFx::splatter`]); none without a surface. At most one a hit
+/// tweak already in `no_decal`), `blood` the splatter's impact ([`splatter_impact`]),
+/// `roll` in [0, 1) against `chance`. The first surface `surface` finds (from, unit
+/// direction, reach → point and normal) along the shot, else straight down from the hit,
+/// within [`WORLD_BLOOD_REACH`], gets `blood` as a decal only ([`ImpactFx::splatter`]);
+/// none without a surface. At most one a hit
 /// [documented: GECK wiki ITR:OnWoundSpray, "the engine breaks out of the raycast loop
 /// on the first valid surface"]; the downward line is ours [hypothesis: observer check
 /// 251, the wiki names only the projectile's direction].
-pub fn world_blood(hit: &ImpactFx, roll: f32, chance: f32, mut surface: impl FnMut(V3, V3, f32) -> Option<(V3, V3)>) -> Option<ImpactFx> {
+pub fn world_blood(hit: &ImpactFx, blood: FormId, roll: f32, chance: f32, mut surface: impl FnMut(V3, V3, f32) -> Option<(V3, V3)>) -> Option<ImpactFx> {
     if hit.actor.is_none() || hit.no_decal || hit.splatter || roll >= chance {
         return None;
     }
     let along = vec::normalize(hit.dir);
     let lines = [along, [0.0, 0.0, -1.0]];
     let (point, normal, dir) = lines.into_iter().filter(|d| vec::len(*d) > 0.5).find_map(|d| surface(hit.point, d, WORLD_BLOOD_REACH).map(|(p, n)| (p, n, d)))?;
-    Some(ImpactFx { impact: hit.impact, shooter: FormId(0), point, normal, dir, actor: None, no_spray: true, no_decal: false, splatter: true })
+    Some(ImpactFx { impact: blood, shooter: FormId(0), point, normal, dir, actor: None, no_spray: true, no_decal: false, splatter: true })
 }
 
 /// Whether a projectile of `damage` (the weapon's per projectile, before armour) does not
@@ -5962,13 +5987,18 @@ fn fly(
         if let Some(item) = w.enchantment.filter(|_| p.actor.is_none() && !p.by.harmless) {
             c.fire_landed.push(crate::grass_fire::Landed { point: p.point, item, by: (shooter != FormId(0)).then_some(shooter) });
         }
+        let bp = p.actor.and_then(|a| body_part(c, &parts, a, p.part)).or_else(|| {
+            (p.actor == Some(PLAYER)).then(|| player_body_part(c, &phys, player.as_deref(), p.point)).flatten()
+        });
+        // The reference struck: the player's, not the shots' sentinel for it.
+        let struck = p.actor.map(actor_ref);
         // The impact the weapon's data set names for what was hit: an actor's is its
         // base's Impact Material Type (NPC_ / CREA `NAM4`), organic without one
         // [design]; anything else's its collision material (docs/spec-notes/audio.md §11).
         // The player's tweak: a shot whose damage does not get through the actor's DT
         // leaves no blood on it [design: docs/design/tweaks.md].
         let wanted = script.as_deref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.armor_blocks_blood);
-        let stopped = wanted && p.actor.is_some_and(|a| blood_stopped(w.base_damage as f32, target_armor(c, script.as_deref_mut(), &mut sim, FormId(a as u32)).0));
+        let stopped = wanted && struck.is_some_and(|r| blood_stopped(w.base_damage as f32, target_armor(c, script.as_deref_mut(), &mut sim, FormId(r)).0));
         // The player's tweak: a shot on the weapon in an actor's hand strikes metal, sparks
         // and no blood [design: docs/design/tweaks.md].
         let on_weapon = p.part == Some(crate::hitvol::WEAPON_PART) && script.as_deref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.weapon_impacts);
@@ -5980,10 +6010,13 @@ fn fly(
                 impact_for(s, script.as_deref(), &sim, id, p.actor, p.material)
             };
             if let Some(impact) = impact {
-                let sent = show_impact(s, script.as_deref(), &sim, ImpactFx { impact, shooter, point: p.point, normal: p.normal, dir: p.dir, actor: p.actor.map(|a| a as u32), no_spray: on_weapon, no_decal: stopped || on_weapon, splatter: false }, &mut effects.0, &mut effects.1);
+                let sent = show_impact(s, script.as_deref(), &sim, ImpactFx { impact, shooter, point: p.point, normal: p.normal, dir: p.dir, actor: struck, no_spray: on_weapon, no_decal: stopped || on_weapon, splatter: false }, &mut effects.0, &mut effects.1);
                 // Blood on the wall or floor behind or below an organic actor
-                // ([`world_blood`]); none where its own blood decal is not left.
-                if p.actor.is_some() && !on_weapon && !sent.no_decal && material.starts_with("organic") {
+                // ([`world_blood`]): the struck part's blood impact (a whole-volume hit
+                // reads the first part [design]); none where the actor's own blood decal
+                // is suppressed (`no_decal`: No Blood Decal, the armour tweak).
+                let body = bp.clone().or_else(|| p.actor.and_then(|a| body_part(c, &parts, a, Some(0))));
+                if let Some(blood) = splatter_impact(&s.forms, p.part, body.as_ref(), material).filter(|_| p.actor.is_some() && !sent.no_decal) {
                     let setting = sim.world.setting_f32("fCombatEnvironmentBloodChance");
                     let chance = blood_chance(setting);
                     if !c.blood_chance_logged {
@@ -5993,7 +6026,7 @@ fn fly(
                     let roll = c.blood_rng.next_f32();
                     stats.blood_rolls += 1;
                     stats.blood_won += u32::from(roll < chance);
-                    if let Some(fx) = world_blood(&sent, roll, chance, |from, d, reach| world_surface(&mut phys, from, d, reach)) {
+                    if let Some(fx) = world_blood(&sent, blood, roll, chance, |from, d, reach| world_surface(&mut phys, from, d, reach)) {
                         stats.blood_sent += 1;
                         effects.1.write(fx);
                     }
@@ -6028,9 +6061,6 @@ fn fly(
         // The player's tweak: sneak criticals with melee only [design: docs/design/tweaks.md].
         let melee_only = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.sneak_criticals_melee_only);
         a.sneaking = !melee_only && p.actor.is_some_and(|t| sneak_attack(script.as_deref(), shooter, p.by.sneaking, FormId(t as u32)));
-        let bp = p.actor.and_then(|a| body_part(c, &parts, a, p.part)).or_else(|| {
-            (p.actor == Some(PLAYER)).then(|| player_body_part(c, &phys, player.as_deref(), p.point)).flatten()
-        });
         let part = bp.as_ref().map_or_else(HitPart::default, BodyPart::hit_part);
         // The player's tweak: sneak criticals on the head only [design: docs/design/tweaks.md].
         if !part.head && script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.sneak_criticals_head_only) {
@@ -6384,38 +6414,85 @@ mod tests {
         let wall = |x: f32| ([x, 0.0, 0.0], [-1.0, 0.0, 0.0]);
         // A wall within reach along the shot: the splatter goes there, facing back.
         let near = [floor, wall(100.0)];
-        let fx = world_blood(&hit, 0.1, 0.5, |f, d, r| planes(&near, f, d, r)).expect("a splatter on the wall");
+        let fx = world_blood(&hit, FormId(0x78), 0.1, 0.5, |f, d, r| planes(&near, f, d, r)).expect("a splatter on the wall");
         assert_eq!((fx.point, fx.normal, fx.dir), ([100.0, 0.0, 50.0], [-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]));
-        assert_eq!(fx.impact, FormId(0x77));
+        // The blood impact given, not the hit's own.
+        assert_eq!(fx.impact, FormId(0x78));
         // A decal only, on the world, heard by no one.
         assert!(fx.splatter && fx.no_spray && !fx.no_decal);
         assert_eq!((fx.actor, fx.shooter), (None, FormId(0)));
         // The wall past reach: the floor below the hit.
         let far = [floor, wall(600.0)];
-        let fx = world_blood(&hit, 0.1, 0.5, |f, d, r| planes(&far, f, d, r)).expect("a splatter on the floor");
+        let fx = world_blood(&hit, FormId(0x78), 0.1, 0.5, |f, d, r| planes(&far, f, d, r)).expect("a splatter on the floor");
         assert_eq!((fx.point, fx.normal), ([0.0, 0.0, 0.0], [0.0, 0.0, 1.0]));
         // Nothing within reach either way: none.
-        assert!(world_blood(&hit, 0.1, 0.5, |f, d, r| planes(&[wall(600.0)], f, d, r)).is_none());
+        assert!(world_blood(&hit, FormId(0x78), 0.1, 0.5, |f, d, r| planes(&[wall(600.0)], f, d, r)).is_none());
         // No Blood Decal (or the armour tweak), the roll lost, a hit on no actor, or a
         // splatter itself: none, and no line is cast.
         let mut cast = 0;
         for h in [ImpactFx { no_decal: true, ..hit }, ImpactFx { actor: None, ..hit }, ImpactFx { splatter: true, ..hit }] {
-            assert!(world_blood(&h, 0.1, 0.5, |f, d, r| {
+            assert!(world_blood(&h, FormId(0x78), 0.1, 0.5, |f, d, r| {
                 cast += 1;
                 planes(&near, f, d, r)
             })
             .is_none());
         }
-        assert!(world_blood(&hit, 0.5, 0.5, |f, d, r| {
+        assert!(world_blood(&hit, FormId(0x78), 0.5, 0.5, |f, d, r| {
             cast += 1;
             planes(&near, f, d, r)
         })
         .is_none());
         assert_eq!(cast, 0);
-        // The game setting as a percentage or a fraction; the default without it.
-        assert_eq!(blood_chance(Some(50.0)), 0.5);
+        // The game setting, a fraction held to 0..=1; the wiki's 0.75 without it.
         assert_eq!(blood_chance(Some(0.25)), 0.25);
-        assert_eq!(blood_chance(None), WORLD_BLOOD_CHANCE);
+        assert_eq!(blood_chance(Some(0.0)), 0.0);
+        assert_eq!(blood_chance(Some(1.0)), 1.0);
+        assert_eq!(blood_chance(Some(1.01)), 1.0);
+        assert_eq!(blood_chance(Some(50.0)), 1.0);
+        assert_eq!(blood_chance(Some(-0.5)), 0.0);
+        assert_eq!(blood_chance(Some(f32::NAN)), WORLD_BLOOD_CHANCE);
+        assert_eq!(blood_chance(None), 0.75);
+        assert_eq!(WORLD_BLOOD_CHANCE, 0.75);
+        // A chance of 1 wins every roll, 0 none.
+        assert!(world_blood(&hit, FormId(0x78), 0.999, blood_chance(Some(1.0)), |f, d, r| planes(&near, f, d, r)).is_some());
+        assert!(world_blood(&hit, FormId(0x78), 0.0, blood_chance(Some(0.0)), |f, d, r| planes(&near, f, d, r)).is_none());
+    }
+
+    #[test]
+    fn the_splatter_is_the_struck_parts_blood_not_the_weapons_organic_slot() {
+        use super::splatter_impact;
+        use fnv_combat::data::BodyPart;
+        use fnv_combat::fx::{FxForms, IMPACT_MATERIALS};
+        use fnv_sim::FormId;
+        let organic = IMPACT_MATERIALS.iter().position(|m| *m == "organic").unwrap();
+        let (weapon_set, blood_set, scorch, blood) = (FormId(0x10), FormId(0x11), FormId(0x20), FormId(0x21));
+        let mut forms = FxForms::default();
+        // A flamer's impact data set: a scorch in the organic slot.
+        let mut slots = [None; 12];
+        slots[organic] = Some(scorch);
+        forms.impact_sets.insert(weapon_set, slots);
+        let mut slots = [None; 12];
+        slots[organic] = Some(blood);
+        forms.impact_sets.insert(blood_set, slots);
+        let torso = BodyPart { severable_impact_dataset: Some(blood_set), ..Default::default() };
+        let explodable_only = BodyPart { explodable_impact_dataset: Some(blood_set), ..Default::default() };
+        let bare = BodyPart::default();
+        assert_eq!(splatter_impact(&forms, Some(0), Some(&torso), "organic"), Some(blood));
+        assert_eq!(splatter_impact(&forms, None, Some(&explodable_only), "organic"), Some(blood));
+        // A part with no blood impact data set: none, never the weapon's scorch.
+        assert_eq!(splatter_impact(&forms, Some(0), Some(&bare), "organic"), None);
+        assert_eq!(splatter_impact(&forms, Some(0), None, "organic"), None);
+        // The held weapon and gore pieces, whatever the tweaks: none.
+        assert_eq!(splatter_impact(&forms, Some(crate::hitvol::WEAPON_PART), Some(&torso), "organic"), None);
+        assert_eq!(splatter_impact(&forms, Some(fnv_phys::gore::GORE_PART), Some(&torso), "organic"), None);
+        // Not organic (a robot's metal): none.
+        assert_eq!(splatter_impact(&forms, Some(0), Some(&torso), "metal"), None);
+    }
+
+    #[test]
+    fn a_shot_on_the_player_reads_the_players_reference() {
+        assert_eq!(super::actor_ref(super::PLAYER), fnv_sim::FormId::PLAYER_REF.0);
+        assert_eq!(super::actor_ref(0xA46), 0xA46);
     }
 
     use super::*;
