@@ -81,6 +81,8 @@ const S_LF_FROM: u32 = 0xF54;
 const S_LF_PLAIN: u32 = 0xF55;
 const S_LF_TO: u32 = 0xF56;
 const T_CHAT: u32 = 0x957;
+const T_FAIL: u32 = 0x9E0;
+const S_FAIL: u32 = 0xFE0;
 const T_ANSWER: u32 = 0x958;
 const C_CHAT: u32 = 0xF57;
 const C_OPENER: u32 = 0xF58;
@@ -667,6 +669,9 @@ fn plugin_bytes() -> Vec<u8> {
             50.0,
             vec![L { id: S_LF_TO, quest: QA, speaker: me, responses: one("To"), link_from: vec![T_LF_FROM, T_LF_PLAIN], ..L::default() }],
         ),
+        // Fallout 3's speech challenge failure topic: a line whose Link From names the
+        // challenge's topic (Lucas Simms's MegTownFatherChoice answer, #3024).
+        topic(T_FAIL, "SpeechChallengeFailure", "", topic_type::TOPIC, 0, 50.0, vec![L { id: S_FAIL, quest: QA, speaker: me, responses: one("Sorry friend."), link_from: vec![T_LF_PLAIN], ..L::default() }]),
         // Between actors: TestChat's line links nowhere; TestAnswer's second line names
         // TestChat in its Link From, its first (an opener) does not.
         topic(T_CHAT, "TestChat", "TestChat", topic_type::CONVERSATION, 0, 50.0, vec![L { id: C_CHAT, quest: QA, ty: CONV, speaker: me, responses: one("Chat"), ..L::default() }]),
@@ -1391,6 +1396,20 @@ fn a_topic_is_offered_after_the_topics_its_lines_link_from() {
     h.start_dialogue(actor(), Some(FormId(T_LF_PLAIN))).unwrap();
     listen(&mut h);
     assert_eq!(offered(&h), vec![T_TOP2, T_TOP, T_LF_TO, T_SKILL, GOODBYE]);
+}
+
+/// #3024: SpeechChallengeFailure is not offered as a player choice through Link From
+/// (its line links from the topic just said); other Link From topics still are.
+#[test]
+fn the_speech_challenge_failure_topic_is_not_a_player_choice() {
+    let f = fixture();
+    assert!(f.data.linked_from[&FormId(T_LF_PLAIN)].contains(&FormId(T_FAIL)));
+    let mut g = game(&f);
+    g.start_dialogue(actor(), Some(FormId(T_LF_PLAIN))).unwrap();
+    listen(&mut g);
+    let list = offered(&g);
+    assert!(!list.contains(&T_FAIL), "{list:?}");
+    assert!(list.contains(&T_LF_TO), "{list:?}");
 }
 
 #[test]
