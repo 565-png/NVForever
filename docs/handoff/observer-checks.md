@@ -3571,13 +3571,15 @@ capture setup, so every part of a check that needs an interior is still open.
      at the surface).
 255. **Do reflections fade out between 1,500 and 1,800 units from the camera?** (P3;
      #2841, nif.md §6.) The INI settings `fEnvMapLOD1` 1500 and `fEnvMapLOD2` 1800
-     [documented: GECK wiki "INI Settings"]. Ours: whole up to 1,500 units, none from
-     1,800, linear between, on window shapes too [hypothesis for the curve]. In a long
+     [documented: GECK wiki "INI Settings"]. Ours: no fade by default [design, kept out of
+     #2841 because it would change window shapes too]; under
+     `NVF_PLAY_DEBUG_ENV_DISTANCE_FADE=1`, whole up to 1,500 units, none from 1,800,
+     linear between, on window shapes too [hypothesis for the curve]. In a long
      room or outdoors at night, frame a shiny prop (e.g. a cooking pot, MSTT CookingPot01,
      `metalpot.nif`) from 1,200, 1,500, 1,650, 1,800 and 2,000 units, with the same view
      direction. A reflection that is whole at 1,500, about half at 1,650 and gone at
-     1,800 agrees with ours; a sudden cut or no change says otherwise
-     (`NVF_PLAY_DEBUG_ENV_DISTANCE_FADE=0` draws no fade). Ours fades by the distance to
+     1,800 agrees with the switch's fade; no change agrees with the default; a sudden cut
+     says neither is right. The switch's fade goes by the distance to
      the shape node's origin (usually the reference's), so a long shape fades as a
      whole and a model whose parts sit under nodes of their own fades part by part.
      *Status: open.* The running original reported 1500 and 1800 (envmap); setting both

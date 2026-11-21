@@ -1,7 +1,7 @@
 //! Environment maps (docs/spec-notes/nif.md §6 "Window glass and environment maps",
 //! "Environment maps on other shapes"): what the material build needs beyond the shape's
-//! own properties (`nif_spawn::shape_env`), the distance fade and the debug switches for
-//! the unknowns.
+//! own properties (`nif_spawn::shape_env`) and the debug switches for the unknowns (a
+//! distance fade among them, off by default).
 //!
 //! A lit shape (BSShaderPPLightingProperty) with BSShaderFlags bit 7 Environment_Mapping
 //! [documented: nif.xml flag names], a texture-set slot-4 cube that loads as a cube map
@@ -29,8 +29,8 @@
 //! Debug switches (development aids for comparing frames with the original's, not part
 //! of a release; read once at start; the run stays attended, as with every
 //! `NVF_PLAY_DEBUG_*` switch, nvf-play `test_aid.rs`). Each defaults to the renderer's own
-//! choice. Unlike the repo's other debug switches, two are on by default and are turned
-//! off by `0` (`NON_WINDOW`, `DISTANCE_FADE`). A set but empty value counts as not set
+//! choice. Unlike the repo's other debug switches, `NON_WINDOW` is on by default and is
+//! turned off by `0`. A set but empty value counts as not set
 //! for every switch, as it does elsewhere (`dialogue::debug_switch`), so it keeps the
 //! default:
 //!
@@ -61,9 +61,11 @@
 //!   Properties"]; the captures showed no difference with the flag). `all` and
 //!   `fade-flag` are rough stand-ins, **not** models of the original. Defaults `scene`
 //!   and `off`.
-//! - `NVF_PLAY_DEBUG_ENV_DISTANCE_FADE=0`: no fade with distance ([`ENV_MAP_LOD1`],
-//!   [`ENV_MAP_LOD2`]; by the distance from the camera to the shape node's origin). Default
-//!   on.
+//! - `NVF_PLAY_DEBUG_ENV_DISTANCE_FADE=1`: reflections fade with distance
+//!   ([`ENV_MAP_LOD1`], [`ENV_MAP_LOD2`]; by the distance from the camera to the shape
+//!   node's origin). Default off [design, #2841]: the fade would change window shapes too
+//!   (#2462's pictures) and is not observed (observer check 255), so it stays out of the
+//!   default until a change of its own takes it up.
 
 use bevy::prelude::*;
 use std::sync::OnceLock;
@@ -75,7 +77,8 @@ use std::sync::OnceLock;
 /// job envmap, GetNumericINISetting]. NVForever reads no INI value for it [design]. The
 /// fade itself is not observed: setting both values to 1 in the running original changed
 /// no picture at 51-1,200 units [observed: capture job envmap5], so either the setting
-/// does not apply live or the fade does not act there; observer check 255.
+/// does not apply live or the fade does not act there; observer check 255. Used only
+/// under `NVF_PLAY_DEBUG_ENV_DISTANCE_FADE=1` (module docs).
 pub const ENV_MAP_LOD1: f32 = 1500.0;
 
 /// Camera distance past which there is no reflection: `fEnvMapLOD2` = 1800, "Max distance
@@ -200,7 +203,7 @@ impl Default for EnvAids {
             blend_window: EnvBlend::Premultiplied,
             light: EnvLight::Scene,
             light_window: EnvLight::Off,
-            distance_fade: true,
+            distance_fade: false,
         }
     }
 }
@@ -484,7 +487,7 @@ mod tests {
             ("NVF_PLAY_DEBUG_ENV_BLEND_WINDOW", "weighted"),
             ("NVF_PLAY_DEBUG_ENV_LIGHT", "fade-flag"),
             ("NVF_PLAY_DEBUG_ENV_LIGHT_WINDOW", "scene"),
-            ("NVF_PLAY_DEBUG_ENV_DISTANCE_FADE", "off"),
+            ("NVF_PLAY_DEBUG_ENV_DISTANCE_FADE", "on"),
         ]));
         assert!(bad.is_empty());
         assert_eq!(
@@ -499,7 +502,7 @@ mod tests {
                 blend_window: EnvBlend::Weighted,
                 light: EnvLight::FadeFlag,
                 light_window: EnvLight::Scene,
-                distance_fade: false
+                distance_fade: true
             }
         );
         let (b, bad) = EnvAids::parse(set(&[("NVF_PLAY_DEBUG_ENV_STRENGTH", "-1"), ("NVF_PLAY_DEBUG_ENV_AXES", "sideways")]));
@@ -511,6 +514,7 @@ mod tests {
         assert!(bad.is_empty());
         assert_eq!(c, EnvAids::default());
         assert_eq!((EnvAids::default().light, EnvAids::default().light_window), (EnvLight::Scene, EnvLight::Off));
+        assert!(!EnvAids::default().distance_fade, "the distance fade is off by default: it would change window shapes too");
     }
 
     /// A slot-5 mask always wins; without one the switch decides, and the normal-alpha
@@ -611,20 +615,20 @@ mod tests {
         assert_eq!(scene_light(Vec3::splat(0.1), 1.0, &[Vec3::ONE], exposure), Vec3::ONE);
     }
 
-    /// The default uniforms of a window shape are #2669's (scale, mask flag, lookup) plus
-    /// the fade; the switches change only what they name.
+    /// The default uniforms of a window shape are #2669's (scale, mask flag, lookup, no
+    /// fade); the switches change only what they name.
     #[test]
     fn uniforms_carry_the_set_and_the_switches() {
         let d = EnvAids::default();
         let (e, how) = env_uniforms(&env(true, false), MaskMode::Slot5, &d);
-        assert_eq!(e, Vec4::new(1.2, 1.0, ENV_MAP_LOD1, ENV_MAP_LOD2));
+        assert_eq!(e, Vec4::new(1.2, 1.0, 0.0, 0.0), "no distance fade by default");
         assert_eq!(how, Vec4::new(0.0, 0.0, 1.0, 1.0));
         let (e, how) = env_uniforms(&env(false, true), MaskMode::Full, &d);
-        assert_eq!(e, Vec4::new(1.2, 0.0, ENV_MAP_LOD1, ENV_MAP_LOD2));
+        assert_eq!(e, Vec4::new(1.2, 0.0, 0.0, 0.0));
         assert_eq!(how, Vec4::new(0.0, 2.0, 0.0, 1.0), "scaled by the scene light by default");
-        let a = EnvAids { strength: 2.0, axes: Axes::SwapYZ, light: EnvLight::FadeFlag, distance_fade: false, ..d };
+        let a = EnvAids { strength: 2.0, axes: Axes::SwapYZ, light: EnvLight::FadeFlag, distance_fade: true, ..d };
         let (e, how) = env_uniforms(&env(false, true), MaskMode::NormalAlpha, &a);
-        assert_eq!(e, Vec4::new(2.4, 2.0, 0.0, 0.0));
+        assert_eq!(e, Vec4::new(2.4, 2.0, ENV_MAP_LOD1, ENV_MAP_LOD2), "the switch turns the fade on");
         assert_eq!(how, Vec4::new(4.0, 1.0, 0.0, 1.0));
         let (_, how) = env_uniforms(&env(true, true), MaskMode::Full, &a);
         assert_eq!(how, Vec4::new(0.0, 0.0, 1.0, 1.0), "the window orientation and no light: LIGHT names the other set");

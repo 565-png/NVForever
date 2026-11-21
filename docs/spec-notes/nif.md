@@ -1550,16 +1550,17 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   - Env Map Fade (flags 2 bit 15) changes nothing [hypothesis, from no difference
     observed in the exterior captures, against the wiki's documented fade; observer check
     254].
-  - Camera distance: whole up to 1500 units, none from 1800, linear between, by the
-    distance to the shape node's origin (the mesh instance's translation, usually the
-    reference's), so a long shape fades as a whole, while a model whose parts sit under
-    nodes of their own (the HELIOS One reflector row, its reflectors about 240 units apart
-    [documented: `heliosone_solarreflector_row.nif` node translations, read with `fnvtool`])
-    fades part by part; on window shapes too [hypothesis for the
-    curve and the origin, documented distances, the fade unobserved; observer check 255].
-    A blended window shape (drawn premultiplied) keeps its colour × alpha even where its
-    reflection has faded out or its strength is 0 [design]. The `glass-mccarran-*` frames
-    stand well inside 1500 units, so #2462's pictures do not change.
+  - Camera distance: no fade by default [design, #2841: a fade would apply to window
+    shapes too and change #2462's pictures, and it is unobserved; a follow-up change
+    takes it up]. Under `NVF_PLAY_DEBUG_ENV_DISTANCE_FADE=1`: whole up to 1500 units, none
+    from 1800, linear between, by the distance to the shape node's origin (the mesh
+    instance's translation, usually the reference's), so a long shape fades as a whole,
+    while a model whose parts sit under nodes of their own (the HELIOS One reflector row,
+    its reflectors about 240 units apart [documented: `heliosone_solarreflector_row.nif`
+    node translations, read with `fnvtool`]) fades part by part; on window shapes too
+    [hypothesis for the curve and the origin, documented distances, the fade unobserved;
+    observer check 255]. A blended window shape (drawn premultiplied) keeps its colour ×
+    alpha even where its reflection has faded out or its strength is 0 [design].
   - A shape with the flag and no slot-4 file reflects nothing (no default cube)
     [hypothesis; observer check 256].
   - The mask's red channel is read, as for windows [hypothesis; only the 29 masks with
@@ -1568,7 +1569,8 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   Debug switches `NVF_PLAY_DEBUG_ENV_*` vary each of these from the same build, for
   comparing frames with the original's (`env_map.rs` module docs: strength, no-mask rule,
   orientation per set, blend per set, light per set (scene light, none, or a
-  received-light stand-in), the distance fade, and `NVF_PLAY_DEBUG_ENV_NON_WINDOW=0` for
+  received-light stand-in), the distance fade (off unless set), and
+  `NVF_PLAY_DEBUG_ENV_NON_WINDOW=0` for
   #2462's set alone). The model log names each model's reflecting shapes without the
   window flag ("N shape(s) with an environment map, no window flag: …", model.rs); smoke
   `env-maps-saloon`, `env-maps-saloon-before`.

@@ -786,7 +786,8 @@ fn nif_fragment(
         // shape is weighted by its alpha, reflection included [hypothesis]. Not in the blend
         // type (nif_surface_blend.rs): it has no environment bindings, and a shape that
         // reflects is never given it (nvforever mesh_terrain_blend.rs `material_reasons`).
-        // Distance fade (env_map.rs ENV_MAP_LOD1, ENV_MAP_LOD2: fEnvMapLOD1/2), linear
+        // Distance fade, under the debug switch NVF_PLAY_DEBUG_ENV_DISTANCE_FADE=1 only (off
+        // by default: env z = w = 0; env_map.rs ENV_MAP_LOD1, ENV_MAP_LOD2: fEnvMapLOD1/2), linear
         // between the two by the distance from the camera to the shape node's origin (the
         // mesh instance's translation, usually the reference's; a model whose parts sit
         // under nodes of their own fades part by part) [hypothesis], in game units (the

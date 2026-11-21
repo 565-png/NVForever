@@ -1735,6 +1735,29 @@ mod tests {
         }
     }
 
+    /// [`AllTextures`] whose base textures' alpha is a mask (a blended cut-out's).
+    struct AllMaskTextures;
+    impl TextureSource for AllMaskTextures {
+        fn texture(&mut self, _: &str, _: bool) -> Option<Handle<Image>> {
+            Some(Handle::default())
+        }
+        fn lacks_alpha(&self, _: &Handle<Image>) -> bool {
+            false
+        }
+        fn alpha_is_mask(&self, _: &str) -> bool {
+            true
+        }
+        fn resolve(&self, raw_path: &str) -> String {
+            fnv_vfs::texture_path(raw_path)
+        }
+        fn pbr_set(&mut self, _: &str) -> Option<crate::authored::PbrSet> {
+            None
+        }
+        fn authored_on(&self) -> bool {
+            false
+        }
+    }
+
     /// The material of a blended reflecting shape: a window one is drawn premultiplied
     /// (#2669), one without the window flag keeps its blend (the reflection weighted by its
     /// alpha); a shape with the flag but no cube is drawn as before. Blend SRC_ALPHA /
@@ -1760,7 +1783,7 @@ mod tests {
         assert!(matches!(plain.base.alpha_mode, AlphaMode::Blend), "the fixture is blended");
         let (m, _) = shape_material_inner(&glass, &mut tri.clone(), &mut AllTextures, Tangents::Generate, &d);
         assert!(matches!(m.base.alpha_mode, AlphaMode::Blend));
-        assert_eq!(m.extension.env.truncate(), Vec3::new(1.0, 1.0, crate::env_map::ENV_MAP_LOD1));
+        assert_eq!(m.extension.env, Vec4::new(1.0, 1.0, 0.0, 0.0), "scale 1, the slot-5 mask, no distance fade");
         assert_eq!(m.extension.env_how.z, 0.0, "not a window");
         assert!(m.extension.env_cube.is_some() && m.extension.env_mask.is_some());
         let window = Props { env: Some(crate::env_map::EnvFlags { window: true, ..flags }), ..glass.clone() };
@@ -1772,8 +1795,18 @@ mod tests {
         assert!(matches!(n.base.alpha_mode, AlphaMode::Blend));
         assert_eq!((n.extension.env, n.extension.env_how), (Vec4::ZERO, Vec4::ZERO));
         assert!(n.extension.env_cube.is_none() && n.extension.env_mask.is_none());
-        let (none, _) = shape_material_inner(&glass, &mut tri, &mut NoTextures, Tangents::Generate, &d);
+        let (none, _) = shape_material_inner(&glass, &mut tri.clone(), &mut NoTextures, Tangents::Generate, &d);
         assert_eq!(none.extension.env, Vec4::ZERO, "a cube that does not load: no reflection");
+        // A blended cut-out (blend with a test below BLEND_TEST_CUT, 0x12ED, and a base
+        // texture whose alpha is a mask) stays blended even with the window flag (main's
+        // rule since #2669), and still reflects.
+        let cutout_window = Props { alpha: Some((0x12ED, 0)), ..window.clone() };
+        let (c, _) = shape_material_inner(&cutout_window, &mut tri.clone(), &mut AllMaskTextures, Tangents::Generate, &d);
+        assert!(matches!(c.base.alpha_mode, AlphaMode::Blend), "a blended cut-out is not premultiplied");
+        assert!(c.extension.blended_cutout.is_some());
+        assert_eq!(c.extension.env_how.z, 1.0);
+        let (wc, _) = shape_material_inner(&cutout_window, &mut tri, &mut AllTextures, Tangents::Generate, &d);
+        assert!(matches!(wc.base.alpha_mode, AlphaMode::Premultiplied), "the same tested blend over a soft alpha is premultiplied");
     }
 
     #[test]
