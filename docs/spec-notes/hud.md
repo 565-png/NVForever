@@ -212,7 +212,7 @@ original at 1920 x 1080 (`Target healthbar`, 1.125 pixels to the unit) `[observe
   hudtemplates.xml] and `vats_bar.dds`'s block is opaque [documented: the texture],
   which is static evidence, not proof that the original never shows it translucent
   (a translucent fill over an opaque ground would read the same on those shots)
-  [hypothesis]. It stays opaque until observer check 250 says otherwise [design].
+  [hypothesis]. It stays opaque until observer check 260 says otherwise [design].
   The bar ends 17 before the divider (x 130–190)
   [observed: §14, read through xNVSE and on its screenshot; 10 before stood 7 too far
   right],

@@ -3469,7 +3469,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-21 (is the HUD's condition bar see-through, #3309)
 
-250. **Does the world show through the HUD's weapon condition bar in the original?** (P3;
+260. **Does the world show through the HUD's weapon condition bar in the original?** (P3;
      #3309, hud.md §4, §14.3 and §14.7.) A player report says the original draws the bar
      with transparent parts and NVForever's is solid. The report's screenshot is
      NVForever's: its fill reads (175, 125, 45) and its ground (100, 71, 26) over a bright
