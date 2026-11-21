@@ -90,6 +90,12 @@ impl Game<'_> {
     fn set_marker_flag(&mut self, r: FormId, bit: u8, on: bool) {
         if let Some(f) = self.marker_flags(r) {
             self.other.lutana.lu2.marker_flags.insert(r, if on { f | bit } else { f & !bit });
+            if !on && bit == MARKER_VISIBLE {
+                self.player.map_markers.remove(&r);
+            }
+            if !on && bit == MARKER_TRAVEL {
+                self.player.travel_markers.remove(&r);
+            }
         }
     }
 }

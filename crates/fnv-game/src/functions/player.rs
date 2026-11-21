@@ -280,18 +280,23 @@ impl Game<'_> {
 /// `marker.GetMapMarkerVisible`: 0 not on the map, 1 on it without fast travel, 2 on it
 /// and a fast-travel target [documented: GECK wiki GetMapMarkerVisible, "Marker State"].
 /// A marker the player found reads 2 [observed: the Goodsprings marker in the save
-/// nvftest, capture `fa_batch1_queries`]; ShowMap's canTravel and ShowAllMapMarkers'
-/// travel flag give 2 to the others. The marker's Hidden flag is not read here: a marker
-/// counts as not hidden [engineering choice: the game crate has no marker data; the
-/// Pip-Boy map reads it]; markers authored Visible are not known here either (0 until
-/// found or shown).
+/// nvftest, capture `fa_batch1_queries`]; ShowMap's canTravel, ShowAllMapMarkers' travel
+/// flag, and the marker's own XMRK/session flags (`Game::marker_flags`) feed visibility
+/// and travel consistently with the Pip-Boy map.
 pub fn get_map_marker_visible(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
     let r = ctx.subject()?;
+    let flags = g.marker_flags(r);
+    let hidden = flags.is_some_and(|f| f & crate::nvse_lu2::MARKER_HIDDEN != 0);
+    let visible_flag = flags.is_some_and(|f| f & crate::nvse_lu2::MARKER_VISIBLE != 0);
+    let travel_flag = flags.is_some_and(|f| f & crate::nvse_lu2::MARKER_TRAVEL != 0);
     let found = g.player.found_markers.contains(&r);
-    if !(found || g.map_marker_shown(r, false)) {
+    let shown = g.map_marker_shown(r, hidden);
+    if !(found || shown || visible_flag || travel_flag) {
         return Ok(Value::Num(0.0));
     }
-    let travel = found || g.player.travel_markers.contains(&r) || g.player.all_markers.is_some_and(|a| a.shown && a.travel);
+    let travel = found
+        || travel_flag
+        || (shown && (g.player.travel_markers.contains(&r) || g.player.all_markers.is_some_and(|a| a.shown && a.travel)));
     Ok(Value::Num(if travel { 2.0 } else { 1.0 }))
 }
 

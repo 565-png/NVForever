@@ -92,13 +92,43 @@ fn map_markers_and_radio_stations_from_their_data() {
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerTravel"), 1.0);
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerHidden"), 0.0);
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerType"), 5.0, "Cave");
+    assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerVisible"), 2.0, "authored Visible | Can Travel To");
+    assert_eq!(
+        match q(&mut g, "SetFunctionValue (TestMarkerRef.GetCustomMapMarkerIcon)") {
+            XVal::Str(s) => s,
+            v => panic!("{v:?}"),
+        },
+        "Interface\\Icons\\World Map\\icon_map_cave.dds"
+    );
     q(&mut g, "TestMarkerRef.SetMapMarkerTravel 0");
     q(&mut g, "TestMarkerRef.SetMapMarkerHidden 1");
     q(&mut g, "TestMarkerRef.SetMapMarkerType 14");
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerTravel"), 0.0);
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerHidden"), 1.0);
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerType"), 14.0);
+    assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerVisible"), 1.0, "Visible without Can Travel To");
+    assert_eq!(
+        match q(&mut g, "SetFunctionValue (TestMarkerRef.GetCustomMapMarkerIcon)") {
+            XVal::Str(s) => s,
+            v => panic!("{v:?}"),
+        },
+        "Interface\\Icons\\World Map\\icon_map_vault.dds",
+        "GetCustomMapMarkerIcon default path follows SetMapMarkerType"
+    );
     assert_eq!(g.marker_flags(FormId(MARKER)), Some(1 | 4));
+    // SetMapMarkerVisible 0 hides the marker, and ShowAllMapMarkers skips it while Hidden is set.
+    q(&mut g, "TestMarkerRef.SetMapMarkerVisible 0");
+    assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerVisible"), 0.0);
+    q(&mut g, "ShowAllMapMarkers 1 0 0");
+    assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerVisible"), 1.0, "skipHidden=0 reveals hidden marker");
+    q(&mut g, "ShowAllMapMarkers 1 1 1");
+    assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerVisible"), 0.0, "skipHidden respects SetMapMarkerHidden");
+    q(&mut g, "ShowAllMapMarkers 0");
+    // Name and reputation accessors reflect SetMapMarkerName / SetMapMarkerRep.
+    q(&mut g, "TestMarkerRef.SetMapMarkerName \"Owned Outpost\"");
+    assert_eq!(g.map_marker_name_override(FormId(MARKER)), Some("Owned Outpost"));
+    q(&mut g, "TestMarkerRef.SetMapMarkerRep 0");
+    assert_eq!(g.map_marker_reputation_override(FormId(MARKER)), Some(None));
     // XRDO [documented: GetRadioRadius's example reads 6000, GetRadioStatic 15].
     assert_eq!(n(&mut g, "TestRadioRef.IsRadioRef"), 1.0);
     assert_eq!(n(&mut g, "TestRadioRef.GetRadioRadius"), 6000.0);

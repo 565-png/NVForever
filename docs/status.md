@@ -154,6 +154,8 @@ Script trace writers lock the requested file before truncation and explicitly un
 
 Runtime IDLE file replacement and replay identity have an initial candidate; `TempCloneForm` IDLE aliases now resolve through `Game::idle_def`, `Game::idle_animation_path`, `ask_idle`, `GetIdleAnimPath`, and the engine idle/combat consumers while preserving each clone's FormID and independent `SetIdleAnimPath` overrides ([IDLE paths](spec-notes/local-idle-path-replacement.md)). Original-game capture parity and full mod acceptance remain unqualified.
 
+Session map-marker overrides (`SetCustomMapMarkerIcon`, `SetMapMarkerType`, `SetMapMarkerVisible`, `SetMapMarkerHidden`, `SetMapMarkerTravel`, `SetMapMarkerName`, and `SetMapMarkerRep`) now reach `GetMapMarkerVisible`, `GetCustomMapMarkerIcon`, the Pip-Boy World and Local Maps (`pipboy::data` and `tiles::map_menu`), discovery banners, compass unmapped-place filtering, and HUD marker names ([JohnnyGuitar batch 7](spec-notes/ext-jg7.md), [Lutana batch 2](spec-notes/ext-lutana.md#9-batch-2-2026-11-08-1009-nvse_lu2rs-and-mod_filesrs), [JIP strings](spec-notes/jip-strings.md)). Original-game capture parity and full mod acceptance remain unqualified.
+
 Nested objective teleport-link paths are being qualified with owned headless regressions; complete consumer acceptance remains separate ([notes](spec-notes/objective-teleport-paths.md)).
 
 Script Console dispatch retains signed numeric words and declared string paths on the word reader while real expressions use a bounded source cache. Authored regressions and current validation are recorded in the PR; complete consumer acceptance remains separate ([notes](spec-notes/script-console-dispatch.md)).
