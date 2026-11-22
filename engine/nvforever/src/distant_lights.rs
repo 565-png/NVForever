@@ -69,7 +69,7 @@ use bevy::shader::ShaderRef;
 use bevy::tasks::{futures::check_ready, Task};
 use fnv_esm::{LoadOrder, Schema as EsmSchema};
 use fnv_world::lighting::{light_data, light_flags, placed_light_radius, ref_xrds, LightData};
-use fnv_world::placed::{base_object, placement};
+use fnv_world::placed::base_object;
 use nvf_assets::model_glow::ModelGlow;
 use fnv_world::{cell_of, CELL_SIZE};
 use std::cmp::Ordering;
@@ -391,12 +391,14 @@ pub fn static_source(s: &PlacedStatic, g: &ModelGlow) -> Vec<SourceLight> {
 
 /// A cell's light references and its statics with a model (`refs`: [`cell_refs`]), with
 /// what was left out counted in `stats`. Deleted references are left out; disabled ones are
-/// kept with their start state. No model is read here. Runs on a worker thread.
-pub fn list_cell(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], bases: &mut HashMap<u32, BaseKind>, stats: &mut Stats) -> CellList {
+/// kept with their start state. Each reference's base is the one `index` draws (its
+/// BaseObjectSwapper swaps applied, as every drawing path). No model is read here. Runs on a
+/// worker thread.
+pub fn list_cell(lo: &LoadOrder, schema: &EsmSchema, index: &fnv_world::WorldIndex, refs: &[u32], bases: &mut HashMap<u32, BaseKind>, stats: &mut Stats) -> CellList {
     let mut out = CellList::default();
     stats.refs += refs.len();
     for &r in refs {
-        let Some(p) = placement(lo, schema, r) else { continue };
+        let Some(p) = index.placement(lo, schema, r) else { continue };
         let Some(base) = p.base else { continue };
         let kind = bases.entry(base).or_insert_with(|| base_kind(lo, schema, base)).clone();
         // Only what the renderer draws with the cell (no imposters, no editor primitives).
@@ -564,7 +566,7 @@ pub fn read_models(models: Vec<Arc<str>>, epoch: &Epoch, started: u64, mut read:
 
 /// List `cells` (cell, its references) with [`list_cell`], stopping before a cell once
 /// `epoch` moved on from `started`. Returns the cells listed.
-pub fn list_cells(lo: &LoadOrder, schema: &EsmSchema, cells: Vec<(Grid, Vec<u32>)>, epoch: &Epoch, started: u64, stats: &mut Stats) -> Vec<(Grid, CellList)> {
+pub fn list_cells(lo: &LoadOrder, schema: &EsmSchema, index: &fnv_world::WorldIndex, cells: Vec<(Grid, Vec<u32>)>, epoch: &Epoch, started: u64, stats: &mut Stats) -> Vec<(Grid, CellList)> {
     let mut bases = HashMap::new();
     let mut out = Vec::new();
     for (g, refs) in cells {
@@ -572,7 +574,7 @@ pub fn list_cells(lo: &LoadOrder, schema: &EsmSchema, cells: Vec<(Grid, Vec<u32>
             break;
         }
         stats.cells += 1;
-        out.push((g, list_cell(lo, schema, &refs, &mut bases, stats)));
+        out.push((g, list_cell(lo, schema, index, &refs, &mut bases, stats)));
     }
     out
 }
@@ -1417,12 +1419,12 @@ fn update(
         let (epoch, busy, started, at) = (st.epoch.clone(), st.busy.clone(), st.epoch.now(), world.world);
         st.job = match next {
             Some(NextJob::Cells(cells)) => {
-                let (lo, schema): (&'static LoadOrder<'static>, &'static EsmSchema) = (world.lo, world.schema);
+                let (lo, schema, index): (&'static LoadOrder<'static>, &'static EsmSchema, &'static fnv_world::WorldIndex) = (world.lo, world.schema, world.index);
                 let guard = busy.start();
                 Some(nvf_assets::read_pool::read_pool().spawn(async move {
                     let _running = guard;
                     let mut stats = Stats::default();
-                    let cells = list_cells(lo, schema, cells, &epoch, started, &mut stats);
+                    let cells = list_cells(lo, schema, index, cells, &epoch, started, &mut stats);
                     Found::Cells(at, cells, stats)
                 }))
             }
@@ -2348,7 +2350,7 @@ mod tests {
             assert!(w.index.errors.is_empty(), "{:?}", w.index.errors);
             let mut stats = Stats::default();
             let epoch = Epoch::default();
-            let cells = list_cells(w.lo, w.schema, vec![((0, 0), cell_refs(&w, (0, 0))), ((1, 0), cell_refs(&w, (1, 0)))], &epoch, epoch.now(), &mut stats);
+            let cells = list_cells(w.lo, w.schema, w.index, vec![((0, 0), cell_refs(&w, (0, 0))), ((1, 0), cell_refs(&w, (1, 0)))], &epoch, epoch.now(), &mut stats);
             assert_eq!(cells.len(), 2);
             // The lamp post's model glows at its bulb, 300 up; the boulder's does not.
             let bulb = ModelGlow { centre: [0.0, 0.0, 300.0], radius: 10.0, colour: [1.0, 0.8, 0.5], shapes: 1, ..ModelGlow::default() };
@@ -2400,7 +2402,7 @@ mod tests {
             assert_eq!((st.stats.glow_statics, st.stats.glow_activators, st.stats.glow_collections), (0, 1, 1));
             // A stopped listing lists no more cells.
             epoch.bump();
-            assert!(list_cells(w.lo, w.schema, vec![((0, 0), cell_refs(&w, (0, 0)))], &epoch, 0, &mut stats).is_empty());
+            assert!(list_cells(w.lo, w.schema, w.index, vec![((0, 0), cell_refs(&w, (0, 0)))], &epoch, 0, &mut stats).is_empty());
         }
     }
 }
