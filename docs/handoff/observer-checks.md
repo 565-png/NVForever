@@ -3692,7 +3692,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-22 (the grab key on pickable plants, #3389)
 
-263. **Can the grab key pick up a White Horse Nettle or a Broc Flower?** (P3: #3389;
+278. **Can the grab key pick up a White Horse Nettle or a Broc Flower?** (P3: #3389;
      grab.md §3.) Ours [hypothesis]: no, the grab ray passes through a body on the
      non-collidable layer, and these two plants' only body (a dynamic box of 45 kg) is
      there. In the original, by Goodsprings (the nettles south of the town, 0016AF22 at

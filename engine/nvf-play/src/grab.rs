@@ -238,7 +238,7 @@ fn find_candidate(phys: &mut PhysState, sim: &SimState, eye: [f32; 3], dir: [f32
     filter.exclude_layers.insert(layers::TRIGGER);
     // A body on the non-collidable layer touches nothing, so there is nothing to hold: the
     // pickable plants' (White Horse Nettle, Broc Flower: one dynamic box of 45 kg on layer
-    // 15) stay rooted (#3389) [hypothesis: the players' report; observer check 263].
+    // 15) stay rooted (#3389) [hypothesis: the players' report; observer check 278].
     filter.exclude_layers.insert(layers::NON_COLLIDABLE);
     let hit = phys.ray(eye, dir, REACH, filter).ok_or("nothing within reach")?;
     let on = match hit.owner {

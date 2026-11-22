@@ -67,7 +67,7 @@ this item). Everything below that is not tagged otherwise is [hypothesis].
   non-collidable layer (15): the ray passes through it. The pickable plants White Horse
   Nettle and Broc Flower have one dynamic box of 45 kg there [observed: `fnvtool nif
   decode`]; held, they came off the ground whole (#3389). They stay rooted [hypothesis: the
-  players' report; observer check 263].
+  players' report; observer check 278].
 - **Where**: the grip is the hit point on the body; it is wanted on the crosshair ray at
   the distance it was picked up at, no nearer than 50 units. The body hangs from that
   point and turns about it (its spin damped to 5 % a second).

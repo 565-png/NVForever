@@ -17806,7 +17806,7 @@ forbid = [{ text = "no loose body", label = "the bear's bodies held keyframed" }
 
 [[scenario]]
 name = "grab-plant-rooted"
-source = "[hypothesis] #3389: the grab key passes through a body on the non-collidable layer, so a pickable plant (White Horse Nettle: one dynamic box of 45 kg on layer 15) stays rooted; observer check 263"
+source = "[hypothesis] #3389: the grab key passes through a body on the non-collidable layer, so a pickable plant (White Horse Nettle: one dynamic box of 45 kg on layer 15) stays rooted; observer check 278"
 note = "the nettle 0016AF22 south of Goodsprings; Z held 3 s on it. Before the fix it was picked up as a loose object of 45 kg and dropped about 100 units off"
 areas = ["grab"]
 paths = ["engine/nvf-play/src/grab.rs"]
