@@ -9,9 +9,10 @@
 
 use crate::nif_mirror::{rig_names, root_of, MirrorSystems, RenamedNifNode, RigNames, Rigs, Visuals};
 use bevy::asset::RenderAssetUsages;
-use bevy::camera::visibility::RenderLayers;
-use bevy::camera::{Hdr, ImageRenderTarget, RenderTarget};
+use bevy::camera::visibility::{RenderLayers, VisibilitySystems};
+use bevy::camera::{CameraUpdateSystems, Hdr, ImageRenderTarget, RenderTarget};
 use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::light::SimulationLightSystems;
 use bevy::pbr::DistanceFog;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
@@ -38,12 +39,49 @@ fn nif_node_to_camera_rotation(anchor_rotation: Quat) -> Quat {
     anchor_rotation * Quat::from_rotation_x(FRAC_PI_2)
 }
 
+/// Safely derive a unit-scale world camera transform from an anchor node's
+/// `GlobalTransform`. Returns `None` for non-finite or zero/degenerate-scale matrices so
+/// degenerate NIF nodes never panic in `to_scale_rotation_translation` or emit `NaN`
+/// camera orientations [design].
+fn safe_camera_transform(anchor: &GlobalTransform) -> Option<Transform> {
+    const MIN_SCALE: f32 = 1e-5;
+    const MIN_DET: f32 = 1e-12;
+    let affine = anchor.affine();
+    let translation = Vec3::from(affine.translation);
+    if !translation.is_finite() {
+        return None;
+    }
+    let m = Mat3::from(affine.matrix3);
+    if !m.is_finite() {
+        return None;
+    }
+    let det = m.determinant();
+    let sx = m.x_axis.length();
+    let sy = m.y_axis.length();
+    let sz = m.z_axis.length();
+    if !det.is_finite() || det.abs() < MIN_DET || sx < MIN_SCALE || sy < MIN_SCALE || sz < MIN_SCALE {
+        return None;
+    }
+    let sign = if det < 0.0 { -1.0 } else { 1.0 };
+    let rot_mat = Mat3::from_cols(m.x_axis / sx, m.y_axis / sy, (m.z_axis / sz) * sign);
+    let rot = Quat::from_mat3(&rot_mat);
+    if !rot.is_finite() || rot.length_squared() < 1e-6 {
+        return None;
+    }
+    let rotation = nif_node_to_camera_rotation(rot.normalize());
+    if !rotation.is_finite() {
+        return None;
+    }
+    Some(Transform { translation, rotation, scale: Vec3::ONE })
+}
+
 /// Marker on Bevy secondary camera entities managed by [`ExtraCameraPlugin`].
 #[derive(Component, Debug, Clone, Copy)]
 pub(crate) struct ExtraCameraTag;
 
-struct BoundTarget {
-    entity: Entity,
+/// Per-target-entity ownership record ensuring multi-camera contention on one geometry
+/// entity never overwrites `original_material` with another camera's projected clone [design].
+struct TargetMaterialOwner {
     original_material: Handle<NifMaterial>,
     projected_material: Handle<NifMaterial>,
 }
@@ -52,13 +90,14 @@ struct LiveExtraCamera {
     camera_entity: Entity,
     image: Handle<Image>,
     pixel_size: u32,
-    bound_target: Option<BoundTarget>,
 }
 
 #[derive(Resource, Default)]
 pub(crate) struct ExtraCameraState {
     session: Option<Arc<()>>,
     active: HashMap<String, LiveExtraCamera>,
+    /// True original vs projected material handles keyed by target geometry entity.
+    bound_targets: HashMap<Entity, TargetMaterialOwner>,
     /// Number of non-idle sync passes executed (remains `0` when no extra cameras are
     /// registered; read by tests to verify zero-work idle control) [design].
     #[cfg(test)]
@@ -71,7 +110,13 @@ impl Plugin for ExtraCameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ExtraCameraState>().add_systems(
             PostUpdate,
-            sync.after(MirrorSystems).after(TransformSystems::Propagate),
+            sync.after(MirrorSystems)
+                .after(TransformSystems::Propagate)
+                .before(VisibilitySystems::UpdateFrusta)
+                // Active secondary cameras need sun cascades and camera projection
+                // updates in the same frame (matching `reflection` and `minimap_render`).
+                .before(SimulationLightSystems::UpdateDirectionalLightCascades)
+                .before(CameraUpdateSystems),
         );
     }
 }
@@ -207,62 +252,75 @@ fn resolve_node(r: u32, node: Option<&str>, rigs: &Rigs, visuals: &Visuals, node
     None
 }
 
-fn restore_target_material(bound: BoundTarget, commands: &mut Commands, drawn: &DrawnMaterials) {
-    if let Ok((Some(current), _, _)) = drawn.get(bound.entity) {
-        if current.0.id() == bound.projected_material.id() {
-            commands.entity(bound.entity).try_insert(MeshMaterial3d(bound.original_material));
+fn restore_target_material(entity: Entity, owner: TargetMaterialOwner, commands: &mut Commands, drawn: &DrawnMaterials) {
+    if let Ok((Some(current), _, _)) = drawn.get(entity) {
+        if current.0.id() == owner.projected_material.id() {
+            commands.entity(entity).try_insert(MeshMaterial3d(owner.original_material));
         }
     }
 }
 
-fn teardown_camera(live: LiveExtraCamera, commands: &mut Commands, drawn: &DrawnMaterials) {
-    commands.entity(live.camera_entity).try_despawn();
-    if let Some(bound) = live.bound_target {
-        restore_target_material(bound, commands, drawn);
-    }
-}
-
-fn teardown_all(active: &mut HashMap<String, LiveExtraCamera>, commands: &mut Commands, drawn: &DrawnMaterials) {
+fn teardown_all(
+    active: &mut HashMap<String, LiveExtraCamera>,
+    bound_targets: &mut HashMap<Entity, TargetMaterialOwner>,
+    commands: &mut Commands,
+    drawn: &DrawnMaterials,
+) {
     for (_, live) in active.drain() {
-        teardown_camera(live, commands, drawn);
+        commands.entity(live.camera_entity).try_despawn();
+    }
+    for (entity, owner) in bound_targets.drain() {
+        restore_target_material(entity, owner, commands, drawn);
     }
 }
 
 fn bind_target_material(
     target_entity: Entity,
     image: &Handle<Image>,
-    current_bound: &mut Option<BoundTarget>,
+    bound_targets: &mut HashMap<Entity, TargetMaterialOwner>,
     commands: &mut Commands,
     drawn: &DrawnMaterials,
     materials: &mut Assets<NifMaterial>,
 ) {
-    if let Some(bound) = current_bound.as_ref() {
-        if bound.entity == target_entity {
-            if let Some(mut mat) = materials.get_mut(&bound.projected_material) {
+    let Ok((handle, blend, drawing)) = drawn.get(target_entity) else { return };
+    let Some(handle) = nvf_assets::nif_surface_blend::source_material(handle, blend) else { return };
+    let current_plain = nvf_assets::nif_material::plain_material(handle, drawing).clone();
+
+    if let Some(entry) = bound_targets.get_mut(&target_entity) {
+        if current_plain.id() == entry.projected_material.id() {
+            if let Some(mut mat) = materials.get_mut(&entry.projected_material) {
                 if mat.base.base_color_texture.as_ref().map(Handle::id) != Some(image.id()) {
                     mat.base.base_color_texture = Some(image.clone());
                 }
             }
             return;
         }
+        // An external system replaced the entity's material while projected: adopt the
+        // new external handle as the true original and rebuild the projected clone.
+        let Some(mut cloned) = materials.get(&current_plain).cloned() else { return };
+        cloned.base.base_color_texture = Some(image.clone());
+        cloned.base.unlit = true;
+        cloned.base.fog_enabled = false;
+        let projected_material = materials.add(cloned);
+        commands.entity(target_entity).try_insert(MeshMaterial3d(projected_material.clone()));
+        entry.original_material = current_plain;
+        entry.projected_material = projected_material;
+        return;
     }
-    if let Some(old) = current_bound.take() {
-        restore_target_material(old, commands, drawn);
-    }
-    let Ok((handle, blend, drawing)) = drawn.get(target_entity) else { return };
-    let Some(handle) = nvf_assets::nif_surface_blend::source_material(handle, blend) else { return };
-    let original_material = nvf_assets::nif_material::plain_material(handle, drawing).clone();
-    let Some(mut cloned) = materials.get(&original_material).cloned() else { return };
+
+    let Some(mut cloned) = materials.get(&current_plain).cloned() else { return };
     cloned.base.base_color_texture = Some(image.clone());
     cloned.base.unlit = true;
     cloned.base.fog_enabled = false;
     let projected_material = materials.add(cloned);
     commands.entity(target_entity).try_insert(MeshMaterial3d(projected_material.clone()));
-    *current_bound = Some(BoundTarget {
-        entity: target_entity,
-        original_material,
-        projected_material,
-    });
+    bound_targets.insert(
+        target_entity,
+        TargetMaterialOwner {
+            original_material: current_plain,
+            projected_material,
+        },
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -281,9 +339,10 @@ fn sync(
     materials: Option<ResMut<Assets<NifMaterial>>>,
 ) {
     let Some(rt) = script.as_deref().and_then(|s| s.rt.as_ref()) else {
-        if !state.active.is_empty() {
+        if !state.active.is_empty() || !state.bound_targets.is_empty() {
             let mut commands = commands;
-            teardown_all(&mut state.active, &mut commands, &drawn);
+            let state = &mut *state;
+            teardown_all(&mut state.active, &mut state.bound_targets, &mut commands, &drawn);
             state.session = None;
         }
         return;
@@ -323,7 +382,7 @@ pub(crate) fn sync_game(
     mut materials: ResMut<Assets<NifMaterial>>,
 ) {
     // Fast path: zero work when no extra cameras are registered and none are live.
-    if game.extra_cameras().is_empty() && state.active.is_empty() {
+    if game.extra_cameras().is_empty() && state.active.is_empty() && state.bound_targets.is_empty() {
         return;
     }
     #[cfg(test)]
@@ -333,7 +392,7 @@ pub(crate) fn sync_game(
 
     let cur_session = game.extra_camera_session();
     if state.session.as_ref().is_none_or(|prev| !Arc::ptr_eq(prev, &cur_session)) {
-        teardown_all(&mut state.active, &mut commands, drawn);
+        teardown_all(&mut state.active, &mut state.bound_targets, &mut commands, drawn);
         state.session = Some(cur_session);
     }
 
@@ -352,7 +411,7 @@ pub(crate) fn sync_game(
     let stale: Vec<String> = state.active.keys().filter(|k| !wanted_keys.contains(k.as_str())).cloned().collect();
     for key in stale {
         if let Some(live) = state.active.remove(&key) {
-            teardown_camera(live, &mut commands, drawn);
+            commands.entity(live.camera_entity).try_despawn();
         }
     }
 
@@ -362,6 +421,11 @@ pub(crate) fn sync_game(
         Err(_) => (crate::sky::OUTDOOR_FAR, crate::sky::initial_fog()),
     };
 
+    // Track the deterministic winning camera per target entity (highest projection
+    // sequence, breaking ties by camera key) so two cameras targeting the same mesh never
+    // fight over or corrupt its original material handle [design].
+    let mut target_winners: HashMap<Entity, (u64, String, Handle<Image>)> = HashMap::new();
+
     for (idx, (key, cam)) in game.extra_cameras().iter().take(EXTRA_CAMERA_MAX).enumerate() {
         let Some(proj) = cam.projection.as_ref() else { continue };
         let ExtraCameraTarget::Geometry { reference: target_ref, node: target_node } = &proj.target else {
@@ -370,30 +434,21 @@ pub(crate) fn sync_game(
         let order = EXTRA_CAMERA_BASE_ORDER - idx as isize;
         let anchor_entity = resolve_node(cam.reference.0, cam.parent_node.as_deref(), rigs, visuals, nodes);
         let target_entity = resolve_node(target_ref.0, Some(target_node.as_str()), rigs, visuals, nodes);
-        let anchor_global = anchor_entity.and_then(|e| globals.get(e).ok());
+        let cam_tf = anchor_entity.and_then(|e| globals.get(e).ok()).and_then(safe_camera_transform);
 
-        let (Some(anchor_global), Some(target_entity)) = (anchor_global, target_entity) else {
+        let (Some(cam_tf), Some(target_entity)) = (cam_tf, target_entity) else {
             if let Some(live) = state.active.get_mut(key) {
                 if let Ok((mut camera, ..)) = live_cams.get_mut(live.camera_entity) {
                     camera.is_active = false;
-                }
-                if let Some(bound) = live.bound_target.take() {
-                    restore_target_material(bound, &mut commands, drawn);
                 }
             }
             continue;
         };
 
-        let (_, anchor_rot, anchor_pos) = anchor_global.to_scale_rotation_translation();
-        let cam_tf = Transform {
-            translation: anchor_pos,
-            rotation: nif_node_to_camera_rotation(anchor_rot),
-            scale: Vec3::ONE,
-        };
         let cam_global = GlobalTransform::from(cam_tf);
         let fov_rad = proj.fov_deg.to_radians();
 
-        if let Some(live) = state.active.get_mut(key) {
+        let img = if let Some(live) = state.active.get_mut(key) {
             if live.pixel_size != proj.pixel_size {
                 let new_img = target_image(&mut images, proj.pixel_size);
                 live.image = new_img.clone();
@@ -414,7 +469,7 @@ pub(crate) fn sync_game(
                 *tf = cam_tf;
                 *gtf = cam_global;
             }
-            bind_target_material(target_entity, &live.image, &mut live.bound_target, &mut commands, drawn, &mut materials);
+            live.image.clone()
         } else {
             let img = target_image(&mut images, proj.pixel_size);
             let camera_entity = commands
@@ -435,23 +490,48 @@ pub(crate) fn sync_game(
                         ..default()
                     }),
                     main_fog.clone(),
-                    RenderLayers::from_layers(&[0, crate::reflection::WATER_LAYER, crate::decals::DECAL_LAYER]),
+                    // Render world and water only; exclude `ARMS_LAYER` and `DECAL_LAYER`
+                    // (avoiding a per-PiP-camera `DepthPrepass` requirement for ForwardDecal) [design].
+                    RenderLayers::from_layers(&[0, crate::reflection::WATER_LAYER]),
                     cam_tf,
                     cam_global,
                 ))
                 .id();
-            let mut bound_target = None;
-            bind_target_material(target_entity, &img, &mut bound_target, &mut commands, drawn, &mut materials);
             state.active.insert(
                 key.clone(),
                 LiveExtraCamera {
                     camera_entity,
-                    image: img,
+                    image: img.clone(),
                     pixel_size: proj.pixel_size,
-                    bound_target,
                 },
             );
+            img
+        };
+
+        let replace = target_winners
+            .get(&target_entity)
+            .is_none_or(|(seq, prev_key, _)| proj.sequence > *seq || (proj.sequence == *seq && key.as_str() > prev_key.as_str()));
+        if replace {
+            target_winners.insert(target_entity, (proj.sequence, key.clone(), img));
         }
+    }
+
+    // Restore original materials for any target entity no longer claimed by an active camera.
+    let unbound: Vec<Entity> = state
+        .bound_targets
+        .keys()
+        .copied()
+        .filter(|e| !target_winners.contains_key(e))
+        .collect();
+    for entity in unbound {
+        if let Some(owner) = state.bound_targets.remove(&entity) {
+            restore_target_material(entity, owner, &mut commands, drawn);
+        }
+    }
+
+    // Bind each winning camera's image onto its target entity's material.
+    for (target_entity, (_, _, img)) in target_winners {
+        bind_target_material(target_entity, &img, &mut state.bound_targets, &mut commands, drawn, &mut materials);
     }
 }
 
@@ -712,5 +792,96 @@ mod tests {
         let mut cam_q = app.world_mut().query::<&ExtraCameraTag>();
         assert_eq!(cam_q.iter(app.world()).count(), 0);
         assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(lens).unwrap().0.id(), orig_mat.id());
+    }
+
+    #[test]
+    fn degenerate_anchor_transform_deactivates_camera_without_panicking() {
+        let tw = TestWorld::build();
+        let mut game = tw.game();
+        let (mut app, anchor, lens, orig_mat) = base_app();
+
+        // Start with a valid camera, then collapse anchor scale to zero.
+        assert_eq!(run_script(&mut game, "OpticRef.AttachExtraCamera \"Optic\" 1 \"ScopeAnchor\""), 1.0);
+        assert_eq!(run_script(&mut game, "OpticRef.ProjectExtraCamera \"Optic\" \"ScopeLens\" 10 256"), 1.0);
+        run_sync(&mut app, &game);
+
+        let mut cam_q = app.world_mut().query_filtered::<Entity, With<ExtraCameraTag>>();
+        let cam_e = cam_q.single(app.world()).expect("spawned camera");
+        assert!(app.world().get::<Camera>(cam_e).unwrap().is_active);
+        assert_ne!(app.world().get::<MeshMaterial3d<NifMaterial>>(lens).unwrap().0.id(), orig_mat.id());
+
+        // Zero-scale anchor must deactivate camera and restore original material without panicking.
+        *app.world_mut().get_mut::<GlobalTransform>(anchor).unwrap() = GlobalTransform::from(Transform::from_scale(Vec3::ZERO));
+        run_sync(&mut app, &game);
+        assert!(!app.world().get::<Camera>(cam_e).unwrap().is_active);
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(lens).unwrap().0.id(), orig_mat.id());
+
+        // Non-finite translation on a fresh camera must never spawn or panic.
+        assert_eq!(run_script(&mut game, "OpticRef.AttachExtraCamera \"Optic\" 0"), 1.0);
+        run_sync(&mut app, &game);
+        *app.world_mut().get_mut::<GlobalTransform>(anchor).unwrap() = GlobalTransform::from(Transform::from_translation(Vec3::NAN));
+        assert_eq!(run_script(&mut game, "OpticRef.AttachExtraCamera \"Optic2\" 1 \"ScopeAnchor\""), 1.0);
+        assert_eq!(run_script(&mut game, "OpticRef.ProjectExtraCamera \"Optic2\" \"ScopeLens\" 10 256"), 1.0);
+        run_sync(&mut app, &game);
+        assert_eq!(app.world_mut().query::<&ExtraCameraTag>().iter(app.world()).count(), 0);
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(lens).unwrap().0.id(), orig_mat.id());
+    }
+
+    #[test]
+    fn two_cameras_contending_on_same_target_restore_true_original_in_both_detach_orders() {
+        let tw = TestWorld::build();
+        let mut game = tw.game();
+        let (mut app, _, lens, orig_mat) = base_app();
+
+        // Order 1: CamA (256px) then CamB (512px, later sequence wins) on ScopeLens; detach CamB then CamA.
+        assert_eq!(run_script(&mut game, "OpticRef.AttachExtraCamera \"CamA\" 1 \"ScopeAnchor\""), 1.0);
+        assert_eq!(run_script(&mut game, "OpticRef.ProjectExtraCamera \"CamA\" \"ScopeLens\" 12 256"), 1.0);
+        run_sync(&mut app, &game);
+        assert_eq!(run_script(&mut game, "OpticRef.AttachExtraCamera \"CamB\" 1 \"ScopeAnchor\""), 1.0);
+        assert_eq!(run_script(&mut game, "OpticRef.ProjectExtraCamera \"CamB\" \"ScopeLens\" 6 512"), 1.0);
+        run_sync(&mut app, &game);
+
+        let bound_mat = app.world().get::<MeshMaterial3d<NifMaterial>>(lens).unwrap().0.clone();
+        assert_ne!(bound_mat.id(), orig_mat.id());
+        let bound_tex = app.world().resource::<Assets<NifMaterial>>().get(&bound_mat).unwrap().base.base_color_texture.clone().unwrap();
+        assert_eq!(app.world().resource::<Assets<Image>>().get(&bound_tex).unwrap().texture_descriptor.size.width, 512);
+
+        // Detach winner (CamB) first: ScopeLens switches to CamA's 256px image while preserving orig_mat.
+        assert_eq!(run_script(&mut game, "OpticRef.AttachExtraCamera \"CamB\" 0"), 1.0);
+        run_sync(&mut app, &game);
+        let bound_tex_a = app.world().resource::<Assets<NifMaterial>>().get(&bound_mat).unwrap().base.base_color_texture.clone().unwrap();
+        assert_eq!(app.world().resource::<Assets<Image>>().get(&bound_tex_a).unwrap().texture_descriptor.size.width, 256);
+
+        // Detach remaining camera (CamA): restores the true original material.
+        assert_eq!(run_script(&mut game, "OpticRef.AttachExtraCamera \"CamA\" 0"), 1.0);
+        run_sync(&mut app, &game);
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(lens).unwrap().0.id(), orig_mat.id());
+
+        // Order 2: CamA then CamB; detach CamA first, then CamB — still restores true orig_mat.
+        assert_eq!(run_script(&mut game, "OpticRef.AttachExtraCamera \"CamA\" 1 \"ScopeAnchor\""), 1.0);
+        assert_eq!(run_script(&mut game, "OpticRef.ProjectExtraCamera \"CamA\" \"ScopeLens\" 12 256"), 1.0);
+        assert_eq!(run_script(&mut game, "OpticRef.AttachExtraCamera \"CamB\" 1 \"ScopeAnchor\""), 1.0);
+        assert_eq!(run_script(&mut game, "OpticRef.ProjectExtraCamera \"CamB\" \"ScopeLens\" 6 512"), 1.0);
+        run_sync(&mut app, &game);
+
+        assert_eq!(run_script(&mut game, "OpticRef.AttachExtraCamera \"CamA\" 0"), 1.0);
+        run_sync(&mut app, &game);
+        let bound_mat2 = app.world().get::<MeshMaterial3d<NifMaterial>>(lens).unwrap().0.clone();
+        assert_ne!(bound_mat2.id(), orig_mat.id());
+        let bound_tex_b = app.world().resource::<Assets<NifMaterial>>().get(&bound_mat2).unwrap().base.base_color_texture.clone().unwrap();
+        assert_eq!(app.world().resource::<Assets<Image>>().get(&bound_tex_b).unwrap().texture_descriptor.size.width, 512);
+
+        // External material replacement while bound is adopted as the new true original and restored on detach.
+        let external_mat = app
+            .world_mut()
+            .resource_mut::<Assets<NifMaterial>>()
+            .add(nvf_assets::nif_material::nif_material(StandardMaterial::default()));
+        app.world_mut().entity_mut(lens).insert(MeshMaterial3d(external_mat.clone()));
+        run_sync(&mut app, &game);
+        assert_ne!(app.world().get::<MeshMaterial3d<NifMaterial>>(lens).unwrap().0.id(), external_mat.id());
+
+        assert_eq!(run_script(&mut game, "OpticRef.AttachExtraCamera \"CamB\" 0"), 1.0);
+        run_sync(&mut app, &game);
+        assert_eq!(app.world().get::<MeshMaterial3d<NifMaterial>>(lens).unwrap().0.id(), external_mat.id());
     }
 }
