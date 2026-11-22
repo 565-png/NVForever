@@ -168,7 +168,7 @@ pub fn register(app: &mut App) {
             key: "monitor",
             group: GROUP_PICTURE,
             label: "Monitor",
-            note: "The display the game opens on in full screen (the first display until you pick one).",
+            note: "The display the game opens on in full screen (the main display until you pick one).",
             switches: "--window",
             get: |_| false,
             set: |_, _| {},
@@ -1117,6 +1117,29 @@ fn register_graphics(app: &mut App) {
             ask_keep: false,
         },
     );
+    // Shadows of placed lights (light_shadows.rs; graphics-enhanced.md §3.17): Off,
+    // Performance or Quality as the Sun shadows row, saved by name, off by default [design].
+    add_choice_list(
+        app,
+        Setting {
+            key: "light-shadows",
+            group: GROUP_GRAPHICS,
+            label: "ALC shadows",
+            note: LIGHT_SHADOWS_NOTE,
+            switches: "--light-shadows",
+            get: |_| false,
+            set: |_, _| {},
+            slider: None,
+        },
+        ChoiceList {
+            names: |_| crate::light_shadows::CHOICES.iter().map(|c| c.to_string()).collect(),
+            chosen: light_shadows_chosen,
+            pick: take_light_shadows,
+            save: light_shadows_chosen,
+            load: take_light_shadows,
+            ask_keep: false,
+        },
+    );
     nvf_play::settings::set_disabled_status(app, "anti-aliasing", |w| crate::upscaler::temporal_active(w).then_some("Off (upscaling active)"));
     // Frame generation: Off, FSR 3.1 or DLSS (#2317), each choice dimmed with its reason; the
     // INI's old on/off still reads. Then DLSS's frames per real frame.
@@ -1165,7 +1188,7 @@ fn register_graphics(app: &mut App) {
         Setting { key: AO_KEY, group: GROUP_GRAPHICS, label: "Ambient occlusion", note: AO_NOTE, switches: "--graphics, --ambient-occlusion", get: |_| false, set: |_, _| {}, slider: None },
         ChoiceList { names: |_| AO_CHOICES.iter().map(|c| (*c).to_string()).collect(), chosen: ao_chosen, pick: take_ao, save: ao_chosen, load: take_ao, ask_keep: false },
     );
-    let switches: [Switch; 19] = [
+    let switches: [Switch; 23] = [
         (
             "fine-shadows",
             "Longer sun shadows",
@@ -1251,6 +1274,16 @@ fn register_graphics(app: &mut App) {
             |w| w.resource::<Graphics>().authored_materials,
             |w, on| w.resource_mut::<Graphics>().authored_materials = on,
         ),
+        // #2981 reflections: read once at the start like Authored materials (main.rs,
+        // nvf_assets `reflection_cube::set_enabled`); the row keeps the next start's choice.
+        (
+            crate::graphics::AUTHORED_REFLECTIONS_KEY,
+            "Reflections on authored materials",
+            AUTHORED_REFLECTIONS_NOTE,
+            AUTHORED_MATERIALS_SWITCHES,
+            |w| w.resource::<Graphics>().authored_reflections,
+            |w, on| w.resource_mut::<Graphics>().authored_reflections = on,
+        ),
         (
             "terrain-height-blend",
             "Terrain height blending",
@@ -1290,6 +1323,30 @@ fn register_graphics(app: &mut App) {
             "--graphics, --graphics-only",
             |w| w.resource::<Graphics>().desert_haze,
             |w, on| w.resource_mut::<Graphics>().desert_haze = on,
+        ),
+        (
+            "aerial-perspective",
+            "Aerial perspective (experimental)",
+            "On: far land takes on the sky's colours with distance, bluer at noon, warmer at dusk, brighter toward the sun, inside the weather's fog. Not in the original.",
+            "--graphics, --graphics-only",
+            |w| w.resource::<Graphics>().aerial_perspective,
+            |w, on| w.resource_mut::<Graphics>().aerial_perspective = on,
+        ),
+        (
+            "night-sky-detail",
+            "Night sky detail (experimental)",
+            "On: stars twinkle a little, more near the horizon; the moon gets a glow and lights the clouds facing it, wider in hazy weather. Not in the original.",
+            "--graphics, --graphics-only",
+            |w| w.resource::<Graphics>().night_sky_detail,
+            |w, on| w.resource_mut::<Graphics>().night_sky_detail = on,
+        ),
+        (
+            "distant-lights",
+            "Distant lights (experimental)",
+            "On: at night, lamps in the places beyond the loaded area show as small glows, so towns can be seen from afar. They light nothing. Not in the original.",
+            "--graphics, --graphics-only",
+            |w| w.resource::<Graphics>().distant_lights,
+            |w, on| w.resource_mut::<Graphics>().distant_lights = on,
         ),
         (
             "water-reflections",
@@ -1352,6 +1409,19 @@ pub(crate) fn authored_after_ini(command_line: bool, given: Option<&nvf_play::se
     nvf_play::settings::switch_after_ini(command_line, stored, given, AUTHORED_MATERIALS_SWITCHES)
 }
 
+/// The Reflections on authored materials row's note (#2981 reflections): it needs a pack and
+/// Authored materials, and takes effect at the next start (main.rs).
+pub(crate) const AUTHORED_REFLECTIONS_NOTE: &str = "On: pack materials reflect the sky outdoors and an approximation of the room and nearby lights indoors. Needs a material pack and Authored materials on. Takes effect at the next start.";
+
+/// The run's Reflections on authored materials state (#2981 reflections), decided before the
+/// first NIF pipeline by [`authored_after_ini`]'s rule: the command line's
+/// (`--graphics-only no-authored-reflections`, else on), then the INI's stored row.
+pub(crate) fn reflections_after_ini(command_line: bool, given: Option<&nvf_play::settings::GivenSwitches>) -> bool {
+    let Some(given) = given else { return command_line };
+    let stored = stored_at_start(crate::graphics::AUTHORED_REFLECTIONS_KEY).and_then(|v| nvf_play::settings::parse_switch(&v));
+    nvf_play::settings::switch_after_ini(command_line, stored, given, AUTHORED_MATERIALS_SWITCHES)
+}
+
 /// The Ambient occlusion row's key and note (ssao.rs `AoLevel`).
 const AO_KEY: &str = "ambient-occlusion";
 const AO_NOTE: &str = "Creases, corners and the ground under things darken by how enclosed they are: Off, Performance (cheaper, a little grainier) or Quality. Not in the original.";
@@ -1401,7 +1471,9 @@ fn register_pipeline_waits(app: &mut App) {
         "anti-aliasing", "shadow-filter", "upscaler", "upscaler-quality", "ambient-occlusion",
         "fine-shadows", "bloom", "glow", "eye-adaptation", "neon-glow", "sharpen",
         "light-shafts", "water-reflections", "water-effects", "water-mirror", "sun-shadows", "grade",
-        "terrain-height-blend", "terrain-anti-tiling", "cloud-shadows", "terrain-shadows", "heat-haze", MESH_BLEND_KEY,
+        "terrain-height-blend", "terrain-anti-tiling", "cloud-shadows", "terrain-shadows", "heat-haze", MESH_BLEND_KEY, "distant-lights",
+        // ALC shadows' first point and spot light shadow views specialize their passes.
+        "light-shadows",
     ] {
         nvf_play::settings::wait_for_pipelines(app, key);
     }
@@ -1654,6 +1726,27 @@ fn take_shadow_resolution(w: &mut World, text: &str) -> bool {
     match nvf_play::settings::choice_of(text, &names, |v| choice_index(v, graphics::SHADOW_RESOLUTIONS.len())) {
         Some(i) => {
             graphics::set_shadow_resolution_choice(w, i);
+            true
+        }
+        None => false,
+    }
+}
+
+/// The ALC shadows row's note (light_shadows.rs; ALC: All Lights Cast, the user-visible
+/// name since 2026-11-19, once Lamp shadows; the INI key stays `light-shadows`).
+const LIGHT_SHADOWS_NOTE: &str = "ALC (All Lights Cast): lamps, fires and spot lights cast shadows within the shadow distance, so walls stop their light. Performance redraws less often. Costs frame rate. Not in the original.";
+
+fn light_shadows_chosen(w: &World) -> String {
+    let choice = w.get_resource::<crate::light_shadows::LightShadows>().map_or(0, |l| l.choice);
+    crate::light_shadows::CHOICES[choice.min(crate::light_shadows::CHOICES.len() - 1)].to_string()
+}
+
+/// The ALC shadows choice `text` names.
+fn take_light_shadows(w: &mut World, text: &str) -> bool {
+    let names: Vec<String> = crate::light_shadows::CHOICES.iter().map(|c| c.to_string()).collect();
+    match nvf_play::settings::choice_of(text, &names, |v| choice_index(v, crate::light_shadows::CHOICES.len())) {
+        Some(i) => {
+            w.insert_resource(crate::light_shadows::LightShadows { choice: i });
             true
         }
         None => false,
@@ -2870,6 +2963,7 @@ dlss-model=Preset K
             ("anti-aliasing", &["--msaa", "--graphics-only"]),
             ("shadow-filter", &[]),
             ("shadow-resolution", &[]),
+            ("light-shadows", &["--light-shadows"]),
             (FRAME_GENERATION_KEY, &["--frame-generation"]),
             (FRAMES_KEY, &[]),
             ("latency-reduction", &["--latency-reduction"]),
@@ -2884,11 +2978,15 @@ dlss-model=Preset K
             ("sharpen", &["--graphics"]),
             ("anisotropic", &["--graphics"]),
             (crate::graphics::AUTHORED_MATERIALS_KEY, &["--graphics-only"]),
+            (crate::graphics::AUTHORED_REFLECTIONS_KEY, &["--graphics-only"]),
             ("terrain-height-blend", &["--graphics", "--graphics-only"]),
             ("terrain-anti-tiling", &["--graphics", "--graphics-only"]),
             ("light-shafts", &["--graphics"]),
             ("heat-haze", &["--graphics-only"]),
             ("desert-haze", &["--graphics", "--graphics-only"]),
+            ("aerial-perspective", &["--graphics", "--graphics-only"]),
+            ("night-sky-detail", &["--graphics", "--graphics-only"]),
+            ("distant-lights", &["--graphics", "--graphics-only"]),
             ("water-reflections", &["--graphics"]),
             ("water-effects", &["--graphics", "--graphics-only"]),
             ("water-mirror", &["--graphics-only"]),
@@ -2933,6 +3031,23 @@ dlss-model=Preset K
         assert_eq!(fnv_install::ini_get(&ini, nvf_play::settings::SECTION, MESH_BLEND_KEY), Some("0".to_string()), "{ini}");
         assert!(!ini_app(&path, &ini, UpscalerChoice::Off, GivenSwitches::default()).world().resource::<Graphics>().mesh_terrain_blend, "and off again at the next");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #2981 reflections: the Reflections on authored materials row follows Authored
+    /// materials, on in a vanilla start, switches `Graphics::authored_reflections` and is
+    /// start-only (no pipeline wait: the run's state is fixed in main.rs).
+    #[test]
+    fn the_reflections_row_follows_authored_materials_and_switches_the_next_start() {
+        let mut app = rows_app();
+        let i = row(&app, crate::graphics::AUTHORED_REFLECTIONS_KEY);
+        assert_eq!(i, row(&app, crate::graphics::AUTHORED_MATERIALS_KEY) + 1, "right after Authored materials");
+        let s = app.world().resource::<Settings>().list()[i];
+        assert_eq!((s.group, s.label, s.note, s.switches), (GROUP_GRAPHICS, "Reflections on authored materials", AUTHORED_REFLECTIONS_NOTE, "--graphics-only"));
+        assert_eq!(nvf_play::settings::note_over_budget(s.note), None);
+        assert!((s.get)(app.world()), "on in a vanilla start");
+        assert_eq!(nvf_play::settings::flip(app.world_mut(), i), Some(false));
+        assert!(!app.world().resource::<Graphics>().authored_reflections);
+        assert!(app.world().resource::<Graphics>().authored_materials, "the materials row is its own");
     }
 
     /// A settings page with the INI at `path` holding `text`, `apply_stored` run once.

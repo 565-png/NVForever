@@ -792,16 +792,18 @@ impl Ui {
     /// trait the including file set too depend on it].
     fn put_trait(&mut self, src: &dyn Source, tile: TileId, e: &Element) {
         let asked = RefCell::new(Vec::new());
-        let string = |n: &str| {
+        let string = |n: &str, explicit: bool| {
             let text = src.game_string(n);
-            asked.borrow_mut().push((n.to_ascii_lowercase(), text.is_some()));
+            if explicit || text.is_some() {
+                asked.borrow_mut().push((n.to_ascii_lowercase(), text.is_some()));
+            }
             text
         };
         let mut warns = Vec::new();
         let (value, expr) = if expr::has_ops(e) {
-            (Value::default(), Some(expr::ops_of(&e.children, &string, &mut |w| warns.push(w))))
+            (Value::default(), Some(expr::ops_of_with(&e.children, &string, &mut |w| warns.push(w))))
         } else {
-            (expr::literal(&e.children, &string), None)
+            (expr::literal_with(&e.children, &string), None)
         };
         let asked = asked.into_inner();
         let built_in_label = match asked.as_slice() {
@@ -1579,7 +1581,9 @@ impl Ui {
                     // `_filename_0`/`_Filename_1` are the two pictures; T15a].
                     let name = match (&acc, name.ends_with('_')) {
                         (Value::Num(n), true) if op.kind == OpKind::Copy => format!("{name}{}", *n as i64),
-                        (Value::Sym(s), true) if op.kind == OpKind::Copy && crate::value::sym_number(s).is_some() => format!("{name}{}", acc.num() as i64),
+                        (v, true) if op.kind == OpKind::Copy && v.sym_name().as_deref().and_then(crate::value::sym_number).is_some() => {
+                            format!("{name}{}", acc.num() as i64)
+                        }
                         _ => name.clone(),
                     };
                     self.read_trait(me, src, &name, deps, sources)
