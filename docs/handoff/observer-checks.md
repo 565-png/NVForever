@@ -3710,3 +3710,12 @@ already talking takes over at once, same topic or another; nothing is queued or 
      shows red alone [hypothesis]; (d) after a save loaded with the hologram alerted but
      not fighting, whether it stays yellow or turns blue about a second later (ours: stays
      yellow) [hypothesis].
+
+## Added 2026-11-22 (the grab key on pickable plants, #3389)
+
+278. **Can the grab key pick up a White Horse Nettle or a Broc Flower?** (P3: #3389;
+     grab.md §3.) Ours [hypothesis]: no, the grab ray passes through a body on the
+     non-collidable layer, and these two plants' only body (a dynamic box of 45 kg) is
+     there. In the original, by Goodsprings (the nettles south of the town, 0016AF22 at
+     -68223, -3810), harvest one and not another, then hold Z on each; also shoot or throw
+     a grenade at one. Say whether either moves.
