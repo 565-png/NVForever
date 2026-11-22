@@ -145,7 +145,6 @@ fn slots_of(g: &Game, item: FormId) -> u32 {
 /// without a slot (ammo) are not equipped items here [hypothesis: the functions count by
 /// slot, as the duplicates note says].
 fn equipped(g: &mut Game, actor: FormId, mask: u32) -> Vec<(FormId, fnv_sim::inventory::Extra)> {
-    let forms = g.world.forms;
     let groups: Vec<(FormId, fnv_sim::inventory::Extra)> = match g.world.get(actor).ok().and_then(|s| s.inventory.as_ref()) {
         Some(inv) => inv.groups().filter(|x| x.1.equipped).map(|x| (x.0, x.1)).collect(),
         None => return Vec::new(),
@@ -159,7 +158,7 @@ fn equipped(g: &mut Game, actor: FormId, mask: u32) -> Vec<(FormId, fnv_sim::inv
         if slots == 0 {
             continue;
         }
-        let pick = if mask & SLOT_BITS == 0 { !forms.item(item).is_some_and(|i| i.non_playable) } else { slots & mask & SLOT_BITS != 0 };
+        let pick = if mask & SLOT_BITS == 0 { !g.is_item_non_playable(item) } else { slots & mask & SLOT_BITS != 0 };
         if pick {
             out.push((item, extra));
         }
