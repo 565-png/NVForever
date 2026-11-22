@@ -3633,6 +3633,23 @@ already talking takes over at once, same topic or another; nothing is queued or 
      marker appears at once, where it lands against the pointer, and whether a press dragged
      a few pixels still counts as a click.
 
+## Added 2026-11-21 (blood on the world behind a shot actor, #3318)
+
+263. **Where does a shot on an actor leave blood on the walls and floor near it, and
+     which impact is it?** (P2; #3318, impact-decals.md §4a.) The engine rolls
+     `fCombatEnvironmentBloodChance` (default 0.75, FalloutNV.esm does not set it) and
+     casts up to 512 units from the hit in the projectile's direction, first surface only,
+     with the hit body part's impact [documented: GECK wiki ITR:OnWoundSpray,
+     FCombatEnvironmentBloodChance]. Ours [hypothesis]: a second line straight down when
+     the shot's line meets nothing; the body part's severable blood impact data set,
+     else its explodable one. Shoot an NPC in the chest ten times with a BB gun
+     (`resurrect` if it dies): in the Goodsprings general store from the door (counter
+     and wall behind Chet), and in the open street with nothing behind the target. Count
+     the splatters on the counter or wall (about 7 in 10 at 0.75), and whether any appear
+     on the ground below the target in the open (a frame after each shot does it); the
+     splatters' size tells the spurt's decal (`BloodSpoutRedData`, 70-90 wide) from the
+     bullet's (`BallisticOrganicImpact`, 12-19).
+
 ## Added 2026-11-21 (is the HUD's condition bar see-through, #3309)
 
 264. **Does the world show through the HUD's weapon condition bar in the original?** (P3;
