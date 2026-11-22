@@ -34736,3 +34736,19 @@ expect = [
   { json = "files.?tree=wastelandshrub01.stub_levels.#", schema = "fnv.spt.shape/1", equals = 0, count = 1, label = "WastelandShrub01 has no stub level" },
   { json = "files.?tree=whiteoak01.stub_levels.#", schema = "fnv.spt.shape/1", equals = 0, count = 1, label = "WhiteOak01 has no stub level" },
 ]
+
+[[scenario]]
+name = "vats-templated-name"
+source = "#3445: a Lonesome Road deathclaw of the nameless base NVDLC04DeathclawAmbusherLVL (template: the leveled creature list NVDLC04DeathClawGLENC, Base Data from the template) was named by that Editor ID in VATS; its name is the picked entry's FULL, Deathclaw (engine/nvf-play/src/sim.rs ref_shown_name)"
+areas = ["combat", "vats"]
+paths = ["engine/nvf-play/src/sim.rs", "engine/nvf-play/src/vats_mode.rs", "engine/nvf-play/src/hud_target.rs"]
+note = "vats-mode-miss's setup at Goodsprings with LonesomeRoad.esm loaded and both dogs killed at 3 s; one such deathclaw is made 500 units from the player (god mode), and the VATS mark at 10 s is on it, the nearest living actor [observed 2026-11-22: the lines below]"
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:kill:0x0013E5BB,3:kill:0x000F573F,3.2:call:player:PlaceAtMe:NVDLC04DeathclawAmbusherLVL:1:500:0", NVF_PLAY_TEST_EQUIP = "0008F216", NVF_PLAY_TEST_GIVE = "0008ED02:24", NVF_PLAY_TEST_CONTROL = "3:weapon,4.5:reload,10.3:aimvats", NVF_PLAY_TEST_KEYS = "10:v,10.32:mouse-left,10.36:e", NVF_PLAY_TEST_VATS_STYLE = "dead-eye" }
+args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm", "LonesomeRoad.esm"]
+run_seconds = 16
+expect = [
+  { re = 'ai .* NVDLC04DeathclawAmbusherLVL 0xFF000001: created by a script \(PlaceAtMe\)', label = "the deathclaw of the nameless base is made" },
+  { re = 'vats mode: preview Deathclaw FF000001', label = "VATS previews it by the picked entry's name" },
+  { re = 'vats mode: marked Deathclaw FF000001 ', label = "the mark names it Deathclaw" },
+]
+forbid = [{ re = 'vats mode: (preview|marked) NVDLC04', label = "VATS names an actor by an Editor ID" }]
