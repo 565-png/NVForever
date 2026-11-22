@@ -1397,12 +1397,51 @@ pub fn cell_lighting(
     }
 }
 
-/// SetCellImageSpace (`fnv_game::game::FormChanges::cell_image_spaces`): an interior
-/// whose image space a script changed is graded with the new one, from when the cell
-/// loads after the call (entered again, or a save made in it loaded): the original
-/// shows a change to the cell the player is in only then [documented: GECK wiki
-/// SetCellImageSpace, notes]. Looked at on every travel (which graded the cell with
-/// its XCIM) and when the script runtime (with a loaded save's changes) becomes ready.
+/// Resolve an IMGS record with any live `SetImageSpaceTrait` session overrides from `game`.
+pub(crate) fn effective_image_space(
+    world: &WorldData,
+    game: Option<&fnv_game::Game<'_>>,
+    space: u32,
+) -> Option<fnv_world::imagespace::Cinematic> {
+    match game {
+        Some(g) => fnv_world::imagespace::image_space_with_traits(
+            world.lo,
+            world.schema,
+            space,
+            g.image_space_trait_overrides(fnv_sim::FormId(space)),
+        ),
+        None => fnv_world::imagespace::image_space(world.lo, world.schema, space),
+    }
+}
+
+/// Cached cell-load and live trait-revision state for [`cell_image_space`] so unchanged
+/// frames do zero work and a pending `SetCellImageSpace` waits until the next cell load.
+#[derive(Default)]
+pub struct CellImageSpaceState {
+    /// Last `(interior_cell, worldspace, game_instance_id)` at which the active cell's
+    /// image space FormID was bound.
+    load_key: Option<(Option<u32>, u32, Option<u64>)>,
+    /// The `IMGS` FormID bound when the current interior cell loaded (from
+    /// `SetCellImageSpace` at load time, else authored `CELL XCIM`). Held fixed until the
+    /// cell next loads so a `SetCellImageSpace` call on the active cell does not switch
+    /// early when `SetImageSpaceTrait` refreshes traits.
+    active_interior_space: Option<u32>,
+    /// Last `SetImageSpaceTrait` revision applied to the active image space.
+    trait_rev: Option<u64>,
+}
+
+/// SetCellImageSpace (`fnv_game::game::FormChanges::cell_image_spaces`) and live
+/// `SetImageSpaceTrait` (`fnv_game::nvse_traits::TraitState`):
+/// - An interior cell's `SetCellImageSpace` assignment is bound when the cell loads (on
+///   travel, cell entry, or when the script runtime with a loaded save's changes becomes
+///   ready): the original shows a `SetCellImageSpace` change to the cell the player is
+///   already in only when the cell next loads [documented: GECK wiki SetCellImageSpace,
+///   notes].
+/// - Session `SetImageSpaceTrait` edits (`0..=32`) on the already-loaded active image
+///   space (interior bound `IMGS` or exterior `WRLD INAM`) refresh immediately when the
+///   monotonic trait revision advances [hypothesis: docs/spec-notes/world.md §6].
+/// - Does zero work on unchanged frames and resets cleanly on game-instance switches.
+///
 /// Runs after [`travel`].
 pub fn cell_image_space(
     mut travels: MessageReader<nvf_play::Travel>,
@@ -1410,23 +1449,54 @@ pub fn cell_image_space(
     world: Res<WorldData>,
     script: Option<Res<nvf_play::script::ScriptState>>,
     mut sky: ResMut<crate::sky::SkyState>,
-    mut seen: Local<Option<(Option<u32>, bool)>>,
+    mut state: Local<CellImageSpaceState>,
 ) {
-    let rt = script.as_deref().and_then(|s| s.rt.as_ref());
-    let key = (streamer.interior, rt.is_some());
+    let game = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
+    let token = game.map(|g| g.image_space_sync_token());
+    let instance_id = token.map(|(id, _)| id);
+    let trait_rev = token.map(|(_, rev)| rev);
+    let load_key = (streamer.interior, world.world, instance_id);
     let travelled = travels.read().count() > 0;
-    if *seen == Some(key) && !travelled {
+    let rebind = state.load_key != Some(load_key) || travelled;
+    if !rebind && state.trait_rev == trait_rev {
         return;
     }
-    *seen = Some(key);
-    let (Some(cell), Some(rt)) = (streamer.interior, rt) else { return };
-    let Some(&space) = rt.game.forms.cell_image_spaces.get(&fnv_sim::FormId(cell)) else { return };
-    match fnv_world::imagespace::image_space(world.lo, world.schema, space.0) {
-        Some(grade) => {
-            info!("cell image space: {cell:#010x} graded with {:#010x} (SetCellImageSpace)", space.0);
-            sky.interior_grade = Some(grade);
+    state.load_key = Some(load_key);
+    state.trait_rev = trait_rev;
+    if let Some(cell) = streamer.interior {
+        let mut scripted = false;
+        let space = if rebind {
+            let assigned = game.and_then(|g| g.forms.cell_image_spaces.get(&fnv_sim::FormId(cell)).map(|f| f.0));
+            scripted = assigned.is_some();
+            let bound = assigned.or_else(|| fnv_world::lighting::cell_image_space(world.lo, world.schema, cell));
+            state.active_interior_space = bound;
+            bound
+        } else {
+            state.active_interior_space
+        };
+        match space {
+            Some(id) => match effective_image_space(&world, game, id) {
+                Some(grade) => {
+                    if sky.interior_grade != Some(grade) {
+                        if scripted {
+                            info!("cell image space: {cell:#010x} graded with {id:#010x} (SetCellImageSpace)");
+                        }
+                        sky.interior_grade = Some(grade);
+                    }
+                }
+                None => warn!("cell image space: {id:#010x} for {cell:#010x} is not an image space the grade reads"),
+            },
+            None => sky.interior_grade = None,
         }
-        None => warn!("cell image space: {:#010x} for {cell:#010x} is not an image space the grade reads", space.0),
+        return;
+    }
+    state.active_interior_space = None;
+    let world_space = crate::sky::worldspace_image_space_id(&world);
+    sky.world_image_space_id = world_space;
+    let next = world_space.and_then(|id| effective_image_space(&world, game, id));
+    if sky.image_space != next {
+        sky.image_space = next;
+        sky.refresh();
     }
 }
 

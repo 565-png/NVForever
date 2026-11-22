@@ -329,6 +329,12 @@ pub struct SkyState {
     choices: Vec<Choice>,
     /// The worldspace's base image space (WRLD INAM); without one there is no grade.
     pub image_space: Option<Cinematic>,
+    /// The FormID of the worldspace's base image space (WRLD INAM or parent's), so live
+    /// `SetImageSpaceTrait` edits can re-evaluate [`Self::image_space`].
+    pub world_image_space_id: Option<u32>,
+    /// Session `SetWeatherTraitNumeric` fog overrides (`15..=20`: day near/far, night
+    /// near/far, day/night power) keyed by weather FormID, synced by [`sync_weather_fog`].
+    pub weather_fog_overrides: HashMap<u32, [Option<f32>; 6]>,
     /// Each weather's image space adapters per time of day, by weather form ID.
     adapters: HashMap<u32, [Option<Adapter>; 6]>,
     changed: bool,
@@ -530,7 +536,12 @@ impl SkyState {
             (load(&clim.weathers), regions)
         };
         let w = weather(world.lo, world.schema, wid).ok_or("weather unreadable")?;
-        let image_space = worldspace_image_space(world);
+        let world_image_space_id = worldspace_image_space_id(world);
+        let image_space = world_image_space_id.and_then(|id| {
+            let c = image_space(world.lo, world.schema, id);
+            info!("image space {id:#010x}: {c:?}");
+            c
+        });
         let adapters = choices
             .iter()
             .chain(regions.iter().flat_map(|r| &r.choices))
@@ -561,6 +572,8 @@ impl SkyState {
             fade: 1.0,
             choices,
             image_space,
+            world_image_space_id,
+            weather_fog_overrides: HashMap::new(),
             adapters,
             changed: true,
             script: None,
@@ -1029,11 +1042,13 @@ impl SkyState {
 
     /// Fog near, far and strength (0..1), blended across a weather fade; `None` when
     /// neither weather has fog. Fading to or from a weather without fog fades the
-    /// strength and keeps the other weather's distances.
+    /// strength and keeps the other weather's distances. Applies any live session
+    /// `SetWeatherTraitNumeric` (`15..=20`) overrides stored in [`Self::weather_fog_overrides`].
     pub fn fog(&self) -> Option<(f32, f32, f32)> {
-        let cur = self.weather.fog_at(&self.climate, self.hour);
+        let fog_of = |w: &Weather| w.fog_at_with(&self.climate, self.hour, self.weather_fog_overrides.get(&w.form_id).copied());
+        let cur = fog_of(&self.weather);
         let prev = match &self.prev {
-            Some(p) => p.fog_at(&self.climate, self.hour),
+            Some(p) => fog_of(p),
             None => return cur.map(|(n, f)| (n, f, 1.0)),
         };
         let t = self.fade;
@@ -1051,13 +1066,15 @@ impl SkyState {
         if self.fog_override.is_some() {
             return 1.0;
         }
-        let cur = self.weather.fog_power_at(&self.climate, self.hour);
+        let fog_of = |w: &Weather| w.fog_at_with(&self.climate, self.hour, self.weather_fog_overrides.get(&w.form_id).copied());
+        let power_of = |w: &Weather| w.fog_power_at_with(&self.climate, self.hour, self.weather_fog_overrides.get(&w.form_id).copied());
+        let cur = power_of(&self.weather);
         match &self.prev {
-            Some(p) if p.fog_at(&self.climate, self.hour).is_some() && self.weather.fog_at(&self.climate, self.hour).is_some() => {
-                let prev = p.fog_power_at(&self.climate, self.hour);
+            Some(p) if fog_of(p).is_some() && fog_of(&self.weather).is_some() => {
+                let prev = power_of(p);
                 prev + (cur - prev) * self.fade
             }
-            Some(p) if self.weather.fog_at(&self.climate, self.hour).is_none() => p.fog_power_at(&self.climate, self.hour),
+            Some(p) if fog_of(&self.weather).is_none() => power_of(p),
             _ => cur,
         }
     }
@@ -1229,18 +1246,38 @@ pub fn weather_region(world: Res<WorldData>, cam: Query<&Transform, With<FlyCam>
     sky.place_outdoors(world.weather_regions, world.world, g.x, g.y);
 }
 
-/// The worldspace's image space (WRLD INAM), or its parent's.
-fn worldspace_image_space(world: &WorldData) -> Option<Cinematic> {
+/// The FormID of the worldspace's image space (WRLD INAM), or its parent's.
+pub(crate) fn worldspace_image_space_id(world: &WorldData) -> Option<u32> {
     let inam = |id: u32| {
         let (pi, r) = fnv_world::fields::winner(world.lo, id)?;
         let f = fnv_world::fields::Fields::new(r, pi, world.schema).ok()?;
         fnv_world::fields::global(world.lo, pi, fnv_world::fields::formid_of(&f.get(b"INAM")?)?)
     };
-    let ws = &world.index.worldspaces[&world.world];
-    let id = inam(world.world).or_else(|| ws.parent.and_then(inam))?;
-    let c = image_space(world.lo, world.schema, id);
-    info!("image space {id:#010x}: {c:?}");
-    c
+    let ws = world.index.worldspaces.get(&world.world)?;
+    inam(world.world).or_else(|| ws.parent.and_then(inam))
+}
+
+/// Sync live session `SetWeatherTraitNumeric` fog overrides (`15..=20`) from `Game::traits`
+/// into [`SkyState::weather_fog_overrides`]. Keyed on `(game_instance_id, weather_fog_revision)`
+/// so unchanged frames do zero work and game-instance switches or runtime drops clear stale
+/// session overrides cleanly. Explicit console/CLI `sky.fog_override` precedence stays
+/// intact in [`apply_cell_fog`] and [`SkyState::fog_power`].
+pub fn sync_weather_fog(
+    script: Option<Res<nvf_play::script::ScriptState>>,
+    mut sky: ResMut<SkyState>,
+    mut seen: Local<Option<Option<(u64, u64)>>>,
+) {
+    let game = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
+    let token = game.map(|g| g.weather_fog_sync_token());
+    if *seen == Some(token) {
+        return;
+    }
+    *seen = Some(token);
+    let next = game.map(|g| g.weather_fog_overrides()).unwrap_or_default();
+    if sky.weather_fog_overrides != next {
+        sky.weather_fog_overrides = next;
+        sky.refresh();
+    }
 }
 
 /// A global variable's Editor ID.
@@ -2362,6 +2399,10 @@ mod weather_percent_tests;
 mod session_lighting_tests;
 
 #[cfg(test)]
+#[path = "cartographer_live_tests.rs"]
+mod cartographer_live_tests;
+
+#[cfg(test)]
 pub(crate) fn authored_session_sky() -> SkyState {
     session_lighting_tests::sky()
 }
@@ -2424,6 +2465,8 @@ mod tests {
             fade: 1.0,
             choices: vec![choice(SAVED), choice(2)],
             image_space: None,
+            world_image_space_id: None,
+            weather_fog_overrides: HashMap::new(),
             adapters: HashMap::new(),
             changed: true,
             script: None,
@@ -2492,6 +2535,8 @@ mod tests {
             fade: 1.0,
             choices: vec![Choice { weather: weather(LISTED), chance: 100, global: None }, Choice { weather: weather(GATED), chance: 100, global: Some(gate) }],
             image_space: None,
+            world_image_space_id: None,
+            weather_fog_overrides: HashMap::new(),
             adapters: HashMap::new(),
             changed: true,
             script: None,
