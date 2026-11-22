@@ -2998,6 +2998,7 @@ order = [[
   { text = "sun visibility: cloud on terrain off debug off", label = "the switch turned the plumbing's cloud variant on" },
   { text = "cloud shadows: layers", label = "the producer composed the weather's layers and published them" },
 ]]
+
 expect = [
   { re = 'graphics: light glow, cloud shadows$', label = "the graphics line names the switch" },
   { text = "sun visibility: cloud on terrain off debug off", count = 1, label = "on once: no texture read or publication toggles the pipelines (C0/C1 review, finding 1)" },
@@ -3010,6 +3011,187 @@ forbid = [
   { text = "still being retried after", label = "a pipeline still retried at the cap" },
   { text = "sun visibility: cloud off", label = "the cloud variant went off while the switch stayed on" },
   { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
+]
+
+[[scenario]]
+name = "light-shadows"
+source = "[design] docs/design/graphics-enhanced.md §3.17, engine/nvforever/src/light_shadows.rs, engine/vendor/bevy_pbr (held light shadow maps): with --light-shadows=quality in the Prospector Saloon at night the placed lights within the shadow distance take shadow maps and draw them, lights skip their fixtures (lamp models, LightFixture), without a rendering or pipeline error. [observed 2026-11-18, these arguments run by hand: 24 cast, 3 lights skipped a fixture, two 10-s summaries.] Whether walls stop their light, and the acne and near plane, are checked in pictures by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/lights/display_shader.rs", "engine/vendor/bevy_pbr/src/render/light.rs", "engine/vendor/bevy_pbr/src/render/shadow_sampling.wesl", "engine/vendor/bevy_light/src/lib.rs"]
+args = ["--cell", "GSProspectorSaloonInterior", "--play", "--no-voice", "--no-messages", "--hour", "22", "--light-shadows=quality"]
+env = { NVF_LIGHT_SHADOW_FIXTURES = "1" }
+run_seconds = 24
+order = [[
+  { re = 'light shadows: [1-9][0-9]* cast \([0-9]+ point, [0-9]+ spot lights\) within', label = "placed lights within the shadow distance took shadow maps" },
+  { re = 'light shadows: [0-9.]+ point lights switched on and [0-9.]+ faces drawn a frame over [0-9]+ frames \([1-9][0-9]* lights casting\)', label = "the 10-s summary: their maps were drawn" },
+]]
+expect = [
+  { re = 'light shadows: light \S+ at .* skips [0-9A-F]{8} fixture', label = "a light skipped a lamp model's shapes (NVF_LIGHT_SHADOW_FIXTURES)" },
+  { re = 'light shadows: renderer over [0-9]+ frames: light views a frame [0-9.]+ alive', label = "the renderer's 10-s line (light views, prepare_lights times)" },
+  { re = 'light shadows: performance pass over [0-9]+ frames: .*caster grid \(on\) [0-9.]+ lamps served a frame', label = "the performance pass's 10-s line, the caster grid on" },
+  { re = 'light shadows: [1-9][0-9]* cast \(.*; static shadow cache on \([0-9]+ MB\)', label = "the static shadow cache on, its memory logged" },
+  { re = 'light shadows: performance pass over [0-9]+ frames: .*static cache \(on\) [0-9.]+ static redraws \(faces\) a frame, [0-9.]+ dynamic recomposites a frame, [0-9.]+ layer copies a frame', label = "the performance pass's 10-s line gives the static cache's counts" },
+]
+forbid = [
+  { text = "DeviceLost", label = "the GPU device was lost" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the light shadow maps" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (a patched lighting or shadow shader that does not compile)" },
+  { text = "still being retried after", label = "a pipeline still retried at the cap" },
+]
+[[scenario]]
+name = "light-shadows-switch"
+source = "[design, #3077 review] docs/design/graphics-enhanced.md §3.17 'With the row Off', engine/nvforever/src/light_shadows.rs (`live`, the wind-down) and engine/vendor/bevy_pbr (`HoldLightShadowMaps::active`): the ALC shadows row switched Off and back to Quality while the game runs in Novac at 22:00. Off, the lamps stop casting ('light shadows: off') and the renderer drops the hold (every light's shadow views made again, no static-cache attachment kept); on again, the lamps cast and the static cache composites without a miss, with no rendering or pipeline error either way. Whether the shadows look as before is checked in pictures by hand"
+areas = ["renderer", "graphics", "settings"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/vendor/bevy_pbr/src/render/light.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_PAUSE = "10:12,18:20", NVF_PLAY_TEST_SETTINGS = "11:light-shadows=Off,19:light-shadows=Quality", NVF_PLAY_TEST_MOVE = "13:1:0:walk,16:0:0,21:0:1:walk,25:0:0" }
+args = ["--cell", "Novac", "--play", "--hour", "22", "--no-voice", "--no-messages", "--light-shadows=quality"]
+run_seconds = 34
+order = [[
+  { re = 'light shadows: [1-9][0-9]* cast \([0-9]+ point, [0-9]+ spot lights\) within', label = "lamps cast from the start" },
+  "settings: light-shadows Off",
+  { text = "light shadows: off", label = "switched off, the lamps stop casting" },
+  "settings: light-shadows Quality",
+  { re = 'light shadows: [1-9][0-9]* cast \([0-9]+ point, [0-9]+ spot lights\) within', label = "switched on again, the lamps cast again" },
+  { re = 'static cache draws [0-9]+, static cache composites [0-9]+, static cache misses 0', label = "the static cache after the switches, without a miss" },
+]]
+expect = [
+  { text = "light shadows: off", count = 1, label = "off once" },
+]
+forbid = [
+  { re = 'static cache misses [1-9]', label = "a composite without its static layer after the switches" },
+  { text = "DeviceLost", label = "the GPU device was lost while the row switched" },
+  { text = "Caught rendering error", label = "a rendering (validation) error while the hold went and came back (a view kept a slot or a static-cache attachment)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "panicked", label = "a panic (a kept phase binned twice, a stale slot)" },
+  { re = 'NVF_PLAY_TEST_(SETTINGS|PAUSE_MENU): ("|no switch|\S+ is a (list|slider):)', label = "every aid step is understood" },
+]
+
+[[scenario]]
+name = "light-shadows-gunfight"
+source = "[design] docs/design/graphics-enhanced.md §3.17 'Other lights': with --light-shadows=quality, Trudy's shotgun flashes in the Prospector Saloon at night cast as transient lights, each drawn once (switched on as often as cast), without a rendering or pipeline error. [observed 2026-11-18, these arguments run by hand: transients 4 cast, 4 switched on, 24 faces drawn.] The picture and the cost are checked by hand"
+areas = ["renderer", "graphics", "combat"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/shot_fx.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "2:enable:TrudyRef,4:call:TrudyRef:AddItem:WithAmmoNVSingleShotgunLoot:1,10:combat:TrudyRef:player" }
+args = ["--cell", "GSProspectorSaloonInterior", "--play", "--hour", "22", "--no-voice", "--no-messages", "--light-shadows=quality"]
+run_seconds = 28
+expect = [
+  { re = 'transients [1-9][0-9]* cast, [1-9][0-9]* switched on, [1-9][0-9]* faces drawn', label = "muzzle flashes cast as transient lights" },
+]
+forbid = [
+  { text = "DeviceLost", label = "the GPU device was lost in the gunfight" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the flashes' maps" },
+  { text = "failed and will not be tried again", label = "a shadow pipeline that failed for good" },
+  { text = "still being retried after", label = "a shadow pipeline still retried at the cap" },
+]
+[[scenario]]
+name = "light-shadows-dlss"
+source = "[design] docs/design/graphics-enhanced.md §3.17 'Soft edges and contact shadows': with --light-shadows=quality and DLSS the lamps take soft edges and contact shadows, and the vendored contact march reads the main pass's viewport (bevy_pbr raymarch.wesl depth_uv_scale): before that, drawn below the output size, it threw hard-edged false shadows that changed as the camera moved (playtest videos 2026-11-18, the Prospector Saloon's porch). The walk along the porch compiles the patched march and draws it without a rendering or pipeline error; the picture is checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadows.rs"]
+note = "needs NVF_DLSS_DIR (NVIDIA's files)."
+requires = ["NVF_DLSS_DIR"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_LOOK = "1:0:12", NVF_PLAY_TEST_MOVE = "6:0:1:walk,10:0:0", WGPU_BACKEND = "vulkan" }
+args = ["--cell", "Goodsprings", "--play", "--pos=-67950,3240,8400", "--heading", "0", "--hour", "14.1", "--no-voice", "--no-messages", "--upscaler", "dlss", "--upscaler-quality", "quality", "--light-shadows=quality"]
+run_seconds = 12
+expect = [
+  { re = 'soft edges \(light size [0-9.]+, explosions [0-9.]+\) and contact shadows on [1-9][0-9]* lights', label = "soft edges and contact shadows on with DLSS" },
+]
+forbid = [
+  { text = "DeviceLost", label = "the GPU device was lost on the porch walk" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with DLSS and the lamp maps" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (the patched contact march under DLSS)" },
+]
+
+[[scenario]]
+name = "light-shadows-novac"
+source = "[design] docs/design/graphics-enhanced.md §3.17, [design, #3074] ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in Novac, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/vendor/bevy_pbr/src/render/light.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0" }
+args = ["--cell", "Novac", "--play", "--hour", "22", "--no-voice", "--no-messages", "--light-shadows=quality"]
+run_seconds = 30
+expect = [
+  { re = 'light shadows: [1-9][0-9]* cast \([0-9]+ point, [0-9]+ spot lights\) within', label = "lamps cast (Novac)" },
+  { re = 'light shadows: [0-9.]+ point lights switched on and [0-9.]+ faces drawn a frame over [0-9]+ frames', label = "the 10-s lamp summary (Novac)" },
+  { re = 'static shadow cache on \([0-9]+ MB\)', label = "the static shadow cache on (Novac)" },
+  { re = 'static cache draws [0-9]+, static cache composites [0-9]+, static cache misses 0', label = "no static cache misses (Novac)" },
+  { re = 'light shadows: soft edges \(light size [0-9.]+, explosions [0-9.]+\)', label = "soft edges on Quality (Novac)" },
+]
+forbid = [
+  { re = 'static cache misses [1-9]', label = "a composite without its static layer (Novac)" },
+  { text = "DeviceLost", label = "the GPU device was lost (Novac)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the lamp maps (Novac)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (Novac)" },
+]
+
+[[scenario]]
+name = "light-shadows-novac-dlss"
+source = "[design] docs/design/graphics-enhanced.md §3.17, [design, #3074] ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in Novac with DLSS Quality, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/vendor/bevy_pbr/src/render/light.rs"]
+note = "needs NVF_DLSS_DIR (NVIDIA's files)."
+requires = ["NVF_DLSS_DIR"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0", WGPU_BACKEND = "vulkan" }
+args = ["--cell", "Novac", "--play", "--hour", "22", "--no-voice", "--no-messages", "--light-shadows=quality", "--upscaler", "dlss", "--upscaler-quality", "quality"]
+run_seconds = 30
+expect = [
+  { re = 'light shadows: [1-9][0-9]* cast \([0-9]+ point, [0-9]+ spot lights\) within', label = "lamps cast (Novac with DLSS Quality)" },
+  { re = 'light shadows: [0-9.]+ point lights switched on and [0-9.]+ faces drawn a frame over [0-9]+ frames', label = "the 10-s lamp summary (Novac with DLSS Quality)" },
+  { re = 'static shadow cache on \([0-9]+ MB\)', label = "the static shadow cache on (Novac with DLSS Quality)" },
+  { re = 'static cache draws [0-9]+, static cache composites [0-9]+, static cache misses 0', label = "no static cache misses (Novac with DLSS Quality)" },
+  { re = 'soft edges \(light size [0-9.]+, explosions [0-9.]+\) and contact shadows on [1-9][0-9]* lights', label = "soft edges and contact shadows with DLSS (Novac)" },
+]
+forbid = [
+  { re = 'static cache misses [1-9]', label = "a composite without its static layer (Novac with DLSS Quality)" },
+  { text = "DeviceLost", label = "the GPU device was lost (Novac with DLSS Quality)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the lamp maps (Novac with DLSS Quality)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (Novac with DLSS Quality)" },
+]
+
+[[scenario]]
+name = "light-shadows-interior"
+source = "[design] docs/design/graphics-enhanced.md §3.17, [design, #3074] ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in UnderpassRanchInterior01, a random interior, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/vendor/bevy_pbr/src/render/light.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0" }
+args = ["--cell", "UnderpassRanchInterior01", "--play", "--hour", "22", "--no-voice", "--no-messages", "--light-shadows=quality"]
+run_seconds = 30
+expect = [
+  { re = 'light shadows: [1-9][0-9]* cast \([0-9]+ point, [0-9]+ spot lights\) within', label = "lamps cast (UnderpassRanchInterior01, a random interior)" },
+  { re = 'light shadows: [0-9.]+ point lights switched on and [0-9.]+ faces drawn a frame over [0-9]+ frames', label = "the 10-s lamp summary (UnderpassRanchInterior01, a random interior)" },
+  { re = 'static shadow cache on \([0-9]+ MB\)', label = "the static shadow cache on (UnderpassRanchInterior01, a random interior)" },
+  { re = 'static cache draws [0-9]+, static cache composites [0-9]+, static cache misses 0', label = "no static cache misses (UnderpassRanchInterior01, a random interior)" },
+  { re = 'light shadows: soft edges \(light size [0-9.]+, explosions [0-9.]+\)', label = "soft edges on Quality (UnderpassRanchInterior01, a random interior)" },
+]
+forbid = [
+  { re = 'static cache misses [1-9]', label = "a composite without its static layer (UnderpassRanchInterior01, a random interior)" },
+  { text = "DeviceLost", label = "the GPU device was lost (UnderpassRanchInterior01, a random interior)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the lamp maps (UnderpassRanchInterior01, a random interior)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (UnderpassRanchInterior01, a random interior)" },
+]
+
+[[scenario]]
+name = "light-shadows-interior-dlss"
+source = "[design] docs/design/graphics-enhanced.md §3.17, [design, #3074] ('run smoke tests for all the features ... DLSS off and on, Novac and some random interior'): lamp shadows on Quality at 22:00 in UnderpassRanchInterior01, a random interior with DLSS Quality, walking: lamps cast, the static shadow cache reports with no misses, no rendering or pipeline error. Pictures are checked by hand"
+areas = ["renderer", "graphics"]
+paths = ["engine/nvforever/src/light_shadows.rs", "engine/nvforever/src/light_shadow_detail.rs", "engine/nvforever/src/light_shadow_casters.rs", "engine/vendor/bevy_pbr/src/render/light.rs"]
+note = "needs NVF_DLSS_DIR (NVIDIA's files)."
+requires = ["NVF_DLSS_DIR"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_MOVE = "8:1:0:walk,14:0:1:walk,20:0:0", WGPU_BACKEND = "vulkan" }
+args = ["--cell", "UnderpassRanchInterior01", "--play", "--hour", "22", "--no-voice", "--no-messages", "--light-shadows=quality", "--upscaler", "dlss", "--upscaler-quality", "quality"]
+run_seconds = 30
+expect = [
+  { re = 'light shadows: [1-9][0-9]* cast \([0-9]+ point, [0-9]+ spot lights\) within', label = "lamps cast (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { re = 'light shadows: [0-9.]+ point lights switched on and [0-9.]+ faces drawn a frame over [0-9]+ frames', label = "the 10-s lamp summary (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { re = 'static shadow cache on \([0-9]+ MB\)', label = "the static shadow cache on (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { re = 'static cache draws [0-9]+, static cache composites [0-9]+, static cache misses 0', label = "no static cache misses (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { re = 'soft edges \(light size [0-9.]+, explosions [0-9.]+\) and contact shadows on [1-9][0-9]* lights', label = "soft edges and contact shadows with DLSS (UnderpassRanchInterior01, a random interior)" },
+]
+forbid = [
+  { re = 'static cache misses [1-9]', label = "a composite without its static layer (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { text = "DeviceLost", label = "the GPU device was lost (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the lamp maps (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (UnderpassRanchInterior01, a random interior with DLSS Quality)" },
 ]
 
 [[scenario]]
@@ -17125,6 +17307,39 @@ expect = [
 forbid = [{ text = "player: stops swimming", label = "swims on over the deepening bed" }]
 
 [[scenario]]
+name = "lakelurk-idle-pose"
+source = "issue #2980 (a lakelurk stands in a T-pose until it fights): the placed lakelurks of Boulder Beach, calm and idle, play the mirelurk king's standing idle (mtidle.kf) alone on their base layer; the pose watch (NVF_PLAY_TEST_POSE_WATCH, swimming.rs) says what each plays, its idle layers and whether it has a character; no lakelurk has a base layer fault (locomotion.rs base_fault)"
+note = "Boulder Beach shore (as wade-in-swim), the lakelurks kept unaware (NVF_PLAY_TEST_UNSEEN); the player walks east to the waterline at 6-8 s and the watch starts at 9 s, so every pose-watch line is from after the approach. No lakelurk reference is named in the docs, so any placed one (not a created FF reference) counts; a reference near the shore (fnvtool world refs) would pin it. Not run yet. The lines are the evidence for #2980's cause: an idle lakelurk on mtidle.kf alone at weight 1 rules out its base layer, and its idle layers name any idle laid over it"
+areas = ["actors", "creatures", "physics"]
+paths = ["engine/nvforever/src/swimming.rs", "engine/nvforever/src/locomotion.rs", "engine/nvforever/src/idles.rs", "engine/nvforever/src/body_weapons.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_MOVE = "6:1:0,8:0:0", NVF_PLAY_TEST_POSE_WATCH = "9:lakelurk" }
+args = ["--play", "--pos=56992,37536,2745", "--heading", "90", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [
+  "test aid: movement keys forward 0 right 0",
+  { re = 'pose watch: Creature [0-9A-E][0-9A-F]{7} \w*[Ll]akelurk\w*: layer 0 \S*mirelurkking.mtidle\.kf \(weight 1\.0\) from its standing set', label = "after the approach a placed lakelurk plays its standing idle alone on its base layer" },
+]
+forbid = [{ re = 'actor base layer fault: Creature [0-9A-F]{8} \w*[Ll]akelurk', label = "no lakelurk lacks a base clip or has a non-finite one" }]
+
+[[scenario]]
+name = "lakelurk-rests-on-bed"
+source = "issue #2980 (docs/spec-notes/physics.md §6.6, Actors standing on the bed): a lakelurk with a live character on a bed deeper than wade_depth swims, held at the bed; standing still there it plays its standing idle (mtidle.kf) alone at full weight, the swimming idle faded out (engine/nvforever/src/swimming.rs rests_now)"
+note = "the player swims out from the Boulder Beach shore as wade-in-swim and the beach's lakelurks, not kept unaware, follow it in (god mode). Dependent, not run yet: a lakelurk keeps its character only while on its way (residents.rs); one holding its ground in range loses it (fnv_ai alert Search::Holding, activity There) unless an attack carries it, so it rests with a character only when it waits at the end of its way for the moving player (Search::Closing). No test aid holds a character in place; hence the known_failing marks"
+areas = ["physics", "actors", "creatures"]
+paths = ["engine/nvforever/src/swimming.rs", "engine/nvforever/src/locomotion.rs", "crates/fnv-phys/src/character.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_MOVE = "10:1:0,14:0:0", NVF_PLAY_TEST_POSE_WATCH = "lakelurk" }
+args = ["--play", "--pos=56992,37536,2745", "--heading", "90", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 30
+expect = [
+  { re = 'swimming: [0-9A-F]{8} rests on the bed under water: it stands on its standing clips', label = "a lakelurk with a character comes to rest on the bed", known_failing = "dependent: needs a lakelurk to stand still while it keeps its character (a holder loses it, residents.rs); not run yet" },
+  { re = 'pose watch: Creature [0-9A-F]{8} \w*[Ll]akelurk\w*: layer 0 \S*mirelurkking.mtidle\.kf \(weight 1\.0\) from its \w+ set; idle layers .*; a character, swimming, resting on the bed', label = "resting on the bed, once the fade is done, the standing idle alone at full weight on its base layer (#2980)", known_failing = "dependent: as above" },
+]
+forbid = [
+  { re = 'pose watch: Creature [0-9A-F]{8} \w*[Ll]akelurk\w*: layer 0 \S*swimidle\.kf .*resting on the bed', label = "never its swimming idle on the base layer while it rests on the bed" },
+  { re = 'actor base layer fault: Creature [0-9A-F]{8} \w*[Ll]akelurk', label = "no lakelurk lacks a base clip or has a non-finite one" },
+]
+
+[[scenario]]
 name = "caravan-currency"
 source = "docs/spec-notes/caravan.md §3.1 (HelpCaravanBetting: NCR dollars and Legion coins may be bet): with 10 caps and ten $20 NCR notes the player's funds count the notes at their value; Auto Match against Ringo's bid, and Play Caravan pays the ante with the caps and then the notes, the change in caps; then the player forfeits"
 areas = ["caravan", "menus"]
@@ -18344,16 +18559,19 @@ expect = [
 
 [[scenario]]
 name = "impact-decals-blood"
-source = "owner's playtest list 7 item 27: blood decals floated off the bodies at wrong angles and came too often; they now lie on the drawn body where the shot's line meets it, at most 3 an actor, one each 0.3 s (docs/spec-notes/impact-decals.md §4)"
-note = "God mode in the Goodsprings general store (the energy-resist-hit setup): aimed at Chet's chest (aimnpc=0.6) the 10mm pistol with no spread shoots him four times from 14.1 s; a frame at 15.8 s shows the blood on him"
+source = "owner's playtest list 7 item 27: blood decals floated off the bodies at wrong angles and came too often; they now lie on the drawn body where the shot's line meets it, at most 3 an actor, one each 0.3 s (docs/spec-notes/impact-decals.md §4). Issue #3318: no blood landed on the walls or floor near a shot actor; a shot on an organic actor now rolls fCombatEnvironmentBloodChance (default 0.75) and splatters its body part's blood impact on the first wall or floor within 512 units along the shot, else below (§4a)"
+note = "God mode in the Goodsprings general store (the energy-resist-hit setup): aimed at Chet's chest (aimnpc=0.6) the 10mm pistol with no spread shoots him four times from 14.1 s; a frame at 15.8 s is taken to check the blood on him and on the counter, wall or floor behind him (not yet looked at). The splatters' rolls are seeded (the first of the four 0.74, the second 0.45), so the default chance 0.75 wins the first"
 areas = ["combat", "render"]
-paths = ["engine/nvforever/src/decals.rs"]
+paths = ["engine/nvforever/src/decals.rs", "engine/nvf-play/src/combat.rs", "engine/nvforever/src/shot_fx.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:20", NVF_PLAY_TEST_CONTROL = "10:weapon,14:aimnpc=0.6,14.1:fire,14.5:aimnpc=0.6,14.6:fire,15:aimnpc=0.6,15.1:fire,15.4:aimnpc=0.6,15.5:fire", NVF_PLAY_TEST_SHOTS = "15.8:decals_blood.png" }
 args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice"]
 run_seconds = 20
 expect = [
   { re = 'decals: \w+ leaves \w+ \(\S+\) on actor [0-9A-F]{8}', label = "a shot leaves blood on Pete" },
   { re = 'decals summary: \d+ placed \((?P<n>\d+) on actors\)', range = [1, 3], label = "no more than three on him" },
+  { re = 'combat: blood on the world behind shot actors: chance \d', label = "the first shot on Chet rolls for blood on the world (the chance and fCombatEnvironmentBloodChance logged)" },
+  { re = 'decals: \w+ splatters blood \(\w+\) on the world behind a shot actor at', label = "a shot on Chet splatters blood on the counter, wall or floor behind or below him" },
+  { re = 'combat summary: blood on the world behind 00104C79: (?P<n>\d+) splatters from', range = [1, 4], label = "one splatter at most a shot on Chet (the player's four; his return fire on the player splatters on its own)" },
 ]
 
 [[scenario]]
