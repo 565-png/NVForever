@@ -16,7 +16,7 @@ still has to be re-run there (84/84 Layer 1 scenarios expected).
 | `fnv-json` | `serde` + `serde_json` (`preserve_order`) | documents built with `json!`; `nvforever.json` was a derived struct (now `NVForever.ini`, hand-written, the old JSON still read); schema files keep duplicate-key rejection via a strict deserializer. Floats >= 1e16 are now written as floats (fnv-json printed them as integer tokens). |
 | `fnv-inflate` decoder | `flate2`, **zlib-rs** backend | our zlib header + Adler-32 trailer diagnostics kept (`adler2`). miniz_oxide was rejected: in streaming mode it accepts back-references before the output start. |
 | `fnv-util::sha256` | `sha2` (+ `hex`) | |
-| `fnv-util::cp1252` | `encoding_rs` (WINDOWS_1252) | |
+| `fnv-util::cp1252` | `encoding_rs` (WINDOWS_1252) | `fnv-util` also uses the existing crate's `GB18030` codec for code page 936, including GBK double-byte and GB18030 four-byte text. |
 | hand-rolled CLI parsing | `clap` (derive) | `--help` everywhere; exits 0 for help, 2 for usage errors |
 | ad-hoc error enums | `thiserror` (libs) + `anyhow` (fnvtool) | messages unchanged (they appear in JSON) |
 | `std::fs::read` of masters | `memmap2` + `bytes::Bytes` | records are zero-copy slices; about half the peak memory |
@@ -52,6 +52,7 @@ still has to be re-run there (84/84 Layer 1 scenarios expected).
 | 3 | latency reduction (AMD Anti-Lag) | **chosen (2026-11-06)**: no new crate. Bevy's `raw_vulkan_init` feature (bevy_render 0.20.1) adds `VK_AMD_anti_lag` at device creation; the calls are written against the Vulkan registry, as ash 0.38 predates the extension ([latency-reduction](latency-reduction.md)) |
 | 3 | latency reduction (NVIDIA low latency) | **chosen (2026-11-12)**: no new crate. `VK_NV_low_latency2` from the public Vulkan registry through `ash` 0.38, which has its structures and calls; NVIDIA's Streamline, Reflex SDK and NvAPI are not used (proprietary). `wgpu-hal` 30.0.1 patched (MIT/Apache-2.0, engine/vendor/README.md): the swapchain is created with `VkSwapchainLatencyCreateInfoNV` on a device that has the extension ([latency-reduction](latency-reduction.md)) |
 | 3 | first Pip-Boy readiness (#1803) | `bevy_pbr` 0.20.1 patched (engine/vendor/README.md): the optional `MaterialQueueProbe` records watched main-pass entries for the rig's readiness check; nothing changes without it |
+| 3 | half floats (FaceGen offset textures; reflection cube texels, #3207) | **chosen**: `half` 2 (MIT/Apache-2.0), engine workspace, the version Bevy already builds (2.7.1 in the lock, no second copy): `nvforever` writes the FaceGen offset textures with it (facegen.rs) and `nvf-assets` the authored materials' reflection cube's `Rgba16Float` texels (reflection_cube.rs) |
 | 4 | physics / character controller | **chosen**: `rapier3d` 0.36 with `enhanced-determinism` (pure Rust, Apache-2.0, no Bevy coupling; Jolt bindings rejected for the C++ build and FFI, `avian3d` for its Bevy coupling; layer4.md §2.8). Used by `fnv-phys` only, which runs rapier in metres internally and exposes game units; terrain as triangle meshes (rapier's heightfield missed rays along grid lines). Pinned to `=0.36.1` (0.36.0 until the physics rate work, #2358; traces are compared bit for bit; licence Apache-2.0, its new dependencies `glamx`/`glam`/`parry3d` MIT/Apache-2.0, within deny.toml). docs/spec-notes/physics.md |
 | 4 | entity model | **decided**: plain ordered maps in `fnv-sim`, no ECS in the core (layer4.md §2.2); `rand_chacha` for the seeded, reproducible RNG |
 | 5 | script runtime | in-house bytecode interpreter (no off-the-shelf fit) |
@@ -85,8 +86,11 @@ bans, sources) for the root workspace; the root workspace's tests and clippy (`-
 smoke runner, the stress tool and the profile campaign; the engine workspace's tests and
 clippy. A pull request that changes only docs skips those steps and passes at once; a newer
 push to the same branch or pull request cancels the run still in progress. The repository
-is public, so runner minutes are free. Windows and macOS are not run in CI; the local
-checks in CLAUDE.md cover them before each push. The parity job that needs game data
+is public, so runner minutes are free. Since #3143 (2026-11-21) one Windows job,
+`windows-clippy`, lints both workspaces, so the `cfg(windows)` code is compiled and
+checked on every pull request; the tests on Windows and all of macOS are not run in CI:
+the local checks in CLAUDE.md cover them before each push. (The "one Linux job" above
+has been several parallel jobs with one `ci` result since #1956.) The parity job that needs game data
 stays in `parity-lab/ci/github-actions.yml`, a template for a self-hosted runner only.
 
 
