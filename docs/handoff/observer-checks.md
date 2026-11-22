@@ -3844,6 +3844,21 @@ capture setup, so every part of a check that needs an interior is still open.
      *Status: open.* The glass tried (the cafeteria glass placed in the air) drew opaque
      in the original, transmission below about 0.1 [observed], so it had no faint alpha
      to compare; the junk drinking glass named here is the one to use.
+     **Partly answered 2026-11-22** [observed: job `oenv2_reflections`]. The junk drinking
+     glass (DrinkingGlass02, 0005B633, placed) was held 60 units ahead of the flying
+     player, the view 20° down onto the rocky ground. It was framed at 23:00 and at
+     12:00, then moved 20 units to each side.
+     - The same screen patch (75 x 140 pixels) was read with the glass over it and
+       without it (the glass moved aside).
+     - At night the glass reads brighter and bluer than the ground behind it: mean RGB
+       (47, 48, 55) over (20, 19, 21). Its brightest 2 % reads 107 over 37, as pale
+       bands up its side.
+     - At noon it reads darker than the ground behind it: (78, 72, 55) over
+       (133, 119, 88), brightest 2 % 109 over 150.
+     - So this glass is far from clear: by day it hides about half of what is behind it.
+       By night it carries a pale, bluish film over 2× as bright as the ground. That fits
+       a term not weighted down by a faint alpha, but with an alpha this high, ours and
+       the premultiplied reading may not differ much [hypothesis].
 275. **Does the reflection depend on the light, with and without Env Map Fade?** (P3;
      #2841, nif.md §6.) The wiki: Env Map Fade (Shader Flags 2 bit 15) "Fades the
      cubemap's brightness based on the distance to the nearest light". Ours (since the
@@ -3872,6 +3887,23 @@ capture setup, so every part of a check that needs an interior is still open.
      [observed]. Open: interiors, the
      role of point lights, and what L is exactly (sun intensity, ambient, or a light sum
      at the surface).
+     **Interiors, 2026-11-22** [observed: job `oenv_reflections`]. A Nuka-Cola bottle and
+     an empty Sarsaparilla bottle were held side by side 50 units ahead, in GSGeneralStore
+     (lit by its windows) and in Vault34a (dark). Each was framed three ways: alone, with
+     a placed light (LIGH VaultWhite256, 00004034) 20 units above them, and after that
+     light was disabled.
+     - The placed light raised the mean brightness of both bottles' boxes by about the
+       same share: the Nuka-Cola bottle 1.45× in the store and 1.41× in the vault, the
+       Sarsaparilla bottle 1.52× and 1.33×. Their brightest 2 % rose by 1.4-1.6×.
+       Disabling the light gave back the first frame's numbers exactly. So a point light
+       changes how the bottles look, whether it is their diffuse light or the
+       reflection's.
+     - The Env Map Fade flag again made no difference that could be seen.
+     - Between the rooms, the wall behind the bottles read 127 in the store and 12.5 in
+       the vault. The bottles read 24 and 19 (Nuka-Cola) and 24 and 22 (Sarsaparilla).
+       They kept about 0.8-0.9 of their brightness in a room about ten times darker.
+     - Rough: the boxes take in some floor and background, and the frames are single
+       views, so streaks were not told apart from the glass's own colour.
 276. **Do reflections fade out between 1,500 and 1,800 units from the camera?** (P3;
      #2841, nif.md §6.) The INI settings `fEnvMapLOD1` 1500 and `fEnvMapLOD2` 1800
      [documented: GECK wiki "INI Settings"]. Ours: no fade by default [design, kept out of
@@ -3890,6 +3922,18 @@ capture setup, so every part of a check that needs an interior is still open.
      does not apply live or the fade does not act there; a crate at 600-1,900 units
      showed no sheen to lose (envmap4). Use an object with a strong visible sheen, the
      camera fixed and the object moved, at a fixed game time.
+     **Tried 2026-11-22: no fade seen, weak** [observed: jobs `oenv_reflections`,
+     `oenv2_reflections`].
+     - The setup: the player flying (`tcl`) 9,000 units above Goodsprings with
+       `fov 15`, the view fixed due north and level. A placed cooking pot (CookingPot01)
+       was moved along the view to 300, 600, 1,200, 1,500, 1,650, 1,800 and 2,000 units,
+       at its height, at 12:00 and 23:00, with the sky behind it.
+     - At noon its pixels darker than the sky read: mean 80, 78, 84, 88, 88, 91, 92;
+       95th percentile 132, 124, 130, 136, 136, 139, 140. There is no step down between
+       1,500 and 1,800; the slow rise fits the sky mixing in at its edges as it shrinks.
+     - But the pot showed no distinct moving sheen at any distance, only a matte grey
+       with a pale rim, so this does not rule a fade out. The night frames look the same
+       by eye.
 277. **Does a shape with Environment_Mapping but no cube in slot 4 reflect anything?**
      (P3; #2841, nif.md §6.) 214 such shapes in the data (the wine bottle Wine,
      `clutter\food\winebottle01.nif`, 238 placements; the Pimp-Boy). Ours: no reflection
@@ -3900,6 +3944,16 @@ capture setup, so every part of a check that needs an interior is still open.
      no streak like the env-mapped bottles' [observed]; its glass texture is very dark,
      so a weak default cube would be hard to see. A lighter bit-7 shape without a cube
      (the Pimp-Boy's) would settle it.
+     **Tried 2026-11-22, not settled** [observed: job `oenv2_reflections`; base game +
+     xNVSE + JIP LN, save `nvfdoc`]. The Pimp-Boy (ARMO PimpBoy 0011BACB, placed with
+     `PlaceAtMe`) was framed at noon 45 units ahead, the player flying (`tcl`) 9,000
+     units above Goodsprings. An empty Sarsaparilla bottle stood beside it, and the pair
+     was moved 15 units left and right of the view between frames. Its gold body and top
+     face read bright, and its silver rings show bright and dark bands with white glints
+     in all three frames. Whether the bands move across the rings with the view, as a
+     cube's would, or are the sun's highlight, could not be told from three frames
+     [hypothesis: either]. A turntable of frames in a dim interior, where the sun's
+     highlight is gone, would separate them.
 
 ## Added 2026-11-22 (the grab key on pickable plants, #3389)
 
@@ -3930,6 +3984,15 @@ capture setup, so every part of a check that needs an interior is still open.
      - **Broc Flower: no grab.** Both 0016D423 (harvested) and 0016D425 (not), in cell
        (-15, -1), were named by the crosshair at 30–70°. `GetPlayerGrabbedRef` stayed 0
        at every aim, and neither plant moved.
-     - **Not answered: shot or grenade.** The frag explosion (`placeatme 179DA` after
-       `prid`) did not go off in either run: no blast in the screenshots, and the first
-       run crashed at that step.
+     - **Shot and explosion: neither plant moved** [observed: job `o278c_shots_blast`].
+       The console's `placeatme 179DA` after `prid` did not go off in the first two runs
+       (no blast in the screenshots, and the first run crashed at that step). A script's
+       `rR.PlaceAtMe` of the same frag grenade explosion (000179DA) did go off: there is a
+       flash three frames after it. It was placed at the unharvested nettle 0016C86D and
+       at the unharvested Broc Flower 0016D425, the player 400 units away. Each plant's
+       position (x, y, z) and heading read the same before and 3 s after, to 0.1.
+       Before that, three 9mm shots were fired at each from 150 units, aimed by script at
+       its base. A bullet mark appeared on the ground at the Broc Flower's foot, and
+       neither plant's reading changed. Whether a bullet struck the plant itself was not
+       confirmed: the crosshair read no reference at 150 units. These positions are
+       meaningful because the same reading followed the grabbed nettles above.
