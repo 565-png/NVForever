@@ -3506,6 +3506,21 @@ already talking takes over at once, same topic or another; nothing is queued or 
      place and heading. The hand moving the same way in both settles it. The reading
      back, `player.GetNifBlockRotation "Bip01 Translate" "Z" 0 2`, should be 30 in both.
 
+## Added 2026-11-21 (talking through cell bars, #3233)
+
+251. **Does the crosshair pass collision on the Transparent layer (3), and on Transparent
+     Small (26/28): can the player talk to, take, open or search what stands behind it?**
+     (P2; #3233, simulation.md §5 "Talking through bars".) The wiki says nothing but
+     projectiles passes Transparent and that actors see through it [documented: GECK wiki
+     "Collision layer"]; it says the player activates and loots through Invisible Wall
+     (27) only. Ours: Talk alone passes the see-through layers, when nothing else is
+     offered [design]. In Vault 3 (Vault3b), stand at the cell bars (JailCellDoorway01,
+     0x000EF3FA, layer 3) with Rick Lancer (V3Prisoner01Ref 0x000F47B0) behind them: does
+     the prompt show Talk and does E open the conversation? With an item dropped behind
+     the bars (`player.drop` then nudge it in, or one placed there with `PlaceAtMe`), is it
+     offered? A screenshot of each prompt answers it; `GetCrosshairRef` printed at the
+     bars says which reference the crosshair holds.
+
 ## Added 2026-11-21 (GetMapMarkerVisible on a marker authored Visible, #3268)
 
 252. **What does GetMapMarkerVisible return for a map marker the player has not found
@@ -3566,3 +3581,111 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the difference from a standing player is the original's too; counts near the standing
      ones mean the original closes the gap in a way ours does not (a lunge from further
      off, a faster chase, or no knockback on the player).
+
+## Added 2026-11-22 (terminal text typing out, #3327)
+
+254. **How fast and in what order does a terminal's text type out?** (P3: #3327; hacking.md
+     §7 "Typing out".) Ours [design]: each page's lines one after another, each left to
+     right, at 600 characters a second; a page starts again only when another page comes
+     up (not when the selection moves); no key skips it; no sound. In the original, record
+     at 60 fps: (a) an unlocked terminal with a long welcome text and several entries
+     (Goodsprings' schoolhouse or any office terminal), from activation to the last
+     character; (b) taking an entry that opens a note, and Tab back to the list; (c) a
+     locked terminal's hacking screen as it comes up, and after a wrong word. Count the
+     frames each page takes and the characters it shows, and say whether lines type one
+     after another or together, whether the selection box types with its row, whether a
+     key or click finishes it at once, and which sound plays while it types
+     (`UIHackingCharSingle`, `…Multiple` or the loop `UIHackingCharScrollLP`).
+
+## Added 2026-11-22 (a terminal note longer than the screen, #3409)
+
+255. **How does the player read on in a terminal entry longer than the screen?** (P3: #3409;
+     hacking.md §7.) Ours [hypothesis]: E, Enter or a click turns a page (the last page
+     shows the last lines), nothing on the last page; Up / Down scroll a line. In the
+     original, open a long entry (a long log, e.g. Vault 11's overseer entries or a
+     Lucky 38 terminal) and note how many lines a page holds, what E and a click do on the
+     first and on the last page (next page, back to the list, nothing), whether Up / Down
+     or the mouse wheel scroll, and any "more" mark the screen shows.
+
+## Added 2026-11-22 (Blake's books for Bitter Springs Infirmary Blues, #3350)
+
+256. **Does a merchant sell the owned items lying at its stand?** (P2: #3350, a player could
+     not buy the two books VMS40 asks for; barter-menu.md §4.) Ours [design]: the barter
+     list is the merchant container's stock alone. Blake's two books lie on his stand,
+     owned by him, and can only be taken as a theft. In the original, with VMS40 at stage
+     10 (`setstage VMS40 10`), go to Blake at the Crimson Caravan Company:
+     (a) open his barter menu and look for "Stress and the Modern Refugee: A Primer" and
+     "Tiny, Tiny Babies: All You Need to Know About Pediatric Medicine", and note their
+     prices;
+     (b) look at his stand for the two books (the upper shelf by the first aid boxes,
+     the lower shelf by the water bottles) and say whether the crosshair shows Take or
+     Steal;
+     (c) if they are in the list, buy one and see whether the one on the stand goes.
+     In the list: the rule is wider than the merchant container (owned loose items near
+     the merchant, or these two only), and a scan of owned items at other merchants'
+     stands sizes it. Not in the list: the original's way is the theft (or a speech or
+     barter line not in our list).
+
+## Added 2026-11-21 (the compass's actor ticks against the strip, #3310)
+
+261. **Where does an actor's tick on the compass end against the strip's line?** (P3;
+     #3310, hud.md §11.) The HUD file's box puts the tick's top at the compass window's
+     top (the group's run-time y 10, read from the original, over the template's 5, and
+     the tick's y -10); ours since #3310 draws the 26-unit tick so its bar ends 22 units
+     down the window, about 4 above the strip's upper line, where it ended on that line
+     before [hypothesis: the picture's bar is its top 22 texel rows, drawn a texel a
+     unit]. Outdoors at 1920 x 1080, HUD scale 100 % (1.125 pixels a unit, hud.md §4),
+     with a neutral NPC about 300 units ahead (Goodsprings, the settler of §14.5) and a
+     hostile one (a gecko), take one frame each, heading steady, and measure on the raw
+     1920 x 1080 capture, not a resized one: the tick's solid end, the top of its fade
+     and the span between, against the strip's doubled line and the bracket's long line
+     above it, in pixels. A fade and bar spanning about 25 pixels (22 units) agree with
+     the 22-row hypothesis, about 20 pixels (17.9 units) with our 26-unit size; a bar
+     ending about 4-5 pixels above the strip's upper line agrees with the new place, one
+     touching it says the old place was right.
+
+## Added 2026-11-21 (placing the custom map marker with the mouse, #3324)
+
+262. **What does a left click on an empty spot of the Pip-Boy's World Map and Local Map do
+     with the keyboard and mouse?** (P2; #3324, pipboy.md Place Marker.) The capture of
+     2026-11-10 showed placement with the X button [observed]; a player reports the
+     original places it with the mouse, and how is [hypothesis]. Ours [design]: a click
+     (press and release within 6 units) away from any marker does what X does (the same
+     question box, or under the No Place Marker Popup tweak an answer at once), of the place
+     under the highlight box; a click with a World Map marker under the box asks to travel;
+     a right click does nothing. On the World Map at 1280x720, click once an
+     empty spot well away from any marker, once a spot about 20 px from one (inside the
+     highlight box's reach), and once with the right button; repeat on the Local Map, once
+     on a door icon. Screenshot each result: whether a box asks (and its words) or the
+     marker appears at once, where it lands against the pointer, and whether a press dragged
+     a few pixels still counts as a click.
+
+## Added 2026-11-21 (is the HUD's condition bar see-through, #3309)
+
+264. **Does the world show through the HUD's weapon condition bar in the original?** (P3;
+     #3309, hud.md §4, §14.3 and §14.7.) A player report says the original draws the bar
+     with transparent parts and NVForever's is solid. The report's screenshot is
+     NVForever's: its fill reads (175, 125, 45) and its ground (100, 71, 26) over a bright
+     sky [observed: the screenshot attached to #3309]; that both are opaque there is
+     inferred from the colours they are drawn with and the sky beside them [hypothesis].
+     Static evidence, which does not prove the original never shows the bar translucent:
+     the ground's template `MeterBackground` is the plain picture `solid.dds` with no
+     `alpha` trait [documented: hudtemplates.xml], and the fill's picture `vats_bar.dds`
+     has an opaque block [documented: the texture]. On the private shots `hud_corners2` c0
+     and c4 the original's fill reads 175/255 and its ground 100/255 of the HUD's colour
+     [observed: hud.md §14.7]. Both NVForever drawings draw that. A fill translucent over
+     an opaque ground reads the same whatever lies behind the bar, so one background is
+     not enough. At 1280 x 720, a weapon at about three quarters' condition:
+     - four frames: the bright sky behind the bottom right corner and dark ground there,
+       each with HUD Opacity (the Display page's slider [documented: GECK wiki, Complete
+       List of GameSettings, `sHUDOpacity`]) at its highest and at a lower setting. In
+       each, sample the filled part and the uncovered ground right of the fill
+       separately, and the world just outside the bar;
+     - if xNVSE can read them, `GetUIFloat` of `alpha` on the fill
+       (`HUDMainMenu/ActionPoints/*:1`), on `ActionPoints/MeterBackground` and on
+       `ActionPoints` itself, at both slider settings;
+     - a low-condition sequence: bring the weapon to about 10 % (hud.md §14.3 records the
+       fill's `alpha` moving between samples there) and take several frames a fraction
+       of a second apart, with the fill's `alpha` read beside each, to see whether the
+       world shows through the fill while it flashes and from what condition it starts.
+     And what is the slider's default?
