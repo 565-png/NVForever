@@ -831,12 +831,14 @@ impl<R, J> FillQueue<R, J> {
         Polled::Done(request, result)
     }
 
-    /// A fill runs.
+    /// A fill runs (the tests wait on it).
+    #[cfg(test)]
     pub fn busy(&self) -> bool {
         self.running.is_some()
     }
 
-    /// The request waiting for the running fill to finish.
+    /// The request waiting for the running fill to finish (the tests read it).
+    #[cfg(test)]
     pub fn waiting(&self) -> Option<&R> {
         self.waiting.as_ref()
     }
