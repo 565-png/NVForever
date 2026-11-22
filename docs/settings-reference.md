@@ -1350,8 +1350,9 @@ stretches drift downstream. Vanilla leaves the switch off. Enhanced turns it on.
   so do layers drawn on their own (GPUs without bindless textures; a texture repeat that
   does not divide the cell). Needs Authored materials: in the game, as this run has it
   (greyed until a restart when it was off at the start; still available after turning it
-  off for the next start); in the launcher, as saved. Whether the original draws any relief on its
-  landscape is not known [hypothesis: none]. Off by
+  off for the next start); in the launcher, as saved. The original draws no relief on its
+  landscape [observed: the maintainer's run of observer check 268, 2026-11-22, by eye], so this
+  is an enhancement that acts only with an authored ground pack. Off by
   default and in both presets until its cost is measured (the maintainer's call); switches
   at once, no restart.
 - Command-line switches: `--graphics-only` (`--graphics-only terrain-parallax`)

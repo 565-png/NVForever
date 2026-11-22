@@ -849,8 +849,14 @@ generated ground pack (below, "Checking it without a pack"), not with a real pac
 [documented: `engine/nvforever/src/terrain.rs` "Parallax", `TerrainCtx::folded_material`,
 `sync_parallax`, `parallax_def`; `engine/nvforever/src/terrain.wesl` `parallax_shift`;
 `engine/nvf-assets/src/texture.rs` `TextureCache::authored_height`, `authored.rs`
-`find_height`]. Whether the original draws any relief on its landscape is not known: an
-addition of NVForever's own until observer check 268 answers it [hypothesis: it draws none].
+`find_height`]. The original draws no relief on its landscape: on the ground outside
+Goodsprings at noon, gravel painted over dirt beside cracked dirt, seen at pitch 30 and 70
+degrees while strafing in 4-unit steps, the painted stones and cracks moved as one rigid
+pattern with the ground, no highlight or shadow slid across them and no bump hid texture,
+even at a grazing view [observed: the maintainer's run of observer check 268, 2026-11-22, by
+eye; judged from stills, not measured]. Terrain parallax is therefore an enhancement of
+NVForever's own: it acts only with an authored ground pack (an authored set's `_p`, below)
+and is off by default and in both presets [design].
 
 - [design] **Source.** A landscape layer's height map is the `_p` of the set the index finds
   for the layer's diffuse path (the LTEX's texture set's diffuse, resolved as a shape's

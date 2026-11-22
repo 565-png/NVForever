@@ -3055,7 +3055,7 @@ dlss-model=Preset K
         assert_eq!(status(&app), None, "Authored materials on, as this run's");
         app.world_mut().resource_mut::<Graphics>().authored_materials = false;
         assert_eq!(status(&app), None, "the saved row off does not grey it while this run has them");
-        assert!(!app.world().resource::<nvf_play::settings::Settings>().list()[i].note.contains("original"), "whether the original draws relief is a hypothesis");
+        assert!(!app.world().resource::<nvf_play::settings::Settings>().list()[i].note.contains("original"), "the page note says what the row adds, not what the original lacks (observer check 268: it draws none)");
 
         fn nvf_settings_layout_why(key: &str) -> Option<&'static str> {
             nvf_play::settings_layout::needs(key).first().map(|r| r.why)
