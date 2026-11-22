@@ -1236,6 +1236,17 @@ fn note_scroll(scroll: usize, window: Option<screen::NoteWindow>, dy: i32) -> us
     window.map_or(s, |w| s.min(w.last_first()))
 }
 
+/// A key for the page the screen shows, whatever is chosen, scrolled or guessed on it: its
+/// text types out again when this changes (`screen::Typed`, #3327) [hypothesis: the
+/// original types out a page as it comes up, not when the selection moves].
+fn page_key(s: &Session) -> String {
+    match &s.page {
+        Page::Hacking(_) => "h".into(),
+        Page::LockedOut(_) => "lockout".into(),
+        Page::Menu(m) => format!("m{}:{}:{:?}", m.terminal.0, m.parents.len(), m.note),
+    }
+}
+
 /// A key for what the screen shows: it is drawn again when this changes.
 fn view_key(s: &Session) -> String {
     match &s.page {
@@ -1256,11 +1267,13 @@ fn draw(
     roots: Query<Entity, With<screen::ScreenRoot>>,
     fading: Query<Entity, With<FadeOut>>,
     mut blinks: Query<&mut Visibility, With<screen::Blink>>,
+    mut typed: Query<(&screen::Typed, &mut Node)>,
     time: Res<Time<Real>>,
     image: Option<Res<TerminalImage>>,
     (mut rows, read): (ResMut<MenuRows>, Res<ReadEntries>),
     mut faces: Local<Option<screen::Faces>>,
     mut shown: Local<Option<(String, u32)>>,
+    mut page: Local<Option<(String, f32)>>,
 ) {
     // The screen is laid out in its own texture, at its size whatever the UI scale; the
     // picture of it on the window scales (`screen::spawn_backdrop`, #1631).
@@ -1279,9 +1292,22 @@ fn draw(
         *shown = None;
     }
     let on = ((time.elapsed_secs() / screen::BLINK_SECONDS) as u32).is_multiple_of(2);
+    // The page's text types out from when it came up (a closed screen starts again).
+    let now = time.elapsed_secs();
+    let this_page = screen.0.as_ref().map(page_key);
+    if page.as_ref().map(|p| &p.0) != this_page.as_ref() {
+        *page = this_page.map(|k| (k, now));
+    }
+    let typed_for = page.as_ref().map_or(f32::INFINITY, |p| now - p.1);
     if key == *shown {
         for mut v in &mut blinks {
             v.set_if_neq(if on { Visibility::Inherited } else { Visibility::Hidden });
+        }
+        for (t, mut node) in &mut typed {
+            let w = crate::interface::u(t.shown(typed_for));
+            if node.width != w {
+                node.width = w;
+            }
         }
         return;
     }
@@ -1292,7 +1318,7 @@ fn draw(
     rows.0 = screen::Drawn::default();
     let (Some(s), Some(rt), Some(image)) = (screen.0.as_ref(), script.as_ref().and_then(|s| s.rt.as_ref()), image) else { return };
     let faces = faces.get_or_insert_with(|| screen::load_faces(data.as_deref(), &mut images, bc_supported(formats.as_deref())));
-    rows.0 = screen::spawn(&mut commands, image.camera, faces, s, &rt.game, on, grey.then_some(&*read));
+    rows.0 = screen::spawn(&mut commands, image.camera, faces, s, &rt.game, on, grey.then_some(&*read), typed_for);
 }
 
 /// How long the screen fades out as it closes, seconds [documented:

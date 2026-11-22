@@ -3506,6 +3506,21 @@ already talking takes over at once, same topic or another; nothing is queued or 
      place and heading. The hand moving the same way in both settles it. The reading
      back, `player.GetNifBlockRotation "Bip01 Translate" "Z" 0 2`, should be 30 in both.
 
+## Added 2026-11-21 (talking through cell bars, #3233)
+
+251. **Does the crosshair pass collision on the Transparent layer (3), and on Transparent
+     Small (26/28): can the player talk to, take, open or search what stands behind it?**
+     (P2; #3233, simulation.md §5 "Talking through bars".) The wiki says nothing but
+     projectiles passes Transparent and that actors see through it [documented: GECK wiki
+     "Collision layer"]; it says the player activates and loots through Invisible Wall
+     (27) only. Ours: Talk alone passes the see-through layers, when nothing else is
+     offered [design]. In Vault 3 (Vault3b), stand at the cell bars (JailCellDoorway01,
+     0x000EF3FA, layer 3) with Rick Lancer (V3Prisoner01Ref 0x000F47B0) behind them: does
+     the prompt show Talk and does E open the conversation? With an item dropped behind
+     the bars (`player.drop` then nudge it in, or one placed there with `PlaceAtMe`), is it
+     offered? A screenshot of each prompt answers it; `GetCrosshairRef` printed at the
+     bars says which reference the crosshair holds.
+
 ## Added 2026-11-21 (GetMapMarkerVisible on a marker authored Visible, #3268)
 
 252. **What does GetMapMarkerVisible return for a map marker the player has not found
@@ -3567,6 +3582,21 @@ already talking takes over at once, same topic or another; nothing is queued or 
      ones mean the original closes the gap in a way ours does not (a lunge from further
      off, a faster chase, or no knockback on the player).
 
+## Added 2026-11-22 (terminal text typing out, #3327)
+
+254. **How fast and in what order does a terminal's text type out?** (P3: #3327; hacking.md
+     §7 "Typing out".) Ours [design]: each page's lines one after another, each left to
+     right, at 600 characters a second; a page starts again only when another page comes
+     up (not when the selection moves); no key skips it; no sound. In the original, record
+     at 60 fps: (a) an unlocked terminal with a long welcome text and several entries
+     (Goodsprings' schoolhouse or any office terminal), from activation to the last
+     character; (b) taking an entry that opens a note, and Tab back to the list; (c) a
+     locked terminal's hacking screen as it comes up, and after a wrong word. Count the
+     frames each page takes and the characters it shows, and say whether lines type one
+     after another or together, whether the selection box types with its row, whether a
+     key or click finishes it at once, and which sound plays while it types
+     (`UIHackingCharSingle`, `…Multiple` or the loop `UIHackingCharScrollLP`).
+
 ## Added 2026-11-22 (a terminal note longer than the screen, #3409)
 
 255. **How does the player read on in a terminal entry longer than the screen?** (P3: #3409;
@@ -3576,3 +3606,19 @@ already talking takes over at once, same topic or another; nothing is queued or 
      Lucky 38 terminal) and note how many lines a page holds, what E and a click do on the
      first and on the last page (next page, back to the list, nothing), whether Up / Down
      or the mouse wheel scroll, and any "more" mark the screen shows.
+
+## Added 2026-11-21 (placing the custom map marker with the mouse, #3324)
+
+262. **What does a left click on an empty spot of the Pip-Boy's World Map and Local Map do
+     with the keyboard and mouse?** (P2; #3324, pipboy.md Place Marker.) The capture of
+     2026-11-10 showed placement with the X button [observed]; a player reports the
+     original places it with the mouse, and how is [hypothesis]. Ours [design]: a click
+     (press and release within 6 units) away from any marker does what X does (the same
+     question box, or under the No Place Marker Popup tweak an answer at once), of the place
+     under the highlight box; a click with a World Map marker under the box asks to travel;
+     a right click does nothing. On the World Map at 1280x720, click once an
+     empty spot well away from any marker, once a spot about 20 px from one (inside the
+     highlight box's reach), and once with the right button; repeat on the Local Map, once
+     on a door icon. Screenshot each result: whether a box asks (and its words) or the
+     marker appears at once, where it lands against the pointer, and whether a press dragged
+     a few pixels still counts as a click.
