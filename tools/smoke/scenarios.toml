@@ -17753,6 +17753,22 @@ expect = [
 ]
 
 [[scenario]]
+name = "grab-teddy-bear"
+source = "[design] #3428: a placed item whose model is several dynamic bodies (the teddy bear: six on five limited hinges) is joined into one rigid body as a dropped one is, so the grab key holds it; physics.md section 4.3.1"
+note = "the bear 00172D8B south of Goodsprings, lying in its designer's XRGD pose; Z held 3 s. Before: 'no loose body' (its bodies were held keyframed). It weighs 8 kg joined (1 x 5 + 3)"
+areas = ["grab", "physics"]
+paths = ["engine/nvf-play/src/phys/prepare.rs", "engine/nvf-play/src/grab.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_NEAR = "00172D8B", NVF_PLAY_TEST_GRAB = "8:z:3:90:at=00172D8B" }
+args = ["--play", "--pos=-68601,-54700,6370", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 22
+expect = [
+  { text = 'phys: 0x00172D8B meshes\clutter\teddybear\teddybear01.nif: collision posed from XRGD (6 bodies)', label = "the bear's bodies are posed as its designer left it" },
+  { re = 'grab: picked up loose object Teddy Bear \(00172D8B\) by Aid: 8\.0 kg', label = "Z picks the bear up as one body of its parts' summed mass" },
+  { re = 'grab: Teddy Bear \(00172D8B\) came to rest at', label = "dropped, it comes to rest" },
+]
+forbid = [{ text = "no loose body", label = "the bear's bodies held keyframed" }]
+
+[[scenario]]
 name = "grab-skull"
 source = "docs/spec-notes/grab.md §5: the tutorial's brahmin skull in Doc Mitchell's house picked up with Grab (Z) and put back, then held with Activate (E) and carried while the view turns 120°, dropped clear of the top it lay on and was carried along (at 90° it was let go on that top's edge and tumbled off it spinning, a roll on the floor that passed 300 units in about one run in three on the physics-tickrate branch, 2026-11-15); its OnGrab and OnRelease blocks run"
 areas = ["grab", "physics"]
