@@ -166,6 +166,7 @@ fn every_test_file_is_built() {
 }
 
 mod callable_identity;
+mod default_open;
 mod em_clearance;
 mod followers_and_detecting_actors;
 mod form_override_queries;
