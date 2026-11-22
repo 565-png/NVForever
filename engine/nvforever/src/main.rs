@@ -65,6 +65,7 @@ mod death_cam;
 mod deaths;
 mod decals;
 mod dismember;
+mod distant_lights;
 mod knockouts;
 mod player_knockdown;
 mod detection;
@@ -585,7 +586,7 @@ struct Args {
     dlss_model: Option<upscaler::DlssModel>,
     /// Instead of --graphics: exactly these improvements on, by the settings page's keys
     /// (ambient-occlusion, fine-shadows, bloom, sharpen, anisotropic, light-shafts,
-    /// water-reflections, water-effects, terrain-height-blend, terrain-anti-tiling, terrain-parallax, cloud-shadows, terrain-shadows, heat-haze, desert-haze, aerial-perspective, night-sky-detail, and
+    /// water-reflections, water-effects, terrain-height-blend, terrain-anti-tiling, terrain-parallax, cloud-shadows, terrain-shadows, heat-haze, desert-haze, aerial-perspective, night-sky-detail, distant-lights, and
     /// mesh-terrain-blend, which no look turns on) and choices (fxaa, smaa or taa instead of --msaa;
     /// shadow-filter-hardware or shadow-filter-temporal; full-detail-7x7 or full-detail-9x9;
     /// distant-objects-8 or distant-objects-12), for comparing them one at a time.
@@ -1880,6 +1881,8 @@ fn main() -> AppExit {
     .add_plugins(light_shadows::LightShadowsPlugin(args.light_shadows.unwrap_or(light_shadows::LightShadowMode::Off)))
     .add_plugins(light_shadow_detail::LightShadowDetailPlugin)
     .add_plugins(mesh_terrain_blend::MeshTerrainBlendPlugin)
+    // Glows of placed lights beyond the loaded cells at night (the Distant lights switch).
+    .add_plugins(distant_lights::DistantLightsPlugin)
     // The switches the settings page weighs against the INI (`--play` only), for the
     // frame split's start-time decision (perf_overlay/split.rs).
     .add_plugins(perf_overlay::PerfOverlayPlugin(args.fps, play.is_some().then(|| settings::given_switches(&args, &command_line()))))

@@ -13,6 +13,7 @@ pub mod guard;
 pub mod load_times;
 pub mod material_anim;
 pub mod model;
+pub mod model_glow;
 pub mod model_light;
 pub mod morph;
 pub mod particles;

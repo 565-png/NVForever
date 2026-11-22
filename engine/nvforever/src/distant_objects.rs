@@ -265,6 +265,12 @@ pub fn nearest(inner: i32) -> f32 {
 /// `None` when the scenery filter leaves it out.
 type ListedBase = Option<(Arc<BaseObject>, String, Option<String>)>;
 
+/// Whether [`list_cell`] looks at reference `p` at all: not deleted, and drawn with its
+/// cell by the renderer's rule ([`world::drawn_with_cell`]: no imposter, no primitive).
+fn listed_ref(p: &Placement) -> bool {
+    !p.deleted() && world::drawn_with_cell(p)
+}
+
 /// Read cell list: the STAT and SCOL references of `refs` that pass the scenery filter
 /// (module notes), each with what [`choose`] needs. Runs on a worker thread.
 pub fn list_cell(lo: &LoadOrder, schema: &EsmSchema, index: &fnv_world::WorldIndex, refs: &[u32], hide: &[String], inner: i32, exists: impl Fn(&str) -> bool) -> CellList {
@@ -273,7 +279,7 @@ pub fn list_cell(lo: &LoadOrder, schema: &EsmSchema, index: &fnv_world::WorldInd
     let small = SIZE_RATIO * HYSTERESIS * nearest(inner);
     for &r in refs {
         let Some(p) = index.placement(lo, schema, r) else { continue };
-        if p.deleted() || p.imposter || !p.draws_base_model() {
+        if !listed_ref(&p) {
             continue;
         }
         let Some(b) = p.base else { continue };
@@ -1935,6 +1941,25 @@ mod tests {
 
     fn no_skip(_: &Entry) -> bool {
         false
+    }
+
+    /// `list_cell` takes the renderer's rule (`world::drawn_with_cell`: no imposter, no
+    /// primitive) and adds only that a deleted reference is not listed. Synthetic
+    /// references; no game data.
+    #[test]
+    fn list_cell_takes_drawn_with_cell() {
+        for imposter in [false, true] {
+            for primitive in [false, true] {
+                for deleted in [false, true] {
+                    let mut p = crate::world::tests::flagged_placement(imposter, primitive);
+                    if deleted {
+                        p.flags |= fnv_world::placed::ref_flags::DELETED;
+                    }
+                    assert_eq!(listed_ref(&p), !deleted && world::drawn_with_cell(&p), "imposter {imposter}, primitive {primitive}, deleted {deleted}");
+                    assert_eq!(listed_ref(&p), !deleted && !imposter && !primitive);
+                }
+            }
+        }
     }
 
     /// Every branch of the rule: a flagged reference is left to a block that holds it or
