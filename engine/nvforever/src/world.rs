@@ -1416,13 +1416,13 @@ pub(crate) enum DrawnAs {
 }
 
 /// The record-type decision of [`spawn_ref`] for placement `p` with its base `base`;
-/// `enabled` is asked only for references past the imposter and primitive tests.
+/// `enabled` is asked only for references past the imposter and primitive tests. Whether
+/// the reference is drawn with its cell at all is [`drawn_with_cell`]'s rule, the one
+/// every drawing path shares; when it is not, the kind says why (an imposter before a
+/// primitive).
 pub(crate) fn classify_ref(p: &Placement, base: Option<&BaseObject>, enabled: impl FnOnce() -> bool) -> RefKind {
-    if p.imposter {
-        return RefKind::Imposter;
-    }
-    if !p.draws_base_model() {
-        return RefKind::Primitive;
+    if !drawn_with_cell(p) {
+        return if p.imposter { RefKind::Imposter } else { RefKind::Primitive };
     }
     if !enabled() {
         return RefKind::Disabled;
@@ -2265,8 +2265,43 @@ fn is_marker(path: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// A synthetic placed reference with the two drawing flags; no game data.
+    pub(crate) fn flagged_placement(imposter: bool, primitive: bool) -> Placement {
+        Placement {
+            form_id: 0x100, sig: *b"REFR", flags: 0, base: Some(0x200), position: [0.0; 3], rotation: [0.0; 3], scale: 1.0,
+            enable_parent: None, open_by_default: false, teleport: false, emittance: None, imposter, primitive,
+        }
+    }
+
+    /// The ring's `classify_ref` takes "drawn with its cell" from `drawn_with_cell`, the
+    /// rule every drawing path shares: a reference that rule turns away is an imposter or
+    /// a primitive (an imposter first, `enabled` never asked), one it keeps goes on to the
+    /// enabled and record-type tests.
+    #[test]
+    fn classify_ref_shares_drawn_with_cell() {
+        let stat = BaseObject {
+            form_id: 0x200, sig: *b"STAT", edid: None, model: Some("synthetic.nif".into()), world_model: None, world_alt_textures: vec![], worn_only: false, flags: 0, bounds: None,
+        };
+        for (imposter, primitive, want) in [
+            (true, false, RefKind::Imposter),
+            (true, true, RefKind::Imposter),
+            (false, true, RefKind::Primitive),
+            (false, false, RefKind::Drawn { light: false, how: DrawnAs::Model }),
+        ] {
+            let p = flagged_placement(imposter, primitive);
+            let mut asked = false;
+            let kind = classify_ref(&p, Some(&stat), || {
+                asked = true;
+                true
+            });
+            assert_eq!(kind, want, "imposter {imposter}, primitive {primitive}");
+            assert_eq!(asked, drawn_with_cell(&p), "enabled is asked exactly for the references drawn with their cell");
+            assert_eq!(drawn_with_cell(&p), !matches!(kind, RefKind::Imposter | RefKind::Primitive));
+        }
+    }
 
     #[test]
     fn spaces() {

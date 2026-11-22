@@ -1,4 +1,4 @@
-// Distant lights at night (distant_lights.rs, docs/design/graphics-enhanced.md §3.17): an
+// Distant lights at night (distant_lights.rs, docs/design/graphics-enhanced.md §3.22): an
 // enhanced-look switch of NVForever's own, not a fact about the original game.
 //
 // One batched mesh of glows; each glow is four vertices (distant_lights.rs `glow_mesh`):
