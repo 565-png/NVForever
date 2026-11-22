@@ -16,7 +16,7 @@ still has to be re-run there (84/84 Layer 1 scenarios expected).
 | `fnv-json` | `serde` + `serde_json` (`preserve_order`) | documents built with `json!`; `nvforever.json` was a derived struct (now `NVForever.ini`, hand-written, the old JSON still read); schema files keep duplicate-key rejection via a strict deserializer. Floats >= 1e16 are now written as floats (fnv-json printed them as integer tokens). |
 | `fnv-inflate` decoder | `flate2`, **zlib-rs** backend | our zlib header + Adler-32 trailer diagnostics kept (`adler2`). miniz_oxide was rejected: in streaming mode it accepts back-references before the output start. |
 | `fnv-util::sha256` | `sha2` (+ `hex`) | |
-| `fnv-util::cp1252` | `encoding_rs` (WINDOWS_1252) | |
+| `fnv-util::cp1252` | `encoding_rs` (WINDOWS_1252) | `fnv-util` also uses the existing crate's `GB18030` codec for code page 936, including GBK double-byte and GB18030 four-byte text. |
 | hand-rolled CLI parsing | `clap` (derive) | `--help` everywhere; exits 0 for help, 2 for usage errors |
 | ad-hoc error enums | `thiserror` (libs) + `anyhow` (fnvtool) | messages unchanged (they appear in JSON) |
 | `std::fs::read` of masters | `memmap2` + `bytes::Bytes` | records are zero-copy slices; about half the peak memory |
@@ -86,8 +86,11 @@ bans, sources) for the root workspace; the root workspace's tests and clippy (`-
 smoke runner, the stress tool and the profile campaign; the engine workspace's tests and
 clippy. A pull request that changes only docs skips those steps and passes at once; a newer
 push to the same branch or pull request cancels the run still in progress. The repository
-is public, so runner minutes are free. Windows and macOS are not run in CI; the local
-checks in CLAUDE.md cover them before each push. The parity job that needs game data
+is public, so runner minutes are free. Since #3143 (2026-11-21) one Windows job,
+`windows-clippy`, lints both workspaces, so the `cfg(windows)` code is compiled and
+checked on every pull request; the tests on Windows and all of macOS are not run in CI:
+the local checks in CLAUDE.md cover them before each push. (The "one Linux job" above
+has been several parallel jobs with one `ci` result since #1956.) The parity job that needs game data
 stays in `parity-lab/ci/github-actions.yml`, a template for a self-hosted runner only.
 
 

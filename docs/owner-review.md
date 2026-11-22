@@ -451,6 +451,11 @@ the spec it links to.
   property, and ruling otherwise means a per-model exception. Check the storm in game at
   night in HVDustStorm ([activators section 6.1](spec-notes/activators.md)).
 
+- **Map markers on the compass use a fixed range (#2348).** [design, owner 2026-11-18]
+  The maintainer chose `iMapMarkerVisibleDistance` (10,000 units by default) for found
+  and unfound places, replacing the Perception-based range from playtest list 5 item 12.
+  Quest targets remain visible at any distance. ([hud §11](spec-notes/hud.md); observer check 227)
+
 19. **Walking away from a conversation.** The world freezes while you talk, as in the
     original, and walking off does not end it. Should walking off end it where the line
     allows leaving? ([dialogue](design/dialogue.md))

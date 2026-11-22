@@ -51,8 +51,6 @@ pub struct GapsState {
     pub gravity: HashMap<FormId, f64>,
     /// ToggleBipedSlotVisibility's hidden slots.
     pub hidden_slots: HashSet<u32>,
-    /// SetDestructionDataHealth's values.
-    pub destruction_health: HashMap<FormId, i32>,
     /// References whose activation SetInteractionDisabled turned off.
     pub interaction_disabled: HashSet<FormId>,
     /// SetNthEffectBase's bases: (item, effect index).
@@ -780,8 +778,11 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             },
             None => XVal::Ref(0),
         },
-        // DEST stages [observed: gaps3, the 10mm pistol 0].
-        "getdestructiondatanumstages" => XVal::Num(form(args, 0).and_then(|f| g.destruction(f)).map_or(0, |d| d.stages.len()) as f64),
+        // DEST stages [documented: GetDestructionDataNumStages; observed: gaps3, the 10mm
+        // pistol 0]. A reference reads its base's, as `nvse_jip6`.
+        "getdestructiondatanumstages" => {
+            XVal::Num(form(args, 0).map(|f| base(g, f)).and_then(|b| g.destruction(b)).map_or(0, |d| d.stages.len()) as f64)
+        }
         // ---- weapons ----
         // ShowOff's index into DNAM flags1 [observed: gaps4, the 10mm pistol reads 0 on
         // 0–5 and SetWeaponFlag 5 1 reads back 1; documented: WeaponHasFlag /
@@ -909,13 +910,12 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             g.field_overrides.insert((f, "DATA/flags".into()), XVal::Num(new as f64));
             zero
         }
-        "getprojectileexplosion" => match form(args, 0).and_then(|f| crate::nvse::record_value(g, f, "DATA", "explosion")) {
-            Some(XVal::Ref(r)) => XVal::Ref(r),
-            _ => XVal::Ref(0),
-        },
+        "getprojectileexplosion" => XVal::Ref(form(args, 0).and_then(|f| g.projectile_traits(f)).and_then(|t| t.explosion).map_or(0, |e| e.0)),
         "setprojectileexplosion" => {
             if let (Some(f), Some(e)) = (form(args, 0), form(args, 1)) {
-                g.field_overrides.insert((f, "DATA/explosion".into()), XVal::Ref(e.0));
+                if g.data.sig(g.unclone(f)) == Some(*b"PROJ") && g.data.sig(g.unclone(e)) == Some(*b"EXPL") {
+                    g.field_overrides.insert((f, "DATA/explosion".into()), XVal::Ref(e.0));
+                }
             }
             zero
         }
@@ -1174,14 +1174,21 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let f = form(args, 0).or(subject).map(|f| base(g, f)).unwrap_or(FormId(0));
             yes(g.data.sig(f).is_some_and(|s| crate::functions::items::form_type_code(&s).is_some() || matches!(&s, b"CCRD" | b"CHIP" | b"CMNY" | b"IMOD")))
         }
+        // DEST health; `object` is a base form (a reference reads its base) [documented:
+        // GECK wiki GetDestructionDataHealth / SetDestructionDataHealth; observed: gaps8,
+        // SetDestructionDataHealth returns 0 and 75 reads back]. Stored on
+        // `Game::destruction` (`other.jip6.destruction`, carried across same-run loads via
+        // `Game::Session`) so `damage_object` and `GetDestructionStage` read the change.
         "getdestructiondatahealth" => {
-            let f = form(args, 0).unwrap_or(FormId(0));
-            XVal::Num(g.gaps.destruction_health.get(&f).copied().or_else(|| g.destruction(f).map(|d| d.health)).unwrap_or(0) as f64)
+            let b = form(args, 0).map(|f| base(g, f)).unwrap_or(FormId(0));
+            XVal::Num(g.destruction(b).map_or(0, |d| d.health) as f64)
         }
-        // Returns 0, for the session [observed: gaps8, 75 reads back].
         "setdestructiondatahealth" => {
-            if let Some(f) = form(args, 0) {
-                g.gaps.destruction_health.insert(f, num(args, 1, 0.0) as i32);
+            let hp = num(args, 1, 0.0);
+            if hp.is_finite() {
+                if let Some(d) = form(args, 0).map(|f| base(g, f)).and_then(|b| g.destruction_mut(b)) {
+                    d.health = hp as i32;
+                }
             }
             zero
         }
