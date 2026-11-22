@@ -10,13 +10,95 @@ use fnv_sim::FormId;
 use serde_json::Value as Json;
 use std::collections::HashMap;
 
-/// The supported session-only numeric edits needed when a new shot is created.
+/// The supported session-only edits needed when a new shot is created.
 /// `original` supplies the typed record; the requested clone retains its own identity.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectileLaunchTraits {
     pub original: FormId,
     pub speed: Option<f32>,
     pub impact_force: Option<f32>,
+    pub flags: Option<u16>,
+}
+
+/// Effective non-flag `PROJ` record traits for a projectile (or `TempCloneForm` `PROJ`
+/// alias), resolving active session overrides (`SetProjectileTraitNumeric`,
+/// `SetProjectileExplosion`, `SetProjectileLight`, `SetProjectileMuzzleFlash`,
+/// `SetProjectileSound`) before authored record fields ([`Game::projectile_traits`]).
+///
+/// `DATA/flags` is intentionally excluded (owned separately by projectile flag helpers).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectileTraits {
+    /// Authored `PROJ` record that backs this form (`unclone(projectile)`).
+    pub original: FormId,
+    /// `DATA/type` code (0 none, 1 Missile, 2 Lobber, 4 Beam, 8 Flame, 16 Continuous Beam).
+    pub kind_code: u16,
+    /// `DATA/type` label matching `fnv_combat::data::ProjectileStats::kind`.
+    pub kind: Option<&'static str>,
+    /// `DATA/gravity` (trait 1).
+    pub gravity: f32,
+    /// `DATA/speed` (trait 2).
+    pub speed: f32,
+    /// `DATA/range` (trait 3).
+    pub range: f32,
+    /// `DATA/tracer_chance` (trait 4).
+    pub tracer_chance: f32,
+    /// `DATA/explosion_alt_trigger_proximity` (trait 5).
+    pub alt_trigger_proximity: f32,
+    /// `DATA/explosion_alt_trigger_timer` (trait 6).
+    pub alt_trigger_timer: f32,
+    /// `DATA/muzzle_flash_duration` (trait 7).
+    pub muzzle_flash_duration: f32,
+    /// `DATA/fade_duration` (trait 8).
+    pub fade_duration: f32,
+    /// `DATA/impact_force` (trait 9).
+    pub impact_force: f32,
+    /// `DATA/rotation.{x,y,z}` (traits 10–12).
+    pub rotation: [f32; 3],
+    /// `DATA/bouncy_mult` (trait 13).
+    pub bouncy_mult: f32,
+    /// `VNAM` detection sound level code (0 Loud, 1 Normal, 2 Silent; trait 14).
+    pub sound_level_code: u8,
+    /// `VNAM` label matching `fnv_combat::data::ProjectileStats::sound_level`.
+    pub sound_level: Option<&'static str>,
+    /// `DATA/explosion` (`SetProjectileExplosion` / `GetProjectileExplosion`).
+    pub explosion: Option<FormId>,
+    /// `DATA/light` (`SetProjectileLight` / `GetProjectileLight`).
+    pub light: Option<FormId>,
+    /// `NAM1` muzzle-flash model path (`SetProjectileMuzzleFlash` / `GetProjectileMuzzleFlash`).
+    pub muzzle_flash_model: Option<String>,
+    /// `DATA/sound` (`SetProjectileSound proj 1 sound`).
+    pub sound: Option<FormId>,
+    /// `DATA/sound_countdown` (`SetProjectileSound proj 2 sound`).
+    pub sound_countdown: Option<FormId>,
+    /// `DATA/sound_disable` (`SetProjectileSound proj 3 sound`).
+    pub sound_disable: Option<FormId>,
+}
+
+/// Sparse session-only non-flag `PROJ` overrides for a projectile (clone-first, then
+/// ancestor chain to `original`), `None` for any field not overridden this session
+/// ([`Game::projectile_trait_overrides`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectileTraitOverrides {
+    pub original: FormId,
+    pub kind: Option<Option<&'static str>>,
+    pub gravity: Option<f32>,
+    pub speed: Option<f32>,
+    pub range: Option<f32>,
+    pub tracer_chance: Option<f32>,
+    pub alt_trigger_proximity: Option<f32>,
+    pub alt_trigger_timer: Option<f32>,
+    pub muzzle_flash_duration: Option<f32>,
+    pub fade_duration: Option<f32>,
+    pub impact_force: Option<f32>,
+    pub rotation: [Option<f32>; 3],
+    pub bouncy_mult: Option<f32>,
+    pub sound_level: Option<Option<&'static str>>,
+    pub explosion: Option<Option<FormId>>,
+    pub light: Option<Option<FormId>>,
+    pub muzzle_flash_model: Option<Option<String>>,
+    pub sound: Option<Option<FormId>>,
+    pub sound_countdown: Option<Option<FormId>>,
+    pub sound_disable: Option<Option<FormId>>,
 }
 
 /// Exact backup of the two supported launch fields for a bounded engine diagnostic.
@@ -188,6 +270,95 @@ const PROJ_NUMERIC: [(&str, &str, Take); 15] = [
     ("VNAM", "", Take::OneOf(&[1.0, 2.0])),
 ];
 
+/// All non-flag `PROJ` trait keys kept in `field_overrides` (excludes `DATA/flags`).
+const PROJ_TRAIT_KEYS: [&str; 21] = [
+    "DATA/type",
+    "DATA/gravity",
+    "DATA/speed",
+    "DATA/range",
+    "DATA/tracer_chance",
+    "DATA/explosion_alt_trigger_proximity",
+    "DATA/explosion_alt_trigger_timer",
+    "DATA/muzzle_flash_duration",
+    "DATA/fade_duration",
+    "DATA/impact_force",
+    "DATA/rotation.x",
+    "DATA/rotation.y",
+    "DATA/rotation.z",
+    "DATA/bouncy_mult",
+    "VNAM/",
+    "DATA/explosion",
+    "DATA/light",
+    "NAM1/",
+    "DATA/sound",
+    "DATA/sound_countdown",
+    "DATA/sound_disable",
+];
+
+/// `PROJ DATA/type` enum label matching `schemas/fnv/combat.json` `ProjectileData.type`
+/// and `fnv_combat::data::ProjectileStats::kind` [documented: xEdit PROJ; GECK wiki
+/// GetProjectileTraitNumeric].
+fn projectile_kind_label(code: u16) -> Option<&'static str> {
+    match code {
+        1 => Some("Missile"),
+        2 => Some("Lobber"),
+        4 => Some("Beam"),
+        8 => Some("Flame"),
+        16 => Some("Continuous Beam"),
+        _ => None,
+    }
+}
+
+/// `PROJ VNAM` sound level label matching `schemas/fnv/objects.json` `SoundLevel`
+/// and `fnv_combat::data::ProjectileStats::sound_level` [documented: xEdit PROJ; GECK wiki
+/// GetProjectileTraitNumeric].
+fn projectile_sound_level_label(code: u8) -> Option<&'static str> {
+    match code {
+        0 => Some("Loud"),
+        1 => Some("Normal"),
+        2 => Some("Silent"),
+        _ => None,
+    }
+}
+
+/// Parses an integer trait index at `args[k]`, rejecting non-finite, fractional, or
+/// negative values.
+fn parse_trait_index(args: &[XVal], k: usize) -> Option<usize> {
+    match args.get(k)? {
+        XVal::Num(x) if x.is_finite() && x.fract() == 0.0 && *x >= 0.0 => usize::try_from(*x as i64).ok(),
+        _ => None,
+    }
+}
+
+/// Parses an optional form argument (`SetProjectileLight`):
+/// - `Some(None)` when omitted or explicitly null (`0`) -> clear.
+/// - `Some(Some(id))` when a non-zero form/integer ID is supplied -> validate signature.
+/// - `None` when malformed (string, negative/fractional number, etc.) -> reject cleanly.
+fn parse_optional_form_arg(args: &[XVal], k: usize) -> Option<Option<FormId>> {
+    match args.get(k) {
+        None | Some(XVal::Ref(0)) => Some(None),
+        Some(XVal::Num(x)) if *x == 0.0 => Some(None),
+        Some(XVal::Ref(r)) => Some(Some(FormId(*r))),
+        Some(XVal::Num(x)) if x.is_finite() && *x >= 1.0 && *x <= f64::from(u32::MAX) && x.fract() == 0.0 => Some(Some(FormId(*x as u32))),
+        _ => None,
+    }
+}
+
+fn xval_finite_f32(v: &XVal) -> Option<f32> {
+    match v {
+        XVal::Num(n) if n.is_finite() && (*n as f32).is_finite() => Some(*n as f32),
+        _ => None,
+    }
+}
+
+fn xval_opt_form(v: &XVal) -> Option<Option<FormId>> {
+    match v {
+        XVal::Ref(id) => Some((*id != 0).then_some(FormId(*id))),
+        XVal::Num(n) if n.is_finite() && *n >= 0.0 && *n <= f64::from(u32::MAX) && n.fract() == 0.0 => Some((*n != 0.0).then_some(FormId(*n as u32))),
+        _ => None,
+    }
+}
+
 /// EXPL numeric traits 0-7 [documented: SetExplosionTraitNumeric's table].
 /// f32 fields but the sound level, 0-2 [documented: the sound levels of the projectile
 /// page].
@@ -335,22 +506,215 @@ impl Game<'_> {
         }
     }
 
-    /// Only speed/impact-force overrides, with the same clone-first/original fallback
-    /// as the record getters. Absent edits leave the typed consumer's values alone.
-    /// The finite conversion guard is an engineering boundary for physical values.
+    /// Walk `form`'s `TempCloneForm` ancestor chain for a `field_overrides` entry:
+    /// clone's own override wins, falling back through parent clones to the original.
+    pub(crate) fn projectile_field_override(&self, mut form: FormId, key: &str) -> Option<&XVal> {
+        let key_s = key.to_string();
+        loop {
+            if let Some(v) = self.field_overrides.get(&(form, key_s.clone())) {
+                return Some(v);
+            }
+            match self.clones.get(&form) {
+                Some(&parent) if parent != form => form = parent,
+                _ => return None,
+            }
+        }
+    }
+
+    /// Snapshot any active session non-flag `PROJ` trait overrides from `source` onto
+    /// `clone` at `TempCloneForm` creation time. Pre-clone edits on `source` carry onto
+    /// `clone` and stay isolated from later edits on `source`, while fields untouched on
+    /// `source` before cloning retain the existing clone-to-original fallback.
+    pub(crate) fn snapshot_projectile_traits(&mut self, source: FormId, clone: FormId) {
+        if self.data.sig(self.unclone(source)) != Some(*b"PROJ") {
+            return;
+        }
+        for key in PROJ_TRAIT_KEYS {
+            if let Some(v) = self.field_overrides.get(&(source, key.to_string())).cloned() {
+                self.field_overrides.insert((clone, key.to_string()), v);
+            }
+        }
+    }
+
+    /// Session `DATA/flags` override for a `PROJ` (clone-first, original fallback),
+    /// from `SetProjectileFlag`. Returns `None` for non-projectiles, absent edits, or
+    /// non-finite values [design].
+    pub fn projectile_flags_override(&self, projectile: FormId) -> Option<u16> {
+        let original = self.unclone(projectile);
+        if self.data.sig(original) != Some(*b"PROJ") {
+            return None;
+        }
+        let key = "DATA/flags".to_string();
+        match self.field_overrides.get(&(projectile, key.clone())).or_else(|| self.field_overrides.get(&(original, key))) {
+            Some(XVal::Num(n)) if n.is_finite() => Some((n.trunc() as i64 as u64 & 0xFFFF) as u16),
+            _ => None,
+        }
+    }
+
+    /// Effective `DATA/flags` bitmask for a `PROJ` (session override first, else
+    /// authored record; `0` when the projectile has no `DATA`), or `None` for
+    /// non-projectiles.
+    pub fn projectile_flags(&self, projectile: FormId) -> Option<u16> {
+        let original = self.unclone(projectile);
+        if self.data.sig(original) != Some(*b"PROJ") {
+            return None;
+        }
+        match crate::nvse::record_value(self, projectile, "DATA", "flags") {
+            Some(XVal::Num(n)) if n.is_finite() => Some((n.trunc() as i64 as u64 & 0xFFFF) as u16),
+            _ => Some(0),
+        }
+    }
+
+    /// Effective projectile `Can Be Disabled` state (`DATA/flags` bit 5), honoring
+    /// live `SetProjectileFlag` overrides before `FormStore`.
+    pub fn projectile_can_be_disabled(&self, projectile: FormId) -> bool {
+        if let Some(flags) = self.projectile_flags_override(projectile) {
+            return flags & (1 << 5) != 0;
+        }
+        matches!(
+            self.world.forms.get(self.unclone(projectile)).map(|b| &b.data),
+            Some(fnv_sim::forms::BaseData::Projectile { can_be_disabled: true, .. })
+        )
+    }
+
+    /// Speed, impact-force, and `DATA/flags` overrides, with the same clone-first /
+    /// original fallback as the record getters. Absent edits leave the typed consumer's
+    /// values alone. The finite conversion guard is an engineering boundary for physical
+    /// values.
     pub fn projectile_launch_traits(&self, projectile: FormId) -> Option<ProjectileLaunchTraits> {
         let original = self.unclone(projectile);
         if self.data.sig(original) != Some(*b"PROJ") {
             return None;
         }
-        let number = |path: &str| {
-            let key = format!("DATA/{path}");
-            match self.field_overrides.get(&(projectile, key.clone())).or_else(|| self.field_overrides.get(&(original, key))) {
-                Some(XVal::Num(n)) if n.is_finite() && (*n as f32).is_finite() => Some(*n as f32),
-                _ => None,
-            }
+        let number = |path: &str| self.projectile_field_override(projectile, &format!("DATA/{path}")).and_then(xval_finite_f32);
+        Some(ProjectileLaunchTraits {
+            original,
+            speed: number("speed"),
+            impact_force: number("impact_force"),
+            flags: self.projectile_flags_override(projectile),
+        })
+    }
+
+    /// Sparse session-only non-flag `PROJ` overrides for `projectile` (clone-first, then
+    /// ancestor chain to `original`). Absent or non-finite entries stay `None` so typed
+    /// combat/audio consumers preserve their authored values.
+    pub fn projectile_trait_overrides(&self, projectile: FormId) -> Option<ProjectileTraitOverrides> {
+        let original = self.unclone(projectile);
+        if self.data.sig(original) != Some(*b"PROJ") {
+            return None;
+        }
+        let f32_ov = |path: &str| self.projectile_field_override(projectile, &format!("DATA/{path}")).and_then(xval_finite_f32);
+        let form_ov = |path: &str| self.projectile_field_override(projectile, &format!("DATA/{path}")).and_then(xval_opt_form);
+        let kind = self.projectile_field_override(projectile, "DATA/type").and_then(|v| match v {
+            XVal::Num(n) if n.is_finite() && *n >= 0.0 && *n <= f64::from(u16::MAX) && n.fract() == 0.0 => Some(projectile_kind_label(*n as u16)),
+            _ => None,
+        });
+        let sound_level = self.projectile_field_override(projectile, "VNAM/").and_then(|v| match v {
+            XVal::Num(n) if n.is_finite() && *n >= 0.0 && *n <= f64::from(u8::MAX) && n.fract() == 0.0 => Some(projectile_sound_level_label(*n as u8)),
+            _ => None,
+        });
+        let muzzle_flash_model = self.projectile_field_override(projectile, "NAM1/").and_then(|v| match v {
+            XVal::Str(s) => Some((!s.trim().is_empty()).then(|| s.clone())),
+            _ => None,
+        });
+        Some(ProjectileTraitOverrides {
+            original,
+            kind,
+            gravity: f32_ov("gravity"),
+            speed: f32_ov("speed"),
+            range: f32_ov("range"),
+            tracer_chance: f32_ov("tracer_chance"),
+            alt_trigger_proximity: f32_ov("explosion_alt_trigger_proximity"),
+            alt_trigger_timer: f32_ov("explosion_alt_trigger_timer"),
+            muzzle_flash_duration: f32_ov("muzzle_flash_duration"),
+            fade_duration: f32_ov("fade_duration"),
+            impact_force: f32_ov("impact_force"),
+            rotation: [f32_ov("rotation.x"), f32_ov("rotation.y"), f32_ov("rotation.z")],
+            bouncy_mult: f32_ov("bouncy_mult"),
+            sound_level,
+            explosion: form_ov("explosion"),
+            light: form_ov("light"),
+            muzzle_flash_model,
+            sound: form_ov("sound"),
+            sound_countdown: form_ov("sound_countdown"),
+            sound_disable: form_ov("sound_disable"),
+        })
+    }
+
+    /// Canonical resolved non-flag `PROJ` traits for `projectile` (authored `PROJ` or
+    /// `TempCloneForm` `PROJ`), applying live session overrides before authored fields.
+    pub fn projectile_traits(&self, projectile: FormId) -> Option<ProjectileTraits> {
+        let original = self.unclone(projectile);
+        if self.data.sig(original) != Some(*b"PROJ") {
+            return None;
+        }
+        let f32_val = |path: &str| {
+            self.projectile_field_override(projectile, &format!("DATA/{path}"))
+                .and_then(xval_finite_f32)
+                .unwrap_or_else(|| self.data.record_field(original, "DATA", path).and_then(Json::as_f64).unwrap_or(0.0) as f32)
         };
-        Some(ProjectileLaunchTraits { original, speed: number("speed"), impact_force: number("impact_force") })
+        let form_val = |path: &str| {
+            self.projectile_field_override(projectile, &format!("DATA/{path}"))
+                .and_then(xval_opt_form)
+                .unwrap_or_else(|| json_form(self.data.record_field(original, "DATA", path)))
+        };
+        let kind_code = self
+            .projectile_field_override(projectile, "DATA/type")
+            .and_then(|v| match v {
+                XVal::Num(n) if n.is_finite() && *n >= 0.0 && *n <= f64::from(u16::MAX) && n.fract() == 0.0 => Some(*n as u16),
+                _ => None,
+            })
+            .unwrap_or_else(|| self.data.record_field(original, "DATA", "type").and_then(Json::as_u64).unwrap_or(0) as u16);
+        let sound_level_raw = self
+            .projectile_field_override(projectile, "VNAM/")
+            .and_then(|v| match v {
+                XVal::Num(n) if n.is_finite() && *n >= 0.0 && *n <= f64::from(u8::MAX) && n.fract() == 0.0 => Some(*n as u8),
+                _ => None,
+            })
+            .or_else(|| self.data.record_field(original, "VNAM", "").and_then(Json::as_u64).map(|n| n as u8));
+        let muzzle_flash_model = self
+            .projectile_field_override(projectile, "NAM1/")
+            .and_then(|v| match v {
+                XVal::Str(s) => Some((!s.trim().is_empty()).then(|| s.clone())),
+                _ => None,
+            })
+            .unwrap_or_else(|| self.data.record_field(original, "NAM1", "").and_then(Json::as_str).filter(|s| !s.trim().is_empty()).map(str::to_string));
+        Some(ProjectileTraits {
+            original,
+            kind_code,
+            kind: projectile_kind_label(kind_code),
+            gravity: f32_val("gravity"),
+            speed: f32_val("speed"),
+            range: f32_val("range"),
+            tracer_chance: f32_val("tracer_chance"),
+            alt_trigger_proximity: f32_val("explosion_alt_trigger_proximity"),
+            alt_trigger_timer: f32_val("explosion_alt_trigger_timer"),
+            muzzle_flash_duration: f32_val("muzzle_flash_duration"),
+            fade_duration: f32_val("fade_duration"),
+            impact_force: f32_val("impact_force"),
+            rotation: [f32_val("rotation.x"), f32_val("rotation.y"), f32_val("rotation.z")],
+            bouncy_mult: f32_val("bouncy_mult"),
+            sound_level_code: sound_level_raw.unwrap_or(0),
+            sound_level: sound_level_raw.and_then(projectile_sound_level_label),
+            explosion: form_val("explosion"),
+            light: form_val("light"),
+            muzzle_flash_model,
+            sound: form_val("sound"),
+            sound_countdown: form_val("sound_countdown"),
+            sound_disable: form_val("sound_disable"),
+        })
+    }
+
+    /// Effective `PROJ` sound slot matching JohnnyGuitar's `SetProjectileSound`:
+    /// `1` sound, `2` countdown sound, `3` disable sound.
+    pub fn projectile_sound(&self, projectile: FormId, which: u8) -> Option<FormId> {
+        let t = self.projectile_traits(projectile)?;
+        match which {
+            1 => t.sound,
+            2 => t.sound_countdown,
+            3 => t.sound_disable,
+            _ => None,
+        }
     }
 
     fn set_field(&mut self, f: FormId, sub: &str, path: &str, v: XVal) {
@@ -415,7 +779,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         }
         // ---- projectiles and explosions
         "setprojectiletraitnumeric" => {
-            let t = usize::try_from(num(args, 1, -1.0) as i64).ok().and_then(|i| PROJ_NUMERIC.get(i));
+            let t = parse_trait_index(args, 1).and_then(|i| PROJ_NUMERIC.get(i));
             if let (Some(p), Some(&(sub, path, how))) = (projectile(g, form(args, 0)), t) {
                 if let Some(v) = take(num(args, 2, f64::NAN), how) {
                     g.set_field(p, sub, path, XVal::Num(v));
@@ -423,10 +787,15 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             }
             zero
         }
-        // `projectile [light]`: left out, none [documented: SetProjectileLight].
+        // `projectile [light]`: left out or null clears; a non-null form must be a LIGH
+        // (including TempCloneForm LIGH) [documented: SetProjectileLight].
         "setprojectilelight" => {
-            if let Some(p) = projectile(g, form(args, 0)) {
-                g.set_field(p, "DATA", "light", XVal::Ref(form(args, 1).map_or(0, |f| f.0)));
+            if let (Some(p), Some(arg)) = (projectile(g, form(args, 0)), parse_optional_form_arg(args, 1)) {
+                match arg {
+                    None => g.set_field(p, "DATA", "light", XVal::Ref(0)),
+                    Some(l) if g.data.sig(g.unclone(l)) == Some(*b"LIGH") => g.set_field(p, "DATA", "light", XVal::Ref(l.0)),
+                    Some(_) => {}
+                }
             }
             zero
         }

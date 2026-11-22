@@ -14,6 +14,7 @@ mod string_settings;
 mod digest;
 
 mod abilities;
+mod actor_base_flags;
 mod actor_values;
 mod aid;
 mod appearance;
@@ -62,7 +63,9 @@ mod item_ref_health;
 mod jg_nif;
 mod jg10;
 mod jg3;
+mod jip_combat_events;
 mod jip_main_loop_zero;
+mod jip_target_and_trigger_events;
 mod jlm_dropped_refs;
 mod jg4;
 mod jg5;
@@ -98,6 +101,7 @@ mod packages;
 mod perk_combat;
 mod perk_talk;
 mod pp;
+mod projectile_trait_overrides;
 mod quest_marker_data;
 mod radiation;
 mod radio_data;
@@ -111,6 +115,7 @@ mod set_class;
 mod showoff4;
 mod showoff5;
 mod softlock;
+mod spawn_placeholders;
 mod source_metadata;
 mod step_budget;
 mod sup1;
@@ -129,6 +134,7 @@ mod unconscious;
 mod unlisted;
 mod vendor_services;
 mod voice_gate;
+mod weapon_sound_overrides;
 mod zones;
 
 /// With `autotests = false` Cargo builds only the files named, so a new file in `tests/`
@@ -163,8 +169,12 @@ fn every_test_file_is_built() {
 }
 
 mod callable_identity;
+mod default_open;
 mod em_clearance;
+mod followers_and_detecting_actors;
 mod form_override_queries;
+mod is_in_air;
 mod is_in_kill_cam;
+mod no_unequip;
 mod preactivation_events;
 mod preactivation_mutation;
