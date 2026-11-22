@@ -669,15 +669,13 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // An actor effect's SPIT, an object effect's or ingestible's ENIT; SetEffectFlag's
         // change first (`crate::nvse_jip8`).
         "geteffectflag" => {
-            let f = form(args, 0).unwrap_or(FormId(0));
-            let sub = if g.data.sig(f) == Some(*b"SPEL") { "SPIT" } else { "ENIT" };
-            let flags = crate::nvse::record_value(g, f, sub, "flags").and_then(|v| v.num().ok()).unwrap_or(0.0);
-            bit(flags, num(args, 1, -1.0))
+            let flags = form(args, 0).map_or(0, |f| g.effect_flags(f));
+            bit(f64::from(flags), num(args, 1, -1.0))
         }
         // MGEF DATA [observed: gaps3, RestoreHealth archetype 0, actor value 16, flags
         // 112 so bits 0–3 read 0].
-        "getbaseeffectarchetype" => XVal::Num(form(args, 0).and_then(|f| g.data.magic_effects.get(&f)).map_or(0, |m| m.archetype) as f64),
-        "getbaseeffectav" => XVal::Num(form(args, 0).and_then(|f| g.data.magic_effects.get(&f)).and_then(|m| m.actor_value).map_or(-1.0, f64::from)),
+        "getbaseeffectarchetype" => XVal::Num(form(args, 0).and_then(|f| g.magic_effect_def(f)).map_or(0, |m| m.archetype) as f64),
+        "getbaseeffectav" => XVal::Num(form(args, 0).and_then(|f| g.magic_effect_def(f)).and_then(|m| m.actor_value).map_or(-1.0, f64::from)),
         "getbaseeffectflag" => {
             // SetBaseEffectFlag's change first (`crate::nvse_jip8`).
             let flags = form(args, 0).map_or(0, |f| g.base_effect_flags(f));
@@ -1258,8 +1256,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // GetIsPoison; observed: gaps7, Silver Sting 1, the stimpak 0].
         "getispoison" => {
             let f = form(args, 0).unwrap_or(FormId(0));
-            let effects = g.data.effect_items.get(&f).map(Vec::as_slice).unwrap_or_default();
-            yes(!effects.is_empty() && effects.iter().all(|e| g.data.magic_effects.get(&e.effect).is_some_and(|m| m.flags & 0x5 == 0x5)))
+            let effects = g.data.effect_items.get(&g.unclone(f)).map(Vec::as_slice).unwrap_or_default();
+            yes(!effects.is_empty() && effects.iter().all(|e| g.magic_effect_def(e.effect).is_some_and(|m| m.flags & 0x5 == 0x5)))
         }
         "isarmoraddon" => yes(form(args, 0).is_some_and(|f| g.data.sig(f) == Some(*b"ARMA"))),
         // A form type an inventory holds [documented: GetIsItem].
