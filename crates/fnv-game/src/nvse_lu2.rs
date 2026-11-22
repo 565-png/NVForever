@@ -96,11 +96,12 @@ impl Game<'_> {
     /// - Otherwise `true` when the player discovered `r` (`found_markers`), `ShowMap r 1`
     ///   or `ShowAllMapMarkers` with travel enabled it on a shown marker, or the authored
     ///   `FNAM` record sets BOTH `MARKER_VISIBLE` and `MARKER_TRAVEL` (`FNAM & 3 == 3`)
-    ///   [observed: original FNV 1.4.0.525 + JIP LN, #3468 (`o31_mapmarker_visible`
-    ///   control + probe plugin: authored `FNAM=3` reads Vis=2/Trv=1 while authored
-    ///   `FNAM=2` alone reads Vis=0/Trv=0; `ShowMap 1` and discovery set Vis=2/Trv=1)
-    ///   and live map-marker probe (`SetMapMarkerTravel 1` alone reads Vis=0/Trv=1;
-    ///   `SetMapMarkerTravel 0` on `FNAM=3` reads Vis=1/Trv=0)].
+    ///   [observed: observer check 252 (#3468, `o31_mapmarker_visible` control + probe
+    ///   plugin: authored `FNAM=3` reads Vis=2/Trv=1 while authored `FNAM=2` alone reads
+    ///   Vis=0/Trv=0; `ShowMap 1` and discovery set Vis=2/Trv=1) and the 2026-11-22 live
+    ///   map-marker probe documented in `docs/spec-notes/ext-lutana.md` §9
+    ///   (`SetMapMarkerTravel 1` alone reads Vis=0/Trv=1; `SetMapMarkerTravel 0` on
+    ///   `FNAM=3` reads Vis=1/Trv=0)].
     pub fn marker_travel(&self, r: FormId) -> bool {
         let Some(m) = self.world.placed.get(r).and_then(|p| p.map_marker) else {
             return false;

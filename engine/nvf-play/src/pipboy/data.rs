@@ -2668,13 +2668,17 @@ pub(crate) fn nearest(places: impl Iterator<Item = Vec2>, want: Vec2) -> Option<
 /// Whether the player knows a marker (`Some`), and whether it is drawn as discovered
 /// (`true`): found within its radius, made a travel target by ShowMap's or
 /// ShowAllMapMarkers' canTravel (owner 2026-10-23: `tmm 1` shows every marker with its
-/// own icon), or explicitly enabled as a travel target by a script's
-/// `SetMapMarkerTravel 1` once visible/shown. The authored Can Travel To flag (`FNAM`
-/// bit 2) alone does not mark an undiscovered marker as known or discovered. Known also
-/// when shown by ShowMap, ShowAllMapMarkers (which leaves out markers flagged "Show All"
-/// Hidden, FNAM bit 4 or `SetMapMarkerHidden` [documented: xEdit's flag names,
-/// schemas/fnv/world.json], when asked to) or by its Visible flag (`FNAM` bit 1 or
-/// `SetMapMarkerVisible`) [hypothesis]; those keep the undiscovered icon.
+/// own icon), explicitly enabled as a travel target by a script's `SetMapMarkerTravel 1`
+/// once visible/shown, or authored with both Visible and Can Travel To (`FNAM=3`, drawn
+/// as discovered with its own icon [hypothesis: mirrors observed `GetMapMarkerVisible=2`
+/// / `GetMapMarkerTravel=1` script values from observer check 252 (#3468) and the
+/// 2026-11-22 live map-marker probe without an observed Pip-Boy icon capture]). The
+/// authored Can Travel To flag (`FNAM` bit 2) alone does not mark an undiscovered marker
+/// as known or discovered. Known also when shown by ShowMap, ShowAllMapMarkers (which
+/// leaves out markers flagged "Show All" Hidden, FNAM bit 4 or `SetMapMarkerHidden`
+/// [documented: xEdit's flag names, schemas/fnv/world.json], when asked to) or by its
+/// Visible flag (`FNAM` bit 1 or `SetMapMarkerVisible`) [hypothesis]; those keep the
+/// undiscovered icon.
 fn known(st: &DataState, game: &Game, m: &read::Marker) -> Option<bool> {
     let rt = game.script.as_ref().and_then(|s| s.rt.as_ref());
     let id = FormId(m.form);
@@ -6449,7 +6453,9 @@ mod tests {
         world.insert_resource(script);
         let mut state = SystemState::<Game>::new(&mut world);
 
-        // Before discovery (#3468 + live map-marker probe):
+        // Before discovery (#3468 check 252 + 2026-11-22 live map-marker probe for script
+        // values; Pip-Boy drawing an undiscovered FNAM=3 marker as discovered with its own
+        // icon is [hypothesis]):
         // - Visible | Can Travel To (FNAM=3) is known and travelable (Some(true)).
         // - Visible alone (FNAM=1) is known as undiscovered (Some(false)).
         // - Can Travel To alone (FNAM=2) is unknown (None) and stays in unmapped_of (Hide Unmapped Places).

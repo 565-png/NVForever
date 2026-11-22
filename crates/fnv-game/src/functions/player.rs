@@ -291,8 +291,8 @@ impl Game<'_> {
 /// and player discovery give 2 (and set `GetMapMarkerTravel` to 1); `SetMapMarkerVisible`
 /// sets/clears only bit 0, `SetMapMarkerTravel 1` alone keeps 0 while setting travel,
 /// `SetMapMarkerTravel 0` drops 2 to 1, and `SetMapMarkerHidden 1` does not zero it
-/// [observed: original FNV 1.4.0.525 + JIP LN, #3468 (`o31_mapmarker_visible` control +
-/// probe plugin) and live map-marker probe].
+/// [observed: observer check 252 (#3468, `o31_mapmarker_visible` control + probe plugin)
+/// and the 2026-11-22 live map-marker probe documented in `docs/spec-notes/ext-lutana.md` §9].
 pub fn get_map_marker_visible(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
     let r = ctx.subject()?;
     let flags = g.marker_flags(r);

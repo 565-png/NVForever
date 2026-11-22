@@ -152,7 +152,7 @@ fn map_markers_and_radio_stations_from_their_data() {
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerTravel"), 1.0);
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerHidden"), 0.0);
     assert_eq!(n(&mut g, "TestMarkerRef.GetMapMarkerType"), 5.0, "Cave");
-    // Observed original-game FNAM matrix (#3468 o31_mapmarker_visible + live map-marker probe):
+    // Observed original-game FNAM matrix (#3468 check 252 + 2026-11-22 live map-marker probe, ext-lutana.md §9):
     // - FNAM=0: Vis=0, Trv=0, Hid=0
     // - FNAM=1 (Visible): Vis=1, Trv=0, Hid=0
     // - FNAM=2 (Can Travel To alone): Vis=0, Trv=0, Hid=0
