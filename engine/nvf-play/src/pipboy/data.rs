@@ -491,6 +491,10 @@ pub struct DataState {
     drag_from: Option<Vec2>,
     /// The Local Map's outline of the place, as far as it is made.
     outline: Option<Outline>,
+    /// The last outline finished of the same place and floor, shown while [`DataState::outline`]
+    /// is made after a pan took the map off it (#3326: outdoors a grid takes several frames, and
+    /// the map blinked empty each time a drag passed a quarter of it).
+    outline_last: Option<Outline>,
     /// The landscape surfaces of the cells the outline read (by grid square; `None` for a
     /// square without land), smoothed or stored as the run draws and collides them
     /// (`crate::smooth_terrain`, #2149), kept while one outline is made.
@@ -2839,7 +2843,12 @@ fn advance_outline(st: &mut DataState, game: &mut Game, images: &mut Assets<Imag
     let centre = st.centre[LOCAL].unwrap_or([feet[0], feet[1]]);
     let key = Outline::key_for(interior, world, centre, feet[2], MAP.size(), scale);
     if st.outline.as_ref().is_none_or(|o| o.key != key) {
-        st.outline = Some(Outline::new(interior, world, centre, feet[2], MAP.size(), scale));
+        let old = st.outline.replace(Outline::new(interior, world, centre, feet[2], MAP.size(), scale));
+        // The picture on screen stays until the new one is made, if it shows the same place.
+        if let Some(old) = old.filter(|o| o.image.is_some()) {
+            st.outline_last = Some(old);
+        }
+        st.outline_last = st.outline_last.take().filter(|o| same_place(&o.key, &key));
         st.outline_land.clear();
     }
     let Some(o) = st.outline.as_mut().filter(|o| !o.done()) else { return };
@@ -2869,6 +2878,7 @@ fn advance_outline(st: &mut DataState, game: &mut Game, images: &mut Assets<Imag
     }
     if o.done() {
         o.image = Some(images.add(o.picture()));
+        st.outline_last = None;
         info!(
             "pipboy data: local map outline {}x{} samples {} apart, {} landed ({})",
             o.size[0],
@@ -2880,6 +2890,18 @@ fn advance_outline(st: &mut DataState, game: &mut Game, images: &mut Assets<Imag
     }
 }
 
+/// Whether two outlines' keys are of the same place and floor (the interior, the worldspace
+/// and the feet's step), whatever their anchors.
+fn same_place(a: &outline::OutlineKey, b: &outline::OutlineKey) -> bool {
+    a.0 == b.0 && a.1 == b.1 && a.2[2] == b.2[2]
+}
+
+/// The outline the Local Map shows: the one being made once its picture is, until then the last
+/// one finished of the same place ([`DataState::outline_last`]).
+fn shown_outline(st: &DataState) -> Option<&Outline> {
+    st.outline.as_ref().filter(|o| o.image.is_some()).or_else(|| st.outline_last.as_ref().filter(|l| st.outline.as_ref().is_none_or(|o| same_place(&l.key, &o.key))))
+}
+
 /// The local map: the player's surroundings at [`local_scale`], the outline of the place,
 /// the doors leading elsewhere and the known map markers [design: the scale; the outline
 /// stands for the original's picture from above].
@@ -2889,22 +2911,22 @@ fn local_map(st: &mut DataState, game: &Game, pointer: Option<Vec2>) -> MapShown
     let mag = st.magnify[LOCAL].max(ZOOM.0);
     let centre = *st.centre[LOCAL].get_or_insert([feet[0], feet[1]]);
     let scale = local_scale(loc.interior.is_some());
-    // The frame the picture covers: the outline's grid (made before this, `advance_outline`), or
-    // the one it would make.
-    let frame = match st.outline.as_ref() {
+    // The frame the picture covers: the shown outline's grid (made before this, `advance_outline`;
+    // while a new one is made, the last one's), the one being made, or the one it would make.
+    let frame = match shown_outline(st).or(st.outline.as_ref()) {
         Some(o) => (o.origin, Vec2::new(o.size[0] as f32, o.size[1] as f32) * o.step),
         None => Outline::frame_for(loc.interior, loc.world, centre, feet[2], MAP.size(), scale),
     };
     // The one viewport both drawings paint from and the pointer is read in.
     let view = MapView::local(map_window(st, LOCAL), view::LocalProjection { centre, mag, scale, origin: frame.0, extent: frame.1 });
     let on_map = |x: f32, y: f32| view.place(x, y);
-    let outline = st.outline.as_ref().and_then(|o| {
+    let outline = shown_outline(st).and_then(|o| {
         let image = o.image.clone()?;
         let top_left = on_map(o.origin[0], o.origin[1]);
         let size = Vec2::new(o.size[0] as f32, o.size[1] as f32) * o.step * mag / scale;
         Some((image, Rect::from_corners(top_left, top_left + size)))
     });
-    let outline_texels = st.outline.as_ref().and_then(|o| Some((o.image.clone()?, Vec2::new(o.size[0] as f32, o.size[1] as f32))));
+    let outline_texels = shown_outline(st).and_then(|o| Some((o.image.clone()?, Vec2::new(o.size[0] as f32, o.size[1] as f32))));
     let extent = view.extent();
     let inside = |p: Vec2| p.x >= -MARKER && p.y >= -MARKER && p.x <= extent.x + MARKER && p.y <= extent.y + MARKER;
     let grid = ((centre[0] / model::CELL).floor() as i32, (centre[1] / model::CELL).floor() as i32);
@@ -4544,12 +4566,23 @@ mod tests {
             let texels = Vec2::new(o.size[0] as f32, o.size[1] as f32);
             st.outline = Some(o);
             let parts = local_map(&mut st, &game, None).world.unwrap();
-            assert_eq!(parts.outline, Some((handle, texels)));
+            assert_eq!(parts.outline, Some((handle.clone(), texels)));
+            // A pan far off it (#3326): the new grid's picture is not made yet, so the last one
+            // stays, in its own frame; once the new one is made, it is shown in its frame.
+            let old_origin = st.outline.as_ref().unwrap().origin;
             let moved = outline::Outline::new(interior, 1, [50000.0, -40000.0], 0.0, MAP.size(), p.scale);
             let new_origin = moved.origin;
-            st.outline = Some(moved);
+            st.outline_last = st.outline.replace(moved);
             let parts = local_map(&mut st, &game, None).world.unwrap();
-            assert_eq!((parts.outline, parts.view.local.unwrap().origin), (None, new_origin), "the new grid's frame, its picture not made yet");
+            assert_eq!((parts.outline, parts.view.local.unwrap().origin), (Some((handle.clone(), texels)), old_origin), "the last picture kept while the new one is made");
+            let made = Assets::<Image>::default().add(Image::default());
+            st.outline.as_mut().unwrap().image = Some(made.clone());
+            let parts = local_map(&mut st, &game, None).world.unwrap();
+            assert_eq!((parts.outline.map(|o| o.0), parts.view.local.unwrap().origin), (Some(made), new_origin), "the new picture, in the new grid's frame");
+            // Another floor (or place): nothing of the last one.
+            st.outline = Some(outline::Outline::new(interior, 1, [50000.0, -40000.0], 900.0, MAP.size(), p.scale));
+            let parts = local_map(&mut st, &game, None).world.unwrap();
+            assert_eq!(parts.outline, None, "another floor's grid, its picture not made yet");
         }
     }
 
