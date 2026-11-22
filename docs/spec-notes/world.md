@@ -1671,6 +1671,42 @@ Code: `engine/nvforever/src/underwater.rs` (`fog_bytes`, `DEEP_AT`).
   The Mojave fit's per-hour sun factors (0.9-1.2 at 07:36 against 0.5 at 09:06) lean that
   way but are noisy; not changed without a check against Mojave sunrise frames.
 
+### Live session `IMGS` traits, `SetCellImageSpace`, exterior `WTHR` fog, and GMSTs
+
+- **Image spaces (`SetImageSpaceTrait`, `SetCellImageSpace`)** [documented: GECK wiki
+  `GetImageSpaceTrait` / `SetImageSpaceTrait` traits `0..=32`, `SetCellImageSpace`;
+  design]:
+  - `fnv_world::imagespace::apply_image_space_traits` overlays session `SetImageSpaceTrait`
+    values onto an `IMGS` record's `Cinematic` grade: HDR (`0..=14`), Bloom (`15..=17`),
+    and Cinematic (`25..=32`, converting tint RGB traits `29..=31` from 0–255 to 0–1).
+    Traits `18..=24` (`GetHit` / `NightEye`) remain stored in `Game::traits` for script
+    readback (`GetImageSpaceTrait`) and have no rendered `Cinematic` field.
+  - `nvforever::world::cell_image_space` tracks `(streamer.interior, world.world,
+    game.image_space_sync_token())` — where the token carries a unique per-`Game` instance
+    ID and a monotonic `image_space_revision` bumped on `SetImageSpaceTrait` and
+    `SetCellImageSpace` — doing zero work on unchanged frames while immediately refreshing
+    `SkyState::interior_grade` (from `SetCellImageSpace` or authored `CELL XCIM`) and
+    `SkyState::image_space` (from `WRLD INAM`) without leaving the current cell. This is a
+    deliberate `[design]` live-refresh policy so location-based preset scripts updating the
+    active cell's `IMGS` in `OnCellEnter` or a main-loop callback take immediate effect.
+- **Exterior weather fog (`SetWeatherTraitNumeric` traits `15..=20`)** [documented: GECK
+  wiki `GetWeatherTraitNumeric` / `SetWeatherTraitNumeric` traits `15..=20` (day/night
+  near, far, power); design]:
+  - `nvforever::sky::sync_weather_fog` syncs session fog overrides from `Game::traits`
+    into `SkyState::weather_fog_overrides` keyed on `(game_instance_id,
+    weather_fog_revision)` (zero work on unchanged frames) and calls `SkyState::refresh()`.
+  - `SkyState::fog()` and `SkyState::fog_power()` evaluate `Weather::fog_at_with` and
+    `Weather::fog_power_at_with` in place (zero per-frame allocations) across both the
+    current and fading-out weather. Explicit console/CLI `SkyState::fog_override` retains
+    precedence.
+- **Game settings (`SetNumericGameSetting`, `SetStringSetting`)**:
+  - Vanilla numeric (`f*`, `i*`) and string (`s*`) GMST edits write directly to
+    `fnv_sim::World::setting_changes` and are visible live to `World::setting_f32`,
+    `World::setting_value`, and script getters. Non-vanilla shader/injector settings
+    authored for third-party D3D9 hooks (such as New Vegas Reloaded) are not ESM `GMST`
+    records and remain outside NVForever's clean-room charter; `SetNumericGameSetting`
+    returns `0` cleanly for unknown names.
+
 ## 7. Distant LOD
 
 Pre-built LOD ships per worldspace [observed: `Fallout - Meshes.bsa`, `Fallout -

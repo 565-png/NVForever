@@ -1388,12 +1388,33 @@ pub fn cell_lighting(
     if sky.interior != light { sky.set_interior(light); }
 }
 
-/// SetCellImageSpace (`fnv_game::game::FormChanges::cell_image_spaces`): an interior
-/// whose image space a script changed is graded with the new one, from when the cell
-/// loads after the call (entered again, or a save made in it loaded): the original
-/// shows a change to the cell the player is in only then [documented: GECK wiki
-/// SetCellImageSpace, notes]. Looked at on every travel (which graded the cell with
-/// its XCIM) and when the script runtime (with a loaded save's changes) becomes ready.
+/// Resolve an IMGS record with any live `SetImageSpaceTrait` session overrides from `game`.
+pub(crate) fn effective_image_space(
+    world: &WorldData,
+    game: Option<&fnv_game::Game<'_>>,
+    space: u32,
+) -> Option<fnv_world::imagespace::Cinematic> {
+    match game {
+        Some(g) => fnv_world::imagespace::image_space_with_traits(
+            world.lo,
+            world.schema,
+            space,
+            g.image_space_trait_overrides(fnv_sim::FormId(space)),
+        ),
+        None => fnv_world::imagespace::image_space(world.lo, world.schema, space),
+    }
+}
+
+/// Key tracking the last applied interior cell, worldspace, and `(game_instance_id, revision)`
+/// for [`cell_image_space`] so unchanged frames do zero work.
+type ImageSpaceSyncKey = (Option<u32>, u32, Option<(u64, u64)>);
+
+/// SetCellImageSpace (`fnv_game::game::FormChanges::cell_image_spaces`) and live
+/// `SetImageSpaceTrait` (`fnv_game::nvse_traits::TraitState`): re-evaluates the active
+/// interior cell's `sky.interior_grade` (from `SetCellImageSpace` or authored `CELL XCIM`)
+/// and the exterior worldspace's `sky.image_space` (`WRLD INAM`) with any live session
+/// `IMGS` trait overrides whenever travel occurs, the game instance changes, or the
+/// monotonic image-space revision advances. Does zero work on unchanged frames.
 /// Runs after [`travel`].
 pub fn cell_image_space(
     mut travels: MessageReader<nvf_play::Travel>,
@@ -1401,23 +1422,40 @@ pub fn cell_image_space(
     world: Res<WorldData>,
     script: Option<Res<nvf_play::script::ScriptState>>,
     mut sky: ResMut<crate::sky::SkyState>,
-    mut seen: Local<Option<(Option<u32>, bool)>>,
+    mut seen: Local<Option<ImageSpaceSyncKey>>,
 ) {
-    let rt = script.as_deref().and_then(|s| s.rt.as_ref());
-    let key = (streamer.interior, rt.is_some());
+    let game = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
+    let key = (streamer.interior, world.world, game.map(|g| g.image_space_sync_token()));
     let travelled = travels.read().count() > 0;
     if *seen == Some(key) && !travelled {
         return;
     }
     *seen = Some(key);
-    let (Some(cell), Some(rt)) = (streamer.interior, rt) else { return };
-    let Some(&space) = rt.game.forms.cell_image_spaces.get(&fnv_sim::FormId(cell)) else { return };
-    match fnv_world::imagespace::image_space(world.lo, world.schema, space.0) {
-        Some(grade) => {
-            info!("cell image space: {cell:#010x} graded with {:#010x} (SetCellImageSpace)", space.0);
-            sky.interior_grade = Some(grade);
+    if let Some(cell) = streamer.interior {
+        let scripted = game.and_then(|g| g.forms.cell_image_spaces.get(&fnv_sim::FormId(cell)).map(|f| f.0));
+        let space = scripted.or_else(|| fnv_world::lighting::cell_image_space(world.lo, world.schema, cell));
+        match space {
+            Some(id) => match effective_image_space(&world, game, id) {
+                Some(grade) => {
+                    if sky.interior_grade != Some(grade) {
+                        if scripted.is_some() {
+                            info!("cell image space: {cell:#010x} graded with {id:#010x} (SetCellImageSpace)");
+                        }
+                        sky.interior_grade = Some(grade);
+                    }
+                }
+                None => warn!("cell image space: {id:#010x} for {cell:#010x} is not an image space the grade reads"),
+            },
+            None => sky.interior_grade = None,
         }
-        None => warn!("cell image space: {:#010x} for {cell:#010x} is not an image space the grade reads", space.0),
+        return;
+    }
+    let world_space = crate::sky::worldspace_image_space_id(&world);
+    sky.world_image_space_id = world_space;
+    let next = world_space.and_then(|id| effective_image_space(&world, game, id));
+    if sky.image_space != next {
+        sky.image_space = next;
+        sky.refresh();
     }
 }
 

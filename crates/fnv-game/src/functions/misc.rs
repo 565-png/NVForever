@@ -655,7 +655,9 @@ pub fn set_cell_image_space(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value,
     if g.data.sig(space) != Some(*b"IMGS") {
         return Err(format!("{} is not an image space", g.data.name(space)));
     }
-    g.forms.cell_image_spaces.insert(cell, space);
+    if g.forms.cell_image_spaces.insert(cell, space) != Some(space) {
+        g.traits.note_image_space_change();
+    }
     none()
 }
 
