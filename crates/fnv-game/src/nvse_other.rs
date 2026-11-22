@@ -85,6 +85,8 @@ pub struct OtherState {
     pub package_lists: HashMap<FormId, Vec<FormId>>,
     /// SetFlagsLow/High's record flags.
     pub flags: HashMap<FormId, u32>,
+    /// SetActorBaseFlagsLow/High's 32-bit ACBS flags, by actor base form.
+    pub acbs_flags: HashMap<FormId, u32>,
     /// Con_SCOF's file name (nothing is written).
     pub scof: Option<String>,
     /// AddAnimation's and DelAnimation's lists, by actor base.
