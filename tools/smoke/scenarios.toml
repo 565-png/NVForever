@@ -28208,6 +28208,21 @@ order = [[
 ]]
 
 [[scenario]]
+name = "cjk-font-fallback"
+source = "[design] docs/spec-notes/fonts.md §§2.3 and 3: ordinary interface text draws missing CJK characters with an external font in both Original and Sharp mode."
+note = "Set NVF_CJK_SMOKE_HOME to a disposable writable home with [Interface] CjkFontPath in its NVForever.ini, pointing to a CJK font on your system. Pass --out with a directory outside the checkout for the screenshots. The language file is an authored smoke fixture."
+areas = ["settings", "ui"]
+paths = ["crates/fnv-font/", "engine/nvf-play/src/cjk_font.rs", "engine/nvf-play/src/interface.rs", "engine/nvforever/src/setup.rs", "tools/smoke/fixtures/cjk-lang/"]
+requires = ["NVF_CJK_SMOKE_HOME"]
+env = { NVFOREVER_HOME = "{env:NVF_CJK_SMOKE_HOME}", NVF_LANG_DIR = "{repo}/tools/smoke/fixtures/cjk-lang", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:20", NVF_PLAY_TEST_SETTINGS = "10.5:menu-font=Sharp,11:menu-font=Original,12:language=CJK Smoke,15:menu-font=Sharp", NVF_PLAY_TEST_SHOTS = "14:cjk-original.png,17:cjk-sharp.png" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 20
+expect = [{ text = "interface: CJK fallback font ", count = 1, label = "the configured font is read once across both menu modes" }]
+order = [["settings: menu-font Original", "language: cjk-smoke", "settings: menu-font Sharp"]]
+forbid = ["interface: CjkFontPath cannot be read as a font:"]
+manual = "cjk-original.png and cjk-sharp.png: the settings rail reads 'Aa 字形检查，继续。' with visible CJK and Latin glyphs on the same baseline"
+
+[[scenario]]
 name = "language-choice"
 source = "#1443: the settings page's Language row lists the languages found in the lang folders (NVF_LANG_DIR here, a made-up one), takes one at once and draws the page again; a broken language file is skipped with a warning"
 areas = ["settings"]
@@ -31745,6 +31760,22 @@ expect = [
   { re = 'npc combat summary.*?(?P<n>\d+) blows', range = [7, 16], label = "the ghoul keeps striking while the player backs away: about a blow a second over 11 s of fighting (3 without the change)" },
   { re = 'npc combat summary.*the player was hit (?P<n>\d+) times', range = [6, 16], label = "and its blows land" },
   { re = 'VCrTier1FeralGhoul1A 0xFF000000: (runs at|stops and faces) the player', max = 12, label = "it keeps the player's pace instead of stopping and setting off again (19 pairs in 7 s without the change)" },
+]
+
+[[scenario]]
+name = "melee-chases-walking-player"
+source = "#3256 (owner's playtest 2026-11-21): a chaser faster than a player backing away at a walk stopped and set off again every quarter of a second. Its target's speed was first measured evened with the standing it began with (69 units/s read as 34.5, under the 40 that counts as moving), and after a short run from standing was not measured at all before the way ended, so the target counted as standing and the chaser held (fnv-ai alert.rs: Drift::on, the fight's keeps_pace)"
+note = "melee-chases-backing-player's ground and ghoul; from 6 s to 14 s the player walks backwards (69 units/s). On main 069ef9bde (2026-11-21): 47 stops and starts for the ghoul (76 a cazador, 78 a gecko, 56 a person with a lead pipe), 10 blows of which 9 land; with the change 3 (5, 4, 4) and 10 of 10"
+areas = ["combat", "creatures", "ai"]
+paths = ["crates/fnv-ai/src/alert.rs", "engine/nvforever/src/npc_combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_CONSOLE = "1:killall;1.3:close", NVF_PLAY_TEST_LOOK = "2:75:0", NVF_PLAY_TEST_SCRIPT = "3:call:player:PlaceAtMe:VCrTier1FeralGhoul1A:1,3.2:moveto:0xFF000000:player:580:155:0,3.5:combat:0xFF000000:player", NVF_PLAY_TEST_MOVE = "6:-1:0:walk,14:0:0" }
+args = ["--cell", "Goodsprings", "--pos=39511,-116487,6180", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 15
+expect = [
+  { text = "test aid: movement keys forward -1 right 0", label = "the player backs away" },
+  { re = 'npc combat summary.*?(?P<n>\d+) blows', range = [7, 16], label = "the ghoul strikes about once a second while the player walks backwards (10 on main and with the change)" },
+  { re = 'npc combat summary.*the player was hit (?P<n>\d+) times', range = [7, 16], label = "and its blows land (9 on main, 10 with the change)" },
+  { re = 'VCrTier1FeralGhoul1A 0xFF000000: (runs at|stops and faces) the player', max = 12, label = "it keeps the walking player's pace instead of stopping and setting off again (47 on main, 3 with the change)" },
 ]
 
 [[scenario]]
