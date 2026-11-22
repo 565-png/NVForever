@@ -134,20 +134,24 @@ execution and complete Casino Rewards Fix compatibility remain separate open che
 level, with an integer parameter in 0..4. Source:
 [GECK](https://geckwiki.com/index.php?title=SetCasinoWinningsLevel).
 
-[design] Engine design choice: source-name calls replace the existing saved
-per-casino level read by GetCasinoWinningsLevel and the casino opening/ban consumer,
-and return 0. Subsequent rounds retain the existing monotonic advancement rule.
-Other casinos and the no-casino-bans option retain their existing behavior.
+[observed: original FNV 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.3 + Stewie's Tweaks v1005,
+two-pass `bNoCasinoBans` 0 vs 1 live capture (2026-11-22, #3474)] On an untouched casino
+(Atomic Wrangler at `0` winnings, never entered in the player's casino list),
+`SetCasinoWinningsLevel` 1..4 is a no-op (both `GetCasinoWinnings` and
+`GetCasinoWinningsLevel` remain `0`). On an already-tracked casino (The Tops,
+`max_winnings = 10000`, after `SetCasinoWinnings 10000`), `SetCasinoWinningsLevel 2`
+sets net winnings to `5000` (`level * max_winnings / 4`) and level to `2`, and
+`SetCasinoWinningsLevel 4` sets net winnings to `10000` and level to `4` (read as `3`
+under `bNoCasinoBans = 1`).
 
-[hypothesis] The setter leaves net earnings unchanged, so lowering a level does not
-bypass an earnings-based ban. The documentation does not say whether the original
-setter touches earnings; this is unobserved.
-
-[design] Engine design choice: invalid casino forms, missing arguments, nonfinite
-numbers and nonintegral/out-of-range levels fail with an engine error without
-changing casino state. Native invalid-input behavior and interaction with the
-original game's quest scripts remain unobserved. Source-name admission does not
-admit native numeric encoding.
+[design] Engine design choice: source-name calls return `0`, treat an untouched casino
+as a no-op, and on a tracked casino update both saved standing and net earnings to
+`level * max_winnings / 4` (using the effective session max winnings). Subsequent rounds
+retain the existing monotonic advancement rule. Invalid casino forms, missing arguments,
+nonfinite numbers and nonintegral/out-of-range levels fail with an engine error without
+changing casino state. Native invalid-input behavior and interaction with the original
+game's quest scripts remain unobserved. Source-name admission does not admit native
+numeric encoding.
 
 - The player's earnings at each casino are kept with the game: the net chips won there
   over every round [documented: GECK wiki SetCasinoBan, GetCasinoWinnings].
