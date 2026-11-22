@@ -72,7 +72,7 @@ const SKY_INNER: f32 = 0.5 * DOME_RADIUS;
 pub const SKY_DEPTH_FROM: f32 = 0.9 * SKY_INNER;
 /// Distance of the sun and moon discs and the sun's size [hypothesis: about 4 degrees
 /// across].
-const SUN_DISTANCE: f32 = 0.8 * SKY_INNER;
+pub(crate) const SUN_DISTANCE: f32 = 0.8 * SKY_INNER;
 const SUN_SIZE: f32 = 0.07 * SUN_DISTANCE;
 /// Angular size (full width, degrees) over which the sun texture is spread around the
 /// sun and the factor on its colour, and the same for the glare texture [hypothesis,
@@ -88,6 +88,9 @@ const MOON_SIZE: f32 = 2.4 * SUN_SIZE;
 /// Sun elevations (degrees) over which the stars and the moon fade in [hypothesis].
 const STARS_FADE: (f32, f32) = (0.0, -12.0);
 const MOON_FADE: (f32, f32) = (5.0, -6.0);
+/// The moon disc is hidden while its direction's height (Bevy y) is below this
+/// (`update_night_sky`; night_sky.rs follows the same rule).
+pub(crate) const MOON_HIDDEN_Y: f32 = -0.1;
 /// How far south of the east-west line the sun's path runs, in radians (9°) [hypothesis,
 /// fitted to the original game's sun positions; fnv_world::sky::sun_direction].
 const SUN_SOUTH: f32 = 9.0 * PI / 180.0;
@@ -246,6 +249,15 @@ pub struct SkyLight {
     pub sun: Vec4,
     /// rgb: sun colour × glare strength (linear); w: tan of half the glare's size.
     pub glare: Vec4,
+    /// Night sky detail (night_sky.rs; zero with its switch off, and on every part it does not
+    /// touch): xyz where the moon disc is drawn from the sky's centre (the main camera, which
+    /// every sky part follows: the direction × [`SUN_DISTANCE`]), w the Henyey-Greenstein g of
+    /// the moon's lobe (the dome's glow, the clouds' moonlight).
+    pub moon: Vec4,
+    /// Night sky detail, by part: on the stars x the twinkle's amplitude and y its lattice
+    /// cells per unit of direction; on the dome and clouds rgb the moon term's gain and w its
+    /// cap (0: none).
+    pub night: Vec4,
 }
 
 impl MaterialExtension for SkyDisplay {
@@ -1122,6 +1134,9 @@ impl SkyState {
             sun_dir: dir.extend(0.0),
             sun: (sun_col * SUN_STRENGTH).extend(half_tan(SUN_SIZE_DEG)),
             glare: (sun_col * GLARE_STRENGTH * glare).extend(half_tan(GLARE_SIZE_DEG)),
+            // Written by night_sky.rs alone (update_sky keeps them).
+            moon: Vec4::ZERO,
+            night: Vec4::ZERO,
         }
     }
 
@@ -1300,6 +1315,22 @@ fn find_weather(world: &WorldData, name: &str) -> Option<u32> {
 #[derive(Component)]
 pub struct SkyDome(Vec<[f32; 3]>);
 
+impl SkyDome {
+    /// The weights per vertex, in the mesh's vertex order (aerial.rs reads the dome's own
+    /// weights by elevation).
+    pub fn weights(&self) -> &[[f32; 3]] {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+impl SkyDome {
+    /// A dome without vertex weights (night_sky.rs's system test).
+    pub(crate) fn for_test() -> Self {
+        SkyDome(Vec::new())
+    }
+}
+
 /// One of the four cloud layers (WTHR layer index) in one of two sets: the set showing
 /// the current weather and the one fading out the previous weather.
 #[derive(Component)]
@@ -1311,6 +1342,12 @@ pub struct CloudLayer {
 }
 
 impl CloudLayer {
+    /// Layer 0 of set 0, showing nothing yet (night_sky.rs's system test).
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        CloudLayer { layer: 0, set: 0, shows: None }
+    }
+
     /// The WTHR cloud layer (0-3) this dome shape draws (cloud_shadows.rs).
     pub(crate) fn layer(&self) -> usize {
         self.layer
@@ -2023,7 +2060,7 @@ pub fn update_night_sky(
     }
     for (mut t, m, mut disc) in &mut moon {
         let moon_dir = -sun_dir;
-        if indoors || moon_vis <= 0.0 || moon_dir.y < -0.1 {
+        if indoors || moon_vis <= 0.0 || moon_dir.y < MOON_HIDDEN_Y {
             t.scale = Vec3::ZERO;
             continue;
         }
@@ -2148,6 +2185,7 @@ pub fn update_sky(
     mut materials: ResMut<Assets<SkyMaterial>>,
     mut flashed: Local<bool>,
     mut dome_shown: Local<Option<DomeShown>>,
+    mut last_interior_fog: Local<Option<(f32, f32, f32)>>,
     screen: Option<Res<crate::imagespace::ScreenModifiers>>,
     tweaks: Option<Res<nvf_play::tweaks::TweakSettings>>,
 ) {
@@ -2190,9 +2228,14 @@ pub fn update_sky(
             light.illuminance = PI * unit * l.directional_fade.clamp(0.0, 1.0) * INTERIOR_DIRECTIONAL_SHARE;
         }
         apply_cell_fog(&sky, &mut fog, emissive_mod, tweaks.as_ref().is_some_and(|t| t.no_interior_fog));
-        info!("interior lighting: fog {:.0}..{:.0} power {:.2}", l.fog_near, l.fog_far, l.fog_power);
+        let fog_key = (l.fog_near, l.fog_far, l.fog_power);
+        if *last_interior_fog != Some(fog_key) {
+            *last_interior_fog = Some(fog_key);
+            info!("interior lighting: fog {:.0}..{:.0} power {:.2}", l.fog_near, l.fog_far, l.fog_power);
+        }
         return;
     }
+    *last_interior_fog = None;
     let c = &sky.climate;
 
     // Follow the camera every frame; clouds drift with their ONAM speeds. The dome is
@@ -2228,7 +2271,8 @@ pub fn update_sky(
     for id in ids {
         let Some(m) = materials.get(id) else { continue };
         let old = m.extension.light;
-        let new = SkyLight { params: light.params.with_y(old.params.y).with_z(old.params.z).with_w(old.params.w), ..light };
+        // The night sky detail's fields are night_sky.rs's own: kept as they are.
+        let new = SkyLight { params: light.params.with_y(old.params.y).with_z(old.params.z).with_w(old.params.w), moon: old.moon, night: old.night, ..light };
         let same = |a: Vec4, b: Vec4| a.abs_diff_eq(b, 1e-3);
         if same(old.params, new.params) && same(old.glow, new.glow) && same(old.sun_dir, new.sun_dir) && same(old.sun, new.sun) && same(old.glare, new.glare) {
             continue;
