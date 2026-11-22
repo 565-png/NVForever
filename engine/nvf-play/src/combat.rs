@@ -2745,7 +2745,7 @@ fn actor_ref(a: ActorId) -> u32 {
 
 /// The impact a shot's blood leaves on the world ([`world_blood`]): the struck body part's
 /// blood spurt / decal impact data set (BPTD; the severable one, else the explodable
-/// [hypothesis: observer check 259]) [documented: GECK wiki Body Part; ITR:OnWoundSpray,
+/// [hypothesis: observer check 263]) [documented: GECK wiki Body Part; ITR:OnWoundSpray,
 /// "the body-part IPCT resolved for the hit limb"], its impact for the actor's Impact
 /// Material Type. Not the weapon's impact data set, whose organic slot may hold another
 /// effect (a flamer's scorch). None for a hit on the held weapon or a gore piece, a
