@@ -3649,6 +3649,30 @@ already talking takes over at once, same topic or another; nothing is queued or 
      on the ground below the target in the open (a frame after each shot does it); the
      splatters' size tells the spurt's decal (`BloodSpoutRedData`, 70-90 wide) from the
      bullet's (`BallisticOrganicImpact`, 12-19).
+     **Partly answered 2026-11-22** [observed: base game + xNVSE 6.4.9 + JIP LN, plugin
+     version 10, save `nvfdoc`, first person, the window in front; job `o263_blood_10`].
+     Setup:
+     - `fCombatEnvironmentBloodChance` read 0.75.
+     - The player, at the spot `coc GSGeneralStore` arrives at (near the door), aimed at
+       Chet's chest (his position + 95, eye + 120) and fired a BB gun with
+       `TapControl 4`, 10 times. `tgm` and `tcai` were on, and a screenshot was taken
+       45 loops after each shot.
+     - Chet was then moved outside onto the road at (-18, 0), 200 units in front of the
+       player, and shot 10 more times.
+     - Chet's health shows which shots hit (0.4–0.5 off per hit). The aim was a
+       script's, not a person's.
+     Results:
+     - **Store: one splatter in 6 hits.** Hits fell on shots 2, 3, 5, 6, 8 and 9. After
+       shot 6 a single cluster of about five dark-red drops appeared on the plank wall
+       just right of Chet (from the shooter), about level with his chest. No other shot
+       left a mark visible at 1280 × 720 from about 580 units, on the wall or the
+       counter.
+     - **Open street: blood on the ground below the target.** The road was clean before.
+       After the first street shot, a hit, one red splatter lay on the road at Chet's
+       feet. The line of fire was level there (pitch −0.1°), with open road beyond.
+       Chet walked away down the road during the next shots, so whether later hits mark
+       the ground was not seen.
+     - **Not measured: the splatters' size**, so which decal they are is still open.
 
 ## Added 2026-11-21 (is the HUD's condition bar see-through, #3309)
 
@@ -3731,3 +3755,27 @@ already talking takes over at once, same topic or another; nothing is queued or 
      there. In the original, by Goodsprings (the nettles south of the town, 0016AF22 at
      -68223, -3810), harvest one and not another, then hold Z on each; also shoot or throw
      a grenade at one. Say whether either moves.
+     **Partly answered 2026-11-22** [observed: base game + xNVSE 6.4.9 + JIP LN, plugin
+     version 10, save `nvfdoc`, first person, the window in front; jobs
+     `o278_grab_plants` and `o278b_grab_broc`]. For each plant, the player stood 70
+     units west of it facing east. At pitches 30–82° in 4° steps the job read
+     `GetCrosshairRef`, held the grab control (`GetControl 27`: key 44, Z) for 40 game
+     loops while lifting the view 25°, read JIP `GetPlayerGrabbedRef` and the plant's
+     position, then released the key. One of each pair was first harvested with
+     `Activate player 1`. A screenshot confirmed this for the nettle: no prompt on the
+     picked one, "E) Pick White Horse Nettle" on the other.
+     - **White Horse Nettle: yes, it can be grabbed, harvested or not.** Both 0016AF22
+       (harvested) and 0016C86D (not) were named by `GetPlayerGrabbedRef` at pitches 30°
+       and 38°. While held they rose 20–26 units and shifted 2–10 sideways, and they
+       stayed displaced after release.
+       - At 34° and 42° the crosshair named the nettle but nothing was grabbed. From 46°
+         on, no grab took for either nettle.
+       - After the 30°–38° grabs, the harvested nettle was read at z 7932–7941, about
+         170 units below where it was placed, through the ground. At the 42° release it
+         read its placed position again.
+     - **Broc Flower: no grab.** Both 0016D423 (harvested) and 0016D425 (not), in cell
+       (-15, -1), were named by the crosshair at 30–70°. `GetPlayerGrabbedRef` stayed 0
+       at every aim, and neither plant moved.
+     - **Not answered: shot or grenade.** The frag explosion (`placeatme 179DA` after
+       `prid`) did not go off in either run: no blast in the screenshots, and the first
+       run crashed at that step.
