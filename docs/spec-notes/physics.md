@@ -2483,6 +2483,35 @@ just above the surface. A human check in the game would settle the depth: walk i
 Mead at Boulder Beach (east from (56992, 37536)) and note where swimming starts. The bed
 falls about 12°, 44 below S at 256 units out, 140 at 768.
 
+**Actors standing on the bed** (2026-11-21, #2980). Actors give the controller no
+vertical input, so the rule above leaves an actor whose character is live on a bed deeper
+than `wade_depth` swimming from that character's first step, held at the bed with no
+buoyancy, and it played its swimming idle (`mirelurkking\swimidle.kf` for a lakelurk)
+whenever it stood still there. Only an actor on its way keeps a character: `residents.rs`
+takes it from an actor that stands idle, and from a fighter that holds its ground in
+range (`fnv_ai` alert, `Search::Holding`, activity There) unless an attack carries it;
+such an actor plays its standing set whatever the water. A swimmer stands still with a
+character only for moments (waiting at the end of its way for a target that moves). Whether this swimming idle is the T-pose reported for idle lakelurks
+in #2980 is therefore not shown [hypothesis]; the pose watch (test aid
+`NVF_PLAY_TEST_POSE_WATCH`) and the base layer warning (`actor base layer fault`) report
+what a lakelurk plays. The physics is unchanged (the player's and every swimmer's depths
+stay as above). The animation reads the swimming state otherwise: an actor whose
+character swims with its feet within 2 units of the support under them
+(`Character::ground_gap`, 0 against the bed, at least 9 for a swimmer floating at
+`float_depth` over a bed deep enough to swim on), standing still (slower than
+`STAND_SPEED`, no walk or run playing) and with its stop faded into the swimming idle,
+plays its standing clips; setting off, it walks on its standing walk until that has faded
+in and then changes to the swimming walk, so no clip still showing is cut off (and while
+such a change of set fades a creature's walk waits for the fade's end; other changes of
+set start it at once as before); moving, it swims
+on its swimming clips as before
+(`engine/nvforever/src/swimming.rs`, `rests_now`) [design]. "Swimming is when your feet do
+not touch solid ground" [documented: GECK wiki fSwimRadiationDamageMult]; how the original
+poses such an actor is observer check 269 [hypothesis]. Smoke `lakelurk-idle-pose` (idle,
+no character) and `lakelurk-rests-on-bed` (following the player in, with one; it depends
+on a lakelurk standing still while it keeps its character, so its checks are marked
+known failing until a run shows one).
+
 **Placed water** (2026-10-08) [observed: the masters and `Fallout - Meshes.bsa`, read-only].
 The reference in `NVDLC03SLH2OINT` is REFR 0x03014467, base PWAT 0x03014465
 (`NVDLC03CleanWater2048x2048`: OBND ±1024 × ±1024 × 0, MODL
