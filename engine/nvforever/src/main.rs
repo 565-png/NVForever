@@ -1386,8 +1386,17 @@ fn main() -> AppExit {
         },
         None => None,
     };
+    let bos_sources: Vec<(String, String)> = game
+        .vfs
+        .paths(|p| p.starts_with("baseobjectswapper\\") && p.ends_with(".ini"))
+        .into_iter()
+        .filter_map(|p| {
+            let bytes = game.vfs.read(&p)?.ok()?;
+            Some((p, String::from_utf8_lossy(&bytes).into_owned()))
+        })
+        .collect();
     let t0 = std::time::Instant::now();
-    let mut world = match WorldData::open(&args.esm_schema, opened, &args.world) {
+    let mut world = match WorldData::open(&args.esm_schema, opened, &args.world, bos_sources) {
         Ok(w) => w,
         Err(e) => return fail(e),
     };

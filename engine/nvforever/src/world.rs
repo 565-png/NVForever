@@ -83,13 +83,31 @@ pub fn open_plugins(data_dir: &Path, mods: &[PathBuf], names: &[String]) -> Open
 }
 
 impl WorldData {
-    pub fn open(schema_dir: &Path, opened: OpenedPlugins, world: &str) -> Result<WorldData, String> {
+    pub fn open(schema_dir: &Path, opened: OpenedPlugins, world: &str, bos_sources: Vec<(String, String)>) -> Result<WorldData, String> {
         let schema: &'static EsmSchema =
             Box::leak(Box::new(EsmSchema::load_dir(schema_dir).map_err(|e| format!("{}: {e}", schema_dir.display()))?));
         let OpenedPlugins { plugins, dropped: dropped_plugins } = opened;
         let plugins: &'static [EsmPlugin] = Box::leak(plugins.into_boxed_slice());
         let lo: &'static LoadOrder<'static> = Box::leak(Box::new(LoadOrder::new(plugins).map_err(|e| e.to_string())?));
-        let index: &'static WorldIndex = Box::leak(Box::new(WorldIndex::build(lo, schema)));
+        let mut built = WorldIndex::build(lo, schema);
+        if !bos_sources.is_empty() {
+            let bos = fnv_world::BosTable::load_from_sources(
+                lo,
+                bos_sources.iter().map(|(name, text)| (name.as_str(), text.as_str())),
+            );
+            let rep = bos.report();
+            if rep.files_loaded > 0 {
+                info!(
+                    "base object swapper: {} file(s), {} form rule(s), {} reference rule(s), {} skipped",
+                    rep.files_loaded,
+                    rep.form_rules,
+                    rep.reference_rules,
+                    rep.total_skipped(),
+                );
+            }
+            built.apply_bos(bos);
+        }
+        let index: &'static WorldIndex = Box::leak(Box::new(built));
         let w = index.world_by_name(world).ok_or_else(|| format!("no worldspace {world}"))?;
         let imposters: &'static ImposterRegions = Box::leak(Box::new(ImposterRegions::build(lo, schema)));
         let weather_regions: &'static [fnv_world::sky::RegionWeather] = Box::leak(fnv_world::sky::region_weathers(lo, schema).into_boxed_slice());
@@ -908,10 +926,10 @@ pub(crate) fn read_ahead_cells(world: &WorldData, ahead: &mut ReadAhead, area: A
             let land = cell.land;
             let around = world.land_ids(c);
             let (spec, draw) = (nvf_play::smooth_terrain::spec(), crate::terrain_lod::first_draw());
-            let (lo, schema, hide) = (world.lo, world.schema, hide.to_vec());
+            let (lo, schema, index, hide) = (world.lo, world.schema, world.index, hide.to_vec());
             let task = nvf_assets::read_pool::read_pool().spawn(async move {
                 CellAhead {
-                    models: cell_models(lo, schema, &refs, &hide, filter),
+                    models: cell_models(lo, schema, index, &refs, &hide, filter),
                     terrain: land.and_then(|l| prepare_terrain(lo, schema, l, c, tile, around, spec, draw)),
                     ready: false,
                 }
@@ -952,11 +970,11 @@ pub(crate) fn cell_ready(world: &WorldData, ahead: &mut ReadAhead, c: (i32, i32)
 /// The distinct models (path, alternate textures) the references `refs` draw as static
 /// models (`spawn_model`) as `filter` chooses them: what a cell's read-ahead prepares.
 /// Runs on a worker thread.
-fn cell_models(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], hide: &[String], filter: ModelFilter) -> Vec<(String, Vec<AltTexture>)> {
+fn cell_models(lo: &LoadOrder, schema: &EsmSchema, index: &WorldIndex, refs: &[u32], hide: &[String], filter: ModelFilter) -> Vec<(String, Vec<AltTexture>)> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for &r in refs {
-        let Some(p) = placement(lo, schema, r) else { continue };
+        let Some(p) = index.placement(lo, schema, r) else { continue };
         if p.imposter || !p.draws_base_model() || !enabled(lo, schema, &p, 0) {
             continue;
         }
@@ -1627,7 +1645,7 @@ fn spawn_ref(
     if managed.contains(&r) {
         return;
     }
-    let Some(p) = placement(world.lo, world.schema, r) else { return };
+    let Some(p) = world.index.placement(world.lo, world.schema, r) else { return };
     let base: Option<BaseObject> = p.base.and_then(|b| base_object(world.lo, world.schema, b));
     let skip_type = |stats: &mut StreamStats| {
         stats.refs_skipped_type += 1;
@@ -2104,7 +2122,7 @@ pub(crate) fn blend_backfill(
     }
     let (mut tracked, mut convertible) = (0, 0);
     for (r, drawn) in by_ref {
-        let Some(p) = placement(world.lo, world.schema, r) else { continue };
+        let Some(p) = world.index.placement(world.lo, world.schema, r) else { continue };
         let Some(base) = p.base.and_then(|b| base_object(world.lo, world.schema, b)) else { continue };
         if crate::mesh_terrain_blend::BaseType::of(&base.sig).is_none() {
             continue;

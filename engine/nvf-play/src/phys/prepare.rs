@@ -19,7 +19,7 @@ use fnv_nif::file::NifFile;
 use fnv_nif::scene::Decoded;
 use fnv_phys::{ref_collision_with, ModelCollision, PhysParams, PreparedRef, PreparedTerrain, RefCollisionOptions, RefPose};
 use fnv_world::land_surface::{block_of, load_heights, LandIds, Surface, SurfaceSpec};
-use fnv_world::placed::{base_object, placement};
+use fnv_world::placed::base_object;
 use fnv_world::Placement;
 use nvf_assets::GameData;
 use std::collections::HashMap;
@@ -336,7 +336,7 @@ pub fn cell(src: &Source, job: &Job) -> Prepared {
     }
     for &r in &job.refs {
         let t = Instant::now();
-        let mut pl = placement(d.lo, d.schema, r).map(|pl| at_pose(pl, job.pose_of(r)));
+        let mut pl = d.index.placement(d.lo, d.schema, r).map(|pl| at_pose(pl, job.pose_of(r)));
         if let Some(s) = job.scale_of(r) {
             pl = pl.filter(|_| s > crate::sim::MIN_DRAWN_SCALE).map(|mut pl| {
                 pl.scale = s;
