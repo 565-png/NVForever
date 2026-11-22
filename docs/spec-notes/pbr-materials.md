@@ -882,11 +882,12 @@ addition of NVForever's own until observer check 268 answers it [hypothesis: it 
   base, on layers drawn over the folded ones or on a placed object never passes as "still".
   What the scenarios claim [design]: at the grazing pose, `changed` (or `moved`, when one
   translation explains it): a change the switch alone makes (the two shots with it off agree)
-  that decorrelates the texture at the centre, A-B and B-C at least 4 levels, 8 times A-C and
-  0.4 of the texture's spread. Not the direction: relief over the generated ridges warps and
+  that decorrelates the texture at the centre: the normalised cross-correlation (mean
+  brightness and contrast taken out, so a brightening or a contrast change alone does not
+  count) of A with B and of B with C at most 0.7, A with C at least 0.98. Not the direction: relief over the generated ridges warps and
   stretches the texture rather than sliding it, so the best-fit translation is logged as
-  information only. Head-on, `still`: no common translation at the view's centre and a change
-  of at most 0.3 of the texture's spread; not an unchanged picture, since the measured box
+  information only. Head-on, `still` (one rule): no fitted translation at all at the view's
+  centre, a change of at most 0.3 of the texture's spread, A-C within its limits; not an unchanged picture, since the measured box
   reaches about 2 degrees off the vertical, where the march at depth 0.08 still moves a sunk
   texel by a few pixels, radially, and the marched relief changes what shows at ridge edges.
   `terrain-parallax-ground-pack-off` (the switch off, the pack mounted) wants no
@@ -896,9 +897,15 @@ addition of NVForever's own until observer check 268 answers it [hypothesis: it 
   cc1ee98ea on the aid's spot (-71552, 3200) in cell (-18, 0), shifted share 0.88 to 0.92
   under the centre: the ridge grid in strong relief with the switch on and none with it off;
   grazing A-B 12.29, A-C 0.10, B-C 12.29 levels on a contrast of 14.1, translation (0, 0);
-  head-on A-B 5.02, A-C 1.02 on 32.5; held off 0.06 / 0.10 and 1.65 / 1.02.] The limits are
-  an engineering policy set from those numbers with margins (the grazing change would pass at
-  half its size, the head-on one at about twice): `terrain_parallax_ab.rs`.
+  head-on A-B 5.02, A-C 1.02 on 32.5; held off 0.06 / 0.10 and 1.65 / 1.02. The run on
+  555ace098 repeated them; its saved shots' correlations A-B / A-C: grazing 0.231 / 1.000,
+  head-on 0.945 / 0.998, held off 1.000 / 1.000 and 0.991 / 0.998.] The limits are an
+  engineering policy set from those numbers with margins (the grazing change would pass at
+  three times its correlation, the head-on one at about twice its change):
+  `terrain_parallax_ab.rs`. The cover under the centre is an estimate (the meshes'
+  interpolation of the painted opacities on the stored triangles, layer alpha taken as 1,
+  layers the renderer leaves out skipped), so its limit (half) leaves a margin; the spot
+  itself is chosen at vertices, where no interpolation enters.
 - **Not done in stage 1** (owed): a passing run of the two ground-pack scenarios; the
   frame-time cost with and without the switch at a ground-heavy and a layer-heavy place;
   before/after pictures with a ground pack (the readback aid saves its shots); the base's own

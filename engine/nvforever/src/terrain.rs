@@ -777,7 +777,11 @@ impl CellCover {
                 .and_then(|f| cache.folded.get(&(name(base), f, shader_tile > 0.0)))
                 .and_then(|h| materials.get(h))
                 .map(|m| m.extension.height_bits());
-            QuadCover { grids: layers.iter().map(|l| alpha_grid(l)).collect(), folded, bits }
+            // The folded layers, then those drawn on their own over them: only the ones the
+            // cell made a material for (`quadrant_draws` leaves out a layer whose texture
+            // set has no diffuse or whose diffuse does not load), by their rank.
+            let over = layers.iter().enumerate().skip(folded).filter(|(rank, l)| name(l.texture).is_some_and(|t| cache.layer.contains_key(&(t, *rank)))).map(|(_, l)| *l);
+            QuadCover { grids: layers.iter().take(folded).copied().chain(over).map(alpha_grid).collect(), folded, bits }
         });
         Some(CellCover { grid, quads })
     }
@@ -812,15 +816,22 @@ pub fn ground_cover(world: &WorldData, cache: &TerrainCache, materials: &Assets<
 }
 
 /// An opacity grid ([`alpha_grid`]) at quadrant grid coordinates `(u, v)` (vertex steps from
-/// the quadrant's south-west corner), interpolated between the four vertices around it as
-/// `fnv_world::grass::Coverage::at` reads it.
+/// the quadrant's south-west corner), on the stored triangles the meshes interpolate it on
+/// (each grid square split along its south-west to north-east diagonal, [`stored_weights`]'s
+/// rule, which [`refine_quad`] gives the drawn vertices; a point on the last row or column on
+/// the square before it).
 fn opacity_at(g: &[f32], u: f32, v: f32) -> f32 {
     let max = (QUAD_SIDE - 1) as f32;
     let (u, v) = (u.clamp(0.0, max), v.clamp(0.0, max));
     let (c, r) = ((u.floor() as usize).min(QUAD_SIDE - 2), (v.floor() as usize).min(QUAD_SIDE - 2));
-    let (fu, fv) = (u - c as f32, v - r as f32);
+    let (fx, fy) = (u - c as f32, v - r as f32);
     let a = |r: usize, c: usize| g[r * QUAD_SIDE + c];
-    (a(r, c) * (1.0 - fu) + a(r, c + 1) * fu) * (1.0 - fv) + (a(r + 1, c) * (1.0 - fu) + a(r + 1, c + 1) * fu) * fv
+    let (sw, se, nw, ne) = (a(r, c), a(r, c + 1), a(r + 1, c), a(r + 1, c + 1));
+    if fx >= fy {
+        sw * (1.0 - fx) + se * (fx - fy) + ne * fy
+    } else {
+        sw * (1.0 - fy) + nw * (fy - fx) + ne * fx
+    }
 }
 
 /// For a quadrant's layers' opacity `grids` in drawing order, the first `folded` folded with
@@ -2674,6 +2685,15 @@ mod tests {
         // Between vertices the opacity is interpolated.
         let ramp = alpha_grid(&Layer { quadrant: 0, texture: Some(1), layer: 0, base: false, alpha: vec![(0, 0.0), (1, 1.0), (QUAD_SIDE as u16, 0.0), (QUAD_SIDE as u16 + 1, 1.0)] });
         assert_eq!(opacity_at(&ramp, 0.25, 0.5), 0.25);
+        // On the stored triangles, not bilinear: one corner painted (north-west) is seen only
+        // in the north-west triangle of its square.
+        let corner = alpha_grid(&Layer { quadrant: 0, texture: Some(1), layer: 0, base: false, alpha: vec![(QUAD_SIDE as u16, 1.0)] });
+        assert_eq!((opacity_at(&corner, 0.75, 0.25), opacity_at(&corner, 0.25, 0.75)), (0.0, 0.5), "bilinear would give 0.1875 for both");
+        for (r, c) in [(0usize, 0usize), (3, 7), (15, 15), (16, 16)] {
+            let w = stored_weights(r * 4 + 1, c * 4 + 3, 4, QUAD_SIDE);
+            let want: f32 = w.iter().map(|&(k, w)| w * corner[k]).sum();
+            assert!((opacity_at(&corner, c as f32 + 0.75, r as f32 + 0.25) - want).abs() < 1e-6, "the meshes' rule at ({r}, {c})");
+        }
         let c = GroundCover { grid: (1, 2), quadrant: 3, folded: 6, with_heights: 6, over: 2, material: true, height_share: 0.8, over_cover: 0.25 };
         assert!((c.shifted() - 0.6).abs() < 1e-6);
         assert_eq!(GroundCover { material: false, ..c.clone() }.shifted(), 0.0, "no folded material: the march never runs");

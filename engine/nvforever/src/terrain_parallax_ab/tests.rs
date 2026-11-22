@@ -148,38 +148,76 @@ fn a_stable_change_no_translation_explains_is_changed_and_a_middling_one_unclear
     // C agree, no translation fits: what relief over ridges does at a grazing view.
     let other = picture(|x, y| (x * 1.7 + 300.0, y * 1.3 + 200.0));
     let m = measure(&a, &other, &a).unwrap();
-    assert!(m.fit > MOVED_FIT * m.ab && m.ab > CHANGED_SHARE * m.contrast[0], "{m:?}");
+    assert!(m.fit > MOVED_FIT * m.ab && m.correlation[0] < 0.3 && m.correlation[1] == 1.0, "{m:?}");
     assert_eq!(judge(&m, None), "changed", "{m:?}");
-    // Three tenths of the other texture mixed in: more than a still view's change, less than a
-    // decorrelation.
+    // Three tenths of the other texture mixed in: still well correlated (about 0.9), yet more
+    // than a still view's change.
     let mixed = Luma { v: a.v.iter().zip(&other.v).map(|(x, o)| 0.69 * x + 0.31 * o).collect(), ..a.clone() };
     let m = measure(&a, &mixed, &a).unwrap();
-    let share = m.ab / m.contrast[0];
-    assert!(share > STILL_SHARE && share < CHANGED_SHARE, "the fixture sits between the two limits: {share} {m:?}");
+    assert!(m.correlation[0] > CHANGED_CORRELATION && m.ab > STILL_SHARE * m.contrast[0], "the fixture sits between the two rules: {m:?}");
     assert_eq!(judge(&m, None), "unclear", "{m:?}");
 }
 
-/// The first real readbacks (cc1ee98ea, the aid's spot in cell (-18, 0)), by their logged
-/// numbers: the verdicts the scenarios want, with the margins the constants' notes give.
+/// Controls: an unchanged texture brightened everywhere, or with its contrast scaled, is no
+/// `changed` however many levels it differs by (its correlation stays 1).
 #[test]
-fn the_first_runs_numbers_give_the_verdicts_the_scenarios_want() {
-    let m = |ab: f64, ac: f64, bc: f64, contrast: [f64; 3]| Measure { rect: centre_box(W, H), ab, ac, bc, shift: (0, 0), fit: ab, contrast };
-    let grazing = m(12.29, 0.10, 12.29, [14.1, 13.5, 14.1]);
-    let head_on = m(5.02, 1.02, 4.87, [32.5, 31.6, 32.6]);
-    let held_grazing = m(0.06, 0.10, 0.05, [14.1, 14.1, 14.1]);
-    let held_head_on = m(1.65, 1.02, 1.52, [32.5, 32.5, 32.6]);
+fn a_brightness_offset_or_a_contrast_scale_is_not_changed() {
+    let a = plain();
+    let offset = Luma { v: a.v.iter().map(|x| x + 6.0).collect(), ..a.clone() };
+    let m = measure(&a, &offset, &a).unwrap();
+    assert!((m.ab - 6.0).abs() < 1e-3 && (m.correlation[0] - 1.0).abs() < 1e-9, "{m:?}");
+    assert_ne!(judge(&m, None), "changed");
+    let darker = Luma { v: a.v.iter().map(|x| x - 30.0).collect(), ..a.clone() };
+    let m = measure(&a, &darker, &a).unwrap();
+    assert!(m.ab > 25.0 && (m.correlation[0] - 1.0).abs() < 1e-9);
+    assert_ne!(judge(&m, None), "changed", "30 levels darker is still the same texture");
+    let mean = a.v.iter().sum::<f32>() / a.v.len() as f32;
+    let scaled = Luma { v: a.v.iter().map(|x| mean + 1.6 * (x - mean)).collect(), ..a.clone() };
+    let m = measure(&a, &scaled, &a).unwrap();
+    assert!((m.correlation[0] - 1.0).abs() < 1e-6, "{m:?}");
+    assert_ne!(judge(&m, None), "changed");
+}
+
+/// One rule for `still`: a B that differs from A by half the contrast is not still, even when
+/// C differs from A as much (B == C != A on a low-contrast texture, A-C inside its limit).
+#[test]
+fn still_needs_no_translation_and_a_small_change_in_every_case() {
+    let a = Luma { v: plain().v.iter().map(|x| 128.0 + (x - 128.0) * 0.17).collect(), ..plain() };
+    let m0 = measure(&a, &a, &a).unwrap();
+    assert!(m0.contrast[0] > FLAT_LEVELS && m0.contrast[0] < 8.0, "a low-contrast fixture: {m0:?}");
+    let up = Luma { v: a.v.iter().map(|x| x + 2.5).collect(), ..a.clone() };
+    let m = measure(&a, &up, &up).unwrap();
+    assert!(m.ac <= STABLE_LEVELS && m.ab > STILL_SHARE * m.contrast[0], "{m:?}");
+    assert_ne!(judge(&m, None), "still");
+    assert_eq!(judge(&m, None), "unclear");
+    // A small translation is never still, however small the difference.
+    let nudged = Measure { shift: (0, 1), ..m0.clone() };
+    assert_ne!(judge(&nudged, None), "still");
+}
+
+/// The real readbacks (the aid's spot in cell (-18, 0)), by their logged numbers and the
+/// correlations of the saved shots of the run on 555ace098: the verdicts the scenarios want,
+/// with the margins the constants' notes give.
+#[test]
+fn the_runs_numbers_give_the_verdicts_the_scenarios_want() {
+    let m = |ab: f64, ac: f64, bc: f64, contrast: [f64; 3], correlation: [f64; 3]| Measure { rect: centre_box(W, H), ab, ac, bc, shift: (0, 0), fit: ab, contrast, correlation };
+    let grazing = m(12.29, 0.11, 12.29, [14.1, 13.5, 14.1], [0.231, 1.000, 0.231]);
+    let head_on = m(5.07, 1.07, 4.64, [32.5, 31.6, 32.6], [0.945, 0.998, 0.949]);
+    let held_grazing = m(0.05, 0.11, 0.06, [14.1, 14.1, 14.1], [1.000, 1.000, 1.000]);
+    let held_head_on = m(1.67, 1.02, 1.53, [32.5, 32.5, 32.6], [0.991, 0.998, 0.994]);
     assert_eq!(judge(&grazing, Some(0.88)), "changed");
     assert_eq!(judge(&head_on, Some(0.91)), "still");
     assert_eq!(judge(&held_grazing, Some(0.88)), "still");
     assert_eq!(judge(&held_head_on, Some(0.91)), "still");
-    // Margins: the grazing change would still pass at half its size; head-on would still be
-    // still at about twice its change.
-    let half = m(12.29 / 2.0, 0.10, 12.29 / 2.0, [14.1, 13.5, 14.1]);
-    assert_eq!(judge(&half, None), "changed");
-    let doubled = m(9.5, 1.02, 9.4, [32.5, 31.6, 32.6]);
+    // Margins: the grazing change would still pass at three times its correlation; head-on
+    // would still be still at about twice its change.
+    let weaker = Measure { correlation: [0.69, 1.0, 0.69], ..grazing.clone() };
+    assert_eq!(judge(&weaker, None), "changed");
+    let doubled = m(9.5, 1.07, 9.4, [32.5, 31.6, 32.6], [0.9, 0.998, 0.9]);
     assert_eq!(judge(&doubled, None), "still");
-    // The head-on change is no grazing change: it fails `changed` on its ratio and its share.
-    assert!(head_on.ab < CHANGED_RATIO * head_on.ac && head_on.ab < CHANGED_SHARE * head_on.contrast[0]);
+    // A-C losing its correlation (the scene moved by itself) makes any of them unsettled.
+    let drifted = Measure { correlation: [0.231, 0.95, 0.231], ..grazing.clone() };
+    assert_eq!(judge(&drifted, None), "unsettled");
 }
 
 #[test]

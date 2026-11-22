@@ -20,12 +20,15 @@
 //! what shows ([`SPOT_SHARE`] of it, at the vertex and its eight neighbours: terrain.rs
 //! `CellCover`, the folded layers with height maps less the layers drawn over them, and the
 //! physics' landscape, not a placed object, under it) and from which a grazing line of sight
-//! reaches it over the landscape. None found: a `FAIL` line and the sequence is skipped.
+//! reaches it over the landscape, from a stand on the physics' landscape inside the same
+//! loaded cells. None found: a `FAIL` line and the sequence is skipped.
 //!
 //! **What is under the centre**, logged for every sequence before shot A: the physics ray
 //! along the view meets the landscape of a cell or a placed object; for the landscape the
-//! ground cover there (terrain.rs `ground_cover`). Where the march would move less than
-//! [`BARE_SHARE`] of it the verdict is `bare`: the readback says nothing about the march.
+//! ground cover there (terrain.rs `ground_cover`, an estimate: the meshes' interpolation of
+//! the painted opacities, each layer texture's alpha taken as 1). Where the march would move
+//! less than [`BARE_SHARE`] of it the verdict is `bare`: the readback says nothing about the
+//! march. With the aid's own pose a cover that cannot be told counts as none (`bare`).
 //!
 //! Each shot waits until [`SETTLE_SECS`] have passed since its switch state was set
 //! ([`POSE_SETTLE_SECS`] after a pose) and the pipeline gate counts no pipeline still
@@ -40,20 +43,23 @@
 //! difference (A-C, two pictures with the same switch state, is what changes anyway: grass,
 //! clouds, light); the whole-pixel translation that best matches B to A ([`best_shift`]:
 //! B(x, y) ≈ A(x - dx, y - dy), searched within [`search_radius`]) and the difference left at
-//! it; each picture's contrast. The verdict ([`judge`]), in this order:
+//! it; each picture's contrast; and the correlation of each pair ([`correlation`]: normalised
+//! cross-correlation, mean brightness and contrast taken out, so a uniform brightening or a
+//! contrast change of an unchanged texture leaves it at 1). The verdict ([`judge`]), in this
+//! order:
 //! - `bare`: the centre is not ground the march moves (above);
 //! - `flat`: a picture without texture to measure;
-//! - `unsettled`: A-C past its own limit ([`STABLE_LEVELS`], [`STABLE_SHARE`] of the
-//!   contrast): the scene changed by itself, so neither a shift nor its absence can be told;
+//! - `unsettled`: A-C past its own limits ([`STABLE_LEVELS`], [`STABLE_SHARE`] of the
+//!   contrast, or a correlation under [`STABLE_CORRELATION`]): the scene changed by itself, so
+//!   neither a shift nor its absence can be told;
 //! - `moved`: B is A translated by at least [`MOVED_PX`], the translation explains most of the
 //!   difference, and both A-B and B-C stand well above A-C (kept for a march that slides the
 //!   texture as one; relief over the generated ridges warps it instead, so this is rare);
 //! - `changed`: the switch made a real, stable change at the centre without one translation
-//!   explaining it: A-B and B-C at least [`CHANGED_LEVELS`], at least [`CHANGED_RATIO`] times
-//!   A-C, and at least [`CHANGED_SHARE`] of A's contrast (the texture decorrelated, not merely
-//!   reshaded);
-//! - `still`: A-B and B-C no more than A-C allows, or the best translation is at most
-//!   [`STILL_PX`] and A-B at most [`STILL_SHARE`] of A's contrast;
+//!   explaining it: the A-B and B-C correlations at most [`CHANGED_CORRELATION`] (the texture
+//!   decorrelated, not merely brightened or reshaded);
+//! - `still`: one rule: no fitted translation at all and A-B at most [`STILL_SHARE`] of A's
+//!   contrast (A-C within its limits, as above);
 //! - `unclear` otherwise.
 //!
 //! [design] **What is claimed.** At the grazing pose: `changed` or `moved`, a change the switch
@@ -71,10 +77,10 @@
 //! B-C 12.29 levels, contrast 14.1, translation (+0, +0), the ridge grid in strong relief in
 //! B only. Head-on: A-B 5.02, A-C 1.02, B-C 4.87, contrast 32.5, (+0, +0). The switch held
 //! off at the same poses: 0.06 / 0.10 / 0.05 (contrast 14.1) and 1.65 / 1.02 / 1.52
-//! (contrast 32.5). The thresholds below are set from these with margins (each constant
-//! says which); a march that changes less than about half as much at the grazing view
-//! (the share limit, 0.4 against 0.87) would no longer pass, nor a head-on change about twice
-//! as large (0.3 against 0.15).
+//! (contrast 32.5). The run on 555ace098, its saved shots' correlations (A-B / A-C / B-C,
+//! worked out from the PNGs with this box and mask): grazing 0.231 / 1.000 / 0.231, head-on
+//! 0.945 / 0.998 / 0.949, held off 1.000 / 1.000 / 1.000 and 0.991 / 0.998 / 0.994. The
+//! thresholds below are set from these with margins (each constant says which).
 //!
 //! Thresholds [engineering policy]: not facts about the original game; the main session
 //! confirms them against later runs.
@@ -114,9 +120,6 @@ pub const CROSS_PX: i32 = 14;
 /// The least translation (pixels, the larger component) a `moved` verdict needs.
 pub const MOVED_PX: i32 = 3;
 
-/// The largest translation (pixels, the larger component) a `still` verdict allows.
-pub const STILL_PX: i32 = 1;
-
 /// A `moved` verdict needs A-B (and B-C) at least this many levels and this many times A-C.
 pub const MOVED_LEVELS: f64 = 1.5;
 pub const MOVED_RATIO: f64 = 2.0;
@@ -125,29 +128,21 @@ pub const MOVED_RATIO: f64 = 2.0;
 /// share of A-B: the translation explains the change.
 pub const MOVED_FIT: f64 = 0.7;
 
-/// B counts as unchanged from A (and from C) when the difference is at most this many levels,
-/// or this many times A-C.
-pub const STILL_LEVELS: f64 = 1.0;
-pub const STILL_RATIO: f64 = 2.0;
-
-/// A `still` verdict by translation (at most [`STILL_PX`]) needs A-B no more than this share of
+/// A `still` verdict (no fitted translation) needs A-B no more than this share of
 /// A's contrast. A picture changed altogether differs by about 1.1 times its spread (two
 /// unrelated samples of one spread). Head-on the first run measured 0.15 (5.02 on 32.5), the
 /// grazing view 0.87 (12.29 on 14.1): 0.3 is twice the head-on value and under half the
 /// grazing one.
 pub const STILL_SHARE: f64 = 0.3;
 
-/// A `changed` verdict needs A-B and B-C at least this many levels (grazing measured 12.29:
-/// three times over; the held-off runs 0.06 and 1.65).
-pub const CHANGED_LEVELS: f64 = 4.0;
+/// A `changed` verdict needs the A-B and B-C correlations at most this. An unrelated texture
+/// gives about 0, an unchanged one 1. Grazing measured 0.231 (it would still pass at three
+/// times that); head-on 0.945 and the held-off runs 0.991 and 1.000 stay well above it.
+pub const CHANGED_CORRELATION: f64 = 0.7;
 
-/// ... and at least this many times A-C (grazing measured 123; head-on 4.9 and the held-off
-/// runs about 1 to 1.6 stay under it).
-pub const CHANGED_RATIO: f64 = 8.0;
-
-/// ... and at least this share of A's contrast: the texture decorrelated (grazing measured
-/// 0.87; head-on 0.15).
-pub const CHANGED_SHARE: f64 = 0.4;
+/// A-C's correlation may be no lower than this (measured 0.998 to 1.000: ten times the
+/// largest loss seen).
+pub const STABLE_CORRELATION: f64 = 0.98;
 
 /// A-C, two pictures with the same switch state, may differ by at most the larger of this
 /// many levels and this share of A's contrast; past it the verdict is `unsettled`.
@@ -337,6 +332,33 @@ pub struct Measure {
     pub fit: f64,
     /// Each picture's contrast over the box.
     pub contrast: [f64; 3],
+    /// The correlations A-B, A-C and B-C ([`correlation`]).
+    pub correlation: [f64; 3],
+}
+
+/// The normalised cross-correlation of `a` and `b` over `rect`, the crosshair left out as in
+/// [`difference`]: each picture's mean taken out and the products divided by both spreads, so
+/// 1 for the same texture whatever its brightness or contrast, about 0 for unrelated ones; 0
+/// when either is uniform (the `flat` verdict comes first).
+pub fn correlation(a: &Luma, b: &Luma, rect: Rect) -> f64 {
+    let (x0, y0, bw, bh) = rect;
+    let points: Vec<(f64, f64)> = (y0..y0 + bh)
+        .flat_map(|y| (x0..x0 + bw).map(move |x| (x, y)))
+        .filter(|&(x, y)| x >= 0 && y >= 0 && (x as usize) < a.w.min(b.w) && (y as usize) < a.h.min(b.h) && !crosshair(a, x, y))
+        .map(|(x, y)| (f64::from(a.at(x, y)), f64::from(b.at(x, y))))
+        .collect();
+    if points.is_empty() {
+        return 0.0;
+    }
+    let n = points.len() as f64;
+    let (ma, mb) = (points.iter().map(|p| p.0).sum::<f64>() / n, points.iter().map(|p| p.1).sum::<f64>() / n);
+    let (mut ab, mut aa, mut bb) = (0.0, 0.0, 0.0);
+    for (x, y) in &points {
+        ab += (x - ma) * (y - mb);
+        aa += (x - ma).powi(2);
+        bb += (y - mb).powi(2);
+    }
+    if aa <= 0.0 || bb <= 0.0 { 0.0 } else { ab / (aa * bb).sqrt() }
 }
 
 /// The measure of three pictures of one size; `Err` with why not.
@@ -349,7 +371,8 @@ pub fn measure(a: &Luma, b: &Luma, c: &Luma) -> Result<Measure, String> {
     let ac = difference(a, c, rect, (0, 0), 1).ok_or("no pixel to compare")?;
     let bc = difference(c, b, rect, (0, 0), 1).ok_or("no pixel to compare")?;
     let (shift, fit) = best_shift(a, b, rect, search_radius(a.w, a.h)).ok_or("no translation to compare")?;
-    Ok(Measure { rect, ab, ac, bc, shift, fit, contrast: [contrast(a, rect), contrast(b, rect), contrast(c, rect)] })
+    let correlation = [correlation(a, b, rect), correlation(a, c, rect), correlation(b, c, rect)];
+    Ok(Measure { rect, ab, ac, bc, shift, fit, contrast: [contrast(a, rect), contrast(b, rect), contrast(c, rect)], correlation })
 }
 
 /// The verdict on a [`Measure`] (module notes); `shifted` the share of the centre the march
@@ -361,17 +384,15 @@ pub fn judge(m: &Measure, shifted: Option<f32>) -> &'static str {
     if m.contrast.iter().any(|&c| c < FLAT_LEVELS) {
         return "flat";
     }
-    if m.ac > STABLE_LEVELS.max(STABLE_SHARE * m.contrast[0]) {
+    if m.ac > STABLE_LEVELS.max(STABLE_SHARE * m.contrast[0]) || m.correlation[1] < STABLE_CORRELATION {
         return "unsettled";
     }
     let len = m.shift.0.abs().max(m.shift.1.abs());
-    let floor = STILL_LEVELS.max(STILL_RATIO * m.ac);
-    let changed = |d: f64| d >= CHANGED_LEVELS && d >= CHANGED_RATIO * m.ac;
     if len >= MOVED_PX && m.ab >= MOVED_LEVELS && m.ab >= MOVED_RATIO * m.ac && m.bc >= MOVED_RATIO * m.ac && m.fit <= MOVED_FIT * m.ab {
         "moved"
-    } else if changed(m.ab) && changed(m.bc) && m.ab >= CHANGED_SHARE * m.contrast[0] {
+    } else if m.correlation[0] <= CHANGED_CORRELATION && m.correlation[2] <= CHANGED_CORRELATION {
         "changed"
-    } else if (m.ab <= floor && m.bc <= floor) || (len <= STILL_PX && m.ab <= STILL_SHARE * m.contrast[0]) {
+    } else if len == 0 && m.ab <= STILL_SHARE * m.contrast[0] {
         "still"
     } else {
         "unclear"
@@ -381,8 +402,8 @@ pub fn judge(m: &Measure, shifted: Option<f32>) -> &'static str {
 /// The result line's words after the time and mode.
 pub fn describe(m: &Measure) -> String {
     format!(
-        "A-B {:.2}, A-C {:.2}, B-C {:.2} levels over {}x{} px at the centre; B = A moved by ({:+}, {:+}) px (A-B {:.2} there); contrast {:.1}/{:.1}/{:.1}",
-        m.ab, m.ac, m.bc, m.rect.2, m.rect.3, m.shift.0, m.shift.1, m.fit, m.contrast[0], m.contrast[1], m.contrast[2]
+        "A-B {:.2}, A-C {:.2}, B-C {:.2} levels over {}x{} px at the centre; B = A moved by ({:+}, {:+}) px (A-B {:.2} there); contrast {:.1}/{:.1}/{:.1}; correlation {:.3}/{:.3}/{:.3}",
+        m.ab, m.ac, m.bc, m.rect.2, m.rect.3, m.shift.0, m.shift.1, m.fit, m.contrast[0], m.contrast[1], m.contrast[2], m.correlation[0], m.correlation[1], m.correlation[2]
     )
 }
 
@@ -447,6 +468,11 @@ pub fn find_spot(world: &WorldData, cache: &TerrainCache, materials: &Assets<Ter
         f
     };
     let terrain = |owner: Owner| matches!(owner, Owner::Terrain { .. });
+    // The 3 x 3 cells the candidates come from, loaded around the player: the stand must lie
+    // in them too, on their landscape (not a roof or an overhang).
+    let size = fnv_world::CELL_SIZE;
+    let home = ((player.feet[0] / size).floor() as i32, (player.feet[1] / size).floor() as i32);
+    let loaded = |x: f32, y: f32| ((x / size).floor() as i32 - home.0).abs() <= 1 && ((y / size).floor() as i32 - home.1).abs() <= 1;
     for (p, described) in candidates.iter().take(SPOT_TRIES) {
         let Some(down) = phys.ray([p[0], p[1], player.feet[2] + 4000.0], [0.0, 0.0, -1.0], 12_000.0, filter()) else { continue };
         if !terrain(down.owner) {
@@ -456,7 +482,13 @@ pub fn find_spot(world: &WorldData, cache: &TerrainCache, materials: &Assets<Ter
         for heading_deg in [0.0f32, 90.0, 180.0, 270.0, 45.0, 135.0, 225.0, 315.0] {
             let (s, c) = heading_deg.to_radians().sin_cos();
             let (sx, sy) = (target[0] - back * s, target[1] - back * c);
+            if !loaded(sx, sy) {
+                continue;
+            }
             let Some(ground) = phys.ray([sx, sy, target[2] + 2000.0], [0.0, 0.0, -1.0], 6000.0, filter()) else { continue };
+            if !terrain(ground.owner) {
+                continue;
+            }
             let eye = [sx, sy, ground.point[2] + eye_height];
             let to = [target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]];
             let length = (to[0] * to[0] + to[1] * to[1] + to[2] * to[2]).sqrt();
@@ -663,7 +695,13 @@ fn tick(
             return;
         }
         // All three received.
-        let (hold, unsettled, restore, shifted) = (run.spec.hold, run.unsettled, run.restore, run.shifted.flatten());
+        // With the aid's own pose an unknown cover counts as none: the pose is there to look at
+        // ground the march moves, so not knowing that is no pass.
+        let shifted = match (run.spec.pose, run.shifted.flatten()) {
+            (Pose::View, s) => s,
+            (_, s) => Some(s.unwrap_or(0.0)),
+        };
+        let (hold, unsettled, restore) = (run.spec.hold, run.unsettled, run.restore);
         ab.run = None;
         if !hold {
             set_switch(graphics.as_deref_mut(), restore, at);
