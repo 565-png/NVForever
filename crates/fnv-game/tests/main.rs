@@ -131,6 +131,7 @@ mod ui_hud;
 mod ui_loading;
 mod ui_mcm;
 mod ui_more;
+mod ui_ysi;
 mod unconscious;
 mod unlisted;
 mod vendor_services;
