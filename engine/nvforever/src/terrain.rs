@@ -677,6 +677,169 @@ fn ground_pack_list(diffuses: impl Iterator<Item = Option<String>>) -> Vec<Strin
     list
 }
 
+/// What the folded draw's march moves at a point of the landscape, for the terrain parallax
+/// readback aid (`crate::terrain_parallax_ab`, #3322): the quadrant's layers as the cell
+/// draws them (its own, stitched to its neighbours', [`stitch_layers`]), the first
+/// [`folded_layers`] folded into the quadrant's draw and those past them drawn on their own
+/// over it (unshifted, module notes "Parallax"), and the folded material the cell made for
+/// them ([`TerrainCache`]), with the height maps it holds. A CPU estimate from the painted
+/// opacities alone (each layer texture's alpha, which also enters the shares, taken as 1)
+/// [design].
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroundCover {
+    pub grid: (i32, i32),
+    /// 0 south-west, 1 south-east, 2 north-west, 3 north-east.
+    pub quadrant: u8,
+    /// Layers folded into the quadrant's draw, those of them with a height map, and the
+    /// layers drawn on their own over the folded draw.
+    pub folded: usize,
+    pub with_heights: usize,
+    pub over: usize,
+    /// Whether the quadrant has a folded material (none: drawn by the separate materials,
+    /// which the march never reaches).
+    pub material: bool,
+    /// The height-mapped folded layers' share of the folded blend at the point (the ordered
+    /// shares, terrain_weights.wesl `terrain_ordered_shares`).
+    pub height_share: f32,
+    /// How much of the folded draw the layers drawn over it hide at the point.
+    pub over_cover: f32,
+}
+
+impl GroundCover {
+    /// How much of what shows at the point the march moves: the height-mapped share, less
+    /// what the separately drawn layers hide; 0 without a folded material.
+    pub fn shifted(&self) -> f32 {
+        if self.material { self.height_share * (1.0 - self.over_cover) } else { 0.0 }
+    }
+
+    pub fn describe(&self) -> String {
+        format!(
+            "cell ({}, {}) quadrant {}: {} folded layers ({} with height maps{}), {} drawn over them; shifted share {:.2} (height-mapped {:.2}, hidden by the layers over them {:.2})",
+            self.grid.0,
+            self.grid.1,
+            self.quadrant,
+            self.folded,
+            self.with_heights,
+            if self.material { "" } else { "; no folded material" },
+            self.over,
+            self.shifted(),
+            self.height_share,
+            self.over_cover
+        )
+    }
+}
+
+/// One quadrant's layers as [`GroundCover`] reads them.
+#[derive(Debug, Clone, Default)]
+struct QuadCover {
+    /// The opacity grids of the quadrant's drawn layers in drawing order ([`alpha_grid`]).
+    grids: Vec<Vec<f32>>,
+    /// How many of them are folded.
+    folded: usize,
+    /// The folded material's height-map bits, when there is one.
+    bits: Option<u32>,
+}
+
+/// A cell's [`GroundCover`]s, prepared once (the layers loaded and stitched, the materials
+/// looked up), for asking many points.
+#[derive(Debug, Clone)]
+pub struct CellCover {
+    grid: (i32, i32),
+    quads: [QuadCover; 4],
+}
+
+impl CellCover {
+    /// `None` without landscape at grid square `grid` (or outside the worldspace).
+    pub fn new(world: &WorldData, cache: &TerrainCache, materials: &Assets<TerrainMaterial>, tile: f32, grid: (i32, i32)) -> Option<CellCover> {
+        let lands = world.land_ids(grid);
+        let parts = LandParts { heights: false, normals: false, colors: false, layers: true };
+        let land = load_land(world.lo, world.schema, lands[1][1]?, parts)?;
+        let around = NEIGHBOURS.map(|(dx, dy)| lands[(dy + 1) as usize][(dx + 1) as usize].and_then(|id| load_land(world.lo, world.schema, id, parts)).map(|l| l.layers));
+        let drawn = stitch_layers(&land.layers, &around);
+        let most = folded_layers(tile);
+        let shader_tile = if most == FOLDED_LAYERS { tile } else { 0.0 };
+        // The texture a layer draws, as `TerrainCtx::texture_of` resolved it (`None`: not
+        // resolved, or an LTEX without a diffuse, which keeps a quadrant from folding).
+        let name = |ltex: Option<u32>| -> Option<String> {
+            match ltex {
+                None => Some(DEFAULT_DIFFUSE.to_string()),
+                Some(id) => cache.textures.get(&id).cloned().flatten(),
+            }
+        };
+        let quads = std::array::from_fn(|q| {
+            let q = q as u8;
+            let layers: Vec<&Layer> = quadrant_layers(&drawn, q).into_iter().map(|(_, l)| l).collect();
+            let folded = layers.len().min(most);
+            let base = drawn.iter().rev().find(|l| l.base && l.quadrant == q).and_then(|b| b.texture);
+            let first: Option<Vec<String>> = layers.iter().take(most).map(|l| name(l.texture)).collect();
+            let bits = first
+                .filter(|f| !f.is_empty())
+                .and_then(|f| cache.folded.get(&(name(base), f, shader_tile > 0.0)))
+                .and_then(|h| materials.get(h))
+                .map(|m| m.extension.height_bits());
+            QuadCover { grids: layers.iter().map(|l| alpha_grid(l)).collect(), folded, bits }
+        });
+        Some(CellCover { grid, quads })
+    }
+
+    /// At cell-local `(x, y)` (game units from the cell's south-west corner).
+    pub fn at(&self, x: f32, y: f32) -> GroundCover {
+        let half = fnv_world::CELL_SIZE / 2.0;
+        let (qx, qy) = (usize::from(x >= half), usize::from(y >= half));
+        let q = qy * 2 + qx;
+        let spacing = fnv_world::land::SPACING;
+        let (u, v) = ((x - qx as f32 * half) / spacing, (y - qy as f32 * half) / spacing);
+        let quad = &self.quads[q];
+        let (height_share, over_cover) = cover_shares(&quad.grids, quad.folded, quad.bits.unwrap_or(0), u, v);
+        GroundCover {
+            grid: self.grid,
+            quadrant: q as u8,
+            folded: quad.folded,
+            with_heights: quad.bits.map_or(0, |b| b.count_ones() as usize),
+            over: quad.grids.len() - quad.folded,
+            material: quad.bits.is_some(),
+            height_share,
+            over_cover,
+        }
+    }
+}
+
+/// [`GroundCover`] at a point of the worldspace (game units); `None` without landscape there.
+pub fn ground_cover(world: &WorldData, cache: &TerrainCache, materials: &Assets<TerrainMaterial>, tile: f32, x: f32, y: f32) -> Option<GroundCover> {
+    let size = fnv_world::CELL_SIZE;
+    let grid = ((x / size).floor() as i32, (y / size).floor() as i32);
+    Some(CellCover::new(world, cache, materials, tile, grid)?.at(x - grid.0 as f32 * size, y - grid.1 as f32 * size))
+}
+
+/// An opacity grid ([`alpha_grid`]) at quadrant grid coordinates `(u, v)` (vertex steps from
+/// the quadrant's south-west corner), interpolated between the four vertices around it as
+/// `fnv_world::grass::Coverage::at` reads it.
+fn opacity_at(g: &[f32], u: f32, v: f32) -> f32 {
+    let max = (QUAD_SIDE - 1) as f32;
+    let (u, v) = (u.clamp(0.0, max), v.clamp(0.0, max));
+    let (c, r) = ((u.floor() as usize).min(QUAD_SIDE - 2), (v.floor() as usize).min(QUAD_SIDE - 2));
+    let (fu, fv) = (u - c as f32, v - r as f32);
+    let a = |r: usize, c: usize| g[r * QUAD_SIDE + c];
+    (a(r, c) * (1.0 - fu) + a(r, c + 1) * fu) * (1.0 - fv) + (a(r + 1, c) * (1.0 - fu) + a(r + 1, c + 1) * fu) * fv
+}
+
+/// For a quadrant's layers' opacity `grids` in drawing order, the first `folded` folded with
+/// height-map bits `bits`: the height-mapped layers' ordered share of the folded blend at
+/// `(u, v)`, and how much the layers past the folded ones hide of it there.
+fn cover_shares(grids: &[Vec<f32>], folded: usize, bits: u32, u: f32, v: f32) -> (f32, f32) {
+    let mut remaining = 1.0f32;
+    let mut height_share = 0.0f32;
+    for k in (0..folded.min(grids.len())).rev() {
+        let paint = opacity_at(&grids[k], u, v);
+        if bits & (1 << k) != 0 {
+            height_share += paint * remaining;
+        }
+        remaining *= 1.0 - paint;
+    }
+    let through: f32 = grids.iter().skip(folded).map(|g| 1.0 - opacity_at(g, u, v)).product();
+    (height_share, 1.0 - through)
+}
+
 /// Whether the settings ask for anti-tiling (module notes); false without the `Graphics`
 /// resource.
 fn anti_tiling_wanted(graphics: Option<&crate::graphics::Graphics>) -> bool {
@@ -2490,6 +2653,31 @@ mod tests {
         want.sort();
         assert_eq!(list, want, "each named texture once, a record without one left out, the default added");
         assert_eq!(ground_pack_list(std::iter::empty()), [DEFAULT_DIFFUSE.to_string()], "a load order without LTEX still covers the default ground");
+    }
+
+    #[test]
+    fn the_ground_cover_counts_the_height_mapped_folded_share_and_what_hides_it() {
+        let cells = (QUAD_SIDE * QUAD_SIDE) as u16;
+        let layer = |o: Option<f32>| alpha_grid(&Layer { quadrant: 0, texture: Some(1), layer: 0, base: false, alpha: o.map_or_else(Vec::new, |o| (0..cells).map(|p| (p, o)).collect()) });
+        let (full, half, none) = (|_: i16, _: u32| layer(Some(1.0)), |_: i16, _: u32| layer(Some(0.5)), |_: i16, _: u32| layer(None));
+        // Two folded layers, both with height maps, the top one painted fully: all of it.
+        assert_eq!(cover_shares(&[half(0, 1), full(1, 2)], 2, 0b11, 3.0, 4.0), (1.0, 0.0));
+        // Only the lower one has a height map: the top one hides it.
+        assert_eq!(cover_shares(&[half(0, 1), full(1, 2)], 2, 0b01, 3.0, 4.0), (0.0, 0.0));
+        // A half-painted top layer without a height map over a full one with: half of it.
+        assert_eq!(cover_shares(&[full(0, 1), half(1, 2)], 2, 0b01, 3.0, 4.0), (0.5, 0.0));
+        // A layer past the folded ones (drawn on its own, unshifted) painted fully hides it all.
+        assert_eq!(cover_shares(&[full(0, 1), full(1, 2)], 1, 0b1, 3.0, 4.0), (1.0, 1.0));
+        // Unpainted layers and the base alone: nothing to move.
+        assert_eq!(cover_shares(&[none(0, 1)], 1, 0b1, 3.0, 4.0), (0.0, 0.0));
+        assert_eq!(cover_shares(&[], 0, 0, 3.0, 4.0), (0.0, 0.0));
+        // Between vertices the opacity is interpolated.
+        let ramp = alpha_grid(&Layer { quadrant: 0, texture: Some(1), layer: 0, base: false, alpha: vec![(0, 0.0), (1, 1.0), (QUAD_SIDE as u16, 0.0), (QUAD_SIDE as u16 + 1, 1.0)] });
+        assert_eq!(opacity_at(&ramp, 0.25, 0.5), 0.25);
+        let c = GroundCover { grid: (1, 2), quadrant: 3, folded: 6, with_heights: 6, over: 2, material: true, height_share: 0.8, over_cover: 0.25 };
+        assert!((c.shifted() - 0.6).abs() < 1e-6);
+        assert_eq!(GroundCover { material: false, ..c.clone() }.shifted(), 0.0, "no folded material: the march never runs");
+        assert!(c.describe().contains("6 folded layers (6 with height maps), 2 drawn over them; shifted share 0.60"), "{}", c.describe());
     }
 
     #[test]

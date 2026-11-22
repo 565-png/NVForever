@@ -125,14 +125,25 @@ fn scalars() -> Vec<u8> {
 }
 
 /// The set stems to write for a diffuse: its own and, under an `\xbox\` folder, the `\pc\`
-/// twin's (`texture::pc_texture`'s rule).
+/// twin's (`texture::pc_texture`'s rule). A stem whose path could leave the pack folder (a
+/// `..` or `.` component, an empty one, a drive or stream colon) is left out: a plugin's
+/// texture path is data, and `fnv_pbr::stem_for` keeps its components as written [design,
+/// review of #3427].
 fn stems_for(diffuse: &str) -> Vec<String> {
     let Some(stem) = fnv_pbr::stem_for(diffuse) else { return Vec::new() };
     let mut stems = vec![stem.clone()];
     if let Some(i) = stem.find("\\xbox\\") {
         stems.push(format!("{}\\pc\\{}", &stem[..i], &stem[i + "\\xbox\\".len()..]));
     }
+    stems.retain(|s| safe_relative(&s.replace('\\', "/")));
     stems
+}
+
+/// Whether `rel` (forward slashes) names a place inside the folder it is joined to: every
+/// component a plain name (not empty, not `.` or `..`, no colon or backslash), so neither an
+/// absolute path, a drive, a stream nor a parent step.
+fn safe_relative(rel: &str) -> bool {
+    !rel.is_empty() && rel.split('/').all(|c| !c.is_empty() && c != "." && c != ".." && !c.contains([':', '\\']))
 }
 
 /// Every generated file for the diffuse paths `diffuses`, by its path under the pack folder
@@ -192,6 +203,11 @@ pub(super) fn seed_ground_pack_in<S: AsRef<str>>(home: &Path, stamp: u128, proce
 /// `files` under `out`, a folder of the caller's own: every folder made inside it, every file
 /// created new.
 fn write_files(out: &Path, files: &[(String, Vec<u8>)]) -> std::io::Result<()> {
+    // Every path checked before the first write: none may leave `out`.
+    let inside = |rel: &str| safe_relative(rel) && Path::new(rel).components().all(|c| matches!(c, std::path::Component::Normal(_)));
+    if let Some((rel, _)) = files.iter().find(|(rel, _)| !inside(rel)) {
+        return Err(std::io::Error::other(format!("{rel:?} would leave the pack folder; nothing written")));
+    }
     for (rel, bytes) in files {
         let path = out.join(rel);
         if let Some(dir) = path.parent() {

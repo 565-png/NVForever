@@ -110,10 +110,11 @@
 //!   for that run only; the ground pack gives every landscape texture the load order names a
 //!   height-only set (a ridged `_p` from a formula, depth 0.08) for the terrain parallax
 //!   (#3322).
-//! - `NVF_PLAY_TEST_TERRAIN_PARALLAX_AB=<seconds>[:hold][,...]` (nvforever
+//! - `NVF_PLAY_TEST_TERRAIN_PARALLAX_AB=<seconds>[:hold][:grazing|head-on][,...]` (nvforever
 //!   terrain_parallax_ab.rs): three screenshots at each time, the Terrain parallax switch
-//!   off, on, off (or left alone with `hold`), and one log line measuring how the ground's
-//!   texture at the centre of the view moved between them (`moved`, `still`, ...).
+//!   off, on, off (or left alone with `hold`), optionally from its own pose on a spot of
+//!   ground the march moves, and log lines for what lies under the view's centre and how the
+//!   ground's texture there moved between them (`moved`, `still`, `bare`, ...).
 //!
 //! With any `NVF_PLAY_TEST_*` variable set the run is unattended ([`Unattended`]): the
 //! cursor is not grabbed, so the desktop's mouse neither leaves the user nor turns the

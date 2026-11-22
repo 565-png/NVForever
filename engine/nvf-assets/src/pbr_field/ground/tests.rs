@@ -127,3 +127,47 @@ fn the_ground_pack_writes_only_a_fresh_folder_of_its_own() {
     assert_eq!(fs::read(taken.join(&files[0].0)).unwrap(), b"there before", "never truncated");
     let _ = fs::remove_dir_all(&home);
 }
+
+/// A plugin's texture path is data: one with parent steps, a dot component or a colon gets no
+/// set, so nothing is written outside the run's own folder, and the writer refuses any such
+/// path before its first write.
+#[test]
+fn no_texture_path_can_write_outside_the_pack_folder() {
+    let hostile = [r"..\..\..\escape.dds", r"landscape\..\..\..\..\escape.dds", r"landscape\.\dot.dds", r"landscape\c:\stream.dds", r"landscape\xbox\..\..\..\escape.dds"];
+    for d in hostile {
+        assert!(ground_fixture(&[d]).is_empty(), "{d}: {:?}", ground_fixture(&[d]).iter().map(|f| &f.0).collect::<Vec<_>>());
+    }
+    // Mixed with a plain texture, only the plain one is written.
+    let mixed = ground_fixture(&[r"..\..\escape.dds", r"landscape\dirt01.dds"]);
+    assert_eq!(mixed.iter().map(|f| f.0.as_str()).collect::<Vec<_>>(), ["textures/pbr/landscape/dirt01_p.dds", "textures/pbr/landscape/dirt01.toml"]);
+    let home = temp_home("contain");
+    let (dir, sets, _) = seed_ground_pack_in(&home, 9, 1, &[r"..\..\..\..\..\escape.dds", r"landscape\dirt01.dds"]).unwrap();
+    assert_eq!(sets, 1);
+    let written: Vec<PathBuf> = walk(&home);
+    assert!(written.iter().all(|p| p.starts_with(&dir)), "every file inside the run's folder: {written:?}");
+    assert!(seed_ground_pack_in(&home, 10, 1, &[r"..\..\escape.dds"]).is_err(), "nothing safe to write: refused");
+    // The writer's own check, before any write.
+    let out = home.join("guarded");
+    fs::create_dir_all(&out).unwrap();
+    for bad in ["../escape_p.dds", "textures/../../escape_p.dds", "/abs_p.dds", "c:/drive_p.dds", "textures//empty_p.dds", "./dot_p.dds"] {
+        let files = vec![("textures/pbr/ok_p.dds".to_string(), b"x".to_vec()), (bad.to_string(), b"x".to_vec())];
+        assert!(write_files(&out, &files).is_err(), "{bad}");
+        assert!(!out.join("textures").exists(), "{bad}: nothing written before the refusal");
+    }
+    assert!(!home.parent().unwrap().join("escape_p.dds").exists());
+    let _ = fs::remove_dir_all(&home);
+}
+
+/// Every file under `dir`.
+fn walk(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for e in fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out.extend(walk(&p));
+        } else {
+            out.push(p);
+        }
+    }
+    out
+}
