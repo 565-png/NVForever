@@ -352,7 +352,9 @@ pub(crate) fn find_target(
                         (water_label(&n, h2o), Action::Drink)
                     }
                     Action::Talk => {
-                        let name = sim.ref_name(rt.as_deref().map(|rt| &rt.game), id).map_or(n, str::to_string);
+                        // An actor's shown name, never its base's Editor ID (#3445): one with no
+                        // name in its template chain is prompted for without one.
+                        let name = sim.ref_shown_name(rt.as_deref().map(|rt| &rt.game), id).unwrap_or_default().to_string();
                         // The player's tweak marks someone not yet spoken to [design: docs/design/tweaks.md].
                         let unspoken = rt.as_deref().is_some_and(|rt| rt.game.tweaks.mark_unspoken && !rt.game.extra.get(&FormId(id)).is_some_and(|e| e.talked_to_pc));
                         let name = if unspoken { format!("{name} *") } else { name };
