@@ -238,7 +238,7 @@ fn find_candidate(phys: &mut PhysState, sim: &SimState, eye: [f32; 3], dir: [f32
     filter.exclude_layers.insert(layers::TRIGGER);
     // A body on the non-collidable layer touches nothing, so there is nothing to hold: the
     // pickable plants' (White Horse Nettle, Broc Flower: one dynamic box of 45 kg on layer
-    // 15) stay rooted (#3389) [hypothesis: the players' report; observer check 257].
+    // 15) stay rooted (#3389) [hypothesis: the players' report; observer check 263].
     filter.exclude_layers.insert(layers::NON_COLLIDABLE);
     let hit = phys.ray(eye, dir, REACH, filter).ok_or("nothing within reach")?;
     let on = match hit.owner {
@@ -555,7 +555,7 @@ mod tests {
         g.tap = Some(Tap { target: None, candidate: c, held: 0.1 });
         assert_eq!(g.released_tap(false), None);
         assert!(g.tap.is_some());
-        let t = Targeted { form_id: 7, name: "Skull".into(), action: crate::activate::outcome::Action::Name, distance: 60.0, source: crate::activate::pick::Source::Bounds, crime: false, empty: false };
+        let t = Targeted { form_id: 7, name: "Skull".into(), action: crate::activate::outcome::Action::Name, distance: 60.0, source: crate::activate::pick::Source::Bounds, crime: false, empty: false, through: None };
         g.tap = Some(Tap { target: Some(t.clone()), candidate: c, held: 0.1 });
         assert_eq!(g.released_tap(true), None);
         assert!(g.tap.is_some());
