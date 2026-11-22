@@ -870,9 +870,9 @@ addition of NVForever's own until observer check 268 answers it [hypothesis: it 
   a quadrant without painted layers is drawn by the separate landscape material, which
   stays unshifted, and a moving base would break at that quadrant's edge.
 - [design] **One march.** Six layers in one draw rule out a march per layer. The folded
-  draw marches once, Bevy's steep parallax with the occlusion refinement (the vendored
-  `parallaxed_uv`'s steps, view vector, tangent frame and signs, as on NIF shapes), over one
-  blended depth: the sum over the layers of share x the layer's own depth x (1 - height),
+  draw marches once, steep parallax with the relief refinement, as NIF shapes march (the
+  vendored `parallaxed_uv`'s relief method: its steps, view vector, tangent frame, signs and
+  grazing clamp; "The march" below), over one blended depth: the sum over the layers of share x the layer's own depth x (1 - height),
   the share the layer's ordered share (painted opacity x the layer diffuse's alpha, laid
   over the earlier layers as the ordinary blend lays them); the base and a layer without a
   height map add no depth (flat at the surface). Then every texture of the quadrant, the
@@ -917,12 +917,55 @@ addition of NVForever's own until observer check 268 answers it [hypothesis: it 
   quadrant, each layer's depth taken over it (`parallax_scales`). A grid from each
   quadrant's deepest layer, as first written, stepped a 0.02 layer beside an unpainted 0.08
   one four times as coarsely as alone (0.00625 against 0.025 texture-coordinate units a
-  step at the same view). At most 8 steps (`PARALLAX_LAYERS`; fewer than a shape's march,
-  as every step reads up to six height maps), fewer as the view steepens; a shallow layer
-  takes fewer of them (a 0.02 layer about a quarter), the refinement interpolating between
-  them [design: the price of one grid; to judge in pictures with a pack]. The height maps are read at the
+  step at the same view). At most 16 layers (`PARALLAX_LAYERS`), fewer as the view
+  steepens; a shallow layer takes fewer of them (a 0.02 layer about a quarter), the relief
+  search refining between them [design: the price of one grid; to judge in pictures with a
+  pack]. The depth is in texture-coordinate units, as on NIF shapes: one unit is one texture
+  repeat, 256 world units on the landscape, so a layer at 0.08 sinks by about 20 world units
+  and, seen 20 degrees above the ground, moves 0.08 / tan 20 degrees = 0.22 of a repeat
+  (about 56 texels of a 256 map, 225 of a 1024 texture). The height maps are read at the
   level their screen footprint asks for (not the top level, as the shapes' march reads),
   with the base texture's sampler.
+- [design] **The march** (round 2 of #3322, after the main session's pictures of the
+  generated ground pack, 2026-11-22: vertical streaks, doubled and stair-stepped stripes,
+  smeared texture and seams with the switch on). Round 1 marched at most 8 layers and
+  refined with the occlusion method (one linear interpolation between the last two layers,
+  parallax occlusion mapping: Tatarchuk, "Dynamic Parallax Occlusion Mapping with
+  Approximate Soft Shadows", I3D 2006), with the step divided by the view's steepness
+  unbounded. Over the ground pack's sharp ridges (a step from low to high, nothing between)
+  the interpolation puts a pixel's hit between the two layers' guesses rather than at the
+  ridge's wall, so each ridge showed once per layer reached (the doubled, stair-stepped
+  bands); at 8 layers a step at 20 degrees (0.039 of a repeat) was longer than a ridge is
+  wide (8/256 = 0.031), so rays also stepped over ridges; and toward the horizon the
+  unbounded divisor threw the samples up to several repeats away (streaks; at 3 degrees a
+  sunk layer moved 1.5 repeats). The march now is the shapes' relief method
+  (`PARALLAX_RELIEF_STEPS`): after the linear search a binary search of 4 halvings between
+  the last layer above the surface and the first below it, so the hit ends within a
+  thirty-second of a step of where the ray meets the surface (Policarpo, Oliveira and Comba,
+  "Real-Time Relief Mapping on Arbitrary Polygonal Surfaces", I3D 2005); a pixel whose plain
+  place is already at the surface is not moved; the step's divisor stops at a steepness of
+  0.15 (`PARALLAX_GRAZING`, the shapes' grazing clamp, #2979), so the full-depth shift stays
+  under about 6.7 x the depth; and 16 layers (Bevy's default count), at which no ridge of
+  the pack's width is stepped over from about 12 degrees up. Checked on a CPU copy of the
+  march (terrain.rs tests `the_march_moves_a_sunk_layer_by_its_depth_over_the_views_slope`,
+  `the_march_is_bounded_at_grazing_views`,
+  `the_march_meets_the_ground_packs_ridges_where_the_ray_does`: over the pack's ridges every
+  one of 512 start points across two ridge periods ends where its ray first meets the
+  surface at 45 to 12 degrees, where round 1's march misplaced 332 of them at 20 degrees).
+  Its frame cost (up to about twice round 1's reads at a 20-degree view) is not measured.
+  Ruled out in that review, from the code: the tangent frame and signs (east +u, Bevy's
+  bitangent -v, the same as the shapes' and as Bevy's tangent generator gives,
+  `tangents_match_the_generator`), per-layer tiling (every layer, the base and the height
+  maps are read at the one coordinate, one repeat per 256 units), and the drawn reads'
+  filtering (the plain place's gradients, "Filtering" above). What the generated pack still
+  shows with a correct march [design expectation, to confirm in pictures]: its ridges are
+  walls 20 units high and 8 wide every 64 with nothing between, and only the textures'
+  place moves (the landscape keeps its own normal map, which knows nothing of the ridges),
+  so a wall's face toward the camera shows the ridge top's strip of texture drawn out down
+  the wall (streaks along the view over much of the ground at 20 degrees), and a ridge
+  running along the view is a seam where the texture beside it moved and its top did not.
+  A real pack's smoother height map with a matching normal map is what the look is to be
+  judged on.
 - [design] **Fade.** Full strength up to 1024 units from the camera, none from 2048
   (`PARALLAX_FADE`): inside the camera's cell and the near half of the next, well inside
   the loaded cells. None head-on (the view vector's tangent part is zero).

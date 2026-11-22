@@ -357,18 +357,36 @@ pub struct TerrainLayersUniform {
 /// Where the height-map bits start in `counts.y` ([`TerrainLayersUniform`]).
 pub const HEIGHT_BITS_SHIFT: u32 = 8;
 
-/// The most steps of the terrain parallax march, on a surface seen edge-on (one straight
-/// down) [design, #3322: every step reads up to seven height maps, so fewer than the NIF
-/// shapes' march takes].
-pub const PARALLAX_LAYERS: f32 = 8.0;
+/// The most layers of the terrain parallax march's linear search, on a surface seen edge-on
+/// (one straight down), before the relief search ([`PARALLAX_RELIEF_STEPS`]) [design, #3322
+/// round 2: Bevy's default count. At 8, at the ground pack's depth 0.08 and a view 20 degrees
+/// above the ground, a layer's step (about 0.039 texture repeats) was longer than the pack's
+/// ridges are wide (8/256), so rays stepped over ridges and the search found the wrong wall;
+/// at 16 a step is 0.020 there, and no ridge of that width is stepped over down to about 12 degrees
+/// (the test `the_march_meets_the_ground_packs_ridges_where_the_ray_does`). Every step reads
+/// the height maps of each layer with a share there, so its frame cost is still to measure].
+pub const PARALLAX_LAYERS: f32 = 16.0;
+
+/// The terrain march's grazing clamp: the step's divisor is the view's steepness (the view
+/// vector's normal part) held at least at this, as on NIF shapes (vendored
+/// parallax_mapping.wesl "NVForever grazing clamp", #2979), so the full-depth shift stays
+/// under about 6.7 x the depth and a view along the ground gives finite coordinates
+/// [design, #3322 round 2; terrain.wesl's `PARALLAX_GRAZING`, the tests read it].
+pub const PARALLAX_GRAZING: f32 = 0.15;
+
+/// The relief search's halvings after the linear search (Policarpo, Oliveira and Comba,
+/// "Real-Time Relief Mapping on Arbitrary Polygonal Surfaces", I3D 2005; Bevy's relief
+/// method), as NIF shapes take them (nvf-assets authored.rs `PARALLAX_METHOD`, relief:4)
+/// [design, #3322 round 2; terrain.wesl's `PARALLAX_RELIEF_STEPS`].
+pub const PARALLAX_RELIEF_STEPS: u32 = 4;
 
 /// The terrain parallax march's scale, in texture-coordinate units: the deepest a set's
 /// height map may be (the scalar range's end), the same for every folded material, so every
 /// quadrant marches on one step grid and a layer meets the same steps on both sides of a
 /// quadrant edge, whatever else either quadrant holds [design, #3322 review: a grid from
 /// each material's deepest layer stepped a shallow layer four times as coarsely beside a
-/// deep one]. Shallower layers take fewer of the [`PARALLAX_LAYERS`] steps (the refinement
-/// interpolates between them).
+/// deep one]. Shallower layers take fewer of the [`PARALLAX_LAYERS`] steps (the relief
+/// search refines between them).
 pub const PARALLAX_SCALE: f32 = nvf_assets::texture::TextureCache::AUTHORED_HEIGHT_MAX_DEPTH;
 
 /// The distances from the camera (world units) where the terrain parallax starts to fade and
@@ -2601,14 +2619,25 @@ mod tests {
     }
 
     /// A CPU statement of terrain.wesl's march (`parallax_shift` over `parallax_depth_at`:
-    /// vendored parallax_mapping.wesl's steps and refinement) on the march's scale `scale`,
-    /// for a depth function already on that scale.
+    /// the vendored parallax_mapping.wesl's linear search, grazing clamp and relief search)
+    /// on the march's scale `scale`, for a depth function already on that scale.
     fn parallax_march(depth_at: &dyn Fn(Vec2) -> f32, vt: Vec3, scale: f32) -> Vec2 {
-        let steepness = vt.z.abs().max(1e-3);
-        let layer_count = PARALLAX_LAYERS + (1.0 - PARALLAX_LAYERS) * steepness;
+        parallax_march_with(depth_at, vt, scale, PARALLAX_LAYERS, true)
+    }
+
+    /// The march with `layers` and either the relief search (`relief`, terrain.wesl now) or
+    /// the round-1 shader's occlusion refinement and unclamped divisor (kept here only to
+    /// show what the round-1 pictures showed).
+    fn parallax_march_with(depth_at: &dyn Fn(Vec2) -> f32, vt: Vec3, scale: f32, layers: f32, relief: bool) -> Vec2 {
+        let steepness = if relief { vt.z.abs() } else { vt.z.abs().max(1e-3) };
+        let layer_count = layers + (1.0 - layers) * steepness;
         let layer_depth = 1.0 / layer_count;
-        let delta = scale * layer_depth * Vec2::new(vt.x, -vt.y) / steepness;
+        let divisor = if relief { steepness.max(PARALLAX_GRAZING) } else { steepness };
+        let mut delta = scale * layer_depth * Vec2::new(vt.x, -vt.y) / divisor;
         let (mut shift, mut current, mut depth) = (Vec2::ZERO, 0.0, depth_at(Vec2::ZERO));
+        if relief && depth <= 0.0 {
+            return Vec2::ZERO;
+        }
         let mut i = 0;
         while depth > current && i <= layer_count as i32 {
             current += layer_depth;
@@ -2616,12 +2645,119 @@ mod tests {
             depth = depth_at(shift);
             i += 1;
         }
+        if relief {
+            delta *= 0.5;
+            let mut step_depth = 0.5 * layer_depth;
+            shift -= delta;
+            current -= step_depth;
+            for _ in 0..PARALLAX_RELIEF_STEPS {
+                depth = depth_at(shift);
+                delta *= 0.5;
+                step_depth *= 0.5;
+                if depth > current {
+                    shift += delta;
+                    current += step_depth;
+                } else {
+                    shift -= delta;
+                    current -= step_depth;
+                }
+            }
+            return shift;
+        }
         let previous = shift - delta;
         let next_depth = depth - current;
         let previous_depth = depth_at(previous) - current + layer_depth;
         let gap = next_depth - previous_depth;
         let weight = if gap.abs() > 1e-6 { next_depth / gap } else { 0.0 };
         shift.lerp(previous, weight)
+    }
+
+    /// A view `elevation` degrees above flat ground, looking along +u (east): the vector
+    /// towards the surface in the tangent frame.
+    fn view_at(elevation: f32) -> Vec3 {
+        let e = elevation.to_radians();
+        Vec3::new(e.cos(), 0.0, -e.sin())
+    }
+
+    /// The ground pack's generated height map (nvf-assets pbr_field/ground.rs: 256 texels a
+    /// repeat, a ridge 8 texels wide every 64, high on the ridges and low elsewhere) as the
+    /// march's depth for one fully painted layer at the scale's depth: 0 on a ridge, 1 off.
+    fn ground_pack_depth(p: Vec2) -> f32 {
+        let on = |c: f32| (c * 256.0).rem_euclid(64.0) < 8.0;
+        if on(p.x) || on(p.y) { 0.0 } else { 1.0 }
+    }
+
+    #[test]
+    fn the_march_moves_a_sunk_layer_by_its_depth_over_the_views_slope() {
+        // #3322 round 2: the shift is in texture-coordinate units (one texture repeat, 256
+        // world units on the landscape), so a layer sunk by the full 0.08 seen 20 degrees above
+        // the ground moves 0.08 / tan(20 degrees) = 0.2198 of a repeat away from the camera
+        // (+u here), about 56 texels of the ground pack's 256 and 225 of a 1024 texture; the
+        // relief search ends within a thirty-second of a layer's step of it.
+        let floor = |_: Vec2| 1.0;
+        let shift = parallax_march(&floor, view_at(20.0), PARALLAX_SCALE);
+        let want = PARALLAX_SCALE / 20f32.to_radians().tan();
+        assert!((shift.x - want).abs() < 2e-3 && shift.y == 0.0, "{shift} against {want}");
+        assert!((shift.x * 256.0 - 56.3).abs() < 0.6, "{} texels of 256", shift.x * 256.0);
+        // The frame's signs: towards +B (Bevy's bitangent, -v on the landscape) moves -v.
+        let sideways = parallax_march(&floor, Vec3::new(0.0, 20f32.to_radians().cos(), -20f32.to_radians().sin()), PARALLAX_SCALE);
+        assert!(sideways.x == 0.0 && (sideways.y + want).abs() < 2e-3, "{sideways}");
+        // At the surface already (a ridge's top): nothing, not a step backwards.
+        assert_eq!(parallax_march(&|_| 0.0, view_at(20.0), PARALLAX_SCALE), Vec2::ZERO);
+    }
+
+    #[test]
+    fn the_march_is_bounded_at_grazing_views() {
+        // #3322 round 2: the step's divisor stops at PARALLAX_GRAZING, as on NIF shapes, so a
+        // view along the ground neither throws the samples away (unclamped, a view 3 degrees
+        // above it moved a sunk layer 1.5 repeats) nor gives non-finite coordinates.
+        let floor = |_: Vec2| 1.0;
+        let limit = PARALLAX_SCALE / PARALLAX_GRAZING;
+        for elevation in [8.0, 3.0, 0.5, 0.0] {
+            let shift = parallax_march(&floor, view_at(elevation), PARALLAX_SCALE);
+            assert!(shift.is_finite() && shift.length() <= limit * 1.001, "{elevation} degrees: {shift}");
+        }
+        let unclamped = parallax_march_with(&floor, view_at(3.0), PARALLAX_SCALE, 8.0, false);
+        assert!(unclamped.length() > 1.0, "round 1 at 3 degrees: {unclamped}");
+        let shader = include_str!("terrain.wesl").replace("\r\n", "\n");
+        assert!(shader.contains(&format!("const PARALLAX_GRAZING: f32 = {PARALLAX_GRAZING};")));
+        assert!(shader.contains(&format!("const PARALLAX_RELIEF_STEPS: u32 = {PARALLAX_RELIEF_STEPS}u;")));
+    }
+
+    /// Where along +u from `u0` the ray (seen `elevation` degrees above the ground) first goes
+    /// below the ground pack's surface, found by small steps: the shift a perfect march would
+    /// return, `None` when the ray stays above it within the full depth.
+    fn first_crossing(u0: f32, elevation: f32) -> Option<f32> {
+        let e = elevation.to_radians();
+        let full = PARALLAX_SCALE * e.cos() / e.sin().max(PARALLAX_GRAZING);
+        (0..=4000).map(|k| k as f32 / 4000.0 * full).find(|&s| ground_pack_depth(Vec2::new(u0 + s, 0.5 / 256.0 + 16.0 / 256.0)) <= s / full + 1e-6)
+    }
+
+    #[test]
+    fn the_march_meets_the_ground_packs_ridges_where_the_ray_does() {
+        // #3322 round 2, the cause of the round-1 pictures' doubled, stair-stepped bands:
+        // over the ground pack's sharp ridges the occlusion refinement put each pixel's hit
+        // between two layers' guesses, so a ridge's wall showed once per layer, and at 8
+        // layers a step (0.039 of a repeat at 20 degrees) was longer than a ridge is wide
+        // (0.031), so rays stepped over ridges. Now each pixel ends where its ray first meets
+        // the surface, within a small part of a texel, along a scanline of start points
+        // across two ridge periods (v kept between ridges, so only the ridges across +u count).
+        let v = 0.5 / 256.0 + 16.0 / 256.0;
+        let misses = |elevation: f32, march: &dyn Fn(Vec2) -> Vec2| {
+            (0..512)
+                .filter(|&k| {
+                    let u0 = k as f32 / 512.0 * 0.5;
+                    let got = march(Vec2::new(u0, v)).x;
+                    first_crossing(u0, elevation).is_none_or(|want| (got - want).abs() > 1.5 / 256.0)
+                })
+                .count()
+        };
+        for elevation in [45.0, 30.0, 20.0, 15.0, 12.0] {
+            let now = misses(elevation, &|p| parallax_march(&|s| ground_pack_depth(p + s), view_at(elevation), PARALLAX_SCALE));
+            assert_eq!(now, 0, "{elevation} degrees: pixels whose hit is not where the ray meets the surface");
+        }
+        let round_one = misses(20.0, &|p| parallax_march_with(&|s| ground_pack_depth(p + s), view_at(20.0), PARALLAX_SCALE, 8.0, false));
+        assert!(round_one > 50, "the round-1 march misplaced {round_one} of 512 at 20 degrees");
     }
 
     /// The blended depth on the march's scale, as `parallax_depth_at` adds it from a
@@ -2741,7 +2877,8 @@ mod tests {
         assert!(terrain.contains("    @if(!TERRAIN_ANTI_TILING && !TERRAIN_PARALLAX) var pbr_input = pbr_input_from_standard_material(in, is_front);"), "Bevy's set-up without it");
         assert!(!terrain.contains("fp.uv +="), "the anti-tiled place is not moved: the two never meet");
         assert!(terrain.contains("    @if(TERRAIN_ANTI_TILING) let fp = terrain_footprint("));
-        assert!(terrain.contains("    let delta = values.x * fade * layer_depth * Vt.xy * vec2(1.0, -1.0) / steepness;"));
+        assert!(terrain.contains("    var delta = values.x * fade * layer_depth * Vt.xy * vec2(1.0, -1.0) / max(steepness, PARALLAX_GRAZING);"));
+        assert!(terrain.contains("    for (var i = 0u; i < PARALLAX_RELIEF_STEPS; i += 1u) {"), "the relief search after the layers");
         assert!(terrain.contains("    let V = calculate_view(world, view.clip_from_view[3].w == 1.0);"), "the view's own ray (orthographic views too)");
         assert!(terrain.contains("            depth += w[k + 1u] * scale[k] * (1.0 - layer_height(k, instance_index, uv, footprint));"));
         assert!(terrain.contains("    let scale = parallax_scales(instance_index, values.x);"));

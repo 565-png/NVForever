@@ -407,14 +407,28 @@ fn layer_normal(k: u32, instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
     return depth;
 }
 
-// How far the texture coordinate `uv` moves: Bevy's steep parallax with the occlusion
-// refinement (vendored parallax_mapping.wesl `parallaxed_uv`: the same view vector, frame
-// and signs as on NIF shapes), over the blended depth. None where the march has nothing to
-// move (no depth, faded out, no layer with both a share and a height map) and none
-// head-on (the view vector's tangent part is 0). `w`: the base's and the layers' weights
-// worked out at the plain coordinate (fragment()), which the drawn blend uses too. The ray
-// is the view's own (Bevy's `calculate_view`: one direction in an orthographic view, as the
-// minimap's); the fade goes by the distance from the camera.
+// The march's grazing clamp and relief search (terrain.rs PARALLAX_GRAZING,
+// PARALLAX_RELIEF_STEPS, whose tests read these lines): the NIF shapes' march's values
+// (vendored parallax_mapping.wesl "NVForever grazing clamp", nvf-assets authored.rs
+// PARALLAX_METHOD relief:4) [design, #3322 round 2].
+const PARALLAX_GRAZING: f32 = 0.15;
+const PARALLAX_RELIEF_STEPS: u32 = 4u;
+
+// How far the texture coordinate `uv` moves: steep parallax (a linear search through
+// layers) with the relief refinement, a binary search between the last two layers
+// (Policarpo, Oliveira and Comba, "Real-Time Relief Mapping on Arbitrary Polygonal
+// Surfaces", I3D 2005; Bevy's relief method in the vendored parallax_mapping.wesl
+// `parallaxed_uv`, as on NIF shapes: the same view vector, frame and signs, and its grazing
+// clamp), over the blended depth. The occlusion refinement first written here (one linear
+// interpolation between the last two layers, Tatarchuk's parallax occlusion mapping, I3D
+// 2006) placed a sharp height map's ridge between two layers' guesses, once per layer,
+// instead of at its wall: the stair-stepped, doubled bands of the round-1 pictures. None where the march has
+// nothing to move (no depth, faded out, no layer with both a share and a height map, the
+// plain place already at the surface) and none head-on (the view vector's tangent part is
+// 0). `w`: the base's and the layers' weights worked out at the plain coordinate
+// (fragment()), which the drawn blend uses too. The ray is the view's own (Bevy's
+// `calculate_view`: one direction in an orthographic view, as the minimap's); the fade goes
+// by the distance from the camera.
 @if(TERRAIN_PARALLAX) fn parallax_shift(instance_index: u32, uv: vec2<f32>, world: vec4<f32>, tbn: mat3x3<f32>, w: array<f32, 7>, n: u32, footprint: f32) -> vec2<f32> {
     let values = parallax_values(instance_index);
     let fade = 1.0 - smoothstep(values.z, values.w, length(view.world_position.xyz - world.xyz));
@@ -434,24 +448,46 @@ fn layer_normal(k: u32, instance_index: u32, uv: vec2<f32>) -> vec3<f32> {
     let V = calculate_view(world, view.clip_from_view[3].w == 1.0);
     // Towards the surface, in the tangent frame.
     let Vt = -vec3(dot(V, tbn[0]), dot(V, tbn[1]), dot(V, tbn[2]));
-    let steepness = max(abs(Vt.z), 1e-3);
+    let steepness = abs(Vt.z);
+    // More layers the shallower the view (the layer count mixes by the unclamped steepness);
+    // the step's divisor stops at the grazing clamp, so a view along the ground neither
+    // throws the samples several texture repeats away nor gives non-finite coordinates (the
+    // full-depth shift stays under 1 / 0.15, about 6.7 x the depth).
     let layer_count = mix(values.y, 1.0, steepness);
     let layer_depth = 1.0 / layer_count;
-    let delta = values.x * fade * layer_depth * Vt.xy * vec2(1.0, -1.0) / steepness;
+    var delta = values.x * fade * layer_depth * Vt.xy * vec2(1.0, -1.0) / max(steepness, PARALLAX_GRAZING);
     var shift = vec2(0.0);
     var current = 0.0;
     var depth = parallax_depth_at(instance_index, uv, w, n, scale, footprint);
+    if depth <= 0.0 {
+        return vec2(0.0);
+    }
     for (var i = 0; depth > current && i <= i32(layer_count); i += 1) {
         current += layer_depth;
         shift += delta;
         depth = parallax_depth_at(instance_index, uv + shift, w, n, scale, footprint);
     }
-    let previous = shift - delta;
-    let next_depth = depth - current;
-    let previous_depth = parallax_depth_at(instance_index, uv + previous, w, n, scale, footprint) - current + layer_depth;
-    let gap = next_depth - previous_depth;
-    let weight = select(0.0, next_depth / gap, abs(gap) > 1e-6);
-    return mix(shift, previous, weight);
+    // Relief: halve the last layer's step PARALLAX_RELIEF_STEPS times, moving forward while
+    // the ray is still above the surface and back once below it, so the coordinate ends
+    // within a thirty-second of a step of where the ray meets the surface (a ridge's wall
+    // or its top), not between two layers' guesses.
+    delta *= 0.5;
+    var step_depth = 0.5 * layer_depth;
+    shift -= delta;
+    current -= step_depth;
+    for (var i = 0u; i < PARALLAX_RELIEF_STEPS; i += 1u) {
+        depth = parallax_depth_at(instance_index, uv + shift, w, n, scale, footprint);
+        delta *= 0.5;
+        step_depth *= 0.5;
+        if depth > current {
+            shift += delta;
+            current += step_depth;
+        } else {
+            shift -= delta;
+            current -= step_depth;
+        }
+    }
+    return shift;
 }
 
 // One unturned read at `uv` through the anti-tiling helpers (one tap of weight 1): with a
