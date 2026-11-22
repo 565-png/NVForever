@@ -59,6 +59,8 @@
 //! - **Night sky detail** (`night-sky-detail`, off in every preset): the stars twinkle, the
 //!   moon has a glow and the clouds take its light, from the weather's own colours and fog
 //!   (night_sky.rs, #2995).
+//! - **Distant lights** (`distant-lights`, off in both presets): at night, placed lights in
+//!   the cells beyond the loaded ones show as small glows (distant_lights.rs, #3013).
 //!
 //! Another switch is off in both looks and not part of `enhanced`: **Blend meshes into
 //! ground** (`mesh-terrain-blend`, `mesh_terrain_blend.rs`), outdoor roads, rocks and
@@ -230,6 +232,9 @@ pub struct Graphics {
     /// changes). Read once at the start (nvf_assets `reflection_cube::set_enabled`, main.rs);
     /// this field is the settings row's value for the next start.
     pub authored_reflections: bool,
+    /// Glows of placed lights beyond the loaded cells at night (distant_lights.rs; off in
+    /// both presets) [design, #3013].
+    pub distant_lights: bool,
     /// Full models of static scenery in the cells beyond the loaded ones, draw-only
     /// (full_detail.rs; 7 x 7 in `enhanced`, off in vanilla) [design, #2701; maintainer
     /// decision 2026-11-21 on #3048].
@@ -255,7 +260,7 @@ pub const AUTHORED_REFLECTIONS_KEY: &str = "authored-reflections";
 /// The keys of `--graphics-only`: the settings page's switches and the anti-aliasing,
 /// shadow-filter, full-detail and distant-object choices that are not vanilla's, in the
 /// order of [`Graphics::describe`].
-pub const KEYS: [&str; 26] = [
+pub const KEYS: [&str; 27] = [
     "ambient-occlusion",
     "fine-shadows",
     "bloom",
@@ -282,6 +287,7 @@ pub const KEYS: [&str; 26] = [
     "distant-objects-12",
     "aerial-perspective",
     "night-sky-detail",
+    "distant-lights",
 ];
 
 impl Graphics {
@@ -343,6 +349,8 @@ impl Graphics {
             authored_materials: true,
             // On in both looks [design, #2981]: without a pack nothing reflects.
             authored_reflections: true,
+            // Off in both looks: an addition of our own [design, #3013].
+            distant_lights: false,
             // An addition of our own for machines with GPU headroom: the 7 x 7 ring in
             // `enhanced`, off in vanilla [design, #2701; maintainer decision 2026-11-21 on
             // #3048].
@@ -383,6 +391,7 @@ impl Graphics {
             "night-sky-detail" => &mut self.night_sky_detail,
             AUTHORED_MATERIALS_KEY => &mut self.authored_materials,
             AUTHORED_REFLECTIONS_KEY => &mut self.authored_reflections,
+            "distant-lights" => &mut self.distant_lights,
             _ => return None,
         })
     }
@@ -451,6 +460,7 @@ impl Graphics {
             (self.distant_objects != crate::distant_objects::DistantObjects::Off, self.distant_objects.describe()),
             (self.aerial_perspective, "aerial perspective"),
             (self.night_sky_detail, "night sky detail"),
+            (self.distant_lights, "distant lights"),
         ];
         let mut on: Vec<&str> = names.iter().filter(|(on, _)| *on).map(|(_, n)| *n).collect();
         if self.fsr().is_some() {

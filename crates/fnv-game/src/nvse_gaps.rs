@@ -669,15 +669,13 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // An actor effect's SPIT, an object effect's or ingestible's ENIT; SetEffectFlag's
         // change first (`crate::nvse_jip8`).
         "geteffectflag" => {
-            let f = form(args, 0).unwrap_or(FormId(0));
-            let sub = if g.data.sig(f) == Some(*b"SPEL") { "SPIT" } else { "ENIT" };
-            let flags = crate::nvse::record_value(g, f, sub, "flags").and_then(|v| v.num().ok()).unwrap_or(0.0);
-            bit(flags, num(args, 1, -1.0))
+            let flags = form(args, 0).map_or(0, |f| g.effect_flags(f));
+            bit(f64::from(flags), num(args, 1, -1.0))
         }
         // MGEF DATA [observed: gaps3, RestoreHealth archetype 0, actor value 16, flags
         // 112 so bits 0–3 read 0].
-        "getbaseeffectarchetype" => XVal::Num(form(args, 0).and_then(|f| g.data.magic_effects.get(&f)).map_or(0, |m| m.archetype) as f64),
-        "getbaseeffectav" => XVal::Num(form(args, 0).and_then(|f| g.data.magic_effects.get(&f)).and_then(|m| m.actor_value).map_or(-1.0, f64::from)),
+        "getbaseeffectarchetype" => XVal::Num(form(args, 0).and_then(|f| g.magic_effect_def(f)).map_or(0, |m| m.archetype) as f64),
+        "getbaseeffectav" => XVal::Num(form(args, 0).and_then(|f| g.magic_effect_def(f)).and_then(|m| m.actor_value).map_or(-1.0, f64::from)),
         "getbaseeffectflag" => {
             // SetBaseEffectFlag's change first (`crate::nvse_jip8`).
             let flags = form(args, 0).map_or(0, |f| g.base_effect_flags(f));
@@ -1258,8 +1256,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // GetIsPoison; observed: gaps7, Silver Sting 1, the stimpak 0].
         "getispoison" => {
             let f = form(args, 0).unwrap_or(FormId(0));
-            let effects = g.data.effect_items.get(&f).map(Vec::as_slice).unwrap_or_default();
-            yes(!effects.is_empty() && effects.iter().all(|e| g.data.magic_effects.get(&e.effect).is_some_and(|m| m.flags & 0x5 == 0x5)))
+            let effects = g.data.effect_items.get(&g.unclone(f)).map(Vec::as_slice).unwrap_or_default();
+            yes(!effects.is_empty() && effects.iter().all(|e| g.magic_effect_def(e.effect).is_some_and(|m| m.flags & 0x5 == 0x5)))
         }
         "isarmoraddon" => yes(form(args, 0).is_some_and(|f| g.data.sig(f) == Some(*b"ARMA"))),
         // A form type an inventory holds [documented: GetIsItem].
@@ -1314,13 +1312,12 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // ---- worldspaces and climates ----
         // WRLD CNAM; the setter for the session [observed: gaps8, WastelandNV 0008809B,
         // set to the Strip's and back].
-        "getworldspaceclimate" => match form(args, 0).and_then(|w| crate::nvse::record_value(g, w, "CNAM", "")) {
-            Some(XVal::Ref(c)) => XVal::Ref(c),
-            _ => XVal::Ref(0),
-        },
+        "getworldspaceclimate" => XVal::Ref(form(args, 0).and_then(|w| g.worldspace_climate(w)).map_or(0, |c| c.0)),
         "setworldspaceclimate" => {
             if let (Some(w), Some(c)) = (form(args, 0), form(args, 1)) {
-                g.field_overrides.insert((w, "CNAM/".into()), XVal::Ref(c.0));
+                if g.data.sig(g.unclone(w)) == Some(*b"WRLD") && g.data.sig(g.unclone(c)) == Some(*b"CLMT") {
+                    g.field_overrides.insert((w, "CNAM/".into()), XVal::Ref(c.0));
+                }
             }
             zero
         }
@@ -1561,13 +1558,12 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             zero
         }
         // WRLD INAM [observed: gaps10, WastelandNV 0008809D].
-        "getworldspaceimagespace" => match form(args, 0).and_then(|w| crate::nvse::record_value(g, w, "INAM", "")) {
-            Some(XVal::Ref(r)) => XVal::Ref(r),
-            _ => XVal::Ref(0),
-        },
+        "getworldspaceimagespace" => XVal::Ref(form(args, 0).and_then(|w| g.worldspace_image_space(w)).map_or(0, |i| i.0)),
         "setworldspaceimagespace" => {
             if let (Some(w), Some(i)) = (form(args, 0), form(args, 1)) {
-                g.field_overrides.insert((w, "INAM/".into()), XVal::Ref(i.0));
+                if g.data.sig(g.unclone(w)) == Some(*b"WRLD") && g.data.sig(g.unclone(i)) == Some(*b"IMGS") {
+                    g.field_overrides.insert((w, "INAM/".into()), XVal::Ref(i.0));
+                }
             }
             zero
         }
@@ -1646,8 +1642,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let flags = crate::nvse::record_value(g, c, sub, "").and_then(|v| v.num().ok()).unwrap_or(0.0);
             bit(flags, k)
         }
-        // XCIM [observed: gaps4, Doc's house 0001507A].
-        "getcellimagespace" => json_form(form(args, 0).and_then(|c| g.data.record_field(c, "XCIM", ""))),
+        // XCIM, with SetCellImageSpace first [observed: gaps4, Doc's house 0001507A].
+        "getcellimagespace" => XVal::Ref(form(args, 0).and_then(|c| g.cell_image_space(c)).map_or(0, |i| i.0)),
         // CLMT WLST [observed: gaps4, the Strip's climate 1 weather, 00161241, global
         // none, past the end 0].
         // ClimateAddWeatherType's and ClimateRemoveWeatherType's changes first
@@ -1664,9 +1660,11 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
         }
         // Night outside the climate's sunrise begin to sunset end (TNAM, ten-minute steps)
-        // [observed: gaps4, the Strip's climate at 10 reads 0; hypothesis: the edges].
+        // [observed: gaps4, the Strip's climate at 10 reads 0; hypothesis: the edges, and
+        // an omitted climate falls back to the current climate].
         "isnight" => {
-            let c = form(args, 0).unwrap_or(FormId(0));
+            let c = form(args, 0).or_else(|| crate::nvse_jip12::current_climate(g)).unwrap_or(FormId(0));
+            let c = g.unclone(c);
             let hour = g.world.global(FormId(0x38)).map_or(12.0, f64::from);
             let t = |k: &str| json_num(g.data.record_field(c, "TNAM", k)) / 6.0;
             let (rise, set) = (t("sunrise_begin"), t("sunset_end"));

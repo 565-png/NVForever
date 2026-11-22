@@ -873,7 +873,14 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
         "getnumloadedmods" => XVal::Num(g.data.load_order.len() as f64),
         // [documented: GetEquipType; observed: nvse-forms, 10mm pistol 2, leather armor 7,
         // stimpak 11, 10mm ammo 0] the item's ETYP.
-        "getequiptype" => num_of(field(g, item(g, 0).unwrap_or(FormId(0)), "ETYP", "")),
+        "getequiptype" => {
+            let f = item(g, 0).unwrap_or(FormId(0));
+            if let Some(d) = g.ingestible_def(f) {
+                XVal::Num(if d.equip_type >= 0 { d.equip_type as f64 } else { 0.0 })
+            } else {
+                num_of(field(g, f, "ETYP", ""))
+            }
+        }
         // [documented: GetRepairList; GetModelPath; GetIconPath].
         "getrepairlist" => form_of(field(g, item(g, 0).unwrap_or(FormId(0)), "REPL", "")),
         // GetTexturePath: the icon (ICON) [observed: nvse-misc, pistol, stimpak, caps, the

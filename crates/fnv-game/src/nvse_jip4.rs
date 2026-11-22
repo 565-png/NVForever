@@ -413,12 +413,7 @@ impl Game<'_> {
     /// `nvse_gaps`) [documented: GetIsPoisoned, "under the influence of a poison-type
     /// effect"; hypothesis: the rule].
     fn jip4_poisoned(&self, a: FormId) -> bool {
-        self.effects.iter().filter(|e| e.target == a).any(|e| {
-            self.data.sig(e.source) == Some(*b"ALCH") && {
-                let list = self.data.effect_items.get(&e.source).map(Vec::as_slice).unwrap_or_default();
-                !list.is_empty() && list.iter().all(|x| self.data.magic_effects.get(&x.effect).is_some_and(|m| m.flags & 0x5 == 0x5))
-            }
-        })
+        self.effects.iter().filter(|e| e.target == a).any(|e| self.is_poison(e.source))
     }
 }
 
