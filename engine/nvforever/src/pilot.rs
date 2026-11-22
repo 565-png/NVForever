@@ -1647,7 +1647,12 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                         // World Blues' X-8 chased an attacker up a gantry and stopped there
                         // (Unreachable { expanded: 0 }, round 7 [observed]).
                         if matches!(e, fnv_nav::PathError::Unreachable { expanded } if expanded < STRANDED_EXPANDED) && !w.stranded && here.space == w.goal.space && w.tried.is_empty() {
-                            if let Some(back) = p.walked_from.filter(|b| b.space == here.space && hdist(b.pos, feet) > 64.0) {
+                            // Only to where the goal can be reached from: a goal no way leads to
+                            // from anywhere (an attacker on Gomorrah's balcony; the nav's door
+                            // search answers Unreachable { expanded: 0 } for it too) is no scrap
+                            // of navmesh, and putting the player back undid the way it had
+                            // come (ncr step 74, rerun 4 [observed]).
+                            if let Some(back) = p.walked_from.filter(|b| b.space == here.space && hdist(b.pos, feet) > 64.0 && nav.graph.find_path(*b, w.goal, &forced).is_ok()) {
                                 w.stranded = true;
                                 p.finding("stranded", format!("no way on from ({:.0}, {:.0}, {:.0}) in {:?} ({e:?}): put back at ({:.0}, {:.0}, {:.0}), where the last path began", feet[0], feet[1], feet[2], here.space, back.pos[0], back.pos[1], back.pos[2]));
                                 p.headless("move_player (back off a scrap of navmesh)");
@@ -1720,8 +1725,12 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 _ => w.dodge = None,
             }
             // Held by a script: a wait, and the watchdog's to judge.
+            // Freed and well on: the skips are counted afresh too, for the next place it is
+            // caught at. Gomorrah's way out is caught at (5598, 2917, 6401) each time a fight
+            // drew the player back past it; the walk's three skips went on earlier spots and
+            // the fourth time there it gave up (ncr step 74, rerun 4 [observed]).
             if w.stuck_at.is_some_and(|at| hdist(feet, at) > UNSTUCK_UNITS) {
-                (w.stuck_at, w.replans) = (None, 0);
+                (w.stuck_at, w.replans, w.skips) = (None, 0, 0);
             }
             // Held up against the load door the leg ends at, before its point on the navmesh:
             // used from here, as a player presses E on the door in front of it. Honest Hearts'
@@ -2891,7 +2900,11 @@ fn leave_talk(p: &mut Pilot, h: &mut Hands, go_along: bool) -> bool {
             .game(|g| {
                 let cs = g.dialogue_choices();
                 cs.iter().position(|c| !c.goodbye && !c.darkened && !choice_to_avoid(g, c)).or_else(|| {
-                    cs.iter().all(|c| c.goodbye || c.darkened).then(|| cs.iter().position(|c| c.goodbye && !c.darkened && !choice_to_avoid(g, c) && g.data.infos.get(&c.info).is_some_and(|d| d.begin.is_some() || d.end.is_some()))).flatten()
+                    // A shaded (said before) one too, after an unshaded one: the second way
+                    // out of the Fort offered the ride shaded beside "Goodbye.", and the
+                    // player stood at the gate taking "Goodbye." for 240 s (rerun 4 [observed]).
+                    let scripted = |c: &fnv_game::dialogue::Choice| c.goodbye && !choice_to_avoid(g, c) && g.data.infos.get(&c.info).is_some_and(|d| d.begin.is_some() || d.end.is_some());
+                    cs.iter().all(|c| c.goodbye || c.darkened).then(|| cs.iter().position(|c| !c.darkened && scripted(c)).or_else(|| cs.iter().position(scripted))).flatten()
                 })
             })
             .flatten();
@@ -3103,7 +3116,13 @@ fn across_point(p: &mut Pilot, h: &mut Hands, target: FormId) -> Option<Place> {
         let a = way as f32 * std::f32::consts::FRAC_PI_4;
         let want = [at[0] + a.cos() * r, at[1] + a.sin() * r, at[2]];
         if let Some((_, on)) = nav.graph.nearest(space, want, 48.0) {
-            if (on[2] - at[2]).abs() < 90.0 && hdist(on, at) > 48.0 {
+            // Or up to 160 units below it: a thing on a wall or a desk stands above the
+            // floor. Ted's Freezer Access Terminal (0x001199DC) is placed 107 units over the
+            // kitchen floor, and every point round it was refused, so the walk to it, whose
+            // nearest navmesh lies behind the locked freezer door, gave up (beyond-the-beef
+            // step 54, rerun 4 [observed]).
+            let dz = on[2] - at[2];
+            if (dz.abs() < 90.0 || (dz < 0.0 && dz > -160.0)) && hdist(on, at) > 48.0 {
                 p.across = Some((target, i));
                 return Some(Place { space, pos: on });
             }
@@ -5084,6 +5103,19 @@ fn drive(
             } else {
                 if engage(p, &mut h, "the attacker", &mut f, &mut w).is_some() {
                     // Out of reach: left alone from now on.
+                    p.given_up.push(who);
+                    h.control.trigger = false;
+                    return;
+                }
+                // Only through a door (a locked one, or another room's): left alone, as a
+                // player does not go round by another floor after one who shoots from it.
+                // Gomorrah's hostile casino drew the player back through the elevator and
+                // up to a locked door after an attacker, behind the spot its walk out was
+                // caught at, until the walk gave up (fail-kimball-graham step 75, rerun 4
+                // [observed]).
+                let through_door = w.locked_way || w.cut || w.follower.as_ref().is_some_and(|fl| fl.path.legs.len() > 1);
+                if through_door && !f.afar {
+                    info!("pilot: step {}: the way to the attacker {who} goes through a door: left alone, the step goes on", p.i);
                     p.given_up.push(who);
                     h.control.trigger = false;
                     return;
