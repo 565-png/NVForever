@@ -9,6 +9,7 @@ pub mod authored;
 mod bc5_field;
 pub mod camera_shot;
 pub mod data;
+pub mod env_map;
 pub mod guard;
 pub mod load_times;
 pub mod material_anim;

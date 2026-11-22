@@ -78,6 +78,8 @@ pub struct OtherState {
     pub echo: bool,
     /// SetPlayerCurrentAmmoRounds, for the engine's combat to take.
     pub set_magazine: Option<u32>,
+    /// One-shot `EndVATScam` exit request for the engine (`Game::take_end_vats_cam_request`).
+    pub end_vats_cam_requested: bool,
     /// AddPackageAt's, RemovePackageAt's and RemoveAllPackages' package lists, by actor
     /// base form (`Game::package_list`).
     pub package_lists: HashMap<FormId, Vec<FormId>>,
@@ -370,9 +372,12 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
             zero
         }
-        // [documented: EndVATScam] leaves VATS [hypothesis: NVForever has no VATS camera
-        // yet; nothing to end].
-        "endvatscam" => zero,
+        // [documented: EndVATScam] exits VATS mode and queues a one-shot camera/mode exit
+        // request for the engine (`Game::end_vats_cam`, `Game::take_end_vats_cam_request`).
+        "endvatscam" => {
+            g.end_vats_cam();
+            zero
+        }
         // [documented: ForEachInList] the UDF runs once per form of the list, in order.
         "foreachinlist" => {
             let (Some(l), Some(f)) = (form(args, 0), args.get(1).cloned()) else { return Some(Ok(zero)) };
