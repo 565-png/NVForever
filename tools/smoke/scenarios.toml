@@ -7057,6 +7057,21 @@ order = [[
 ]]
 
 [[scenario]]
+name = "terminal-note-pages"
+source = "[hypothesis] #3409: E, Enter or a click turns a terminal note longer than the screen to its next page, and does nothing on its last page (hacking.md section 7; observer check 255)"
+note = "V21SheldonTerminal's mail: Messages, New Message from Sarah Weintraub (note V21SarahOutMail01, about 30 lines: two pages of 16) [observed: 2026-11-22, the first page ends mid-sentence and the second runs to 'Sarah.']. Three selects: the first turns, the other two find the last page"
+areas = ["terminal"]
+paths = ["engine/nvf-play/src/terminal*", "engine/nvf-play/src/terminal/**"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TERMINAL = "20:open:0011E3C3,22:item:0,24:item:0,26:item:0,28:select,30:select,32:select,34:back,36:exit" }
+args = ["--cell", "2EOMichaelAngelo", "--play", "--no-voice"]
+run_seconds = 40
+expect = [
+  { text = "note V21SarahOutMail01", count = 1, label = "the long mail opened as a note" },
+  { text = "terminal: note turned to line 16", count = 1, label = "one select turns it to its second page, the others find its last page" },
+]
+order = [["note V21SarahOutMail01", "terminal: note turned to line 16", "terminal: back from the note to the list"]]
+
+[[scenario]]
 name = "terminal-scripted-activate"
 source = "#1532: Lucky38MrHouseTerminal's OnActivate (SCPT 0x001746C1) ends in a bare Activate: a script's default activation of a terminal opens its screen for the player, after Terminal01.NIF's Open sequence (keyboard, then screen); leaving plays Close"
 note = "Lucky38MrHouseTerminalREF (0014B0A7, base Lucky38MrHouseTerminal 0014B08E: Hard, locked, model Terminals/Terminal01.NIF with Idle/Open/Close) [observed: FalloutNV.esm]; Science 80 so the script's first branch (Science 75, not locked for good) runs Activate and the hacking game opens"

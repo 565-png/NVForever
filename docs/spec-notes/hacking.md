@@ -344,6 +344,11 @@ after each adjustment:
   Down choose a menu item, Enter or E takes it; Tab or Backspace go back; Esc leaves. The
   pointer lights what it is on and a click enters it. The first key or the pointer shows
   the cursor.
+- A note longer than the screen (#3409) [hypothesis: the player's memory of the original,
+  observer check 255]: Up / Down scroll it a line, no further than its last lines; Enter,
+  E or a click anywhere on the screen turns to the next page (the line after the last one
+  shown; the last page shows the note's last lines), and on the last page does nothing.
+  Tab goes back to the list.
 - Times [design]: 2 s of the wait message before the menu; 1.5 s before the lockout screen.
 
 ## 8. Words not in the plugins

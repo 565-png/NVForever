@@ -20,6 +20,7 @@ use super::{Hacking, MenuView, Page, Session};
 use crate::interface::{at, face, line_anchor, plain_font, set_line, set_marked, texture, u, Face};
 use bevy::prelude::*;
 use fnv_font::{Font, Line};
+use fnv_sim::FormId;
 use fnv_game::data::NoteDef;
 use fnv_game::hacking::{Puzzle, Target, ROWS, ROW_CHARS};
 use nvf_assets::GameData;
@@ -185,6 +186,36 @@ pub const LIST_ROWS: usize = 12;
 /// the screenshot shows one item only].
 pub const LIST_ROW: f32 = 30.0;
 pub const NOTE_LINES: usize = 16;
+
+/// What the screen drew that the input reads back: the menu's rows on the canvas (for the
+/// pointer) and an open note's window (for paging it, #3409).
+#[derive(Default, Debug, Clone, PartialEq)]
+pub struct Drawn {
+    pub rows: Vec<(usize, Rect)>,
+    pub note: Option<NoteWindow>,
+}
+
+/// The lines of an open note on the screen: `shown` of its `total` from line `first`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NoteWindow {
+    pub note: FormId,
+    pub first: usize,
+    pub shown: usize,
+    pub total: usize,
+}
+
+impl NoteWindow {
+    /// The scroll that shows the note's last lines (the most it scrolls).
+    pub fn last_first(&self) -> usize {
+        self.total.saturating_sub(self.shown)
+    }
+
+    /// The scroll of the next page: the line after the last one shown, kept to
+    /// [`NoteWindow::last_first`]; `None` on the last page.
+    pub fn next_page(&self) -> Option<usize> {
+        (self.first + self.shown < self.total).then(|| (self.first + self.shown).min(self.last_first()))
+    }
+}
 /// The result's prompt: 30 above the bottom; its text 34 right of the prompt.
 pub const RESULT_GAP: f32 = 30.0;
 pub const RESULT_X: f32 = 34.0;
@@ -599,10 +630,10 @@ fn centred(p: &mut ChildSpawnerCommands, face: &Face, s: &str, width: f32, top: 
 }
 
 /// Draw the screen into the picture `camera` renders; returns the menu's rows on the
-/// canvas, for the pointer.
+/// canvas, for the pointer, and an open note's window ([`Drawn`]).
 /// `read`: the entries drawn dimmer (the Grey Read Notes tweak on).
-pub fn spawn(commands: &mut Commands, camera: Entity, faces: &Faces, session: &Session, game: &fnv_game::Game, cursor_on: bool, read: Option<&super::ReadEntries>) -> Vec<(usize, Rect)> {
-    let mut rows = Vec::new();
+pub fn spawn(commands: &mut Commands, camera: Entity, faces: &Faces, session: &Session, game: &fnv_game::Game, cursor_on: bool, read: Option<&super::ReadEntries>) -> Drawn {
+    let mut rows = Drawn::default();
     let root = Node { overflow: Overflow::clip(), ..at(0.0, 0.0, CANVAS.x, CANVAS.y) };
     commands.spawn((ScreenRoot, root, UiTargetCamera(camera), Name::new("Terminal screen"))).with_children(|c| {
         // [design] Keep the texture/vignette, accounting for its contribution in the
@@ -714,7 +745,8 @@ fn fit_cjk_line<'a>(font: &Font, text: &'a str, room: f32) -> std::borrow::Cow<'
 }
 
 #[allow(clippy::too_many_arguments)]
-fn menu_page(c: &mut ChildSpawnerCommands, face: &Face, lit_face: &Face, m: &MenuView, game: &fnv_game::Game, cursor_on: bool, rows: &mut Vec<(usize, Rect)>, read: Option<&super::ReadEntries>) {
+fn menu_page(c: &mut ChildSpawnerCommands, face: &Face, lit_face: &Face, m: &MenuView, game: &fnv_game::Game, cursor_on: bool, drawn: &mut Drawn, read: Option<&super::ReadEntries>) {
+    let rows = &mut drawn.rows;
     let bright = bright();
     let data = game.data;
     let Some(t) = data.terminals.get(&m.terminal) else { return };
@@ -758,6 +790,7 @@ fn menu_page(c: &mut ChildSpawnerCommands, face: &Face, lit_face: &Face, m: &Men
             // result line [design], from the line scrolled to.
             let room = (((CANVAS.y - LINE - RESULT_GAP) - (y + 10.0)) / LINE).floor().max(1.0) as usize;
             let first = m.scroll.min(lines.len().saturating_sub(room.min(NOTE_LINES)));
+            drawn.note = Some(NoteWindow { note: n, first, shown: NOTE_LINES.min(room).min(lines.len()), total: lines.len() });
             for (i, line) in lines.into_iter().skip(first).take(NOTE_LINES.min(room)).enumerate() {
                 if let Some(line) = line {
                     set_line(c, face, &line, MENU_X, y + 10.0 + i as f32 * LINE + BASE, bright);
