@@ -2797,6 +2797,44 @@ order = [[
 forbid = [{ text = "Caught rendering error", label = "a rendering (validation) error while anti-aliasing or the filters change" }]
 
 [[scenario]]
+name = "taa-teardown"
+source = "#2955, docs/design/graphics-enhanced.md §3.6 (Temporal anti-aliasing), docs/spec-notes/fsr-upscaling.md: TAA turned off while the game runs, by another anti-aliasing choice (FXAA, Off) or by FSR taking over, drops its pass state and history on the view the same frame (before, the pass went on blending the history frozen at the switch), and turned on again starts its history over"
+areas = ["renderer", "graphics", "settings"]
+paths = [
+  "engine/nvforever/src/taa*", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/fsr*",
+  "engine/nvforever/src/upscaler*", "engine/nvforever/src/upscaler/**",
+]
+env = { WGPU_BACKEND = "vulkan", NVF_FFX_API = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:21", NVF_PLAY_TEST_SETTINGS = "11:anti-aliasing=0.667,12.5:anti-aliasing=1,14:anti-aliasing=0,15.5:anti-aliasing=1,17:fsr-upscaling=Quality,19:fsr-upscaling=Off" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720", "--graphics-only", "taa", "--upscaler", "off", "--no-lodgen"]
+run_seconds = 24
+note = "DLSS goes the same way (graphics.rs apply takes TAA off for any effective temporal upscaler) but needs NVF_DLSS_DIR, so FSR stands in for it here. NVF_FFX_API=0 keeps the built-in FSR 3.1.4 whatever FidelityFX library lies beside the exe (ffx_api.rs), so the dispatch line is always the 3.1.4 one. --upscaler off keeps an upscaler saved in the INI from starting the run (a given switch wins over the INI in a test run); the settings switches still apply. The start may say 'taa: on' more than once (the camera's view made again by the cell load), hence min counts"
+order = [[
+  "taa: on for a view: its history starts over",
+  "settings: anti-aliasing FXAA",
+  "taa: off for a view: its pass state and history dropped",
+  "settings: anti-aliasing TAA",
+  "taa: on for a view: its history starts over",
+  "settings: anti-aliasing Off",
+  "taa: off for a view: its pass state and history dropped",
+  "settings: anti-aliasing TAA",
+  "taa: on for a view: its history starts over",
+  "settings: fsr-upscaling Quality",
+  "taa: off for a view: its pass state and history dropped",
+  "settings: fsr-upscaling Off",
+  "taa: on for a view: its history starts over",
+]]
+expect = [
+  { text = "taa: off for a view: its pass state and history dropped", min = 3, label = "TAA's state dropped for FXAA, Off and FSR" },
+  { text = "taa: on for a view: its history starts over", min = 4, label = "the history started over at the start and each time TAA came back" },
+  "graphics: FSR Quality active; native anti-aliasing off",
+  "FSR dispatch active: 3.1.4, 853x480 -> 1280x720",
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error while TAA goes off and on" },
+  "FSR dispatch failed", "FSR 3.1 unavailable", "Validation Error",
+]
+
+[[scenario]]
 name = "tree-distance-row"
 source = "[design, #3016] docs/design/layer3.md §2.2 (distant trees; engine/nvforever/src/treelod.rs, draw_distance.rs): the settings page's Tree distance slider, a part of the distant LOD's far limit (125,000 units), goes to 0.08 while the game runs at Goodsprings noon and the distant tree billboards' reach drops from --tree-distance's 40,000 units to 10,000 at once, then to the full part and 125,000, beyond the flag, without a rendering or validation error; the exit's distant LOD line still counts trees"
 areas = ["renderer", "settings"]
