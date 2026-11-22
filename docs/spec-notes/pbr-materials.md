@@ -864,21 +864,35 @@ addition of NVForever's own until observer check 268 answers it [hypothesis: it 
   layer for that run only, as the reflections' mount pack is: a `_p` (unsigned BC4, 256
   square, a full mip chain; low almost everywhere, crossed by a grid of raised ridges, from a
   formula: no game pixel is read) and a scalar file at depth 0.08, nothing else.
-  `NVF_PLAY_TEST_TERRAIN_PARALLAX_AB=<seconds>[:hold]` (nvforever `terrain_parallax_ab.rs`)
-  takes three screenshots with the switch off, on, off (or left alone), each after the
-  pipelines have settled, and logs how the ground's texture in a small box at the centre of
-  the view moved: the best whole-pixel translation from the first to the second shot, the
-  differences against the first-to-third floor, and a verdict (`moved`, `still`, ...).
+  A plugin's texture path is data: a stem with a parent step, a dot component or a colon gets
+  no set, and the writer checks every path before its first write.
+  `NVF_PLAY_TEST_TERRAIN_PARALLAX_AB=<seconds>[:flip|hold][:view|grazing|head-on]` (nvforever
+  `terrain_parallax_ab.rs`) takes three screenshots with the switch off, on, off (or left
+  alone), each after the pipelines have settled, and logs how the ground's texture in a small
+  box at the centre of the view moved: the best whole-pixel translation from the first to the
+  second shot, the differences between all three, and a verdict (`moved`, `still`, `bare`,
+  `unsettled`, ...). With a pose it first finds its own spot near the player: the nearest
+  landscape vertex where the folded layers with height maps make up nearly all of what shows
+  (terrain.rs `CellCover`: the cell's stitched layers in drawing order, the folded material's
+  height-map bits, the layers past the folded ones drawn over them; each layer texture's alpha
+  taken as 1), with the physics' landscape under it and a grazing line of sight to it, and
+  stands the player there. Before the first shot it logs what the centre's physics ray meets
+  and the share there the march would move; under half is `bare`, so a view on a quadrant's
+  base, on layers drawn over the folded ones or on a placed object never passes as "still".
   Smoke `terrain-parallax-ground-pack` wants it moved down the screen (towards the camera) at
-  a grazing view and still head-on; `terrain-parallax-ground-pack-off` (the switch off, the
-  pack mounted) wants no `TERRAIN_PARALLAX` pipeline and both views still. The direction is
+  the grazing pose and still head-on; `terrain-parallax-ground-pack-off` (the switch off, the
+  pack mounted) wants no `TERRAIN_PARALLAX` pipeline and both poses still. The direction is
   a [design expectation] (a sunk surface shows each pixel a point further along its ray), the
-  thresholds an engineering policy from reasoning; neither has been seen running yet.
-- **Not done in stage 1** (owed): a run of the two ground-pack scenarios above (their pose,
-  Goodsprings' main street, is not yet checked to stand over painted layers); the frame-time
-  cost with and without the switch at a ground-heavy and a layer-heavy place; before/after
-  pictures with a ground pack (the readback aid saves its shots); the base's own `_p`; height
-  maps for the separate landscape materials.
+  thresholds an engineering policy from reasoning. [observed, the first run on b76835100,
+  looking down Goodsprings' main street from the start: no shift anywhere on screen with
+  the switch flipped, while every folded material held six height maps and the flips edited
+  them; why was not known from that run (a base, layers over the folded ones, or the
+  shader), which the spot and the line under the centre now tell apart.]
+- **Not done in stage 1** (owed): a passing run of the two ground-pack scenarios; the
+  frame-time cost with and without the switch at a ground-heavy and a layer-heavy place;
+  before/after pictures with a ground pack (the readback aid saves its shots); the base's own
+  `_p`; height maps for the separate landscape materials and for the layers past the first
+  six of a quadrant (drawn on their own over the folded draw, unshifted).
 
 ## Load order: per file, so ship complete sets
 
