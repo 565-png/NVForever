@@ -14,7 +14,7 @@ the end). Lab scenario `L5.ext.jg6`. Tests: `crates/fnv-game/tests/jg6.rs`.
 | Function | NVForever |
 |---|---|
 | DamageActorValueAlt, ForceActorValueAlt, ModActorValueAlt, RestoreActorValueAlt, SetActorValueAlt `code value` (and their …AVAlt aliases) | the game's own DamageAV, ForceAV, ModAV, RestoreAV and SetAV with a numeric actor value code [documented: each page's summary and example, e.g. ModActorValueAlt 5 3 raising Strength by 3]; JohnnyGuitar's actor value change handlers see the change as for the plain function. A code past the actor value table changes nothing [hypothesis] |
-| UnforceAV `av` | reverses the cumulative permanent-modifier delta applied by `ForceActorValue` / `ForceActorValueAlt` on the calling actor, leaving `ModAV`, base (`SetAV`), and damage intact; no-op without a prior `ForceAV` [documented: GECK wiki UnforceAV; hypothesis: tracked cumulative ForceAV delta per `(actor, code)`] |
+| UnforceAV `av` | nothing [documented: "currently broken and does nothing"] |
 | UnsetAV `av` | the base goes back to what it was before the first SetAV on that actor value; the modifiers and the damage stay; nothing without a SetAV [documented: UnsetAV; hypothesis: "its previous state" read as the base SetAV changed, the first one kept] |
 | GetActorValueModifierAlt (GetAVModAlt) `av [filter]` | the modifier the actor's active effects hold ("gained from Effects"): 1 the permanent one (an ability's), 2 the temporary one, 3 or none both [documented]. ModAV's change is in none of them, and another filter reads 0 [observed 2026-11-08: ModActorValueAlt Luck 1 on the player read 0 with filters 1, 2, 3, 4 and none] |
 | RewardKarmaAlt `value` | RewardKarma's change without the corner message: the karma note for the engine is dropped [documented] |

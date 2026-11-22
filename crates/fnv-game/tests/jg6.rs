@@ -185,9 +185,9 @@ fn actor_values_by_code() {
     q(&mut g, "player.SetActorValue Luck 7");
     q(&mut g, "player.UnsetAV Luck");
     assert_eq!(n(&mut g, "player.GetBaseActorValue Luck"), luck);
-    // [documented: UnforceAV clears the permanent modifier delta applied by ForceAV].
+    // [documented: UnforceAV "does nothing"].
     q(&mut g, "player.UnforceAV Health");
-    assert_eq!(n(&mut g, "player.GetActorValue Health"), hp);
+    assert_eq!(n(&mut g, "player.GetActorValue Health"), 50.0);
 }
 
 #[test]

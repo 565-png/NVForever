@@ -420,7 +420,6 @@ pub fn force_actor_value(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, Str
         return none();
     }
     add_modifier(g, r, code, diff)?;
-    crate::nvse_jg6::note_force_av(g, r, code, diff);
     none()
 }
 

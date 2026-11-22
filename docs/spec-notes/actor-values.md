@@ -64,7 +64,7 @@ An actor value is a base value and three pools added to it [documented: ActorVal
   for Guns' tag bonus (fAVDTagSkillBonus), which stays: SetActorValue sets the number
   plus the formula plus the tag bonus (`functions::actor::set_actor_value`)
   [hypothesis: the save's tagged skills were not read].
-- `UnsetAV` and `UnforceAV` are modelled in `nvse_jg6.rs` (`Jg6State::set_av_before`, `force_av_delta`).
+- Not modelled: `UnsetAV` and `UnforceAV`.
 
 Where the numbers live: the permanent value of S.P.E.C.I.A.L. is in the Layer 4 world
 (`World::actor_value`), because the carry weight rule and the menus read and write it

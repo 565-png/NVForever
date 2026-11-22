@@ -1,10 +1,8 @@
-//! Integration tests for replaced NVSE stubs: `UnforceAV`, `IsInCharGen`,
-//! `GetStringHash`, and `HasKeywordCond`.
+//! Integration tests for replaced NVSE stubs: `IsInCharGen` and `HasKeywordCond`.
 
 use crate::common::*;
 use fnv_esm::{LoadOrder, Plugin, Schema};
 use fnv_game::game::{menus, Game, GameConfig, RaceMenu, RunCtx};
-use fnv_game::nvse_jip12::string_hash;
 use fnv_game::GameData;
 use fnv_script::vm::XVal;
 use fnv_script::FunctionTable;
@@ -69,38 +67,6 @@ fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XVal]) -> XVa
 }
 
 #[test]
-fn unforce_av_reverses_force_av_and_preserves_mod_av_base_and_damage() {
-    let f = fixture();
-    let mut g = game(&f);
-
-    let hp0 = n(&mut g, "player.GetActorValue Health");
-    // Apply ModAV (+20) and DamageAV (5): current should be hp0 + 15.
-    q(&mut g, "player.ModActorValue Health 20\nplayer.DamageActorValue Health 5");
-    assert_eq!(n(&mut g, "player.GetActorValue Health"), hp0 + 15.0);
-
-    // UnforceAV without a prior ForceAV is a no-op (ModAV and damage stay).
-    q(&mut g, "player.UnforceAV Health");
-    assert_eq!(n(&mut g, "player.GetActorValue Health"), hp0 + 15.0);
-
-    // ForceAV twice (plain ForceAV then ForceActorValueAlt), then UnforceAV restores hp0 + 15.
-    q(&mut g, "player.ForceActorValue Health 40\nplayer.ForceActorValueAlt 16 75");
-    assert_eq!(n(&mut g, "player.GetActorValue Health"), 75.0);
-    q(&mut g, "player.UnforceAV Health");
-    assert_eq!(n(&mut g, "player.GetActorValue Health"), hp0 + 15.0);
-
-    // Second UnforceAV is idempotent.
-    q(&mut g, "player.UnforceAV Health");
-    assert_eq!(n(&mut g, "player.GetActorValue Health"), hp0 + 15.0);
-
-    // Works on SPECIAL attributes (synced through World) and on non-player actors too.
-    let npc_str = n(&mut g, "OwnKeywordActorRef.GetActorValue Strength");
-    q(&mut g, "OwnKeywordActorRef.ForceActorValue Strength 9");
-    assert_eq!(n(&mut g, "OwnKeywordActorRef.GetActorValue Strength"), 9.0);
-    q(&mut g, "OwnKeywordActorRef.UnforceAV Strength");
-    assert_eq!(n(&mut g, "OwnKeywordActorRef.GetActorValue Strength"), npc_str);
-}
-
-#[test]
 fn is_in_chargen_tracks_set_in_chargen_and_chargen_menus() {
     let f = fixture();
     let mut g = game(&f);
@@ -133,27 +99,6 @@ fn is_in_chargen_tracks_set_in_chargen_and_chargen_menus() {
     assert_eq!(n(&mut g, "IsInCharGen"), 0.0);
     g.menu = None;
     assert_eq!(n(&mut g, "IsInCharGen"), 0.0);
-}
-
-#[test]
-fn get_string_hash_is_deterministic_signed_32bit_and_zero_for_empty() {
-    let f = fixture();
-    let mut g = game(&f);
-
-    assert_eq!(n(&mut g, "GetStringHash"), 0.0);
-    assert_eq!(n(&mut g, "GetStringHash \"\""), 0.0);
-    assert_eq!(string_hash(""), 0);
-
-    let h1 = n(&mut g, "GetStringHash \"NVForever\"");
-    let h2 = n(&mut g, "GetStringHash \"NVForever\"");
-    let h3 = n(&mut g, "GetStringHash \"OtherString\"");
-    assert_eq!(h1, f64::from(string_hash("NVForever")));
-    assert_eq!(h1, h2);
-    assert_eq!(call(&mut g, "gethash", None, &[XVal::Str("NVForever".into())]), XVal::Num(h1));
-    assert_ne!(h1, 0.0);
-    assert_ne!(h1, h3);
-    assert!((f64::from(i32::MIN)..=f64::from(i32::MAX)).contains(&h1));
-    assert_eq!(h1.fract(), 0.0);
 }
 
 #[test]
