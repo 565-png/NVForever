@@ -2,6 +2,9 @@
 //! (docs/spec-notes/script-compiler.md). The parity over the shipped units is the lab
 //! scenario L5.script.compile.vanilla.
 
+#[path = "compile/inline_surplus_operands.rs"]
+mod inline_surplus_operands;
+
 use fnv_script::compile::{compile, Compiled, Env, FormInfo, Seed, PLAYER};
 use fnv_script::unit::RefSlot;
 use fnv_script::{decode, Arg, Expr, FunctionTable, Op, Program, Stmt, Token, VarDecl, VarType};
@@ -543,6 +546,37 @@ end");
     // rCallback 10`].
     assert_eq!(l[0], "(v1 Set= Call(v2 1 2 3))");
     assert_eq!(l[1], "(v1 Set= Call(v2 1 (2 Add 3)))");
+}
+
+#[test]
+fn a_joined_block_lambda_is_the_calls_first_argument() {
+    // Public issue #2985: the opener's `(` can be the only separator.
+    for opener in ["Call (begin function", "Call ( begin function", "Call(begin function"] {
+        let source = format!(
+            "int result\nint input\nbegin GameMode\n\
+             let result := {opener}{{input}}\nSetFunctionValue input\nend) 7\n\
+             {opener}{{input}}\nSetFunctionValue input\nend) 7\nend"
+        );
+        let (_, p) = build(&source);
+        let [Stmt::Let { expr: XExpr::Assign { value, .. } }, Stmt::Eval { expr: XExpr::Call { call: statement } }] = body(&p)
+        else {
+            panic!("{opener}: expected a let and a call statement, got {:?}", body(&p));
+        };
+        let XExpr::Call { call: assigned } = value.as_ref() else {
+            panic!("{opener}: expected a call on the right of let, got {value:?}");
+        };
+        for call in [assigned, statement] {
+            assert_eq!(call.func, FuncId::Name("Call".into()), "{opener}");
+            let [XExpr::Lambda { params, body, value: None, .. }, XExpr::Num { value, .. }] = call.args.as_slice() else {
+                panic!("{opener}: expected a block lambda and the trailing argument, got {:?}", call.args);
+            };
+            assert_eq!(*value, 7.0, "{opener}");
+            let [param] = params.as_slice() else { panic!("{opener}: expected one lambda parameter, got {params:?}") };
+            assert!(param.on.is_none() && matches!(param.var, VarSlot::Local { index: 2, .. }), "{opener}: {param:?}");
+            let [Stmt::Eval { expr }] = body.as_slice() else { panic!("{opener}: expected the lambda body, got {body:?}") };
+            assert_eq!(x(expr), "SetFunctionValue(v2)", "{opener}");
+        }
+    }
 }
 
 #[test]
@@ -1944,4 +1978,46 @@ fn a_declarations_value_declares_inline_in_a_lambda() {
         let c = fnv_script::compile::compile_mod_runtime(&src, &table(), &World);
         assert_eq!(c.errors().count(), 0, "{body}: {:?}", c.errors().collect::<Vec<_>>());
     }
+}
+
+/// `SetOnPlayGroupEventHandler` parameter index 3 resolves bare known `anim_group` keywords
+/// to `XExpr::Enum`, while leaving quoted strings (including names outside `encodings.json`),
+/// runtime `string_var`s, numeric codes, globals, dotted quest variables, and function calls
+/// as ordinary `ParamEnc::Value` expressions.
+#[test]
+fn set_on_play_group_event_handler_anim_group_arg_forms() {
+    let (_, p) = build(
+        "ref fnH\nstring_var sGrp\nbegin GameMode\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF Idle\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF Equip\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF \"Equip\"\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF \"TurnRight\"\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF sGrp\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF 0\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF 24\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF TestGlobal\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF TestQuest.bDone\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF GetAnimAction\n\
+         end\n",
+    );
+    let fourth_args: Vec<String> = body(&p)
+        .iter()
+        .map(|s| match s {
+            Stmt::Eval { expr } => match expr {
+                XExpr::Call { call } => x(&call.args[3]),
+                other => panic!("expected call, got {other:?}"),
+            },
+            other => panic!("expected eval stmt, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(fourth_args[0], "#0", "bare keyword Idle");
+    assert_eq!(fourth_args[1], "#24", "bare keyword Equip");
+    assert_eq!(fourth_args[2], "\"Equip\"", "quoted string must stay XExpr::Str for runtime normalization");
+    assert_eq!(fourth_args[3], "\"TurnRight\"", "unknown quoted string must compile as XExpr::Str");
+    assert_eq!(fourth_args[4], "v2", "string_var stays a variable reference");
+    assert_eq!(fourth_args[5], "0", "numeric 0");
+    assert_eq!(fourth_args[6], "24", "numeric 24");
+    assert!(fourth_args[7].starts_with('g'), "global variable must stay global var, got {}", fourth_args[7]);
+    assert_eq!(fourth_args[8], "v1", "dotted quest variable must compile as variable, not unknown enum");
+    assert!(fourth_args[9].contains('('), "zero-arg function call must compile as call, got {}", fourth_args[9]);
 }

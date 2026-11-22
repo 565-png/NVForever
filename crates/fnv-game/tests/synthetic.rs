@@ -3580,6 +3580,34 @@ End
 }
 
 #[test]
+fn refresh_items_list_sets_one_shot_transient_request() {
+    use fnv_script::vm::XVal;
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let q = |g: &mut fnv_game::Game, body: &str| {
+        g.run_query(&format!("Begin Function {{ }}\n{body}\nEnd\n"), Default::default())
+    };
+    assert!(!g.refresh_items_list_pending());
+    assert!(!g.take_refresh_items_list());
+
+    // Calling RefreshItemsList returns 0 and latches a pending request; repeated calls coalesce.
+    assert_eq!(q(&mut g, "SetFunctionValue (RefreshItemsList)"), Ok(XVal::Num(0.0)));
+    assert!(g.refresh_items_list_pending());
+    assert_eq!(q(&mut g, "RefreshItemsList"), Ok(XVal::Num(0.0)));
+    assert!(g.refresh_items_list_pending());
+
+    // The request is transient (not carried across snapshot/restore).
+    let snap = g.snapshot();
+    let restored = Game::restore(&f.data, World::restore(&f.forms, &f.refs, &snap.sim).unwrap(), g.cfg, &snap).unwrap();
+    assert!(!restored.refresh_items_list_pending());
+
+    // Engine consumption is one-shot.
+    assert!(g.take_refresh_items_list());
+    assert!(!g.refresh_items_list_pending());
+    assert!(!g.take_refresh_items_list());
+}
+
+#[test]
 fn queries_run_function_scripts_and_keep_what_they_change() {
     // The runner's `query` action (Game::run_query): JIP's auxiliary variables set by one
     // query are read by the next, and the saved ones are in the snapshot.
@@ -3765,6 +3793,97 @@ fn answer_ok_boxes_leaves_a_box_with_a_choice_to_the_player() {
     g.run_source("MessageBoxEx \"A|Yes|No\"", Default::default()).expect("compiles");
     assert_eq!((g.menu, g.boxes.len()), (Some(menus::MESSAGE), 1));
     assert!(g.take_answered_boxes().is_empty());
+}
+
+/// The fixture with its message made a box without buttons (Message Box flag, no ITXT),
+/// as BMRhondaFixMsg (MESG 0x000E9551) is (#2925).
+fn ok_box_fixture(message_box: bool) -> Fixture {
+    let mut f = fixture();
+    let msg = f.data.messages.get_mut(&FormId(MESSAGE)).unwrap();
+    msg.buttons.clear();
+    msg.button_conditions.clear();
+    msg.message_box = message_box;
+    f
+}
+
+/// GetButtonPressed as the activator's script (the one that shows the message) calls it.
+fn activator_reads_button(g: &mut Game) -> Value {
+    let ctx = Ctx { unit: "test".into(), opcode: 0x101F, on: None, self_ref: None, action_ref: None, quest: None, inst: Some(InstKey::Ref { reference: FormId(ACT_REF) }), in_condition: false };
+    g.call_function(&ctx, &[])
+}
+
+/// #2925: the Broken Mr. Handy in Black Mountain waits for button 0 after a box with no
+/// buttons. The player's OK on such a box gives the script that showed it 0, once, then
+/// −1 [hypothesis: inferred from SCPT 0x000E9483]; before, the box had no `message_box`
+/// and GetButtonPressed read −1 for good.
+#[test]
+fn ok_on_a_message_box_without_buttons_gives_its_script_button_0_once() {
+    use fnv_game::game::menus;
+    let f = ok_box_fixture(true);
+    let mut g = game(&f);
+    g.new_game();
+    g.activate(FormId::PLAYER_REF, FormId(ACT_REF), ActMode::Hand).unwrap();
+    assert_eq!((g.menu, g.boxes.clone()), (Some(menus::MESSAGE), vec![FormId(MESSAGE)]));
+    assert_eq!(g.message_box.as_ref().map(|m| (m.buttons, m.pressed)), Some((0, None)));
+    assert_eq!(activator_reads_button(&mut g), Value::Num(-1.0), "not answered yet");
+    // The player's OK (`Game::close_menu`, as nvf-play closes an answered box).
+    assert_eq!(g.close_menu(), Some(menus::MESSAGE));
+    assert_eq!(g.menu, None);
+    assert_eq!(activator_reads_button(&mut g), Value::Num(0.0));
+    assert_eq!(activator_reads_button(&mut g), Value::Num(-1.0), "once");
+}
+
+/// A message without the Message Box flag and without buttons is a corner notification:
+/// no box waits, GetButtonPressed stays −1 (#2925).
+#[test]
+fn a_corner_message_gives_get_button_pressed_nothing() {
+    let f = ok_box_fixture(false);
+    let mut g = game(&f);
+    g.new_game();
+    g.activate(FormId::PLAYER_REF, FormId(ACT_REF), ActMode::Hand).unwrap();
+    assert_eq!((g.menu, g.boxes.len()), (None, 0));
+    assert!(g.message_box.is_none());
+    assert_eq!(activator_reads_button(&mut g), Value::Num(-1.0));
+}
+
+/// `--no-messages` (GameConfig::answer_ok_boxes) answers the same box with OK as it is
+/// shown: its script reads 0 once (#2925; before, −1).
+#[test]
+fn answer_ok_boxes_gives_a_box_without_buttons_button_0() {
+    let f = ok_box_fixture(true);
+    let mut g = game(&f);
+    g.cfg.answer_ok_boxes = true;
+    g.new_game();
+    g.activate(FormId::PLAYER_REF, FormId(ACT_REF), ActMode::Hand).unwrap();
+    assert_eq!((g.menu, g.boxes.len()), (None, 0), "the box never opened");
+    assert_eq!(g.take_answered_boxes(), vec![FormId(MESSAGE)]);
+    assert_eq!(activator_reads_button(&mut g), Value::Num(0.0));
+    assert_eq!(activator_reads_button(&mut g), Value::Num(-1.0));
+}
+
+/// A box without buttons shown behind a box with buttons that still waits does not take
+/// its place: the choice's button reaches its script [design, #2925].
+#[test]
+fn a_box_without_buttons_leaves_a_waiting_choice_its_button() {
+    use fnv_game::game::menus;
+    const INFO: u32 = 0x811;
+    let mut f = fixture();
+    let info = fnv_game::data::MessageDef { text: Some("Info".into()), message_box: true, ..Default::default() };
+    f.data.messages.insert(FormId(INFO), info);
+    let mut g = game(&f);
+    g.new_game();
+    // The activator's Yes / No box, then another script's box with OK alone behind it.
+    g.activate(FormId::PLAYER_REF, FormId(ACT_REF), ActMode::Hand).unwrap();
+    let quest = Ctx { unit: "test".into(), opcode: SHOW_MESSAGE, on: None, self_ref: None, action_ref: None, quest: None, inst: Some(InstKey::Quest { quest: q() }), in_condition: false };
+    g.call_function(&quest, &[ArgValue::Value(Value::Ref(INFO))]);
+    assert_eq!(g.boxes, vec![FormId(MESSAGE), FormId(INFO)]);
+    assert_eq!(g.message_box.as_ref().map(|m| m.message), Some(FormId(MESSAGE)), "the choice keeps the slot");
+    g.press_button(1).unwrap();
+    assert_eq!(activator_reads_button(&mut g), Value::Num(1.0));
+    // The box with OK alone is on screen now; its OK has nothing to answer.
+    assert_eq!((g.menu, g.boxes.clone()), (Some(menus::MESSAGE), vec![FormId(INFO)]));
+    g.close_menu();
+    assert_eq!(g.menu, None);
 }
 
 #[test]

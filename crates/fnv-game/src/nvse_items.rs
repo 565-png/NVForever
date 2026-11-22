@@ -174,8 +174,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // SetIsPlayable 0 on the 10mm pistol leaves IsPlayable 1].
         "setisplayable" => {
             let it = form(args, 1).or(subject).map(|f| base(g, f)).unwrap_or(FormId(0));
-            if g.data.sig(it) != Some(*b"WEAP") {
-                g.playable_overrides.insert(it, args.first().is_some_and(XVal::truthy));
+            if g.data.sig(g.unclone(it)) != Some(*b"WEAP") {
+                g.set_item_playable(it, args.first().is_some_and(XVal::truthy));
             }
             XVal::Num(0.0)
         }
@@ -299,7 +299,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // as an array of forms [hypothesis: forms only, without levels].
         "getlevcharacterrefs" | "getlevcreaturerefs" => {
             let l = form(args, 0).unwrap_or(FormId(0));
-            let items: Vec<XVal> = g.data.leveled_actors.get(&l).map(|d| d.entries.iter().map(|(_, f)| XVal::Ref(f.0)).collect()).unwrap_or_default();
+            let items: Vec<XVal> = g.lev_list(l).map(|d| d.entries.iter().map(|e| XVal::Ref(e.1 .0)).collect()).unwrap_or_default();
             let entries = items.into_iter().enumerate().map(|(i, v)| (XKey::Num(i as f64), v)).collect();
             XVal::Array(g.ext.new_array(ArrayKind::List, entries))
         }

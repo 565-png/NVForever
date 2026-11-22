@@ -82,7 +82,7 @@ changes. The engine's crafting menu (`engine/nvf-play/src/crafting.rs`) reads
 
 | Function | NVForever |
 |---|---|
-| IsTrait `perk` | PERK DATA Trait, SetPerkFlag's change first [documented] |
+| IsTrait `perk` | PERK DATA Trait, `Game::perk_def` first (`SetPerkFlag`) [documented] |
 | GetNthPerkEntryForm `perk index` | an ability entry's spell, a quest stage entry's quest [documented: "Ability for type 5, Quest for type 6"]; an entry point without a leveled list 0, a negative or missing index 0 [observed: lutana1 perk.entryform.builtto.1, perk.entryform.actionboy.2, perk.entryform.actionboy.-1]; an entry point's leveled list ("type 3") is not kept decoded [hypothesis: 0] |
 | GetWorldspaceParentWorldspace (GetWorldParentWorld) `world` | WRLD WNAM [documented] |
 | GetCellWaterForm `[cell]` | XCWT; an exterior cell its worldspace's NAM2 [documented]; the player's cell when none is given [documented] |
@@ -112,7 +112,7 @@ changes. The engine's crafting menu (`engine/nvf-play/src/crafting.rs`) reads
 | Function | NVForever |
 |---|---|
 | GetFormFlag, SetFormFlag `form flag [on]` | 1 when every bit of the mask is among the record flags, as GetFlagsLow/High read and SetFlagsLow/High store them [documented: the table] |
-| LNIsPlayable, LNSetIsPlayable `[on] [form]` | weapons, armour, ammo as IsPlayable/SetIsPlayable; RACE DATA flags bit 0; HAIR and EYES DATA bit 0; PERK DATA Playable (SetPerkFlag's store) [documented: the form types; the fields xEdit]; the calling reference's base when no form |
+| LNIsPlayable, LNSetIsPlayable `[on] [form]` | weapons, armour, ammo as IsPlayable/SetIsPlayable; RACE DATA flags bit 0; HAIR and EYES DATA bit 0; PERK DATA Playable (`Game::perk_def`, shared with `SetPerkFlag` / `SetPerkLevel` and carried across same-run loads via `Game::take_session`) [documented: the form types; the fields xEdit; hypothesis: session-only lifetime]; the calling reference's base when no form |
 | SetWeaponCritFlags, SetWeaponKillImpulse, SetWeaponImpulseDistance, SetWeaponVATSEffect `weapon value` | CRDT flags, DNAM kill impulse and impulse distance, VATS effect, for the session [documented], read through the record getters; combat still reads the record (follow-up) |
 | GetLoadScreenType, SetLoadScreenType `screen [type]` | LSCR WMI1 [documented] |
 | GetPCCanUsePowerArmor | SetPCCanUsePowerArmor's state [documented] |
@@ -120,7 +120,7 @@ changes. The engine's crafting menu (`engine/nvf-play/src/crafting.rs`) reads
 | AddNoteNS `note` | AddNote without the corner message [documented]: the note is filed and OnNoteAdded handlers run |
 | GetTimeStamp | the computer's local time as "HH-mm-SS" [documented] |
 | CrosshairRefInList `list` | 1 the reference under the crosshair is in the list, 2 its base is, else 0 [documented] |
-| GetRadius, SetRadius `[radius] [light]` | a light base's DATA radius (whole, a negative one kept) [observed: lutana1 radius.set.base.frac, radius.set.base.neg]; else the calling reference's XRDS as given, -16.59 too [observed: lutana1 radius.ref.fire, radius.set.ref], else its light base's radius [hypothesis], else 0 [documented: "a reference (any type) or Light BaseForm"]; the radiation markers keep the record's radius (follow-up) |
+| GetRadius, SetRadius `[radius] [light]` | a light base's DATA radius (whole, a negative one kept) [observed: lutana1 radius.set.base.frac, radius.set.base.neg]; else the calling reference's XRDS as given, -16.59 too [observed: lutana1 radius.ref.fire, radius.set.ref], else its light base's radius [hypothesis], else 0 [documented: "a reference (any type) or Light BaseForm"]; live reference radii reach radiation markers (`Game::radiation_markers_in`: player and Character Radiation exposure, `GetRadiationLevelAlt`, and AI avoidance) and are carried across same-run loads in `Game::Session` [hypothesis] |
 
 ## 8. Not built yet (53)
 

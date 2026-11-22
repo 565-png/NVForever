@@ -56,6 +56,9 @@ own rules are not known]:
 - what is still open at the end of a file is closed there (each included file is read
   on its own, so this stays inside the include);
 - a start tag cut short by `<` ends there, open (its own end tag follows);
+- an element opened inside 256 open ones is left out with everything in it, up to its own
+  end tag [design: `xml::MAX_DEPTH`, NVForever's own guard against running out of stack on
+  a broken or crafted file, #3156; no vanilla file comes near it];
 - an unquoted attribute value runs to a space or `>`, stray quotes dropped;
 - `<!-- -->` comments, `<?…?>` and `<!…>` are skipped; `&amp;` `&lt;` `&gt;` `&quot;`
   `&apos;` `&#N;` are decoded; any other `&name;` is kept by name;
@@ -126,6 +129,16 @@ codes [documented: GetActiveMenuMode]. Other numbers stay as before [hypothesis]
 - `&hudmain;` 1, `&hudalt;` 2 [observed: private job hud_jip file_0032;
   hud_hardcore2 hc2-hc5; hud.md §14.8];
 - every other constant reads 0 as a number [hypothesis].
+
+Scripts can also write standalone entity tokens into a trait via `SetUIString` /
+`SetUIStringAlt` with or without a trailing semicolon (e.g. `"&false"`, `"&true"`,
+`"&center"`) [hypothesis: JIP UI scripts hide vanilla tiles by writing `"&false"` to
+`.../visible`, relying on the trait parser recognising `&name` constants the same as XML
+entities; observer check]. NVForever keeps the written `Value::Str` text verbatim for
+`GetUIString`, while evaluating standalone `&name` / `&name;` ASCII identifier strings
+(excluding `&-sName;` game-string placeholders and mixed prose) identically to
+`Value::Sym` for `truthy()`, `num()`, `eq`, `justify`, and suffix-`<copy>` lookup
+[design: `fnv_ui::value`].
 
 ### 2.4 Game setting strings
 
@@ -205,6 +218,22 @@ The tree records each name it read and whether it had text (`Ui::game_strings_re
 engine logs `ui: game strings: N read, M without text` at start for the menus it keeps
 loaded (with the vanilla files, `sModffects` of `item_stats_display.xml` is the one name
 without text there).
+
+**Unprefixed game-string entities (`&sName;` without `-`)** [observed: MCM 1.5's
+`Scale.xml` writes `<string> &sAccept; </string>` and `<string> &sCancel; </string>`,
+#2270]: mod menu files sometimes omit the leading `-` on game-setting string entities.
+Previously, `fnv_ui::expr::literal` turned any lone entity without `-` straight into
+`Value::Sym`, rendering raw `&saccept;` / `&scancel;`, and left unprefixed entities raw in
+compound text. [design: `fnv_ui::expr::literal_with`, `fnv_ui::tree::Ui::put_trait`] When
+an unprefixed entity is not a known numeric or menu-class constant (`sym_number`),
+NVForever checks `Source::game_string` (load-order GMSTs first, then `BUILT_IN`, without
+case) for both lone entities and compound text; when found, it expands to that text and
+records the read in `game_strings_read` (and `built_in_label` for lone built-in labels).
+When not found, it stays a named constant `Value::Sym` (or literal `&name;` in compound
+text) without recording a missing game-string read [hypothesis: whether the original reads
+an unknown unprefixed `&sName;` as empty or literal text has not been observed; keeping
+unmatched unprefixed entities as symbols preserves unknown UI constants such as `&center;`
+and `&scale;`].
 
 The names with no record in the vanilla masters, by spelling:
 
@@ -1350,3 +1379,32 @@ Blue Moon list showed: `*:N` counted from the last child, `_Has360Controller` ne
 written (MCM took the pointer for a controller), bracket-less sources read as names
 (Vanilla UI Plus's option titles all at y 0), and JIP CCC's sub-menu lines with no mod
 chosen.
+
+## 11. Modern Minimap's map picture (ModernMinimap.dll)
+
+[observed: menus\prefabs\stentorious\modernminimap\main.xml, its "ModernMinimap.dll
+Traits"; NVSE\CompileScript\ModernMinimap\OnRender.gek; nvse.log "ModernMinimap; version
+1"] The mod's HUD window `HUDMainMenu/ModernMinimap` leaves the map picture to its plugin.
+The file computes `_Render` (true when `_ForceUpdate`, or when `MapRender`'s offset from
+the window's centre passes `_UpdateWidth`; the mod's scripts force it by setting
+`_MapOriginX` to -999999 on load, cell change, fast travel and key presses), and reads the
+render's centre back from `_MapOriginX`/`_MapOriginY` to place the picture
+(`_PosXOffset = (_MapOriginX - _PlrX) * _WorldScale`, `_WorldScale = _MapScaleLocal /
+_Frustum`) and every icon. The picture spans `_FrustumSize` (`_Frustum` 2048 /
+`_MapScaleLocal`) game units each way, from a camera `_CameraOffset` (10,000) over the
+player. The mod's render-update handler writes `_PlrX`/`_PlrY`/`_PlrZ` and `_PlrDeg`.
+
+NVForever [design] (`nvf_play::tiles::modern_minimap`, `nvforever::minimap_render`): while
+`_Render` reads true, a camera straight down over `_PlrX`/`_PlrY` renders the picture,
+given to `MapRender` as the runtime picture `nvf:modern_minimap`, and the render's
+centre is written to `_MapOriginX`/`_MapOriginY`. The file's own tint (`systemcolor`,
+`brightness`) colours it. Engine design choices: the camera draws the world layer only
+(not the player's body or the water's own layer), without fog, clearing to black, with
+no MSAA; it draws to 20,000 units below its height over the player; when `_CameraOffset`
+does not read, it uses the file's 10,000.
+
+[hypothesis] The plugin's camera is orthographic with north up, and its picture is 1024
+texels square (`textureSize=1024`, taken to be the plugin INI's default). Neither has
+been observed in the original game. Open: the plugin's
+exact look (classic mode's shading, interiors under a ceiling 10,000 over the player)
+and the INI's other settings are not read; the picture is the lit scene from above.

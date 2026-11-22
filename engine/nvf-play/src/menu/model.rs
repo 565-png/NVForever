@@ -66,6 +66,9 @@ use fnv_sim::world::{Encumbrance, SimError};
 use fnv_sim::{FormId, Pick, RefTable, World};
 use std::collections::BTreeMap;
 
+mod search;
+pub use search::{SearchError, MAX_SEARCH_CHARS};
+
 /// Rows the inventory (the Pip-Boy's ITEMS list) shows at once; the list scrolls to keep
 /// the selection visible. Its list is 468 high and a row 51 (`pipboy::items`).
 pub const VISIBLE_ROWS: usize = 9;
@@ -711,6 +714,9 @@ pub struct Trade {
     /// A script's price multipliers, buying and selling (SetBarterPriceMult,
     /// `fnv_game::nvse_jip12`), in place of the rules'.
     pub mult_set: [Option<f32>; 2],
+    /// Items hidden by `HideItemBarterEx` for this merchant (`1` hidden on vendor's side,
+    /// `2` hidden on player's side, `3` hidden on both) [documented: HideItemBarterEx].
+    pub hidden: BTreeMap<FormId, i64>,
 }
 
 /// Whether the merchant sells an item: `None` when it does, else the name of the service
@@ -771,6 +777,17 @@ impl Trade {
         }
     }
 
+    /// Whether `HideItemBarterEx` hides `item` on `side` (`1` hidden on vendor's side,
+    /// `2` hidden on player's side, `3` hidden on both) [documented: HideItemBarterEx].
+    pub fn is_hidden(&self, item: FormId, side: Side) -> bool {
+        match self.hidden.get(&item).copied().unwrap_or(0) {
+            1 => side == Side::Container,
+            2 => side == Side::Player,
+            3 => true,
+            _ => false,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.offered.iter().all(BTreeMap::is_empty)
     }
@@ -780,6 +797,7 @@ impl Trade {
 #[derive(Debug, Clone)]
 pub struct MenuModel {
     pub mode: Mode,
+    search: search::Search,
     /// The column that has the keyboard (always `Player` in the inventory menu).
     pub focus: Side,
     /// Selected row per column, indexed by `Side as usize`.
@@ -1041,6 +1059,7 @@ impl MenuModel {
             sells: None,
             withheld: Vec::new(),
             mult_set: [None; 2],
+            hidden: BTreeMap::new(),
         });
         m.focus = Side::Player;
         m.refresh(world)?;
@@ -1055,9 +1074,18 @@ impl MenuModel {
         self.refresh(world)
     }
 
+    /// Apply active `HideItemBarterEx` item flags for this merchant and list the trade again.
+    pub fn set_barter_hidden(&mut self, world: &mut World<'_>, hidden: BTreeMap<FormId, i64>) -> Result<(), SimError> {
+        if let Some(t) = self.trade.as_mut() {
+            t.hidden = hidden;
+        }
+        self.refresh(world)
+    }
+
     fn empty(mode: Mode, title: String) -> MenuModel {
         MenuModel {
             mode,
+            search: Default::default(),
             focus: Side::Player,
             selected: [0; 2],
             scroll: [0; 2],
@@ -1139,6 +1167,7 @@ impl MenuModel {
     /// the same row when it is still there (else on the same position).
     pub fn refresh(&mut self, world: &mut World<'_>) -> Result<(), SimError> {
         let keep = [Side::Container, Side::Player].map(|s| self.selected_row(s).map(|r| (r.units(), r.bartered, r.folder, r.live)));
+        let search_keep = [Side::Container, Side::Player].map(|s| self.search.capture(self, s));
         if self.trade.is_some() {
             self.refresh_trade(world)?;
         } else {
@@ -1195,10 +1224,15 @@ impl MenuModel {
                 self.lists[side as usize] = l;
             }
         }
-        for &side in self.columns() {
+        let columns = self.columns();
+        self.search.filter(&mut self.lists, columns);
+        for &side in columns {
             let i = side as usize;
             let rows = &self.lists[i].rows;
-            let at = keep[i].and_then(|k| rows.iter().position(|r| (r.units(), r.bartered, r.folder, r.live) == k));
+            let at = match search_keep[i] {
+                Some(key) => key.find(rows),
+                None => keep[i].and_then(|k| rows.iter().position(|r| (r.units(), r.bartered, r.folder, r.live) == k)),
+            };
             self.selected[i] = at.unwrap_or(self.selected[i]).min(rows.len().saturating_sub(1));
             self.ensure_visible(side);
         }
@@ -1228,8 +1262,9 @@ impl MenuModel {
             own[i] = l
                 .rows
                 .into_iter()
-                // A live explosive (`Row::live`) is not for trade (#1640).
-                .filter(|r| r.item != t.caps && !r.quest && !r.live && !(side == Side::Player && hide_equipped && r.equipped) && !(side == Side::Player && hotkeyed.contains(&r.item)))
+                // A live explosive (`Row::live`) is not for trade (#1640); items hidden by
+                // `HideItemBarterEx` (`t.is_hidden`) stay off the requested side(s).
+                .filter(|r| r.item != t.caps && !r.quest && !r.live && !t.is_hidden(r.item, side) && !(side == Side::Player && hide_equipped && r.equipped) && !(side == Side::Player && hotkeyed.contains(&r.item)))
                 .filter(|r| {
                     // The player's tweak holds the player's side to the merchant's list too [design: docs/design/tweaks.md].
                     let why = (side == Side::Container || both_sides).then(|| t.sells.as_ref().and_then(|s| (s.0)(r.item))).flatten();
@@ -1984,6 +2019,7 @@ pub fn report_trade_progress_fixture(step: usize) -> MenuModel {
         sells: None,
         withheld: vec![],
         mult_set: [None; 2],
+        hidden: BTreeMap::new(),
     };
     if step >= 1 {
         t.offered[0].insert((FormId(100), None, 0), 1);

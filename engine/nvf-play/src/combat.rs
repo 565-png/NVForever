@@ -145,6 +145,10 @@ mod projectile_launch;
 mod projectile_launch_probe;
 #[cfg(test)]
 mod projectile_launch_tests;
+#[cfg(test)]
+mod critical_damage_hit_tests;
+#[cfg(test)]
+mod weapon_sound_bridge_tests;
 
 /// The shooter's id for projectiles (the player has no hit volume).
 const PLAYER: ActorId = u64::MAX;
@@ -360,6 +364,11 @@ fn note_armour(script: Option<&mut ScriptState>, target: FormId, d: &damage::Dam
     }
 }
 
+pub(crate) fn apply_critical_tweaks(rules: &mut Rules, tweaks: &fnv_game::tweaks::Tweaks) {
+    rules.crit_ignores_fire_rate = tweaks.crit_ignores_fire_rate;
+    rules.crit_damage_scale = tweaks.crit_damage_scale as f32;
+}
+
 /// The weapon damage penalty below 75 % condition: SetConditionDamagePenalty's, else
 /// 0.67 (`fnv_game::Game::condition_damage_penalty`).
 fn sync_condition_penalty(c: &mut Combat, script: Option<&ScriptState>) {
@@ -368,12 +377,19 @@ fn sync_condition_penalty(c: &mut Combat, script: Option<&ScriptState>) {
         // The player's tweaks on the damage rules [design: docs/design/tweaks.md].
         c.rules.condition_damage_penalty = if t.no_condition_damage_penalty { 0.0 } else { rt.game.condition_damage_penalty() };
         c.rules.condition_damage_threshold = if t.no_condition_damage_buffer { 1.0 } else { fnv_combat::damage::CONDITION_DAMAGE_THRESHOLD };
-        c.rules.crit_ignores_fire_rate = t.crit_ignores_fire_rate;
-        c.rules.crit_damage_scale = t.crit_damage_scale as f32;
+        apply_critical_tweaks(&mut c.rules, t);
         // The Explosion Radius Buff: the inner 30% at full damage, 20% at the edge (the
         // tweak's own numbers as its description gives them).
         c.tuning.explosion_inner = if t.explosion_radius_buff { 0.3 } else { 0.0 };
         c.tuning.explosion_inner_edge = 0.2;
+    }
+}
+
+/// ext-last-core.md: the same critical-damage override that scripts read must
+/// reach every direct hit, including NPC weapons and the player's modified copy.
+fn script_weapon_critical_damage(game: Option<&fnv_game::Game<'_>>, weapon: FormId, stats: &mut WeaponStats) {
+    if let Some(damage) = game.and_then(|game| game.weapon_critical_damage_override(weapon)) {
+        stats.crit_damage = damage;
     }
 }
 
@@ -1230,6 +1246,9 @@ pub struct Combat {
     load_magazine: Option<(u32, u32)>,
     /// A save's weapon and the type of round in its magazine, with `load_magazine`.
     load_ammo: Option<(u32, FormId)>,
+    /// Player's last chosen ammo type per weapon base form for the Keep Chosen Ammo
+    /// tweak (#3305) [design: per base form, player only]. Saved beside `magazine_ammo`.
+    chosen_ammo: std::collections::BTreeMap<FormId, FormId>,
     /// Test aid `NVF_PLAY_TEST_TRACERS=<seconds>`: every projectile draws a line, and
     /// the lines and a marker at the muzzle stay that long, so one screenshot of an
     /// unattended check shows where the shots were drawn from. The muzzle flashes and
@@ -1285,10 +1304,27 @@ pub struct Combat {
 }
 
 impl Combat {
+    /// [design, #2652] Run normal combat initialization over authored plugin tables,
+    /// without the game/render plugins, for downstream engine tests.
+    #[cfg(feature = "test-support")]
+    pub fn over_plugins(play: crate::PlayData) -> Self {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = bevy::prelude::World::new();
+        world.insert_resource(crate::PlayWorld(play));
+        world.run_system_once(init_combat).unwrap();
+        world.remove_resource::<Combat>().unwrap()
+    }
+
     /// Whether the player's flinch (a staggering hit, [`player_flinch`]) still plays: the
     /// player does not walk meanwhile (`crate::player::flinch_holds_walk`).
     pub fn player_flinching(&self) -> bool {
         self.time < self.flinch_until
+    }
+
+    /// Whether the player's weapon is reloading (a reload, a jam's clearing): it ends a sprint
+    /// (`crate::sprint`).
+    pub fn player_reloading(&self) -> bool {
+        self.cycle.as_ref().is_some_and(Cycle::reloading)
     }
 }
 
@@ -1472,6 +1508,82 @@ impl Combat {
         }
     }
 
+    /// Remember `ammo` as the player's chosen ammo type for weapon base form `weapon`
+    /// under the Keep Chosen Ammo tweak (#3305) [design: per base form, player only].
+    pub fn remember_chosen_ammo(&mut self, weapon: FormId, ammo: FormId) {
+        self.chosen_ammo.insert(weapon, ammo);
+    }
+
+    /// The player's remembered ammo type for weapon base form `weapon`, if any (#3305).
+    pub fn chosen_ammo_of(&self, weapon: FormId) -> Option<FormId> {
+        self.chosen_ammo.get(&weapon).copied()
+    }
+
+    /// The player's remembered per-weapon ammo choices, for a save (#3305).
+    pub fn chosen_ammo_for_save(&self) -> std::collections::BTreeMap<u32, u32> {
+        self.chosen_ammo.iter().map(|(w, a)| (w.0, a.0)).collect()
+    }
+
+    /// Restore the save's per-weapon remembered ammo choices (#3305). Replaces any prior
+    /// choices so loading an older save with none clears stale picks.
+    pub fn restore_chosen_ammo(&mut self, map: &std::collections::BTreeMap<u32, u32>) {
+        self.chosen_ammo = map.iter().map(|(&w, &a)| (FormId(w), FormId(a))).collect();
+    }
+
+    /// The ammo type that equipping weapon `id` would load right now: when `keep_chosen`
+    /// is on (#3305) and the remembered type is still one of the weapon's ammo choices and
+    /// carried, that type wins; otherwise falls back to `CombatForms::ammo_for`.
+    pub fn preferred_ammo_for(&self, id: FormId, keep_chosen: bool, carried: impl Fn(FormId) -> bool) -> Option<FormId> {
+        if keep_chosen {
+            if let (Some(&remembered), Some(w)) = (self.chosen_ammo.get(&id), self.forms.weapons.get(&id)) {
+                if self.forms.ammo_choices(w).contains(&remembered) && carried(remembered) {
+                    return Some(remembered);
+                }
+            }
+        }
+        self.forms.ammo_for(id, carried)
+    }
+
+    /// Pick the player's ammo on equip for weapon `id`: `load_ammo` (a save's
+    /// weapon-in-hand ammo, #1574) takes precedence when it matches `id`, is one of the
+    /// weapon's ammo choices and some is carried; otherwise when `keep_chosen` is on
+    /// (#3305), the remembered type for `id` wins under the same check (retaining the
+    /// remembered entry when temporarily out of stock so it returns once carried again);
+    /// otherwise falls back to `CombatForms::ammo_for`.
+    pub fn pick_equip_ammo(&mut self, id: FormId, w: &WeaponStats, keep_chosen: bool, carried: impl Fn(FormId) -> bool) -> Option<FormId> {
+        let choices = self.forms.ammo_choices(w);
+        let mut ammo = self.forms.ammo_for(id, &carried);
+        if keep_chosen {
+            if let Some(&remembered) = self.chosen_ammo.get(&id) {
+                if choices.contains(&remembered) && carried(remembered) {
+                    ammo = Some(remembered);
+                }
+            }
+        }
+        // A save's type of round for this weapon (`crate::save`; #1574), while it is one of
+        // the weapon's types and some is carried.
+        if let Some((sw, a)) = self.load_ammo.take() {
+            if sw == id.0 && choices.contains(&a) && carried(a) {
+                ammo = Some(a);
+            } else if sw != id.0 {
+                self.load_ammo = Some((sw, a));
+            }
+        }
+        ammo
+    }
+
+    /// Advance the player's loaded ammo on weapon `id` to the next carried choice,
+    /// remembering the chosen type for `id` when `keep_chosen` is on (#3305).
+    pub fn swap_ammo_choice(&mut self, id: FormId, keep_chosen: bool, carried: impl Fn(FormId) -> bool) -> Option<FormId> {
+        let cur = self.ammo?;
+        let next = self.forms.next_ammo(id, cur, carried).filter(|&n| n != cur)?;
+        self.ammo = Some(next);
+        if keep_chosen {
+            self.remember_chosen_ammo(id, next);
+        }
+        Some(next)
+    }
+
     /// The weapon in use and its Sight FOV (degrees), when it is a gun with sights (Sight
     /// FOV above 0; melee weapons block instead) (`crate::aim_zoom`).
     /// Weapon `id`'s VATS special attack, when its record has one (WEAP `VATS`).
@@ -1546,14 +1658,16 @@ impl Combat {
         }
         let style = AttackStyle::of(w, false, false);
         // God mode keeps the magazine full (the shots take nothing).
-        let rounds = if cy.no_ammo {
+        // A weapon of Ammo Use 0 spends none (#3023): as one with no ammo.
+        let free = cy.no_ammo || cy.ammo_use == 0;
+        let rounds = if free {
             u32::MAX / 2
         } else if god_mode() && cy.regen.is_none() {
             cy.clip_size
         } else {
             cy.magazine
         };
-        if !cy.no_ammo && rounds < cy.ammo_use {
+        if !free && rounds < cy.ammo_use {
             return Err("Out of ammo.");
         }
         let range = self.forms.projectiles.get(&proj).map_or(0.0, |p| p.range);
@@ -1563,7 +1677,7 @@ impl Combat {
             cost,
             style,
             // A burst's rounds are one mark's (§16.1).
-            rounds_per_shot: if cy.no_ammo { 1 } else { cy.ammo_use * style.shots_per_mark() },
+            rounds_per_shot: if free { 1 } else { cy.ammo_use * style.shots_per_mark() },
             rounds,
             reach: if range > 0.0 { range } else { crate::vats_mode::REACH },
             melee_reach: 0.0,
@@ -1740,7 +1854,7 @@ impl Plugin for CombatPlugin {
             .add_systems(Startup, init_combat)
             .add_systems(
                 Update,
-                (track_limbs, (perk_speed, stat_speed), player_flinch, arm_sway, weapon_state, equip_sync, run_pace, reload_pace, weapon_sounds, fire, melee, actor_attacks, fly, crate::dismember::resolve, (crate::mines::tick, crate::grass_fire::tick).chain(), crate::thrown::land, disarm, death_drops, meltdown, log_combat_lines).chain().in_set(PlaySet::Activation).run_if(in_state(PlayState::Playing)).run_if(resource_exists::<Combat>),
+                (track_limbs, (perk_speed, stat_speed), player_flinch, arm_sway, weapon_state, equip_sync, run_pace, reload_pace, weapon_sounds, fire, melee, (actor_attacks, sync_player_anim_events).chain(), fly, crate::dismember::resolve, (crate::mines::tick, crate::grass_fire::tick).chain(), crate::thrown::land, disarm, death_drops, meltdown, log_combat_lines).chain().in_set(PlaySet::Activation).run_if(in_state(PlayState::Playing)).run_if(resource_exists::<Combat>),
             )
             .add_systems(Update, (draw_marks, watch_hit_effects, leave_space_shots).run_if(resource_exists::<Combat>))
             .add_systems(Last, report);
@@ -2361,6 +2475,101 @@ fn weapon_state(anim: Res<WeaponAnim>, mut script: Option<ResMut<ScriptState>>) 
     }
 }
 
+/// The locomotion group name for a player movement direction and pace
+/// (`fnv_actor::locomotion::Move::group`, `fnv_game::anims`).
+pub fn movement_group(dir: fnv_game::anim_state::MoveDir, fast: bool) -> &'static str {
+    use fnv_game::anim_state::MoveDir;
+    match (dir, fast) {
+        (MoveDir::None, _) => "Idle",
+        (MoveDir::Forward, false) => "Forward",
+        (MoveDir::Backward, false) => "Backward",
+        (MoveDir::Left, false) => "Left",
+        (MoveDir::Right, false) => "Right",
+        (MoveDir::Forward, true) => "FastForward",
+        (MoveDir::Backward, true) => "FastBackward",
+        (MoveDir::Left, true) => "FastLeft",
+        (MoveDir::Right, true) => "FastRight",
+    }
+}
+
+/// Bridge the player's combat/weapon animation action and locomotion group into
+/// `fnv_game::Game::set_anim_state`, firing JIP `SetOnAnimActionEventHandler`
+/// (`animaction`) and `SetOnPlayGroupEventHandler` (`playgroup`) on state transitions
+/// while preserving any renderer-driven non-weapon action (such as `PlayIdle` or jump
+/// landing) when combat owns no action (`had_weapon_action`).
+#[allow(clippy::too_many_arguments)]
+pub fn bridge_player_anim_state(
+    game: &mut fnv_game::game::Game<'_>,
+    combat: &Combat,
+    anim: &WeaponAnim,
+    trigger: bool,
+    aiming: bool,
+    intent: Option<&MoveIntent>,
+    dt: f32,
+    had_weapon_action: &mut bool,
+) {
+    use fnv_game::anim_state::{AnimState, MoveDir};
+    let weapon_action = combat.player_anim_action(anim, trigger, aiming, dt);
+    let prev = game.anim_state(FormId::PLAYER_REF).cloned().unwrap_or_default();
+    let action = match weapon_action {
+        Some(a) => {
+            *had_weapon_action = true;
+            Some(a)
+        }
+        None => {
+            if *had_weapon_action {
+                *had_weapon_action = false;
+                None
+            } else {
+                prev.action
+            }
+        }
+    };
+    let (moving, group) = match intent {
+        Some(i) => {
+            let dir = MoveDir::of(i.right, i.forward, 0.01);
+            (dir, Some(movement_group(dir, !i.walk)))
+        }
+        None => (prev.moving, prev.group),
+    };
+    let iron_sights = combat.player_sights_up(anim, aiming);
+    let st = AnimState {
+        action,
+        moving,
+        group,
+        iron_sights,
+        throwing: prev.throwing,
+        mine: prev.mine,
+        forced_hit: prev.forced_hit,
+        clip: prev.clip,
+        at: 0.0,
+    };
+    game.set_anim_state(FormId::PLAYER_REF, st);
+}
+
+/// Bridge live player combat/weapon animation and movement group transitions from
+/// `CombatPlugin` into `ScriptState` inside `with_world` so `SetOnAnimActionEventHandler`
+/// and `SetOnPlayGroupEventHandler` handlers fire with live world access.
+#[allow(clippy::too_many_arguments)]
+fn sync_player_anim_events(
+    time: Res<Time>,
+    combat: Res<Combat>,
+    anim: Res<WeaponAnim>,
+    control: Option<Res<PlayerControl>>,
+    intent: Option<Res<MoveIntent>>,
+    mut sim: ResMut<SimState>,
+    mut script: Option<ResMut<ScriptState>>,
+    mut had_weapon_action: Local<bool>,
+) {
+    let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
+    let dt = time.delta_secs().min(0.1);
+    let trigger = control.as_deref().is_some_and(|c| c.trigger);
+    let aiming = control.as_deref().is_some_and(|c| c.aiming);
+    with_world(rt, &mut sim, |rt| {
+        bridge_player_anim_state(&mut rt.game, &combat, &anim, trigger, aiming, intent.as_deref(), dt, &mut had_weapon_action);
+    });
+}
+
 fn init_combat(mut commands: Commands, d: Res<PlayWorld>) {
     let t = std::time::Instant::now();
     let tracer_hold = std::env::var("NVF_PLAY_TEST_TRACERS").ok().and_then(|v| v.trim().parse().ok()).filter(|s: &f32| *s > 0.0);
@@ -2418,6 +2627,7 @@ fn init_combat(mut commands: Commands, d: Res<PlayWorld>) {
         tracer_hold,
         load_magazine: None,
         load_ammo: None,
+        chosen_ammo: std::collections::BTreeMap::new(),
         crosshair_cone: None,
         player_spread: None,
         grenade_hold: 0.0,
@@ -2532,16 +2742,20 @@ fn hud_ammo(magazine: u32, carried: u32, regenerates: bool) -> (u32, u32) {
 }
 
 /// Follow the equipped weapon: a new weapon gets a new cycle, loaded from what is carried.
-fn equip_sync(mut c: ResMut<Combat>, mut sim: ResMut<SimState>, mut anim: ResMut<WeaponAnim>) {
-    let c = &mut *c;
+fn equip_sync(mut c: ResMut<Combat>, mut sim: ResMut<SimState>, mut anim: ResMut<WeaponAnim>, tweaks: Option<Res<crate::tweaks::TweakSettings>>) {
+    let keep_chosen = tweaks.as_deref().is_some_and(|t| t.keep_chosen_ammo);
+    equip_sync_step(&mut c, &mut sim, &mut anim, keep_chosen);
+}
+
+fn equip_sync_step(c: &mut Combat, sim: &mut SimState, anim: &mut WeaponAnim, keep_chosen: bool) {
     let equipped = sim.world.peek(FormId::PLAYER_REF).and_then(|s| s.inventory.as_ref()).map(|i| i.equipped()).unwrap_or_default();
     let mut equipped = equipped.into_iter().find(|id| c.forms.weapons.contains_key(id));
     // A weapon at zero condition does not stay in the hand, however it got there (a
     // script's SetWeaponHealthPerc) (§17); under the player's Equip Broken Items or Keep
     // Broken Items Equipped tweak it does, and does not fire (`broken_in_hand`).
-    if let Some(id) = equipped.filter(|&id| !broken_kept() && item_condition(&sim, FormId::PLAYER_REF, id) <= 0.0) {
+    if let Some(id) = equipped.filter(|&id| !broken_kept() && item_condition(sim, FormId::PLAYER_REF, id) <= 0.0) {
         let _ = sim.world.unequip(FormId::PLAYER_REF, id);
-        info!("combat: the player's {} ({id}) is broken: unequipped", item_name(&sim, id));
+        info!("combat: the player's {} ({id}) is broken: unequipped", item_name(sim, id));
         equipped = None;
     }
     let mods = equipped.and_then(|id| sim.world.peek(FormId::PLAYER_REF).and_then(|s| s.inventory.as_ref()).map(|i| i.equipped_mods(id))).unwrap_or(0);
@@ -2564,27 +2778,18 @@ fn equip_sync(mut c: ResMut<Combat>, mut sim: ResMut<SimState>, mut anim: ResMut
         anim.reload = None;
         return;
     };
-    let w = &c.player_stats(id).expect("weapon present");
-    let mut ammo = c.forms.ammo_for(id, |a| player_count(&sim, Some(a)) > 0);
-    // A save's type of round for this weapon (`crate::save`; #1574), while it is one of
-    // the weapon's types and some is carried.
-    if let Some((sw, a)) = c.load_ammo.take() {
-        if sw == id.0 && c.forms.ammo_choices(w).contains(&a) && player_count(&sim, Some(a)) > 0 {
-            ammo = Some(a);
-        } else if sw != id.0 {
-            c.load_ammo = Some((sw, a));
-        }
-    }
-    let chain = c.forms.chain_with(id, w, ammo);
-    let melee = AttackKind::of(w) != AttackKind::Gun;
+    let w = c.player_stats(id).expect("weapon present");
+    let ammo = c.pick_equip_ammo(id, &w, keep_chosen, |a| player_count(sim, Some(a)) > 0);
+    let chain = c.forms.chain_with(id, &w, ammo);
+    let melee = AttackKind::of(&w) != AttackKind::Gun;
     c.melee = melee && chain.projectile.is_none();
     c.self_ammo = !melee && chain.ammo_choices.is_empty() && chain.projectile.is_some();
     c.ammo = chain.ammo;
-    let carried = player_count(&sim, c.ammo);
-    let timing = Timing::of(w, &anim.timing, &c.tuning);
+    let carried = player_count(sim, c.ammo);
+    let timing = Timing::of(&w, &anim.timing, &c.tuning);
     // Ranged weapons without a projectile (the detonator, binoculars) use no ammo.
     let no_ammo = melee || c.self_ammo || (chain.projectile.is_none() && chain.ammo_choices.is_empty());
-    c.cycle = Some(Cycle::new(w, timing, no_ammo, carried));
+    c.cycle = Some(Cycle::new(&w, timing, no_ammo, carried));
     if let (Some(n), Some(cy)) = (kept, c.cycle.as_mut()) {
         cy.magazine = n.min(cy.clip_size).min(carried);
     }
@@ -2618,7 +2823,7 @@ fn equip_sync(mut c: ResMut<Combat>, mut sim: ResMut<SimState>, mut anim: ResMut
 fn model_base(script: Option<&ScriptState>, sim: &SimState, actor: u32) -> Option<FormId> {
     let b = sim.base_of(actor)?;
     let r = FormId(actor);
-    Some(script.and_then(|s| s.rt.as_ref()).map_or(b, |rt| { let (seed, at) = sim.pick(&rt.game, r); rt.game.data.model_base_at(b, seed, at) }))
+    Some(script.and_then(|s| s.rt.as_ref()).map_or(b, |rt| { let (seed, at) = sim.pick(&rt.game, r); rt.game.runtime_template_source(b, seed, at, |d| d.template_model).map_or(b, |(id, _)| id) }))
 }
 
 /// An actor's Impact Material Type (NPC_ / CREA `NAM4`) from its Model/Animation source
@@ -2646,7 +2851,7 @@ fn show_impact(s: &Sfx, script: Option<&ScriptState>, sim: &SimState, mut fx: Im
     if let (Some(a), Some(rt)) = (fx.actor, script.and_then(|s| s.rt.as_ref())) {
         if let Some(b) = sim.base_of(a) {
             let (seed, at) = sim.pick(&rt.game, FormId(a));
-            let (spray, decal) = rt.game.data.no_blood(b, seed, at);
+            let (spray, decal) = rt.game.runtime_template_source(b, seed, at, |d| d.template_model).map_or((false, false), |(_, d)| (d.no_blood_spray, d.no_blood_decal));
             (fx.no_spray, fx.no_decal) = (fx.no_spray || spray, fx.no_decal || decal);
         }
     }
@@ -2685,6 +2890,8 @@ struct PhysView<'a> {
     /// The characters of the actors another system walks (`PhysState::npcs`).
     npcs: Vec<Key>,
     actors: Vec<(ActorId, V3, f32)>,
+    /// Published scaled BBX widths used by actor blocking [design, #2535].
+    actor_block_radii: &'a HashMap<u32, f32>,
     /// The corpses whose ragdoll took over from their hit volume (`crate::hitvol`), with
     /// their trunk's centre and the radius of their bodies' bounds: only blasts reach them
     /// ([`CombatWorld::blast_targets_near`], #2346).
@@ -2820,6 +3027,16 @@ impl CombatWorld for PhysView<'_> {
         self.actors.iter().filter(near).map(|&(id, c, _)| (id, c)).collect()
     }
 
+    fn melee_targets_near(&self, point: V3, radius: f32) -> Vec<(ActorId, V3, f32)> {
+        use fnv_combat::projectile::SWING_BODY_MARGIN;
+        self.actors.iter().filter_map(|&(id, c, r)| {
+            // Match blocking's BBX source, preserving the ordinary ground margin
+            // and the candidate search's existing hit-volume allowance [design, #2535].
+            let margin = crate::blocking::walking_radius(SWING_BODY_MARGIN, self.actor_block_radii.get(&(id as u32)).copied());
+            (vec::len(vec::sub(c, point)) <= radius + margin + r && !self.ghosts.contains(&id)).then_some((id, c, margin))
+        }).collect()
+    }
+
     fn blast_targets_near(&self, point: V3, radius: f32) -> Vec<(ActorId, V3)> {
         let near = |&&(id, c, r): &&(ActorId, V3, f32)| vec::len(vec::sub(c, point)) <= radius + r && !self.ghosts.contains(&id);
         self.actors.iter().chain(&self.corpses).filter(near).map(|&(id, c, _)| (id, c)).collect()
@@ -2877,7 +3094,7 @@ fn view<'p>(phys: &'p mut PhysState, script: Option<&ScriptState>, sim: Option<&
     let mut aims: HashMap<ActorId, Vec<V3>> = actors.iter().map(|&(id, ..)| (id, phys.world.actor_part_centers(id as u32))).filter(|(_, v)| !v.is_empty()).collect();
     aims.extend(corpses.iter().map(|&(id, ..)| (id, phys.world.ragdoll_body_centers(id as u32))).filter(|(_, v)| !v.is_empty()));
     phys.world.update_queries();
-    PhysView { q: phys.world.queries(), player, npcs, actors, corpses, aims, ghosts, passes: layers::shot_ignores(), only: std::cell::Cell::new(None) }
+    PhysView { q: phys.world.queries(), player, npcs, actors, actor_block_radii: &phys.actor_block_radii, corpses, aims, ghosts, passes: layers::shot_ignores(), only: std::cell::Cell::new(None) }
 }
 
 /// An actor's current value as the formulas read it (within its range: S.P.E.C.I.A.L.
@@ -3246,8 +3463,9 @@ pub(crate) fn fire(
     mut sounds: MessageWriter<PlaySound>,
     mut casings: MessageWriter<CasingFx>,
     mut loops: MessageWriter<LoopSound>,
-    (mut hud, mut vats, lens_sway, inertia, mut scaled): (Option<ResMut<HudMessage>>, Option<ResMut<crate::vats_mode::VatsMode>>, Option<Res<crate::aim_zoom::LensSway>>, Option<Res<crate::inertia::MovementInertia>>, MessageWriter<ScaledSound>),
+    (mut hud, mut vats, lens_sway, inertia, mut scaled, tweaks): (Option<ResMut<HudMessage>>, Option<ResMut<crate::vats_mode::VatsMode>>, Option<Res<crate::aim_zoom::LensSway>>, Option<Res<crate::inertia::MovementInertia>>, MessageWriter<ScaledSound>, Option<Res<crate::tweaks::TweakSettings>>),
 ) {
+    let keep_chosen = tweaks.as_deref().is_some_and(|t| t.keep_chosen_ammo);
     let dt = time.delta_secs();
     let c = &mut *c;
     c.time += dt;
@@ -3335,12 +3553,15 @@ pub(crate) fn fire(
         if swap && holstered_swap {
             if let Some(cur) = c.ammo {
                 let next = c.forms.next_ammo(id, cur, |a| player_count(&sim, Some(a)) > 0);
-                if next.is_some_and(|n| n != cur) {
-                    c.ammo = next;
+                if let Some(n) = next.filter(|&n| n != cur) {
+                    c.ammo = Some(n);
+                    if keep_chosen {
+                        c.chosen_ammo.insert(id, n);
+                    }
                     if !god {
                         cycle.swap_ammo();
                     }
-                    info!("combat: ammo swapped to {} with the weapon away (tweak)", next.and_then(|a| c.forms.ammo.get(&a)).and_then(|a| a.edid.clone()).unwrap_or_default());
+                    info!("combat: ammo swapped to {} with the weapon away (tweak)", c.forms.ammo.get(&n).and_then(|a| a.edid.clone()).unwrap_or_default());
                 }
             }
         }
@@ -3402,13 +3623,16 @@ pub(crate) fn fire(
     if swap {
         if let Some(cur) = c.ammo {
             let next = c.forms.next_ammo(id, cur, |a| player_count(&sim, Some(a)) > 0);
-            if next.is_some_and(|n| n != cur) {
-                c.ammo = next;
+            if let Some(n) = next.filter(|&n| n != cur) {
+                c.ammo = Some(n);
+                if keep_chosen {
+                    c.chosen_ammo.insert(id, n);
+                }
                 // God mode's magazine stays full: its shot goes on and nothing reloads.
                 if !god {
                     cycle.swap_ammo();
                 }
-                info!("combat: ammo swapped to {}", next.and_then(|a| c.forms.ammo.get(&a)).and_then(|a| a.edid.clone()).unwrap_or_default());
+                info!("combat: ammo swapped to {}", c.forms.ammo.get(&n).and_then(|a| a.edid.clone()).unwrap_or_default());
             }
         }
     }
@@ -4405,7 +4629,8 @@ fn melee(
         anim.swing = None;
         return;
     }
-    let w = c.player_stats(id).expect("weapon present");
+    let mut w = c.player_stats(id).expect("weapon present");
+    script_weapon_critical_damage(script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game), id, &mut w);
     // The clip the body timed for the swing playing; a new swing runs on the weapon's
     // own timing until the body has read its clip (the next frame).
     // The Modify Attack Speed perks (Slayer, Melee Hacker …) speed the swing as the
@@ -4966,6 +5191,7 @@ fn actor_attacks(
         // place [design: the Fists' other figures stand in for a creature's].
         let Some(id) = b.weapon.or(c.fists) else { continue };
         let Some(mut w) = c.forms.weapons.get(&id).cloned() else { continue };
+        script_weapon_critical_damage(script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game), id, &mut w);
         if let Some(d) = b.creature_damage {
             w.base_damage = d.round() as i32;
         }
@@ -5833,6 +6059,7 @@ fn fly(
         // The player's weapon hits with its mods' figures (weapon-mods.md §2).
         let w = if p.by.actor == FormId::PLAYER_REF { c.player_stats(id) } else { c.forms.weapons.get(&id).cloned() };
         let Some(mut w) = w else { continue };
+        script_weapon_critical_damage(script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game), id, &mut w);
         if let Some(s) = &shot {
             w.base_damage = s.damage.round() as i32;
         }
@@ -6549,6 +6776,81 @@ mod tests {
     }
 
     #[test]
+    fn player_knife_reaches_a_low_widened_creature_at_its_blocking_stop() {
+        use crate::blocking::{clip_pushing_nobody, walking_radius, Block};
+        use fnv_combat::projectile::{swing, swing_reaching};
+        // Synthetic low body and knife [design, #2535]. Blocking and combat read
+        // the same published widths, including one beyond the old coarse query.
+        let id = 0x2535;
+        let eye = [0.0, 0.0, 112.0];
+        let reach = 53.5 + 22.0;
+        let tuning = CombatTuning::default();
+        for width in [88.2, 400.0] {
+            for walking in [false, true] {
+                let mut phys = PhysState::default();
+                phys.actor_block_radii.insert(id, width);
+                let radius = walking_radius(22.0, phys.actor_block_radii.get(&id).copied());
+                let target = [width + 100.0, 0.0, 0.0];
+                let block = Block::character(id, target, radius, 30.0, false);
+                let velocity = clip_pushing_nobody(PLAYER as u32, [200.0, 0.0], [0.0; 3], 22.0, 128.0, 1.0, &mut [block]);
+                let feet = [target[0] - velocity[0], 0.0, 0.0];
+                assert!((feet[0] - (width + 22.0)).abs() < 1e-4);
+                phys.world.set_actor_volume(id, fnv_phys::HitVolume { feet, radius: 15.0, height: 30.0, dead: false });
+                if walking {
+                    let ch = phys.world.add_character(id, fnv_phys::CharacterParams::default(), feet);
+                    phys.npcs.insert(id, NpcBody { prev_feet: feet, ch, velocity: [0.0; 2], jump: false, sink: 0.0, lift: Default::default() });
+                }
+                for forward in [[1.0, 0.0, 0.0], vec::normalize([1.0, 0.0, -1.0])] {
+                    let mut world = view(&mut phys, None, None).for_melee();
+                    assert!(swing(&world, &tuning, eye, forward, [0.0, 0.0, 1.0], reach, PLAYER).is_empty());
+                    let hits = swing_reaching(&world, &tuning, eye, 0.0, forward, reach, PLAYER);
+                    assert_eq!(hits.iter().map(|h| h.0).collect::<Vec<_>>(), vec![id as ActorId], "width={width}, walking={walking}");
+                    world.ghosts.push(id as ActorId);
+                    assert!(swing_reaching(&world, &tuning, eye, 0.0, forward, reach, PLAYER).is_empty());
+                }
+                // Widening retains a finite ground-reach boundary [design, #2535].
+                let outside = [reach + width + 0.01, 0.0, 0.0];
+                phys.world.set_actor_volume(id, fnv_phys::HitVolume { feet: outside, radius: 15.0, height: 30.0, dead: false });
+                assert!(swing_reaching(&view(&mut phys, None, None).for_melee(), &tuning, eye, 0.0, [1.0, 0.0, 0.0], reach, PLAYER).is_empty());
+                phys.world.set_actor_volume(id, fnv_phys::HitVolume { feet, radius: 15.0, height: 30.0, dead: false });
+                // A wall still shields the widened target [design, #2535].
+                use fnv_collide::{CollisionObject, Iso, Motion, Shape};
+                let wall = CollisionObject {
+                    node: None, node_block: 0, node_transform: Iso::IDENTITY, body_transform: Iso::IDENTITY,
+                    motion: Motion::Static, layer: layers::STATIC, mass: 0.0, friction: 0.5, restitution: 0.0,
+                    shape: Shape::Box { half_extents: [5.0, 100.0, 100.0] }.into(), shell: 0.0, material: None, wind: false,
+                };
+                phys.world.add_ref(&fnv_phys::RefPose {
+                    form_id: id + 1, position: [30.0, 0.0, 80.0],
+                    rotation: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], scale: 1.0,
+                }, &[wall]);
+                let world = view(&mut phys, None, None).for_melee();
+                assert!(swing_reaching(&world, &tuning, eye, 0.0, [1.0, 0.0, 0.0], reach, PLAYER).iter().all(|h| h.0 != id as ActorId));
+            }
+        }
+    }
+
+    #[test]
+    fn player_ground_reach_keeps_ordinary_targets_at_the_old_boundary() {
+        use fnv_combat::projectile::swing_reaching;
+        // Synthetic body, boundary and invalid/small BBX cases [design, #2535].
+        let id = 0x2535;
+        let reach = 53.5 + 22.0;
+        for bbx in [None, Some(20.0), Some(f32::NAN)] {
+            for (distance, expected) in [(reach + 24.0 - 0.01, true), (reach + 24.0 + 0.01, false)] {
+                let mut phys = PhysState::default();
+                if let Some(bbx) = bbx {
+                    phys.actor_block_radii.insert(id, bbx);
+                }
+                phys.world.set_actor_volume(id, fnv_phys::HitVolume { feet: [distance, 0.0, 0.0], radius: 15.0, height: 30.0, dead: false });
+                let world = view(&mut phys, None, None).for_melee();
+                let hits = swing_reaching(&world, &CombatTuning::default(), [0.0, 0.0, 112.0], 0.0, [1.0, 0.0, 0.0], reach, PLAYER);
+                assert_eq!(hits.iter().any(|h| h.0 == id as ActorId), expected);
+            }
+        }
+    }
+
+    #[test]
     fn shots_pass_an_npcs_character_and_strike_its_body() {
         // The playtest list 5 item 16: the character was struck as a wall (dust, no damage).
         let mut phys = npc_world();
@@ -6847,6 +7149,29 @@ mod tests {
             assert!(close(blast_on(&mut g, None, FormId::PLAYER_REF).dealt, 94.0));
         }
 
+        #[test]
+        fn source_critical_damage_changes_the_existing_hit_calculation() {
+            let f = fixture();
+            let mut g = game(&f, &[]);
+            let source = "Begin Function {}\nSetWeaponCritDamage 37 Rifle\nEnd";
+            g.run_query(source, Default::default()).unwrap();
+            for animation in ["Rifle - Automatic (2 Hand)", "One Hand Sword"] {
+                let mut weapon = WeaponStats { base_damage: 20, crit_damage: 11, crit_mult: 1.0, anim_type: Some(animation.into()), ..Default::default() };
+                let hit = |weapon: &WeaponStats| damage::hit(&Rules::defaults(), &CombatTuning::default(),
+                    &HitInput { weapon, projectiles: 1, condition: 1.0, ammo_effects: &[], part: HitPart::default(), power: 1.0 },
+                    &Attacker { sneaking: true, ..Default::default() }, &Target::default(), &NoPerks, &NoPerks, 0.0);
+                let baseline = hit(&weapon);
+                assert_eq!(baseline.crit_bonus, 11.0);
+                script_weapon_critical_damage(Some(&g), FormId(RIFLE), &mut weapon);
+                let corrected = hit(&weapon);
+                assert_eq!(corrected.crit_bonus, 37.0);
+                assert!(close(corrected.dealt - baseline.dealt, 26.0));
+                let before = weapon.clone();
+                script_weapon_critical_damage(Some(&g), FormId(LAUNCHER), &mut weapon);
+                assert_eq!(weapon.crit_damage, before.crit_damage, "another weapon has no override");
+            }
+        }
+
         /// A grenade that strikes an actor deals its weapon's hit and its explosion's blast;
         /// the damage perk multiplies each of them once.
         #[test]
@@ -6862,6 +7187,460 @@ mod tests {
             let blasted = blast_on(&mut g, Some(Cause { actor: player, weapon: launcher }), npc);
             assert!(direct.base > 0.0 && close(direct.modified, direct.base * 1.2), "{direct:?}");
             assert!(close(blasted.base, 100.0) && close(blasted.modified, 120.0), "{blasted:?}");
+        }
+
+        /// `bridge_player_anim_state` drives `fnv_game::Game::set_anim_state` from live
+        /// `Combat` + `WeaponAnim` + `MoveIntent`, firing JIP `SetOnAnimActionEventHandler`
+        /// (including literal action 0 Equip) and `SetOnPlayGroupEventHandler` (including
+        /// literal group 0 Idle) on transitions without clobbering renderer-driven idles.
+        #[test]
+        fn player_anim_bridge_fires_jip_animaction_and_playgroup_events() {
+            use fnv_combat::attack::{Cycle, Phase, Timing};
+            use fnv_game::anim_state::{AnimAction, AnimState};
+            use fnv_game::game::RunCtx;
+
+            let f = fixture();
+            let mut g = game(&f, &[]);
+            let mut xml = String::from("<menu name=\"HUDMainMenu\"><rect name=\"Probe\">");
+            for key in ["a0", "a1", "a2", "a9", "a13", "g0", "g3", "g7"] {
+                xml.push_str(&format!("<_{key}>0</_{key}>"));
+            }
+            xml.push_str("</rect></menu>");
+            let ui_src = fnv_ui::MemSource::default().with("owned.xml", &xml);
+            g.ui_tree.load_menu(&ui_src, "owned.xml").unwrap();
+            g.ui_tree.update();
+            let q = |g: &mut Game<'_>, src: &str| {
+                g.run_query(src, RunCtx::default()).unwrap_or_else(|e| panic!("{src}: {e}"))
+            };
+            let ui = |g: &Game<'_>, key: &str| g.ui_tree.get_float(&format!("HUDMainMenu/Probe/_{key}")).unwrap();
+
+            // Register Equip (0), Attack (2), Reload (9), ForceScriptAnim (13), Unequip (1),
+            // and PlayGroup Idle (0) + Forward (3) + FastForward (7) on PlayerREF.
+            q(
+                &mut g,
+                "ref fnEq\nBegin Function { }\n\
+                 let fnEq := (Begin Function {int a}\n\
+                   SetUIFloat \"HUDMainMenu/Probe/_a0\" ((GetUIFloat \"HUDMainMenu/Probe/_a0\") + 1)\n\
+                 End)\n\
+                 SetOnAnimActionEventHandler fnEq 1 PlayerREF 0\n\
+                 PlayerREF.AuxVarSetRef \"*fn_eq\" fnEq\nEnd\n",
+            );
+            q(&mut g, "Begin Function { }\nSetOnAnimActionEventHandler (Begin Function {int a}\nSetUIFloat \"HUDMainMenu/Probe/_a2\" ((GetUIFloat \"HUDMainMenu/Probe/_a2\") + 1)\nEnd) 1 PlayerREF 2\nEnd\n");
+            q(&mut g, "Begin Function { }\nSetOnAnimActionEventHandler (Begin Function {int a}\nSetUIFloat \"HUDMainMenu/Probe/_a9\" ((GetUIFloat \"HUDMainMenu/Probe/_a9\") + 1)\nEnd) 1 PlayerREF 9\nEnd\n");
+            q(&mut g, "Begin Function { }\nSetOnAnimActionEventHandler (Begin Function {int a}\nSetUIFloat \"HUDMainMenu/Probe/_a13\" ((GetUIFloat \"HUDMainMenu/Probe/_a13\") + 1)\nEnd) 1 PlayerREF 13\nEnd\n");
+            q(&mut g, "Begin Function { }\nSetOnAnimActionEventHandler (Begin Function {int a}\nSetUIFloat \"HUDMainMenu/Probe/_a1\" ((GetUIFloat \"HUDMainMenu/Probe/_a1\") + 1)\nEnd) 1 PlayerREF 1\nEnd\n");
+            q(&mut g, "Begin Function { }\nSetOnPlayGroupEventHandler (Begin Function {int gr}\nSetUIFloat \"HUDMainMenu/Probe/_g0\" ((GetUIFloat \"HUDMainMenu/Probe/_g0\") + 1)\nEnd) 1 PlayerREF Idle\nEnd\n");
+            q(&mut g, "Begin Function { }\nSetOnPlayGroupEventHandler (Begin Function {int gr}\nSetUIFloat \"HUDMainMenu/Probe/_g3\" ((GetUIFloat \"HUDMainMenu/Probe/_g3\") + 1)\nEnd) 1 PlayerREF Forward\nEnd\n");
+            q(&mut g, "Begin Function { }\nSetOnPlayGroupEventHandler (Begin Function {int gr}\nSetUIFloat \"HUDMainMenu/Probe/_g7\" ((GetUIFloat \"HUDMainMenu/Probe/_g7\") + 1)\nEnd) 1 PlayerREF FastForward\nEnd\n");
+
+            let timing = Timing { interval: 0.4, fire_delay: 0.05, reload: 1.5, spin_up: 0.0, rounds: None, attach: None };
+            let mut cycle = Cycle::new(&WeaponStats::default(), timing, false, 10);
+            let mut combat = Combat {
+                forms: CombatForms::default(),
+                rules: Rules::defaults(),
+                tuning: CombatTuning::default(),
+                weapon: Some(FormId(RIFLE)),
+                equipped: Some(Some(FormId(RIFLE))),
+                mods: 0,
+                silenced_logged: None,
+                fists: None,
+                ammo: None,
+                self_ammo: false,
+                melee: false,
+                swings: Melee::default(),
+                blows: 0,
+                boom: Vec::new(),
+                meltdowns: HashSet::new(),
+                debris: Vec::new(),
+                cycle: Some(cycle.clone()),
+                kick: Kick::default(),
+                flying: Vec::new(),
+                dropped_live: Vec::new(),
+                settled: Vec::new(),
+                landed: Vec::new(),
+                fire_landed: Vec::new(),
+                splashes: Vec::new(),
+                ghosts: Vec::new(),
+                looping: None,
+                ejects_seen: 0,
+                vats_throw: None,
+                last_shot: 0.0,
+                next_visual: 0,
+                pending: Vec::new(),
+                script_shots: Vec::new(),
+                guarding: HashMap::new(),
+                blocked_blows: Vec::new(),
+                fresh_reload: false,
+                guard_down_until: 0.0,
+                marks: Vec::new(),
+                rng: SplitMix(1),
+                swing_rng: SplitMix(2),
+                time: 0.0,
+                no_spread: false,
+                tracer_hold: None,
+                load_magazine: None,
+                load_ammo: None,
+                crosshair_cone: None,
+                player_spread: None,
+                grenade_hold: 0.0,
+                grenade_held: false,
+                vats_cone: None,
+                vats_blast: VatsBlast::default(),
+                player_blocked_at: None,
+                special_swing: None,
+                throw_logged: None,
+                spread_perks_logged: None,
+                flinch_until: 0.0,
+                flinch_end: None,
+                flinch_rng: SplitMix(3),
+                kick_rng: SplitMix(5),
+                kick_just_settled: false,
+                kick_left: [0.0; 2],
+                kick_back_goal: [0.0; 2],
+                kick_back: [crate::ease::Spring::default(); 2],
+                spent_rng: SplitMix(4),
+                chosen_ammo: std::collections::BTreeMap::new(),
+            };
+            let dt = 1.0 / 60.0;
+            let mut had_weapon = false;
+            let idle_intent = MoveIntent { forward: 0.0, right: 0.0, walk: false, ..Default::default() };
+
+            // 1. Drawing weapon -> Equip (0) + Idle (0); steady frame does not re-fire.
+            let mut anim = WeaponAnim { drawing: true, ready: false, ..Default::default() };
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
+            assert_eq!((ui(&g, "a0"), ui(&g, "g0")), (1.0, 1.0));
+
+            // 2. Ready + WindUp -> Attack (2); walk forward -> Forward (3).
+            anim.drawing = false;
+            anim.ready = true;
+            cycle.phase = Phase::WindUp { left: 0.03 };
+            combat.cycle = Some(cycle.clone());
+            let walk_fwd = MoveIntent { forward: 1.0, right: 0.0, walk: true, ..Default::default() };
+            bridge_player_anim_state(&mut g, &combat, &anim, true, false, Some(&walk_fwd), dt, &mut had_weapon);
+            assert_eq!((ui(&g, "a2"), ui(&g, "a0"), ui(&g, "g3")), (1.0, 1.0, 1.0));
+
+            // 3. Reloading -> Reload (9); run forward -> FastForward (7).
+            cycle.phase = Phase::Reloading { left: 1.0 };
+            combat.cycle = Some(cycle.clone());
+            let run_fwd = MoveIntent { forward: 1.0, right: 0.0, walk: false, ..Default::default() };
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&run_fwd), dt, &mut had_weapon);
+            assert_eq!((ui(&g, "a9"), ui(&g, "g7")), (1.0, 1.0));
+
+            // 4. Jammed -> ForceScriptAnim (13), then Ready clears weapon action cleanly.
+            cycle.phase = Phase::Jammed { left: 0.5 };
+            combat.cycle = Some(cycle.clone());
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
+            assert_eq!((ui(&g, "a13"), ui(&g, "g0")), (1.0, 2.0));
+            cycle.phase = Phase::Ready;
+            combat.cycle = Some(cycle.clone());
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
+            assert_eq!(g.anim_state(FormId::PLAYER_REF).and_then(|s| s.action), None);
+
+            // 5. Renderer-driven non-weapon action (WaitForSpecialIdle 12) is preserved when
+            //    combat owns no action.
+            g.set_anim_state(FormId::PLAYER_REF, AnimState { action: Some(AnimAction::WaitForSpecialIdle), group: Some("Idle"), ..Default::default() });
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
+            assert_eq!(g.anim_state(FormId::PLAYER_REF).and_then(|s| s.action), Some(AnimAction::WaitForSpecialIdle));
+
+            // 6. Holstering -> Unequip (1); removing Equip handler suppresses future Equip (0).
+            anim.ready = false;
+            anim.holstering = true;
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
+            assert_eq!(ui(&g, "a1"), 1.0);
+            q(&mut g, "ref fnEq\nBegin Function { }\nlet fnEq := PlayerREF.AuxVarGetRef \"*fn_eq\"\nSetOnAnimActionEventHandler fnEq 0 PlayerREF 0\nEnd\n");
+            anim.holstering = false;
+            anim.drawing = true;
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
+            assert_eq!(ui(&g, "a0"), 1.0, "removed Equip handler must not fire");
+        }
+    }
+
+    /// Keep Chosen Ammo tweak (#3305): per-weapon remembered ammo across switching,
+    /// unequipping, dropping/picking up, out-of-ammo fallback + return, save/load, and
+    /// unchanged behavior when off.
+    mod keep_chosen_ammo {
+        use super::*;
+        use fnv_combat::data::{AmmoStats, ProjectileStats};
+        use fnv_sim::forms::{BaseData, BaseForm, Item, ItemKind};
+
+        const PISTOL: FormId = FormId(0x0000_9001);
+        const KNIFE: FormId = FormId(0x0000_9002);
+        const AMMO_LIST: FormId = FormId(0x0000_9003);
+        const AMMO_PLAIN: FormId = FormId(0x0000_9010);
+        const AMMO_JHP: FormId = FormId(0x0000_9011);
+        const AMMO_AP: FormId = FormId(0x0000_9012);
+        const PROJ: FormId = FormId(0x0000_9020);
+
+        fn item(id: FormId, sig: [u8; 4], kind: ItemKind) -> BaseForm {
+            BaseForm {
+                id,
+                sig,
+                edid: Some(format!("Edid{:X}", id.0)),
+                name: None,
+                script: None,
+                prompt: None,
+                voice_filter: false,
+                data: BaseData::Item(Item {
+                    kind,
+                    value: Some(10),
+                    money: None,
+                    weight: Some(1.0),
+                    slots: None,
+                    projectile: None,
+                    health: Some(100),
+                    non_playable: false,
+                    cant_drop: false,
+                    armor_class: Default::default(),
+                    power_armor: false,
+                    armor_dr: None,
+                    armor_dt: None,
+                    weapon_damage: Some(20.0),
+                    weight_mods: [0.0; 3],
+                    drawable: kind == ItemKind::Weapon,
+                    not_for_npcs: false,
+                    thrown: false,
+                    quest_item: false,
+                    icon: None,
+                    placed_count: None,
+                    teaches: None,
+                    cant_be_taken: false,
+                    modulates_voice: false,
+                    weapon_traits: None,
+                }),
+            }
+        }
+
+        fn make_sim_and_combat() -> (SimState, Combat) {
+            let mut sim = crate::sim::test_world::sim(
+                vec![
+                    item(PISTOL, *b"WEAP", ItemKind::Weapon),
+                    item(KNIFE, *b"WEAP", ItemKind::Weapon),
+                    item(AMMO_PLAIN, *b"AMMO", ItemKind::Ammo),
+                    item(AMMO_JHP, *b"AMMO", ItemKind::Ammo),
+                    item(AMMO_AP, *b"AMMO", ItemKind::Ammo),
+                ],
+                Vec::new(),
+            );
+            sim.world.add_item(FormId::PLAYER_REF, PISTOL, 1).unwrap();
+            sim.world.add_item(FormId::PLAYER_REF, KNIFE, 1).unwrap();
+            sim.world.add_item(FormId::PLAYER_REF, AMMO_PLAIN, 20).unwrap();
+            sim.world.add_item(FormId::PLAYER_REF, AMMO_JHP, 15).unwrap();
+            sim.world.add_item(FormId::PLAYER_REF, AMMO_AP, 10).unwrap();
+
+            let mut forms = CombatForms::default();
+            forms.weapons.insert(
+                PISTOL,
+                WeaponStats {
+                    edid: Some("Weap10mmPistol".into()),
+                    clip_size: 12,
+                    ammo_use: 1,
+                    base_damage: 22,
+                    anim_type: Some("One Hand Pistol".into()),
+                    ammo: Some(AMMO_LIST),
+                    projectile: Some(PROJ),
+                    ..Default::default()
+                },
+            );
+            forms.weapons.insert(
+                KNIFE,
+                WeaponStats {
+                    edid: Some("WeapKnife".into()),
+                    base_damage: 10,
+                    anim_type: Some("One Hand Melee".into()),
+                    ..Default::default()
+                },
+            );
+            forms.form_lists.insert(AMMO_LIST, vec![AMMO_PLAIN, AMMO_JHP, AMMO_AP]);
+            for (id, name) in [(AMMO_PLAIN, "Ammo10mm"), (AMMO_JHP, "Ammo10mmJHP"), (AMMO_AP, "Ammo10mmAP")] {
+                forms.ammo.insert(id, AmmoStats { edid: Some(name.into()), ..Default::default() });
+            }
+            forms.projectiles.insert(PROJ, ProjectileStats { speed: 1000.0, ..Default::default() });
+
+            let combat = Combat {
+                forms,
+                rules: Rules::defaults(),
+                tuning: CombatTuning::default(),
+                weapon: None,
+                equipped: None,
+                mods: 0,
+                silenced_logged: None,
+                fists: None,
+                ammo: None,
+                self_ammo: false,
+                melee: false,
+                swings: Melee::default(),
+                blows: 0,
+                boom: Vec::new(),
+                meltdowns: HashSet::new(),
+                debris: Vec::new(),
+                cycle: None,
+                kick: Kick::default(),
+                flying: Vec::new(),
+                dropped_live: Vec::new(),
+                settled: Vec::new(),
+                landed: Vec::new(),
+                fire_landed: Vec::new(),
+                splashes: Vec::new(),
+                ghosts: Vec::new(),
+                looping: None,
+                ejects_seen: 0,
+                vats_throw: None,
+                last_shot: 0.0,
+                next_visual: 0,
+                pending: Vec::new(),
+                script_shots: Vec::new(),
+                guarding: HashMap::new(),
+                blocked_blows: Vec::new(),
+                fresh_reload: false,
+                guard_down_until: 0.0,
+                marks: Vec::new(),
+                rng: SplitMix(1),
+                swing_rng: SplitMix(2),
+                time: 0.0,
+                no_spread: false,
+                tracer_hold: None,
+                load_magazine: None,
+                load_ammo: None,
+                chosen_ammo: std::collections::BTreeMap::new(),
+                crosshair_cone: None,
+                player_spread: None,
+                grenade_hold: 0.0,
+                grenade_held: false,
+                vats_cone: None,
+                vats_blast: VatsBlast::default(),
+                player_blocked_at: None,
+                special_swing: None,
+                throw_logged: None,
+                spread_perks_logged: None,
+                flinch_until: 0.0,
+                flinch_end: None,
+                flinch_rng: SplitMix(3),
+                kick_rng: SplitMix(5),
+                kick_just_settled: false,
+                kick_left: [0.0; 2],
+                kick_back_goal: [0.0; 2],
+                kick_back: [crate::ease::Spring::default(); 2],
+                spent_rng: SplitMix(4),
+            };
+            (sim, combat)
+        }
+
+        #[test]
+        fn keep_chosen_ammo_on_survives_switch_unequip_drop_out_of_stock_and_save_load() {
+            let (mut sim, mut combat) = make_sim_and_combat();
+            let mut anim = WeaponAnim::default();
+
+            // 1. Initial equip picks default first carried ammo (Plain), then Ammo Swap picks JHP.
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_ammo(), Some(AMMO_PLAIN));
+            let swapped = combat.swap_ammo_choice(PISTOL, true, |a| player_count(&sim, Some(a)) > 0);
+            assert_eq!(swapped, Some(AMMO_JHP));
+            assert_eq!(combat.player_ammo(), Some(AMMO_JHP));
+            assert_eq!(combat.chosen_ammo_of(PISTOL), Some(AMMO_JHP));
+
+            // 2. Switching to another weapon and back keeps JHP (and weapon wheel preview sees JHP).
+            sim.world.equip(FormId::PLAYER_REF, KNIFE).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_weapon(), Some(KNIFE));
+            assert_eq!(combat.preferred_ammo_for(PISTOL, true, |a| player_count(&sim, Some(a)) > 0), Some(AMMO_JHP));
+            assert_eq!(combat.preferred_ammo_for(PISTOL, false, |a| player_count(&sim, Some(a)) > 0), Some(AMMO_PLAIN));
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_ammo(), Some(AMMO_JHP));
+
+            // 3. Unequipping and re-equipping keeps JHP.
+            sim.world.unequip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_weapon(), None);
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_ammo(), Some(AMMO_JHP));
+
+            // 4. Dropping (removing) and picking up again keeps JHP.
+            sim.world.remove_item(FormId::PLAYER_REF, PISTOL, 1).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_weapon(), None);
+            sim.world.add_item(FormId::PLAYER_REF, PISTOL, 1).unwrap();
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_ammo(), Some(AMMO_JHP));
+
+            // 5. Out of JHP -> falls back to ammo_for (Plain), keeps JHP remembered, and returns
+            //    to JHP once carried again.
+            sim.world.remove_item(FormId::PLAYER_REF, AMMO_JHP, 15).unwrap();
+            sim.world.equip(FormId::PLAYER_REF, KNIFE).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_ammo(), Some(AMMO_PLAIN));
+            assert_eq!(combat.chosen_ammo_of(PISTOL), Some(AMMO_JHP));
+
+            sim.world.add_item(FormId::PLAYER_REF, AMMO_JHP, 5).unwrap();
+            sim.world.equip(FormId::PLAYER_REF, KNIFE).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_ammo(), Some(AMMO_JHP));
+
+            // 6. Save/load round-trip via EngineSnapshot restores remembered ammo even without
+            //    load_ammo; load_ammo (#1574) still wins on the initial weapon-in-hand load;
+            //    and an older save with empty chosen_ammo clears stale choices.
+            let saved_map = combat.chosen_ammo_for_save();
+            assert_eq!(saved_map.get(&PISTOL.0), Some(&AMMO_JHP.0));
+            let snap = crate::save::EngineSnapshot {
+                format: crate::save::ENGINE_FORMAT.into(),
+                chosen_ammo: saved_map,
+                ..Default::default()
+            };
+            let decoded: crate::save::EngineSnapshot = serde_json::from_str(&serde_json::to_string(&snap).unwrap()).unwrap();
+            let (mut sim2, mut combat2) = make_sim_and_combat();
+            combat2.restore_chosen_ammo(&decoded.chosen_ammo);
+            sim2.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat2, &mut sim2, &mut anim, true);
+            assert_eq!(combat2.player_ammo(), Some(AMMO_JHP));
+
+            // load_ammo (#1574) precedence on load.
+            combat2.restore_magazine((PISTOL.0, 6), Some(AMMO_AP.0));
+            equip_sync_step(&mut combat2, &mut sim2, &mut anim, true);
+            assert_eq!(combat2.player_ammo(), Some(AMMO_AP));
+
+            // Legacy save with empty chosen_ammo clears remembered picks.
+            combat2.restore_chosen_ammo(&std::collections::BTreeMap::new());
+            assert_eq!(combat2.chosen_ammo_of(PISTOL), None);
+        }
+
+        #[test]
+        fn keep_chosen_ammo_off_leaves_equip_and_swap_behavior_unchanged() {
+            let (mut sim, mut combat) = make_sim_and_combat();
+            let mut anim = WeaponAnim::default();
+
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, false);
+            assert_eq!(combat.player_ammo(), Some(AMMO_PLAIN));
+
+            // Swapping with toggle off changes the live ammo but remembers nothing.
+            let swapped = combat.swap_ammo_choice(PISTOL, false, |a| player_count(&sim, Some(a)) > 0);
+            assert_eq!(swapped, Some(AMMO_JHP));
+            assert_eq!(combat.player_ammo(), Some(AMMO_JHP));
+            assert_eq!(combat.chosen_ammo_of(PISTOL), None);
+            assert!(combat.chosen_ammo_for_save().is_empty());
+
+            // Switching away and back resets to ammo_for (Plain).
+            sim.world.equip(FormId::PLAYER_REF, KNIFE).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, false);
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, false);
+            assert_eq!(combat.player_ammo(), Some(AMMO_PLAIN));
+
+            // Even if a loaded save had remembered ammo, toggle off ignores it on equip.
+            combat.remember_chosen_ammo(PISTOL, AMMO_JHP);
+            sim.world.equip(FormId::PLAYER_REF, KNIFE).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, false);
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, false);
+            assert_eq!(combat.player_ammo(), Some(AMMO_PLAIN));
         }
     }
 }

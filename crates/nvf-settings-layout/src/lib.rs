@@ -72,12 +72,13 @@ pub const fn group_section(subgroup: &'static str, heading: &'static str, keys: 
 /// The rows the NVF Features tab may hold: only what the owner named there [design: owner
 /// 2026-11-15]. Adding a key needs the owner's word; a bigger gameplay change is offered to
 /// the owner for this tab, never moved here unasked (docs/design/settings-page.md).
-pub const NVF_FEATURES_KEYS: [&str; 15] = [
+pub const NVF_FEATURES_KEYS: [&str; 16] = [
     "advanced-movement",
     "movement-weight",
     "movement-inertia",
     "weapon-handling",
     "advanced-recoil",
+    "sprint",
     "weapon-inertia",
     "animation-smoothing",
     "camera-motion",
@@ -148,6 +149,8 @@ pub const SECTIONS: &[Section] = &[
             "controls:bind:Run",
             "controls:bind:Always Run",
             "controls:bind:Auto Move",
+            // NVForever's own, greyed while its NVF Features switch is off (#3000).
+            "controls:bind:Sprint",
         ],
     ),
     section("Controls", Some("Combat"), &["controls:bind:Use", "controls:bind:Block", "controls:bind:Ready Item", "controls:bind:Vats", "controls:bind:Ammo Swap", "controls:bind:Lower Weapon"]),
@@ -202,14 +205,15 @@ pub const SECTIONS: &[Section] = &[
     section("Graphics", Some("Quality"), &["quality"]),
     // Shadow resolution sizes the flashlight's maps too, so it needs no Sun shadows (no NEEDS
     // line) (#2843).
-    section("Graphics", Some("Shadows"), &["sun-shadows", "shadow-filter", "shadow-resolution", "shadow-distance", "fine-shadows", "cloud-shadows"]),
-    section("Graphics", Some("Lighting and Effects"), &["ambient-occlusion", "light-shafts", "bloom", "grade", "glow", "eye-adaptation", "neon-glow"]),
-    section("Graphics", Some("Water"), &["water-reflections", "water-mirror"]),
-    section("Graphics", Some("Detail and Distance"), &["distant-lod", "grass", "anisotropic", "terrain-height-blend", "terrain-anti-tiling", "mesh-terrain-blend", "smooth-terrain", "object-distance", "actor-distance", "item-distance", "grass-distance"]),
+    section("Graphics", Some("Shadows"), &["sun-shadows", "shadow-filter", "shadow-resolution", "shadow-distance", "fine-shadows", "cloud-shadows", "terrain-shadows"]),
+    section("Graphics", Some("Lighting and Effects"), &["ambient-occlusion", "light-shafts", "heat-haze", "desert-haze", "aerial-perspective", "night-sky-detail", "bloom", "grade", "glow", "eye-adaptation", "neon-glow"]),
+    section("Graphics", Some("Water"), &["water-reflections", "water-mirror", "water-effects"]),
+    section("Graphics", Some("Detail and Distance"), &["distant-lod", "full-detail", "distant-objects", "grass", "anisotropic", "authored-materials", "authored-reflections", "terrain-height-blend", "terrain-anti-tiling", "mesh-terrain-blend", "smooth-terrain", "object-distance", "actor-distance", "item-distance", "grass-distance", "tree-distance"]),
     section("Graphics", Some("World and Animation"), &["head-tracking", "foot-ik", "sky-clock"]),
     // The owner's own layout of the movement work (tech/movement-inertia, 2026-11-15).
     section(NVF_FEATURES_TAB, Some("Advanced Movement"), &["advanced-movement", "movement-weight"]),
-    section(NVF_FEATURES_TAB, Some("Gameplay"), &["movement-inertia", "weapon-handling", "advanced-recoil"]),
+    // Sprint after Advanced Recoil (#3000).
+    section(NVF_FEATURES_TAB, Some("Gameplay"), &["movement-inertia", "weapon-handling", "advanced-recoil", "sprint"]),
     section(NVF_FEATURES_TAB, Some("Visual Only"), &["weapon-inertia", "animation-smoothing", "camera-motion"]),
     section(NVF_FEATURES_TAB, Some("World Interaction"), &["grass-fire"]),
     // The Quick Loot menu (docs/design/quick-loot.md) [design, #2933].
@@ -376,6 +380,10 @@ pub const SECTIONS: &[Section] = &[
             "tweak-hack-spare-guessed",
             "tweak-hack-no-repeat-words",
             "tweak-hack-no-single-chars",
+            "tweak-hack-mark-guesses-as-duds",
+            "tweak-hack-keep-matching-chars",
+            "tweak-hack-compact-guesses",
+            "tweak-hack-replenish-bonus",
             "tweak-key-name",
             "tweak-no-grab-owned",
             "tweak-no-terminal-lockout",
@@ -482,6 +490,7 @@ pub const SECTIONS: &[Section] = &[
             "tweak-npcs-disarm-player",
             "tweak-npc-melee-part-damage",
             "tweak-hold-release-throws",
+            "tweak-keep-chosen-ammo",
             "tweak-no-condition-damage-buffer",
             "tweak-no-condition-damage-penalty",
             "tweak-no-spin-up",
@@ -947,6 +956,11 @@ pub const NEEDS: &[(&str, &str, &str)] = &[
     ("eye-adaptation", "glow", "Needs Light Glow (HDR)."),
     ("neon-glow", "glow", "Needs Light Glow (HDR)."),
     ("grass-distance", "grass", "Needs Grass."),
+    // #3014: the distant objects stand where the distant LOD's blocks leave gaps.
+    ("distant-objects", "distant-lod", "Needs Distant terrain and objects."),
+    ("tree-distance", "distant-lod", "Needs Distant terrain and objects."),
+    // #2981: the reflections act only on authored materials, so the row greys while they are off.
+    ("authored-reflections", "authored-materials", "Needs Authored materials."),
     ("fps-counter-fps", "fps-counter", "Needs the Frame Rate Counter."),
     ("fps-counter-graph", "fps-counter", "Needs the Frame Rate Counter."),
     ("fps-counter-split", "fps-counter", "Needs the Frame Rate Counter."),
@@ -958,6 +972,7 @@ pub const NEEDS: &[(&str, &str, &str)] = &[
     ("fps-counter-upscaling", "fps-counter", "Needs the Frame Rate Counter."),
     ("fps-counter-low", "fps-counter", "Needs the Frame Rate Counter."),
     ("fps-counter-low", "fps-counter-fps", "Needs Counter: Frame Rate."),
+    ("tweak-hack-keep-matching-chars", "tweak-hack-mark-guesses-as-duds", "Needs Hacking: Mark Guesses as Duds."),
 ];
 
 /// The Controls tab's rows that are shown only while the input device is a controller

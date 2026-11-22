@@ -45,6 +45,8 @@ pub(crate) fn objective_teleport_links(g: &mut Game, flat: bool) -> XVal {
 /// "changes are NOT savebaked" [documented]; the rest [hypothesis]).
 #[derive(Debug, Default)]
 pub struct OtherState {
+    /// Bounded SetMaxAniso request; last call wins until the renderer consumes it. Not saved.
+    pub(crate) texture_filter_level: Option<u16>,
     /// The immutable placed-door graph, built lazily; run-time lock state is read
     /// for every route. Not persisted or rebuilt on each minimap callback.
     pub objective_doors: Option<crate::quest_targets::DoorGraph>,
@@ -81,6 +83,12 @@ pub struct OtherState {
     pub package_lists: HashMap<FormId, Vec<FormId>>,
     /// SetFlagsLow/High's record flags.
     pub flags: HashMap<FormId, u32>,
+    /// Explicit `SetPersistent` session overrides (separate from `flags` so unrelated
+    /// `SetReferenceFlag` / `SetFlagsLow` writes do not clear persistent-group refs whose
+    /// static record lacks bit `0x400`) [design].
+    pub persistent_overrides: HashMap<FormId, bool>,
+    /// SetActorBaseFlagsLow/High's 32-bit ACBS flags, by actor base form.
+    pub acbs_flags: HashMap<FormId, u32>,
     /// Con_SCOF's file name (nothing is written).
     pub scof: Option<String>,
     /// AddAnimation's and DelAnimation's lists, by actor base.
@@ -91,7 +99,9 @@ pub struct OtherState {
     pub lev_actors: HashMap<FormId, crate::nvse_leveled::LevList>,
     /// Generic*Form's changed lists, by (list code, form) (`Game::generic_list`).
     pub generic: HashMap<(i64, FormId), Vec<FormId>>,
-    /// SetOwningFactionRequiredRank's ranks, by reference (over the record's XRNK).
+    /// SetOwningFactionRequiredRank's ranks, by reference (over the record's XRNK), read
+    /// through `Game::owner_rank` / `Game::ownership_in` and carried across same-run loads
+    /// in `Game::Session`.
     pub owner_ranks: HashMap<FormId, i32>,
     /// SetZoneMinLevel's and SetZoneOwner's changes, by encounter zone (`nvse_anh`).
     pub zone_changes: HashMap<FormId, crate::nvse_anh::ZoneChange>,
@@ -209,11 +219,16 @@ fn alt_groups(ex: bool, args: &[XVal], dflt: [bool; 7], short: [bool; 7]) -> [bo
 
 impl<'a> Game<'a> {
     /// Change a package for the session: a copy of its definition, changed, takes its
-    /// place for every reader (`Game::package_def`).
+    /// place for every reader (`Game::package_def`). A change that leaves the definition
+    /// as it is makes no copy: the copies live for the session (readers hold `&'a`), and a
+    /// mod's main-loop script may call a setter with the same values every frame (#3150).
     pub(crate) fn change_package(&mut self, p: FormId, change: impl FnOnce(&mut crate::package::PackageDef)) {
         let Some(def) = self.package_def(&p) else { return };
         let mut new = def.clone();
         change(&mut new);
+        if new == *def {
+            return;
+        }
         let leaked: &'a crate::package::PackageDef = Box::leak(Box::new(new));
         self.package_overrides.insert(p, leaked);
     }
@@ -315,7 +330,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // (actor-behaviour.md §2.4). Missing/nonactor zero is a selected portable
         // convention matching neighboring queries; native invalid behavior is unknown.
         "isactordetected" => {
-            let target = subject.filter(|&r| matches!(g.data.sig(base(g, r)), Some(sig) if sig == *b"NPC_" || sig == *b"CREA"));
+            let target = subject.filter(|&r| g.def_following(r, |_| false).is_some()
+                || matches!(g.data.sig(base(g, r)), Some(sig) if sig == *b"NPC_" || sig == *b"CREA"));
             yes(target.is_some_and(|target| target != FormId::PLAYER_REF
                 && g.detection.pairs.iter().any(|(&(detector, seen), (d, _))|
                     seen == target && detector != target && detector != FormId::PLAYER_REF
@@ -536,7 +552,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // equipping does not].
         "setispowerarmor" => {
             let f = form(args, 1).or(subject).map(|f| base(g, f)).unwrap_or(FormId(0));
-            g.other.power_armor.insert(f, num(args, 0, 0.0) != 0.0);
+            g.set_armo_power_armor(f, num(args, 0, 0.0) != 0.0);
             zero
         }
         // Formatted by the VM (`Vm::host_function`), then here.
@@ -750,8 +766,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // SetModelPath(Ex), SetIconPath(Ex), SetTexturePath,
         // SetBipedModelPath(Ex), SetBipedIconPath(Ex)]: the scope model is MOD3 [observed:
         // the sniper rifle's MOD3 is interface\HUD\mildotscope.NIF]. The getters see the
-        // change; the drawn models do not [hypothesis: "If the replaced model is already
-        // loaded, then it will need to be reloaded"; NVForever reads the record's].
+        // change; the drawn models do not, but for a weapon's (weapon-mods.md §8)
+        // [hypothesis: "If the replaced model is already loaded, then it will need to be
+        // reloaded"; NVForever reads the record's].
         "getscopemodelpath" | "getbipediconpath" => {
             let (sub, at) = if name == "getscopemodelpath" {
                 ("MOD3", 0)
