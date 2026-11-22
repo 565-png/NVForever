@@ -188,3 +188,4 @@ mod nvse_stubs_batch2;
 mod preactivation_events;
 mod preactivation_mutation;
 mod stewie_945_960_970_qualification;
+mod worldspace_climate_imagespace;
