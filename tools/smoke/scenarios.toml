@@ -6084,6 +6084,41 @@ args = ["--cell", "GSHouseInterior03", "--play", "--hour", "23", "--no-voice"]
 run_seconds = 28
 order = [["flashlight: on", "flashlight: off"]]
 
+[[scenario]]
+name = "flashlight-aimed-weapon"
+source = "#3121 / #3405 (docs/design/first-person-depth.md, engine/nvforever/src/flashlight.rs, lights/display_shader.rs): aimed down sights of a shiny revolver (Ranger Sequoia 0x00129A44) in a dark interior at 1280x720 with the flashlight off and then on, verifying first-person flashlight attenuation keeps the held weapon and hand readable while the beam lights the room ahead"
+areas = ["flashlight", "lights", "player-body"]
+paths = [
+  "engine/nvf-play/src/flashlight.rs",
+  "engine/nvforever/src/flashlight.rs",
+  "engine/nvforever/src/lights.rs",
+  "engine/nvforever/src/lights/display_shader.rs",
+]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_EQUIP = "00129A44", NVF_PLAY_TEST_LOOK = "2:345:-4", NVF_PLAY_TEST_CONTROL = "3:weapon,5:aim,8:flashlight,11:flashlight,12:aim", NVF_PLAY_TEST_SHOTS = "7:flashlight_aimed_off.png,10:flashlight_aimed_on.png" }
+args = ["--cell", "GSHouseInterior03", "--play", "--hour", "23", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm", "--size", "1280x720"]
+run_seconds = 14
+expect = [
+  { text = "test aid: the player equips 0x00129A44", label = "Ranger Sequoia equipped" },
+  { re = 'aim zoom: WeapNVRangerSequoia \(0x00129A44\) sight FOV', label = "aiming down iron sights" },
+  { text = "test aid: screenshot flashlight_aimed_off.png", label = "flashlight-off aimed frame captured" },
+  { text = "test aid: screenshot flashlight_aimed_on.png", label = "flashlight-on aimed frame captured" },
+  { text = "aim zoom: back to the unzoomed view", label = "aiming released cleanly" },
+]
+order = [[
+  "test aid: the player equips 0x00129A44",
+  "aim zoom: WeapNVRangerSequoia (0x00129A44) sight FOV",
+  "test aid: screenshot flashlight_aimed_off.png",
+  "flashlight: on",
+  "test aid: screenshot flashlight_aimed_on.png",
+  "flashlight: off",
+  "aim zoom: back to the unzoomed view",
+]]
+forbid = [
+  { text = "Caught rendering error", label = "no rendering or validation errors while aiming with the flashlight" },
+  { text = "failed and will not be tried again", label = "no failed render pipelines while toggling the flashlight" },
+]
+manual = "Compare flashlight_aimed_off.png and flashlight_aimed_on.png (1280x720): with the flashlight on, the aimed Ranger Sequoia cylinder, frame, sights and gloved hand must remain cleanly readable (not blown out to white) while the interior wallpaper and window ahead are brightly illuminated by the flashlight cone."
+
 # ------------------------------------------------------------------ sounds
 
 [[scenario]]
