@@ -57,6 +57,7 @@ Constraints that decide what fits:
 | Sun shafts (own screen-space pass), tied to the weather's fog | Medium: dusk and dawn, the sun behind roofs and poles | ~0.03 ms here | **Built** (§3.7) |
 | Bevy volumetric fog | Would replace the game's fog look | Tried: darkens the whole picture on the non-HDR view, box edges | Rejected (§4) |
 | Desert haze: exponential height fog in closed form, in the world shaders' fog path, on top of the weather's fog | Medium: far ridges fade in layers, basins haze over, warmer toward the sun | A few arithmetic operations per fragment where the fog runs; no pass | **Built**, off in every preset (§3.16) |
+| Aerial perspective: the weather's fog per colour channel and toward the sky's colours in the ray's direction (Hoffman and Preetham), in the world shaders' fog path | Medium: successive ridges separate, bluer at noon, warmer at dusk, brighter toward the sun | A few arithmetic operations per fragment where the fog runs; no pass; the fog uniform grows by 48 bytes | **Built**, off in every preset (§3.18) |
 | SSR on water | Low: the planar reflection is better where it reaches | Own march in the water shader from the depth prepass | **Built** for where the planar reflection does not reach (§3.8) |
 | Bevy atmosphere | Would replace the game's sky look | | Rejected |
 | Auto exposure, depth of field, motion blur | Change the look; the game's own HDR/eye-adapt values (IMGS DNAM) are not decoded | | Not now (§6) |
@@ -611,6 +612,16 @@ over the frames instead of by alpha to coverage.
   and its depth prepass texture can disagree; the passes that bind the depth (ambient
   occlusion, sun shafts, TAA, the image-space blur) now go by the texture's own sample count
   and skip that frame (before, a validation error ended the run).
+- Switching TAA off while the game runs (another anti-aliasing choice, or a temporal upscaler
+  taking over, which turns native TAA off) [design, #2955]: the camera keeps its render-world
+  view, and Bevy's sync takes only the TAA marker off it, so the pass's own state on that view
+  (its pipeline, history pair and uniform) is dropped in the same frame and the history with
+  it, and the pass runs only on a view that carries the marker this frame (log: `taa: off for
+  a view: its pass state and history dropped`). Before, the pass went on blending the history
+  frozen at the switch into every frame (a faint still picture over the view under FSR or DLSS
+  until a load). Turned on again, the history starts over on its first pass that runs
+  (`taa: on for a view: its history starts over` is logged when the view's state is made,
+  which can be a frame or more before, while the pipeline compiles).
 - Looks [observed 2026-10-12, Goodsprings noon, standing, and walking while turning 40 degrees a
   second]: edges as smooth as MSAA 4x standing still, plants' cut-outs smoother; textures a
   little softer standing still and clearly softer while the view moves (the usual TAA trade);
@@ -2626,6 +2637,333 @@ experimental height branch (stage 4) a set's `_p` (or a height-only set) is draw
 relief mapping, depth 0.03 unless the set's scalars say otherwise, on opaque, single-sided,
 non-decal shapes with tangents. By default it marches up to eight layers and refines the
 intersection with four additional steps. Each height sample reads the top mip. [design]
+
+### 3.18 Aerial perspective (`aerial-perspective`; off in every preset)
+
+[design, #2993] An addition of NVForever's own, an engineering choice for the enhanced look:
+not a fact about the original game, never a parity item, and never to be used to explain a
+difference from the original's frames. With the weather's distance fog alone every far ridge
+fades to the same flat fog colour, so the Mojave's ranges stack into one band. With this row
+far land takes on the sky's colours by distance instead: bluer and paler with distance under
+a blue noon sky, warmer under a dusk sky, brighter toward the sun, so successive ridgelines
+separate. The row is "Aerial perspective (experimental)" under Graphics > Lighting and
+Effects, after Desert haze, off by default and in every preset (the `enhanced` row the issue
+text would have used no longer exists since the settings menu overhaul). Code: `aerial.rs`,
+fog.rs `GAME_FOG`, a patch of the vendored bevy_pbr fog uniform.
+
+- **Technique.** After Hoffman and Preetham, "Rendering Outdoor Light Scattering in Real
+  Time" (GDC 2002) [documented: cited paper]: the light reaching the eye is the surface colour
+  times the extinction plus the in-scattered light times one minus the extinction, the
+  extinction differing per colour channel and the in-scattered light depending on the view
+  ray's direction (a phase function toward the sun). The sun's phase function is the
+  Henyey-Greenstein one (Henyey and Greenstein, "Diffuse radiation in the galaxy",
+  Astrophysical Journal 93, 1941) [documented: cited paper], divided by its value at the sun.
+  Our own code from those descriptions; no code from any other project. The amounts are the
+  weather's, not a physical atmosphere's [design]: Bevy's procedural atmosphere (after
+  Hillaire, EGSR 2020) stays rejected (§2); the game's sky dome and the weather's colours stay.
+- **What it changes** (constants at the top of `aerial.rs`, each an engineering choice by eye
+  [design]):
+  - *Per-channel share.* The weather's fog share f (`GAME_FOG`'s, with its strength) becomes
+    f_c = 1 - (1 - f)^(w_c) per channel: 0 at 0, 1 at 1, rising with f. The weights come from
+    the chroma of the sky colour behind far land (the drawn dome's at the horizon, below): the
+    deviation d_c = (c_c - Y) / max(Y, 0.01) (Y the Rec. 709 luminance; `DARK_FLOOR`), whose
+    luminance-weighted mean is 0 by construction, then w_c = 1 + k d_c with k = 1
+    (`CHROMA_GAIN`) or less where that would take a weight out of 0.5..2 (`WEIGHT_LOW`,
+    `WEIGHT_HIGH`). w is linear in k and 1 at k = 0, so the luminance-weighted mean stays
+    exactly 1 and the hue keeps its direction, with no clamp. Below a luminance of 0.01 the
+    chroma fades out continuously, so a fade to or from a near-black sky does not step
+    (tested). A grey or black sky gives 1, 1, 1 (the weather's own fog). The amount of fog
+    stays the weather's in that sense: the mean optical-depth multiplier is 1; a channel with
+    w below 1 fogs less than f, one above more.
+  - *In-scatter colour.* Instead of the one fog colour, the fog colour moved toward the sky
+    colour in the view ray's direction by up to 0.8 (`DOME_MIX`). The sky colour is the drawn
+    dome's at the horizon (0°, used at and below it) and at 20° up (`LOWER_SIN`), mixed by a
+    smoothstep in the ray's sine between them. Those two colours are the dome's as the
+    renderer draws them: sky.rs `dome_color` of each vertex's own weights on the rings nearest
+    below and above, averaged per ring, then mixed in linear RGB at the point where the ray at
+    that elevation crosses the mesh's edge between the two rings (each ring's mean horizontal
+    distance and height), as the rasteriser interpolates the vertex colours along that edge
+    (tested with rings of equal and unequal radius). The rings are read from the dome mesh in
+    use (its positions and `SkyDome` weights, again only for a new dome mesh): the stock
+    atmosphere.nif's weights are about 0.69 horizon + 0.35 sky-lower at 0° and 0.57 sky-lower
+    + 0.53 sky-upper at 20° [documented: docs/spec-notes/world.md "Sky meshes"]; the fallback
+    dome has its own (all sky-lower at 0°, sky.rs `fallback_dome`). Before a dome mesh has been
+    read, the bare horizon and sky-lower colours stand in. Each is taken times the dome's sky
+    level (`SkyState::sky_scale`, the factor sky.wesl draws the dome with [documented:
+    engine/nvforever/src/sky.wesl]), so a far ridge meets the sky drawn behind it. All mixes:
+    the colour stays within the weather's fog colour and the dome's colours as drawn, so it is
+    above the display range only where the drawn sky already is (#2915: no clamp added).
+  - *Sun lobe.* The finished pixel (linear light) is moved toward the same blend with the
+    weather's sun colour as the in-scatter colour, by the normalised Henyey-Greenstein lobe
+    ((1 - g)^2 / (1 + g^2 - 2 g cos))^1.5 with g = 0.6 (`HG_G`), at most 0.35 at the sun
+    (`LOBE_MOST`), fading in as the sun rises through -2..3° as the sky's disc and glare do
+    (`SkyState::light`; nothing at night), times the two pixels' luminance contrast,
+    (Y_toward - Y_plain) / max(Y_toward, 1e-4) held to 0..1. A linear mix toward a brighter
+    pixel only raises luminance, so the lobe never darkens what is shown, for any surface, fog
+    share, channel weights and haze (tested over a grid through the whole blend and decode); a
+    weather with a black sun, or one no brighter than its sky, gets none. The lobe follows the
+    real sun: below the horizon sky.rs `aim_sun` turns the directional light to the moon's
+    side while the fade still runs, so the CPU packs which side the light points to (the sign
+    of the lobe's strength, from the light's own clock) and the shader turns the light's
+    direction back toward the sun; the pixel is continuous through 0° (tested).
+  - *Weight.* All of it scales with the desert haze's weight (§3.16, `haze::weight`, reused):
+    full under a clear weather, none as the weather's own fog gets short or dense, so
+    NVWastelandHazy and HVDustStorm (weight 0: `haze::weight` of their fog distances, which
+    are [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17]; the picture runs logged
+    "weight 0.00, none" for both [observed: NVForever run, 2026-11-18]) are exactly as with
+    the row off: the uniform's vectors are zero there.
+- **Where it sits.** Per fragment in the world shaders' fog path, no pass: everything the
+  weather's fog covers, under every anti-aliasing and upscaler. `nvf_aerial` (aerial.rs,
+  written before Bevy's `apply_fog` in `pbr_functions.wesl`) wraps the desert haze's call of
+  the atmospheric fog: it composes with the haze's replacement of Bevy's call instead of
+  replacing that call again, and its edit is made after the haze's, only once those are in
+  place. It works out the in-scatter colour and the lobe's weight for the fragment's view ray
+  and hands them, with the three weights and the sun colour, to `GAME_FOG` in a copy of the
+  fog uniform (`nvf_params[0]` the colour with alpha -2, which the CPU never writes,
+  `nvf_params[1].rgb` the weights, `nvf_params[2]` the sun colour and the lobe's weight).
+  `GAME_FOG`'s first outdoor branch, taken only on that -2, blends **once**, per channel, in
+  the values the fog is blended in outdoors (the pow(1/2.2) encoding: the main view is HDR,
+  but the outdoor fog blend is in that encoding [documented: engine/nvforever/src/fog.rs], and
+  the colours are encoded on the CPU the same way; `dome_color` mixes in the sRGB curve, a
+  small difference), then applies the lobe in linear light. Interiors (the linear blend) are
+  untouched, and the CPU writes zeros indoors.
+- **With Desert haze also on**: the haze's share and colour stay as they are; the aerial terms
+  apply to the weather's fog part: each channel's total share 1 - (1 - f_c)(1 - h), the
+  colours weighted as the haze seen through the aerial fog (as in §3.16), the lobe's blend
+  with the same haze. Tested: alone or together every channel's total is within 0..1, the
+  haze never lowers a share, and the total is at least the haze's. Together, the near and
+  middle distance take the haze's warm dust and the far ranges the sky's colours behind them,
+  the haze's share over them.
+- **Carried** in three vec4s appended to Bevy's fog uniform (`DistanceFog::nvf_params`,
+  `GpuFog`, the shader's `Fog`; a patch of engine/vendor/bevy_pbr, listed in its README): one
+  uniform grows by 48 bytes, the view bind group keeps its bindings. [0] the sun colour
+  (display values, blended like the air colour, so nothing is converted per fragment) and the
+  lobe's strength, negative while the directional light points away from the sun; [1] the
+  in-scatter colour at the horizon and the red weight; [2] the one at 20° and the blue
+  weight; green follows from the mean of 1, in the shader. The haze uses up the uniform's
+  free fields, per-frame values written into shader text are not acceptable and the view
+  bind group is not to grow, hence the patch. The reflection and lens cameras clone the main
+  camera's fog, so they get the same vectors; the reflection camera's rays are the mirrored
+  ones, which see the sky above the reflected land. The 3D scope's lens camera copies the
+  main camera's fog after both writers of it after the sky (fog.rs `FogWriters`: the desert
+  haze and this; the reflection camera copies in PostUpdate), so neither shows a frame with
+  the sun's side not yet turned or the aerial fog without the haze (a scheduling test).
+- **Off.** With the switch off (or a weight of 0) the vectors are zero, `nvf_aerial` makes
+  the call as the haze left it and `GAME_FOG` runs its old lines: the picture and the log are
+  as on main. What stays for every player: the fog uniform is 48 bytes larger, and the fog
+  path has one more uniform branch in `nvf_aerial` and one in `GAME_FOG`; the edits are made
+  at the start, with no log line. Both fail safe (one `warn!` line, the shader as it was, the
+  row does nothing). With the row on, the weather's fog numbers, five of its colours, the sky
+  level and the sun's height are read each frame; the derivation (the dome's colours, the
+  weights, the encodings) is done again only when one of them or the dome mesh changes.
+- **What follows the weather** (from `SkyState` every frame, through weather fades, scripted
+  SetWeather/ForceWeather and the hour; no weather names, no hour table, no result kept past
+  a change): the weight from the fog numbers, the channel weights and in-scatter colours from
+  the fog, horizon, sky-lower and sky-upper colours as the dome draws them and the sky level,
+  the lobe from the sun colour and the sun's height. Values outside the base game's ranges
+  are tested as data (fog far 0 and 1,000,000, power 0, NaN and infinite colours, a black sky,
+  one channel 0, a black sun): no NaN, nothing negative, no division by zero.
+- **Switching**: the row, `--graphics-only aerial-perspective`, a `--graphics-cycle` set,
+  `NVF_PLAY_TEST_SETTINGS=<t>:aerial-perspective`. Only the uniform changes; nothing compiles.
+  Log lines: `aerial: aerial perspective on: <weather>: weight <w>, channel weights
+  <r>/<g>/<b>, sky share <s>, sun lobe <l>` (or `..., none (the weather's own fog leaves no
+  room)`); the same as `aerial: <weather>: ...` when the weather, the weight (by 0.1) or a
+  channel weight (by 0.1) changes, not during a time-lapse; `aerial: aerial perspective off`
+  (`... off indoors`). Debug aid `NVF_PLAY_DEBUG_AERIAL=<multiplier>`: the weight times that
+  (1 as designed, 0 to 4; the sky share and the lobe are held to 1, the weights to their
+  range), logged once; it does not turn the switch on. Smoke: `aerial-perspective`,
+  `aerial-perspective-with-haze`.
+- **Cost**: none that the runs can show: 3.23-3.28 ms a frame with the row off, 3.23-3.29 ms
+  on, main 3.25-3.28 ms (three rounds each, the median of five 4-second periods, 2560x1440,
+  Goodsprings at 13:00 under NVWastelandClear, Sun shadows on, on the contributor's machine)
+  [observed: NVForever run, 2026-11-19]. Not measured on a slower GPU or at other resolutions.
+- **Not done**: between the two reference elevations the sky colour is a smoothstep between
+  the dome's two colours, not the dome's own curve; no height dependence (the weather's fog
+  has none; the haze has its own); no shadowing of the in-scattered light; the sun's
+  direction is the view's first directional light, turned back toward the sun where it is
+  the moon's side (the first-person arms' shade light points the same way); the cloud cover
+  is not read, so the base game's overcast is not told from clear (their classification
+  flags and cloud layer counts are the same [observed: FalloutNV.esm, fnvtool esm decode,
+  2026-11-17]).
+
+### 3.19 Night sky detail (`night-sky-detail`; off in every preset)
+
+[design, #2995] An addition of NVForever's own, an engineering choice for the enhanced look:
+not a fact about the original game, never a parity item, and never to be used to explain a
+difference from the original's frames (`vanilla` stays the parity picture). The row "Night
+sky detail (experimental)" (Graphics > Lighting and Effects, after Aerial perspective) is off by
+default and in every preset, `--graphics enhanced` included (`graphics.rs` test). Issue #2995
+predates the settings menu overhaul; the old `enhanced` row no longer exists, so this is a
+row of its own. `--graphics-only night-sky-detail` and a `--graphics-cycle` set turn it on
+too. Code: `night_sky.rs` and the night part of `sky.wesl`.
+
+- **What** [design]. Three additions, built only from the climate's own stars and moon and
+  the shown weather's own colours and fog: the stars **twinkle**, more toward the horizon; a
+  **glow round the moon**, wider and stronger in hazier weather; **moonlit clouds**, the cloud
+  layers lit a little on the side of the sky facing the moon. Nothing new is read from the
+  data and nothing is shipped.
+- **Where it sits** [design]. No pass, texture or mesh of its own: the sky's own fragment
+  shader (`sky.wesl`, used by every sky part) does all three from two `vec4`s at the end of
+  the sky parts' uniform, `sky::SkyLight::moon` and `::night` (the Rust and WGSL structs in
+  the same order; the composed shader's layout is tested). Their meaning depends on the part,
+  as `params.w` already does: the star dome (the additive parts the daylight does not apply
+  to, `params.z` 0) takes the twinkle; the atmosphere dome (`params.w` 2) the glow, drawn
+  with the sun's disc and glare, so behind the clouds and under the moon disc; the cloud
+  layers (`params.w` 1) the moonlight. The moon disc takes nothing. The additions use the
+  arithmetic of the sun's glare beside them: linear RGB added to the part's colour before
+  `tony_inverse`, which is the identity under the game's clipping tonemapper (`lights.rs`;
+  the main view is HDR). The twinkle multiplies what a star adds.
+- **How the values get there** [design]. `night_sky.rs` `update_detail` runs after
+  `sky::update_night_sky` and works the detail out from the live `SkyState`, again only when
+  the climate, the weather, the weather fading out, the fade, the hour, the days passed or
+  `--fog` changed. Every frame it compares the result with each sky part's stored fields and
+  writes only those that moved by more than 1e-3 (the disc's place by 1e-3 x its distance,
+  the same angle), because each write remakes the material's uniform on the GPU (#897); zero
+  is written exactly. So a part made later (a new worldspace's sky) takes the values the
+  frame it appears. `update_sky` keeps the two fields when it replaces the rest of the
+  uniform. A system test covers a later part, a weather fade, and off then on.
+- **With the row off** the fields stay zero, `update_detail` returns at its first test, each
+  branch in the shader is skipped by a uniform test, and nothing is logged.
+- **Twinkle** (stars) [design]. Each star's added light is multiplied by
+  1 + A x air(e) x s(dir, t):
+  - s is lattice value noise in time over the dome direction (Ebert et al., "Texturing and
+    Modeling: A Procedural Approach", lattice noises [documented: cited publication]). The
+    direction times the cells per unit falls in a cell of a 3D integer lattice; each of its 8
+    corners has a wave, the mean of two sines whose phases and rates (3,600 to 14,400 whole
+    cycles an hour, 1 to 4 Hz) come from an integer hash of the corner: the corner times the
+    primes of Teschner et al., "Optimized Spatial Hashing for Collision Detection of
+    Deformable Objects" (2003), xor-ed, then MurmurHash3's 32-bit finaliser [documented: the
+    published constants]. The waves are interpolated with smoothstep weights, so there is no
+    edge between cells. s has mean 0 over time and stays within -1..1, so the factor's mean
+    is 1 (the night is as bright as without) and it stays within 1 ± A (tested through a
+    Rust mirror of the shader, `twinkle_factor`).
+  - The lattice is read along the direction from the star dome's own centre (its mesh's
+    place, `get_world_from_local`), not from the eye. The dome never turns and follows the
+    main camera, so the cells belong to the dome: a turning camera, the temporal
+    anti-aliasing's jitter and the upscalers see no change of cell, and the water
+    reflection's camera (the main camera mirrored below the water, `reflection.rs`) gives a
+    reflected star the same phase at any height above the water. A 3D lattice has no pole
+    and no seam.
+  - Cell size: about the size of a star on screen. At 1080 lines with the game's default
+    field of view (75, the horizontal angle at 4:3; vertical 59.8°, `free_cam::vertical_fov`)
+    a pixel spans 9.7e-4 rad; a star of the base game's star dome covers 2 to 4 pixels there
+    [hypothesis], so a cell of 4 pixels (3.9e-3 rad, 0.22°; about 258 cells per unit of
+    direction) gives neighbouring stars their own phases while a star's own pixels change
+    nearly together.
+  - Time: Bevy's `globals.time`, the extracted `Time`, which is the game's virtual clock
+    wrapped at an hour (`bevy_render` `globals.rs` [documented: vendored source]); the pause
+    menu holds that clock (nvf-play `pause.rs`), and with it the twinkle. Bevy writes it
+    every frame, so no material is rewritten for time. The rates are whole cycles an hour,
+    so the wrap joins without a jump; the phase is the fraction of the hour times the cycle
+    count, within 1e-3 of a cycle in f32. At 60 frames a second the fastest wave moves 0.42
+    rad a frame: smooth, never a per-frame random value.
+  - air(e) = 1 - 1/X, X the air mass by Rozenberg's formula 1 / (sin e + 0.025 e^(-11 sin e))
+    (G. V. Rozenberg, "Twilight", 1966 [documented: cited publication]): 0 at the zenith,
+    0.5 at 30°, 0.82 at 10°, 0.975 at and below the horizon; bounded and monotone (tested).
+  - A = (0.15 + 0.25 q) x the debug multiplier, held to at most 0.9 so a star never dims
+    below a tenth [engineering choice]; q is the weather's haze (below). The clear Mojave
+    night (q 0.5) twinkles ±0.27 at the horizon and ±0.14 at 30° up. A fragment whose added
+    light is under 1e-4 (most of the sky between the stars) skips the lattice.
+- **Moon glow** (dome) [design]. A Henyey-Greenstein lobe (L. G. Henyey and J. L.
+  Greenstein, "Diffuse radiation in the Galaxy", Astrophysical Journal 93, 1941 [documented:
+  cited publication]) divided by its value on the axis: (1 - g)^3 / ((1 - g)^2 + 2 g (1 -
+  cos))^1.5, the denominator written so that it stays exact on the axis in f32; 1 at the
+  centre, falling monotonically (tested).
+  - Axis: from the rendering eye to the disc's centre. `moon.xyz` is where the disc is drawn
+    from the sky's centre (`-sun_dir` from `SkyState::hour` x `SUN_DISTANCE`, as
+    `update_night_sky` places it), and the shader adds the sky part's own place (the main
+    camera's). In the main view that is the moon's direction; the water reflection's
+    mirrored eye sees the disc elsewhere (3.97° off the moon's direction with the camera
+    5,000 units above the water and the moon 10° up: our arithmetic, a test), and its glow
+    stays round the disc it sees.
+  - Width [engineering choice]: g = 0.9 in clear air to 0.75 under a full fog share, half
+    the peak at 4.6° to 12.7° from the centre (the disc is 3.6° across, `sky.rs`
+    `MOON_SIZE`).
+  - Strength at the centre [engineering choice]: 0.06 x (1 + 0.5 q) (at most 0.09, linear)
+    x the moon's strength. The moon's strength is its visibility
+    (`SkyState::night_visibility`, fading in as the sun goes from +5° to -6°) x the phase's
+    lit share (from the phase index in `MOON_PHASES` order: full 1, three quarters 0.75,
+    half 0.5, a quarter 0.25, new 0, then back up) x the debug multiplier. It is 0 while the
+    disc is hidden (its direction's height below -0.1, `sky::MOON_HIDDEN_Y`, the disc's own
+    rule), indoors, in a climate without a moon and by day (visibility 0).
+  - Colour: the hue of the weather's **Sunlight** colour now (`ColorType::Sunlight`, blended
+    across a weather fade), its largest channel set to 1. At night that colour is the light
+    the renderer lights the world with as moonlight (`sky.rs` `MOON_SHARE`, `aim_sun`), so
+    the glow takes the light that weather's moon gives [design]. A colour darker than 0.05 in
+    its largest channel keeps its hue with its brightness scaled down, so a black night
+    sunlight gives no glow. No colour constant.
+- **Moonlit clouds** (cloud layers) [design]. Added: the cloud's own colour (its weather's
+  PNAM colour at the hour, as `update_clouds` sets it, times its texture and the sky level,
+  without a lightning flash's light, which the sky already adds once) x 0.5 x a broader lobe
+  (g 0.6, half at about 23°, aimed as the glow is) x the moon's strength, scaled down so
+  that no channel adds more than 0.06 x the strength. The blend weighs it by the texture's
+  alpha; through a weather fade both sets of cloud shapes take it, each at its own alpha.
+  Every cloud layer that is drawn counts as cloud. The base game's starfield layer texture
+  (layer 0 of the night weather) is in no archive (docs/spec-notes/world.md §6), so that
+  layer is never drawn.
+- **What follows the weather** [design] (from `SkyState`, no weather names, no per-weather
+  table): the haze q, the weather's fog share at 50,000 units (the desert haze's reference
+  distance, §3.16) by the curve the fog shader draws, with the fog's near, far, power and
+  strength as the fog uniform takes them (or `--fog`), so it blends through a fade and
+  follows SetWeather / ForceWeather the next frame; the moonlight colour; the cloud colours
+  (in the cloud parts' own colour); the hour (the moon's place and visibility); the days
+  passed and the climate's phase length (the phase); the climate's moon flags. A script's
+  moon textures (SetMoonTexture) change nothing here. It adds to the weather's own colours
+  and never replaces them. A weather whose two fog ranges are both unset has no fog
+  (`Weather::fog_at`) and so no haze: the clear-air values.
+- **Weather and mods** [design]: tested as data in `night_sky.rs`: fog far 0 and 1,000,000,
+  near above far, power 0 or negative, values that are not numbers, both fog ranges unset, a
+  moonlight of 1e6 or negative, phase length 0, every phase index and beyond, the sun exactly
+  at the horizon, directions at elevation 0 and 90°, no direction, the multiplier 0 and above
+  4: no NaN, nothing negative, every field within its bound.
+- **Switching**: the row, `--graphics-only night-sky-detail`,
+  `NVF_PLAY_TEST_SETTINGS=<t>:night-sky-detail`. Only uniform values change, so no pipeline
+  is compiled. Log lines:
+  - `night sky: detail on: <weather>: haze <q>, twinkle <A>, moon <phase> lit <l>, strength
+    <s>, glow <peak> half width <deg>°` (`no moon` for a climate without one);
+  - the same figures as `night sky: <weather>: ...` when the phase's lit share changes and,
+    outside a time-lapse, when the weather changes or the haze moves by 0.1;
+  - `night sky: applied: <n> star material(s) twinkling (amplitude <A>), the dome's glow
+    <g>, <k> cloud material(s) moonlit`, once each time it turns on, read back from the
+    materials after the writes (only checked while this frame's values can give it: not by
+    day, at a new moon, without a moon or at the multiplier 0; the cloud count includes
+    hidden layers);
+  - `night sky: detail off` (`... off indoors` on going in).
+- **Debug aid** `NVF_PLAY_DEBUG_NIGHT_SKY=<multiplier>` (0 to 4, 1 as designed): all three
+  times that, read once and logged (`debug switch NVF_PLAY_DEBUG_NIGHT_SKY: ...`) when the
+  detail first turns on; it does not turn the switch on and does not make a run unattended.
+- **Tests.** `night_sky.rs`: the pure parts above, the mirrored view (`glow_axis`,
+  `star_direction`), the write tolerances, the kept derivation (system test), and that
+  `sky.wesl` holds the constants its Rust mirrors use. `engine/nvf-shader-tests/tests/sky.rs`
+  composes the production `sky.wesl` with Bevy's own imports through Bevy's shader cache and
+  validates it with Naga, with no definitions (the dome, clouds and moon) and with the
+  definitions Bevy's mesh pipeline sets for the additive stars (`PREMULTIPLY_ALPHA`,
+  `BLEND_PREMULTIPLIED_ALPHA`), and checks the uniform's layout. Smoke: `night-sky-detail`
+  (switched on in the pause menu at Goodsprings at 23:00 on day 0, a full moon, left on after
+  the game resumes; it expects the `applied` line).
+- **Seen** [observed: NVForever run, 2026-11-19, pictures at Goodsprings]: the glow follows
+  the phase (centre 0.075 at the full moon, 0.037 at the half moon, none at the new moon, as
+  logged), is wider under NVWastelandHazy, and nothing shows at noon.
+- **Cost.** Measured 2026-11-19, indicative: 3.13 ms off, 3.13 ms on at 2560x1440,
+  Goodsprings 23:00, on the contributor's machine [observed: NVForever run, 2026-11-19]. Not
+  measured on a slower GPU, at handheld resolution, or with FSR. What the code does: every
+  sky fragment pays a few uniform tests; a dome or cloud fragment with the moon up also a
+  matrix fetch, a normalisation, a `pow` and a few multiplies; a star fragment that adds
+  light runs the lattice, eight corner waves of two hash finalisations and two sines each,
+  and an `exp`. With FSR the stars, the clouds and the moon are drawn a second time into
+  FSR's opaque reference (`fsr.rs`, the reactive reference pass), so the stars' and clouds'
+  terms run twice there. The water reflection's and a 3D scope's cameras draw the sky too.
+- **Not done**:
+  - The twinkle was judged only from the log and still pictures; no clip of it was taken.
+  - No colour change in the twinkle (chromatic scintillation) and no twinkle of the moon.
+  - A mod's starfield texture on a cloud layer counts as cloud: it takes the moonlight and
+    does not twinkle (no classifier is guessed).
+  - FSR draws the stars and clouds twice (above); nothing skips the night terms in its
+    second draw.
+  - No halo ring (the 22° ice halo), no moonlight on the fog or the land beyond what the
+    weather's own night light does, nothing indoors.
+  - The constants are starting values chosen by reasoning and checked in pictures at a few
+    strengths (the debug multiplier), not tuned against anything.
 
 ### 3.20 Full-detail scenery (`full-detail`; 7 x 7 in `enhanced`, off in vanilla, #2701 stages 1 and 2)
 
