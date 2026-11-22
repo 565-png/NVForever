@@ -11343,6 +11343,19 @@ expect = [
 forbid = [{ text = "explore: the free-camera explorer", label = "not the explorer" }]
 
 [[scenario]]
+name = "code-page-936"
+source = "#1443: explicit code page 936 selects the GB18030 codec and starts the game"
+areas = ["main-menu", "settings"]
+paths = ["crates/fnv-util/src/lib.rs", "crates/fnv-esm/src/text_guess.rs", "engine/nvforever/src/setup.rs"]
+env = { NVFOREVER_HOME = "code-page-936-home", NVF_CODE_PAGE = "936" }
+args = ["--play", "--menu", "--no-voice"]
+run_seconds = 8
+order = [[
+  "setup: game text read as windows-936 (GB18030/GBK)",
+  { re = 'main menu: open \(', label = "the main menu opens with code page 936" },
+]]
+
+[[scenario]]
 name = "menus-look"
 source = "owner todo 5 items 8, 19, 51: the pause menu in the original's look (column, highlight box, settings categories, quit question, load page), the game's pointer, the wait menu in the HUD's colour and fonts; frames pause_main/quit/settings/load.png and wait_menu.png in the working folder"
 areas = ["main-menu", "save"]
@@ -34379,4 +34392,18 @@ manual = "glass_mccarran_north.png: the window ahead shows a pane over the dark 
 expect = [
   { re = 'vwindow01\.nif: 1 shape\(s\) with a window environment map \(textures.effects.ShinyBright_e\.dds, scale 1\.00, over the blend\): VWindow01:0', label = "the pane is drawn with its environment map, added over its blend" },
   { re = 'test aid: screenshot .*glass_mccarran_north\.png', label = "the interrogation-side frame is saved" },
+]
+
+[[scenario]]
+name = "key-on-broken-shelf"
+source = "#3333: Goodsprings Home's safe key (VZKeyDirtyGSHome2SafeKey 0x001767AB) lies on the bottom board of a broken shelf (ShelvesWooden01broke01 0x0010B1E7), its render box just under the board's collision surface (the shape's 0.7-unit shell), and was never the crosshair's target (engine/nvf-play/src/activate/pick.rs SURFACE_SLACK)"
+areas = ["activate"]
+paths = ["engine/nvf-play/src/activate/pick.rs"]
+note = "From (1210, -241), east of the shelf's open side, the view aimed at the key (aimref) sees it on the board under the crosshair [observed 2026-11-21: screenshot]. Nearer, at the report's spot (1160, -241), the upper board's front edge is in front of it on screen as in the collision, so the key is not expected from there"
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_GOTO = "5:1210:-241:2320", NVF_PLAY_TEST_CONTROL = "7:aimref=001767AB" }
+args = ["--cell", "GSHouseInterior02", "--play"]
+run_seconds = 10
+expect = [
+  { text = "test aid: aiming at 001767AB", label = "the view is turned to the key" },
+  { re = 'target 0x001767AB .*\(Take', label = "the key on the shelf is the target, to take" },
 ]
