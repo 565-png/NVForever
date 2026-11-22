@@ -451,7 +451,7 @@ engine if needed, and delete the item here.
     - Sneak-indicator states. Does a following companion (or an actor on a Follow
       package on the player) seeing the player leave the word at [HIDDEN]? Does a
       neutral (non-hostile) NPC seeing the player give [DETECTED]? (#1159)
-    - Compass ticks within PER × 300; markers within PER × 2048.
+    - Compass ticks within PER × 300 (markers: check 227).
     - "How many?" asks only above 5 (barter) or above 1 (crafting).
     - The crafting filter arrows.
     - Wait pace: 1 hour per 0.5 s, and it can be cancelled.
@@ -3306,6 +3306,19 @@ already talking takes over at once, same topic or another; nothing is queued or 
      separated: whether CompleteAllObjectives or the stage's Complete Quest flag completed
      the objective; FailAllObjectives; what the Pip-Boy lists for such a quest.
 
+## Added 2026-11-14 (the compass's map marker range, #2348)
+
+227. **How far does the compass show map markers, and does Perception change it?** (P2;
+     #2348, hud.md §11.) Ours since #2348: within `iMapMarkerVisibleDistance` (10000 by
+     the executable's default [documented: GECK wiki "Complete List of GameSettings"]),
+     found and unfound alike, whatever the Perception [hypothesis: the setting's name,
+     and Oblivion's setting of the same name]. Before it, Perception × 2048. To check:
+     walk straight away from a known marker and note where it leaves the compass (about
+     10,000 units expected; `player.getpos x` / `y` at that point and the marker's place
+     give the distance). Then `setgs iMapMarkerVisibleDistance 3000` and check that the
+     cut-off follows. Repeat with one found and one unfound marker, and at Perception 1
+     and 10 (`player.setav perception`), to confirm Perception plays no part.
+
 
 ## Added 2026-11-17 (OK on a message box without buttons, #2925)
 
@@ -3507,3 +3520,64 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the bars (`player.drop` then nudge it in, or one placed there with `PlaceAtMe`), is it
      offered? A screenshot of each prompt answers it; `GetCrosshairRef` printed at the
      bars says which reference the crosshair holds.
+
+## Added 2026-11-21 (GetMapMarkerVisible on a marker authored Visible, #3268)
+
+252. **What does GetMapMarkerVisible return for a map marker the player has not found
+     whose record is authored Visible?** (P2: 41 calls in the shipped scripts read it,
+     VMQ01 among them [observed: script-function-audit.md]; #3268.) The wiki gives 0 not
+     on the map, 1 on it without fast travel, 2 on it and a fast-travel target
+     [documented: GECK wiki GetMapMarkerVisible]; it does not say whether a marker's
+     authored flags (REFR `FNAM`: 1 Visible, 2 Can Travel To, 4 "Show All" Hidden
+     [documented: xEdit, schemas/fnv/world.json]) count before the player finds it. Ours
+     on main: 0 until the player finds it (then 2) or a script shows it (ShowMap 0 gives
+     1, ShowMap 1 gives 2), whatever the record says [hypothesis]. #3268 makes an
+     undiscovered marker authored Visible read 1 (Visible | Can Travel To 1 too, Can
+     Travel To alone 0), as its Pip-Boy map shows it [hypothesis]. Also asked: the same
+     markers after ShowMap 0, ShowMap 1 and discovery.
+     Campaign `tools/capture/observe/o31_mapmarker_visible.campaign.json`, save `nvfdoc`
+     (Doc Mitchell's house, so the markers far from Goodsprings are not found yet
+     [hypothesis]), base game + xNVSE with three JIP readers. It reads, every 10 game
+     loops, `GetMapMarkerVisible` of four FalloutNV.esm markers whose IDs are in the
+     notes [observed: pipboy.md §5.3]: Goodsprings 0x000CDF51 (v1), Coyote Den 0x00154A69
+     (v2), Hoover Dam 0x00135E5F (v3), Jacobstown 0x000CDF57 (v4). v5-v8 hold
+     `IsMapMarker + 2 GetMapMarkerTravel + 4 GetMapMarkerHidden` of the same four (JIP
+     readers; 0 means the ID is no marker), v9 `GetPCMiscStat "Locations Discovered"`,
+     v10 a count of the reads; -1 means that read did not run. Sessions, in one game:
+     `a_before` (nothing done), `b_showmap` (ShowMap Hoover Dam 0, ShowMap Jacobstown 1),
+     `c_find_coyote`, `d_find_hoover`, `e_find_goodsprings` (`player.MoveTo` the marker,
+     300 loops, which should find it by its radius [hypothesis]).
+     **Before the run** the authored flags of the four are needed; the repository holds
+     none. Read each with `fnvtool esm decode "<Data>\FalloutNV.esm" --schema schemas/fnv
+     --formid CDF51` (then 154A69, 135E5F, CDF57) and note `FNAM`, "Map Marker Flags".
+     If none of Coyote Den, Hoover Dam and Jacobstown is Visible, find one that is
+     (`fnvtool world refs "<Data>" FalloutNV.esm --schema schemas/fnv --world
+     WastelandNV`, the rows whose base is 00000010, decoded as above) and put its FormID
+     in place of one of them everywhere in the campaign file; one Visible | Can Travel
+     To and one Can Travel To alone are wanted too. Run:
+     `python tools/capture/observe.py run tools/capture/observe/o31_mapmarker_visible.campaign.json
+     --game <FNV> --data <Data>` (JIP LN stays installed, ai-observer-jip.md §2).
+     Reading it: an undiscovered Visible marker in `a_before` reading 0 says main is
+     right; 1 says #3268 is right; 2 says the authored Can Travel To counts as well.
+     A Can Travel To alone marker reading anything but 0 is a third rule. `b_showmap`
+     should read 1 and 2 in both, the found markers 2 in both (Goodsprings 2 in
+     nvftest [observed: fa_batch1_queries]); v9 rising and v2-v4 changing in c-e shows
+     MoveTo found them. v5-v8 before and after say whether the original changes a
+     marker's Travel flag when it is found or shown.
+
+## Added 2026-11-21 (melee creatures and a player who backs away, #3256)
+
+253. **How often is a player who backs away hit by a melee creature?** (P1: the owner's
+     playtest of 2026-11-21 found it far too easy to back away; #3256, combat-rules.md
+     "Knockback".) Ours [observed: main 069ef9bde, 12 s of backing away at a run]: a feral
+     ghoul 11 to 12 blows, a coyote 6 to 7, a young gecko 2 to 3 (10 on a standing
+     player), because each blow knocks the player back about 50 units and the gecko gains
+     only 13 units a second. In the original, on open flat ground (the Searchlight Airport
+     runway serves), let one creature at a time attack: a young gecko, a coyote, a feral
+     ghoul and a person with a melee weapon. For each, count the blows that take health
+     over 12 s (a) standing still, (b) holding the back key at a run, (c) at a walk
+     (Caps Lock). Note also whether a blow moves the player (knockback), and whether the
+     creature stops and starts on the way at a walk. Counts near ours for the gecko mean
+     the difference from a standing player is the original's too; counts near the standing
+     ones mean the original closes the gap in a way ours does not (a lunge from further
+     off, a faster chase, or no knockback on the player).
