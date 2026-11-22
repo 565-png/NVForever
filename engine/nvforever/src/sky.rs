@@ -329,6 +329,12 @@ pub struct SkyState {
     choices: Vec<Choice>,
     /// The worldspace's base image space (WRLD INAM); without one there is no grade.
     pub image_space: Option<Cinematic>,
+    /// The FormID of the worldspace's base image space (WRLD INAM or parent's), so live
+    /// `SetImageSpaceTrait` edits can re-evaluate [`Self::image_space`].
+    pub world_image_space_id: Option<u32>,
+    /// Session `SetWeatherTraitNumeric` fog overrides (`15..=20`: day near/far, night
+    /// near/far, day/night power) keyed by weather FormID, synced by [`sync_weather_fog`].
+    pub weather_fog_overrides: HashMap<u32, [Option<f32>; 6]>,
     /// Each weather's image space adapters per time of day, by weather form ID.
     adapters: HashMap<u32, [Option<Adapter>; 6]>,
     changed: bool,
@@ -530,7 +536,12 @@ impl SkyState {
             (load(&clim.weathers), regions)
         };
         let w = weather(world.lo, world.schema, wid).ok_or("weather unreadable")?;
-        let image_space = worldspace_image_space(world);
+        let world_image_space_id = worldspace_image_space_id(world);
+        let image_space = world_image_space_id.and_then(|id| {
+            let c = image_space(world.lo, world.schema, id);
+            info!("image space {id:#010x}: {c:?}");
+            c
+        });
         let adapters = choices
             .iter()
             .chain(regions.iter().flat_map(|r| &r.choices))
@@ -561,6 +572,8 @@ impl SkyState {
             fade: 1.0,
             choices,
             image_space,
+            world_image_space_id,
+            weather_fog_overrides: HashMap::new(),
             adapters,
             changed: true,
             script: None,
@@ -1029,11 +1042,13 @@ impl SkyState {
 
     /// Fog near, far and strength (0..1), blended across a weather fade; `None` when
     /// neither weather has fog. Fading to or from a weather without fog fades the
-    /// strength and keeps the other weather's distances.
+    /// strength and keeps the other weather's distances. Applies any live session
+    /// `SetWeatherTraitNumeric` (`15..=20`) overrides stored in [`Self::weather_fog_overrides`].
     pub fn fog(&self) -> Option<(f32, f32, f32)> {
-        let cur = self.weather.fog_at(&self.climate, self.hour);
+        let fog_of = |w: &Weather| w.fog_at_with(&self.climate, self.hour, self.weather_fog_overrides.get(&w.form_id).copied());
+        let cur = fog_of(&self.weather);
         let prev = match &self.prev {
-            Some(p) => p.fog_at(&self.climate, self.hour),
+            Some(p) => fog_of(p),
             None => return cur.map(|(n, f)| (n, f, 1.0)),
         };
         let t = self.fade;
@@ -1051,13 +1066,15 @@ impl SkyState {
         if self.fog_override.is_some() {
             return 1.0;
         }
-        let cur = self.weather.fog_power_at(&self.climate, self.hour);
+        let fog_of = |w: &Weather| w.fog_at_with(&self.climate, self.hour, self.weather_fog_overrides.get(&w.form_id).copied());
+        let power_of = |w: &Weather| w.fog_power_at_with(&self.climate, self.hour, self.weather_fog_overrides.get(&w.form_id).copied());
+        let cur = power_of(&self.weather);
         match &self.prev {
-            Some(p) if p.fog_at(&self.climate, self.hour).is_some() && self.weather.fog_at(&self.climate, self.hour).is_some() => {
-                let prev = p.fog_power_at(&self.climate, self.hour);
+            Some(p) if fog_of(p).is_some() && fog_of(&self.weather).is_some() => {
+                let prev = power_of(p);
                 prev + (cur - prev) * self.fade
             }
-            Some(p) if self.weather.fog_at(&self.climate, self.hour).is_none() => p.fog_power_at(&self.climate, self.hour),
+            Some(p) if fog_of(&self.weather).is_none() => power_of(p),
             _ => cur,
         }
     }
@@ -1229,18 +1246,38 @@ pub fn weather_region(world: Res<WorldData>, cam: Query<&Transform, With<FlyCam>
     sky.place_outdoors(world.weather_regions, world.world, g.x, g.y);
 }
 
-/// The worldspace's image space (WRLD INAM), or its parent's.
-fn worldspace_image_space(world: &WorldData) -> Option<Cinematic> {
+/// The FormID of the worldspace's image space (WRLD INAM), or its parent's.
+pub(crate) fn worldspace_image_space_id(world: &WorldData) -> Option<u32> {
     let inam = |id: u32| {
         let (pi, r) = fnv_world::fields::winner(world.lo, id)?;
         let f = fnv_world::fields::Fields::new(r, pi, world.schema).ok()?;
         fnv_world::fields::global(world.lo, pi, fnv_world::fields::formid_of(&f.get(b"INAM")?)?)
     };
-    let ws = &world.index.worldspaces[&world.world];
-    let id = inam(world.world).or_else(|| ws.parent.and_then(inam))?;
-    let c = image_space(world.lo, world.schema, id);
-    info!("image space {id:#010x}: {c:?}");
-    c
+    let ws = world.index.worldspaces.get(&world.world)?;
+    inam(world.world).or_else(|| ws.parent.and_then(inam))
+}
+
+/// Sync live session `SetWeatherTraitNumeric` fog overrides (`15..=20`) from `Game::traits`
+/// into [`SkyState::weather_fog_overrides`]. Keyed on `(game_instance_id, weather_fog_revision)`
+/// so unchanged frames do zero work and game-instance switches or runtime drops clear stale
+/// session overrides cleanly. Explicit console/CLI `sky.fog_override` precedence stays
+/// intact in [`apply_cell_fog`] and [`SkyState::fog_power`].
+pub fn sync_weather_fog(
+    script: Option<Res<nvf_play::script::ScriptState>>,
+    mut sky: ResMut<SkyState>,
+    mut seen: Local<Option<Option<(u64, u64)>>>,
+) {
+    let game = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
+    let token = game.map(|g| g.weather_fog_sync_token());
+    if *seen == Some(token) {
+        return;
+    }
+    *seen = Some(token);
+    let next = game.map(|g| g.weather_fog_overrides()).unwrap_or_default();
+    if sky.weather_fog_overrides != next {
+        sky.weather_fog_overrides = next;
+        sky.refresh();
+    }
 }
 
 /// A global variable's Editor ID.
@@ -2120,13 +2157,31 @@ pub fn tell_sky_colors(sky: Res<SkyState>, mut script: Option<ResMut<nvf_play::s
     rt.game.other.jg9.sky_colors = sky.interior.is_none().then(|| sky.all_color_bytes());
 }
 
+/// Whether an interior cell's fog range is active.
+///
+/// Cells whose effective fog range has `fog_far <= fog_near.max(0.0)` (most commonly
+/// `0..0` with black fog colour in interiors without a lighting template) have no active
+/// distance fog, matching how exterior weathers treat unset fog ranges
+/// (`fnv_world::sky::Weather::fog_at`).
+pub(crate) fn interior_fog_active(l: fnv_world::lighting::CellLighting) -> bool {
+    l.fog_near.is_finite() && l.fog_far.is_finite() && l.fog_far > l.fog_near.max(0.0)
+}
+
 /// Compose the current cell/weather fog for the main camera. Underwater fog uses
 /// the same composition on exit, without waiting for the next weather refresh.
 pub(crate) fn apply_cell_fog(sky: &SkyState, fog: &mut DistanceFog, emissive_mod: f32, no_interior_fog: bool) {
     if let Some(l) = sky.interior {
-        fog.color = to_color(l.fog_color.map(fnv_world::sky::srgb_to_linear));
-        let far = if no_interior_fog { NO_FOG_FAR } else { l.fog_far };
-        fog.falloff = crate::fog::falloff(l.fog_near.max(0.0), far, l.fog_power, false, 1.0);
+        let color = to_color(l.fog_color.map(fnv_world::sky::srgb_to_linear));
+        if interior_fog_active(l) {
+            fog.color = color;
+            let far = if no_interior_fog { NO_FOG_FAR } else { l.fog_far };
+            fog.falloff = crate::fog::falloff(l.fog_near.max(0.0), far, l.fog_power, false, 1.0);
+        } else {
+            // Unset interior fog range (e.g. 0..0): disable fog via alpha 0, matching
+            // exterior weathers (`Weather::fog_at`), instead of clamping far to near + 1.
+            fog.color = color.with_alpha(0.0);
+            fog.falloff = crate::fog::falloff(0.0, NO_FOG_FAR, l.fog_power, false, 1.0);
+        }
     } else {
         let range = sky.fog_override.map(|(n, f)| (n, f, 1.0)).or_else(|| sky.fog());
         let (near, far, strength) = range.unwrap_or((0.0, 0.0, 0.0));
@@ -2194,7 +2249,11 @@ pub fn update_sky(
         let fog_key = (l.fog_near, l.fog_far, l.fog_power);
         if *last_interior_fog != Some(fog_key) {
             *last_interior_fog = Some(fog_key);
-            info!("interior lighting: fog {:.0}..{:.0} power {:.2}", l.fog_near, l.fog_far, l.fog_power);
+            if interior_fog_active(l) {
+                info!("interior lighting: fog {:.0}..{:.0} power {:.2}", l.fog_near, l.fog_far, l.fog_power);
+            } else {
+                info!("interior lighting: fog none (stored {:.0}..{:.0} power {:.2})", l.fog_near, l.fog_far, l.fog_power);
+            }
         }
         return;
     }
@@ -2362,6 +2421,10 @@ mod weather_percent_tests;
 mod session_lighting_tests;
 
 #[cfg(test)]
+#[path = "cartographer_live_tests.rs"]
+mod cartographer_live_tests;
+
+#[cfg(test)]
 pub(crate) fn authored_session_sky() -> SkyState {
     session_lighting_tests::sky()
 }
@@ -2424,6 +2487,8 @@ mod tests {
             fade: 1.0,
             choices: vec![choice(SAVED), choice(2)],
             image_space: None,
+            world_image_space_id: None,
+            weather_fog_overrides: HashMap::new(),
             adapters: HashMap::new(),
             changed: true,
             script: None,
@@ -2492,6 +2557,8 @@ mod tests {
             fade: 1.0,
             choices: vec![Choice { weather: weather(LISTED), chance: 100, global: None }, Choice { weather: weather(GATED), chance: 100, global: Some(gate) }],
             image_space: None,
+            world_image_space_id: None,
+            weather_fog_overrides: HashMap::new(),
             adapters: HashMap::new(),
             changed: true,
             script: None,
@@ -3128,5 +3195,107 @@ mod tests {
         }
         // Half of a colour as display values is darker than half in linear light.
         assert!(dome_color([0.0, 0.0, 0.5], lower, horizon, upper)[2] < 0.5 * upper[2]);
+    }
+
+    fn assert_fog_falloff(actual: &FogFalloff, expected: &FogFalloff) {
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    }
+
+    #[test]
+    fn interior_zero_fog_range_disables_fog_instead_of_clamping_to_one_unit() {
+        // Synthetic reproduction of #3038: an interior cell with no lighting template and
+        // stored fog range 0..0 with black fog colour must not saturate the room at >=1 unit.
+        let cell = fnv_world::lighting::CellLighting {
+            ambient: [55, 50, 45],
+            fog_color: [0, 0, 0],
+            fog_near: 0.0,
+            fog_far: 0.0,
+            fog_power: 1.0,
+            ..Default::default()
+        };
+        assert!(!interior_fog_active(cell));
+        let mut sky = SkyState::default();
+        sky.set_interior(Some(cell));
+        for no_interior_fog in [false, true] {
+            // Start from an opaque underwater-like fog to also cover exiting water into a 0..0 cell.
+            let mut fog = DistanceFog {
+                color: Color::srgba(0.2, 0.4, 0.3, 1.0),
+                falloff: crate::fog::falloff(0.0, 700.0, 1.0, false, 1.0),
+                ..default()
+            };
+            apply_cell_fog(&sky, &mut fog, 1.0, no_interior_fog);
+            assert_eq!(fog.color.alpha(), 0.0, "unset 0..0 interior fog must disable fog via alpha 0");
+            assert_fog_falloff(&fog.falloff, &crate::fog::falloff(0.0, NO_FOG_FAR, 1.0, false, 1.0));
+            for dist in [1.0_f32, 10.0, 500.0] {
+                let effective_share = crate::fog::share(0.0, NO_FOG_FAR, 1.0, dist) * fog.color.alpha();
+                assert_eq!(effective_share, 0.0, "effective fog share at {dist} units");
+            }
+        }
+    }
+
+    #[test]
+    fn interior_degenerate_and_inverted_fog_ranges_disable_fog() {
+        for (near, far) in [(500.0, 500.0), (500.0, 100.0), (-50.0, 0.0), (0.0, -10.0), (f32::NAN, 100.0), (0.0, f32::NAN)] {
+            let cell = fnv_world::lighting::CellLighting {
+                fog_color: [10, 20, 30],
+                fog_near: near,
+                fog_far: far,
+                fog_power: 1.0,
+                ..Default::default()
+            };
+            assert!(!interior_fog_active(cell), "range {near}..{far} should be inactive");
+            let mut sky = SkyState::default();
+            sky.set_interior(Some(cell));
+            let mut fog = DistanceFog::default();
+            apply_cell_fog(&sky, &mut fog, 1.0, false);
+            assert_eq!(fog.color.alpha(), 0.0, "range {near}..{far}");
+            assert_fog_falloff(&fog.falloff, &crate::fog::falloff(0.0, NO_FOG_FAR, 1.0, false, 1.0));
+        }
+    }
+
+    #[test]
+    fn interior_active_fog_range_preserves_opaque_fog_and_no_interior_fog_tweak() {
+        // Template-inherited interior range (e.g. 64..6500): remains opaque and active.
+        let active = fnv_world::lighting::CellLighting {
+            fog_color: [134, 134, 128],
+            fog_near: 64.0,
+            fog_far: 6500.0,
+            fog_power: 1.0,
+            ..Default::default()
+        };
+        assert!(interior_fog_active(active));
+        let mut sky = SkyState::default();
+        sky.set_interior(Some(active));
+        let mut fog = DistanceFog::default();
+        apply_cell_fog(&sky, &mut fog, 1.0, false);
+        assert_eq!(fog.color.alpha(), 1.0);
+        assert_fog_falloff(&fog.falloff, &crate::fog::falloff(64.0, 6500.0, 1.0, false, 1.0));
+
+        // Negative near with positive far stays active with near clamped to 0.
+        let neg_near = fnv_world::lighting::CellLighting {
+            fog_color: [80, 90, 100],
+            fog_near: -100.0,
+            fog_far: 2000.0,
+            fog_power: 1.2,
+            ..Default::default()
+        };
+        assert!(interior_fog_active(neg_near));
+        sky.set_interior(Some(neg_near));
+        apply_cell_fog(&sky, &mut fog, 1.0, false);
+        assert_eq!(fog.color.alpha(), 1.0);
+        assert_fog_falloff(&fog.falloff, &crate::fog::falloff(0.0, 2000.0, 1.2, false, 1.0));
+
+        // No Interior Fog tweak on an active interior range keeps opaque colour with NO_FOG_FAR.
+        let tweaked = fnv_world::lighting::CellLighting {
+            fog_color: [120, 40, 20],
+            fog_near: 27.0,
+            fog_far: 1900.0,
+            fog_power: 1.7,
+            ..Default::default()
+        };
+        sky.set_interior(Some(tweaked));
+        apply_cell_fog(&sky, &mut fog, 1.0, true);
+        assert_eq!(fog.color.alpha(), 1.0);
+        assert_fog_falloff(&fog.falloff, &crate::fog::falloff(27.0, NO_FOG_FAR, 1.7, false, 1.0));
     }
 }
