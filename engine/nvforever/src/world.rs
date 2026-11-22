@@ -1979,6 +1979,9 @@ pub fn spawn_model(
     // passes this test too; wrecks.rs lets the parts fall only when the game has the
     // reference destroyed to that model and physics built its collision from it.
     let wreck = model.loose && p.base.and_then(|b| base_object(world.lo, world.schema, b)).and_then(|b| b.world_model_path()).is_some_and(|m| m != path);
+    // A lamp's housing, shade or bulb (or a light's own model): casts no lamp shadows
+    // (light_shadows.rs `LightFixture`).
+    let fixture = &base.sig == b"LIGH" || crate::light_shadows::is_fixture_model(&path);
     // Drawn only (the full-detail ring): a moveable static's idle alone, nothing else rigged.
     let rigged = |rig: &&nvf_assets::model::Rig| match scenery {
         true => &base.sig == b"MSTT" && rig.idle.is_some() && idle.is_some() && !rig.shapes.is_empty(),
@@ -1994,6 +1997,9 @@ pub fn spawn_model(
         commands.entity(root).insert(RefVisual(r));
         for e in &drawn {
             commands.entity(*e).insert(RefVisual(r));
+            if fixture {
+                commands.entity(*e).insert(crate::light_shadows::LightFixture);
+            }
         }
         // Drawn only: its idle plays, and that is all (no door, group, emitter, light or
         // node map; `object_anims::publish_poses` leaves it out).
@@ -2128,6 +2134,9 @@ pub fn spawn_model(
         // A mine's light parts: shown and hidden by its state (`nvf_play::mines`).
         if let Some(l) = nvf_play::mines::MineLight::of(s.name.as_deref(), &s.ancestors).filter(|_| !scenery) {
             commands.entity(e).insert(l);
+        }
+        if fixture {
+            commands.entity(e).insert(crate::light_shadows::LightFixture);
         }
         stats.shapes += 1;
     }
