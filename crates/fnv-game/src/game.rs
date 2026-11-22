@@ -2445,6 +2445,10 @@ pub struct Session {
     /// Session-only perk definition edits (`Lu3State::perk_edits`: entries, `SetPerkLevel`,
     /// `SetPerkFlag`, `LNSetIsPlayable`).
     perk_edits: std::collections::HashMap<FormId, crate::data::PerkDef>,
+    /// Session-only `SetRadius` reference overrides (`LutanaState::ref_radius`).
+    ref_radius: std::collections::HashMap<FormId, f32>,
+    /// Session-only `SetRadiationExtraData` overrides (`ShowOffState::radiation`).
+    radiation: std::collections::HashMap<FormId, f32>,
     /// Session-only authored package overrides (`Game::package_overrides` for forms in
     /// `GameData::package_defs`: SetPackageFlag, SetPackageLocationRadius,
     /// SetPackageTargetDistance, etc.).
@@ -3873,7 +3877,7 @@ impl<'a> Game<'a> {
             .map(|(&id, &def)| (id, def.clone()))
             .collect();
         self.package_overrides.retain(|id, _| !self.data.package_defs.contains_key(id));
-        Session { handlers, main_loop, main_loop_registrars, jip_seq, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits), owner_ranks: std::mem::take(&mut self.other.owner_ranks), destruction: std::mem::take(&mut self.other.jip6.destruction), perk_edits: std::mem::take(&mut self.lu3.perk_edits), package_overrides }
+        Session { handlers, main_loop, main_loop_registrars, jip_seq, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits), owner_ranks: std::mem::take(&mut self.other.owner_ranks), destruction: std::mem::take(&mut self.other.jip6.destruction), perk_edits: std::mem::take(&mut self.lu3.perk_edits), ref_radius: std::mem::take(&mut self.other.lutana.ref_radius), radiation: std::mem::take(&mut self.showoff.radiation), package_overrides }
     }
 
     /// Take over what lasts for the session ([`Game::take_session`]).
@@ -3897,6 +3901,8 @@ impl<'a> Game<'a> {
         self.other.owner_ranks = s.owner_ranks;
         self.other.jip6.destruction = s.destruction;
         self.lu3.perk_edits = s.perk_edits;
+        self.other.lutana.ref_radius = s.ref_radius;
+        self.showoff.radiation = s.radiation;
         for (id, def) in s.package_overrides {
             self.change_package(id, |d| *d = def);
         }

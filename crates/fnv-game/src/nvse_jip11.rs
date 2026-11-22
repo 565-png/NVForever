@@ -201,11 +201,9 @@ impl Game<'_> {
         let place = self.world.peek(r).map(|s| (s.cell, s.pos)).or_else(|| self.world.placed.get(r).map(|p| (p.cell, p.pos)));
         let Some((Some(cell), pos)) = place else { return 0.0 };
         let space = self.world.placed.world_of(cell).unwrap_or(cell);
-        let list = self.data.radiation_markers.get(&space).map(Vec::as_slice).unwrap_or_default();
-        let edited = self.edited_markers(list, space);
-        let list = if self.showoff.radiation.is_empty() { list } else { edited.as_slice() };
+        let list = self.radiation_markers_in(space);
         let world = &self.world;
-        let (m, _) = crate::radiation::marker_level(list, pos, |id| world.is_enabled(id).unwrap_or(true));
+        let (m, _) = crate::radiation::marker_level(&list, pos, |id| world.is_enabled(id).unwrap_or(true));
         let (z, _) = crate::radiation::zone_level(&self.senses.rad_zones, space, pos);
         m.max(z)
     }
