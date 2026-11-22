@@ -112,7 +112,9 @@ impl Game<'_> {
     /// The engine reads [`Game::explosion_radius`] back before working out who it reaches.
     pub fn explosion_placed(&mut self, base: FormId, source: Option<FormId>, at: [f32; 3], radius: f32) -> Option<FormId> {
         let cell = source.and_then(|s| self.cell_of(s)).or_else(|| self.cell_of(FormId::PLAYER_REF));
-        let r = self.world.place(base, cell, at, [0.0; 3], 1).ok()?;
+        let place_base = self.unclone(base);
+        let r = self.world.place(place_base, cell, at, [0.0; 3], 1).ok()?;
+        let radius = self.explosion_radius_override(base).unwrap_or(radius);
         let until = self.time + self.cfg.frame_seconds;
         self.showoff.b5.explosions.insert(r, LiveExplosion { source, radius, until });
         Some(r)

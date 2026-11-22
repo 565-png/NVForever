@@ -249,6 +249,14 @@ impl Game<'_> {
         Some(z)
     }
 
+    /// Leave the radiation zone of `explosion` at `pos` using its live session traits
+    /// (`Game::explosion_traits`, including `SetExplosionTraitNumeric` overrides for
+    /// `radiation_level`, `radiation_dissipation_time`, `radiation_radius`, and `radius`).
+    pub fn add_explosion_radiation_zone(&mut self, explosion: FormId, pos: [f32; 3]) -> Option<RadZone> {
+        let t = self.explosion_traits(explosion)?;
+        self.add_radiation_zone(explosion, pos, t.radiation_level, t.radiation_radius, t.radius, t.radiation_dissipation_time)
+    }
+
     /// The radiation zones explosions left that have not faded yet.
     pub fn radiation_zones(&self) -> &[RadZone] {
         &self.senses.rad_zones
