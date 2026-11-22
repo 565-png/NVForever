@@ -40,6 +40,7 @@ pub mod abilities;
 pub mod activate_choices;
 pub mod actor_values;
 pub mod aggro;
+pub mod armor_overrides;
 pub mod ash_piles;
 pub mod aid;
 pub mod area_effects;

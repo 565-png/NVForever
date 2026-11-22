@@ -519,10 +519,10 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                     None => return Some(Ok(XVal::Num(-1.0))),
                 },
             };
-            let Some(it) = g.world.forms.item(item) else { return Some(Ok(XVal::Num(-1.0))) };
+            let Some(it) = g.world.resolve_item(item) else { return Some(Ok(XVal::Num(-1.0))) };
             let Some(value) = g.forms.item_values.get(&item).copied().or(it.value) else { return Some(Ok(XVal::Num(-1.0))) };
-            let has_health = it.health.is_some_and(|h| h > 0);
-            let mut v = value_at(g, f64::from(value), condition, has_health) + f64::from(g.world.forms.mods_value(item, mods));
+            let has_health = g.world.effective_health(item).is_some_and(|h| h > 0);
+            let mut v = value_at(g, f64::from(value), condition, has_health) + f64::from(g.world.forms.mods_value(g.unclone(item), mods));
             if num(args, 0, 0.0) != 0.0 && holder.is_some() && g.menu_open(crate::game::menus::BARTER) {
                 let side = usize::from(holder == Some(FormId::PLAYER_REF));
                 let mult = g

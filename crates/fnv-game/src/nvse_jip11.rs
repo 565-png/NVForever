@@ -520,7 +520,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             let slots = |g: &Game, f: FormId| field_num(g, f, "BMDT", "biped_flags").map_or(0, |x| x as u64);
             let want = slots(g, a);
             let on = g.world.equipment(r).unwrap_or_default();
-            yes(want != 0 && on.into_iter().filter(|&i| i != a && g.data.sig(i) == Some(*b"ARMO")).any(|i| slots(g, i) & want != 0))
+            yes(want != 0 && on.into_iter().filter(|&i| i != a && g.is_armo(i)).any(|i| slots(g, i) & want != 0))
         }
         // On the inventory reference of an equipped item: the item stays on until a
         // script takes it off (the world's NoUnequip lock, saved) [documented].
@@ -545,7 +545,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         "getarmoreffectivedr" | "getarmoreffectivedt" => {
             let Some(r) = subject else { return Some(Ok(zero)) };
             let (Some(item), cond) = item_condition(g, r) else { return Some(Ok(zero)) };
-            if g.data.sig(item) != Some(*b"ARMO") {
+            if !g.is_armo(item) {
                 return Some(Ok(zero));
             }
             let value = field_num(g, item, "DNAM", if name == "getarmoreffectivedr" { "dr" } else { "dt" }).unwrap_or(0.0);

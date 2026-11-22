@@ -20,6 +20,7 @@ mod aid;
 mod ammo_overrides;
 mod appearance;
 mod area_effects;
+mod armo_overrides;
 mod ash_piles;
 mod build_identity;
 mod camera_paths;

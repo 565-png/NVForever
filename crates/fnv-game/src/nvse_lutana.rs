@@ -838,9 +838,12 @@ fn set_playable(g: &mut Game, f: FormId, on: bool) {
             let new = if on { now & !(1 << 7) } else { now | (1 << 7) };
             g.field_overrides.insert((f, "DNAM/flags1".into()), XVal::Num(new as f64));
             g.playable_overrides.remove(&f);
+            g.world.mutate_item_override(f, |ov| {
+                ov.non_playable = Some(!on);
+            });
         }
         Some(b"ARMO" | b"AMMO") => {
-            g.playable_overrides.insert(f, on);
+            g.set_item_playable(f, on);
         }
         Some(b"RACE") => {
             let v = bit(record_num(g, f, "DATA", "flags"));
