@@ -305,9 +305,10 @@ mod tests {
     /// Inertia and Camera Motion in place of weapon sway and head bob, #2843's Shadow
     /// resolution row, Gore Shake and #2670's Cloud shadows; #2661's mesh terrain blend row, the
     /// Quick Loot rows; #2965's heat haze row; #2675's desert haze row; Sprint; #2671's terrain
-    /// shadows row; #2981's authored materials row; #2701's full-detail scenery row; #3014's
-    /// distant objects row; #3013's distant lights row), by the group it registers with.
-    const KNOWN: [(&str, &str); 144] = [
+    /// shadows row; #2981's authored materials row and its reflections row; #2701's
+    /// full-detail scenery row; #3014's distant objects row; #2993's aerial perspective row;
+    /// #2995's night sky detail row; #3013's distant lights row), by the group it registers with.
+    const KNOWN: [(&str, &str); 147] = [
         ("detached-camera", "Gameplay"),
         ("gore-shake", "Gameplay"),
         ("advanced-movement", "Gameplay"),
@@ -423,6 +424,7 @@ mod tests {
         ("sharpen", "Graphics"),
         ("anisotropic", "Graphics"),
         ("authored-materials", "Graphics"),
+        ("authored-reflections", "Graphics"),
         ("terrain-height-blend", "Graphics"),
         ("terrain-anti-tiling", "Graphics"),
         ("mesh-terrain-blend", "Graphics"),
@@ -432,6 +434,8 @@ mod tests {
         ("light-shafts", "Graphics"),
         ("heat-haze", "Graphics"),
         ("desert-haze", "Graphics"),
+        ("aerial-perspective", "Graphics"),
+        ("night-sky-detail", "Graphics"),
         ("distant-lights", "Graphics"),
         ("water-reflections", "Graphics"),
         ("water-effects", "Graphics"),
@@ -560,7 +564,7 @@ mod tests {
         marker-name-hide-unfound marker-name-units hide-hud-compass hide-hud-ammo hide-hud-needs hide-hud-sneak \
         hide-hud-on-load grey-read-notes remember-item-places player-weapon-volume npc-weapon-volume \
         keep-fall-height-on-load no-marker-popup marker-shift-removes marker-removed-on-it clear-marker-within \
-        place-marker-here-says repeat-activate-takes-only hi-res-npc-weapons empty-reload-swaps-ammo \
+        place-marker-here-says repeat-activate-takes-only hi-res-npc-weapons empty-reload-swaps-ammo keep-chosen-ammo \
         objectives-on-arrival objectives-gap sleep-in-owned-beds power-armor-no-training";
 
     /// [`TWEAK_ROWS`] as keys, under the Tweaks tab's group.
@@ -668,6 +672,7 @@ mod tests {
         assert_eq!(at("button-style"), "Controls > Input");
         assert_eq!(at("terrain-anti-tiling"), "Graphics > Detail and Distance", "beside terrain height blending (#2551)");
         assert_eq!(at("authored-materials"), "Graphics > Detail and Distance", "beside anisotropic filtering, the other texture row (#2981)");
+        assert_eq!(at("authored-reflections"), "Graphics > Detail and Distance", "right after Authored materials (#2981 reflections)");
         assert_eq!(at("mesh-terrain-blend"), "Graphics > Detail and Distance", "beside the terrain rows (#2661)");
         assert_eq!(at("cloud-shadows"), "Graphics > Shadows", "after Longer sun shadows (#2670)");
         assert_eq!(at("terrain-shadows"), "Graphics > Shadows", "after Cloud shadows (#2671)");
@@ -749,8 +754,9 @@ mod tests {
     #[test]
     fn every_tweak_of_1892_has_its_group_and_category() {
         let tweaks = tweak_rows();
-        // 564 less the console and screenshot keys, bindings since 2026-11-16 (Controls).
-        assert_eq!(tweaks.len(), 562);
+        // 564 less the console and screenshot keys, bindings since 2026-11-16 (Controls),
+        // plus Keep Chosen Ammo (#3305).
+        assert_eq!(tweaks.len(), 563);
         let mut rows: Vec<(&'static str, &'static str)> = KNOWN.to_vec();
         rows.extend(&tweaks);
         let list = registry(&rows);
@@ -767,6 +773,7 @@ mod tests {
         assert_eq!(at("tweak-no-xp-messages"), "Tweaks > HUD > Messages");
         assert_eq!(at("tweak-weightless-ammo"), "Tweaks > Cheats > Weight");
         assert_eq!(at("tweak-weightless-worn-armor"), "Tweaks > Gameplay > Weight");
+        assert_eq!(at("tweak-keep-chosen-ammo"), "Tweaks > Combat > Weapons and Armour");
         // A row that only matters with another comes right after it.
         let next = |k: &str| list[l.ordered_settings().skip_while(|&i| list[i].key != k).nth(1).unwrap()].key;
         assert_eq!(next("tweak-take-all-confirm"), "tweak-take-all-confirm-min");

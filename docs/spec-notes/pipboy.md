@@ -1440,7 +1440,10 @@ fonts) and the owner's five DATA screenshots (§1), compared at 1280 × 720 with
     McCarran 8, Hoover Dam 7]), flags `FNAM`, radius `XRDS`. Shown when the player has been
     within the radius (`XRDS`) in the marker's own worldspace with its type's icon,
     or when ShowMap or the Visible flag made it known, with the undiscovered icon
-    [hypothesis]. A marker without `XRDS` is found within `iMapMarkerRevealDistance`
+    [hypothesis]. What `GetMapMarkerVisible` returns for an undiscovered marker
+    authored Visible (0 on main, 1 in #3268) is open [hypothesis]: observer check 252
+    (`docs/handoff/observer-checks.md`, campaign `o31_mapmarker_visible`).
+    A marker without `XRDS` is found within `iMapMarkerRevealDistance`
     [documented: GECK wiki "Complete List of GameSettings", the Fallout: New Vegas default
     1000; no master sets it], that setting being this distance a [hypothesis] (#2338;
     observer check 128); a plugin's value is used as it is, and 0 finds no such marker by
@@ -1510,6 +1513,28 @@ fonts) and the owner's five DATA screenshots (§1), compared at 1280 × 720 with
     marker's texture coordinates equal the box's middle within 0.001), no does
     nothing. With a marker placed it asks with three answers, in this order: move (to
     the highlight box's spot), remove, leave (it stays).
+  - **With the mouse** (#3324) [design]: a click on a map away from any marker (the left
+    button pressed and let go on the map's window, the pointer moving no more than 6
+    units between, as a travel click) does what X does there, of the place under the
+    highlight box at the pointer: it asks the question above, or under the player's No
+    Place Marker Popup tweak answers at once as X does (docs/design/tweaks.md). The
+    click is read once the map is laid out for good on the frame the button is let go
+    (its pan and zoom, the window the page drawn from the file published and any second
+    layout of it, the highlight box as it stands then): on the World Map, with the
+    player's Map Selectable Companions tweak on and companions under the box then, it
+    summons them; else with a marker under the box it asks to travel there instead and
+    places nothing. A click wins over Enter (A, the Travel hint) in the same frame: one
+    question, the click's. The Local Map has no travel, so a click anywhere
+    on it places (on a door or marker the box has taken, at its spot, as X there). A
+    press that moved further is a drag and does neither; a press on a hint over the map
+    is the hint's; with a question box up the box takes every click; a map that cannot
+    be drawn (a worldspace without map data) takes none, nothing being under its box; a
+    press held while DATA closes (another page, the Pip-Boy down) is let go with it
+    (`data.rs::travel_ask`, `take_click`, `step`). The capture above placed the marker
+    with X [observed]; how the original's mouse places it (a left click on an
+    empty spot, whether it asks first) is [hypothesis] (docs/handoff/observer-checks.md
+    #262). Log: `pipboy map: a click on the <world|local>
+    map away from any marker: Place Marker`, then Place Marker's own lines.
   - The words are game settings by name: `sSetMarkerQuestion` (no marker yet),
     `sMoveMarkerQuestion` (one placed), `sYes`, `sNo`, `sMoveMarker`, `sRemoveMarker`,
     `sLeaveMarker` [documented: the GECK wiki's Complete List of GameSettings names
