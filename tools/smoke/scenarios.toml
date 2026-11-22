@@ -30943,6 +30943,7 @@ expect = [
   { text = "MapMenu drawn by hand", count = 0, label = "no fallback warned of" },
 ]
 order = [["tiles: MapMenu draws local map from tiles", { re = 'tiles: MapMenu local map picture given' }, { re = 'pipboy data: question box over the tiles' }, "pipboy map: custom marker placed at", "pipboy data: map dragged by (-1500, 0)", { re = 'tiles: MapMenu local map picture given' }, { re = 'tiles: MapMenu local map frames: ' }, "tiles: MapMenu draws quests from tiles"]]
+forbid = [{ text = "tiles: MapMenu local map picture taken away", label = "the drag leaves the last picture on screen while the new outline is made (#3326: it was taken away for about 330 ms, the map blinked)" }]
 
 [[scenario]]
 name = "tiles-data-local-off"
