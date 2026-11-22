@@ -694,17 +694,14 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // AMEF DATA: 0 the type, 1 the operation, 2 the value [observed: gaps2, the DT
         // reduction (DT Mod, Subtract, 2) reads 2 2 2, trait 3 reads 0].
         "getammoeffecttraitnumeric" => {
-            let f = form(args, 0).unwrap_or(FormId(0));
-            let key = match num(args, 1, -1.0) as i64 {
-                0 => "type",
-                1 => "operation",
-                2 => "value",
-                _ => return Some(Ok(zero)),
+            let Some(eff) = form(args, 0).and_then(|f| g.ammo_effect_traits(f)) else {
+                return Some(Ok(zero));
             };
-            // SetAmmoEffectTraitNumericAlt's change first (`crate::nvse_one111`).
-            match crate::nvse::record_value(g, f, "DATA", key) {
-                Some(XVal::Num(x)) => XVal::Num(x),
-                _ => XVal::Num(json_num(g.data.record_field(f, "DATA", key))),
+            match num(args, 1, -1.0) as i64 {
+                0 => XVal::Num(f64::from(eff.effect_type)),
+                1 => XVal::Num(f64::from(eff.operation)),
+                2 => XVal::Num(crate::nvse::record_float(f64::from(eff.value))),
+                _ => zero,
             }
         }
         // ---- globals ----
