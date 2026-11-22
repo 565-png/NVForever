@@ -119,6 +119,8 @@ pub struct GapsState {
     pub always_run_request: Option<bool>,
     /// RunScriptSnippet's snippets waiting: (frames left, source, reference).
     pub snippets: Vec<(u32, String, FormId)>,
+    /// ToggleItemUnique's unique weapon/armor base forms (excluded as repair-part sources).
+    pub unique_items: HashSet<FormId>,
     /// Session weapon-sound overrides (`SetWeaponSound`, `SetPickupSound`/`SetPutdownSound`
     /// on `WEAP`, plus `TempCloneForm` snapshots): `(weapon, slot 0..14) -> Some(SOUN)` or
     /// `None` when cleared.
@@ -993,8 +995,24 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let a = subject.unwrap_or(FormId(0));
             XVal::Num(if a == FormId::PLAYER_REF || g.package_actors().contains(&a) { 0.0 } else { 3.0 })
         }
-        // Returns 0 [observed: gaps6]; NVForever keeps every reference it changes.
-        "setpersistent" => zero,
+        // `persistent:0/1`: sets or clears the persistent record flag (0x400) on the
+        // calling reference for the session [documented: GECK wiki SetPersistent;
+        // observed: gaps6, returns 0].
+        "setpersistent" => {
+            if let Some(r) = subject.filter(|&r| r != FormId::PLAYER_REF) {
+                let on = num(args, 0, 0.0) != 0.0;
+                let cur = crate::nvse_other::record_flags_of(g, r)
+                    | if g.persistent(r) { fnv_sim::refs::FLAG_PERSISTENT } else { 0 };
+                let next = if on {
+                    cur | fnv_sim::refs::FLAG_PERSISTENT
+                } else {
+                    cur & !fnv_sim::refs::FLAG_PERSISTENT
+                };
+                g.other.flags.insert(r, next);
+                g.other.persistent_overrides.insert(r, on);
+            }
+            zero
+        }
         // `limb`: the limb's condition to 0 [observed: gaps6, 2 (the left arm) leaves Left
         // Attack Condition 0]; 0 head, 1 torso, 3 right arm, 4–5 legs [hypothesis: the
         // order of the condition values].
@@ -1157,7 +1175,12 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let Some(b) = form(args, 0) else { return Some(Ok(zero)) };
             let loaded: Vec<FormId> = g.loaded_cells.iter().copied().collect();
             let mut refs: Vec<FormId> = loaded.iter().flat_map(|&c| g.refs_in_cell(c, false)).filter(|&r| base(g, r) == b).collect();
-            refs.extend(g.world.placed.refs.iter().filter(|(_, p)| p.base == b && (p.in_persistent_group || p.flags & fnv_sim::refs::FLAG_PERSISTENT != 0)).map(|(&r, _)| r));
+            refs.extend(g.world.placed.refs.iter().filter(|&(&r, p)| p.base == b && g.persistent(r)).map(|(&r, _)| r));
+            refs.extend(g.other.persistent_overrides.keys().copied().filter(|&r| {
+                g.world.placed.get(r).is_none()
+                    && g.world.peek(r).is_some_and(|s| s.base == b && !s.deleted())
+                    && g.persistent(r)
+            }));
             refs.sort();
             refs.dedup();
             let refs = refs.into_iter().map(|r| XVal::Ref(r.0)).collect();
@@ -1411,32 +1434,46 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
             zero
         }
-        // The explosion's form traits, 0 light … 6 placed impact object as GetExplosion-
-        // TraitForm reads them; no form clears it [observed: gaps7].
+        // The explosion's form traits, 0 light … 6 image-space modifier as GetExplosion-
+        // TraitForm reads them; no form clears it [observed: gaps7]. Only EXPL forms (and
+        // their TempCloneForm clones) are accepted; typed slots reject wrong-type forms
+        // while keeping null/omitted clears [hypothesis].
         "setexplosiontraitform" => {
-            let f = form(args, 0).unwrap_or(FormId(0));
-            let key = match num(args, 1, -1.0) as i64 {
-                0 => "DATA/light",
-                1 => "DATA/sound_1",
-                2 => "DATA/sound_2",
-                3 => "DATA/impact_dataset",
-                4 => "INAM/",
-                5 => "EITM/",
-                6 => "MNAM/",
+            let Some(f) = form(args, 0).filter(|&f| g.data.sig(g.unclone(f)) == Some(*b"EXPL")) else {
+                return Some(Ok(zero));
+            };
+            let (key, want): (&str, Option<&[u8; 4]>) = match num(args, 1, -1.0) as i64 {
+                0 => ("DATA/light", Some(b"LIGH")),
+                1 => ("DATA/sound_1", Some(b"SOUN")),
+                2 => ("DATA/sound_2", Some(b"SOUN")),
+                3 => ("DATA/impact_dataset", Some(b"IPDS")),
+                4 => ("INAM/", None),
+                5 => ("EITM/", Some(b"ENCH")),
+                6 => ("MNAM/", Some(b"IMAD")),
                 _ => return Some(Ok(zero)),
             };
-            g.field_overrides.insert((f, key.into()), XVal::Ref(form(args, 2).map_or(0, |e| e.0)));
+            let target = form(args, 2);
+            if let (Some(e), Some(sig)) = (target, want) {
+                if g.data.sig(g.unclone(e)) != Some(*sig) {
+                    return Some(Ok(zero));
+                }
+            }
+            g.field_overrides.insert((f, key.into()), XVal::Ref(target.map_or(0, |e| e.0)));
             zero
         }
-        // EXPL DATA flags; returns 0 [observed: gaps7, 0 both ways].
+        // EXPL DATA flags; returns 0 [observed: gaps7, 0 both ways]. Only EXPL forms (and
+        // their TempCloneForm clones) and flag IDs 1..32 (matching GetExplosionFlag) are
+        // accepted [design].
         "setexplosionflag" => {
-            let Some(f) = form(args, 0) else { return Some(Ok(zero)) };
+            let Some(f) = form(args, 0).filter(|&f| g.data.sig(g.unclone(f)) == Some(*b"EXPL")) else {
+                return Some(Ok(zero));
+            };
             let flags = match crate::nvse::record_value(g, f, "DATA", "flags") {
                 Some(XVal::Num(x)) => x as u64,
                 _ => 0,
             };
             let k = num(args, 1, -1.0);
-            if !(0.0..32.0).contains(&k) {
+            if !(1.0..32.0).contains(&k) {
                 return Some(Ok(zero));
             }
             let new = if num(args, 2, 0.0) != 0.0 { flags | 1 << (k as u64) } else { flags & !(1 << (k as u64)) };

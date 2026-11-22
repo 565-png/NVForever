@@ -29,7 +29,9 @@ one).
 
 The Controls tab's own rows (Input Device, Automatic Input Switching, Rumble, Invert Y, the
 sensitivities, the controls) stand under the Controls headings the page shows them in. The
-Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md.
+Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md (including
+`tweak-keep-chosen-ammo` — Keep Chosen Ammo, under Tweaks › Combat › Weapons and Armour,
+off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
 
 ## Gameplay › Game
 
@@ -291,7 +293,7 @@ Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md.
 
 ### `monitor`: Monitor
 
-- On the page: The display the game opens on in full screen (the first display until you
+- On the page: The display the game opens on in full screen (the main display until you
   pick one).
 - Command-line switches: `--window`
 - Registered in `engine/nvforever/src/settings.rs`
@@ -1071,6 +1073,36 @@ below cover them all.
 - More: docs/design/graphics-enhanced.md §3.16
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `aerial-perspective`: Aerial perspective (experimental)
+
+- On the page: On: far land takes on the sky's colours with distance, bluer at noon, warmer
+  at dusk, brighter toward the sun, inside the weather's fog. Not in the original.
+- In full: On: the weather's own distance fog fades far land toward the sky colour behind it
+  (its horizon and lower-sky colours) instead of the one fog colour, each colour channel at
+  its own pace set by the sky's hue (a blue sky fogs blue in first, a dusk sky warm), and
+  toward the weather's sun colour looking into the sun by day. The amount of fog stays the
+  weather's; a short or dense fog (a hazy weather, a dust storm) is left as it is. Off in
+  every preset; not in the original. Outdoors only.
+- Command-line switches: `--graphics`, `--graphics-only`
+- More: docs/design/graphics-enhanced.md §3.18
+- Registered in `engine/nvforever/src/settings.rs`
+
+### `night-sky-detail`: Night sky detail (experimental)
+
+- On the page: On: stars twinkle a little, more near the horizon; the moon gets a glow and
+  lights the clouds facing it, wider in hazy weather. Not in the original.
+- In full: On: each star's light rises and falls a little, smoothly, one to four times a
+  second, hardly at all overhead and most near the horizon, a little more in hazier air; a
+  soft glow surrounds the moon, in the weather's night light colour, wider and a little
+  stronger the hazier the weather's fog, and the clouds near the moon take some of its light.
+  The glow and the moonlit clouds follow the moon's phase (none at the new moon) and show only
+  while the moon does; nothing by day or indoors. Built from the climate's own stars and
+  moon and the weather's own colours and fog, so mods' skies work too. Off in every preset;
+  not in the original.
+- Command-line switches: `--graphics`, `--graphics-only`
+- More: docs/design/graphics-enhanced.md §3.19
+- Registered in `engine/nvforever/src/settings.rs`
+
 ### `bloom`: Bloom
 
 - On the page: On: light brighter than a sunlit white wall (the sun, lamps, windows) glows
@@ -1230,14 +1262,15 @@ stretches drift downstream. Vanilla leaves the switch off. Enhanced turns it on.
 
 ### `authored-reflections`: Reflections on authored materials
 
-- On the page: On: surfaces with a texture pack's material maps reflect the sky outdoors and
-  the cell's ambient colours indoors. Needs such a pack and Authored materials on. Takes
-  effect at the next start.
+- On the page: On: pack materials reflect the sky outdoors and an approximation of the
+  room and nearby lights indoors. Needs a material pack and Authored materials on.
+  Takes effect at the next start.
 - In full: [design, #2981] Surfaces shaded from an authored set reflect a small cube of the
   world camera's surroundings, blurred by their roughness, and the `_orm`'s metallic channel
-  takes effect: outdoors the sky as drawn, sunlit ground and a broad glow toward
-  the sun or the moon; indoors the cell's ambient colour with its fog colour at the
-  horizon. No clouds, sun disc, nearby objects or rooms are reflected. A metal's base colour
+  takes effect. Outdoors it reflects the sky, ground and a broad glow toward the sun or
+  moon. Nearby lamps can light the ground in the cube at night. Indoors it approximates
+  the room with a box lit by the cell's ambient light and nearby lamps. The cube omits
+  cloud shapes, the sun disc and nearby objects. A metal's base colour
   is lifted by its set's metal gain (12 by default) so it reflects
   as a metal. Only authored materials reflect: the game's own materials, terrain, trees, grass and water are
   unchanged. Nothing changes without a pack, or with Authored materials off. Off: metallic
