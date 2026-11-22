@@ -157,7 +157,7 @@ impl<'a> Cur<'a> {
         Ok(self.take(3)?.try_into().unwrap())
     }
     /// A `.fos` header/plugin string field followed by a trailing `|` when non-empty
-    /// [observed: empty strings write `00 00 7C` with no second `|`].
+    /// [hypothesis: empty strings write `00 00 7C` with no second `|`].
     fn string_field(&mut self, trailing_bar: bool) -> Result<String, FosError> {
         let n = self.u16()? as usize;
         self.bar()?;
@@ -613,7 +613,8 @@ impl Fos {
             .collect()
     }
 
-    /// Form lists changed by script (FLST, change flag 31: `u32 count |`, then `count * (ref |)`).
+    /// Form lists changed by script (FLST, change flag 31: `u32 count |`, then `count * (ref |)`)
+    /// [hypothesis: save-files.md §6.2; count width not re-verified against named saves].
     pub fn form_lists(&self) -> Vec<Result<FosFormList, FosError>> {
         self.records(TYPE_FLST)
             .filter(|f| f.has(31))
@@ -637,7 +638,7 @@ impl Fos {
     }
 
     /// Leveled item lists changed by script (LVLI, change flag 31: `vsval count |`, then
-    /// `ref | u16 level | u16 count | f32 condition |`; §6.2).
+    /// `ref | u16 level | u16 count | f32 condition |`; §6.2) [hypothesis].
     pub fn leveled_lists(&self) -> Vec<Result<FosLeveledList, FosError>> {
         self.records(TYPE_LVLI)
             .filter(|f| f.has(31))
@@ -666,7 +667,8 @@ impl Fos {
             .collect()
     }
 
-    /// Reputations changed in play (REPU, change flag 1: `f32 fame | f32 infamy |`; §6.3).
+    /// Reputations changed in play (REPU, change flag 1: `f32 fame | f32 infamy |`; §6.3)
+    /// [hypothesis].
     pub fn reputations(&self) -> Vec<Result<FosReputation, FosError>> {
         self.records(TYPE_REPU)
             .filter(|f| f.has(1))
@@ -685,7 +687,8 @@ impl Fos {
             .collect()
     }
 
-    /// Challenges changed in play (CHAL, change flag 1: `u32 progress | u32 flags |`; §6.2).
+    /// Challenges changed in play (CHAL, change flag 1: `u32 progress | u32 flags |`; §6.2)
+    /// [hypothesis].
     pub fn challenges(&self) -> Vec<Result<FosChallenge, FosError>> {
         self.records(TYPE_CHAL)
             .filter(|f| f.has(1))

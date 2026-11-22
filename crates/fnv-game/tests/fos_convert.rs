@@ -615,6 +615,26 @@ fn fos_converts_to_valid_nvfsave_and_restores_all_sections() {
     assert_eq!(converted.report.converted.get("said_infos"), Some(&1));
     assert_eq!(converted.report.converted.get("weather"), Some(&1));
     assert_eq!(converted.report.converted.get("thumbnail_encoded"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("player_xp (AV2 code 24) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("player_karma (AV2 code 23) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("reputations (REPU bit 1, fame/infamy) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("active_quest (global type 1) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("form_lists (FLST bit 31, u32 count) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("leveled_lists (LVLI bit 31) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("challenges (CHAL bit 1, progress/flags) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("notes (NOTE bit 31) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("said_infos (INFO bit 31) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("player_item_conditions (extra 0x25) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("player_equipped (extra 0x16) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("reference_form_flags (REFR/ACHR/ACRE bit 0) [hypothesis]"), Some(&2));
+    assert_eq!(converted.report.hypothesis_fields.get("faction_relations (FACT bit 2) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("player_special (NPC_ bit 2) [hypothesis]"), Some(&7));
+    assert_eq!(converted.report.hypothesis_fields.get("player_tag_skills (CLAS bit 1) [hypothesis]"), Some(&3));
+    assert_eq!(converted.report.hypothesis_fields.get("misc_stats (global type 0) [hypothesis]"), Some(&2));
+    assert_eq!(converted.report.hypothesis_fields.get("weather (global type 8) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("quest_flags_delay_objectives (QUST) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("thumbnail_rgb_order (header screenshot) [hypothesis]"), Some(&1));
+    assert!(converted.report.warnings.iter().any(|w| w.contains("[hypothesis]")));
     assert!(converted.report.skipped.contains_key("global: form of a plugin not loaded"));
     assert!(converted.report.skipped.contains_key("global: created form (0xFF)"));
     assert!(converted.report.skipped.contains_key("global_table: type 6 layout unmapped"));
@@ -715,6 +735,9 @@ fn malformed_truncated_and_unknown_extra_data_are_handled_without_panicking() {
     let converted = convert_fos(&fos, &f.data, &f.forms, &f.refs, &opts).unwrap();
     assert!(converted.shot.is_empty());
     assert!(converted.report.skipped.contains_key("player_inventory: not read (missing player record or unmapped layout)"));
+    assert!(!converted.report.hypothesis_fields.contains_key("player_item_conditions (extra 0x25) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("player_equipped (extra 0x16) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("thumbnail_rgb_order (header screenshot) [hypothesis]"));
     assert_eq!(converted.report.converted.get("quests"), Some(&1));
     converted.body.game.check().unwrap();
 
@@ -733,5 +756,7 @@ fn malformed_truncated_and_unknown_extra_data_are_handled_without_panicking() {
     assert!(edge_converted.report.skipped.contains_key("player_item: negative item count overflow"));
     assert!(edge_converted.report.skipped.contains_key("changed_form: INFO (kind 8) unmapped"));
     assert!(edge_converted.report.skipped.contains_key("changed_form: NOTE (kind 31) unmapped"));
+    assert!(!edge_converted.report.hypothesis_fields.contains_key("notes (NOTE bit 31) [hypothesis]"));
+    assert!(!edge_converted.report.hypothesis_fields.contains_key("said_infos (INFO bit 31) [hypothesis]"));
     edge_converted.body.game.check().unwrap();
 }

@@ -86,7 +86,7 @@ From 0x0F, each field followed by a 0x7C byte:
 
 Strings are length-prefixed (u16), a `|`, then the bytes without a terminator; non-empty
 strings are followed by a trailing `|`, while zero-length strings (such as an unnamed
-new-game player) write only `00 00 7C` with no second `|` [observed]. The header
+new-game player, empty in B) are read as `00 00 7C` with no second `|` [hypothesis]. The header
 size therefore varies with the strings (137 bytes in A/C/D, 141 in B) [observed]. The
 header holds no game date and no plugin list; the load menu's line is built from it alone
 [hypothesis].
@@ -294,11 +294,12 @@ been said", the say-once flag and the "said" condition functions].
 u32, `|`, u32, `|` [hypothesis: faction relations, ref + modifier + combat reaction;
 read by the lab, §6.5].
 
-**FLST** bit 31: `u32` count, `|`, then `count × (ref, |)` [observed: form lists changed
-by script, AddFormToFormList]. **LVLI** bit 31: `vsval` count, `|`, then entries of
-`ref, |, u16 level, |, u16 count, |, f32 condition, |` [observed: leveled list changed by
-script, AddItemToLeveledList]. **CHAL** bit 1: `u32, |, u32, |` (progress and flags word)
-[observed; hypothesis: progress + state flags]. **CLAS** bit 1 (PlayerClass): four u32,
+**FLST** bit 31: `u32` count (earlier notes wrote `vsval`; `fnv_save::fos` reads `u32, |`),
+then `count × (ref, |)` [hypothesis: form lists changed by script, AddFormToFormList;
+count width not re-verified against named saves]. **LVLI** bit 31: `vsval` count, `|`,
+then entries of `ref, |, u16 level, |, u16 count, |, f32, |` [hypothesis: leveled list
+changed by script, AddItemToLeveledList, condition float]. **CHAL** bit 1: `u32, |, u32, |`
+(1 and 0 seen in A–D) [hypothesis: challenge progress and state flags]. **CLAS** bit 1 (PlayerClass): four u32,
 three skill-like values and −1 [hypothesis: the player's tag skills].
 
 ### 6.3 The max save (M) [observed unless tagged]
@@ -436,19 +437,38 @@ SetEnemy/SetAlly would; the modifier is not used.
 **Reputations**: nvfairport has no REPU record (M has nine, §6.3), so every reputation
 is at its start [observed].
 
-### 6.6 Offline `.fos` converter (`fnvtool save inspect-fos` / `convert`) [design]
+### 6.6 Offline `.fos` converter (`fnvtool save inspect-fos` / `convert`) [design; converted fields tagged below]
 
 `crates/fnv-game/src/fos_convert.rs` and `crates/fnvtool/src/save_cmd.rs` build an offline
 converter on top of `fnv_save::fos`. It populates a `World` and `Game` from the active load
-order plus the decoded sections of §§3–6.5 (header metadata and optional RGB→PNG thumbnail,
-global variables, misc statistics, player place and active quest, weather, quests/stages/
-objectives/script variables, player SPECIAL/tag skills/XP/karma/inventory/worn state, placed
-reference flags and places, faction relations, `FLST`, `LVLI`, `REPU`, `CHAL`, empty-payload
-`NOTE`, and empty-payload `INFO` said-once records), then emits a standard `NVFSAVE\0` v1 file
-through `Game::checked_snapshot` and `fnv_save::write`. Every unmapped global table, created
-`0xFF` form, missing-plugin form, unmapped or non-empty-payload changed-form record, overflowed
-inventory delta, and sibling `.nvse` co-save is counted in the JSON conversion report rather
-than guessed. The game runtime itself remains `.nvfsave`-only.
+order plus the decoded sections of §§3–6.5, then emits a standard `NVFSAVE\0` v1 file through
+`Game::checked_snapshot` and `fnv_save::write`.
+
+- **Observed / documented structure** (§§3–6.5): container header strings and dimensions,
+  plugin load order, form ID array, global table 1 type 3 (`GLOB` values), player and
+  reference positions/rotations, quest stage and script-variable tables, and player
+  inventory item-list framing (`[observed]` in named saves A–D, M, and the `nvf*.fos` set).
+- **Hypothesised fields written into `.nvfsave` `[hypothesis]`**:
+  - player XP and Karma from AV array 2 codes 24 and 23 (§6.4),
+  - `REPU` bit 1 fame and infamy floats (§6.3),
+  - global table 1 type 1 active quest (§5.1),
+  - `FLST` bit 31 form lists (`u32` count; §6.2), `LVLI` bit 31 leveled item lists (§6.2),
+    and `CHAL` bit 1 challenge progress/flags (§6.2),
+  - empty-payload `NOTE` bit 31 (§6.3) and empty-payload `INFO` bit 31 said-once (§6.2),
+  - inventory extra data `0x25` item condition and `0x16` worn marker (§6.4),
+  - placed reference form flags (`FORM_DISABLED`, `FORM_DELETED`, `FORM_TALKED_TO_PC`; §6.5),
+  - `FACT` bit 2 faction relations (§6.2, §6.5), `NPC_` bit 2 player SPECIAL (§6.2),
+    `CLAS` bit 1 tag skills (§6.2), global type 0 misc statistics (§5.1, §6.3), global
+    type 8 current weather (§5.1), quest flags/delay/objectives (§6.2), and screenshot RGB
+    channel order (§3.2).
+
+Every `[hypothesis]` field actually written during a conversion is counted explicitly in
+`ConversionReport::hypothesis_fields` (alongside a summary entry in `warnings`) so callers
+and users can see exactly which hypothesised `.fos` readings entered the `.nvfsave`. Every
+unmapped global table, created `0xFF` form, missing-plugin form, unmapped or
+non-empty-payload changed-form record, overflowed inventory delta, and sibling `.nvse`
+co-save is counted in `skipped` rather than guessed. The game runtime itself remains
+`.nvfsave`-only.
 
 ## 7. What moves between C and D [observed]
 
@@ -487,10 +507,10 @@ records (script variables), the player and every actor.
 
 None of these is needed for NVForever's own format. The offline `fnvtool save convert`
 importer (§6.6, `crates/fnv-game/src/fos_convert.rs`) converts only the decoded sections
-documented above (header, optional RGB->PNG thumbnail, globals, misc stats, active quest,
-weather, quests/stages/objectives/variables, player name/level/SPECIAL/tag skills/XP/karma/
-inventory/place, placed reference flags and places, faction relations, `FLST`, `LVLI`,
-`REPU`, `CHAL` progress, `NOTE`, and `INFO` said-once), and truthfully counts every
-unmapped global table, created `0xFF` form, missing-plugin form, unmapped changed-form
-record, and ignored `.nvse` co-save in its JSON conversion report [design]. The game
-runtime itself remains `.nvfsave`-only.
+documented above, explicitly tags and counts every `[hypothesis]` field written into
+`.nvfsave` in `ConversionReport::hypothesis_fields` (including XP/karma at AV2 24/23,
+`REPU` fame/infamy, active quest, `FLST`, `LVLI`, `CHAL`, `NOTE`, `INFO`, item condition
+`0x25`, worn `0x16`, and reference form flags), and truthfully counts every unmapped global
+table, created `0xFF` form, missing-plugin form, unmapped changed-form record, and ignored
+`.nvse` co-save in `skipped` [design; converted field readings `[hypothesis]` where tagged
+in §§3–6.6]. The game runtime itself remains `.nvfsave`-only.

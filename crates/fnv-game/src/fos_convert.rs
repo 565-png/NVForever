@@ -123,6 +123,9 @@ pub struct ConversionReport {
     pub missing_plugins: Vec<String>,
     pub cosave_ignored: bool,
     pub converted: BTreeMap<String, usize>,
+    /// Counts of converted fields whose `.fos` decoding or `.nvfsave` mapping relies on
+    /// `[hypothesis]` readings in `docs/spec-notes/save-files.md` (§§3–6.6).
+    pub hypothesis_fields: BTreeMap<String, usize>,
     pub skipped: BTreeMap<String, usize>,
     pub warnings: Vec<String>,
 }
@@ -289,10 +292,14 @@ pub fn convert_fos(
     };
 
     let mut converted: BTreeMap<String, usize> = BTreeMap::new();
+    let mut hypothesis_fields: BTreeMap<String, usize> = BTreeMap::new();
     let mut skipped: BTreeMap<String, usize> = BTreeMap::new();
     let mut warnings: Vec<String> = Vec::new();
     let mut inc_ok = |k: &str| {
         *converted.entry(k.to_string()).or_default() += 1;
+    };
+    let mut inc_hyp = |k: &str| {
+        *hypothesis_fields.entry(k.to_string()).or_default() += 1;
     };
     let mut inc_skip = |what: &str, why: &str| {
         *skipped.entry(format!("{what}: {why}")).or_default() += 1;
@@ -336,7 +343,7 @@ pub fn convert_fos(
         Err(_) => inc_skip("global_table", "type 3 (globals) malformed"),
     }
 
-    // 2. Global table 1 type 0: misc statistics (43 entries in code order).
+    // 2. Global table 1 type 0: misc statistics (43 entries in code order; [hypothesis]).
     match fos.misc_stats() {
         Ok(stats) => {
             for (code, val) in stats.into_iter().enumerate() {
@@ -344,6 +351,7 @@ pub fn convert_fos(
                     if let Ok(code) = u16::try_from(code) {
                         g.player.misc_stats.insert(code, f64::from(val));
                         inc_ok("misc_stats");
+                        inc_hyp("misc_stats (global type 0) [hypothesis]");
                     }
                 }
             }
@@ -351,7 +359,7 @@ pub fn convert_fos(
         Err(_) => inc_skip("global_table", "type 0 (misc stats) malformed"),
     }
 
-    // 3. Global table 1 type 8: sky/weather.
+    // 3. Global table 1 type 8: sky/weather ([hypothesis]).
     let mut header_weather: Option<String> = None;
     let mut engine = EngineSnapshot::new();
     match fos.weather() {
@@ -366,6 +374,7 @@ pub fn convert_fos(
                         }
                         header_weather = edid;
                         inc_ok("weather");
+                        inc_hyp("weather (global type 8) [hypothesis]");
                     }
                     Ok(_) => inc_skip("weather", "not a WTHR record"),
                     Err(why) => inc_skip("weather", why),
@@ -433,18 +442,22 @@ pub fn convert_fos(
             }
         }
         let qs = g.quest(qid);
+        let mut wrote_hyp_quest = false;
         if let Some(r) = q.running() {
             qs.running = r;
+            wrote_hyp_quest = true;
         }
         if let Some(c) = q.completed() {
             qs.completed = c;
             if !c {
                 qs.failed = false;
             }
+            wrote_hyp_quest = true;
         }
         if let Some(delay) = q.delay {
             if delay.is_finite() && delay >= 0.0 {
                 qs.delay = Some(f64::from(delay));
+                wrote_hyp_quest = true;
             }
         }
         for &(stage, done) in &q.stages {
@@ -458,11 +471,15 @@ pub fn convert_fos(
             let entry = qs.objectives.entry(index as i32).or_default();
             entry.displayed = state & 1 != 0;
             entry.completed = state & 2 != 0;
+            wrote_hyp_quest = true;
+        }
+        if wrote_hyp_quest {
+            inc_hyp("quest_flags_delay_objectives (QUST) [hypothesis]");
         }
         inc_ok("quests");
     }
 
-    // 5. Active quest (global table 1 type 1).
+    // 5. Active quest (global table 1 type 1; [hypothesis]).
     let loc_global = fos.player_location_global();
     if let Some(raw_q) = loc_global.as_ref().and_then(|l| l.active_quest) {
         match map_id(raw_q) {
@@ -470,6 +487,7 @@ pub fn convert_fos(
                 g.ui.active_quest = Some(qid);
                 engine.active_quest = Some(qid.0);
                 inc_ok("active_quest");
+                inc_hyp("active_quest (global type 1) [hypothesis]");
             }
             Ok(_) => inc_skip("active_quest", "no QUST record"),
             Err(why) => inc_skip("active_quest", why),
@@ -493,6 +511,7 @@ pub fn convert_fos(
                     let code = AV_STRENGTH + i as u16;
                     g.extra.entry(FormId::PLAYER_REF).or_default().actor_values.insert(code, f64::from(val));
                     inc_ok("player_special");
+                    inc_hyp("player_special (NPC_ bit 2) [hypothesis]");
                 }
             }
             if !p.tag_skills.is_empty() {
@@ -503,6 +522,7 @@ pub fn convert_fos(
                             g.player.tag_slots.insert(s, code);
                         }
                         inc_ok("player_tag_skills");
+                        inc_hyp("player_tag_skills (CLAS bit 1) [hypothesis]");
                     }
                 }
             }
@@ -519,6 +539,7 @@ pub fn convert_fos(
                         AV_XP if val >= 0.0 => {
                             g.player.xp = f64::from(val);
                             inc_ok("player_xp");
+                            inc_hyp("player_xp (AV2 code 24) [hypothesis]");
                         }
                         AV_KARMA => {
                             g.extra
@@ -527,6 +548,7 @@ pub fn convert_fos(
                                 .actor_values
                                 .insert(AV_KARMA, f64::from(val));
                             inc_ok("player_karma");
+                            inc_hyp("player_karma (AV2 code 23) [hypothesis]");
                         }
                         _ => {}
                     }
@@ -538,7 +560,7 @@ pub fn convert_fos(
 
             match &p.inventory {
                 Some(items) => {
-                    apply_player_inventory(&mut g, forms, items, &map_id, &mut inc_ok, &mut inc_skip);
+                    apply_player_inventory(&mut g, forms, items, &map_id, &mut inc_ok, &mut inc_hyp, &mut inc_skip);
                 }
                 None => {
                     inc_skip("player_inventory", "not read (missing player record or unmapped layout)");
@@ -603,6 +625,7 @@ pub fn convert_fos(
                 g.extra.entry(rid).or_default().talked_to_pc = true;
             }
             inc_ok("references");
+            inc_hyp("reference_form_flags (REFR/ACHR/ACRE bit 0) [hypothesis]");
         }
         if let Some((raw_at, pos, rot)) = r.place {
             match map_id(raw_at) {
@@ -643,6 +666,7 @@ pub fn convert_fos(
                     g.forms.faction_reactions.entry(fid).or_default().insert(oid, i64::from(reaction));
                     factions_changed = true;
                     inc_ok("faction_relations");
+                    inc_hyp("faction_relations (FACT bit 2) [hypothesis]");
                 }
                 Err(why) => inc_skip("faction_relation", why),
             }
@@ -652,7 +676,7 @@ pub fn convert_fos(
         crate::functions::actor::forget_relations(&g);
     }
 
-    // 9. Form lists (FLST flag 31).
+    // 9. Form lists (FLST flag 31; [hypothesis]).
     for flres in fos.form_lists() {
         let Ok(fl) = flres else {
             inc_skip("form_list", "record not understood");
@@ -679,10 +703,11 @@ pub fn convert_fos(
         if !members.is_empty() {
             g.form_lists.insert(fl_id, members);
             inc_ok("form_lists");
+            inc_hyp("form_lists (FLST bit 31, u32 count) [hypothesis]");
         }
     }
 
-    // 10. Leveled item lists (LVLI flag 31).
+    // 10. Leveled item lists (LVLI flag 31; [hypothesis]).
     for lvres in fos.leveled_lists() {
         let Ok(lv) = lvres else {
             inc_skip("leveled_list", "record not understood");
@@ -721,10 +746,11 @@ pub fn convert_fos(
         }
         if added_any {
             inc_ok("leveled_lists");
+            inc_hyp("leveled_lists (LVLI bit 31) [hypothesis]");
         }
     }
 
-    // 11. Reputations (REPU flag 1: fame, infamy).
+    // 11. Reputations (REPU flag 1: fame, infamy; [hypothesis]).
     for rres in fos.reputations() {
         let Ok(rep) = rres else {
             inc_skip("reputation", "record not understood");
@@ -745,12 +771,13 @@ pub fn convert_fos(
             // PlayerState::reputation stores [infamy, fame] (axis 0 = infamy, axis 1 = fame).
             g.player.reputation.insert(rid, [f64::from(rep.infamy.max(0.0)), f64::from(rep.fame.max(0.0))]);
             inc_ok("reputations");
+            inc_hyp("reputations (REPU bit 1, fame/infamy) [hypothesis]");
         } else {
             inc_skip("reputation", "non-finite value");
         }
     }
 
-    // 12. Challenges (CHAL flag 1: progress, flags).
+    // 12. Challenges (CHAL flag 1: progress, flags; [hypothesis]).
     for cres in fos.challenges() {
         let Ok(ch) = cres else {
             inc_skip("challenge", "record not understood");
@@ -774,26 +801,29 @@ pub fn convert_fos(
             st.completed = true;
         }
         inc_ok("challenges");
+        inc_hyp("challenges (CHAL bit 1, progress/flags) [hypothesis]");
     }
 
-    // 13. Notes (NOTE flag 31).
+    // 13. Notes (NOTE flag 31; [hypothesis]).
     for raw_note in fos.notes() {
         match map_id(raw_note) {
             Ok(id) if data.notes.contains_key(&id) || data.sig(id).as_ref() == Some(b"NOTE") => {
                 g.player.notes.insert(id);
                 inc_ok("notes");
+                inc_hyp("notes (NOTE bit 31) [hypothesis]");
             }
             Ok(_) => inc_skip("note", "no NOTE record"),
             Err(why) => inc_skip("note", why),
         }
     }
 
-    // 14. Dialogue said-once (INFO flag 31 -> actorless FormId(0) entry, checked by Game::said_once).
+    // 14. Dialogue said-once (INFO flag 31 -> actorless FormId(0) entry, checked by Game::said_once; [hypothesis]).
     for raw_info in fos.said_infos() {
         match map_id(raw_info) {
             Ok(id) if data.infos.contains_key(&id) || data.sig(id).as_ref() == Some(b"INFO") => {
                 g.said.insert((FormId(0), id));
                 inc_ok("said_infos");
+                inc_hyp("said_infos (INFO bit 31) [hypothesis]");
             }
             Ok(_) => inc_skip("said_info", "no INFO record"),
             Err(why) => inc_skip("said_info", why),
@@ -852,6 +882,7 @@ pub fn convert_fos(
         match encode_rgb_png(&fos.screenshot_rgb, fos.header.screenshot_width, fos.header.screenshot_height) {
             Some(png) => {
                 inc_ok("thumbnail_encoded");
+                inc_hyp("thumbnail_rgb_order (header screenshot) [hypothesis]");
                 png
             }
             None => {
@@ -863,6 +894,13 @@ pub fn convert_fos(
         Vec::new()
     };
 
+    if !hypothesis_fields.is_empty() {
+        warnings.push(format!(
+            "wrote {} [hypothesis] .fos field category/categories into .nvfsave (see hypothesis_fields and docs/spec-notes/save-files.md §6.6)",
+            hypothesis_fields.len()
+        ));
+    }
+
     let body = SaveBody::new(snapshot, engine);
     let report = ConversionReport {
         schema: REPORT_FORMAT.into(),
@@ -870,6 +908,7 @@ pub fn convert_fos(
         missing_plugins,
         cosave_ignored: opts.cosave_present,
         converted,
+        hypothesis_fields,
         skipped,
         warnings,
     };
@@ -883,17 +922,20 @@ fn apply_player_inventory(
     items: &[FosItem],
     map_id: &impl Fn(u32) -> Result<FormId, &'static str>,
     inc_ok: &mut impl FnMut(&str),
+    inc_hyp: &mut impl FnMut(&str),
     inc_skip: &mut impl FnMut(&str, &str),
 ) {
     for it in items.iter().filter(|it| it.count != 0) {
         match it.item.ok_or("not in save form ID array").and_then(map_id) {
             Ok(id) => {
+                let mut applied_cond = false;
                 let res = if it.count > 0 {
                     let cond = it.condition.and_then(|hp| {
                         let max_hp = forms.item(id)?.health.filter(|&h| h > 0)? as f32;
                         hp.is_finite().then_some((hp / max_hp).clamp(0.0, 1.0))
                     });
                     if cond.is_some() {
+                        applied_cond = true;
                         g.world.add_item_at_condition(FormId::PLAYER_REF, id, it.count, cond).map(|_| ())
                     } else {
                         g.world.add_item(FormId::PLAYER_REF, id, it.count).map(|_| ())
@@ -906,6 +948,9 @@ fn apply_player_inventory(
                 };
                 if res.is_ok() {
                     inc_ok("player_items");
+                    if applied_cond {
+                        inc_hyp("player_item_conditions (extra 0x25) [hypothesis]");
+                    }
                 } else {
                     inc_skip("player_item", "unknown or non-inventory form");
                 }
@@ -923,6 +968,7 @@ fn apply_player_inventory(
                     .is_some_and(|inv| inv.is_equipped(id));
                 if already || g.world.equip(FormId::PLAYER_REF, id).is_ok() {
                     inc_ok("player_equipped");
+                    inc_hyp("player_equipped (extra 0x16) [hypothesis]");
                 } else {
                     inc_skip("player_equipped", "cannot equip item");
                 }

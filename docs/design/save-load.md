@@ -284,11 +284,14 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
    with a notice; built 2026-10-21 (§4.1).
 7. **Importing a `.fos`**: the game runtime never reads or writes `.fos` files. An
    offline `fnvtool save convert <input.fos> --out <output.nvfsave>` (and
-   `fnvtool save inspect-fos <input.fos>`) utility converts the documented/observed
-   `.fos` subset (`crates/fnv-save/src/fos.rs`, `crates/fnv-game/src/fos_convert.rs`) into
-   a standard `NVFSAVE\0` v1 save and emits a structured JSON report of converted and
-   skipped/unmapped sections (`.nvse` co-saves, created `0xFF` forms, perks/active effects,
-   and unmapped changed-form/global layouts are truthfully reported as skipped).
+   `fnvtool save inspect-fos <input.fos>`) utility converts the decoded `.fos` subset
+   (`crates/fnv-save/src/fos.rs`, `crates/fnv-game/src/fos_convert.rs`) into a standard
+   `NVFSAVE\0` v1 save and emits a structured JSON report separating `converted`,
+   `hypothesis_fields` (every `[hypothesis]` `.fos` field written, per
+   `docs/spec-notes/save-files.md` §6.6), and `skipped` (`.nvse` co-saves, created `0xFF`
+   forms, perks/active effects, and unmapped changed-form/global layouts). Adopting this
+   offline importer reverses the earlier "not planned" decision and is subject to
+   maintainer approval.
 8. **Thumbnail**: 512×288 from the main camera; built (§6), shown on the pause menu's load
    page.
 
