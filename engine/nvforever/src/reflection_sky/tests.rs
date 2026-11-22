@@ -255,17 +255,30 @@ fn running_producer() -> (App, Entity) {
     (app, camera)
 }
 
+/// Run the producer until no fill is in flight on the worker (module notes, "Where"): one
+/// update asks, a later one applies the finished fill.
+fn settle(app: &mut App) {
+    for _ in 0..2000 {
+        app.update();
+        if !app.world().resource::<ReflectionSky>().queue.busy() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    panic!("the fill on the worker did not finish");
+}
+
 #[test]
 fn the_producer_only_records_fills_after_writing_the_current_camera_cube() {
     let (mut app, camera) = running_producer();
-    app.update();
+    settle(&mut app);
     let previous = app.world().resource::<ReflectionSky>().last.clone();
     assert_eq!(app.world().resource::<ReflectionSky>().fills_outdoors, 1);
 
     let inherited_light = app.world().get::<ReflectionCube>(camera).unwrap().light();
     app.world_mut().despawn(camera);
     app.world_mut().resource_mut::<SkyState>().interior = Some(default());
-    app.update();
+    settle(&mut app);
     let state = app.world().resource::<ReflectionSky>();
     assert_eq!(state.last, previous, "no camera means no fill, even on an interior transition");
     assert_eq!((state.fills_outdoors, state.fills_indoors), (1, 0));
@@ -274,7 +287,7 @@ fn the_producer_only_records_fills_after_writing_the_current_camera_cube() {
     app.world_mut().resource_mut::<SkyState>().interior = None;
     let replacement = spawn_world_camera(&mut app);
     app.world_mut().entity_mut(replacement).insert(inherited_light);
-    app.update();
+    settle(&mut app);
     assert!(app.world().get::<EnvironmentMapLight>(replacement).is_none(), "an inherited light must wait for the new cube");
     let state = app.world().resource::<ReflectionSky>();
     let cube = app.world().get::<ReflectionCube>(replacement).expect("new camera gets a cube");
@@ -285,7 +298,7 @@ fn the_producer_only_records_fills_after_writing_the_current_camera_cube() {
     let old_light = cube.light();
 
     app.world_mut().entity_mut(replacement).insert(old_light).remove::<ReflectionCube>();
-    app.update();
+    settle(&mut app);
     let recovered = app.world().get::<ReflectionCube>(replacement).expect("lost cube is replaced");
     assert_ne!(recovered.specular.id(), previous_cube);
     assert_eq!(recovered.generation(), 1);
@@ -295,7 +308,7 @@ fn the_producer_only_records_fills_after_writing_the_current_camera_cube() {
     app.world_mut().entity_mut(replacement)
         .insert(EnvironmentMapLight::default())
         .remove::<ReflectionCube>();
-    app.update();
+    settle(&mut app);
     assert!(app.world().get::<EnvironmentMapLight>(replacement).is_some(), "an unrelated map stays installed");
 }
 
@@ -303,12 +316,12 @@ fn the_producer_only_records_fills_after_writing_the_current_camera_cube() {
 fn removing_the_dome_profile_refills_an_unchanged_outdoor_cube() {
     let (mut app, camera) = running_producer();
     app.insert_resource(DomeProfile([[1.0, 0.0, 0.0]; DOME_PROFILE_BINS]));
-    app.update();
+    settle(&mut app);
     let previous = app.world().resource::<ReflectionSky>().last.clone();
     assert_eq!(app.world().get::<ReflectionCube>(camera).unwrap().generation(), 1);
 
     app.world_mut().remove_resource::<DomeProfile>();
-    app.update();
+    settle(&mut app);
     let state = app.world().resource::<ReflectionSky>();
     assert_eq!(state.last, previous);
     assert_eq!(state.profile_revision, None);
@@ -352,9 +365,12 @@ fn the_summary_line() {
     s.room_fills = [1, 0, 0];
     s.refills[1] = 2;
     s.slowest_ms = 0.5;
+    s.stale = 2;
+    s.slowest_gather_ms = 0.12;
+    s.slowest_apply_ms = 0.03;
     assert_eq!(
         s.line(),
-        "4 fills (3 outdoors, 1 indoors), 40 checks skipped as unchanged; 1 room fills (1 marker, 0 rays, 0 default), 0 ground-lamp fills, slowest room or lamp fill 0.50 ms; refills: 0 mode, 2 cell, 0 room, 0 box, 0 moved, 0 lamps, 0 light, 0 profile"
+        "4 fills (3 outdoors, 1 indoors), 40 checks skipped as unchanged; 1 room fills (1 marker, 0 rays, 0 default), 0 ground-lamp fills, slowest room or lamp fill 0.50 ms; refills: 0 mode, 2 cell, 0 room, 0 box, 0 moved, 0 lamps, 0 light, 0 profile; on a worker, 2 fills dropped as stale; main thread slowest gather 0.12 ms, slowest apply 0.03 ms"
     );
 }
 
@@ -591,4 +607,123 @@ fn lamps_light_the_ground_outdoors_at_night() {
     let away = Vec3::new(0.0, 0.8, 0.6).normalize();
     assert!(near(with.colour(away, 0), without.colour(away, 0), 1e-6));
     assert_eq!(lit.change(&night), Some(Refill::Lamps));
+}
+
+// The fill on a worker (maintainer decision 2026-11-22, #3238).
+
+/// The inputs of a lamp-lit room (the default box, two lamps) for the fill tests.
+fn lit_room() -> Inputs {
+    let eye = Vec3::new(0.0, 100.0, 0.0);
+    let lamps = [(5, warm_lamp(eye + Vec3::new(150.0, 60.0, 0.0), 300.0)), (9, warm_lamp(eye + Vec3::new(-120.0, 80.0, 90.0), 260.0))];
+    let r = room_inputs(eye, BoxSource::Rays, default_box(eye), &lamps, Vec3::ZERO, Vec3::Y, Some([64.0, 2048.0, 1.0])).expect("a room");
+    let Inputs::Indoors { cell, ambient, fog, .. } = room() else { unreachable!() };
+    Inputs::Indoors { cell, ambient, fog, room: Some(r) }
+}
+
+/// The worker's fill is the main thread's old fill: the same bytes as
+/// `ReflectionCube::fill` from `Content::new` (what `produce` ran before the move), for the
+/// sky, stage 1's interior, the room and the ground lamps, and the same bytes again on a
+/// second call; the samples the log lines quote are the content's texels.
+#[test]
+fn the_fill_on_a_worker_writes_the_main_threads_bytes() {
+    let profile = DomeProfile::fallback();
+    let eye = Vec3::new(0.0, 120.0, 0.0);
+    let g = ground_inputs(eye, 0.0, &[(1, warm_lamp(Vec3::new(0.0, 250.0, -150.0), 500.0))]).expect("a lamp near");
+    let Inputs::Outdoors { horizon, lower, upper, ambient, sun, sun_dir, sky_scale, clip, .. } = dark(day()) else { unreachable!() };
+    let ground = Inputs::Outdoors { horizon, lower, upper, ambient, sun, sun_dir, sky_scale, clip, ground: Some(g) };
+    for inputs in [day(), room(), lit_room(), ground] {
+        let content = Content::new(&inputs, &profile);
+        let before = reflection_cube::specular_levels(|d, level| content.colour(d, level));
+        let filled = fill(&inputs, &profile);
+        assert!(filled.levels == before, "the same bytes as the main thread's fill: {inputs:?}");
+        assert!(fill(&inputs, &profile).levels == filled.levels, "deterministic");
+        assert_eq!(filled.samples.zenith, content.colour(Vec3::Y, 0));
+        assert_eq!(filled.samples.nadir, content.colour(Vec3::NEG_Y, 0));
+        assert_eq!((filled.samples.above, filled.samples.below), content.means());
+    }
+    let Inputs::Indoors { room: Some(r), .. } = lit_room() else { unreachable!() };
+    let nearest = r.lamps.iter().min_by(|a, b| a.lamp.position.distance(r.eye).total_cmp(&b.lamp.position.distance(r.eye))).unwrap();
+    let content = Content::new(&lit_room(), &profile);
+    assert_eq!(fill(&lit_room(), &profile).samples.nearest_lamp, Some(content.colour((nearest.lamp.position - r.eye).normalize(), 0)));
+    assert_eq!(fill(&room(), &profile).samples.nearest_lamp, None);
+}
+
+/// A job of the queue tests: its result once finished.
+type Job = Option<u32>;
+
+fn ready(job: &mut Job) -> Option<u32> {
+    job.take()
+}
+
+/// An idle queue starts a fill at once; while it runs nothing is handed back to apply, so
+/// the cube keeps the last finished fill; once finished with nothing newer asked, its result
+/// is applied and the queue is idle.
+#[test]
+fn the_last_finished_fill_stays_while_a_fill_runs() {
+    let mut q: FillQueue<&str, Job> = FillQueue::default();
+    assert_eq!(q.poll(ready, |_| panic!("nothing to start")), Polled::Idle);
+    let mut started = Vec::new();
+    q.ask("first", |r| {
+        started.push(*r);
+        None
+    });
+    assert_eq!(started, ["first"]);
+    assert!(q.busy());
+    assert_eq!(q.poll(ready, |_| panic!("nothing waits")), Polled::Running, "not finished: nothing to apply");
+    q.running.as_mut().unwrap().1 = Some(1);
+    assert_eq!(q.poll(ready, |_| panic!("nothing waits")), Polled::Done("first", 1));
+    assert!(!q.busy());
+    assert_eq!(q.poll(ready, |_| panic!("nothing to start")), Polled::Idle);
+}
+
+/// Inputs asked while a fill runs wait, the newest replacing an older waiting request; the
+/// running fill's result is then stale and dropped, and only the newest request starts and
+/// is applied.
+#[test]
+fn the_newest_inputs_win_and_a_stale_fill_is_dropped() {
+    let mut q: FillQueue<&str, Job> = FillQueue::default();
+    let mut started = Vec::new();
+    q.ask("cell A", |r| {
+        started.push(*r);
+        None
+    });
+    q.ask("moved", |_| panic!("one fill at a time"));
+    assert_eq!(q.waiting(), Some(&"moved"));
+    q.ask("cell B", |_| panic!("one fill at a time"));
+    assert_eq!(q.waiting(), Some(&"cell B"), "the newest inputs replace the waiting ones");
+    q.running.as_mut().unwrap().1 = Some(1);
+    assert_eq!(
+        q.poll(ready, |r| {
+            started.push(*r);
+            None
+        }),
+        Polled::Stale,
+        "cell A's room is out of date: not applied"
+    );
+    assert_eq!(started, ["cell A", "cell B"], "\"moved\" never ran");
+    assert_eq!(q.waiting(), None);
+    assert_eq!(q.poll(ready, |_| panic!("nothing waits")), Polled::Running);
+    q.running.as_mut().unwrap().1 = Some(2);
+    assert_eq!(q.poll(ready, |_| panic!("nothing waits")), Polled::Done("cell B", 2));
+}
+
+/// In the game: the update that asks a fill leaves the camera's cube as it was (the fill
+/// runs on the worker); a later update moves the finished bytes in, the same bytes the
+/// main thread wrote before.
+#[test]
+fn the_producer_applies_the_workers_fill_a_frame_later() {
+    let (mut app, camera) = running_producer();
+    app.update();
+    let state = app.world().resource::<ReflectionSky>();
+    assert!(state.last.is_some(), "asked");
+    assert_eq!(state.fills_outdoors, 0, "not applied in the update that asked");
+    assert_eq!(app.world().get::<ReflectionCube>(camera).unwrap().generation(), 0, "the cube keeps what it held");
+    settle(&mut app);
+    let state = app.world().resource::<ReflectionSky>();
+    assert_eq!((state.fills_outdoors, state.stale), (1, 0));
+    let inputs = state.last.clone().expect("the asked inputs");
+    let want = fill(&inputs, &DomeProfile::fallback()).levels;
+    let cube = app.world().get::<ReflectionCube>(camera).unwrap();
+    assert_eq!(cube.generation(), 1);
+    assert!(cube.levels() == want.as_slice(), "the worker's bytes, moved into the cube");
 }

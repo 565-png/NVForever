@@ -786,15 +786,34 @@ reflection); computed on the CPU from what the renderer already lights the room 
   64 units from the last fill, a box moved 32, another set of lamps, a lamp's colour past
   1/128 or its place or radius past 8. Indoors against outdoors, another interior cell,
   another room marker and a new sky dome profile refill at once, without the quarter-second
-  wait. A room fill takes 6,144 level-0 texels x the lamps plus the filter, on the main
-  thread.
+  wait. A room fill takes 6,144 level-0 texels x the lamps plus the filter.
+- **Where the fill runs** [design, owner 2026-11-22, #3238: the maintainer asked for the
+  fill off the main thread, since on the main thread it took up to 4.89 ms (9 lamps, Doc
+  Mitchell's house) up to four times a second while walking indoors]. The main thread
+  only gathers the inputs into owned data: the sky's state, the directional light, the
+  placed lamps, the room marker or the six rays (they need the physics world), and compares
+  them with the last ones. The fill itself (the content and every level's texels, a pure
+  function of those inputs) runs on Bevy's async compute pool, every fill alike (stage 1's
+  sky too). The producer looks at it each frame; the cube keeps the last finished fill
+  until the new one is done, and the main thread then only moves the finished bytes into
+  the cube, which the render world uploads as before. At most one fill runs: inputs that
+  move past a step while it runs wait as one request (newer inputs replace it), and a
+  fill that finishes with a request waiting is out of date and dropped, the waiting one
+  starting instead. The trade-off: the cube shows a change one fill later than on the main
+  thread (the fill's few milliseconds, then the next frame's upload). Until a camera's first
+  fill is done it has no cube and no environment light, as before the first upload; on
+  entering an interior the outdoor cube stays until the room's first fill is done
+  [documented: `reflection_sky.rs` `produce`, `FillQueue`, `fill`].
 - **Log lines.** `reflection sky: room fill in interior <cell>: box from <room marker
   <id>|rays|default> (<x> x <y> x <height> game units, x y height), <n> lamps, level 0 toward
-  the nearest lamp [...], filled in <ms> ms` at the first room fill in each interior, or
+  the nearest lamp [...], filled in <ms> ms on a worker (main thread: gather <ms> ms, apply
+  <ms> ms)` at the first room fill in each interior, or
   `reflection sky: interior <cell>: no lamp in reach and no room box, so stage 1's interior
   content`; the exit summary adds the room fills by box source, the ground-lamp fills, the
-  slowest fill and the refills by reason (mode, cell, room, box, moved, lamps, light,
-  profile).
+  slowest fill on the worker, the refills by reason (mode, cell, room, box, moved, lamps,
+  light, profile), the fills dropped as stale and the main thread's slowest gather and
+  slowest apply (`...; on a worker, <n> fills dropped as stale; main thread slowest gather
+  <ms> ms, slowest apply <ms> ms`).
 - **Not there.** No captured scene: no objects, textures, signs or bulbs' shapes, no
   actors; uniform walls of assumed albedo; one box per fill, centred on the camera, so it
   is exact only near the camera (no parallax), and rooms joined without a marker share the
@@ -803,7 +822,9 @@ reflection); computed on the CPU from what the renderer already lights the room 
 - **Checking it.** Unit tests in `reflection_room.rs` and `reflection_sky.rs` (an empty
   room is the ambient on each surface, a lamp brightens its wall and its lobe points at it,
   a lamp out of reach adds nothing, the levels approach the mean, the fallback is stage 1's
-  content exactly, the refill steps). The smoke scenario `authored-reflections-room` in Doc
+  content exactly, the refill steps; the worker's fill writes the bytes the main thread
+  wrote, the last finished fill stays while one runs, the newest inputs win and a stale
+  fill is dropped). The smoke scenario `authored-reflections-room` in Doc
   Mitchell's house (`GSDocMitchellHouse`, the generated sets of `authored-reflections-sky`):
   the first room fill line and the summary. Log lines only.
 

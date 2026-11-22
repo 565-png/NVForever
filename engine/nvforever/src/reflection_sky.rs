@@ -78,11 +78,29 @@
 //!   wait and refill at once (code review 1, finding 6), as does losing the dome profile
 //!   outdoors or replacing the cube's camera. One log line at the first fill of each cube,
 //!   one at the first room fill of each interior (the box's source, its size, the lamps,
-//!   the fill's time), one summary at exit (`reflection sky summary: ...`, with the room
-//!   fills and the refills by reason).
+//!   the worker's fill time and the main thread's gather and apply times), one summary at
+//!   exit (`reflection sky summary: ...`, with the room fills, the refills by reason, the
+//!   fills dropped as stale and the main thread's slowest gather and apply).
+//! - **Where** (maintainer decision 2026-11-22, #3238): the main thread only gathers the
+//!   inputs (the sky's state, the lamps, the room marker or the six rays, which need the
+//!   physics world) into owned data ([`FillRequest`]); the fill itself ([`fill`]: the
+//!   content and every level's texels, a pure function of the inputs) runs on Bevy's async
+//!   compute pool. Each frame the producer polls it ([`FillQueue`]); the cube keeps the last
+//!   finished fill until the new one is done, and the main thread then only moves the
+//!   finished bytes into the cube (`ReflectionCube::set_levels`; the render world uploads
+//!   them as before). At most one fill runs: inputs that move past a step while it runs are
+//!   kept as the one waiting request (a newer one replaces it), and when the running fill
+//!   finishes with a request waiting, its result is out of date and dropped, and the waiting
+//!   one starts. So the cube shows a change one fill later than before (the fill's time, a
+//!   few milliseconds, then the next frame's upload) [design]. Until the first fill of a
+//!   camera is done the camera has no cube and no `EnvironmentMapLight`, as before the first
+//!   upload in stage 1; on entering an interior the outdoor cube stays until the room's
+//!   first fill is done.
 
 use bevy::light::EnvironmentMapLight;
 use bevy::prelude::*;
+use bevy::tasks::{futures::check_ready, AsyncComputeTaskPool, Task, TaskPool};
+use std::time::Instant;
 use nvf_assets::reflection_cube::{self, GateState, ReflectionCube, SPECULAR_LEVELS};
 use nvf_assets::reflection_room::{self, FilteredCube, GroundLamps, Lamp, RoomBox, RoomScene, Spot};
 use std::f32::consts::PI;
@@ -676,6 +694,145 @@ impl Content {
     }
 }
 
+/// The texels the log lines quote, read from a fill's content on the worker (module notes,
+/// "When").
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FillSamples {
+    pub zenith: Vec3,
+    pub horizon: Vec3,
+    pub nadir: Vec3,
+    /// The means above and below the horizon ([`Content::means`]).
+    pub above: Vec3,
+    pub below: Vec3,
+    /// Indoors with a room and a lamp, the level-0 texel toward the lamp nearest the eye.
+    pub nearest_lamp: Option<Vec3>,
+}
+
+/// A finished fill: the specular cube's levels as `ReflectionCube` uploads them, the texels
+/// the log lines quote and the fill's time on the worker, milliseconds.
+#[derive(Clone, Debug)]
+pub struct Filled {
+    pub levels: Vec<Vec<u8>>,
+    pub samples: FillSamples,
+    pub ms: f32,
+}
+
+/// One fill (module notes, "Where"): the content for `inputs` and every level of the
+/// specular cube from it (`reflection_cube::specular_levels`). A pure function of its
+/// arguments apart from the time it reports: the same inputs give the same bytes, the bytes
+/// the producer wrote on the main thread before the fill moved to a worker.
+pub fn fill(inputs: &Inputs, profile: &DomeProfile) -> Filled {
+    let started = Instant::now();
+    let content = Content::new(inputs, profile);
+    let levels = reflection_cube::specular_levels(|d, level| content.colour(d, level));
+    let (above, below) = content.means();
+    let nearest_lamp = match inputs {
+        Inputs::Indoors { room: Some(r), .. } => r
+            .lamps
+            .iter()
+            .min_by(|a, b| a.lamp.position.distance(r.eye).total_cmp(&b.lamp.position.distance(r.eye)))
+            .map(|l| content.colour((l.lamp.position - r.eye).normalize_or(Vec3::Y), 0)),
+        _ => None,
+    };
+    let samples = FillSamples {
+        zenith: content.colour(Vec3::Y, 0),
+        horizon: content.colour(Vec3::X, 0),
+        nadir: content.colour(Vec3::NEG_Y, 0),
+        above,
+        below,
+        nearest_lamp,
+    };
+    Filled { levels, samples, ms: started.elapsed().as_secs_f32() * 1000.0 }
+}
+
+/// A fill the producer asked for: what it is made from, owned so the worker can take a copy,
+/// and what the producer records when its result is applied.
+#[derive(Clone, Debug)]
+pub struct FillRequest {
+    pub inputs: Inputs,
+    /// The dome profile (or its fallback) at the time of asking.
+    pub profile: DomeProfile,
+    /// Why it was asked; `None` for a new camera or cube with unchanged inputs.
+    pub reason: Option<Refill>,
+    /// The main thread's time to gather the inputs and compare them, milliseconds.
+    pub gather_ms: f32,
+}
+
+/// What [`FillQueue::poll`] found.
+#[derive(Debug, PartialEq)]
+pub enum Polled<R, T> {
+    /// No fill runs.
+    Idle,
+    /// The fill runs on.
+    Running,
+    /// The fill finished and nothing newer was asked meanwhile: apply its result.
+    Done(R, T),
+    /// The fill finished, but newer inputs were asked while it ran: its result was dropped
+    /// and the waiting request started.
+    Stale,
+}
+
+/// At most one fill in flight (module notes, "Where"). `R` is the request, `J` the running
+/// job (a task in the game, a plain value in the tests); the queue itself spawns nothing and
+/// waits for nothing, so its rules are tested without a GPU or a thread pool.
+#[derive(Debug)]
+pub struct FillQueue<R, J> {
+    running: Option<(R, J)>,
+    waiting: Option<R>,
+}
+
+impl<R, J> Default for FillQueue<R, J> {
+    fn default() -> Self {
+        FillQueue { running: None, waiting: None }
+    }
+}
+
+impl<R, J> FillQueue<R, J> {
+    /// Ask for a fill: started at once with `spawn` when none runs; otherwise kept as the
+    /// waiting request, replacing an older waiting one (the newest inputs win).
+    pub fn ask(&mut self, request: R, spawn: impl FnOnce(&R) -> J) {
+        if self.running.is_some() {
+            self.waiting = Some(request);
+        } else {
+            let job = spawn(&request);
+            self.running = Some((request, job));
+        }
+    }
+
+    /// Look at the running fill with `ready` (its result once finished). A finished fill
+    /// with no request waiting is handed back to apply; with one waiting it is dropped as
+    /// stale and the waiting request is started with `spawn`.
+    pub fn poll<T>(&mut self, ready: impl FnOnce(&mut J) -> Option<T>, spawn: impl FnOnce(&R) -> J) -> Polled<R, T> {
+        let Some((_, job)) = self.running.as_mut() else { return Polled::Idle };
+        let Some(result) = ready(job) else { return Polled::Running };
+        let Some((request, _)) = self.running.take() else { return Polled::Idle };
+        match self.waiting.take() {
+            Some(next) => {
+                self.ask(next, spawn);
+                Polled::Stale
+            }
+            None => Polled::Done(request, result),
+        }
+    }
+
+    /// A fill runs.
+    pub fn busy(&self) -> bool {
+        self.running.is_some()
+    }
+
+    /// The request waiting for the running fill to finish.
+    pub fn waiting(&self) -> Option<&R> {
+        self.waiting.as_ref()
+    }
+}
+
+/// Start a fill on Bevy's async compute pool (module notes, "Where") with a copy of the
+/// request's inputs and profile.
+fn spawn_fill(request: &FillRequest) -> Task<Filled> {
+    let (inputs, profile) = (request.inputs.clone(), request.profile.clone());
+    AsyncComputeTaskPool::get_or_init(TaskPool::default).spawn(async move { fill(&inputs, &profile) })
+}
+
 /// Stage 1's light on level ground outdoors: the ambient (x share) plus the directional
 /// light times the sine of its elevation.
 fn outdoor_ground_light(ambient: Vec3, sun: Vec3, sun_dir: Vec3) -> Vec3 {
@@ -852,17 +1009,26 @@ enum Phase {
     On,
 }
 
-/// The producer's state: the run's two rows (main.rs), the phase, the last fill's inputs
-/// and the counts for the summary.
+/// The producer's state: the run's two rows (main.rs), the phase, the newest asked fill's
+/// inputs, the fill in flight and the counts for the summary.
 #[derive(Resource, Default)]
 pub struct ReflectionSky {
     row: bool,
     authored: bool,
     phase: Phase,
+    /// The inputs of the newest fill asked (running, waiting or applied): later inputs are
+    /// compared with these, so a fill in flight is not asked again.
     last: Option<Inputs>,
-    /// Each camera and cube needs a fill even if its lighting inputs equal the previous ones.
+    /// The camera and cube the last applied fill went into (an inherited light of an older
+    /// cube is removed against it).
     target: Option<(Entity, AssetId<Image>)>,
-    /// The dome resource's change tick at the last fill, or absent for the fallback.
+    /// The camera and the cube it held (none: a cube is made when the fill is applied) when
+    /// the newest fill was asked: each camera and cube needs a fill even if its lighting
+    /// inputs equal the previous ones.
+    asked: Option<(Entity, Option<AssetId<Image>>)>,
+    /// The fill on the worker and the request waiting for it (module notes, "Where").
+    queue: FillQueue<FillRequest, Task<Filled>>,
+    /// The dome resource's change tick at the newest fill asked, or absent for the fallback.
     profile_revision: Option<u32>,
     last_check: Option<f64>,
     /// The cheap per-frame key of the last check (indoors, interior cell, room marker): a
@@ -874,9 +1040,16 @@ pub struct ReflectionSky {
     /// Room fills by box source: marker, rays, default.
     room_fills: [u64; 3],
     ground_fills: u64,
+    /// The slowest room or ground-lamp fill on the worker, milliseconds.
     slowest_ms: f32,
     /// Refills by reason, in [`Refill::ALL`]'s order.
     refills: [u64; 8],
+    /// Fills that finished after newer inputs were asked, dropped unapplied.
+    stale: u64,
+    /// The main thread's slowest check (gathering and comparing the inputs, asking a fill)
+    /// and slowest apply (moving a finished fill into the cube), milliseconds.
+    slowest_gather_ms: f32,
+    slowest_apply_ms: f32,
     /// The last interior whose room fill was logged, and whether that fill had lamps.
     logged_room_fill: Option<(Option<u32>, bool)>,
     /// The last interior whose fill with stage 1's content was logged.
@@ -905,7 +1078,7 @@ impl ReflectionSky {
             Phase::On => {
                 let refills: Vec<String> = Refill::ALL.iter().zip(self.refills).map(|(r, n)| format!("{n} {}", r.name())).collect();
                 format!(
-                    "{} fills ({} outdoors, {} indoors), {} checks skipped as unchanged; {} room fills ({} marker, {} rays, {} default), {} ground-lamp fills, slowest room or lamp fill {:.2} ms; refills: {}",
+                    "{} fills ({} outdoors, {} indoors), {} checks skipped as unchanged; {} room fills ({} marker, {} rays, {} default), {} ground-lamp fills, slowest room or lamp fill {:.2} ms; refills: {}; on a worker, {} fills dropped as stale; main thread slowest gather {:.2} ms, slowest apply {:.2} ms",
                     self.fills_outdoors + self.fills_indoors,
                     self.fills_outdoors,
                     self.fills_indoors,
@@ -916,7 +1089,10 @@ impl ReflectionSky {
                     self.room_fills[2],
                     self.ground_fills,
                     self.slowest_ms,
-                    refills.join(", ")
+                    refills.join(", "),
+                    self.stale,
+                    self.slowest_gather_ms,
+                    self.slowest_apply_ms
                 )
             }
         }
@@ -996,20 +1172,20 @@ fn gather(sky: &SkyState, sun: Option<(&DirectionalLight, &Transform)>, mut s: S
 
 /// The interior lines: the first room fill and the first room fill with lamps, if the
 /// lights arrive later. Report a fill with stage 1's content separately.
-fn log_interior(state: &mut ReflectionSky, cell: Option<u32>, room: Option<&RoomInputs>, content: &Content, ms: f32) {
+/// `ms` is the fill's time on the worker, `gather_ms` and `apply_ms` the main thread's.
+fn log_interior(state: &mut ReflectionSky, cell: Option<u32>, room: Option<&RoomInputs>, samples: &FillSamples, ms: f32, gather_ms: f32, apply_ms: f32) {
     let name = cell.map_or("unknown".to_string(), |c| format!("{c:08X}"));
     match room {
         Some(r) if state.mark_room_fill_for_log(cell, !r.lamps.is_empty()) => {
             let size = r.room.size();
-            let nearest = r.lamps.iter().min_by(|a, b| a.lamp.position.distance(r.eye).total_cmp(&b.lamp.position.distance(r.eye)));
             info!(
-                "reflection sky: room fill in interior {name}: box from {} ({:.0} x {:.0} x {:.0} game units, x y height), {} lamps, level 0 toward the nearest lamp {:.4?}, filled in {ms:.2} ms",
+                "reflection sky: room fill in interior {name}: box from {} ({:.0} x {:.0} x {:.0} game units, x y height), {} lamps, level 0 toward the nearest lamp {:.4?}, filled in {ms:.2} ms on a worker (main thread: gather {gather_ms:.2} ms, apply {apply_ms:.2} ms)",
                 r.source,
                 size.x,
                 size.y,
                 size.z,
                 r.lamps.len(),
-                nearest.map_or([0.0; 3], |l| content.colour((l.lamp.position - r.eye).normalize_or(Vec3::Y), 0).to_array())
+                samples.nearest_lamp.unwrap_or(Vec3::ZERO).to_array()
             );
         }
         None if state.logged_plain_cell != Some(cell) => {
@@ -1072,8 +1248,17 @@ pub fn produce(
         }
     }
     let Ok((entity, transform, cube, environment)) = camera else { return };
-    let target = cube.as_ref().map(|cube| (entity, cube.specular.id()));
-    let target_changed = target.is_none() || target != state.target;
+    let mut current = cube.as_ref().map(|cube| cube.specular.id());
+    // A finished fill goes into the cube, unless newer inputs were asked while it ran.
+    match state.queue.poll(check_ready, spawn_fill) {
+        Polled::Done(request, filled) => {
+            current = Some(apply_fill(&mut state, &mut commands, &mut images, entity, cube, environment, request, filled));
+        }
+        Polled::Stale => state.stale += 1,
+        Polled::Idle | Polled::Running => {}
+    }
+    let target = (entity, current);
+    let target_changed = state.asked != Some(target);
     let eye = transform.translation();
     let cell = streamer.as_ref().and_then(|s| s.interior);
     // A new camera or cube, a change of room, or a change to the outdoor dome skips the wait.
@@ -1085,6 +1270,9 @@ pub fn produce(
     if state.phase == Phase::On && !prompt && state.last_check.is_some_and(|t| now - t < CHECK_INTERVAL) {
         return;
     }
+    // The main thread's part of a fill: gathering the inputs into owned data and comparing
+    // them (module notes, "Where").
+    let started = Instant::now();
     state.last_check = Some(now);
     state.key = Some(key);
     let lamps: Vec<(u64, Lamp)> = lights
@@ -1105,25 +1293,41 @@ pub fn produce(
         .and_then(|last| inputs.change(last).or(profile_changed.then_some(Refill::Profile)));
     if !target_changed && reason.is_none() {
         state.unchanged += 1;
+        state.slowest_gather_ms = state.slowest_gather_ms.max(started.elapsed().as_secs_f32() * 1000.0);
         return;
     }
-    let fallback;
-    let profile = match profile.as_deref() {
-        Some(p) => p,
-        None => {
-            fallback = DomeProfile::fallback();
-            &fallback
-        }
-    };
-    let started = std::time::Instant::now();
-    let content = Content::new(&inputs, profile);
-    let fill_cube = |cube: &mut ReflectionCube| cube.fill(|d, level| content.colour(d, level));
+    let profile = profile.as_deref().cloned().unwrap_or_else(DomeProfile::fallback);
+    let gather_ms = started.elapsed().as_secs_f32() * 1000.0;
+    state.queue.ask(FillRequest { inputs: inputs.clone(), profile, reason, gather_ms }, spawn_fill);
+    state.last = Some(inputs);
+    state.asked = Some(target);
+    state.profile_revision = profile_revision;
+    state.phase = Phase::On;
+    state.slowest_gather_ms = state.slowest_gather_ms.max(started.elapsed().as_secs_f32() * 1000.0);
+}
+
+/// Move a finished fill into the camera's cube (a new cube when it has none), drop a light
+/// inherited from an older cube, count it and log it; the cube's specular image is returned.
+/// Only bytes move here: the texels were made on the worker (module notes, "Where").
+#[allow(clippy::too_many_arguments)]
+fn apply_fill(
+    state: &mut ReflectionSky,
+    commands: &mut Commands,
+    images: &mut Assets<Image>,
+    entity: Entity,
+    cube: Option<Mut<ReflectionCube>>,
+    environment: Option<&EnvironmentMapLight>,
+    request: FillRequest,
+    filled: Filled,
+) -> AssetId<Image> {
+    let started = Instant::now();
+    let Filled { levels, samples, ms } = filled;
     let specular = if let Some(mut cube) = cube {
-        fill_cube(&mut cube);
+        cube.set_levels(levels);
         cube.specular.id()
     } else {
-        let mut cube = ReflectionCube::new(&mut images);
-        fill_cube(&mut cube);
+        let mut cube = ReflectionCube::new(images);
+        cube.set_levels(levels);
         let specular = cube.specular.id();
         commands.entity(entity).insert(cube);
         specular
@@ -1136,7 +1340,9 @@ pub fn produce(
     }) {
         commands.entity(entity).remove::<EnvironmentMapLight>();
     }
-    let ms = started.elapsed().as_secs_f32() * 1000.0;
+    let apply_ms = started.elapsed().as_secs_f32() * 1000.0;
+    state.slowest_apply_ms = state.slowest_apply_ms.max(apply_ms);
+    let FillRequest { inputs, reason, gather_ms, .. } = request;
     if let Some(i) = Refill::ALL.iter().position(|&r| Some(r) == reason) {
         state.refills[i] += 1;
     }
@@ -1161,24 +1367,24 @@ pub fn produce(
         _ => {}
     }
     if let Inputs::Indoors { cell, room, .. } = &inputs {
-        log_interior(&mut state, *cell, room.as_ref(), &content, ms);
+        log_interior(state, *cell, room.as_ref(), &samples, ms, gather_ms, apply_ms);
     }
-    let where_ = if inputs.indoors() { "indoors" } else { "outdoors" };
-    state.last = Some(inputs);
+    let first = state.target != Some((entity, specular));
     state.target = Some((entity, specular));
-    state.profile_revision = profile_revision;
-    state.phase = Phase::On;
-    if target_changed {
-        let (up, down) = content.means();
+    // This fill was the newest asked (nothing waited): its camera now holds this cube.
+    state.asked = Some((entity, Some(specular)));
+    if first {
+        let where_ = if inputs.indoors() { "indoors" } else { "outdoors" };
         info!(
             "reflection sky: first fill of the world camera's cube ({where_}; level 0 zenith {:.4?}, horizon {:.4?}, nadir {:.4?}; mean above {:.4?}, below {:.4?}), attached once on the GPU",
-            content.colour(Vec3::Y, 0).to_array(),
-            content.colour(Vec3::X, 0).to_array(),
-            content.colour(Vec3::NEG_Y, 0).to_array(),
-            up.to_array(),
-            down.to_array()
+            samples.zenith.to_array(),
+            samples.horizon.to_array(),
+            samples.nadir.to_array(),
+            samples.above.to_array(),
+            samples.below.to_array()
         );
     }
+    specular
 }
 
 /// The exit summary (Last, on the app's exit): one line, `reflection sky summary: ...`.
