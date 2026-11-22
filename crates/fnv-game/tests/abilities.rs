@@ -333,6 +333,27 @@ fn loaded_actors_get_abilities_in_the_frame() {
     assert!(g.effects.iter().any(|e| e.target == FormId(GHOUL_REF) && e.source == FormId(GHOUL_RAD)));
 }
 
+#[test]
+fn the_frame_rechecks_actor_presence_with_the_same_loaded_cells() {
+    let f = fixture();
+    let mut g = game(&f);
+    let robot = FormId(ROBOT_REF);
+    let has_effect = |g: &Game| g.effects.iter().any(|e| e.target == robot && e.source == FormId(DT_ABILITY));
+    // Warm the placement list while the robot is disabled and has no effects.
+    g.world.set_enabled(robot, false).unwrap();
+    g.tick();
+    assert!(!has_effect(&g));
+    g.world.set_enabled(robot, true).unwrap();
+    g.tick();
+    assert!(has_effect(&g));
+    g.loaded_cells.clear();
+    g.tick();
+    assert!(!has_effect(&g));
+    g.loaded_cells.insert(FormId(CELL));
+    g.tick();
+    assert!(has_effect(&g));
+}
+
 /// Abilities are on an actor only while it is loaded (capture abilities-1: Victor, Rex
 /// and Lily out of the loaded area read 0), and come back when it is loaded again.
 #[test]
