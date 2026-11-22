@@ -55,7 +55,7 @@
 //!   player's volume, SetMusicState's pause and the layers are left as they are. Battle
 //!   music (a battle loop, a dungeon set's battle stem) and the music scripts ask for
 //!   keep their level; incidental phrases are not changed [hypothesis: observer check
-//!   250; #3311].
+//!   266; #3311].
 //! - Music goes on in menus and behind loading screens [design].
 //! - Not built: the main menu's music (no main menu yet; `SMainMenuMusicTrack`), the
 //!   controllers' retrigger delay and `NAM1` (not understood), `IsMusicPlaying`-style
