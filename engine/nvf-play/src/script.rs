@@ -295,6 +295,10 @@ pub struct Runtime {
     /// residents leave it alone, `Core::prepare` in `nvforever::residents`). A restore that
     /// fails installs no runtime ([`run_scripts`]), so `false` is always a new game.
     pub restored_from_save: bool,
+    /// Monotonic counter incremented only after a save restore commits (failed loads leave
+    /// this unchanged), so engine UI services can separate committed session epochs from
+    /// transient loading gates [design: docs/spec-notes/local-map-ui-service.md].
+    pub(crate) session_epoch: u64,
     /// `--new-game`: the opening starts on the first frame scripts run.
     opening_pending: bool,
     /// A run without a save: the Script Runner's new-game files (`gn_`, `ln_`) run on the
@@ -710,6 +714,7 @@ impl Runtime {
             skip: BTreeSet::new(),
             closing: None,
             restored_from_save: false,
+            session_epoch: 0,
             opening_pending: new_game,
             new_game_files: false,
             wake_talk: None,
@@ -782,6 +787,7 @@ impl Runtime {
         self.new_game_files = false;
         self.player_cell = None;
         self.restored_from_save = true;
+        self.session_epoch = self.session_epoch.saturating_add(1);
         with_world(self, sim, |rt| {
             // `Game::restore` above reached only the stand-in, and the Script Runner's files
             // and the LoadGame events run ahead of the first tick.
@@ -2843,6 +2849,7 @@ impl ScriptState {
             skip: BTreeSet::new(),
             closing: None,
             restored_from_save: false,
+            session_epoch: 0,
             opening_pending: false,
             new_game_files: false,
             wake_talk: None,
@@ -2966,10 +2973,12 @@ mod restore_tests {
         assert_eq!(sim.world.snapshot(), played);
         assert_eq!(rt.game.world.snapshot(), stand_in);
         assert!(!rt.restored_from_save);
+        assert_eq!(rt.session_epoch, 0, "a refused restore must not advance the committed session epoch");
         // The successful neighbor still transfers this same active session.
         rt.restore_save(&mut sim, good).unwrap();
         assert_eq!(rt.game.save_files, before);
         assert!(rt.restored_from_save);
+        assert_eq!(rt.session_epoch, 1, "a committed restore advances the session epoch");
         assert_eq!(sim.world.peek(ACTOR).unwrap().cell, Some(MARKER_CELL));
     }
 

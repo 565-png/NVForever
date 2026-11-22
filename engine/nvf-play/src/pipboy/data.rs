@@ -62,7 +62,7 @@
 
 pub mod marker;
 mod model;
-mod outline;
+pub(crate) mod outline;
 pub(crate) mod read;
 pub mod travel;
 pub mod view;
