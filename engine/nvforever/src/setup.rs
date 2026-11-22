@@ -96,24 +96,22 @@ pub fn game_install(cli: Option<&Path>) -> Result<GameInstall, String> {
 pub fn text_code_page() -> Result<(fnv_util::text::CodePage, bool, Option<PathBuf>), String> {
     let (ini, cjk_font_path) = EngineHome::user().and_then(|home| {
         let cfg = Config::load(&home).ok()?;
-        let ini = cfg.code_page.filter(|v| !v.trim().is_empty());
         let cjk_font_path = cfg.cjk_font_path.map(|path| home.root.join(path));
-        Some((ini, cjk_font_path))
+        Some((cfg.code_page, cjk_font_path))
     }).unwrap_or_default();
-    let env = std::env::var(fnv_util::text::ENV).ok().filter(|v| !v.trim().is_empty());
-    let named = ini.is_some() || env.is_some();
-    fnv_util::text::chosen(ini.as_deref()).map(|c| (c, named, cjk_font_path))
+    fnv_util::text::configured(ini.as_deref())
+        .map(|page| (page.unwrap_or_default(), page.is_some(), cjk_font_path))
 }
 
 /// The code page read from the plugins' own text when no setting names one (#1443,
 /// `fnv_esm::text_guess`): set and said in the log when it is not the default. Runs after
-/// the plugins are opened and before any of their text is decoded.
+/// the plugins are opened and before their record text is decoded.
 pub fn guess_code_page(plugins: &[fnv_esm::Plugin]) {
     let g = fnv_esm::text_guess::guess(plugins);
     if let Some(c) = g.code_page {
         eprintln!(
             "setup: game text read as {c}, found in the plugins' text ({}); set [Text] CodePage in NVForever.ini to choose another",
-            g.cyrillic().join(", ")
+            g.supporting_plugins().join(", ")
         );
         fnv_util::text::set_code_page(c);
     }
