@@ -3582,6 +3582,21 @@ already talking takes over at once, same topic or another; nothing is queued or 
      ones mean the original closes the gap in a way ours does not (a lunge from further
      off, a faster chase, or no knockback on the player).
 
+## Added 2026-11-22 (terminal text typing out, #3327)
+
+254. **How fast and in what order does a terminal's text type out?** (P3: #3327; hacking.md
+     §7 "Typing out".) Ours [design]: each page's lines one after another, each left to
+     right, at 600 characters a second; a page starts again only when another page comes
+     up (not when the selection moves); no key skips it; no sound. In the original, record
+     at 60 fps: (a) an unlocked terminal with a long welcome text and several entries
+     (Goodsprings' schoolhouse or any office terminal), from activation to the last
+     character; (b) taking an entry that opens a note, and Tab back to the list; (c) a
+     locked terminal's hacking screen as it comes up, and after a wrong word. Count the
+     frames each page takes and the characters it shows, and say whether lines type one
+     after another or together, whether the selection box types with its row, whether a
+     key or click finishes it at once, and which sound plays while it types
+     (`UIHackingCharSingle`, `…Multiple` or the loop `UIHackingCharScrollLP`).
+
 ## Added 2026-11-21 (placing the custom map marker with the mouse, #3324)
 
 262. **What does a left click on an empty spot of the Pip-Boy's World Map and Local Map do
