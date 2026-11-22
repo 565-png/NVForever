@@ -354,6 +354,16 @@ pub(crate) struct RigNames {
     names: HashMap<Entity, String>,
 }
 
+impl RigNames {
+    pub(crate) fn is_root(&self, e: Entity) -> bool {
+        self.root == Some(e)
+    }
+
+    pub(crate) fn name_of(&self, e: Entity) -> Option<&str> {
+        self.names.get(&e).map(String::as_str)
+    }
+}
+
 pub(crate) fn rig_names(r: u32, view: ModelView, rigs: &Rigs) -> RigNames {
     rig_of(r, view, rigs)
         .map(|(root, a)| RigNames { root: Some(root), names: a.nodes.iter().zip(&a.skel.names).filter_map(|(e, n)| n.clone().map(|n| (*e, n))).collect() })
