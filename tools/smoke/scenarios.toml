@@ -17805,6 +17805,21 @@ expect = [
 forbid = [{ text = "no loose body", label = "the bear's bodies held keyframed" }]
 
 [[scenario]]
+name = "grab-plant-rooted"
+source = "[hypothesis] #3389: the grab key passes through a body on the non-collidable layer, so a pickable plant (White Horse Nettle: one dynamic box of 45 kg on layer 15) stays rooted; observer check 278"
+note = "the nettle 0016AF22 south of Goodsprings; Z held 3 s on it. Before the fix it was picked up as a loose object of 45 kg and dropped about 100 units off"
+areas = ["grab"]
+paths = ["engine/nvf-play/src/grab.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_NEAR = "0016AF22", NVF_PLAY_TEST_GRAB = "8:z:3:90:at=0016AF22" }
+args = ["--play", "--pos=-68223,-3700,8110", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { text = "test aid NVF_PLAY_TEST_GRAB: aimed at 0016AF22", label = "the view is turned to the nettle" },
+  { text = "grab: nothing under the crosshair to pick up", label = "Z finds nothing to pick up on the plant" },
+]
+forbid = [{ text = "grab: picked up loose object White Horse Nettle", label = "the plant comes off the ground" }]
+
+[[scenario]]
 name = "grab-skull"
 source = "docs/spec-notes/grab.md §5: the tutorial's brahmin skull in Doc Mitchell's house picked up with Grab (Z) and put back, then held with Activate (E) and carried while the view turns 120°, dropped clear of the top it lay on and was carried along (at 90° it was let go on that top's edge and tumbled off it spinning, a roll on the floor that passed 300 units in about one run in three on the physics-tickrate branch, 2026-11-15); its OnGrab and OnRelease blocks run"
 areas = ["grab", "physics"]
