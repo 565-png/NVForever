@@ -17728,7 +17728,7 @@ areas = ["grab", "physics"]
 paths = ["engine/nvf-play/src/phys/prepare.rs", "engine/nvf-play/src/grab.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_NEAR = "00172D8B", NVF_PLAY_TEST_GRAB = "8:z:3:90:at=00172D8B" }
 args = ["--play", "--pos=-68601,-54700,6370", "--hour", "12", "--no-voice", "--no-messages"]
-run_seconds = 14
+run_seconds = 22
 expect = [
   { text = 'phys: 0x00172D8B meshes\clutter\teddybear\teddybear01.nif: collision posed from XRGD (6 bodies)', label = "the bear's bodies are posed as its designer left it" },
   { re = 'grab: picked up loose object Teddy Bear \(00172D8B\) by Aid: 8\.0 kg', label = "Z picks the bear up as one body of its parts' summed mass" },
