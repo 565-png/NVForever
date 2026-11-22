@@ -67,6 +67,9 @@ pub struct PreparedShape {
     /// Its material's stored glow and alpha, for clips that drive them (a held weapon's
     /// bulbs, `material_anim`).
     pub look: crate::material_anim::Look,
+    /// The diffuse texture the shape names when it could not be loaded (as the NIF names
+    /// it), so its material has no base texture: nvforever's distant LOD logs it (#3096).
+    pub missing_diffuse: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1900,7 +1903,7 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
             })
         });
         // The normal map's tangents: those the file stores (crate::tangents).
-        let (material, _missing) = shape_material_with(&props, &mut mesh, sink, crate::tangents::Tangents::Stored(&stored));
+        let (material, missing_diffuse) = shape_material_with(&props, &mut mesh, sink, crate::tangents::Tangents::Stored(&stored));
         if material.extension.env.x > 0.0 && material.extension.env_how.z > 0.5 {
             let over = if matches!(material.base.alpha_mode, AlphaMode::Premultiplied) { "over the blend" } else { "added" };
             // Scaled by light only under a debug switch (env_map.rs `LIGHT_WINDOW`); the
@@ -1988,6 +1991,7 @@ fn prepare_unguarded(sink: &mut impl ModelSink, path: &str, keep_cpu: bool, firs
                 let (e, m) = props.emissive_parts();
                 crate::material_anim::Look::stored(e, m, props.alpha_part())
             },
+            missing_diffuse,
         });
         out.triangles += tris;
     }
@@ -2113,6 +2117,7 @@ mod tests {
             segments: Vec::new(),
             external_emittance: false,
             look: crate::material_anim::Look::stored([0.0; 3], 1.0, 1.0),
+            missing_diffuse: None,
         };
         let mut cache = ModelCache::default();
         cache.map.insert("a.nif".into(), Some(Arc::new(PreparedModel { shapes: vec![shape.clone()], ..default() })));

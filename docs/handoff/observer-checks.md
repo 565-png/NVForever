@@ -3506,6 +3506,21 @@ already talking takes over at once, same topic or another; nothing is queued or 
      place and heading. The hand moving the same way in both settles it. The reading
      back, `player.GetNifBlockRotation "Bip01 Translate" "Z" 0 2`, should be 30 in both.
 
+## Added 2026-11-21 (talking through cell bars, #3233)
+
+251. **Does the crosshair pass collision on the Transparent layer (3), and on Transparent
+     Small (26/28): can the player talk to, take, open or search what stands behind it?**
+     (P2; #3233, simulation.md §5 "Talking through bars".) The wiki says nothing but
+     projectiles passes Transparent and that actors see through it [documented: GECK wiki
+     "Collision layer"]; it says the player activates and loots through Invisible Wall
+     (27) only. Ours: Talk alone passes the see-through layers, when nothing else is
+     offered [design]. In Vault 3 (Vault3b), stand at the cell bars (JailCellDoorway01,
+     0x000EF3FA, layer 3) with Rick Lancer (V3Prisoner01Ref 0x000F47B0) behind them: does
+     the prompt show Talk and does E open the conversation? With an item dropped behind
+     the bars (`player.drop` then nudge it in, or one placed there with `PlaceAtMe`), is it
+     offered? A screenshot of each prompt answers it; `GetCrosshairRef` printed at the
+     bars says which reference the crosshair holds.
+
 ## Added 2026-11-21 (GetMapMarkerVisible on a marker authored Visible, #3268)
 
 252. **What does GetMapMarkerVisible return for a map marker the player has not found
@@ -3567,6 +3582,66 @@ already talking takes over at once, same topic or another; nothing is queued or 
      ones mean the original closes the gap in a way ours does not (a lunge from further
      off, a faster chase, or no knockback on the player).
 
+## Added 2026-11-22 (terminal text typing out, #3327)
+
+254. **How fast and in what order does a terminal's text type out?** (P3: #3327; hacking.md
+     §7 "Typing out".) Ours [design]: each page's lines one after another, each left to
+     right, at 600 characters a second; a page starts again only when another page comes
+     up (not when the selection moves); no key skips it; no sound. In the original, record
+     at 60 fps: (a) an unlocked terminal with a long welcome text and several entries
+     (Goodsprings' schoolhouse or any office terminal), from activation to the last
+     character; (b) taking an entry that opens a note, and Tab back to the list; (c) a
+     locked terminal's hacking screen as it comes up, and after a wrong word. Count the
+     frames each page takes and the characters it shows, and say whether lines type one
+     after another or together, whether the selection box types with its row, whether a
+     key or click finishes it at once, and which sound plays while it types
+     (`UIHackingCharSingle`, `…Multiple` or the loop `UIHackingCharScrollLP`).
+
+## Added 2026-11-22 (a terminal note longer than the screen, #3409)
+
+255. **How does the player read on in a terminal entry longer than the screen?** (P3: #3409;
+     hacking.md §7.) Ours [hypothesis]: E, Enter or a click turns a page (the last page
+     shows the last lines), nothing on the last page; Up / Down scroll a line. In the
+     original, open a long entry (a long log, e.g. Vault 11's overseer entries or a
+     Lucky 38 terminal) and note how many lines a page holds, what E and a click do on the
+     first and on the last page (next page, back to the list, nothing), whether Up / Down
+     or the mouse wheel scroll, and any "more" mark the screen shows.
+
+## Added 2026-11-22 (Blake's books for Bitter Springs Infirmary Blues, #3350)
+
+256. **Does a merchant sell the owned items lying at its stand?** (P2: #3350, a player could
+     not buy the two books VMS40 asks for; barter-menu.md §4.) Ours [design]: the barter
+     list is the merchant container's stock alone. Blake's two books lie on his stand,
+     owned by him, and can only be taken as a theft. In the original, with VMS40 at stage
+     10 (`setstage VMS40 10`), go to Blake at the Crimson Caravan Company:
+     (a) open his barter menu and look for "Stress and the Modern Refugee: A Primer" and
+     "Tiny, Tiny Babies: All You Need to Know About Pediatric Medicine", and note their
+     prices;
+     (b) look at his stand for the two books (the upper shelf by the first aid boxes,
+     the lower shelf by the water bottles) and say whether the crosshair shows Take or
+     Steal;
+     (c) if they are in the list, buy one and see whether the one on the stand goes.
+     In the list: the rule is wider than the merchant container (owned loose items near
+     the merchant, or these two only), and a scan of owned items at other merchants'
+     stands sizes it. Not in the list: the original's way is the theft (or a speech or
+     barter line not in our list).
+
+## Added 2026-11-21 (placing the custom map marker with the mouse, #3324)
+
+262. **What does a left click on an empty spot of the Pip-Boy's World Map and Local Map do
+     with the keyboard and mouse?** (P2; #3324, pipboy.md Place Marker.) The capture of
+     2026-11-10 showed placement with the X button [observed]; a player reports the
+     original places it with the mouse, and how is [hypothesis]. Ours [design]: a click
+     (press and release within 6 units) away from any marker does what X does (the same
+     question box, or under the No Place Marker Popup tweak an answer at once), of the place
+     under the highlight box; a click with a World Map marker under the box asks to travel;
+     a right click does nothing. On the World Map at 1280x720, click once an
+     empty spot well away from any marker, once a spot about 20 px from one (inside the
+     highlight box's reach), and once with the right button; repeat on the Local Map, once
+     on a door icon. Screenshot each result: whether a box asks (and its words) or the
+     marker appears at once, where it lands against the pointer, and whether a press dragged
+     a few pixels still counts as a click.
+
 ## Added 2026-11-16 (environment maps on other shapes, #2841)
 
 Each can be compared with ours from one build: the debug switches
@@ -3580,7 +3655,7 @@ Status lines below come from captures of the original, jobs envmap, envmap2 … 
 other shapes" has the numbers). They are exteriors only: interior shots fail in the
 capture setup, so every part of a check that needs an interior is still open.
 
-254. **How strong is the reflection on a masked prop without the window flag, and does it
+271. **How strong is the reflection on a masked prop without the window flag, and does it
      follow the view?** (P3; #2841, nif.md §6 "Environment maps on other shapes".) Ours:
      the cube read along the view reflected about the normal, × the shape's
      `environment_map_scale` × its slot-5 mask, added to the lit colour [hypothesis]. Place
@@ -3600,7 +3675,7 @@ capture setup, so every part of a check that needs an interior is still open.
      strength, and whether the scale
      multiplies: the two bottles' glass differs in colour (4.0-4.6× under moonlight), so
      they cannot show it; a pair with the same texture and different scales is needed.
-255. **Does a shape with Environment_Mapping and a cube but no slot-5 mask reflect?** (P3;
+272. **Does a shape with Environment_Mapping and a cube but no slot-5 mask reflect?** (P3;
      #2841, nif.md §6.) Ours: at full strength over the whole shape [hypothesis]. Place
      an empty whiskey bottle (WhiskeyBottle01Empty01, `whiskeybottle01empty.nif`,
      `shinydull_e.dds`, no mask) and a cafeteria drinking glass (DrinkingGlass01,
@@ -3611,7 +3686,7 @@ capture setup, so every part of a check that needs an interior is still open.
      *Status: open.* The whiskey bottle is patterned with one glossy patch, not evenly
      washed; the cafeteria glass is evenly milky [observed]; their own textures cannot be
      told from an unmasked term.
-256. **Which way is the cube turned on a shape without the window flag, and on a window?**
+273. **Which way is the cube turned on a shape without the window flag, and on a window?**
      (P3; #2841, nif.md §6.) The GECK wiki says the window flag "simply flips the cubemap
      orientation" without saying which axis. Ours: both read the game-space reflection
      (x, y, z) as (x, z, y) [hypothesis]. In Lucky 38, frame a shape that reflects
@@ -3630,7 +3705,7 @@ capture setup, so every part of a check that needs an interior is still open.
      by the engine for … advanced effect combinations (e.g. parallax + cube mapping)": if
      the engine switches a PPLighting shape with parallax and a cube to it at run time,
      such shapes would show a flipped cube too [hypothesis]; frame one if any is found.
-257. **On blended glass without the window flag, is the reflection weighted by the glass's
+274. **On blended glass without the window flag, is the reflection weighted by the glass's
      alpha?** (P3; #2841, nif.md §6.) Ours: the shape keeps its blend, so its reflection
      fades with its alpha like the rest of its colour; window shapes are drawn with the
      reflection over the blend (check 249) [hypothesis]. Place a drinking glass
@@ -3641,7 +3716,7 @@ capture setup, so every part of a check that needs an interior is still open.
      *Status: open.* The glass tried (the cafeteria glass placed in the air) drew opaque
      in the original, transmission below about 0.1 [observed], so it had no faint alpha
      to compare; the junk drinking glass named here is the one to use.
-258. **Does the reflection depend on the light, with and without Env Map Fade?** (P3;
+275. **Does the reflection depend on the light, with and without Env Map Fade?** (P3;
      #2841, nif.md §6.) The wiki: Env Map Fade (Shader Flags 2 bit 15) "Fades the
      cubemap's brightness based on the distance to the nearest light". Ours (since the
      captures below): shapes without the window flag are scaled by the scene light, the
@@ -3669,7 +3744,7 @@ capture setup, so every part of a check that needs an interior is still open.
      [observed]. Open: interiors, the
      role of point lights, and what L is exactly (sun intensity, ambient, or a light sum
      at the surface).
-259. **Do reflections fade out between 1,500 and 1,800 units from the camera?** (P3;
+276. **Do reflections fade out between 1,500 and 1,800 units from the camera?** (P3;
      #2841, nif.md §6.) The INI settings `fEnvMapLOD1` 1500 and `fEnvMapLOD2` 1800
      [documented: GECK wiki "INI Settings"]. Ours: no fade by default [design, kept out of
      #2841 because it would change window shapes too]; under
@@ -3687,7 +3762,7 @@ capture setup, so every part of a check that needs an interior is still open.
      does not apply live or the fade does not act there; a crate at 600-1,900 units
      showed no sheen to lose (envmap4). Use an object with a strong visible sheen, the
      camera fixed and the object moved, at a fixed game time.
-260. **Does a shape with Environment_Mapping but no cube in slot 4 reflect anything?**
+277. **Does a shape with Environment_Mapping but no cube in slot 4 reflect anything?**
      (P3; #2841, nif.md §6.) 214 such shapes in the data (the wine bottle Wine,
      `clutter\food\winebottle01.nif`, 238 placements; the Pimp-Boy). Ours: no reflection
      (no default cube) [hypothesis]. Frame a wine bottle close up and strafing. A plain

@@ -20,6 +20,7 @@ pub mod particles;
 mod pbr_field;
 pub mod read_pool;
 pub mod reflection_cube;
+pub mod reflection_room;
 pub mod release;
 pub mod nif_material;
 pub mod nif_spawn;
