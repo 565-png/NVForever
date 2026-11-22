@@ -1369,23 +1369,32 @@ pub(crate) fn effective_cell_lighting(world: &WorldData, game: Option<&fnv_game:
     }
 }
 
-/// Reapply lighting when the cell is applied by travel, or when its runtime
-/// becomes available/unavailable. Live setter-driven refresh is deliberately a
-/// separate timing policy; unchanged frames neither resolve fields nor allocate.
+type CellLightingKey = (Option<u32>, Option<(u64, u64)>);
+
+/// Reapply interior cell lighting on travel, runtime availability/replacement changes,
+/// or live session lighting edits (`Game::lighting_token` bumped by
+/// `SetCellLightingTemplate`, `SetCellFlag` 8..=16, `SetLightingTemplateTraitNumeric`,
+/// and `SetInteriorLightingTraitNumeric`). Unchanged frames neither resolve fields nor
+/// allocate; edits to unrelated cells/templates leave `SkyState` untouched.
 pub fn cell_lighting(
     mut travels: MessageReader<nvf_play::Travel>,
-    streamer: Res<Streamer>, world: Res<WorldData>,
+    streamer: Res<Streamer>,
+    world: Res<WorldData>,
     script: Option<Res<nvf_play::script::ScriptState>>,
     mut sky: ResMut<crate::sky::SkyState>,
-    mut seen: Local<Option<(Option<u32>, bool)>>,
+    mut seen: Local<Option<CellLightingKey>>,
 ) {
     let game = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
-    let key = (streamer.interior, game.is_some());
+    let key = (streamer.interior, game.map(fnv_game::Game::lighting_token));
     let travelled = travels.read().count() > 0;
-    if *seen == Some(key) && !travelled { return; }
+    if *seen == Some(key) && !travelled {
+        return;
+    }
     *seen = Some(key);
     let light = streamer.interior.and_then(|cell| effective_cell_lighting(&world, game, cell));
-    if sky.interior != light { sky.set_interior(light); }
+    if sky.interior != light {
+        sky.set_interior(light);
+    }
 }
 
 /// SetCellImageSpace (`fnv_game::game::FormChanges::cell_image_spaces`): an interior

@@ -2111,6 +2111,7 @@ pub fn update_sky(
     mut materials: ResMut<Assets<SkyMaterial>>,
     mut flashed: Local<bool>,
     mut dome_shown: Local<Option<DomeShown>>,
+    mut last_interior_fog: Local<Option<(f32, f32, f32)>>,
     screen: Option<Res<crate::imagespace::ScreenModifiers>>,
     tweaks: Option<Res<nvf_play::tweaks::TweakSettings>>,
 ) {
@@ -2153,9 +2154,14 @@ pub fn update_sky(
             light.illuminance = PI * unit * l.directional_fade.clamp(0.0, 1.0) * INTERIOR_DIRECTIONAL_SHARE;
         }
         apply_cell_fog(&sky, &mut fog, emissive_mod, tweaks.as_ref().is_some_and(|t| t.no_interior_fog));
-        info!("interior lighting: fog {:.0}..{:.0} power {:.2}", l.fog_near, l.fog_far, l.fog_power);
+        let fog_key = (l.fog_near, l.fog_far, l.fog_power);
+        if *last_interior_fog != Some(fog_key) {
+            *last_interior_fog = Some(fog_key);
+            info!("interior lighting: fog {:.0}..{:.0} power {:.2}", l.fog_near, l.fog_far, l.fog_power);
+        }
         return;
     }
+    *last_interior_fog = None;
     let c = &sky.climate;
 
     // Follow the camera every frame; clouds drift with their ONAM speeds. The dome is
