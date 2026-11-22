@@ -365,12 +365,11 @@ fn the_summary_line() {
     s.room_fills = [1, 0, 0];
     s.refills[1] = 2;
     s.slowest_ms = 0.5;
-    s.stale = 2;
     s.slowest_gather_ms = 0.12;
     s.slowest_apply_ms = 0.03;
     assert_eq!(
         s.line(),
-        "4 fills (3 outdoors, 1 indoors), 40 checks skipped as unchanged; 1 room fills (1 marker, 0 rays, 0 default), 0 ground-lamp fills, slowest room or lamp fill 0.50 ms; refills: 0 mode, 2 cell, 0 room, 0 box, 0 moved, 0 lamps, 0 light, 0 profile; on a worker, 2 fills dropped as stale; main thread slowest gather 0.12 ms, slowest apply 0.03 ms"
+        "4 fills (3 outdoors, 1 indoors), 40 checks skipped as unchanged; 1 room fills (1 marker, 0 rays, 0 default), 0 ground-lamp fills, slowest room or lamp fill 0.50 ms; refills: 0 mode, 2 cell, 0 room, 0 box, 0 moved, 0 lamps, 0 light, 0 profile; main thread slowest gather 0.12 ms, slowest apply 0.03 ms"
     );
 }
 
@@ -676,11 +675,11 @@ fn the_last_finished_fill_stays_while_a_fill_runs() {
     assert_eq!(q.poll(ready, |_| panic!("nothing to start")), Polled::Idle);
 }
 
-/// Inputs asked while a fill runs wait, the newest replacing an older waiting request; the
-/// running fill's result is then stale and dropped, and only the newest request starts and
-/// is applied.
+/// Inputs asked while a fill runs wait, the newest replacing an older waiting request; when
+/// the running fill finishes it is still applied (it is newer than what the cube shows) and
+/// the newest waiting request starts in the same poll; the one it replaced never runs.
 #[test]
-fn the_newest_inputs_win_and_a_stale_fill_is_dropped() {
+fn a_fill_finishing_while_newer_inputs_wait_is_applied_and_the_newer_fill_starts() {
     let mut q: FillQueue<&str, Job> = FillQueue::default();
     let mut started = Vec::new();
     q.ask("cell A", |r| {
@@ -697,14 +696,16 @@ fn the_newest_inputs_win_and_a_stale_fill_is_dropped() {
             started.push(*r);
             None
         }),
-        Polled::Stale,
-        "cell A's room is out of date: not applied"
+        Polled::Done("cell A", 1),
+        "cell A's room is newer than the cube's: applied"
     );
-    assert_eq!(started, ["cell A", "cell B"], "\"moved\" never ran");
+    assert_eq!(started, ["cell A", "cell B"], "cell B started in the same poll; \"moved\" never ran");
     assert_eq!(q.waiting(), None);
+    assert!(q.busy());
     assert_eq!(q.poll(ready, |_| panic!("nothing waits")), Polled::Running);
     q.running.as_mut().unwrap().1 = Some(2);
     assert_eq!(q.poll(ready, |_| panic!("nothing waits")), Polled::Done("cell B", 2));
+    assert!(!q.busy());
 }
 
 /// In the game: the update that asks a fill leaves the camera's cube as it was (the fill
@@ -720,7 +721,7 @@ fn the_producer_applies_the_workers_fill_a_frame_later() {
     assert_eq!(app.world().get::<ReflectionCube>(camera).unwrap().generation(), 0, "the cube keeps what it held");
     settle(&mut app);
     let state = app.world().resource::<ReflectionSky>();
-    assert_eq!((state.fills_outdoors, state.stale), (1, 0));
+    assert_eq!(state.fills_outdoors, 1);
     let inputs = state.last.clone().expect("the asked inputs");
     let want = fill(&inputs, &DomeProfile::fallback()).levels;
     let cube = app.world().get::<ReflectionCube>(camera).unwrap();

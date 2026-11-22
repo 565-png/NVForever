@@ -79,8 +79,8 @@
 //!   outdoors or replacing the cube's camera. One log line at the first fill of each cube,
 //!   one at the first room fill of each interior (the box's source, its size, the lamps,
 //!   the worker's fill time and the main thread's gather and apply times), one summary at
-//!   exit (`reflection sky summary: ...`, with the room fills, the refills by reason, the
-//!   fills dropped as stale and the main thread's slowest gather and apply).
+//!   exit (`reflection sky summary: ...`, with the room fills, the refills by reason and
+//!   the main thread's slowest gather and apply).
 //! - **Where** (maintainer decision 2026-11-22, #3238): the main thread only gathers the
 //!   inputs (the sky's state, the lamps, the room marker or the six rays, which need the
 //!   physics world) into owned data ([`FillRequest`]); the fill itself ([`fill`]: the
@@ -89,10 +89,12 @@
 //!   finished fill until the new one is done, and the main thread then only moves the
 //!   finished bytes into the cube (`ReflectionCube::set_levels`; the render world uploads
 //!   them as before). At most one fill runs: inputs that move past a step while it runs are
-//!   kept as the one waiting request (a newer one replaces it), and when the running fill
-//!   finishes with a request waiting, its result is out of date and dropped, and the waiting
-//!   one starts. So the cube shows a change one fill later than before (the fill's time, a
-//!   few milliseconds, then the next frame's upload) [design]. Until the first fill of a
+//!   kept as the one waiting request (a newer one replaces it). When the running fill
+//!   finishes, it is applied all the same (it is newer than what the cube shows) and the
+//!   waiting request starts in the same frame, so no work is thrown away and a stream of
+//!   changes cannot keep the cube from updating. So the cube shows a change one fill later
+//!   than before (the fill's time, a few milliseconds, then the next frame's upload), two
+//!   with a fill already running [design]. Until the first fill of a
 //!   camera is done the camera has no cube and no `EnvironmentMapLight`, as before the first
 //!   upload in stage 1; on entering an interior the outdoor cube stays until the room's
 //!   first fill is done.
@@ -765,11 +767,8 @@ pub enum Polled<R, T> {
     Idle,
     /// The fill runs on.
     Running,
-    /// The fill finished and nothing newer was asked meanwhile: apply its result.
+    /// The fill finished: apply its result. A request waiting for it has been started.
     Done(R, T),
-    /// The fill finished, but newer inputs were asked while it ran: its result was dropped
-    /// and the waiting request started.
-    Stale,
 }
 
 /// At most one fill in flight (module notes, "Where"). `R` is the request, `J` the running
@@ -799,20 +798,17 @@ impl<R, J> FillQueue<R, J> {
         }
     }
 
-    /// Look at the running fill with `ready` (its result once finished). A finished fill
-    /// with no request waiting is handed back to apply; with one waiting it is dropped as
-    /// stale and the waiting request is started with `spawn`.
+    /// Look at the running fill with `ready` (its result once finished). A finished fill is
+    /// handed back to apply, even with newer inputs waiting (it is still newer than what the
+    /// cube shows); a waiting request is started with `spawn` first.
     pub fn poll<T>(&mut self, ready: impl FnOnce(&mut J) -> Option<T>, spawn: impl FnOnce(&R) -> J) -> Polled<R, T> {
         let Some((_, job)) = self.running.as_mut() else { return Polled::Idle };
         let Some(result) = ready(job) else { return Polled::Running };
         let Some((request, _)) = self.running.take() else { return Polled::Idle };
-        match self.waiting.take() {
-            Some(next) => {
-                self.ask(next, spawn);
-                Polled::Stale
-            }
-            None => Polled::Done(request, result),
+        if let Some(next) = self.waiting.take() {
+            self.ask(next, spawn);
         }
+        Polled::Done(request, result)
     }
 
     /// A fill runs.
@@ -1044,8 +1040,6 @@ pub struct ReflectionSky {
     slowest_ms: f32,
     /// Refills by reason, in [`Refill::ALL`]'s order.
     refills: [u64; 8],
-    /// Fills that finished after newer inputs were asked, dropped unapplied.
-    stale: u64,
     /// The main thread's slowest check (gathering and comparing the inputs, asking a fill)
     /// and slowest apply (moving a finished fill into the cube), milliseconds.
     slowest_gather_ms: f32,
@@ -1078,7 +1072,7 @@ impl ReflectionSky {
             Phase::On => {
                 let refills: Vec<String> = Refill::ALL.iter().zip(self.refills).map(|(r, n)| format!("{n} {}", r.name())).collect();
                 format!(
-                    "{} fills ({} outdoors, {} indoors), {} checks skipped as unchanged; {} room fills ({} marker, {} rays, {} default), {} ground-lamp fills, slowest room or lamp fill {:.2} ms; refills: {}; on a worker, {} fills dropped as stale; main thread slowest gather {:.2} ms, slowest apply {:.2} ms",
+                    "{} fills ({} outdoors, {} indoors), {} checks skipped as unchanged; {} room fills ({} marker, {} rays, {} default), {} ground-lamp fills, slowest room or lamp fill {:.2} ms; refills: {}; main thread slowest gather {:.2} ms, slowest apply {:.2} ms",
                     self.fills_outdoors + self.fills_indoors,
                     self.fills_outdoors,
                     self.fills_indoors,
@@ -1090,7 +1084,6 @@ impl ReflectionSky {
                     self.ground_fills,
                     self.slowest_ms,
                     refills.join(", "),
-                    self.stale,
                     self.slowest_gather_ms,
                     self.slowest_apply_ms
                 )
@@ -1249,12 +1242,11 @@ pub fn produce(
     }
     let Ok((entity, transform, cube, environment)) = camera else { return };
     let mut current = cube.as_ref().map(|cube| cube.specular.id());
-    // A finished fill goes into the cube, unless newer inputs were asked while it ran.
+    // A finished fill goes into the cube; inputs asked while it ran start on the worker.
     match state.queue.poll(check_ready, spawn_fill) {
         Polled::Done(request, filled) => {
             current = Some(apply_fill(&mut state, &mut commands, &mut images, entity, cube, environment, request, filled));
         }
-        Polled::Stale => state.stale += 1,
         Polled::Idle | Polled::Running => {}
     }
     let target = (entity, current);
@@ -1371,7 +1363,9 @@ fn apply_fill(
     }
     let first = state.target != Some((entity, specular));
     state.target = Some((entity, specular));
-    // This fill was the newest asked (nothing waited): its camera now holds this cube.
+    // The camera now holds this cube: a fill waiting or started since goes into it, and the
+    // camera needs no further fill for a cube of its own (`state.last` stays the newest
+    // inputs asked).
     state.asked = Some((entity, Some(specular)));
     if first {
         let where_ = if inputs.indoors() { "indoors" } else { "outdoors" };

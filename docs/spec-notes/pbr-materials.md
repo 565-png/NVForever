@@ -797,10 +797,12 @@ reflection); computed on the CPU from what the renderer already lights the room 
   sky too). The producer looks at it each frame; the cube keeps the last finished fill
   until the new one is done, and the main thread then only moves the finished bytes into
   the cube, which the render world uploads as before. At most one fill runs: inputs that
-  move past a step while it runs wait as one request (newer inputs replace it), and a
-  fill that finishes with a request waiting is out of date and dropped, the waiting one
-  starting instead. The trade-off: the cube shows a change one fill later than on the main
-  thread (the fill's few milliseconds, then the next frame's upload). Until a camera's first
+  move past a step while it runs wait as one request (newer inputs replace it). A fill
+  that finishes is applied even with a request waiting, since it is still newer than what
+  the cube shows, and the waiting one starts in the same frame: no work is thrown away and
+  a stream of changes cannot keep the cube from updating. The trade-off: the cube shows a
+  change one fill later than on the main thread (the fill's few milliseconds, then the next
+  frame's upload), two when a fill was already running. Until a camera's first
   fill is done it has no cube and no environment light, as before the first upload; on
   entering an interior the outdoor cube stays until the room's first fill is done
   [documented: `reflection_sky.rs` `produce`, `FillQueue`, `fill`].
@@ -811,9 +813,8 @@ reflection); computed on the CPU from what the renderer already lights the room 
   `reflection sky: interior <cell>: no lamp in reach and no room box, so stage 1's interior
   content`; the exit summary adds the room fills by box source, the ground-lamp fills, the
   slowest fill on the worker, the refills by reason (mode, cell, room, box, moved, lamps,
-  light, profile), the fills dropped as stale and the main thread's slowest gather and
-  slowest apply (`...; on a worker, <n> fills dropped as stale; main thread slowest gather
-  <ms> ms, slowest apply <ms> ms`).
+  light, profile) and the main thread's slowest gather and slowest apply (`...; main
+  thread slowest gather <ms> ms, slowest apply <ms> ms`).
 - **Not there.** No captured scene: no objects, textures, signs or bulbs' shapes, no
   actors; uniform walls of assumed albedo; one box per fill, centred on the camera, so it
   is exact only near the camera (no parallax), and rooms joined without a marker share the
@@ -823,8 +824,8 @@ reflection); computed on the CPU from what the renderer already lights the room 
   room is the ambient on each surface, a lamp brightens its wall and its lobe points at it,
   a lamp out of reach adds nothing, the levels approach the mean, the fallback is stage 1's
   content exactly, the refill steps; the worker's fill writes the bytes the main thread
-  wrote, the last finished fill stays while one runs, the newest inputs win and a stale
-  fill is dropped). The smoke scenario `authored-reflections-room` in Doc
+  wrote, the last finished fill stays while one runs, the newest waiting inputs win, and a
+  fill finishing while newer inputs wait is applied with the newer fill started). The smoke scenario `authored-reflections-room` in Doc
   Mitchell's house (`GSDocMitchellHouse`, the generated sets of `authored-reflections-sky`):
   the first room fill line and the summary. Log lines only.
 
