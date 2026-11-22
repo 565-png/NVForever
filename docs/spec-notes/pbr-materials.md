@@ -37,7 +37,7 @@ These choices are settled; pack authors and later versions can rely on them.
 | Reading BC7 and BC4 files (DDS with the DX10 header, or legacy `BC4U` / `BC4S`) | stage 1 of #2981 (`crates/fnv-dds`) |
 | Drawing a surface with its set (ORM, normal) | **implemented** in source (stage 3) [documented: `engine/nvf-assets/src/nif_spawn.rs` `shape_material`, `authored.rs` `retexture`]; the setting Authored materials (`authored-materials`, on by default, read at the start; `--graphics-only no-authored-materials`). Its check is the field test `pbr-authored-field` (below). A sample pack was drawn in the game with the setting off and on by the main session as of head `bebd7841a` (pictures not committed; they show the pack's own values, and no reference look exists to judge them by); those pictures are owed again after the fixes that followed that head |
 | Height maps (`_p`, parallax) | **implemented** (stage 4, below: "Height maps"). The game's own height slot (#2979) is not read |
-| Height maps on the landscape's texture layers | **implemented** in source, off by default (#3322 stage 1, below: "Terrain layers: parallax"); not yet seen running with a ground pack |
+| Height maps on the landscape's texture layers | **implemented** in source, off by default (#3322 stage 1, below: "Terrain layers: parallax"); seen running with the generated ground pack (test aid, 2026-11-22), not yet with a real pack |
 | Metallic | read with the ORM; acts where the view has a reflection cube while the setting Reflections on authored materials is on (`authored-reflections`, on by default, read at the start; `--graphics-only no-authored-reflections`), **held at 0** otherwise (section "Reflections on authored materials") |
 | A pack validator (`fnvtool pbr check`, `fnvtool pbr selftest`) | **implemented** (`crates/fnvtool/src/pbr_check.rs`, docs/cli-contract.md `fnv.pbr.check/1`) |
 
@@ -742,8 +742,9 @@ at `8a9abf4a9`, then with the experiment's gains at `8e1f196c6`].
 
 ## Terrain layers: parallax (#3322, stage 1)
 
-What the source does with ground height maps, as written; not seen running yet with a ground
-pack [documented: `engine/nvforever/src/terrain.rs` "Parallax", `TerrainCtx::folded_material`,
+What the source does with ground height maps, as written; seen running only with the
+generated ground pack (below, "Checking it without a pack"), not with a real pack
+[documented: `engine/nvforever/src/terrain.rs` "Parallax", `TerrainCtx::folded_material`,
 `sync_parallax`, `parallax_def`; `engine/nvforever/src/terrain.wesl` `parallax_shift`;
 `engine/nvf-assets/src/texture.rs` `TextureCache::authored_height`, `authored.rs`
 `find_height`]. Whether the original draws any relief on its landscape is not known: an
@@ -879,15 +880,25 @@ addition of NVForever's own until observer check 268 answers it [hypothesis: it 
   stands the player there. Before the first shot it logs what the centre's physics ray meets
   and the share there the march would move; under half is `bare`, so a view on a quadrant's
   base, on layers drawn over the folded ones or on a placed object never passes as "still".
-  Smoke `terrain-parallax-ground-pack` wants it moved down the screen (towards the camera) at
-  the grazing pose and still head-on; `terrain-parallax-ground-pack-off` (the switch off, the
-  pack mounted) wants no `TERRAIN_PARALLAX` pipeline and both poses still. The direction is
-  a [design expectation] (a sunk surface shows each pixel a point further along its ray), the
-  thresholds an engineering policy from reasoning. [observed, the first run on b76835100,
-  looking down Goodsprings' main street from the start: no shift anywhere on screen with
-  the switch flipped, while every folded material held six height maps and the flips edited
-  them; why was not known from that run (a base, layers over the folded ones, or the
-  shader), which the spot and the line under the centre now tell apart.]
+  What the scenarios claim [design]: at the grazing pose, `changed` (or `moved`, when one
+  translation explains it): a change the switch alone makes (the two shots with it off agree)
+  that decorrelates the texture at the centre, A-B and B-C at least 4 levels, 8 times A-C and
+  0.4 of the texture's spread. Not the direction: relief over the generated ridges warps and
+  stretches the texture rather than sliding it, so the best-fit translation is logged as
+  information only. Head-on, `still`: no common translation at the view's centre and a change
+  of at most 0.3 of the texture's spread; not an unchanged picture, since the measured box
+  reaches about 2 degrees off the vertical, where the march at depth 0.08 still moves a sunk
+  texel by a few pixels, radially, and the marched relief changes what shows at ridge edges.
+  `terrain-parallax-ground-pack-off` (the switch off, the pack mounted) wants no
+  `TERRAIN_PARALLAX` pipeline and both poses still. [observed, the first run on b76835100,
+  looking down Goodsprings' main street from the start: no shift anywhere on screen; the
+  street turned out not to be a spot the stage-1 march reaches. observed, the run on
+  cc1ee98ea on the aid's spot (-71552, 3200) in cell (-18, 0), shifted share 0.88 to 0.92
+  under the centre: the ridge grid in strong relief with the switch on and none with it off;
+  grazing A-B 12.29, A-C 0.10, B-C 12.29 levels on a contrast of 14.1, translation (0, 0);
+  head-on A-B 5.02, A-C 1.02 on 32.5; held off 0.06 / 0.10 and 1.65 / 1.02.] The limits are
+  an engineering policy set from those numbers with margins (the grazing change would pass at
+  half its size, the head-on one at about twice): `terrain_parallax_ab.rs`.
 - **Not done in stage 1** (owed): a passing run of the two ground-pack scenarios; the
   frame-time cost with and without the switch at a ground-heavy and a layer-heavy place;
   before/after pictures with a ground pack (the readback aid saves its shots); the base's own

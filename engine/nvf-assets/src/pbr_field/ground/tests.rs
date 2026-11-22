@@ -141,6 +141,8 @@ fn no_texture_path_can_write_outside_the_pack_folder() {
     let mixed = ground_fixture(&[r"..\..\escape.dds", r"landscape\dirt01.dds"]);
     assert_eq!(mixed.iter().map(|f| f.0.as_str()).collect::<Vec<_>>(), ["textures/pbr/landscape/dirt01_p.dds", "textures/pbr/landscape/dirt01.toml"]);
     let home = temp_home("contain");
+    // The home exists, as the game's NVFOREVER_HOME does (the pack makes only its own folder).
+    fs::create_dir_all(&home).unwrap();
     let (dir, sets, _) = seed_ground_pack_in(&home, 9, 1, &[r"..\..\..\..\..\escape.dds", r"landscape\dirt01.dds"]).unwrap();
     assert_eq!(sets, 1);
     let written: Vec<PathBuf> = walk(&home);

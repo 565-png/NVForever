@@ -105,7 +105,7 @@ fn an_unchanged_or_radially_changed_picture_is_still() {
     assert_eq!((m.ab, m.shift, judge(&m, None)), (0.0, (0, 0), "still"));
     // Head-on the shift grows from nothing at the centre outwards: no common translation.
     let (cx, cy) = (W as f32 / 2.0, H as f32 / 2.0);
-    let radial = picture(|x, y| (cx + (x - cx) * 0.96, cy + (y - cy) * 0.96));
+    let radial = picture(|x, y| (cx + (x - cx) * 0.985, cy + (y - cy) * 0.985));
     let m = measure(&a, &radial, &a).unwrap();
     assert!(m.ab > 0.0 && m.ab < STILL_SHARE * m.contrast[0], "the picture did change, by a fraction of its grain: {m:?}");
     assert_eq!((m.shift, judge(&m, None)), ((0, 0), "still"), "{m:?}");
@@ -142,14 +142,44 @@ fn a_picture_without_texture_is_flat_and_a_wrong_size_fails() {
 }
 
 #[test]
-fn a_change_the_translation_does_not_explain_is_unclear() {
+fn a_stable_change_no_translation_explains_is_changed_and_a_middling_one_unclear() {
     let a = plain();
-    // A different texture altogether in B alone (C back as A): large difference, no
-    // translation fits it.
+    // A different texture altogether in B alone (C back as A): the texture decorrelated, A and
+    // C agree, no translation fits: what relief over ridges does at a grazing view.
     let other = picture(|x, y| (x * 1.7 + 300.0, y * 1.3 + 200.0));
     let m = measure(&a, &other, &a).unwrap();
-    assert!(m.ab > STILL_SHARE * m.contrast[0], "{m:?}");
+    assert!(m.fit > MOVED_FIT * m.ab && m.ab > CHANGED_SHARE * m.contrast[0], "{m:?}");
+    assert_eq!(judge(&m, None), "changed", "{m:?}");
+    // Three tenths of the other texture mixed in: more than a still view's change, less than a
+    // decorrelation.
+    let mixed = Luma { v: a.v.iter().zip(&other.v).map(|(x, o)| 0.69 * x + 0.31 * o).collect(), ..a.clone() };
+    let m = measure(&a, &mixed, &a).unwrap();
+    let share = m.ab / m.contrast[0];
+    assert!(share > STILL_SHARE && share < CHANGED_SHARE, "the fixture sits between the two limits: {share} {m:?}");
     assert_eq!(judge(&m, None), "unclear", "{m:?}");
+}
+
+/// The first real readbacks (cc1ee98ea, the aid's spot in cell (-18, 0)), by their logged
+/// numbers: the verdicts the scenarios want, with the margins the constants' notes give.
+#[test]
+fn the_first_runs_numbers_give_the_verdicts_the_scenarios_want() {
+    let m = |ab: f64, ac: f64, bc: f64, contrast: [f64; 3]| Measure { rect: centre_box(W, H), ab, ac, bc, shift: (0, 0), fit: ab, contrast };
+    let grazing = m(12.29, 0.10, 12.29, [14.1, 13.5, 14.1]);
+    let head_on = m(5.02, 1.02, 4.87, [32.5, 31.6, 32.6]);
+    let held_grazing = m(0.06, 0.10, 0.05, [14.1, 14.1, 14.1]);
+    let held_head_on = m(1.65, 1.02, 1.52, [32.5, 32.5, 32.6]);
+    assert_eq!(judge(&grazing, Some(0.88)), "changed");
+    assert_eq!(judge(&head_on, Some(0.91)), "still");
+    assert_eq!(judge(&held_grazing, Some(0.88)), "still");
+    assert_eq!(judge(&held_head_on, Some(0.91)), "still");
+    // Margins: the grazing change would still pass at half its size; head-on would still be
+    // still at about twice its change.
+    let half = m(12.29 / 2.0, 0.10, 12.29 / 2.0, [14.1, 13.5, 14.1]);
+    assert_eq!(judge(&half, None), "changed");
+    let doubled = m(9.5, 1.02, 9.4, [32.5, 31.6, 32.6]);
+    assert_eq!(judge(&doubled, None), "still");
+    // The head-on change is no grazing change: it fails `changed` on its ratio and its share.
+    assert!(head_on.ab < CHANGED_RATIO * head_on.ac && head_on.ab < CHANGED_SHARE * head_on.contrast[0]);
 }
 
 #[test]

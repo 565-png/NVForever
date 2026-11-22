@@ -46,22 +46,38 @@
 //! - `unsettled`: A-C past its own limit ([`STABLE_LEVELS`], [`STABLE_SHARE`] of the
 //!   contrast): the scene changed by itself, so neither a shift nor its absence can be told;
 //! - `moved`: B is A translated by at least [`MOVED_PX`], the translation explains most of the
-//!   difference, and both A-B and B-C stand well above A-C;
+//!   difference, and both A-B and B-C stand well above A-C (kept for a march that slides the
+//!   texture as one; relief over the generated ridges warps it instead, so this is rare);
+//! - `changed`: the switch made a real, stable change at the centre without one translation
+//!   explaining it: A-B and B-C at least [`CHANGED_LEVELS`], at least [`CHANGED_RATIO`] times
+//!   A-C, and at least [`CHANGED_SHARE`] of A's contrast (the texture decorrelated, not merely
+//!   reshaded);
 //! - `still`: A-B and B-C no more than A-C allows, or the best translation is at most
-//!   [`STILL_PX`] and the difference a small share of the picture's contrast ([`STILL_SHARE`];
-//!   head-on, the march's shift is nothing at the centre and grows radially with the view's
-//!   tilt away from it, so it has no common translation);
+//!   [`STILL_PX`] and A-B at most [`STILL_SHARE`] of A's contrast;
 //! - `unclear` otherwise.
 //!
-//! [design expectation, to confirm with the first real run] Ground seen at a grazing angle
-//! sinks under the march (a height map below its top lies under the surface), so a pixel
-//! shows the texture of a point further along its ray: the picture's texture moves towards the
-//! camera, down the screen (dy > 0) with no turn about the view (dx about 0). Head-on the view
-//! vector has no tangent part at the centre: no shift there.
+//! [design] **What is claimed.** At the grazing pose: `changed` or `moved`, a change the switch
+//! alone makes (A and C, both off, agree) that decorrelates the texture at the centre. The
+//! direction is not claimed: relief over ridges warps and stretches the texture (the
+//! best-fit translation is logged as information only). Head-on: `still`, meaning no common
+//! translation of the texture at the view's centre and a change of at most [`STILL_SHARE`] of
+//! its spread; not that the picture is unchanged. The measured box reaches about 2 degrees
+//! off the vertical, where the march at depth 0.08 still moves a sunk texel by a few pixels
+//! (about depth x tan(2 degrees) = 0.003 texture units, near a pixel per world unit at 125
+//! units), radially, and the marched relief changes what shows at ridge edges.
 //!
-//! Thresholds [engineering policy]: set from reasoning about the expected values (module
-//! constants), with wide margins, not from readbacks; the main session confirms them against
-//! the first real ones. Nothing here is a fact about the original game.
+//! [observed, the first run on the aid's spot, cc1ee98ea, (-71552, 3200) in cell (-18, 0),
+//! shifted share 0.88 to 0.92 under the centre] Grazing (pitch -20.7): A-B 12.29, A-C 0.10,
+//! B-C 12.29 levels, contrast 14.1, translation (+0, +0), the ridge grid in strong relief in
+//! B only. Head-on: A-B 5.02, A-C 1.02, B-C 4.87, contrast 32.5, (+0, +0). The switch held
+//! off at the same poses: 0.06 / 0.10 / 0.05 (contrast 14.1) and 1.65 / 1.02 / 1.52
+//! (contrast 32.5). The thresholds below are set from these with margins (each constant
+//! says which); a march that changes less than about half as much at the grazing view
+//! (the share limit, 0.4 against 0.87) would no longer pass, nor a head-on change about twice
+//! as large (0.3 against 0.15).
+//!
+//! Thresholds [engineering policy]: not facts about the original game; the main session
+//! confirms them against later runs.
 
 use crate::terrain::{ground_cover, CellCover, TerrainCache, TerrainMaterial, TerrainSettings};
 use crate::world::WorldData;
@@ -115,10 +131,23 @@ pub const STILL_LEVELS: f64 = 1.0;
 pub const STILL_RATIO: f64 = 2.0;
 
 /// A `still` verdict by translation (at most [`STILL_PX`]) needs A-B no more than this share of
-/// A's contrast: a picture changed altogether differs by about 1.1 times its spread (two
-/// unrelated samples of one spread), one whose texture moves by a fraction of its grain by
-/// much less.
-pub const STILL_SHARE: f64 = 0.6;
+/// A's contrast. A picture changed altogether differs by about 1.1 times its spread (two
+/// unrelated samples of one spread). Head-on the first run measured 0.15 (5.02 on 32.5), the
+/// grazing view 0.87 (12.29 on 14.1): 0.3 is twice the head-on value and under half the
+/// grazing one.
+pub const STILL_SHARE: f64 = 0.3;
+
+/// A `changed` verdict needs A-B and B-C at least this many levels (grazing measured 12.29:
+/// three times over; the held-off runs 0.06 and 1.65).
+pub const CHANGED_LEVELS: f64 = 4.0;
+
+/// ... and at least this many times A-C (grazing measured 123; head-on 4.9 and the held-off
+/// runs about 1 to 1.6 stay under it).
+pub const CHANGED_RATIO: f64 = 8.0;
+
+/// ... and at least this share of A's contrast: the texture decorrelated (grazing measured
+/// 0.87; head-on 0.15).
+pub const CHANGED_SHARE: f64 = 0.4;
 
 /// A-C, two pictures with the same switch state, may differ by at most the larger of this
 /// many levels and this share of A's contrast; past it the verdict is `unsettled`.
@@ -337,8 +366,11 @@ pub fn judge(m: &Measure, shifted: Option<f32>) -> &'static str {
     }
     let len = m.shift.0.abs().max(m.shift.1.abs());
     let floor = STILL_LEVELS.max(STILL_RATIO * m.ac);
+    let changed = |d: f64| d >= CHANGED_LEVELS && d >= CHANGED_RATIO * m.ac;
     if len >= MOVED_PX && m.ab >= MOVED_LEVELS && m.ab >= MOVED_RATIO * m.ac && m.bc >= MOVED_RATIO * m.ac && m.fit <= MOVED_FIT * m.ab {
         "moved"
+    } else if changed(m.ab) && changed(m.bc) && m.ab >= CHANGED_SHARE * m.contrast[0] {
+        "changed"
     } else if (m.ab <= floor && m.bc <= floor) || (len <= STILL_PX && m.ab <= STILL_SHARE * m.contrast[0]) {
         "still"
     } else {
