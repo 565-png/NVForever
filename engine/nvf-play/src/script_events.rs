@@ -390,14 +390,16 @@ pub fn effects(events: &[Event], skip: &BTreeSet<usize>, ctx: &dyn EffectCtx) ->
             // name is not shown [hypothesis] (quest-messages.md §5).
             EventKind::ObjectiveDisplayed { quest, index, on: true } => {
                 let Some(text) = ctx.objective_text(*quest, *index).filter(|t| !t.trim().is_empty()) else { continue };
+                let Some(name) = ctx.quest_title(*quest).filter(|n| !n.trim().is_empty()) else { continue };
                 if announced.insert(*quest) && !ctx.quest_listed(*quest, &shown(*quest)) {
-                    if let Some(name) = ctx.quest_title(*quest) {
-                        out.push(ScriptEffect::Quest(QuestNotice::Added(name)));
-                    }
+                    out.push(ScriptEffect::Quest(QuestNotice::Added(name)));
                 }
                 out.push(ScriptEffect::Quest(QuestNotice::Objectives(vec![Objective { quest: quest.0, text, completed: false }])));
             }
             EventKind::ObjectiveCompleted { quest, index, on: true, silent: false } => {
+                if ctx.quest_title(*quest).is_none_or(|n| n.trim().is_empty()) {
+                    continue;
+                }
                 if let Some(text) = ctx.objective_text(*quest, *index).filter(|t| !t.trim().is_empty()) {
                     out.push(ScriptEffect::Quest(QuestNotice::Objectives(vec![Objective { quest: quest.0, text, completed: true }])));
                 }
@@ -1128,6 +1130,74 @@ mod tests {
     fn hidden_or_late_objectives_say_nothing() {
         let e = effects(&[ev(EventKind::ObjectiveCompleted { quest: QUEST, index: 10, on: true, silent: true })], &BTreeSet::new(), &Fake);
         assert_eq!(e, vec![]);
+    }
+
+    #[test]
+    fn empty_objective_text_and_nameless_quests_show_no_objective_notices() {
+        const NAMELESS: FormId = FormId(0x78);
+        const BLANK_TITLE: FormId = FormId(0x79);
+        struct EmptyCtx;
+        impl EffectCtx for EmptyCtx {
+            fn name(&self, form: FormId) -> String {
+                Fake.name(form)
+            }
+            fn objective_text(&self, quest: FormId, index: i32) -> Option<String> {
+                match (quest, index) {
+                    (QUEST, 1) => Some("".into()),
+                    (QUEST, 2) => Some("   \t\n ".into()),
+                    (NAMELESS, 1) => Some("Hidden behind nameless quest".into()),
+                    (BLANK_TITLE, 1) => Some("Hidden behind blank-title quest".into()),
+                    _ => Fake.objective_text(quest, index),
+                }
+            }
+            fn quest_title(&self, quest: FormId) -> Option<String> {
+                match quest {
+                    NAMELESS => None,
+                    BLANK_TITLE => Some("   ".into()),
+                    _ => Fake.quest_title(quest),
+                }
+            }
+            fn quest_listed(&self, quest: FormId, besides: &[i32]) -> bool {
+                Fake.quest_listed(quest, besides)
+            }
+            fn is_message_box(&self, message: FormId) -> bool {
+                Fake.is_message_box(message)
+            }
+            fn message_look(&self, message: FormId) -> (Option<String>, Option<f32>) {
+                Fake.message_look(message)
+            }
+            fn enable_children(&self, r: FormId) -> Vec<FormId> {
+                Fake.enable_children(r)
+            }
+            fn pops_in(&self, r: FormId) -> bool {
+                Fake.pops_in(r)
+            }
+            fn player_heading_deg(&self) -> f32 {
+                Fake.player_heading_deg()
+            }
+            fn player_pitch_deg(&self) -> Option<f32> {
+                Fake.player_pitch_deg()
+            }
+            fn destination(&self, cell: Option<FormId>) -> Destination {
+                Fake.destination(cell)
+            }
+            fn activation_effects(&self, a: &Activation, target: FormId) -> Vec<Effect> {
+                Fake.activation_effects(a, target)
+            }
+            fn is_terminal(&self, r: FormId) -> bool {
+                Fake.is_terminal(r)
+            }
+        }
+        let events = [
+            ev(EventKind::ObjectiveDisplayed { quest: QUEST, index: 1, on: true }),
+            ev(EventKind::ObjectiveDisplayed { quest: QUEST, index: 2, on: true }),
+            ev(EventKind::ObjectiveCompleted { quest: QUEST, index: 2, on: true, silent: false }),
+            ev(EventKind::ObjectiveDisplayed { quest: NAMELESS, index: 1, on: true }),
+            ev(EventKind::ObjectiveCompleted { quest: NAMELESS, index: 1, on: true, silent: false }),
+            ev(EventKind::ObjectiveDisplayed { quest: BLANK_TITLE, index: 1, on: true }),
+            ev(EventKind::ObjectiveCompleted { quest: BLANK_TITLE, index: 1, on: true, silent: false }),
+        ];
+        assert!(effects(&events, &BTreeSet::new(), &EmptyCtx).is_empty());
     }
 
     #[test]

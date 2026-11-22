@@ -5969,11 +5969,11 @@ fn fly(
         };
         let always = x.flags.iter().any(|f| f == "Knock Down - Always");
         let by_formula = x.flags.iter().any(|f| f == "Knock Down - By Formula");
-        let own_blast_spares = cause.is_some_and(|c| c.actor == FormId::PLAYER_REF) && script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.no_self_explosion_damage);
+        let player_blast = cause.is_some_and(|c| c.actor == FormId::PLAYER_REF);
         for b in hits {
             let target = if b.actor == PLAYER { FormId::PLAYER_REF } else { FormId(b.actor as u32) };
-            // The player's tweak: the player's own blast spares the player [design: docs/design/tweaks.md].
-            if own_blast_spares && target == FormId::PLAYER_REF {
+            // The player's tweak: the player's own blast spares the player (and optionally non-hostiles) [design: docs/design/tweaks.md].
+            if player_blast && script.as_deref_mut().and_then(|s| s.rt.as_mut()).is_some_and(|rt| crate::script::with_world(rt, &mut sim, |rt| rt.game.own_explosion_spares(target))) {
                 continue;
             }
             // The player's tweak: a Meltdown blast spares the player and the companions [design: docs/design/tweaks.md].
