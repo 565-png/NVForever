@@ -306,13 +306,18 @@ impl BosTable {
         self
     }
 
+    /// Current session seed used for `chanceR(...)` rolls.
+    pub fn random_seed(&self) -> u64 {
+        self.random_seed
+    }
+
     /// Resolve the effective base FormID for placed reference `ref_id` whose authored base
     /// is `orig_base`.
     ///
-    /// Precedence [design]:
-    /// 1. When empty, returns `orig_base` immediately with zero lookups.
-    /// 2. `[References]` rules matching `ref_id` win over `[Forms]` rules.
-    /// 3. `[Forms]` rules matching `orig_base` run in deterministic file/line order.
+    /// Precedence:
+    /// 1. When empty, returns `orig_base` immediately with zero lookups `[design]`.
+    /// 2. `[References]` rules matching `ref_id` win over `[Forms]` rules `[hypothesis]`.
+    /// 3. `[Forms]` rules matching `orig_base` run in deterministic file/line order `[hypothesis]`.
     #[inline]
     pub fn resolve(&self, ref_id: u32, orig_base: u32) -> u32 {
         if self.is_empty() {
@@ -774,5 +779,32 @@ OrigBarrel|SwapCrate|SomeCellFilter|NONE
         assert_eq!(ix.placement(&lo, &schema, 0x0000_2003).unwrap().base, Some(0x0000_1002));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn two_sessions_with_different_seeds_vary_chance_r_while_keeping_chance_s_identical() {
+        let plugins = build_two_plugin_fixture();
+        let lo = LoadOrder::new(&plugins).unwrap();
+        let ini = "[Forms]\nOrigBarrel|SwapBarrel|NONE|chanceS(50)\nOrigCar|SwapCarRed|NONE|chanceR(50)\n";
+
+        let session_a = BosTable::load_from_sources(&lo, [("session.ini", ini)]).with_random_seed(0x1111_2222_3333_4444);
+        let session_b = BosTable::load_from_sources(&lo, [("session.ini", ini)]).with_random_seed(0x9999_AAAA_BBBB_CCCC);
+        assert_eq!(session_a.random_seed(), 0x1111_2222_3333_4444);
+        assert_eq!(session_b.random_seed(), 0x9999_AAAA_BBBB_CCCC);
+
+        // chanceS(50) stays identical for every reference across both sessions.
+        for rid in 0x0002_0000u32..0x0002_0100 {
+            assert_eq!(
+                session_a.resolve(rid, 0x0000_1001),
+                session_b.resolve(rid, 0x0000_1001),
+                "chanceS must stay identical across sessions for ref 0x{rid:08X}"
+            );
+        }
+
+        // chanceR(50) varies across sessions with different seeds.
+        let r_diffs = (0x0002_0000u32..0x0002_0100)
+            .filter(|&rid| session_a.resolve(rid, 0x0000_1003) != session_b.resolve(rid, 0x0000_1003))
+            .count();
+        assert!(r_diffs > 20, "expected distinct chanceR outcomes across sessions, got {r_diffs} diffs");
     }
 }

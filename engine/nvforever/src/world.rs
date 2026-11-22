@@ -82,6 +82,30 @@ pub fn open_plugins(data_dir: &Path, mods: &[PathBuf], names: &[String]) -> Open
     OpenedPlugins { plugins, dropped }
 }
 
+/// Per-session random seed for Base Object Swapper `chanceR(...)` rolls [design].
+/// Combines OS-seeded `RandomState` entropy with wall-clock nanoseconds and process ID so
+/// each run starts with an independent `chanceR` seed while `build_bos_table` /
+/// `BosTable::with_random_seed` preserve deterministic control in tests.
+fn bos_session_seed() -> u64 {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = RandomState::new().build_hasher();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0u128, |d| d.as_nanos());
+    h.write_u128(nanos);
+    h.write_u32(std::process::id());
+    h.finish()
+}
+
+fn build_bos_table(lo: &LoadOrder, bos_sources: &[(String, String)], random_seed: u64) -> fnv_world::BosTable {
+    fnv_world::BosTable::load_from_sources(
+        lo,
+        bos_sources.iter().map(|(name, text)| (name.as_str(), text.as_str())),
+    )
+    .with_random_seed(random_seed)
+}
+
 impl WorldData {
     pub fn open(schema_dir: &Path, opened: OpenedPlugins, world: &str, bos_sources: Vec<(String, String)>) -> Result<WorldData, String> {
         let schema: &'static EsmSchema =
@@ -91,10 +115,7 @@ impl WorldData {
         let lo: &'static LoadOrder<'static> = Box::leak(Box::new(LoadOrder::new(plugins).map_err(|e| e.to_string())?));
         let mut built = WorldIndex::build(lo, schema);
         if !bos_sources.is_empty() {
-            let bos = fnv_world::BosTable::load_from_sources(
-                lo,
-                bos_sources.iter().map(|(name, text)| (name.as_str(), text.as_str())),
-            );
+            let bos = build_bos_table(lo, &bos_sources, bos_session_seed());
             let rep = bos.report();
             if rep.files_loaded > 0 {
                 info!(
@@ -2613,6 +2634,52 @@ mod tests {
             let p = placement(&lo, &schema, id).unwrap();
             assert_eq!(enabled(&lo, &schema, &p, 0), want, "0x{id:X}");
         }
+    }
+
+    #[test]
+    fn bos_engine_session_seed_varies_chance_r_while_keeping_chance_s_identical() {
+        use fnv_esm::raw::{write_subrecords, Subrecord};
+        let sub = |sig: &[u8; 4], data: Vec<u8>| Subrecord { sig: *sig, data, extended: false };
+        let z = |s: &str| {
+            let mut v = s.as_bytes().to_vec();
+            v.push(0);
+            v
+        };
+        let record = |sig: &[u8; 4], flags: u32, fid: u32, subs: &[Subrecord]| {
+            let payload = write_subrecords(subs);
+            [&sig[..], &(payload.len() as u32).to_le_bytes(), &flags.to_le_bytes(), &fid.to_le_bytes(), &[0; 4], &15u16.to_le_bytes(), &[0; 2], &payload].concat()
+        };
+        let group = |label: [u8; 4], kind: i32, body: &[u8]| [&b"GRUP"[..], &((24 + body.len()) as u32).to_le_bytes(), &label, &kind.to_le_bytes(), &[0; 8], body].concat();
+        let hedr = [&1.34f32.to_le_bytes()[..], &0i32.to_le_bytes(), &0x800u32.to_le_bytes()].concat();
+        let stat_body = [
+            record(b"STAT", 0, 0x1001, &[sub(b"EDID", z("SynOrigA"))]),
+            record(b"STAT", 0, 0x1002, &[sub(b"EDID", z("SynSwapA"))]),
+            record(b"STAT", 0, 0x1003, &[sub(b"EDID", z("SynOrigB"))]),
+            record(b"STAT", 0, 0x1004, &[sub(b"EDID", z("SynSwapB"))]),
+        ]
+        .concat();
+        let bytes = [record(b"TES4", 1, 0, &[sub(b"HEDR", hedr)]), group(*b"STAT", 0, &stat_body)].concat();
+        let plugins = vec![EsmPlugin::parse(&bytes, "TestBos.esm".into()).unwrap()];
+        let lo = LoadOrder::new(&plugins).unwrap();
+        let sources = vec![(
+            "baseobjectswapper\\session_test.ini".to_string(),
+            "[Forms]\nSynOrigA|SynSwapA|NONE|chanceS(50)\nSynOrigB|SynSwapB|NONE|chanceR(50)\n".to_string(),
+        )];
+
+        // Two engine sessions with distinct seeds vary chanceR while keeping chanceS identical.
+        let s1 = build_bos_table(&lo, &sources, 0xA1B2_C3D4_E5F6_0708);
+        let s2 = build_bos_table(&lo, &sources, 0x0102_0304_0506_0708);
+        for rid in 0x0001_0000u32..0x0001_0100 {
+            assert_eq!(s1.resolve(rid, 0x1001), s2.resolve(rid, 0x1001), "chanceS must stay identical");
+        }
+        let diffs = (0x0001_0000u32..0x0001_0100)
+            .filter(|&rid| s1.resolve(rid, 0x1003) != s2.resolve(rid, 0x1003))
+            .count();
+        assert!(diffs > 20, "chanceR should vary across session seeds, got {diffs} diffs");
+
+        // Fresh OS-backed session seeds should not collapse to a fixed constant.
+        let seeds: HashSet<u64> = (0..4).map(|_| bos_session_seed()).collect();
+        assert!(seeds.len() > 1, "expected varying session seeds, got {seeds:?}");
     }
 
     /// Issue #2549: a placed torch's glow card (`oasistorch01.nif`'s `GlowMesh`, a
