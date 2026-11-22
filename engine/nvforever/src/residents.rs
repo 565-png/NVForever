@@ -1817,7 +1817,14 @@ impl Core {
     fn take_moved(&mut self, game: &mut Game, all: bool, mut phys: Option<&mut PhysState>) {
         let refs = game.world.placed;
         for (id, ours) in self.ai.moved_by_scripts(game) {
-            if !is_actor(refs, id) {
+            // An actor a script made (PlaceAtMe) is in no plugin's table of placed
+            // references, yet the AI looks after it (`ours`): it is moved as any other.
+            // Left out here, its character stayed where it was made, and the walker, which
+            // reads its place from its character, went on from there: a radscorpion made
+            // at the player and moved 600 units out 0.2 s later fought from beside the
+            // player in about half the runs, whenever its character already existed
+            // [observed: smoke `radscorpions-spacing-cadence`, 21 probe runs, #3366].
+            if !ours && !is_actor(refs, id) {
                 continue;
             }
             if let Some(run) = self.knocks.get_mut(&id.0) {
