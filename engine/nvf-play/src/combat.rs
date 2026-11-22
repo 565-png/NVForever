@@ -1244,6 +1244,9 @@ pub struct Combat {
     load_magazine: Option<(u32, u32)>,
     /// A save's weapon and the type of round in its magazine, with `load_magazine`.
     load_ammo: Option<(u32, FormId)>,
+    /// Player's last chosen ammo type per weapon base form for the Keep Chosen Ammo
+    /// tweak (#3305) [design: per base form, player only]. Saved beside `magazine_ammo`.
+    chosen_ammo: std::collections::BTreeMap<FormId, FormId>,
     /// Test aid `NVF_PLAY_TEST_TRACERS=<seconds>`: every projectile draws a line, and
     /// the lines and a marker at the muzzle stay that long, so one screenshot of an
     /// unattended check shows where the shots were drawn from. The muzzle flashes and
@@ -1501,6 +1504,82 @@ impl Combat {
                 self.load_ammo = None;
             }
         }
+    }
+
+    /// Remember `ammo` as the player's chosen ammo type for weapon base form `weapon`
+    /// under the Keep Chosen Ammo tweak (#3305) [design: per base form, player only].
+    pub fn remember_chosen_ammo(&mut self, weapon: FormId, ammo: FormId) {
+        self.chosen_ammo.insert(weapon, ammo);
+    }
+
+    /// The player's remembered ammo type for weapon base form `weapon`, if any (#3305).
+    pub fn chosen_ammo_of(&self, weapon: FormId) -> Option<FormId> {
+        self.chosen_ammo.get(&weapon).copied()
+    }
+
+    /// The player's remembered per-weapon ammo choices, for a save (#3305).
+    pub fn chosen_ammo_for_save(&self) -> std::collections::BTreeMap<u32, u32> {
+        self.chosen_ammo.iter().map(|(w, a)| (w.0, a.0)).collect()
+    }
+
+    /// Restore the save's per-weapon remembered ammo choices (#3305). Replaces any prior
+    /// choices so loading an older save with none clears stale picks.
+    pub fn restore_chosen_ammo(&mut self, map: &std::collections::BTreeMap<u32, u32>) {
+        self.chosen_ammo = map.iter().map(|(&w, &a)| (FormId(w), FormId(a))).collect();
+    }
+
+    /// The ammo type that equipping weapon `id` would load right now: when `keep_chosen`
+    /// is on (#3305) and the remembered type is still one of the weapon's ammo choices and
+    /// carried, that type wins; otherwise falls back to `CombatForms::ammo_for`.
+    pub fn preferred_ammo_for(&self, id: FormId, keep_chosen: bool, carried: impl Fn(FormId) -> bool) -> Option<FormId> {
+        if keep_chosen {
+            if let (Some(&remembered), Some(w)) = (self.chosen_ammo.get(&id), self.forms.weapons.get(&id)) {
+                if self.forms.ammo_choices(w).contains(&remembered) && carried(remembered) {
+                    return Some(remembered);
+                }
+            }
+        }
+        self.forms.ammo_for(id, carried)
+    }
+
+    /// Pick the player's ammo on equip for weapon `id`: `load_ammo` (a save's
+    /// weapon-in-hand ammo, #1574) takes precedence when it matches `id`, is one of the
+    /// weapon's ammo choices and some is carried; otherwise when `keep_chosen` is on
+    /// (#3305), the remembered type for `id` wins under the same check (retaining the
+    /// remembered entry when temporarily out of stock so it returns once carried again);
+    /// otherwise falls back to `CombatForms::ammo_for`.
+    pub fn pick_equip_ammo(&mut self, id: FormId, w: &WeaponStats, keep_chosen: bool, carried: impl Fn(FormId) -> bool) -> Option<FormId> {
+        let choices = self.forms.ammo_choices(w);
+        let mut ammo = self.forms.ammo_for(id, &carried);
+        if keep_chosen {
+            if let Some(&remembered) = self.chosen_ammo.get(&id) {
+                if choices.contains(&remembered) && carried(remembered) {
+                    ammo = Some(remembered);
+                }
+            }
+        }
+        // A save's type of round for this weapon (`crate::save`; #1574), while it is one of
+        // the weapon's types and some is carried.
+        if let Some((sw, a)) = self.load_ammo.take() {
+            if sw == id.0 && choices.contains(&a) && carried(a) {
+                ammo = Some(a);
+            } else if sw != id.0 {
+                self.load_ammo = Some((sw, a));
+            }
+        }
+        ammo
+    }
+
+    /// Advance the player's loaded ammo on weapon `id` to the next carried choice,
+    /// remembering the chosen type for `id` when `keep_chosen` is on (#3305).
+    pub fn swap_ammo_choice(&mut self, id: FormId, keep_chosen: bool, carried: impl Fn(FormId) -> bool) -> Option<FormId> {
+        let cur = self.ammo?;
+        let next = self.forms.next_ammo(id, cur, carried).filter(|&n| n != cur)?;
+        self.ammo = Some(next);
+        if keep_chosen {
+            self.remember_chosen_ammo(id, next);
+        }
+        Some(next)
     }
 
     /// The weapon in use and its Sight FOV (degrees), when it is a gun with sights (Sight
@@ -2451,6 +2530,7 @@ fn init_combat(mut commands: Commands, d: Res<PlayWorld>) {
         tracer_hold,
         load_magazine: None,
         load_ammo: None,
+        chosen_ammo: std::collections::BTreeMap::new(),
         crosshair_cone: None,
         player_spread: None,
         grenade_hold: 0.0,
@@ -2565,16 +2645,20 @@ fn hud_ammo(magazine: u32, carried: u32, regenerates: bool) -> (u32, u32) {
 }
 
 /// Follow the equipped weapon: a new weapon gets a new cycle, loaded from what is carried.
-fn equip_sync(mut c: ResMut<Combat>, mut sim: ResMut<SimState>, mut anim: ResMut<WeaponAnim>) {
-    let c = &mut *c;
+fn equip_sync(mut c: ResMut<Combat>, mut sim: ResMut<SimState>, mut anim: ResMut<WeaponAnim>, tweaks: Option<Res<crate::tweaks::TweakSettings>>) {
+    let keep_chosen = tweaks.as_deref().is_some_and(|t| t.keep_chosen_ammo);
+    equip_sync_step(&mut c, &mut sim, &mut anim, keep_chosen);
+}
+
+fn equip_sync_step(c: &mut Combat, sim: &mut SimState, anim: &mut WeaponAnim, keep_chosen: bool) {
     let equipped = sim.world.peek(FormId::PLAYER_REF).and_then(|s| s.inventory.as_ref()).map(|i| i.equipped()).unwrap_or_default();
     let mut equipped = equipped.into_iter().find(|id| c.forms.weapons.contains_key(id));
     // A weapon at zero condition does not stay in the hand, however it got there (a
     // script's SetWeaponHealthPerc) (§17); under the player's Equip Broken Items or Keep
     // Broken Items Equipped tweak it does, and does not fire (`broken_in_hand`).
-    if let Some(id) = equipped.filter(|&id| !broken_kept() && item_condition(&sim, FormId::PLAYER_REF, id) <= 0.0) {
+    if let Some(id) = equipped.filter(|&id| !broken_kept() && item_condition(sim, FormId::PLAYER_REF, id) <= 0.0) {
         let _ = sim.world.unequip(FormId::PLAYER_REF, id);
-        info!("combat: the player's {} ({id}) is broken: unequipped", item_name(&sim, id));
+        info!("combat: the player's {} ({id}) is broken: unequipped", item_name(sim, id));
         equipped = None;
     }
     let mods = equipped.and_then(|id| sim.world.peek(FormId::PLAYER_REF).and_then(|s| s.inventory.as_ref()).map(|i| i.equipped_mods(id))).unwrap_or(0);
@@ -2597,27 +2681,18 @@ fn equip_sync(mut c: ResMut<Combat>, mut sim: ResMut<SimState>, mut anim: ResMut
         anim.reload = None;
         return;
     };
-    let w = &c.player_stats(id).expect("weapon present");
-    let mut ammo = c.forms.ammo_for(id, |a| player_count(&sim, Some(a)) > 0);
-    // A save's type of round for this weapon (`crate::save`; #1574), while it is one of
-    // the weapon's types and some is carried.
-    if let Some((sw, a)) = c.load_ammo.take() {
-        if sw == id.0 && c.forms.ammo_choices(w).contains(&a) && player_count(&sim, Some(a)) > 0 {
-            ammo = Some(a);
-        } else if sw != id.0 {
-            c.load_ammo = Some((sw, a));
-        }
-    }
-    let chain = c.forms.chain_with(id, w, ammo);
-    let melee = AttackKind::of(w) != AttackKind::Gun;
+    let w = c.player_stats(id).expect("weapon present");
+    let ammo = c.pick_equip_ammo(id, &w, keep_chosen, |a| player_count(sim, Some(a)) > 0);
+    let chain = c.forms.chain_with(id, &w, ammo);
+    let melee = AttackKind::of(&w) != AttackKind::Gun;
     c.melee = melee && chain.projectile.is_none();
     c.self_ammo = !melee && chain.ammo_choices.is_empty() && chain.projectile.is_some();
     c.ammo = chain.ammo;
-    let carried = player_count(&sim, c.ammo);
-    let timing = Timing::of(w, &anim.timing, &c.tuning);
+    let carried = player_count(sim, c.ammo);
+    let timing = Timing::of(&w, &anim.timing, &c.tuning);
     // Ranged weapons without a projectile (the detonator, binoculars) use no ammo.
     let no_ammo = melee || c.self_ammo || (chain.projectile.is_none() && chain.ammo_choices.is_empty());
-    c.cycle = Some(Cycle::new(w, timing, no_ammo, carried));
+    c.cycle = Some(Cycle::new(&w, timing, no_ammo, carried));
     if let (Some(n), Some(cy)) = (kept, c.cycle.as_mut()) {
         cy.magazine = n.min(cy.clip_size).min(carried);
     }
@@ -3291,8 +3366,9 @@ pub(crate) fn fire(
     mut sounds: MessageWriter<PlaySound>,
     mut casings: MessageWriter<CasingFx>,
     mut loops: MessageWriter<LoopSound>,
-    (mut hud, mut vats, lens_sway, inertia, mut scaled): (Option<ResMut<HudMessage>>, Option<ResMut<crate::vats_mode::VatsMode>>, Option<Res<crate::aim_zoom::LensSway>>, Option<Res<crate::inertia::MovementInertia>>, MessageWriter<ScaledSound>),
+    (mut hud, mut vats, lens_sway, inertia, mut scaled, tweaks): (Option<ResMut<HudMessage>>, Option<ResMut<crate::vats_mode::VatsMode>>, Option<Res<crate::aim_zoom::LensSway>>, Option<Res<crate::inertia::MovementInertia>>, MessageWriter<ScaledSound>, Option<Res<crate::tweaks::TweakSettings>>),
 ) {
+    let keep_chosen = tweaks.as_deref().is_some_and(|t| t.keep_chosen_ammo);
     let dt = time.delta_secs();
     let c = &mut *c;
     c.time += dt;
@@ -3380,12 +3456,15 @@ pub(crate) fn fire(
         if swap && holstered_swap {
             if let Some(cur) = c.ammo {
                 let next = c.forms.next_ammo(id, cur, |a| player_count(&sim, Some(a)) > 0);
-                if next.is_some_and(|n| n != cur) {
-                    c.ammo = next;
+                if let Some(n) = next.filter(|&n| n != cur) {
+                    c.ammo = Some(n);
+                    if keep_chosen {
+                        c.chosen_ammo.insert(id, n);
+                    }
                     if !god {
                         cycle.swap_ammo();
                     }
-                    info!("combat: ammo swapped to {} with the weapon away (tweak)", next.and_then(|a| c.forms.ammo.get(&a)).and_then(|a| a.edid.clone()).unwrap_or_default());
+                    info!("combat: ammo swapped to {} with the weapon away (tweak)", c.forms.ammo.get(&n).and_then(|a| a.edid.clone()).unwrap_or_default());
                 }
             }
         }
@@ -3447,13 +3526,16 @@ pub(crate) fn fire(
     if swap {
         if let Some(cur) = c.ammo {
             let next = c.forms.next_ammo(id, cur, |a| player_count(&sim, Some(a)) > 0);
-            if next.is_some_and(|n| n != cur) {
-                c.ammo = next;
+            if let Some(n) = next.filter(|&n| n != cur) {
+                c.ammo = Some(n);
+                if keep_chosen {
+                    c.chosen_ammo.insert(id, n);
+                }
                 // God mode's magazine stays full: its shot goes on and nothing reloads.
                 if !god {
                     cycle.swap_ammo();
                 }
-                info!("combat: ammo swapped to {}", next.and_then(|a| c.forms.ammo.get(&a)).and_then(|a| a.edid.clone()).unwrap_or_default());
+                info!("combat: ammo swapped to {}", c.forms.ammo.get(&n).and_then(|a| a.edid.clone()).unwrap_or_default());
             }
         }
     }
@@ -7008,6 +7090,294 @@ mod tests {
             let blasted = blast_on(&mut g, Some(Cause { actor: player, weapon: launcher }), npc);
             assert!(direct.base > 0.0 && close(direct.modified, direct.base * 1.2), "{direct:?}");
             assert!(close(blasted.base, 100.0) && close(blasted.modified, 120.0), "{blasted:?}");
+        }
+    }
+
+    /// Keep Chosen Ammo tweak (#3305): per-weapon remembered ammo across switching,
+    /// unequipping, dropping/picking up, out-of-ammo fallback + return, save/load, and
+    /// unchanged behavior when off.
+    mod keep_chosen_ammo {
+        use super::*;
+        use fnv_combat::data::{AmmoStats, ProjectileStats};
+        use fnv_sim::forms::{BaseData, BaseForm, Item, ItemKind};
+
+        const PISTOL: FormId = FormId(0x0000_9001);
+        const KNIFE: FormId = FormId(0x0000_9002);
+        const AMMO_LIST: FormId = FormId(0x0000_9003);
+        const AMMO_PLAIN: FormId = FormId(0x0000_9010);
+        const AMMO_JHP: FormId = FormId(0x0000_9011);
+        const AMMO_AP: FormId = FormId(0x0000_9012);
+        const PROJ: FormId = FormId(0x0000_9020);
+
+        fn item(id: FormId, sig: [u8; 4], kind: ItemKind) -> BaseForm {
+            BaseForm {
+                id,
+                sig,
+                edid: Some(format!("Edid{:X}", id.0)),
+                name: None,
+                script: None,
+                prompt: None,
+                voice_filter: false,
+                data: BaseData::Item(Item {
+                    kind,
+                    value: Some(10),
+                    money: None,
+                    weight: Some(1.0),
+                    slots: None,
+                    projectile: None,
+                    health: Some(100),
+                    non_playable: false,
+                    cant_drop: false,
+                    armor_class: Default::default(),
+                    power_armor: false,
+                    armor_dr: None,
+                    armor_dt: None,
+                    weapon_damage: Some(20.0),
+                    weight_mods: [0.0; 3],
+                    drawable: kind == ItemKind::Weapon,
+                    not_for_npcs: false,
+                    thrown: false,
+                    quest_item: false,
+                    icon: None,
+                    placed_count: None,
+                    teaches: None,
+                    cant_be_taken: false,
+                    modulates_voice: false,
+                    weapon_traits: None,
+                }),
+            }
+        }
+
+        fn make_sim_and_combat() -> (SimState, Combat) {
+            let mut sim = crate::sim::test_world::sim(
+                vec![
+                    item(PISTOL, *b"WEAP", ItemKind::Weapon),
+                    item(KNIFE, *b"WEAP", ItemKind::Weapon),
+                    item(AMMO_PLAIN, *b"AMMO", ItemKind::Ammo),
+                    item(AMMO_JHP, *b"AMMO", ItemKind::Ammo),
+                    item(AMMO_AP, *b"AMMO", ItemKind::Ammo),
+                ],
+                Vec::new(),
+            );
+            sim.world.add_item(FormId::PLAYER_REF, PISTOL, 1).unwrap();
+            sim.world.add_item(FormId::PLAYER_REF, KNIFE, 1).unwrap();
+            sim.world.add_item(FormId::PLAYER_REF, AMMO_PLAIN, 20).unwrap();
+            sim.world.add_item(FormId::PLAYER_REF, AMMO_JHP, 15).unwrap();
+            sim.world.add_item(FormId::PLAYER_REF, AMMO_AP, 10).unwrap();
+
+            let mut forms = CombatForms::default();
+            forms.weapons.insert(
+                PISTOL,
+                WeaponStats {
+                    edid: Some("Weap10mmPistol".into()),
+                    clip_size: 12,
+                    ammo_use: 1,
+                    base_damage: 22,
+                    anim_type: Some("One Hand Pistol".into()),
+                    ammo: Some(AMMO_LIST),
+                    projectile: Some(PROJ),
+                    ..Default::default()
+                },
+            );
+            forms.weapons.insert(
+                KNIFE,
+                WeaponStats {
+                    edid: Some("WeapKnife".into()),
+                    base_damage: 10,
+                    anim_type: Some("One Hand Melee".into()),
+                    ..Default::default()
+                },
+            );
+            forms.form_lists.insert(AMMO_LIST, vec![AMMO_PLAIN, AMMO_JHP, AMMO_AP]);
+            for (id, name) in [(AMMO_PLAIN, "Ammo10mm"), (AMMO_JHP, "Ammo10mmJHP"), (AMMO_AP, "Ammo10mmAP")] {
+                forms.ammo.insert(id, AmmoStats { edid: Some(name.into()), ..Default::default() });
+            }
+            forms.projectiles.insert(PROJ, ProjectileStats { speed: 1000.0, ..Default::default() });
+
+            let combat = Combat {
+                forms,
+                rules: Rules::defaults(),
+                tuning: CombatTuning::default(),
+                weapon: None,
+                equipped: None,
+                mods: 0,
+                silenced_logged: None,
+                fists: None,
+                ammo: None,
+                self_ammo: false,
+                melee: false,
+                swings: Melee::default(),
+                blows: 0,
+                boom: Vec::new(),
+                meltdowns: HashSet::new(),
+                debris: Vec::new(),
+                cycle: None,
+                kick: Kick::default(),
+                flying: Vec::new(),
+                dropped_live: Vec::new(),
+                settled: Vec::new(),
+                landed: Vec::new(),
+                fire_landed: Vec::new(),
+                splashes: Vec::new(),
+                ghosts: Vec::new(),
+                looping: None,
+                ejects_seen: 0,
+                vats_throw: None,
+                last_shot: 0.0,
+                next_visual: 0,
+                pending: Vec::new(),
+                script_shots: Vec::new(),
+                guarding: HashMap::new(),
+                blocked_blows: Vec::new(),
+                fresh_reload: false,
+                guard_down_until: 0.0,
+                marks: Vec::new(),
+                rng: SplitMix(1),
+                swing_rng: SplitMix(2),
+                time: 0.0,
+                no_spread: false,
+                tracer_hold: None,
+                load_magazine: None,
+                load_ammo: None,
+                chosen_ammo: std::collections::BTreeMap::new(),
+                crosshair_cone: None,
+                player_spread: None,
+                grenade_hold: 0.0,
+                grenade_held: false,
+                vats_cone: None,
+                vats_blast: VatsBlast::default(),
+                player_blocked_at: None,
+                special_swing: None,
+                throw_logged: None,
+                spread_perks_logged: None,
+                flinch_until: 0.0,
+                flinch_end: None,
+                flinch_rng: SplitMix(3),
+                kick_rng: SplitMix(5),
+                kick_just_settled: false,
+                kick_left: [0.0; 2],
+                kick_back_goal: [0.0; 2],
+                kick_back: [crate::ease::Spring::default(); 2],
+                spent_rng: SplitMix(4),
+            };
+            (sim, combat)
+        }
+
+        #[test]
+        fn keep_chosen_ammo_on_survives_switch_unequip_drop_out_of_stock_and_save_load() {
+            let (mut sim, mut combat) = make_sim_and_combat();
+            let mut anim = WeaponAnim::default();
+
+            // 1. Initial equip picks default first carried ammo (Plain), then Ammo Swap picks JHP.
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_ammo(), Some(AMMO_PLAIN));
+            let swapped = combat.swap_ammo_choice(PISTOL, true, |a| player_count(&sim, Some(a)) > 0);
+            assert_eq!(swapped, Some(AMMO_JHP));
+            assert_eq!(combat.player_ammo(), Some(AMMO_JHP));
+            assert_eq!(combat.chosen_ammo_of(PISTOL), Some(AMMO_JHP));
+
+            // 2. Switching to another weapon and back keeps JHP (and weapon wheel preview sees JHP).
+            sim.world.equip(FormId::PLAYER_REF, KNIFE).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_weapon(), Some(KNIFE));
+            assert_eq!(combat.preferred_ammo_for(PISTOL, true, |a| player_count(&sim, Some(a)) > 0), Some(AMMO_JHP));
+            assert_eq!(combat.preferred_ammo_for(PISTOL, false, |a| player_count(&sim, Some(a)) > 0), Some(AMMO_PLAIN));
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_ammo(), Some(AMMO_JHP));
+
+            // 3. Unequipping and re-equipping keeps JHP.
+            sim.world.unequip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_weapon(), None);
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_ammo(), Some(AMMO_JHP));
+
+            // 4. Dropping (removing) and picking up again keeps JHP.
+            sim.world.remove_item(FormId::PLAYER_REF, PISTOL, 1).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_weapon(), None);
+            sim.world.add_item(FormId::PLAYER_REF, PISTOL, 1).unwrap();
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_ammo(), Some(AMMO_JHP));
+
+            // 5. Out of JHP -> falls back to ammo_for (Plain), keeps JHP remembered, and returns
+            //    to JHP once carried again.
+            sim.world.remove_item(FormId::PLAYER_REF, AMMO_JHP, 15).unwrap();
+            sim.world.equip(FormId::PLAYER_REF, KNIFE).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_ammo(), Some(AMMO_PLAIN));
+            assert_eq!(combat.chosen_ammo_of(PISTOL), Some(AMMO_JHP));
+
+            sim.world.add_item(FormId::PLAYER_REF, AMMO_JHP, 5).unwrap();
+            sim.world.equip(FormId::PLAYER_REF, KNIFE).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.player_ammo(), Some(AMMO_JHP));
+
+            // 6. Save/load round-trip via EngineSnapshot restores remembered ammo even without
+            //    load_ammo; load_ammo (#1574) still wins on the initial weapon-in-hand load;
+            //    and an older save with empty chosen_ammo clears stale choices.
+            let saved_map = combat.chosen_ammo_for_save();
+            assert_eq!(saved_map.get(&PISTOL.0), Some(&AMMO_JHP.0));
+            let snap = crate::save::EngineSnapshot {
+                format: crate::save::ENGINE_FORMAT.into(),
+                chosen_ammo: saved_map,
+                ..Default::default()
+            };
+            let decoded: crate::save::EngineSnapshot = serde_json::from_str(&serde_json::to_string(&snap).unwrap()).unwrap();
+            let (mut sim2, mut combat2) = make_sim_and_combat();
+            combat2.restore_chosen_ammo(&decoded.chosen_ammo);
+            sim2.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat2, &mut sim2, &mut anim, true);
+            assert_eq!(combat2.player_ammo(), Some(AMMO_JHP));
+
+            // load_ammo (#1574) precedence on load.
+            combat2.restore_magazine((PISTOL.0, 6), Some(AMMO_AP.0));
+            equip_sync_step(&mut combat2, &mut sim2, &mut anim, true);
+            assert_eq!(combat2.player_ammo(), Some(AMMO_AP));
+
+            // Legacy save with empty chosen_ammo clears remembered picks.
+            combat2.restore_chosen_ammo(&std::collections::BTreeMap::new());
+            assert_eq!(combat2.chosen_ammo_of(PISTOL), None);
+        }
+
+        #[test]
+        fn keep_chosen_ammo_off_leaves_equip_and_swap_behavior_unchanged() {
+            let (mut sim, mut combat) = make_sim_and_combat();
+            let mut anim = WeaponAnim::default();
+
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, false);
+            assert_eq!(combat.player_ammo(), Some(AMMO_PLAIN));
+
+            // Swapping with toggle off changes the live ammo but remembers nothing.
+            let swapped = combat.swap_ammo_choice(PISTOL, false, |a| player_count(&sim, Some(a)) > 0);
+            assert_eq!(swapped, Some(AMMO_JHP));
+            assert_eq!(combat.player_ammo(), Some(AMMO_JHP));
+            assert_eq!(combat.chosen_ammo_of(PISTOL), None);
+            assert!(combat.chosen_ammo_for_save().is_empty());
+
+            // Switching away and back resets to ammo_for (Plain).
+            sim.world.equip(FormId::PLAYER_REF, KNIFE).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, false);
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, false);
+            assert_eq!(combat.player_ammo(), Some(AMMO_PLAIN));
+
+            // Even if a loaded save had remembered ammo, toggle off ignores it on equip.
+            combat.remember_chosen_ammo(PISTOL, AMMO_JHP);
+            sim.world.equip(FormId::PLAYER_REF, KNIFE).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, false);
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, false);
+            assert_eq!(combat.player_ammo(), Some(AMMO_PLAIN));
         }
     }
 }
