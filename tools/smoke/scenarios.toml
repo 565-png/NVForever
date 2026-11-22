@@ -7166,6 +7166,21 @@ order = [[
 ]]
 
 [[scenario]]
+name = "terminal-note-pages"
+source = "[hypothesis] #3409: E, Enter or a click turns a terminal note longer than the screen to its next page, and does nothing on its last page (hacking.md section 7; observer check 255)"
+note = "V21SheldonTerminal's mail: Messages, New Message from Sarah Weintraub (note V21SarahOutMail01, about 30 lines: two pages of 16) [observed: 2026-11-22, the first page ends mid-sentence and the second runs to 'Sarah.']. Three selects: the first turns, the other two find the last page"
+areas = ["terminal"]
+paths = ["engine/nvf-play/src/terminal*", "engine/nvf-play/src/terminal/**"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TERMINAL = "20:open:0011E3C3,22:item:0,24:item:0,26:item:0,28:select,30:select,32:select,34:back,36:exit" }
+args = ["--cell", "2EOMichaelAngelo", "--play", "--no-voice"]
+run_seconds = 40
+expect = [
+  { text = "note V21SarahOutMail01", count = 1, label = "the long mail opened as a note" },
+  { text = "terminal: note turned to line 16", count = 1, label = "one select turns it to its second page, the others find its last page" },
+]
+order = [["note V21SarahOutMail01", "terminal: note turned to line 16", "terminal: back from the note to the list"]]
+
+[[scenario]]
 name = "terminal-scripted-activate"
 source = "#1532: Lucky38MrHouseTerminal's OnActivate (SCPT 0x001746C1) ends in a bare Activate: a script's default activation of a terminal opens its screen for the player, after Terminal01.NIF's Open sequence (keyboard, then screen); leaving plays Close"
 note = "Lucky38MrHouseTerminalREF (0014B0A7, base Lucky38MrHouseTerminal 0014B08E: Hard, locked, model Terminals/Terminal01.NIF with Idle/Open/Close) [observed: FalloutNV.esm]; Science 80 so the script's first branch (Science 75, not locked for good) runs Activate and the hacking game opens"
@@ -7304,6 +7319,23 @@ order = [[
   { text = "quest message on screen: Talk to Sunny Smiles in the Prospector Saloon.", label = "drawn only after the terminal closes" },
 ]]
 expect = [{ text = "quest message on screen: Talk to Sunny Smiles in the Prospector Saloon.", count = 1, label = "shown once" }]
+
+[[scenario]]
+name = "blake-books"
+source = "[observed] #3350: Bitter Springs Infirmary Blues' two books lie on Blake's stand in WastelandNVmini, owned by him (VBSPsychologyBookREF 0x00178DB0, VBSPediatricsBookREF 0x00178DAF; in no merchant container); they are drawn there, can be taken (a theft), and each completes its objective (20, 40) by its OnAdd. Whether the original also sells them is observer check 256"
+note = "NEAR stands the player facing the pediatrics book (heading 45, pitch -60) and E takes it by the crosshair; the psychology book, on the upper shelf behind the barbed wire, is taken by a script activation (by the crosshair it needs a pitch of about -6 from its NEAR spot). The theft is seen, so Blake's side may turn on the player afterwards: god mode"
+areas = ["quests", "crime"]
+paths = ["engine/nvf-play/src/activate.rs", "engine/nvf-play/src/activate/**", "engine/nvf-play/src/menu/model.rs", "docs/spec-notes/barter-menu.md"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00178DAF", NVF_PLAY_TEST_ACTIVATE = "8", NVF_PLAY_TEST_SCRIPT = "5:start:VMS40,5.5:stage:VMS40:10,10:activate:VBSPsychologyBookREF" }
+args = ["--world", "WastelandNVmini", "--pos=13240,17420,9960", "--hour", "12", "--play", "--no-voice", "--no-messages"]
+run_seconds = 13
+expect = [
+  { text = "target 0x00178DAF Tiny, Tiny Babies: All You Need to Know About Pediatric Medicine (Take, owned)", label = "the pediatrics book is drawn on the stand and the crosshair finds it, owned" },
+  { text = "script: VMS40 objective 40 completed true", count = 1, label = "taking it completes objective 40" },
+  { text = "crime: the player took VBSPediatricsBook (0x00178DAF) x1, owned by someone else", label = "as a theft from Blake" },
+  { text = "script: VMS40 objective 20 completed true", count = 1, label = "the psychology book taken completes objective 20" },
+  { text = "crime: the player took VBSPsychologyBook (0x00178DB0) x1, owned by someone else", label = "as a theft too" },
+]
 
 [[scenario]]
 name = "hacking-owned"
