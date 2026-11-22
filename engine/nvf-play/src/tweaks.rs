@@ -142,6 +142,11 @@ pub struct TweakSettings {
     pub jump_ap_cost: f32,
     /// `bRunningCostsAP`: Action Points running costs a second; 0 changes nothing.
     pub run_ap_per_second: f32,
+    /// `bRunningCostsAP` (`fSneakAPDrainCostBase`, `fSneakRunAPEnduranceMult`): Action
+    /// Points running while sneaking costs a second (`base + mult * (Endurance - 5)`,
+    /// clamped to `>= 0`); 0 base changes nothing.
+    pub sneak_run_ap_base: f32,
+    pub sneak_run_ap_endurance_mult: f32,
     /// `bDisableSellingItems`: the player cannot sell in a barter.
     pub no_selling: bool,
     /// The Own Skill Points Rule's numbers, kept while the rule is off.
@@ -216,9 +221,11 @@ pub struct TweakSettings {
     /// once; so does an attack this many seconds after the death (0: not by attacking).
     pub skip_death_cam: bool,
     pub skip_death_cam_attack: f32,
-    /// `bReplaceHelpWithConsole`: the pause menu has a Console entry where the original
-    /// has Help.
+    /// `bReplaceHelpWithConsole` (`[Help Button Replacer] sButtonLabel`): the pause menu
+    /// has a Console entry where the original has Help, using `help_console_label` when
+    /// non-empty (else `"Console"`).
     pub help_is_console: bool,
+    pub help_console_label: String,
     /// `bHeatbeatSoundsFade` (`fDuration`): the low-health heartbeat fades out over this
     /// many seconds, whole again at each loss of health.
     pub heartbeat_fade: bool,
@@ -330,11 +337,12 @@ pub struct TweakSettings {
     pub compass_doors_exterior: f32,
     pub compass_doors_interior: f32,
     pub compass_doors_fade: bool,
-    /// `bArmorConditionLabel`: the body armour's condition under the weapon's on the HUD;
-    /// shown below `armor_visible_below` (0: always), red below `armor_red_below`,
-    /// flashing below `armor_flash_below`, in the weapon's place with none drawn under
+    /// `bArmorConditionLabel`: thresholds and placement for the body armour's condition
+    /// row under the weapon's on the HUD (the enable switch itself lives on
+    /// `game.armor_condition` so `StewVal`/`StewieGetValue` reads it live): shown below
+    /// `armor_visible_below` (0: always), red below `armor_red_below`, flashing below
+    /// `armor_flash_below`, in the weapon's place with none drawn under
     /// `armor_in_weapon_place`.
-    pub armor_condition: bool,
     pub armor_visible_below: f32,
     pub armor_red_below: f32,
     pub armor_flash_below: f32,
@@ -688,6 +696,23 @@ impl TweakSettings {
             self.game.skill_points = Some((self.skill_point_base, self.skill_points_per_int));
         }
     }
+
+    /// Label shown for the pause menu's Console entry (`[Help Button Replacer] sButtonLabel`),
+    /// falling back to `"Console"` when empty or whitespace-only.
+    pub fn console_label(&self) -> &str {
+        let trimmed = self.help_console_label.trim();
+        if trimmed.is_empty() { "Console" } else { trimmed }
+    }
+}
+
+/// Action Points per second drained while sneak-running under `[Running Costs AP]`
+/// (`fSneakAPDrainCostBase + fSneakRunAPEnduranceMult * (Endurance - 5)`), clamped at `0.0`.
+/// Returns `0.0` whenever `base <= 0.0` (disabled).
+pub fn sneak_run_ap_rate(base: f32, endurance_mult: f32, endurance: f32) -> f32 {
+    if base <= 0.0 {
+        return 0.0;
+    }
+    (base + endurance_mult * (endurance - 5.0)).max(0.0)
 }
 
 /// Whether `actor` wears power armour on the upper body.
@@ -741,6 +766,8 @@ impl Default for TweakSettings {
             no_travel_crippled_leg: false,
             jump_ap_cost: 0.0,
             run_ap_per_second: 0.0,
+            sneak_run_ap_base: 0.0,
+            sneak_run_ap_endurance_mult: 0.0,
             no_selling: false,
             skill_point_base: SKILL_POINTS_START.0,
             skill_points_per_int: SKILL_POINTS_START.1,
@@ -775,6 +802,7 @@ impl Default for TweakSettings {
             skip_death_cam: false,
             skip_death_cam_attack: 0.0,
             help_is_console: false,
+            help_console_label: String::new(),
             heartbeat_fade: false,
             heartbeat_fade_seconds: 5.0,
             terminal_fade: false,
@@ -828,7 +856,6 @@ impl Default for TweakSettings {
             compass_doors_exterior: 2000.0,
             compass_doors_interior: 1000.0,
             compass_doors_fade: false,
-            armor_condition: false,
             armor_visible_below: 0.0,
             armor_red_below: 0.25,
             armor_flash_below: 0.1,
@@ -1319,6 +1346,30 @@ impl Plugin for TweaksPlugin {
         amount!(app, "kill-reward-ap", "Action Points per Kill", "Action Points a kill by the player gives back; 0 changes nothing. (Stewie's Tweaks bKillsRewardAP)", 50.0, f64, game.kill_reward_ap);
         amount!(app, "jump-ap-cost", "Action Points per Jump", "Action Points a jump costs; with too few the player cannot jump. 0 changes nothing. (Stewie's Tweaks bJumpingCostsAP)", 50.0, f32, jump_ap_cost);
         amount!(app, "run-ap-cost", "Action Points per Second Running", "Action Points running costs each second; with none left the player walks. 0 changes nothing. (Stewie's Tweaks bRunningCostsAP)", 20.0, f32, run_ap_per_second);
+        amount!(app, "sneak-run-ap-cost", "Action Points per Second Sneak-Running", "Action Points running while sneaking costs each second; with none left the player walks. 0 changes nothing. (Stewie's Tweaks bRunningCostsAP, fSneakAPDrainCostBase)", 20.0, f32, sneak_run_ap_base);
+        add_setting(
+            app,
+            Setting::slider(
+                "tweak-sneak-run-ap-endurance",
+                GROUP,
+                "Sneak-Running AP: Endurance Factor",
+                "Added to sneak-running AP per second for each point of Endurance over 5, subtracted below; negative saves AP. 0 changes nothing. (Stewie's Tweaks bRunningCostsAP, fSneakRunAPEnduranceMult)",
+                Slider {
+                    get: |w| w.get_resource::<TweakSettings>().map_or(0.5, |t| ((t.sneak_run_ap_endurance_mult + 1.0) / 2.0).clamp(0.0, 1.0)),
+                    set: |w, v| {
+                        if let Some(mut t) = w.get_resource_mut::<TweakSettings>() {
+                            t.sneak_run_ap_endurance_mult = ((v * 2.0 - 1.0) * 10.0).round() / 10.0;
+                        }
+                    },
+                    min: 0.0,
+                    step: 0.05,
+                    shown: Some(|v| {
+                        let rate = ((v * 2.0 - 1.0) * 10.0).round() / 10.0;
+                        if rate == 0.0 { "0.0".to_string() } else { format!("{rate:+.1}") }
+                    }),
+                },
+            ),
+        );
         // ---- batch 9 ----
         switch!(app, "no-selling", "No Selling", "The player cannot sell items in a barter (buying still works). (Stewie's Tweaks bDisableSellingItems)", no_selling);
         add_setting(
@@ -1664,7 +1715,7 @@ impl Plugin for TweaksPlugin {
         );
         // ---- batch 25 ----
         switch!(app, "invert-title-wheel", "Reverse Category Wheel", "The mouse wheel over a container's category title steps the other way. (Stewie's Tweaks bInvertContainerTitleScrollwheelDirection)", invert_title_wheel);
-        switch!(app, "armor-condition", "Armor Condition on the HUD", "The HUD shows the condition of the armour worn on the body, under the weapon's. (Stewie's Tweaks bArmorConditionLabel)", armor_condition);
+        switch!(app, "armor-condition", "Armor Condition on the HUD", "The HUD shows the condition of the armour worn on the body, under the weapon's. (Stewie's Tweaks bArmorConditionLabel)", game.armor_condition);
         part!(app, "armor-visible-below", "Armor Condition: Shown Below", "The armour's row shows only below this condition; 0% always. (Stewie's Tweaks bArmorConditionLabel)", armor_visible_below);
         part!(app, "armor-red-below", "Armor Condition: Red Below", "The armour's bar turns red below this condition; 0% never. (Stewie's Tweaks bArmorConditionLabel)", armor_red_below);
         part!(app, "armor-flash-below", "Armor Condition: Flashing Below", "The armour's bar flashes red below this condition; 0% never. (Stewie's Tweaks bArmorConditionLabel)", armor_flash_below);
@@ -2648,18 +2699,21 @@ fn ap_costs(
     if over {
         (jump, run) = (jump + tweaks.over_jump_ap, run + tweaks.over_run_ap);
     }
+    let sneak_run_base = tweaks.sneak_run_ap_base;
     let asked = intent.jump;
     let fresh_jump = asked && !*jumped;
     *jumped = asked;
-    if (jump <= 0.0 && run <= 0.0) || crate::combat::god_mode() {
+    if (jump <= 0.0 && run <= 0.0 && sneak_run_base <= 0.0) || crate::combat::god_mode() {
         return;
     }
     let (Some(rt), Some(mut sim)) = (script.as_deref_mut().and_then(|s| s.rt.as_mut()), sim) else { return };
-    let running = (intent.forward != 0.0 || intent.right != 0.0) && !intent.walk && !intent.sneak;
+    let moving = intent.forward != 0.0 || intent.right != 0.0;
+    let running = moving && !intent.walk && !intent.sneak;
+    let sneak_running = moving && !intent.walk && intent.sneak;
     let dt = time.delta_secs();
     let intent = &mut *intent;
     crate::script::with_world(rt, &mut sim, |rt| {
-        use fnv_game::actor_values::ACTION_POINTS;
+        use fnv_game::actor_values::{ACTION_POINTS, ENDURANCE};
         let g = &mut rt.game;
         let p = fnv_sim::FormId::PLAYER_REF;
         let mut ap = fnv_game::functions::actor_value(g, p, ACTION_POINTS).unwrap_or(0.0);
@@ -2672,9 +2726,17 @@ fn ap_costs(
                 info!("tweaks: jump refused, {ap:.0} AP of {jump:.0}");
             }
         }
-        if running && run > 0.0 {
+        let move_rate = if running {
+            run
+        } else if sneak_running {
+            let endurance = fnv_game::functions::actor_value(g, p, ENDURANCE).unwrap_or(5.0) as f32;
+            sneak_run_ap_rate(sneak_run_base, tweaks.sneak_run_ap_endurance_mult, endurance)
+        } else {
+            0.0
+        };
+        if move_rate > 0.0 {
             if ap > 0.0 {
-                fnv_game::functions::add_actor_value_damage(g, p, ACTION_POINTS, f64::from(run * dt).min(ap));
+                fnv_game::functions::add_actor_value_damage(g, p, ACTION_POINTS, f64::from(move_rate * dt).min(ap));
             } else {
                 intent.walk = true;
             }
@@ -3001,5 +3063,27 @@ mod tests {
         assert_eq!(t.game, Tweaks::default());
         assert_eq!(t.game.xp_multiplier, 1.0);
         assert!(!t.no_karma_messages && !t.disable_fast_travel && !t.keep_chosen_ammo);
+        assert_eq!(t.sneak_run_ap_base, 0.0);
+        assert_eq!(t.sneak_run_ap_endurance_mult, 0.0);
+        assert_eq!(t.console_label(), "Console");
+    }
+
+    #[test]
+    fn sneak_run_ap_rate_follows_endurance_formula() {
+        assert_eq!(sneak_run_ap_rate(0.0, -0.1, 1.0), 0.0, "disabled when base is zero");
+        assert_eq!(sneak_run_ap_rate(2.0, 0.0, 10.0), 2.0, "flat base with zero multiplier");
+        assert!((sneak_run_ap_rate(2.0, -0.2, 10.0) - 1.0).abs() < 1e-6, "higher Endurance reduces drain");
+        assert!((sneak_run_ap_rate(2.0, -0.2, 1.0) - 2.8).abs() < 1e-6, "lower Endurance raises drain");
+        assert_eq!(sneak_run_ap_rate(0.5, -0.5, 10.0), 0.0, "clamped non-negative");
+    }
+
+    #[test]
+    fn help_console_label_uses_custom_text_or_default() {
+        let mut t = TweakSettings::default();
+        assert_eq!(t.console_label(), "Console");
+        t.help_console_label = "   ".to_string();
+        assert_eq!(t.console_label(), "Console");
+        t.help_console_label = " Dev Console ".to_string();
+        assert_eq!(t.console_label(), "Dev Console");
     }
 }

@@ -566,7 +566,8 @@ mod tests {
         hide-hud-on-load grey-read-notes remember-item-places player-weapon-volume npc-weapon-volume \
         keep-fall-height-on-load no-marker-popup marker-shift-removes marker-removed-on-it clear-marker-within \
         place-marker-here-says repeat-activate-takes-only hi-res-npc-weapons empty-reload-swaps-ammo keep-chosen-ammo \
-        objectives-on-arrival objectives-gap sleep-in-owned-beds power-armor-no-training";
+        objectives-on-arrival objectives-gap sleep-in-owned-beds power-armor-no-training \
+        sneak-run-ap-cost sneak-run-ap-endurance";
 
     /// [`TWEAK_ROWS`] as keys, under the Tweaks tab's group.
     fn tweak_rows() -> Vec<(&'static str, &'static str)> {
@@ -757,8 +758,8 @@ mod tests {
     fn every_tweak_of_1892_has_its_group_and_category() {
         let tweaks = tweak_rows();
         // 564 less the console and screenshot keys, bindings since 2026-11-16 (Controls),
-        // plus Keep Chosen Ammo (#3305).
-        assert_eq!(tweaks.len(), 563);
+        // plus Keep Chosen Ammo (#3305) and Running Costs AP sneak options (#3183).
+        assert_eq!(tweaks.len(), 565);
         let mut rows: Vec<(&'static str, &'static str)> = KNOWN.to_vec();
         rows.extend(&tweaks);
         let list = registry(&rows);
