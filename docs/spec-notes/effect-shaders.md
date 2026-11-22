@@ -152,7 +152,7 @@ Read here as [hypothesis where marked]:
   got an added rim in their pale edge colours (fall off 0.95, edge colours from
   (164, 206, 240) to (213, 210, 191)). That it looked near-white and washed the yellow
   and red fills out is a hypothesis until frames of both engines are compared
-  [hypothesis: observer-checks.md item 266].
+  [hypothesis: observer-checks.md item 270].
 - Which records the flag reaches [observed: the main session's EFSH listing over the
   masters, 2026-11-21]: it is set on FalloutNV.esm's `PlasmaGooification`,
   `PlasmaGooificationGlow` and `PlasmaGooificationSmall` (destination Source Inverted
@@ -199,7 +199,7 @@ Read here as [hypothesis where marked]:
   on the mesh's own material, not its blended copy, and the overlays' alpha is the
   record's cycle times the actor's alpha, so at 0 the membrane goes with the body
   [hypothesis: the original's fade of a membrane with SetActorAlpha is not documented;
-  observer-checks.md item 266]. The factor is the alpha of the see-through copy the
+  observer-checks.md item 270]. The factor is the alpha of the see-through copy the
   reference's meshes wear that frame (the actor alpha is drawn first, so a membrane
   started on an actor already at 0 starts unseen), 1 without one: the player's
   third-person body is not
@@ -445,7 +445,7 @@ What runs here:
   whatever colour a code holder's OnLoad has just restored. The script's shape suggests
   its authors expected a threat colour to take over and the neutral replay not to undo
   a code holder's alert [hypothesis: inferred from the call sequence; observer-checks.md
-  item 266]. The colour rule, applied at the script call
+  item 270]. The colour rule, applied at the script call
   (`fnv_game::functions::misc::ScriptLooks::play`), so HasEffectShader and the drawing
   agree:
   - a threat colour (Attention, Aggressive) played on a hologram ends the other colours

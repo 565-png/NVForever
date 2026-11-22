@@ -526,6 +526,7 @@ pub fn distant_water(
     mut dw: ResMut<DistantWater>,
     mut models: ModelCtx,
     mut water: WaterCtx,
+    pace: Res<crate::stream_pace::StreamPace>,
 ) {
     let Ok(root) = root.single() else { return };
     let on = lod.enabled && streamer.interior.is_none();
@@ -536,6 +537,9 @@ pub fn distant_water(
         return;
     }
     dw.built_for = Some(want_key);
+    let _spending = pace.spending();
+    // Above 60 fps a frame gets the same share of itself (stream_pace.rs).
+    let reads_a_frame = pace.count(SURFACE_READS_PER_FRAME);
     // The cells with water under the terrain chunks chosen now (none while the LOD is off
     // or nothing is chosen), redone only when the choice changes.
     if dw.want_for != Some(want_key) {
@@ -568,7 +572,7 @@ pub fn distant_water(
         // of one frame [observed 2026-11-19, `profile hitch`]). At most
         // `SURFACE_READS_PER_FRAME` are read a frame, the rest the frames after.
         if !dw.surface_known(c) {
-            if reads >= SURFACE_READS_PER_FRAME {
+            if reads >= reads_a_frame {
                 dw.built_for = None;
                 continue;
             }
