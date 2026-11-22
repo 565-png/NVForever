@@ -1543,6 +1543,17 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   in 55 it is nearer than the fog's end (WinsResidence 1,800 against 3,300). As built:
   indoors the camera's far plane is the clip distance, 0 for none [hypothesis: 0 is no
   clip]; outdoors 400,000 units as before.
+- **Interior unset fog ranges** [observed, Fallout3.esm and FalloutNV.esm; #3038]: some
+  interiors store a fog range whose far is not beyond its clamped near
+  (`fog_far <= fog_near.max(0.0)`, most commonly `0..0` with black fog colour): 57 of 420
+  interiors in `Fallout3.esm` (48 without a lighting template, including `zGrandmaSparkle`,
+  and 9 whose `LTMP` also stores an unset range) and 9 of 388 in `FalloutNV.esm` (7 without
+  a template, 2 via `LTMP`). Cells such as `GermPoliceHQ01` store `0..0` in raw `XCLL` but
+  inherit a non-zero fog range (`64..6500`) from their `LTMP` (`NeoclassicalDefaultTemplateDC`).
+  Taken literally through `fog::falloff`'s `far.max(near + 1.0)` clamp, an opaque `0..0`
+  black fog would draw the room solid black past 1 game unit; matching exterior weathers
+  (*Unset fog ranges* above), `nvforever/src/sky.rs::apply_cell_fog` treats
+  `fog_far <= fog_near.max(0.0)` as no fog (`alpha = 0`, `NO_FOG_FAR`) [hypothesis].
 - **Fog power** (XCLL, LGTM, WTHR) varies (1.0 in 189 interiors, 0.5–2.0 in the rest;
   0.2–1.0 in the masters' 98 weathers, the Mojave's 0.6 by day and 0.5 by night, Dead
   Money's 0.21–0.5 [observed, `weather_dump.rs --fog`]). What curve it sets is not
