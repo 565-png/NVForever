@@ -25,7 +25,7 @@ impl Plugin for ProvokedPlugin {
 }
 
 #[derive(Resource, Default)]
-struct Stats {
+pub(crate) struct Stats {
     assaulted: usize,
     tolerated: usize,
     ignored: usize,
