@@ -34503,7 +34503,7 @@ expect = [
 
 [[scenario]]
 name = "game-parallax-vault34"
-source = "[design, #2979] docs/spec-notes/nif.md §6 \"Parallax height maps\", docs/spec-notes/pbr-materials.md \"The game's own height maps\": with authored materials off, Vault 34's shapes whose texture set names a height map (slot 3) with shader flag bit 11 draw it as a depth map; depth and method provisional [hypothesis] until observer check 261; a frame in target/smoke (game_parallax_vault34.png)"
+source = "[design, #2979] docs/spec-notes/nif.md §6 \"Parallax height maps\", docs/spec-notes/pbr-materials.md \"The game's own height maps\": with authored materials off, Vault 34's shapes whose texture set names a height map (slot 3) with shader flag bit 11 draw it as a depth map; depth and method provisional [hypothesis] until observer check 265; a frame in target/smoke (game_parallax_vault34.png)"
 areas = ["renderer", "textures", "nif"]
 paths = ["engine/nvf-assets/src/authored.rs", "engine/nvf-assets/src/authored/", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/nif_spawn/", "engine/nvf-assets/src/model.rs", "engine/nvf-assets/src/actor.rs", "engine/nvforever/src/effect_shaders.rs", "engine/vendor/bevy_pbr/src/render/parallax_mapping.wesl"]
 # The switches the counts depend on are pinned (depth, method, layers, alpha-tested), and authored sets are off, so every count is the game's own maps.
