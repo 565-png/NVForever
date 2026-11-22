@@ -103,6 +103,18 @@
 //!   placed reference with a dynamic body for that long after its cell loads — offsets,
 //!   turns, speeds and the overlaps found after the first step (physics.md §4.3.1).
 //!
+//! - `NVF_PLAY_TEST_PBR_MOUNT_PACK=1` (nvf-assets pbr_field/reflect.rs) and
+//!   `NVF_PLAY_TEST_PBR_GROUND_PACK=1` (nvf-assets pbr_field/ground.rs, with nvforever
+//!   terrain.rs `ground_pack_diffuses`): generated authored sets written into a fresh folder
+//!   of the run under an explicit `NVFOREVER_HOME` and mounted over every other loose layer
+//!   for that run only; the ground pack gives every landscape texture the load order names a
+//!   height-only set (a ridged `_p` from a formula, depth 0.08) for the terrain parallax
+//!   (#3322).
+//! - `NVF_PLAY_TEST_TERRAIN_PARALLAX_AB=<seconds>[:hold][,...]` (nvforever
+//!   terrain_parallax_ab.rs): three screenshots at each time, the Terrain parallax switch
+//!   off, on, off (or left alone with `hold`), and one log line measuring how the ground's
+//!   texture at the centre of the view moved between them (`moved`, `still`, ...).
+//!
 //! With any `NVF_PLAY_TEST_*` variable set the run is unattended ([`Unattended`]): the
 //! cursor is not grabbed, so the desktop's mouse neither leaves the user nor turns the
 //! view (as with `--auto-walk`). Not the aids that only measure ([`MEASURING_AIDS`]:

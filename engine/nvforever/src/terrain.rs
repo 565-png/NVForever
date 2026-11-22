@@ -654,6 +654,29 @@ pub fn sync_parallax(graphics: Option<Res<crate::graphics::Graphics>>, mut mater
     *last = Some(want);
 }
 
+/// The diffuse paths the ground pack test aid writes height-only sets for (nvf_assets
+/// `seed_ground_pack`, #3322): every landscape texture the load order `plugins` names (each
+/// LTEX's winning definition, its texture set's TX00, as [`TerrainCtx::texture_of`] reads it
+/// through `land_texture`) and the default ground texture (a layer without a texture draws
+/// it), so every texture a folded layer can draw has one. The LTEX records are read from a
+/// load order of the plugins' own, made for this and dropped again (the aid runs before the
+/// game's own is built).
+pub fn ground_pack_diffuses(plugins: &[fnv_esm::Plugin], schema_dir: &std::path::Path) -> Result<Vec<String>, String> {
+    let schema = EsmSchema::load_dir(schema_dir).map_err(|e| format!("{}: {e}", schema_dir.display()))?;
+    let lo = LoadOrder::new(plugins).map_err(|e| e.to_string())?;
+    let ltex = lo.index.iter().filter(|(_, defs)| defs.last().is_some_and(|d| &lo.records[d.plugin as usize][d.ordinal as usize].header.sig == b"LTEX")).map(|(&id, _)| id);
+    Ok(ground_pack_list(ltex.map(|id| land_texture(&lo, &schema, id).and_then(|t| t.diffuse))))
+}
+
+/// [`ground_pack_diffuses`]' list from the LTEX records' diffuses (`None`: no texture set or
+/// no TX00): the default ground texture added, sorted, without repeats.
+fn ground_pack_list(diffuses: impl Iterator<Item = Option<String>>) -> Vec<String> {
+    let mut list: Vec<String> = diffuses.flatten().chain([DEFAULT_DIFFUSE.to_string()]).collect();
+    list.sort();
+    list.dedup();
+    list
+}
+
 /// Whether the settings ask for anti-tiling (module notes); false without the `Graphics`
 /// resource.
 fn anti_tiling_wanted(graphics: Option<&crate::graphics::Graphics>) -> bool {
@@ -2458,6 +2481,15 @@ mod tests {
         // A set deeper than the scale is held to it.
         let deep = TerrainLayers { parallax_depths: [0.2, 0.0, 0.0, 0.0, 0.0, 0.0], ..alone.clone() };
         assert_eq!(deep.layer_depths()[0], PARALLAX_SCALE);
+    }
+
+    #[test]
+    fn the_ground_pack_covers_every_named_texture_and_the_default_once() {
+        let list = ground_pack_list([Some(r"Landscape\Dirt02.dds".to_string()), None, Some(r"Landscape\Dirt02.dds".to_string()), Some(r"landscape\rocks01.dds".to_string())].into_iter());
+        let mut want = vec![DEFAULT_DIFFUSE.to_string(), r"Landscape\Dirt02.dds".to_string(), r"landscape\rocks01.dds".to_string()];
+        want.sort();
+        assert_eq!(list, want, "each named texture once, a record without one left out, the default added");
+        assert_eq!(ground_pack_list(std::iter::empty()), [DEFAULT_DIFFUSE.to_string()], "a load order without LTEX still covers the default ground");
     }
 
     #[test]
