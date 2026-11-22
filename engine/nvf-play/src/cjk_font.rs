@@ -540,7 +540,9 @@ mod tests {
         assert_ne!(glyph, 0);
         let count = u16::from_be_bytes(bytes[4..6].try_into().unwrap()) as usize;
         let cmap = bytes[12..12 + 16 * count]
-            .chunks_exact(16)
+            .as_chunks::<16>()
+            .0
+            .iter()
             .find(|record| &record[..4] == b"cmap")
             .unwrap();
         let offset = u32::from_be_bytes(cmap[8..12].try_into().unwrap()) as usize;

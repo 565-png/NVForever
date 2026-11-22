@@ -574,6 +574,8 @@ pub fn hover_boxes(mut pip: ResMut<PipBoy>, mut boxes: Query<(&TabHoverBox, &mut
     }
 }
 
+type ShownFrame = (Page, usize, Frame, bool, u32);
+
 /// Rebuild the frame (and with it every page's body) when the Pip-Boy's page or tab
 /// changed, or it came up, or a page went over to its tiles or back. A page drawn from its
 /// file (`crate::tiles::stats_menu::StatsTiles::ready` or
@@ -596,7 +598,7 @@ pub fn draw(
     repair_tiles: Option<Res<crate::tiles::repair_menu::RepairTiles>>,
     map_tiles: Option<Res<crate::tiles::map_menu::MapTiles>>,
     item_mod_tiles: Option<Res<crate::tiles::item_mod_menu::ItemModTiles>>,
-    mut shown: Local<Option<(Page, usize, Frame, bool, u32)>>,
+    mut shown: Local<Option<ShownFrame>>,
 ) {
     // Laid out in the Pip-Boy's screen texture, at its size whatever the UI scale (#1631).
     let _canvas = crate::interface::original_units();
