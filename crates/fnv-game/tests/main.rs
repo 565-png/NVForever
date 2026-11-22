@@ -46,6 +46,7 @@ mod difficulty;
 mod effect_updates;
 mod experience;
 mod explosion_overrides;
+mod extra_camera;
 mod player_source_commands;
 mod pipboy_mode;
 mod extender_conditions;

@@ -32,6 +32,7 @@ mod exit_watch;
 mod native_crash_unix;
 mod nif_mirror;
 mod nif_attachments;
+mod extra_camera;
 // Authored record builders are loaded once for the engine test binary.
 #[cfg(test)]
 #[path = "../../../crates/fnv-game/tests/common/mod.rs"]
@@ -2217,6 +2218,8 @@ fn main() -> AppExit {
             app.add_plugins(anim_state::AnimStatePlugin);
             // JIP's NIF block functions on the drawn nodes (nif_mirror.rs).
             app.add_plugins(nif_mirror::NifMirrorPlugin);
+            // JIP's extra render-to-texture cameras (AttachExtraCamera / ProjectExtraCamera).
+            app.add_plugins(extra_camera::ExtraCameraPlugin);
             // kNVSE's replacement animations on the drawn actors (anim_paths.rs).
             app.add_plugins(anim_paths::AnimPathsPlugin);
         }
