@@ -102,8 +102,9 @@
 //!   fill. A light inherited from an older cube is removed as soon as the camera or cube
 //!   changes, not when the new fill lands: any light of a cube a fill went into, while the
 //!   camera holds another cube or none. The hemisphere means (a pass over the room's
-//!   level-0 texels) are taken only for fills asked while their cube had no fill yet (its
-//!   first, whose log line quotes them, and any asked behind it). Until the first fill of a
+//!   level-0 texels) are taken only for fills asked while the camera's cube was not the
+//!   last one filled (its first, whose log line quotes them, any asked behind it, and the
+//!   first after a camera or cube comes back from an earlier replacement). Until the first fill of a
 //!   camera is done the camera has no cube and no `EnvironmentMapLight`, as before the first
 //!   upload in stage 1; on entering an interior the outdoor cube stays until the room's
 //!   first fill is done.
@@ -773,9 +774,9 @@ pub struct FillRequest {
     /// when the fill is applied). A fill is applied only while the camera still holds that
     /// cube; a fill for a replaced camera or cube is discarded.
     pub target: (Entity, Option<AssetId<Image>>),
-    /// Take the hemisphere means on the worker: asked while its cube had no fill yet (the
-    /// first, or one queued behind it),
-    /// whose log line quotes them.
+    /// Take the hemisphere means on the worker: asked while its cube was not the last one
+    /// filled (the first, one queued behind it, or the first after a camera or cube comes
+    /// back), whose log line quotes them.
     pub means: bool,
 }
 
