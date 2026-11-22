@@ -100,8 +100,10 @@
 //!   was asked for (none: a cube is made on applying it); a fill whose camera or cube was
 //!   replaced meanwhile is discarded, and the replacement's change of target asks its own
 //!   fill. A light inherited from an older cube is removed as soon as the camera or cube
-//!   changes, not when the new fill lands. The hemisphere means (a pass over the room's
-//!   level-0 texels) are taken only for a cube's first fill, whose log line quotes them. Until the first fill of a
+//!   changes, not when the new fill lands: any light of a cube a fill went into, while the
+//!   camera holds another cube or none. The hemisphere means (a pass over the room's
+//!   level-0 texels) are taken only for fills asked while their cube had no fill yet (its
+//!   first, whose log line quotes them, and any asked behind it). Until the first fill of a
 //!   camera is done the camera has no cube and no `EnvironmentMapLight`, as before the first
 //!   upload in stage 1; on entering an interior the outdoor cube stays until the room's
 //!   first fill is done.
@@ -771,7 +773,8 @@ pub struct FillRequest {
     /// when the fill is applied). A fill is applied only while the camera still holds that
     /// cube; a fill for a replaced camera or cube is discarded.
     pub target: (Entity, Option<AssetId<Image>>),
-    /// Take the hemisphere means on the worker: this fill is expected to be its cube's first,
+    /// Take the hemisphere means on the worker: asked while its cube had no fill yet (the
+    /// first, or one queued behind it),
     /// whose log line quotes them.
     pub means: bool,
 }
@@ -856,12 +859,16 @@ fn spawn_fill(request: &FillRequest, hold: Option<Arc<AtomicBool>>) -> Task<Fill
     })
 }
 
-/// Remove a light the camera inherited from the cube of the last applied fill when the
-/// camera now holds another cube or none (`current`), so no camera shows an older cube's
-/// reflection while its own fill runs; `attach_lights` installs the new cube's light once it
-/// is uploaded. Other maps stay.
+/// Remove a light the camera holds from any cube a fill went into ([`ReflectionSky`]'s
+/// `filled_cubes`) when the camera now holds another cube or none (`current`), so no camera
+/// shows an older cube's reflection while its own fill runs, and `attach_lights` (which
+/// skips a camera that has a light) installs the new cube's light once it is uploaded.
+/// Other maps stay.
 fn drop_inherited_light(state: &ReflectionSky, commands: &mut Commands, entity: Entity, environment: Option<&EnvironmentMapLight>, current: Option<AssetId<Image>>) {
-    if state.target.is_some_and(|(_, old)| Some(old) != current && environment.is_some_and(|light| light.specular_map.id() == old)) {
+    if environment.is_some_and(|light| {
+        let id = light.specular_map.id();
+        Some(id) != current && state.filled_cubes.contains(&id)
+    }) {
         commands.entity(entity).remove::<EnvironmentMapLight>();
     }
 }
@@ -1083,6 +1090,9 @@ pub struct ReflectionSky {
     slowest_apply_ms: f32,
     /// Finished fills discarded because their camera or cube was replaced meanwhile.
     discarded: u64,
+    /// Every specular cube a fill went into (one per camera or cube replacement): a light of
+    /// one of them on a camera holding another cube is stale ([`drop_inherited_light`]).
+    filled_cubes: std::collections::HashSet<AssetId<Image>>,
     /// The tests' seam: while set, fills started on the worker wait (never set in the game).
     hold: Option<Arc<AtomicBool>>,
     /// The last interior whose room fill was logged, and whether that fill had lamps.
@@ -1387,8 +1397,9 @@ fn apply_fill(
         }
         specular
     };
-    // A camera can retain or inherit the light from the previous cube (produce removes it
-    // when the target changes; again here for a light added since). Preserve unrelated maps.
+    state.filled_cubes.insert(specular);
+    // A camera can retain or inherit the light from an older cube (produce removes it when
+    // the target changes; again here for a light added since). Preserve unrelated maps.
     drop_inherited_light(state, commands, entity, environment, Some(specular));
     let apply_ms = started.elapsed().as_secs_f32() * 1000.0;
     state.slowest_apply_ms = state.slowest_apply_ms.max(apply_ms);

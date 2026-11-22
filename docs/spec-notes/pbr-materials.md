@@ -805,8 +805,10 @@ reflection); computed on the CPU from what the renderer already lights the room 
   frame's upload), two when a fill was already running. Each fill is applied only to the
   camera and cube it was asked for: a fill whose camera or cube was replaced meanwhile is
   discarded, and the replacement asks its own; a light inherited from an older cube is
-  removed as soon as the camera or cube changes. The hemisphere means the first-fill line
-  quotes (a pass over the room's level-0 texels) are taken only for a cube's first fill.
+  removed as soon as the camera or cube changes (the light of any cube a fill went into,
+  while the camera holds another cube or none). The hemisphere means the first-fill line
+  quotes (a pass over the room's level-0 texels) are taken only for fills asked while
+  their cube had no fill yet: its first, and any queued behind it.
   Until a camera's first fill is done it has no cube and no environment light, as before
   the first upload; on entering an interior the outdoor cube stays until the room's first
   fill is done
