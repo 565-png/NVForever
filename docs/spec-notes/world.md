@@ -2038,7 +2038,13 @@ Textures2.bsa`, `Fallout - Misc.bsa`, DLC archives]:
     sum is formed from the same lights, whose colours there hold display values; the
     surface gets diffuse colour × sum^2.2, held to 1 per channel. The lights' and the
     ambient light's highlights (specular) take their colours back as linear light;
-    taken as display values they put white sparkles on the floors of Jacobstown's lodge;
+    taken as display values they put white sparkles on the floors of Jacobstown's lodge.
+    On first-person shapes (`FIRST_PERSON_DEPTH`: arms, held weapon, Pip-Boy),
+    shadow-casting spot lights (the player flashlight, `flashlight.rs`) are scaled down in
+    both display diffuse (`0.15`) and specular (`0.10`) (`lights/display_shader.rs`)
+    [design, #3121] so aiming into the beam's inner core does not clip the weapon and hand
+    to white, while world geometry, third-person body/weapon (`BODY_LAYER`), and
+    non-shadow-casting world spot lamps (`LIGH` `SPOT`) stay at full strength;
   - shows the main view's colour clipped to 1 in the place of Tony McMapface (its curve
     in Bevy's tonemapping functions is swapped; the pass keeps running, and with it the
     eye adaptation's exposure, which Bevy applies there); the sky leaves out its inverse
