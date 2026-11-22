@@ -1414,16 +1414,34 @@ pub(crate) fn effective_image_space(
     }
 }
 
-/// Key tracking the last applied interior cell, worldspace, and `(game_instance_id, revision)`
-/// for [`cell_image_space`] so unchanged frames do zero work.
-type ImageSpaceSyncKey = (Option<u32>, u32, Option<(u64, u64)>);
+/// Cached cell-load and live trait-revision state for [`cell_image_space`] so unchanged
+/// frames do zero work and a pending `SetCellImageSpace` waits until the next cell load.
+#[derive(Default)]
+pub struct CellImageSpaceState {
+    /// Last `(interior_cell, worldspace, game_instance_id)` at which the active cell's
+    /// image space FormID was bound.
+    load_key: Option<(Option<u32>, u32, Option<u64>)>,
+    /// The `IMGS` FormID bound when the current interior cell loaded (from
+    /// `SetCellImageSpace` at load time, else authored `CELL XCIM`). Held fixed until the
+    /// cell next loads so a `SetCellImageSpace` call on the active cell does not switch
+    /// early when `SetImageSpaceTrait` refreshes traits.
+    active_interior_space: Option<u32>,
+    /// Last `SetImageSpaceTrait` revision applied to the active image space.
+    trait_rev: Option<u64>,
+}
 
 /// SetCellImageSpace (`fnv_game::game::FormChanges::cell_image_spaces`) and live
-/// `SetImageSpaceTrait` (`fnv_game::nvse_traits::TraitState`): re-evaluates the active
-/// interior cell's `sky.interior_grade` (from `SetCellImageSpace` or authored `CELL XCIM`)
-/// and the exterior worldspace's `sky.image_space` (`WRLD INAM`) with any live session
-/// `IMGS` trait overrides whenever travel occurs, the game instance changes, or the
-/// monotonic image-space revision advances. Does zero work on unchanged frames.
+/// `SetImageSpaceTrait` (`fnv_game::nvse_traits::TraitState`):
+/// - An interior cell's `SetCellImageSpace` assignment is bound when the cell loads (on
+///   travel, cell entry, or when the script runtime with a loaded save's changes becomes
+///   ready): the original shows a `SetCellImageSpace` change to the cell the player is
+///   already in only when the cell next loads [documented: GECK wiki SetCellImageSpace,
+///   notes].
+/// - Session `SetImageSpaceTrait` edits (`0..=32`) on the already-loaded active image
+///   space (interior bound `IMGS` or exterior `WRLD INAM`) refresh immediately when the
+///   monotonic trait revision advances [hypothesis: docs/spec-notes/world.md §6].
+/// - Does zero work on unchanged frames and resets cleanly on game-instance switches.
+///
 /// Runs after [`travel`].
 pub fn cell_image_space(
     mut travels: MessageReader<nvf_play::Travel>,
@@ -1431,23 +1449,36 @@ pub fn cell_image_space(
     world: Res<WorldData>,
     script: Option<Res<nvf_play::script::ScriptState>>,
     mut sky: ResMut<crate::sky::SkyState>,
-    mut seen: Local<Option<ImageSpaceSyncKey>>,
+    mut state: Local<CellImageSpaceState>,
 ) {
     let game = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
-    let key = (streamer.interior, world.world, game.map(|g| g.image_space_sync_token()));
+    let token = game.map(|g| g.image_space_sync_token());
+    let instance_id = token.map(|(id, _)| id);
+    let trait_rev = token.map(|(_, rev)| rev);
+    let load_key = (streamer.interior, world.world, instance_id);
     let travelled = travels.read().count() > 0;
-    if *seen == Some(key) && !travelled {
+    let rebind = state.load_key != Some(load_key) || travelled;
+    if !rebind && state.trait_rev == trait_rev {
         return;
     }
-    *seen = Some(key);
+    state.load_key = Some(load_key);
+    state.trait_rev = trait_rev;
     if let Some(cell) = streamer.interior {
-        let scripted = game.and_then(|g| g.forms.cell_image_spaces.get(&fnv_sim::FormId(cell)).map(|f| f.0));
-        let space = scripted.or_else(|| fnv_world::lighting::cell_image_space(world.lo, world.schema, cell));
+        let mut scripted = false;
+        let space = if rebind {
+            let assigned = game.and_then(|g| g.forms.cell_image_spaces.get(&fnv_sim::FormId(cell)).map(|f| f.0));
+            scripted = assigned.is_some();
+            let bound = assigned.or_else(|| fnv_world::lighting::cell_image_space(world.lo, world.schema, cell));
+            state.active_interior_space = bound;
+            bound
+        } else {
+            state.active_interior_space
+        };
         match space {
             Some(id) => match effective_image_space(&world, game, id) {
                 Some(grade) => {
                     if sky.interior_grade != Some(grade) {
-                        if scripted.is_some() {
+                        if scripted {
                             info!("cell image space: {cell:#010x} graded with {id:#010x} (SetCellImageSpace)");
                         }
                         sky.interior_grade = Some(grade);
@@ -1459,6 +1490,7 @@ pub fn cell_image_space(
         }
         return;
     }
+    state.active_interior_space = None;
     let world_space = crate::sky::worldspace_image_space_id(&world);
     sky.world_image_space_id = world_space;
     let next = world_space.and_then(|id| effective_image_space(&world, game, id));

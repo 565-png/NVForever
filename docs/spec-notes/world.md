@@ -1674,24 +1674,29 @@ Code: `engine/nvforever/src/underwater.rs` (`fog_bytes`, `DEEP_AT`).
 ### Live session `IMGS` traits, `SetCellImageSpace`, exterior `WTHR` fog, and GMSTs
 
 - **Image spaces (`SetImageSpaceTrait`, `SetCellImageSpace`)** [documented: GECK wiki
-  `GetImageSpaceTrait` / `SetImageSpaceTrait` traits `0..=32`, `SetCellImageSpace`;
-  design]:
+  `GetImageSpaceTrait` / `SetImageSpaceTrait` traits `0..=32`, `SetCellImageSpace` notes;
+  hypothesis: live in-place refresh for `SetImageSpaceTrait`]:
   - `fnv_world::imagespace::apply_image_space_traits` overlays session `SetImageSpaceTrait`
     values onto an `IMGS` record's `Cinematic` grade: HDR (`0..=14`), Bloom (`15..=17`),
     and Cinematic (`25..=32`, converting tint RGB traits `29..=31` from 0–255 to 0–1).
     Traits `18..=24` (`GetHit` / `NightEye`) remain stored in `Game::traits` for script
     readback (`GetImageSpaceTrait`) and have no rendered `Cinematic` field.
-  - `nvforever::world::cell_image_space` tracks `(streamer.interior, world.world,
-    game.image_space_sync_token())` — where the token carries a unique per-`Game` instance
-    ID and a monotonic `image_space_revision` bumped on `SetImageSpaceTrait` and
-    `SetCellImageSpace` — doing zero work on unchanged frames while immediately refreshing
-    `SkyState::interior_grade` (from `SetCellImageSpace` or authored `CELL XCIM`) and
-    `SkyState::image_space` (from `WRLD INAM`) without leaving the current cell. This is a
-    deliberate `[design]` live-refresh policy so location-based preset scripts updating the
-    active cell's `IMGS` in `OnCellEnter` or a main-loop callback take immediate effect.
+  - `SetCellImageSpace` preserves the original game's documented next-load behaviour
+    [documented: GECK wiki `SetCellImageSpace`, notes]: `nvforever::world::cell_image_space`
+    binds an interior cell's active `IMGS` FormID (`SetCellImageSpace` override, else
+    authored `CELL XCIM`) only when the cell loads (on travel, cell entry, or when the
+    script runtime with a loaded save's changes becomes ready). Calling
+    `SetCellImageSpace` on the cell the player is already in does not switch the active
+    grade until the cell next loads.
+  - Live `SetImageSpaceTrait` refresh on the already-loaded active `IMGS` (interior bound
+    `IMGS` or exterior `WRLD INAM`) is keyed on `(game_instance_id, image_space_revision)`
+    from `Game::image_space_sync_token()` — doing zero work on unchanged frames while
+    refreshing `SkyState::interior_grade` and `SkyState::image_space` in place without
+    re-reading pending `SetCellImageSpace` assignments [hypothesis: not yet independently
+    verified by an original-game capture].
 - **Exterior weather fog (`SetWeatherTraitNumeric` traits `15..=20`)** [documented: GECK
   wiki `GetWeatherTraitNumeric` / `SetWeatherTraitNumeric` traits `15..=20` (day/night
-  near, far, power); design]:
+  near, far, power); hypothesis: live in-place refresh on active weather]:
   - `nvforever::sky::sync_weather_fog` syncs session fog overrides from `Game::traits`
     into `SkyState::weather_fog_overrides` keyed on `(game_instance_id,
     weather_fog_revision)` (zero work on unchanged frames) and calls `SkyState::refresh()`.

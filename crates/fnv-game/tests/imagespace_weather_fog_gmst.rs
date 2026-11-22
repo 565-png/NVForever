@@ -157,12 +157,11 @@ fn imagespace_and_weather_fog_tokens_track_live_edits_and_isolate_instances() {
     assert!(ovs.contains(&(29, 250.0)));
     assert!(ovs.contains(&(32, 0.25)));
 
-    // SetCellImageSpace bumps image_space_revision on change, and is idempotent on repeat.
+    // SetCellImageSpace records the assignment for the next cell load (documented GECK wiki
+    // rule) and must NOT bump the live SetImageSpaceTrait revision token.
     q(&mut g, "SetCellImageSpace OwnedIntCell OwnedImgB");
-    let img_rev2 = g.image_space_sync_token().1;
-    assert_eq!(img_rev2, img_rev1 + 1);
-    q(&mut g, "SetCellImageSpace OwnedIntCell OwnedImgB");
-    assert_eq!(g.image_space_sync_token().1, img_rev2);
+    assert_eq!(g.forms.cell_image_spaces.get(&FormId(CELL_INT)), Some(&FormId(IMGS_B)));
+    assert_eq!(g.image_space_sync_token().1, img_rev1);
 
     // Non-fog weather trait (wind speed = 4) must NOT bump weather_fog_revision.
     q(&mut g, "SetWeatherTraitNumeric OwnedWeatherA 4 0.5");

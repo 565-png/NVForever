@@ -24,8 +24,9 @@ pub struct TraitState {
     /// Unique per-`Game` instance identity so renderer caches never reuse session trait
     /// state across a restored or recreated `Game`.
     pub instance_id: u64,
-    /// Monotonic revision bumped whenever `SetImageSpaceTrait` or `SetCellImageSpace`
-    /// changes an image-space trait or cell assignment.
+    /// Monotonic revision bumped whenever `SetImageSpaceTrait` (`0..=32`) changes an
+    /// `IMGS` trait value (`SetCellImageSpace` applies on next cell load and does not
+    /// bump this revision).
     pub image_space_revision: u64,
     /// Monotonic revision bumped whenever `SetWeatherTraitNumeric` changes a weather fog
     /// trait (`15..=20`: day/night near/far/power).
@@ -51,8 +52,8 @@ impl TraitState {
         self.values.get(&(form, IMAD, trait_id)).copied()
     }
 
-    /// Record a live change to a cell's image space assignment or an `IMGS` trait.
-    pub(crate) fn note_image_space_change(&mut self) {
+    /// Record a live change to an `IMGS` trait (`SetImageSpaceTrait`).
+    fn note_image_space_change(&mut self) {
         self.image_space_revision = self.image_space_revision.wrapping_add(1);
     }
 
@@ -119,8 +120,9 @@ impl Game<'_> {
     }
 
     /// Unique `(game_instance_id, image_space_revision)` token for renderer consumers
-    /// tracking live `SetCellImageSpace` and `SetImageSpaceTrait` updates without work
-    /// on unchanged frames.
+    /// tracking live `SetImageSpaceTrait` (`0..=32`) updates without work on unchanged
+    /// frames. `SetCellImageSpace` follows the documented next-load rule and does not
+    /// bump this revision.
     pub fn image_space_sync_token(&self) -> (u64, u64) {
         (self.traits.instance_id, self.traits.image_space_revision)
     }

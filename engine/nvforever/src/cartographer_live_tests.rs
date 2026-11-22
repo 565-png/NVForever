@@ -306,7 +306,7 @@ fn fog_range(f: &FogFalloff) -> (f32, f32) {
 }
 
 #[test]
-fn live_imagespace_traits_and_set_cell_image_space_update_grade_without_leaving_cell() {
+fn live_imagespace_traits_refresh_while_set_cell_image_space_waits_for_next_load() {
     let (world, play, forms, refs) = fixture(0, Some(CELL_INT));
     let (script, sim) = runtime(play, forms, refs);
     let mut sky = authored_session_sky();
@@ -359,7 +359,7 @@ fn live_imagespace_traits_and_set_cell_image_space_update_grade_without_leaving_
     assert_eq!(source(&mut a, "SetFunctionValue (GetImageSpaceTrait OwnedImgA 18)"), XVal::Num(0.9));
     assert_eq!(source(&mut a, "SetFunctionValue (GetImageSpaceTrait OwnedImgA 21)"), XVal::Num(0.5));
 
-    // Refresh happens live without leaving the cell or emitting a Travel message.
+    // Trait edits on the already-loaded IMGS refresh live without leaving the cell [hypothesis].
     a.update();
     let g = *a.world().get::<ImageSpaceGrade>(cam).unwrap();
     assert!(approx(g.saturation, 0.72), "live saturation: {}", g.saturation);
@@ -389,16 +389,42 @@ fn live_imagespace_traits_and_set_cell_image_space_update_grade_without_leaving_
         "cell_image_space must do zero work on unchanged frames"
     );
 
-    // Live SetCellImageSpace + SetImageSpaceTrait on the newly assigned IMGS refreshes in-place.
+    // Documented next-load rule (GECK wiki SetCellImageSpace): calling SetCellImageSpace on
+    // the cell the player is already in must NOT switch the active image space before reload.
+    source(&mut a, "SetCellImageSpace OwnedIntCell OwnedImgB");
+    a.update();
+    assert_eq!(
+        a.world().resource::<SkyState>().interior_grade.unwrap().saturation,
+        7.75,
+        "SetCellImageSpace on current cell must wait until next cell load"
+    );
+    let g = *a.world().get::<ImageSpaceGrade>(cam).unwrap();
+    assert!(approx(g.brightness, 0.92), "must keep OwnedImgA brightness before reload, got {}", g.brightness);
+
+    // Even when SetImageSpaceTrait triggers a live refresh while SetCellImageSpace is pending,
+    // only the already-bound OwnedImgA traits refresh — OwnedImgB still waits for next load.
     source(
         &mut a,
-        "SetCellImageSpace OwnedIntCell OwnedImgB\n\
+        "SetImageSpaceTrait OwnedImgA 25 0.61\n\
          SetImageSpaceTrait OwnedImgB 25 0.35",
     );
     a.update();
     let g = *a.world().get::<ImageSpaceGrade>(cam).unwrap();
-    assert!(approx(g.saturation, 0.35), "SetCellImageSpace + trait override saturation: {}", g.saturation);
-    assert!(approx(g.brightness, 1.25), "SetCellImageSpace brightness from OwnedImgB: {}", g.brightness);
+    assert!(approx(g.saturation, 0.61), "bound OwnedImgA trait refreshes live: {}", g.saturation);
+    assert!(approx(g.brightness, 0.92), "pending SetCellImageSpace must not apply early: {}", g.brightness);
+
+    // Next cell load (Travel / re-entry) binds OwnedImgB and applies its live trait override.
+    a.world_mut().write_message(nvf_play::Travel {
+        world: None,
+        interior: Some(CELL_INT),
+        feet: [0.0; 3],
+        heading_deg: 0.0,
+        pitch_deg: None,
+    });
+    a.update();
+    let g = *a.world().get::<ImageSpaceGrade>(cam).unwrap();
+    assert!(approx(g.saturation, 0.35), "reloaded cell binds OwnedImgB + trait override saturation: {}", g.saturation);
+    assert!(approx(g.brightness, 1.25), "reloaded cell binds OwnedImgB brightness: {}", g.brightness);
 
     // Game-instance switch (new/loaded game) immediately restores authored IMGS_A.
     let (fresh_script, fresh_sim) = runtime(play, forms, refs);
