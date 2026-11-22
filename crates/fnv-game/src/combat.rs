@@ -254,9 +254,12 @@ pub fn worn_armor_class(world: &fnv_sim::World, id: FormId) -> fnv_sim::forms::A
         .equipment(id)
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|i| world.forms.item(i))
-        .find(|it| it.kind == ItemKind::Armor && it.slots.is_some_and(|s| s & crate::detection::UPPER_BODY != 0))
-        .map_or(ArmorClass::Light, |it| it.armor_class)
+        .find(|&i| {
+            world.resolve_item(i).is_some_and(|it| it.kind == ItemKind::Armor)
+                && world.effective_slots(i).is_some_and(|s| s & crate::detection::UPPER_BODY != 0)
+        })
+        .and_then(|i| world.effective_armor_class(i))
+        .unwrap_or(ArmorClass::Light)
 }
 
 /// Settings with their documented defaults (GECK wiki Experience Settings).
@@ -830,6 +833,21 @@ impl Game<'_> {
                 (l.condition, after, crippled)
             })
             .collect()
+    }
+
+    /// Apply an explosion's live object effect (`EITM`, respecting `SetExplosionTraitForm`
+    /// trait 5 and `TempCloneForm` snapshots via [`Game::explosion_traits`]) to `target`
+    /// as a hit effect. Dead or immune targets and explosions without an enchantment
+    /// apply nothing. Returns the active-effect ids started on `target`.
+    pub fn apply_explosion_effect(&mut self, explosion: FormId, target: FormId, caster: Option<FormId>) -> Vec<u32> {
+        if self.is_dead(target) || self.is_immune(target) {
+            return Vec::new();
+        }
+        let Some(ench) = self.explosion_traits(explosion).and_then(|t| t.enchantment) else {
+            return Vec::new();
+        };
+        let mods = crate::aid::Mods { hit: true, ..crate::aid::Mods::default() };
+        self.apply_magic_item_with(target, ench, caster, false, &mods).into_iter().filter(|a| !a.extended).map(|a| a.id).collect()
     }
 
     /// Lower a limb's condition by a hit (see the module notes): its condition after, and

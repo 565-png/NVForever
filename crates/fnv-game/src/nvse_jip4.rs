@@ -532,6 +532,9 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         "setcellclimate" | "setcelllightingtemplate" => {
             let sub = if name == "setcellclimate" { "XCCM" } else { "LTMP" };
             set(g, f0, sub, "", XVal::Ref(form(args, 1).map_or(0, |r| r.0)));
+            if name == "setcelllightingtemplate" {
+                g.bump_lighting_revision();
+            }
             zero
         }
         "setcellnoisetexture" => {

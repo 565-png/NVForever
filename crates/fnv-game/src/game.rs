@@ -1387,6 +1387,11 @@ pub struct Game<'a> {
     /// Record fields xNVSE's setters changed this session (`crate::nvse`), by form and
     /// "SUB/path", and the names SetName gave.
     pub(crate) field_overrides: std::collections::HashMap<(FormId, String), fnv_script::vm::XVal>,
+    /// Transient instance identity + monotonic revision for live interior cell-lighting
+    /// session edits (`SetCellLightingTemplate`, `SetCellFlag` 8..=16,
+    /// `SetLightingTemplateTraitNumeric`, `SetInteriorLightingTraitNumeric`); never saved.
+    pub(crate) lighting_instance: u64,
+    pub(crate) lighting_revision: u64,
     /// Owner witness for bounded diagnostic restoration; never part of a save.
     pub(crate) projectile_launch_restore_owner: std::sync::Arc<()>,
     pub(crate) name_overrides: std::collections::HashMap<FormId, String>,
@@ -2445,6 +2450,10 @@ pub struct Session {
     /// Session-only perk definition edits (`Lu3State::perk_edits`: entries, `SetPerkLevel`,
     /// `SetPerkFlag`, `LNSetIsPlayable`).
     perk_edits: std::collections::HashMap<FormId, crate::data::PerkDef>,
+    /// Session-only `SetRadius` reference overrides (`LutanaState::ref_radius`).
+    ref_radius: std::collections::HashMap<FormId, f32>,
+    /// Session-only `SetRadiationExtraData` overrides (`ShowOffState::radiation`).
+    radiation: std::collections::HashMap<FormId, f32>,
     /// Session-only authored package overrides (`Game::package_overrides` for forms in
     /// `GameData::package_defs`: SetPackageFlag, SetPackageLocationRadius,
     /// SetPackageTargetDistance, etc.).
@@ -2564,6 +2573,11 @@ impl<'a> Game<'a> {
             delayed: Vec::new(),
             ref_walk: Vec::new(),
             field_overrides: std::collections::HashMap::new(),
+            lighting_instance: {
+                static NEXT_LIGHTING_INSTANCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+                NEXT_LIGHTING_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
+            lighting_revision: 0,
             projectile_launch_restore_owner: std::sync::Arc::new(()),
             name_overrides: std::collections::HashMap::new(),
             mod_data: BTreeMap::new(),
@@ -3873,7 +3887,7 @@ impl<'a> Game<'a> {
             .map(|(&id, &def)| (id, def.clone()))
             .collect();
         self.package_overrides.retain(|id, _| !self.data.package_defs.contains_key(id));
-        Session { handlers, main_loop, main_loop_registrars, jip_seq, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits), owner_ranks: std::mem::take(&mut self.other.owner_ranks), destruction: std::mem::take(&mut self.other.jip6.destruction), perk_edits: std::mem::take(&mut self.lu3.perk_edits), package_overrides }
+        Session { handlers, main_loop, main_loop_registrars, jip_seq, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits), owner_ranks: std::mem::take(&mut self.other.owner_ranks), destruction: std::mem::take(&mut self.other.jip6.destruction), perk_edits: std::mem::take(&mut self.lu3.perk_edits), ref_radius: std::mem::take(&mut self.other.lutana.ref_radius), radiation: std::mem::take(&mut self.showoff.radiation), package_overrides }
     }
 
     /// Take over what lasts for the session ([`Game::take_session`]).
@@ -3897,6 +3911,8 @@ impl<'a> Game<'a> {
         self.other.owner_ranks = s.owner_ranks;
         self.other.jip6.destruction = s.destruction;
         self.lu3.perk_edits = s.perk_edits;
+        self.other.lutana.ref_radius = s.ref_radius;
+        self.showoff.radiation = s.radiation;
         for (id, def) in s.package_overrides {
             self.change_package(id, |d| *d = def);
         }
