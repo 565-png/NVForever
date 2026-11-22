@@ -2251,6 +2251,7 @@ fn door_terminal(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<DoorTermina
 
 /// A door stays locked: what opens it is used, or walked to first (`Walk::side`).
 /// Whether there was something to use.
+#[allow(clippy::too_many_arguments)]
 fn try_beside(p: &Pilot, poked: &mut Vec<(u32, u32)>, side: &mut Option<(FormId, u32, Box<Walk>)>, errands: &mut Option<(Errand, Place)>, h: &mut Hands, door: u32, feet: [f32; 3], target: Option<FormId>) -> bool {
     let used = poked.clone();
     let switch = h.game(|g| door_switch(g, door, &used)).flatten();
