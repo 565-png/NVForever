@@ -1278,6 +1278,14 @@ fn find_weather(world: &WorldData, name: &str) -> Option<u32> {
 #[derive(Component)]
 pub struct SkyDome(Vec<[f32; 3]>);
 
+impl SkyDome {
+    /// The weights per vertex, in the mesh's vertex order (aerial.rs reads the dome's own
+    /// weights by elevation).
+    pub fn weights(&self) -> &[[f32; 3]] {
+        &self.0
+    }
+}
+
 #[cfg(test)]
 impl SkyDome {
     /// A dome without vertex weights (night_sky.rs's system test).
@@ -1465,6 +1473,8 @@ pub fn setup_sky(
     // Per vertex: the weights of the horizon, sky-lower and sky-upper colours (red,
     // green, blue).
     let dome: Vec<[f32; 3]> = weights.iter().map(|w| [w[0], w[1], w[2]]).collect();
+    // The same weights by height, for the reflection cube's sky (reflection_sky.rs).
+    commands.insert_resource(crate::reflection_sky::DomeProfile::from_vertices(&atmosphere.positions, &atmosphere.colors));
     commands.spawn((
         Name::new("Sky"),
         SkyDome(dome),
@@ -2138,6 +2148,7 @@ pub fn update_sky(
     mut materials: ResMut<Assets<SkyMaterial>>,
     mut flashed: Local<bool>,
     mut dome_shown: Local<Option<DomeShown>>,
+    mut last_interior_fog: Local<Option<(f32, f32, f32)>>,
     screen: Option<Res<crate::imagespace::ScreenModifiers>>,
     tweaks: Option<Res<nvf_play::tweaks::TweakSettings>>,
 ) {
@@ -2180,9 +2191,14 @@ pub fn update_sky(
             light.illuminance = PI * unit * l.directional_fade.clamp(0.0, 1.0) * INTERIOR_DIRECTIONAL_SHARE;
         }
         apply_cell_fog(&sky, &mut fog, emissive_mod, tweaks.as_ref().is_some_and(|t| t.no_interior_fog));
-        info!("interior lighting: fog {:.0}..{:.0} power {:.2}", l.fog_near, l.fog_far, l.fog_power);
+        let fog_key = (l.fog_near, l.fog_far, l.fog_power);
+        if *last_interior_fog != Some(fog_key) {
+            *last_interior_fog = Some(fog_key);
+            info!("interior lighting: fog {:.0}..{:.0} power {:.2}", l.fog_near, l.fog_far, l.fog_power);
+        }
         return;
     }
+    *last_interior_fog = None;
     let c = &sky.climate;
 
     // Follow the camera every frame; clouds drift with their ONAM speeds. The dome is

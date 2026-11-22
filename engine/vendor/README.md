@@ -294,6 +294,23 @@ fixture), and the only maps set now are the authored `_p` (nvf-assets `authored.
 while NVForever's height maps are heights; drop it if they are ever converted to depth on the
 CPU instead.
 
+Another change (fog parameters, #2993, docs/design/graphics-enhanced.md §3.18), each part
+marked `NVForever fog parameters`, for nvforever's `aerial.rs`:
+
+- `src/fog.rs`: `DistanceFog::nvf_params`, three `Vec4`s, zero by default.
+- `src/render/fog.rs`: `GpuFog::nvf_params`, copied from the component in `prepare_fog` for
+  every fog mode (the Atmospheric arm now ends in `..Default::default()` like the others).
+- `src/render/mesh_view_types.wesl`: `Fog::nvf_params: array<vec4<f32>, 3>` after `mode`
+  (offset 64, the struct 112 bytes; nvforever's `aerial.rs` tests the Rust and the WGSL
+  layout).
+
+Bevy's fog functions never read the new field, so with it zero (Bevy's default, and every
+NVForever view while the Aerial perspective row is off) the fog is upstream's. The fog
+uniform grows by 48 bytes; the mesh view bind group keeps its entries. nvforever's own edits
+of `fog.wesl` and `pbr_functions.wesl` (fog.rs, haze.rs, aerial.rs, at run time) read it.
+Upstream has no way for an application to hand its own values to the fog shader (the
+uniform's free fields were used up by the desert haze, §3.16).
+
 ## bevy_render 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
 [documented: `src/render_resource/pipeline_cache.rs::create_pipeline_task`, #2317]
@@ -360,6 +377,40 @@ Gated render assets (#2661), in `src/erased_render_asset.rs`, marked `NVForever 
 materials`: `ErasedRenderAssetPlugin::gated(Arc<AtomicBool>)` runs the asset type's
 extraction and preparation systems only while the flag is set, for bevy_pbr's gated
 materials above. `Default` has no flag and does what upstream does.
+
+Slab accounting (docs/design/streaming-hitches.md §3.2), in `src/material_bind_groups.rs`,
+each part marked by a comment starting `NVForever slab accounting`. A bindless slab's
+binding arrays hold each resource once, with a reference count, and `free` gives a slot
+back only when the last reference goes. Upstream's `check_allocation` and
+`insert_resources` count a resource the slab lacks once for every bindless index of the
+material that binds it, so a material that binds one resource at several indices takes
+more slots than it gives back and a slab's count only rises as such materials come and
+go: the slab refuses materials while nearly empty, and the slabs multiply. NVForever's
+mesh blend material binds the fallback image at each unused palette index (up to 400,
+nvf-assets `nif_surface_blend.rs`) and remakes its clones at every cell crossing. Now:
+
+- a missing resource is counted once per material (`check_allocation`) and a slot is taken
+  only when the resource was not in the array (`insert_resources`), so the count is the
+  number of resources the arrays hold;
+- `check_allocation` returns as soon as the missing resources exceed the slab's free
+  slots, the count `try_allocate` refuses the slab for, instead of looking up the rest of
+  the material's resources in a slab that cannot take it (`allocate_unprepared` tries
+  every slab in turn).
+
+Which slab a material goes to can differ from upstream's choice (slabs fill properly);
+what a slab binds for it does not. Two GPU-free unit tests (`tests::slab_accounting`, the
+noop backend); the vendored crate is not a workspace member, so they run from a copy of it
+outside the workspace (`cargo test --release --lib material_bind_groups`). Drop the patch
+when Bevy counts distinct resources.
+
+[observed 2026-11-20, `tools/stress run tour --towns Goodsprings Primm --step 1024`, a
+player's NVForever.ini (Very High, mesh blend on, DLSS Quality at 3840x2160), the `profile`
+build with the two changes behind a switch, one run each, Ryzen 9 9950X3D and RTX 5090]
+`NifSurfaceBlend` slabs during the 150 s tour: 6 rising to 82 before, 1 throughout after.
+Frames of 20 ms or more: 176 of 16,433 before, 79 of 16,961 after;
+`prepare_erased_assets` was the largest span of 98 of them before (longest 33.0 ms, the
+allocation 1,365 ms of their 1,730 ms) and of 8 after (longest 4.4 ms). Mean frame 8.62 →
+8.36 ms, 1 % low 25.5 → 22.5 ms.
 
 A measuring aid for the encoder spans (`NVF_PLAY_TEST_PROFILE_ENCODERS=1`, `enc:<system>`, #2060),
 in `src/diagnostic/internal.rs` (marked `NVForever encoder gaps`), adds

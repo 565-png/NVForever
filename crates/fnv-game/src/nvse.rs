@@ -167,6 +167,83 @@ impl Game<'_> {
         }
     }
 
+    /// Session `DNAM/flags1` override for a `WEAP` (clone-first, original fallback),
+    /// from `SetWeaponFlag`, `SetWeaponFlags1`, `SetWeaponIsAutomatic`, or
+    /// `LNSetIsPlayable`. Returns `None` for non-weapons, absent edits, or non-finite
+    /// values [design].
+    pub fn weapon_flags1_override(&self, weapon: FormId) -> Option<u8> {
+        let original = self.unclone(weapon);
+        if self.data.sig(original) != Some(*b"WEAP") {
+            return None;
+        }
+        let key = "DNAM/flags1";
+        let value = self.field_overrides.get(&(weapon, key.into()))
+            .or_else(|| self.field_overrides.get(&(original, key.into())))?;
+        match value {
+            XVal::Num(n) if n.is_finite() => Some((n.trunc() as i64 as u64 & 0xFF) as u8),
+            _ => None,
+        }
+    }
+
+    /// Effective `DNAM/flags1` bitmask for a `WEAP` (session override first, else
+    /// authored record; `0` when the weapon has no `DNAM`), or `None` for non-weapons.
+    pub fn weapon_flags1(&self, weapon: FormId) -> Option<u8> {
+        let original = self.unclone(weapon);
+        if self.data.sig(original) != Some(*b"WEAP") {
+            return None;
+        }
+        match field(self, weapon, "DNAM", "flags1") {
+            Some(XVal::Num(n)) if n.is_finite() => Some((n.trunc() as i64 as u64 & 0xFF) as u8),
+            _ => Some(0),
+        }
+    }
+
+    /// Effective weapon `Is Automatic` state (`DNAM/flags1` bit 1), honoring live
+    /// session overrides before `FormStore`.
+    pub fn weapon_is_automatic(&self, weapon: FormId) -> bool {
+        if let Some(flags1) = self.weapon_flags1_override(weapon) {
+            return flags1 & (1 << 1) != 0;
+        }
+        self.world.forms.item(self.unclone(weapon)).and_then(|i| i.weapon_traits.as_ref()).is_some_and(|t| t.automatic)
+    }
+
+    /// Effective weapon `Can't Drop` state (`DNAM/flags1` bit 3), honoring live session
+    /// overrides before `FormStore`.
+    pub fn weapon_cant_drop(&self, weapon: FormId) -> bool {
+        if let Some(flags1) = self.weapon_flags1_override(weapon) {
+            return flags1 & (1 << 3) != 0;
+        }
+        self.world.forms.item(self.unclone(weapon)).is_some_and(|i| i.cant_drop)
+    }
+
+    /// Whether an item form is playable (`IsPlayable` / `LNIsPlayable`): for `WEAP`,
+    /// live `DNAM/flags1` bit 7 (`Non-Playable`) overrides take precedence; for other
+    /// items, `playable_overrides` then `World`'s live item overrides / `FormStore`
+    /// [design].
+    pub fn is_item_playable(&self, item: FormId) -> bool {
+        if let Some(flags1) = self.weapon_flags1_override(item) {
+            return flags1 & (1 << 7) == 0;
+        }
+        if let Some(&playable) = self.playable_overrides.get(&item) {
+            return playable;
+        }
+        self.world.resolve_item(item).is_some() && !self.world.effective_non_playable(item)
+    }
+
+    /// Whether an item form is marked non-playable (for inventory/equipment filters
+    /// such as `GetEquippedItems` and `GetAllItemRefs`), honoring live `DNAM/flags1`
+    /// bit 7, `playable_overrides`, and `World`'s live item overrides while keeping
+    /// non-item forms `false`.
+    pub fn is_item_non_playable(&self, item: FormId) -> bool {
+        if let Some(flags1) = self.weapon_flags1_override(item) {
+            return flags1 & (1 << 7) != 0;
+        }
+        if let Some(&playable) = self.playable_overrides.get(&item) {
+            return !playable;
+        }
+        self.world.effective_non_playable(item)
+    }
+
     /// The weapons whose models scripts changed this session (SetWeaponModel, SetModelPath,
     /// SetWeapon1stPersonModel), for the renderer's record view to draw
     /// (docs/spec-notes/weapon-mods.md §8). Like the critical damage above, the authored
@@ -534,14 +611,23 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
         let get = format!("get{rest}");
         let (value, form_at) = if name == "setbaseitemvalue" { (args.get(1), 0) } else { (args.first(), 1) };
         let f = item(g, form_at).unwrap_or(FormId(0));
+        let orig_sig = g.data.sig(g.unclone(f));
         let target = match get.as_str() {
             "getbaseitemvalue" => Some(("DATA", "value")),
-            "getweight" if g.data.sig(f) == Some(*b"AMMO") => Some(("DAT2", "weight")),
-            "getweight" if g.data.sig(f) == Some(*b"ALCH") => Some(("DATA", "")),
+            "getweight" if orig_sig == Some(*b"AMMO") => Some(("DAT2", "weight")),
+            "getweight" if orig_sig == Some(*b"ALCH") => Some(("DATA", "")),
             "getweight" => Some(("DATA", "weight")),
             "getarmorarmorrating" => Some(("DNAM", "dr")),
             "getarmordt" => Some(("DNAM", "dt")),
-            "getammoconsumedpercent" => Some(("DAT2", "consumed_percentage")),
+            "getammoconsumedpercent" => {
+                if orig_sig != Some(*b"AMMO") {
+                    return Some(Ok(XVal::Num(0.0)));
+                }
+                if let Some(v) = value.and_then(|v| v.num().ok()).and_then(|x| field_number(x, F32.0, F32.1)) {
+                    g.field_overrides.insert((f, "DAT2/consumed_percentage".into()), XVal::Num(v));
+                }
+                return Some(Ok(XVal::Num(0.0)));
+            }
             // [documented: SetHairLength; SetNPCWeight] the NPC base's LNAM and NAM7.
             "gethairlength" => Some(("LNAM", "")),
             "getnpcweight" => Some(("NAM7", "")),
@@ -549,11 +635,12 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
             "getobjecthealth" => Some(("DATA", "health")),
             // A creature's attack damage is not set [observed: atk1, SetAttackDamage 50 on
             // VStreetCrBrahmin2 still reads 0, though the page names creatures].
-            "getattackdamage" if g.data.sig(f) == Some(*b"CREA") => return Some(Ok(XVal::Num(0.0))),
+            "getattackdamage" if orig_sig == Some(*b"CREA") => return Some(Ok(XVal::Num(0.0))),
             g2 => weapon_field(g2),
         };
         if let (Some((sub, path)), Some(v)) = (target, value) {
             g.field_overrides.insert((f, format!("{sub}/{path}")), v.clone());
+            g.sync_item_field_override(f, sub, path, v);
             return Some(Ok(XVal::Num(0.0)));
         }
         // The flag setters: one bit of DNAM's flags.
@@ -633,7 +720,8 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
         // its value in ENIT.
         "getweight" | "getitemvalue" | "getbasehealth" | "getarmorarmorrating" | "getarmordt" => {
             let f = item(g, 0).unwrap_or(FormId(0));
-            let alch = g.data.sig(f) == Some(*b"ALCH");
+            let orig_sig = g.data.sig(g.unclone(f));
+            let alch = orig_sig == Some(*b"ALCH");
             // [observed: nvse-forms, Stimpak value 0] an ALCH's value (ENIT) is not what
             // GetItemValue reads.
             if alch && name == "getitemvalue" {
@@ -642,7 +730,7 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
             let (sub, path) = match (name, alch) {
                 ("getweight", true) => ("DATA", ""),
                 // AMMO keeps its weight in DAT2 [observed: nvse-forms, 10mm ammo 0.033].
-                ("getweight", false) if g.data.sig(f) == Some(*b"AMMO") => ("DAT2", "weight"),
+                ("getweight", false) if orig_sig == Some(*b"AMMO") => ("DAT2", "weight"),
                 ("getweight", false) => ("DATA", "weight"),
                 ("getitemvalue", false) => ("DATA", "value"),
                 ("getbasehealth", _) => ("DATA", "health"),
@@ -847,13 +935,11 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
                 _ => c("red") + c("green") * 256.0 + c("blue") * 65536.0,
             })
         }
-        // The ACBS flags' low and high 16 bits [hypothesis from the names].
+        // The ACBS flags' low and high 16 bits [documented: GetActorBaseFlagsLow, GetActorBaseFlagsHigh].
         "getactorbaseflagslow" | "getactorbaseflagshigh" => {
-            let bits = match field(g, item(g, 0).unwrap_or(FormId(0)), "ACBS", "flags") {
-                Some(XVal::Num(x)) => x as u64,
-                _ => 0,
-            };
-            XVal::Num(if name.ends_with("low") { (bits & 0xFFFF) as f64 } else { (bits >> 16) as f64 })
+            let b = as_form(args.first()).or(subject).map(|f| g.actor_flags_target(f)).unwrap_or(FormId(0));
+            let bits = g.actor_base_flags_raw(b);
+            XVal::Num(f64::from(if name.ends_with("low") { bits & 0xFFFF } else { bits >> 16 }))
         }
         // AI packages of the reference's base: the "AI Packages" template's list whenever
         // the flag is set, the base's own list beside it unread [documented: GetPackageCount;
@@ -890,7 +976,7 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
         // [documented: GetParentCellOwner; GetOwningFactionRequiredRank] the cell's owner
         // and the faction rank a reference's owner needs.
         "getparentcellowner" => XVal::Ref(subject.and_then(|r| g.cell_of(r)).and_then(|c| g.cell_ownership(c)).map_or(0, |o| o.owner.0)),
-        "getowningfactionrequiredrank" => XVal::Num(subject.and_then(|r| g.other.owner_ranks.get(&r).or_else(|| g.data.owner_ranks.get(&r))).map_or(0.0, |&r| f64::from(r))),
+        "getowningfactionrequiredrank" => XVal::Num(subject.and_then(|r| g.owner_rank(r)).map_or(0.0, f64::from)),
         // `GetBipedModelPath which [form]`: 0 male biped (MODL), 1 female biped (MOD3),
         // 2 male ground (MOD2), 3 female ground (MOD4) [observed: nvse-misc, leather armor].
         "getbipedmodelpath" => {
