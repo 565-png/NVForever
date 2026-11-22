@@ -568,6 +568,9 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             let flags = g.num_field8(c, sub, "") as u64;
             let new = if num(args, 2, 0.0) != 0.0 { flags | 1 << b } else { flags & !(1 << b) };
             g.set_field8(c, sub, "", XVal::Num(new as f64));
+            if k >= 8.0 {
+                g.bump_lighting_revision();
+            }
             zero
         }
         // `cell water`: XCWT [documented: the page; the field: xEdit CELL].
