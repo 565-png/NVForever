@@ -517,19 +517,30 @@ menu's (`dialogue_menu.rs`).
   puts it, a check), and the original, drawing the picture a texel a unit in its box,
   ends its bar 22 down the window, about 4 above the strip's upper line, where the
   hand-built's ended on it. The row count, the window origin, the strip line's 26 and
-  that alignment are all this hypothesis; observer check 257 measures the original's
+  that alignment are all this hypothesis; observer check 261 measures the original's
   bar against the strip's line on a raw 1920 x 1080 frame.
   [design] NVForever keeps the fitted 26-unit size and the bar's middle on the bearing
   and stands the hand-built tick so its bar ends at 22 (`compass::TICK_BAR_END`,
   `TICK_TOP` 4.125): 4.9 units higher than before, for neutral, hostile and companion
-  ticks alike; the map marker, quest and player icons are unchanged. Observer check 257
+  ticks alike; the map marker, quest and player icons are unchanged. Observer check 261
   says where the original's bar ends against the strip's line (test
   `compass::tests::an_actor_tick_stands_where_the_originals_box_puts_its_bar`).
 - [hypothesis] Which actors: the living NPCs and creatures of the loaded cells within
-  Perception × 300 units of the player; which markers: those of the worldspace within
-  Perception × 2048, while outdoors. No game setting for these ranges is in the masters.
-  Hostile is the enemy bar's rule (§8). Each mark stands at its bearing from the
+  Perception × 300 units of the player; no game setting for this range is in the
+  masters. Hostile is the enemy bar's rule (§8). Each mark stands at its bearing from the
   player's heading at 1024 units for 360 degrees, the strip's scale.
+- Which markers: those of the worldspace within `iMapMarkerVisibleDistance` of the player
+  (measured across the ground), found and unfound alike and whatever the Perception,
+  while outdoors. The setting is not in the masters; its default in the executable is
+  10000, and `iMapMarkerRevealDistance`'s 1000 [documented: GECK wiki "Complete List of
+  GameSettings"; the wiki does not describe either]. NVForever reads the load order's
+  setting and falls back on 10000 (`engine/nvf-play/src/compass.rs`, `marker_range`).
+  That this setting is the compass's cut-off for markers is [hypothesis]: its name, and
+  Oblivion's setting of the same name; nothing on the wiki ties the marker range to
+  Perception (its SPECIAL page links Perception only to hostile marks on the compass).
+  Observer check 227 asks the original (#2348). Until #2348 the range was Perception ×
+  2048, built for the owner's playtest list 5 item 12 ("range by Perception"); the
+  change back to the original's fixed range is in docs/owner-review.md for the owner.
 - [observed: the owner, 2026-10-23] An actor that sneaks gets no tick. NVForever's
   "sneaks" is IsSneaking's (`fnv_game::Game::is_sneaking`: the engine's measure, else
   SetForceSneak, an Always Sneak package, a crouch to fire or reload, a teammate
