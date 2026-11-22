@@ -2454,6 +2454,8 @@ pub struct Session {
     ref_radius: std::collections::HashMap<FormId, f32>,
     /// Session-only `SetRadiationExtraData` overrides (`ShowOffState::radiation`).
     radiation: std::collections::HashMap<FormId, f32>,
+    /// Session-only `SetPasswordNote` overrides by `TERM` base (`Terminals::password_notes`).
+    terminal_password_notes: BTreeMap<FormId, Option<FormId>>,
     /// Session-only authored package overrides (`Game::package_overrides` for forms in
     /// `GameData::package_defs`: SetPackageFlag, SetPackageLocationRadius,
     /// SetPackageTargetDistance, etc.).
@@ -3901,7 +3903,7 @@ impl<'a> Game<'a> {
                 None
             })
             .collect();
-        Session { handlers, main_loop, main_loop_registrars, jip_seq, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits), owner_ranks: std::mem::take(&mut self.other.owner_ranks), destruction: std::mem::take(&mut self.other.jip6.destruction), perk_edits: std::mem::take(&mut self.lu3.perk_edits), ref_radius: std::mem::take(&mut self.other.lutana.ref_radius), radiation: std::mem::take(&mut self.showoff.radiation), package_overrides, object_effect_overrides }
+        Session { handlers, main_loop, main_loop_registrars, jip_seq, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits), owner_ranks: std::mem::take(&mut self.other.owner_ranks), destruction: std::mem::take(&mut self.other.jip6.destruction), perk_edits: std::mem::take(&mut self.lu3.perk_edits), ref_radius: std::mem::take(&mut self.other.lutana.ref_radius), radiation: std::mem::take(&mut self.showoff.radiation), terminal_password_notes: std::mem::take(&mut self.terminals.password_notes), package_overrides, object_effect_overrides }
     }
 
     /// Take over what lasts for the session ([`Game::take_session`]).
@@ -3927,6 +3929,7 @@ impl<'a> Game<'a> {
         self.lu3.perk_edits = s.perk_edits;
         self.other.lutana.ref_radius = s.ref_radius;
         self.showoff.radiation = s.radiation;
+        self.terminals.password_notes = s.terminal_password_notes;
         for (id, def) in s.package_overrides {
             self.change_package(id, |d| *d = def);
         }
@@ -6201,7 +6204,14 @@ impl<'a> Game<'a> {
     pub fn apply_magic_item_with(&mut self, target: FormId, source: FormId, caster: Option<FormId>, permanent: bool, mods: &crate::aid::Mods) -> Vec<crate::aid::Applied> {
         let data = self.data;
         // With AddNewEffect's entries after the record's (`crate::nvse_jip14`).
-        let items = self.applied_effects(source);
+        let items = {
+            let own = self.applied_effects(source);
+            if own.is_empty() && self.clones.contains_key(&source) {
+                self.applied_effects(self.unclone(source))
+            } else {
+                own
+            }
+        };
         if items.is_empty() {
             return Vec::new();
         }
@@ -6215,7 +6225,7 @@ impl<'a> Game<'a> {
             if mods.only.is_some_and(|o| o != index) || self.effect_removed(source, index) {
                 continue;
             }
-            let label = format!("{} effect {index}", data.name(source));
+            let label = format!("{} effect {index}", data.name(self.unclone(source)));
             // A lasting effect whose conditions fail (an ability, a worn enchantment, or a
             // spell's effect with a duration) is listed inactive, to take hold when they
             // pass (`crate::abilities::recheck_conditions`); only an instant one is dropped.
@@ -6226,7 +6236,8 @@ impl<'a> Game<'a> {
             if !pass && !permanent && e.duration == 0 {
                 continue;
             }
-            let seconds = mods.seconds(data.magic_effects.get(&e.effect), e);
+            let mgef = self.magic_effect_def(e.effect);
+            let seconds = mods.seconds(mgef.as_ref(), e);
             if !permanent && e.duration > 0 {
                 let active = self
                     .effects
@@ -6251,14 +6262,13 @@ impl<'a> Game<'a> {
             }
             let id = self.next_effect;
             self.next_effect += 1;
-            let script = data.magic_effects.get(&e.effect).and_then(|m| m.script).filter(|s| data.scripts.contains_key(s));
-            let resisted = if mods.hit { self.resisted(target, data.magic_effects.get(&e.effect)) } else { 0.0 };
+            let script = mgef.as_ref().and_then(|m| m.script).filter(|s| data.scripts.contains_key(s));
+            let resisted = if mods.hit { self.resisted(target, mgef.as_ref()) } else { 0.0 };
             if resisted >= 1.0 {
                 continue;
             }
-            let change = data
-                .magic_effects
-                .get(&e.effect)
+            let change = mgef
+                .as_ref()
                 .and_then(|m| crate::aid::value_change(m, e, mods.potency, permanent))
                 .map(|c| mods.on_change(c))
                 .map(|mut c| {
@@ -6379,7 +6389,7 @@ impl<'a> Game<'a> {
     /// default objects' Drug Wears Off Image Space plays [documented: the DOBJ entry's
     /// name; hypothesis: when, docs/spec-notes/default-objects.md].
     fn drug_wore_off(&mut self, target: FormId, source: FormId) {
-        let chem = self.data.ingestibles.get(&source).is_some_and(|i| i.equip_type == crate::data::IngestibleDef::CHEMS);
+        let chem = self.ingestible_def(source).is_some_and(|i| i.equip_type == crate::data::IngestibleDef::CHEMS);
         // The player's tweak can leave the effect out [design: docs/design/tweaks.md].
         if target != FormId::PLAYER_REF || !chem || self.tweaks.no_chem_wore_off_effect || self.effects.iter().any(|x| x.target == target && x.source == source) {
             return;
