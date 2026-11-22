@@ -179,3 +179,4 @@ mod is_in_kill_cam;
 mod no_unequip;
 mod preactivation_events;
 mod preactivation_mutation;
+mod worldspace_climate_imagespace;

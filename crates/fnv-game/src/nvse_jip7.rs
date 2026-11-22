@@ -698,12 +698,13 @@ impl Game<'_> {
     }
 
     /// A climate's weathers (WLST), ClimateAddWeatherType's and ClimateRemoveWeatherType's
-    /// changes first.
+    /// changes first (clone-first, original fallback).
     pub fn climate_weathers(&self, climate: FormId) -> Vec<ClimateWeather> {
-        if let Some(v) = self.other.jip7.climate_weathers.get(&climate) {
+        let orig = self.unclone(climate);
+        if let Some(v) = self.other.jip7.climate_weathers.get(&climate).or_else(|| self.other.jip7.climate_weathers.get(&orig)) {
             return v.clone();
         }
-        let list = self.data.record_field(climate, "WLST", "").and_then(Json::as_array);
+        let list = self.data.record_field(orig, "WLST", "").and_then(Json::as_array);
         list.into_iter()
             .flatten()
             .filter_map(|e| {
