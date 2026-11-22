@@ -79,8 +79,10 @@
 //!   outdoors or replacing the cube's camera. One log line at the first fill of each cube,
 //!   one at the first room fill of each interior (the box's source, its size, the lamps,
 //!   the worker's fill time and the main thread's gather and apply times), one summary at
-//!   exit (`reflection sky summary: ...`, with the room fills, the refills by reason and
-//!   the main thread's slowest gather and apply).
+//!   exit (`reflection sky summary: ...`, with the room fills, the refills by reason, the
+//!   main thread's slowest gather and apply and the fills discarded for a replaced camera or
+//!   cube). The gather time starts after the per-frame room-marker search for the wait's
+//!   key, which runs every frame either way.
 //! - **Where** (maintainer decision 2026-11-22, #3238): the main thread only gathers the
 //!   inputs (the sky's state, the lamps, the room marker or the six rays, which need the
 //!   physics world) into owned data ([`FillRequest`]); the fill itself ([`fill`]: the
@@ -94,7 +96,12 @@
 //!   waiting request starts in the same frame, so no work is thrown away and a stream of
 //!   changes cannot keep the cube from updating. So the cube shows a change one fill later
 //!   than before (the fill's time, a few milliseconds, then the next frame's upload), two
-//!   with a fill already running [design]. Until the first fill of a
+//!   with a fill already running [design]. Each request names the camera and the cube it
+//!   was asked for (none: a cube is made on applying it); a fill whose camera or cube was
+//!   replaced meanwhile is discarded, and the replacement's change of target asks its own
+//!   fill. A light inherited from an older cube is removed as soon as the camera or cube
+//!   changes, not when the new fill lands. The hemisphere means (a pass over the room's
+//!   level-0 texels) are taken only for a cube's first fill, whose log line quotes them. Until the first fill of a
 //!   camera is done the camera has no cube and no `EnvironmentMapLight`, as before the first
 //!   upload in stage 1; on entering an interior the outdoor cube stays until the room's
 //!   first fill is done.
@@ -102,6 +109,8 @@
 use bevy::light::EnvironmentMapLight;
 use bevy::prelude::*;
 use bevy::tasks::{futures::check_ready, AsyncComputeTaskPool, Task, TaskPool};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 use nvf_assets::reflection_cube::{self, GateState, ReflectionCube, SPECULAR_LEVELS};
 use nvf_assets::reflection_room::{self, FilteredCube, GroundLamps, Lamp, RoomBox, RoomScene, Spot};
@@ -703,9 +712,10 @@ pub struct FillSamples {
     pub zenith: Vec3,
     pub horizon: Vec3,
     pub nadir: Vec3,
-    /// The means above and below the horizon ([`Content::means`]).
-    pub above: Vec3,
-    pub below: Vec3,
+    /// The means above and below the horizon ([`Content::means`]), only when asked for (the
+    /// first fill of a camera or cube logs them; for a room they cost a pass over the 6,144
+    /// level-0 texels).
+    pub means: Option<(Vec3, Vec3)>,
     /// Indoors with a room and a lamp, the level-0 texel toward the lamp nearest the eye.
     pub nearest_lamp: Option<Vec3>,
 }
@@ -722,12 +732,12 @@ pub struct Filled {
 /// One fill (module notes, "Where"): the content for `inputs` and every level of the
 /// specular cube from it (`reflection_cube::specular_levels`). A pure function of its
 /// arguments apart from the time it reports: the same inputs give the same bytes, the bytes
-/// the producer wrote on the main thread before the fill moved to a worker.
-pub fn fill(inputs: &Inputs, profile: &DomeProfile) -> Filled {
+/// the producer wrote on the main thread before the fill moved to a worker. `means`: also
+/// take the hemisphere means for the first-fill log line.
+pub fn fill(inputs: &Inputs, profile: &DomeProfile, means: bool) -> Filled {
     let started = Instant::now();
     let content = Content::new(inputs, profile);
     let levels = reflection_cube::specular_levels(|d, level| content.colour(d, level));
-    let (above, below) = content.means();
     let nearest_lamp = match inputs {
         Inputs::Indoors { room: Some(r), .. } => r
             .lamps
@@ -740,8 +750,7 @@ pub fn fill(inputs: &Inputs, profile: &DomeProfile) -> Filled {
         zenith: content.colour(Vec3::Y, 0),
         horizon: content.colour(Vec3::X, 0),
         nadir: content.colour(Vec3::NEG_Y, 0),
-        above,
-        below,
+        means: means.then(|| content.means()),
         nearest_lamp,
     };
     Filled { levels, samples, ms: started.elapsed().as_secs_f32() * 1000.0 }
@@ -758,6 +767,13 @@ pub struct FillRequest {
     pub reason: Option<Refill>,
     /// The main thread's time to gather the inputs and compare them, milliseconds.
     pub gather_ms: f32,
+    /// The camera the fill is for and the cube it held when asked (`None`: a cube is made
+    /// when the fill is applied). A fill is applied only while the camera still holds that
+    /// cube; a fill for a replaced camera or cube is discarded.
+    pub target: (Entity, Option<AssetId<Image>>),
+    /// Take the hemisphere means on the worker: this fill is expected to be its cube's first,
+    /// whose log line quotes them.
+    pub means: bool,
 }
 
 /// What [`FillQueue::poll`] found.
@@ -820,13 +836,34 @@ impl<R, J> FillQueue<R, J> {
     pub fn waiting(&self) -> Option<&R> {
         self.waiting.as_ref()
     }
+
+    /// The running and the waiting request, to change in place.
+    pub fn requests_mut(&mut self) -> impl Iterator<Item = &mut R> {
+        self.running.as_mut().map(|(r, _)| r).into_iter().chain(self.waiting.as_mut())
+    }
 }
 
 /// Start a fill on Bevy's async compute pool (module notes, "Where") with a copy of the
-/// request's inputs and profile.
-fn spawn_fill(request: &FillRequest) -> Task<Filled> {
-    let (inputs, profile) = (request.inputs.clone(), request.profile.clone());
-    AsyncComputeTaskPool::get_or_init(TaskPool::default).spawn(async move { fill(&inputs, &profile) })
+/// request's inputs and profile. `hold` is the tests' seam: while it is set the fill does
+/// not start (never set in the game).
+fn spawn_fill(request: &FillRequest, hold: Option<Arc<AtomicBool>>) -> Task<Filled> {
+    let (inputs, profile, means) = (request.inputs.clone(), request.profile.clone(), request.means);
+    AsyncComputeTaskPool::get_or_init(TaskPool::default).spawn(async move {
+        while hold.as_ref().is_some_and(|h| h.load(Ordering::Acquire)) {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        fill(&inputs, &profile, means)
+    })
+}
+
+/// Remove a light the camera inherited from the cube of the last applied fill when the
+/// camera now holds another cube or none (`current`), so no camera shows an older cube's
+/// reflection while its own fill runs; `attach_lights` installs the new cube's light once it
+/// is uploaded. Other maps stay.
+fn drop_inherited_light(state: &ReflectionSky, commands: &mut Commands, entity: Entity, environment: Option<&EnvironmentMapLight>, current: Option<AssetId<Image>>) {
+    if state.target.is_some_and(|(_, old)| Some(old) != current && environment.is_some_and(|light| light.specular_map.id() == old)) {
+        commands.entity(entity).remove::<EnvironmentMapLight>();
+    }
 }
 
 /// Stage 1's light on level ground outdoors: the ambient (x share) plus the directional
@@ -1044,6 +1081,10 @@ pub struct ReflectionSky {
     /// and slowest apply (moving a finished fill into the cube), milliseconds.
     slowest_gather_ms: f32,
     slowest_apply_ms: f32,
+    /// Finished fills discarded because their camera or cube was replaced meanwhile.
+    discarded: u64,
+    /// The tests' seam: while set, fills started on the worker wait (never set in the game).
+    hold: Option<Arc<AtomicBool>>,
     /// The last interior whose room fill was logged, and whether that fill had lamps.
     logged_room_fill: Option<(Option<u32>, bool)>,
     /// The last interior whose fill with stage 1's content was logged.
@@ -1072,7 +1113,7 @@ impl ReflectionSky {
             Phase::On => {
                 let refills: Vec<String> = Refill::ALL.iter().zip(self.refills).map(|(r, n)| format!("{n} {}", r.name())).collect();
                 format!(
-                    "{} fills ({} outdoors, {} indoors), {} checks skipped as unchanged; {} room fills ({} marker, {} rays, {} default), {} ground-lamp fills, slowest room or lamp fill {:.2} ms; refills: {}; main thread slowest gather {:.2} ms, slowest apply {:.2} ms",
+                    "{} fills ({} outdoors, {} indoors), {} checks skipped as unchanged; {} room fills ({} marker, {} rays, {} default), {} ground-lamp fills, slowest room or lamp fill {:.2} ms; refills: {}; main thread slowest gather {:.2} ms, slowest apply {:.2} ms; {} fills for a replaced camera or cube discarded",
                     self.fills_outdoors + self.fills_indoors,
                     self.fills_outdoors,
                     self.fills_indoors,
@@ -1085,7 +1126,8 @@ impl ReflectionSky {
                     self.slowest_ms,
                     refills.join(", "),
                     self.slowest_gather_ms,
-                    self.slowest_apply_ms
+                    self.slowest_apply_ms,
+                    self.discarded
                 )
             }
         }
@@ -1242,15 +1284,23 @@ pub fn produce(
     }
     let Ok((entity, transform, cube, environment)) = camera else { return };
     let mut current = cube.as_ref().map(|cube| cube.specular.id());
-    // A finished fill goes into the cube; inputs asked while it ran start on the worker.
-    match state.queue.poll(check_ready, spawn_fill) {
-        Polled::Done(request, filled) => {
+    // A finished fill goes into the cube it was asked for; inputs asked while it ran start on
+    // the worker. A fill for another camera or a replaced cube is discarded: the change of
+    // target asks a fill of its own (below).
+    let hold = state.hold.clone();
+    match state.queue.poll(check_ready, |r| spawn_fill(r, hold.clone())) {
+        Polled::Done(request, filled) if request.target == (entity, current) => {
             current = Some(apply_fill(&mut state, &mut commands, &mut images, entity, cube, environment, request, filled));
         }
+        Polled::Done(..) => state.discarded += 1,
         Polled::Idle | Polled::Running => {}
     }
     let target = (entity, current);
     let target_changed = state.asked != Some(target);
+    if target_changed {
+        // A new camera or cube shows no older cube's light while its own fill runs.
+        drop_inherited_light(&state, &mut commands, entity, environment, current);
+    }
     let eye = transform.translation();
     let cell = streamer.as_ref().and_then(|s| s.interior);
     // A new camera or cube, a change of room, or a change to the outdoor dome skips the wait.
@@ -1290,7 +1340,11 @@ pub fn produce(
     }
     let profile = profile.as_deref().cloned().unwrap_or_else(DomeProfile::fallback);
     let gather_ms = started.elapsed().as_secs_f32() * 1000.0;
-    state.queue.ask(FillRequest { inputs: inputs.clone(), profile, reason, gather_ms }, spawn_fill);
+    // The cube's first fill logs the hemisphere means: a new cube, or a cube no fill went into.
+    let means = target.1.is_none_or(|id| state.target != Some((entity, id)));
+    let request = FillRequest { inputs: inputs.clone(), profile, reason, gather_ms, target, means };
+    let hold = state.hold.clone();
+    state.queue.ask(request, |r| spawn_fill(r, hold));
     state.last = Some(inputs);
     state.asked = Some(target);
     state.profile_revision = profile_revision;
@@ -1322,16 +1376,20 @@ fn apply_fill(
         cube.set_levels(levels);
         let specular = cube.specular.id();
         commands.entity(entity).insert(cube);
+        // Fills asked for this camera before it had a cube go into the one just made.
+        for r in state.queue.requests_mut() {
+            if r.target == (entity, None) {
+                r.target.1 = Some(specular);
+            }
+        }
+        if state.asked == Some((entity, None)) {
+            state.asked = Some((entity, Some(specular)));
+        }
         specular
     };
-    // A camera can retain or inherit the light from the previous cube. Remove that light
-    // so attach_lights can install the new one after upload. Preserve unrelated maps.
-    if state.target.is_some_and(|(_, old_specular)| {
-        old_specular != specular
-            && environment.is_some_and(|light| light.specular_map.id() == old_specular)
-    }) {
-        commands.entity(entity).remove::<EnvironmentMapLight>();
-    }
+    // A camera can retain or inherit the light from the previous cube (produce removes it
+    // when the target changes; again here for a light added since). Preserve unrelated maps.
+    drop_inherited_light(state, commands, entity, environment, Some(specular));
     let apply_ms = started.elapsed().as_secs_f32() * 1000.0;
     state.slowest_apply_ms = state.slowest_apply_ms.max(apply_ms);
     let FillRequest { inputs, reason, gather_ms, .. } = request;
@@ -1363,19 +1421,16 @@ fn apply_fill(
     }
     let first = state.target != Some((entity, specular));
     state.target = Some((entity, specular));
-    // The camera now holds this cube: a fill waiting or started since goes into it, and the
-    // camera needs no further fill for a cube of its own (`state.last` stays the newest
-    // inputs asked).
-    state.asked = Some((entity, Some(specular)));
     if first {
+        let (above, below) = samples.means.unwrap_or_default();
         let where_ = if inputs.indoors() { "indoors" } else { "outdoors" };
         info!(
             "reflection sky: first fill of the world camera's cube ({where_}; level 0 zenith {:.4?}, horizon {:.4?}, nadir {:.4?}; mean above {:.4?}, below {:.4?}), attached once on the GPU",
             samples.zenith.to_array(),
             samples.horizon.to_array(),
             samples.nadir.to_array(),
-            samples.above.to_array(),
-            samples.below.to_array()
+            above.to_array(),
+            below.to_array()
         );
     }
     specular

@@ -367,9 +367,10 @@ fn the_summary_line() {
     s.slowest_ms = 0.5;
     s.slowest_gather_ms = 0.12;
     s.slowest_apply_ms = 0.03;
+    s.discarded = 1;
     assert_eq!(
         s.line(),
-        "4 fills (3 outdoors, 1 indoors), 40 checks skipped as unchanged; 1 room fills (1 marker, 0 rays, 0 default), 0 ground-lamp fills, slowest room or lamp fill 0.50 ms; refills: 0 mode, 2 cell, 0 room, 0 box, 0 moved, 0 lamps, 0 light, 0 profile; main thread slowest gather 0.12 ms, slowest apply 0.03 ms"
+        "4 fills (3 outdoors, 1 indoors), 40 checks skipped as unchanged; 1 room fills (1 marker, 0 rays, 0 default), 0 ground-lamp fills, slowest room or lamp fill 0.50 ms; refills: 0 mode, 2 cell, 0 room, 0 box, 0 moved, 0 lamps, 0 light, 0 profile; main thread slowest gather 0.12 ms, slowest apply 0.03 ms; 1 fills for a replaced camera or cube discarded"
     );
 }
 
@@ -633,18 +634,20 @@ fn the_fill_on_a_worker_writes_the_main_threads_bytes() {
     for inputs in [day(), room(), lit_room(), ground] {
         let content = Content::new(&inputs, &profile);
         let before = reflection_cube::specular_levels(|d, level| content.colour(d, level));
-        let filled = fill(&inputs, &profile);
+        let filled = fill(&inputs, &profile, true);
         assert!(filled.levels == before, "the same bytes as the main thread's fill: {inputs:?}");
-        assert!(fill(&inputs, &profile).levels == filled.levels, "deterministic");
+        let again = fill(&inputs, &profile, false);
+        assert!(again.levels == filled.levels, "deterministic, with or without the means");
+        assert_eq!(again.samples.means, None, "the means only when asked for");
         assert_eq!(filled.samples.zenith, content.colour(Vec3::Y, 0));
         assert_eq!(filled.samples.nadir, content.colour(Vec3::NEG_Y, 0));
-        assert_eq!((filled.samples.above, filled.samples.below), content.means());
+        assert_eq!(filled.samples.means, Some(content.means()));
     }
     let Inputs::Indoors { room: Some(r), .. } = lit_room() else { unreachable!() };
     let nearest = r.lamps.iter().min_by(|a, b| a.lamp.position.distance(r.eye).total_cmp(&b.lamp.position.distance(r.eye))).unwrap();
     let content = Content::new(&lit_room(), &profile);
-    assert_eq!(fill(&lit_room(), &profile).samples.nearest_lamp, Some(content.colour((nearest.lamp.position - r.eye).normalize(), 0)));
-    assert_eq!(fill(&room(), &profile).samples.nearest_lamp, None);
+    assert_eq!(fill(&lit_room(), &profile, false).samples.nearest_lamp, Some(content.colour((nearest.lamp.position - r.eye).normalize(), 0)));
+    assert_eq!(fill(&room(), &profile, false).samples.nearest_lamp, None);
 }
 
 /// A job of the queue tests: its result once finished.
@@ -723,8 +726,88 @@ fn the_producer_applies_the_workers_fill_a_frame_later() {
     let state = app.world().resource::<ReflectionSky>();
     assert_eq!(state.fills_outdoors, 1);
     let inputs = state.last.clone().expect("the asked inputs");
-    let want = fill(&inputs, &DomeProfile::fallback()).levels;
+    let want = fill(&inputs, &DomeProfile::fallback(), false).levels;
     let cube = app.world().get::<ReflectionCube>(camera).unwrap();
     assert_eq!(cube.generation(), 1);
     assert!(cube.levels() == want.as_slice(), "the worker's bytes, moved into the cube");
+}
+
+/// Hold the worker's fills (the tests' seam) and give the handle to release them.
+fn hold_fills(app: &mut App) -> Arc<AtomicBool> {
+    let hold = Arc::new(AtomicBool::new(true));
+    app.world_mut().resource_mut::<ReflectionSky>().hold = Some(hold.clone());
+    hold
+}
+
+/// A camera's fill still running when the camera is replaced never reaches the new camera:
+/// the new camera loses the light inherited from the old cube at once, not after a fill;
+/// the old fill is discarded when it finishes; the new camera gets its own fill (the
+/// interior's bytes, not the old camera's outdoor ones).
+#[test]
+fn a_fill_for_a_replaced_camera_is_discarded() {
+    let (mut app, camera_a) = running_producer();
+    settle(&mut app);
+    let hold = hold_fills(&mut app);
+    // A's fill of new inputs (an interior), held on the worker.
+    app.world_mut().resource_mut::<SkyState>().interior = Some(default());
+    app.update();
+    let a_inputs = app.world().resource::<ReflectionSky>().last.clone().unwrap();
+    assert!(a_inputs.indoors() && app.world().resource::<ReflectionSky>().queue.busy());
+    let inherited = app.world().get::<ReflectionCube>(camera_a).unwrap().light();
+
+    // B replaces A, carrying A's light; back outdoors, so B's inputs differ from A's fill.
+    app.world_mut().despawn(camera_a);
+    let camera_b = spawn_world_camera(&mut app);
+    app.world_mut().entity_mut(camera_b).insert(inherited);
+    app.world_mut().resource_mut::<SkyState>().interior = None;
+    app.update();
+    assert!(app.world().get::<EnvironmentMapLight>(camera_b).is_none(), "the inherited light goes when the camera changes");
+    assert!(app.world().get::<ReflectionCube>(camera_b).is_none(), "A's fill is not B's");
+    let b_inputs = app.world().resource::<ReflectionSky>().last.clone().unwrap();
+    assert!(!b_inputs.indoors());
+    app.update();
+    assert!(app.world().get::<EnvironmentMapLight>(camera_b).is_none() && app.world().get::<ReflectionCube>(camera_b).is_none());
+
+    hold.store(false, Ordering::Release);
+    settle(&mut app);
+    let state = app.world().resource::<ReflectionSky>();
+    assert_eq!(state.discarded, 1, "A's fill discarded");
+    assert_eq!(state.fills_indoors, 0);
+    let cube = app.world().get::<ReflectionCube>(camera_b).expect("B's own fill made its cube");
+    assert_eq!(cube.generation(), 1, "only B's fill went in");
+    assert!(cube.levels() == fill(&b_inputs, &DomeProfile::fallback(), false).levels.as_slice(), "B's bytes");
+    assert!(cube.levels() != fill(&a_inputs, &DomeProfile::fallback(), false).levels.as_slice(), "never A's");
+}
+
+/// The same for a cube replaced on the same camera while its fill runs: the old cube's
+/// light goes at once, the old fill is discarded, the new cube gets only its own fill.
+#[test]
+fn a_fill_for_a_replaced_cube_is_discarded() {
+    let (mut app, camera) = running_producer();
+    settle(&mut app);
+    let old = app.world().get::<ReflectionCube>(camera).unwrap().clone();
+    app.world_mut().entity_mut(camera).insert(old.light());
+    let hold = hold_fills(&mut app);
+    app.world_mut().resource_mut::<SkyState>().interior = Some(default());
+    app.update();
+    let old_inputs = app.world().resource::<ReflectionSky>().last.clone().unwrap();
+    assert!(app.world().resource::<ReflectionSky>().queue.busy());
+
+    let replacement = ReflectionCube::new(&mut app.world_mut().resource_mut::<Assets<Image>>());
+    let replacement_id = replacement.specular.id();
+    app.world_mut().entity_mut(camera).insert(replacement);
+    app.world_mut().resource_mut::<SkyState>().interior = None;
+    app.update();
+    assert!(app.world().get::<EnvironmentMapLight>(camera).is_none(), "the old cube's light goes when the cube changes");
+    let new_inputs = app.world().resource::<ReflectionSky>().last.clone().unwrap();
+    assert_eq!(app.world().get::<ReflectionCube>(camera).unwrap().generation(), 0);
+
+    hold.store(false, Ordering::Release);
+    settle(&mut app);
+    assert_eq!(app.world().resource::<ReflectionSky>().discarded, 1);
+    let cube = app.world().get::<ReflectionCube>(camera).unwrap();
+    assert_eq!(cube.specular.id(), replacement_id);
+    assert_eq!(cube.generation(), 1, "only the new cube's own fill went in");
+    assert!(cube.levels() == fill(&new_inputs, &DomeProfile::fallback(), false).levels.as_slice());
+    assert!(cube.levels() != fill(&old_inputs, &DomeProfile::fallback(), false).levels.as_slice());
 }

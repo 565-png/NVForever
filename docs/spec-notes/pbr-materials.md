@@ -802,9 +802,14 @@ reflection); computed on the CPU from what the renderer already lights the room 
   the cube shows, and the waiting one starts in the same frame: no work is thrown away and
   a stream of changes cannot keep the cube from updating. The trade-off: the cube shows a
   change one fill later than on the main thread (the fill's few milliseconds, then the next
-  frame's upload), two when a fill was already running. Until a camera's first
-  fill is done it has no cube and no environment light, as before the first upload; on
-  entering an interior the outdoor cube stays until the room's first fill is done
+  frame's upload), two when a fill was already running. Each fill is applied only to the
+  camera and cube it was asked for: a fill whose camera or cube was replaced meanwhile is
+  discarded, and the replacement asks its own; a light inherited from an older cube is
+  removed as soon as the camera or cube changes. The hemisphere means the first-fill line
+  quotes (a pass over the room's level-0 texels) are taken only for a cube's first fill.
+  Until a camera's first fill is done it has no cube and no environment light, as before
+  the first upload; on entering an interior the outdoor cube stays until the room's first
+  fill is done
   [documented: `reflection_sky.rs` `produce`, `FillQueue`, `fill`].
 - **Log lines.** `reflection sky: room fill in interior <cell>: box from <room marker
   <id>|rays|default> (<x> x <y> x <height> game units, x y height), <n> lamps, level 0 toward
@@ -813,8 +818,10 @@ reflection); computed on the CPU from what the renderer already lights the room 
   `reflection sky: interior <cell>: no lamp in reach and no room box, so stage 1's interior
   content`; the exit summary adds the room fills by box source, the ground-lamp fills, the
   slowest fill on the worker, the refills by reason (mode, cell, room, box, moved, lamps,
-  light, profile) and the main thread's slowest gather and slowest apply (`...; main
-  thread slowest gather <ms> ms, slowest apply <ms> ms`).
+  light, profile), the main thread's slowest gather and slowest apply and the fills
+  discarded for a replaced camera or cube (`...; main thread slowest gather <ms> ms,
+  slowest apply <ms> ms; <n> fills for a replaced camera or cube discarded`). The gather
+  time starts after the room-marker search that keys the wait, which runs every frame.
 - **Not there.** No captured scene: no objects, textures, signs or bulbs' shapes, no
   actors; uniform walls of assumed albedo; one box per fill, centred on the camera, so it
   is exact only near the camera (no parallax), and rooms joined without a marker share the
@@ -825,7 +832,8 @@ reflection); computed on the CPU from what the renderer already lights the room 
   a lamp out of reach adds nothing, the levels approach the mean, the fallback is stage 1's
   content exactly, the refill steps; the worker's fill writes the bytes the main thread
   wrote, the last finished fill stays while one runs, the newest waiting inputs win, and a
-  fill finishing while newer inputs wait is applied with the newer fill started). The smoke scenario `authored-reflections-room` in Doc
+  fill finishing while newer inputs wait is applied with the newer fill started; a fill
+  for a replaced camera or cube is discarded and the inherited light removed at once). The smoke scenario `authored-reflections-room` in Doc
   Mitchell's house (`GSDocMitchellHouse`, the generated sets of `authored-reflections-sky`):
   the first room fill line and the summary. Log lines only.
 
