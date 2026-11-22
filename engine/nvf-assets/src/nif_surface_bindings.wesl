@@ -54,7 +54,9 @@ struct NifSurface {
     // noise's reach (display values), z the canvas's share of the texture's width; w unused.
     pipboy_b: vec4<f32>,
     // Landscape anti-tiling (nif_material.rs NifSurface::terrain_repeat): x world units per
-    // texture repeat of a landscape material, 0 on every other shape; y, z, w unused.
+    // texture repeat of a landscape material, 0 on every other shape; y an authored set's
+    // metal gain (NifSurface::metal_gain, #2981; 0 on every other material), read by
+    // nif_material.wesl's lift only; z, w unused.
     terrain: vec4<f32>,
     // Environment map (nif_material.rs NifSurface::env): x the scale (0: none), y the mask
     // (0 none, 1 the mask's red, 2 the mask's alpha: the game's normal map bound as the

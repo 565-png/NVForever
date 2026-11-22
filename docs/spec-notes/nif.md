@@ -1524,18 +1524,18 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   [documented: GECK wiki "NIF Shader Properties"]. No model stores that block (the schema
   has none), but the engine may switch PPLighting shapes with parallax and a cube to it
   at run time, flipping their cube [hypothesis]; one more reading for observer
-  check 252. Choices, each tagged, with the observer check that would settle it:
+  check 256. Choices, each tagged, with the observer check that would settle it:
   - Strength and view: the cube read along the view reflected about the normal-mapped
     normal (world-fixed, which fits the bright patches observed), × the scale × the mask,
     added to the lit colour, as for windows [hypothesis for the lookup, the strength and
-    the scale; observer check 250]. By day L (next bullet) is at most 1, so the default
+    the scale; observer check 254]. By day L (next bullet) is at most 1, so the default
     can only dim the strength-1 term, while the fit asks for up to 8.5 times the term on
     some objects (a Sarsaparilla bottle): the day strength is **open** and deliberately left at 1.
   - Light: × the scene light L, per channel the ambient colour plus the sun's or moon's
     (indoors the cell's ambient plus directional colour), as display values without any
     N·L, held to 1 (`env_map::scene_light`, `env_scene_light` in nif_material.wesl)
     [hypothesis, from the dimming and the light colour observed on the static bottle;
-    observer check 254]. The shader takes them from the view's light uniforms, which in a
+    observer check 258]. The shader takes them from the view's light uniforms, which in a
     world view hold the colours NVForever lights with: outdoors the weather's colours ×
     `AMBIENT_SHARE` 0.9, `SUN_SHARE` 0.75, `MOON_SHARE` 0.5 (sky.rs) with the sunlight's
     fade and the lightning flash, not the records' bytes as stored; indoors XCLL's ambient
@@ -1545,19 +1545,19 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
     alone, as the lit surfaces do. Window shapes keep #2462's unscaled term by default
     (`NVF_PLAY_DEBUG_ENV_LIGHT_WINDOW=scene` scales them too). Views without the world
     view's display-value lights (the minigame views) keep the term unscaled.
-  - No slot-5 mask: full strength [hypothesis; observer check 251].
+  - No slot-5 mask: full strength [hypothesis; observer check 255].
   - Cube orientation: the same lookup as window shapes, (x, z, y) of the game-space
-    reflection [hypothesis: the wiki says the two differ by a flip; observer check 252].
+    reflection [hypothesis: the wiki says the two differ by a flip; observer check 256].
   - A blended shape without the window flag keeps its blend, so its reflection is
     weighted by its alpha like the rest of its colour; window shapes stay premultiplied
     (#2462) [hypothesis, the conservative choice: hair, cell fades, blended cut-outs and
-    material animation key on the blend mode; observer check 253]. A blended cut-out (a
+    material animation key on the blend mode; observer check 257]. A blended cut-out (a
     tested shape whose texture is a mask, `nif_spawn::blended_cutout`) stays blended
     whether or not it has the window flag, so its reflection is added inside the blend
     [design, as merged with #2669].
   - Env Map Fade (flags 2 bit 15) changes nothing [hypothesis, from no difference
     observed in the exterior captures, against the wiki's documented fade; observer check
-    254].
+    258].
   - Camera distance: no fade by default [design, #2841: a fade would apply to window
     shapes too and change #2462's pictures, and it is unobserved; a follow-up change
     takes it up]. Under `NVF_PLAY_DEBUG_ENV_DISTANCE_FADE=1`: whole up to 1500 units, none
@@ -1567,10 +1567,10 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
     its reflectors about 240 units apart [documented: `heliosone_solarreflector_row.nif`
     node translations, read with `fnvtool`]) fades part by part; on window shapes too
     [hypothesis for the curve and the origin, documented distances, the fade unobserved;
-    observer check 255]. A blended window shape (drawn premultiplied) keeps its colour ×
+    observer check 259]. A blended window shape (drawn premultiplied) keeps its colour ×
     alpha even where its reflection has faded out or its strength is 0 [design].
   - A shape with the flag and no slot-4 file reflects nothing (no default cube)
-    [hypothesis; observer check 256].
+    [hypothesis; observer check 260].
   - The mask's red channel is read, as for windows [hypothesis; only the 29 masks with
     an alpha channel could differ].
 
