@@ -35145,3 +35145,74 @@ expect = [
   { re = 'vats mode: marked Deathclaw FF000001 ', label = "the mark names it Deathclaw" },
 ]
 forbid = [{ re = 'vats mode: (preview|marked) NVDLC04', label = "VATS names an actor by an Editor ID" }]
+
+[[scenario]]
+name = "env-maps-saloon"
+source = "#2841 (docs/spec-notes/nif.md §6 \"Environment maps on other shapes\"): shapes with Environment_Mapping and no window flag reflect their slot-4 cube: in the Prospector Saloon a Sunset Sarsaparilla bottle (SSBottleEmpty, ssbottle02.nif: shinybright cube, scale 1.2, a slot-5 mask) and an empty whiskey bottle (WhiskeyBottle01Empty01, whiskeybottle01empty.nif: shinydull cube, no mask) are placed in front of the player, with the 10mm Pistol (Weap10mmPistol 0000434F, 10mmpistol.nif: six masked shapes) drawn; two frames in target/smoke (env_saloon.png looking west and down, env_saloon_b.png from 25 units north). Shape facts from the data files (fork data survey), not from a run"
+note = "the two bottles are PlaceAtMe'd at the player and moved about 60 units west of him; the IDs the moveto steps name (0xFF000000, 0xFF000001) are checked against what PlaceAtMe returned, and their distance from the player is read back (GetDistance). Two frames: looking west and down at the bottles from where first-person-depth puts the player, then from 25 units north turned towards them (another eye position, so the reflections move on the still bottles). The frames are for the eye. For the upstream comparison the main session takes the same scene on a main build (069ef9bde); env-maps-saloon-before is the same build with the debug switch, not upstream"
+areas = ["rendering"]
+paths = ["engine/nvf-assets/src/env_map.rs", "engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/model.rs", "engine/nvf-assets/src/texture.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GOTO = "2:469:244:3457", NVF_PLAY_TEST_LOOK = "2.5:270:-30,10.5:250:-30", NVF_PLAY_TEST_CONTROL = "3:weapon", NVF_PLAY_TEST_SCRIPT = "3:call:player:PlaceAtMe:SSBottleEmpty:1,3.5:call:player:PlaceAtMe:WhiskeyBottle01Empty01:1,4:moveto:0xFF000000:player:-60:-15:30,4.2:moveto:0xFF000001:player:-60:15:30,6:call:0xFF000000:GetDistance:player,6.1:call:0xFF000001:GetDistance:player,10:call:player:SetPos:Y:269", NVF_PLAY_TEST_SHOTS = "9:env_saloon.png,12:env_saloon_b.png" }
+args = ["--cell", "GSProspectorSaloonInterior", "--play", "--no-voice", "--no-messages"]
+run_seconds = 14
+manual = "env_saloon.png, env_saloon_b.png: the two bottles on the floor ahead and the pistol in hand show grey-white reflection streaks that move between the two angles; the whiskey bottle (no mask) reflects over its whole surface, the Sarsaparilla bottle and the pistol only where their masks allow"
+expect = [
+  { re = '(?i)ssbottle02\.nif: \d+ shape\(s\) with an environment map, no window flag: .*textures.effects.shinybright_e\.dds, scale 1\.20, masked, ', label = "the Sarsaparilla bottle reflects, masked, at its scale" },
+  { re = '(?i)whiskeybottle01empty\.nif: \d+ shape\(s\) with an environment map, no window flag: .*textures.effects.shinydull_e\.dds, scale 1\.00, no mask, ', label = "the whiskey bottle reflects at full strength (no slot-5 mask)" },
+  { re = '(?i)10mmpistol\.nif: \d+ shape\(s\) with an environment map, no window flag: .*, masked, ', label = "the pistol's masked shapes reflect" },
+  { re = 'test aid: screenshot .*env_saloon\.png', label = "the frame is saved" },
+  { re = 'test aid: screenshot .*env_saloon_b\.png', label = "the second angle is saved" },
+  { re = 'script: test aid calls SetPos on ', label = "the player is moved 25 units north for the second frame" },
+  { re = 'test aid: look heading 250\.0 pitch -30\.0$', label = "and turned towards the bottles" },
+  { re = 'script: test aid calls PlaceAtMe on .* = FF000000', label = "the Sarsaparilla bottle is the first created reference, as the moveto steps assume" },
+  { re = 'script: test aid calls PlaceAtMe on .* = FF000001', label = "the whiskey bottle is the second" },
+  { re = 'script: test aid calls GetDistance on .* = (?P<n>[0-9.]+)', range = [40, 100], all = true, label = "each bottle stands about 70 units from the player" },
+  { re = 'script: test aid calls GetDistance on ', count = 2, label = "both distances are read" },
+  { re = 'test aid: the player equips 0x0000434F', label = "the 10mm Pistol is equipped" },
+  { re = 'test aid: control .*weapon out true', label = "the pistol is drawn" },
+]
+order = [[
+  { re = 'test aid: screenshot .*env_saloon\.png', label = "the first frame" },
+  { re = 'script: test aid calls SetPos on ', label = "then the move" },
+  { re = 'test aid: look heading 250\.0 pitch -30\.0$', label = "then the turn" },
+  { re = 'test aid: screenshot .*env_saloon_b\.png', label = "then the second frame" },
+]]
+forbid = [
+  { re = 'test aid: script (Call|MoveTo)\(.*\): \S', label = "no placement step failed" },
+  { re = 'debug switch NVF_PLAY_DEBUG_ENV_', label = "no environment-map debug switch is on" },
+  { re = '(?i)(ssbottle02|whiskeybottle01empty|10mmpistol)\.nif: \d+ shape\(s\) with a window environment map', label = "the bottles and the pistol are not window shapes" },
+]
+
+[[scenario]]
+name = "env-maps-saloon-before"
+source = "#2841: the same scene as env-maps-saloon with the debug switch NVF_PLAY_DEBUG_ENV_NON_WINDOW=0 (engine/nvf-assets/src/env_map.rs): only window shapes reflect, as with #2669 alone; the before frames from the same build (env_saloon_before.png, env_saloon_before_b.png)"
+note = "placement checked as in env-maps-saloon (PlaceAtMe IDs, GetDistance, the pistol equipped and drawn); two frames from the same two places. The baseline of this branch's own build; the upstream comparison is the same scene on a main build (069ef9bde), which the main session takes"
+areas = ["rendering"]
+paths = ["engine/nvf-assets/src/env_map.rs", "engine/nvf-assets/src/nif_material.wesl", "engine/nvf-assets/src/nif_material.rs", "engine/nvf-assets/src/nif_surface_bindings.wesl", "engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/model.rs", "engine/nvf-assets/src/texture.rs"]
+env = { NVF_PLAY_DEBUG_ENV_NON_WINDOW = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GOTO = "2:469:244:3457", NVF_PLAY_TEST_LOOK = "2.5:270:-30,10.5:250:-30", NVF_PLAY_TEST_CONTROL = "3:weapon", NVF_PLAY_TEST_SCRIPT = "3:call:player:PlaceAtMe:SSBottleEmpty:1,3.5:call:player:PlaceAtMe:WhiskeyBottle01Empty01:1,4:moveto:0xFF000000:player:-60:-15:30,4.2:moveto:0xFF000001:player:-60:15:30,6:call:0xFF000000:GetDistance:player,6.1:call:0xFF000001:GetDistance:player,10:call:player:SetPos:Y:269", NVF_PLAY_TEST_SHOTS = "9:env_saloon_before.png,12:env_saloon_before_b.png" }
+args = ["--cell", "GSProspectorSaloonInterior", "--play", "--no-voice", "--no-messages"]
+run_seconds = 14
+manual = "env_saloon_before.png, env_saloon_before_b.png: the same views as env_saloon.png and env_saloon_b.png with no reflections on the bottles or the pistol"
+expect = [
+  { re = 'debug switch NVF_PLAY_DEBUG_ENV_\*: environment maps drawn with .*non_window: false', label = "the switch is read" },
+  { re = 'test aid: screenshot .*env_saloon_before\.png', label = "the frame is saved" },
+  { re = 'test aid: screenshot .*env_saloon_before_b\.png', label = "the second angle is saved (before)" },
+  { re = 'script: test aid calls SetPos on ', label = "the player is moved 25 units north for the second frame (before)" },
+  { re = 'test aid: look heading 250\.0 pitch -30\.0$', label = "and turned towards the bottles (before)" },
+  { re = 'script: test aid calls PlaceAtMe on .* = FF000000', label = "the Sarsaparilla bottle is the first created reference, as the moveto steps assume (before)" },
+  { re = 'script: test aid calls PlaceAtMe on .* = FF000001', label = "the whiskey bottle is the second (before)" },
+  { re = 'script: test aid calls GetDistance on .* = (?P<n>[0-9.]+)', range = [40, 100], all = true, label = "each bottle stands about 70 units from the player (before)" },
+  { re = 'script: test aid calls GetDistance on ', count = 2, label = "both distances are read (before)" },
+  { re = 'test aid: the player equips 0x0000434F', label = "the 10mm Pistol is equipped (before)" },
+  { re = 'test aid: control .*weapon out true', label = "the pistol is drawn (before)" },
+]
+order = [[
+  { re = 'test aid: screenshot .*env_saloon_before\.png', label = "the first frame (before)" },
+  { re = 'script: test aid calls SetPos on ', label = "then the move (before)" },
+  { re = 'test aid: look heading 250\.0 pitch -30\.0$', label = "then the turn (before)" },
+  { re = 'test aid: screenshot .*env_saloon_before_b\.png', label = "then the second frame (before)" },
+]]
+forbid = [
+  { re = 'test aid: script (Call|MoveTo)\(.*\): \S', label = "no placement step failed (before)" },
+  { re = 'shape\(s\) with an environment map, no window flag', label = "no shape without the window flag reflects" },
+]
