@@ -1440,7 +1440,10 @@ fonts) and the owner's five DATA screenshots (§1), compared at 1280 × 720 with
     McCarran 8, Hoover Dam 7]), flags `FNAM`, radius `XRDS`. Shown when the player has been
     within the radius (`XRDS`) in the marker's own worldspace with its type's icon,
     or when ShowMap or the Visible flag made it known, with the undiscovered icon
-    [hypothesis]. A marker without `XRDS` is found within `iMapMarkerRevealDistance`
+    [hypothesis]. What `GetMapMarkerVisible` returns for an undiscovered marker
+    authored Visible (0 on main, 1 in #3268) is open [hypothesis]: observer check 252
+    (`docs/handoff/observer-checks.md`, campaign `o31_mapmarker_visible`).
+    A marker without `XRDS` is found within `iMapMarkerRevealDistance`
     [documented: GECK wiki "Complete List of GameSettings", the Fallout: New Vegas default
     1000; no master sets it], that setting being this distance a [hypothesis] (#2338;
     observer check 128); a plugin's value is used as it is, and 0 finds no such marker by
@@ -1530,7 +1533,7 @@ fonts) and the owner's five DATA screenshots (§1), compared at 1280 × 720 with
     (`data.rs::travel_ask`, `take_click`, `step`). The capture above placed the marker
     with X [observed]; how the original's mouse places it (a left click on an
     empty spot, whether it asks first) is [hypothesis] (docs/handoff/observer-checks.md
-    #258). Log: `pipboy map: a click on the <world|local>
+    #262). Log: `pipboy map: a click on the <world|local>
     map away from any marker: Place Marker`, then Place Marker's own lines.
   - The words are game settings by name: `sSetMarkerQuestion` (no marker yet),
     `sMoveMarkerQuestion` (one placed), `sYes`, `sNo`, `sMoveMarker`, `sRemoveMarker`,

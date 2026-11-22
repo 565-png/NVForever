@@ -671,7 +671,8 @@ impl Game<'_> {
         if self.data.actors.get(&base).is_some_and(|d| &d.sig == b"NPC_") {
             return false;
         }
-        self.template_source(base, r, |d| d.template_base).is_some_and(|(_, d)| d.is_ghost)
+        self.template_source(base, r, |d| d.template_base)
+            .is_some_and(|(id, d)| &d.sig == b"CREA" && self.acbs_flag(id, d, crate::actor_values::acbs::IS_GHOST, |d| d.is_ghost))
     }
 
     /// `target` is a ghost that `detector` would otherwise attack: such an enemy does not
@@ -724,7 +725,11 @@ impl Game<'_> {
     /// ghost while sealed (its script's SetGhost 1) and House's body killable once the
     /// terminal unseals it (owner ruling 2026-11-13).
     pub fn is_fixture(&self, r: FormId) -> bool {
-        if r == FormId::PLAYER_REF || !self.base_data_def(r).is_some_and(|d| d.immobile && &d.sig == b"CREA") {
+        if r == FormId::PLAYER_REF
+            || !self
+                .base_data_source(r)
+                .is_some_and(|(id, d)| &d.sig == b"CREA" && self.acbs_flag(id, d, crate::actor_values::acbs::IMMOBILE, |d| d.immobile))
+        {
             return false;
         }
         let calm = self.def_following(r, |d| d.template_ai).is_some_and(|d| d.aggression == Some(0) && d.assistance == Some(0));
