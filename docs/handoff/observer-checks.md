@@ -3566,3 +3566,22 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the difference from a standing player is the original's too; counts near the standing
      ones mean the original closes the gap in a way ours does not (a lunge from further
      off, a faster chase, or no knockback on the player).
+
+## Added 2026-11-22 (Blake's books for Bitter Springs Infirmary Blues, #3350)
+
+256. **Does a merchant sell the owned items lying at its stand?** (P2: #3350, a player could
+     not buy the two books VMS40 asks for; barter-menu.md §4.) Ours [design]: the barter
+     list is the merchant container's stock alone. Blake's two books lie on his stand,
+     owned by him, and can only be taken as a theft. In the original, with VMS40 at stage
+     10 (`setstage VMS40 10`), go to Blake at the Crimson Caravan Company:
+     (a) open his barter menu and look for "Stress and the Modern Refugee: A Primer" and
+     "Tiny, Tiny Babies: All You Need to Know About Pediatric Medicine", and note their
+     prices;
+     (b) look at his stand for the two books (the upper shelf by the first aid boxes,
+     the lower shelf by the water bottles) and say whether the crosshair shows Take or
+     Steal;
+     (c) if they are in the list, buy one and see whether the one on the stand goes.
+     In the list: the rule is wider than the merchant container (owned loose items near
+     the merchant, or these two only), and a scan of owned items at other merchants'
+     stands sizes it. Not in the list: the original's way is the theft (or a speech or
+     barter line not in our list).
