@@ -988,11 +988,11 @@ expect = [
 [[scenario]]
 name = "physics-rate-fps"
 source = "the owner 2026-11-11 (rename the Match Display to Match FPS and implement it): Match FPS follows the game's own frame rate down when it stays low and back up when it recovers, between 60 and the display's ceiling (engine/nvf-play/src/phys_rate.rs `FpsFollow`, docs/spec-notes/physics.md §5.4)"
-note = "The test aid NVF_PLAY_TEST_SLOW_FRAMES holds every frame 30 ms longer from 25 to 35 real seconds after the start: under 34 frames a second, so Match FPS steps down to 60 after 2 s of it, and back up once the frames have recovered for 5 s (their rate depends on the machine, so only that it rises is checked). The cost guard is not what moves it"
+note = "--log-frame-times with --frame-cap 120 gives Match FPS a ceiling of 120 on every display (phys_rate.rs display_hz: a cap without vertical sync is the ceiling); on a 60 Hz display under vertical sync the ceiling was 60, Match FPS started at its floor and had nothing to step down from, so the scenario could not pass (#3356). The test aid NVF_PLAY_TEST_SLOW_FRAMES holds every frame 30 ms longer from 25 to 35 real seconds after the start: under 34 frames a second, so Match FPS steps down to 60 after 2 s of it, and back up once the frames have recovered for 5 s (their rate depends on the machine, so only that it rises is checked). The cost guard is not what moves it"
 areas = ["physics"]
 paths = ["engine/nvf-play/src/phys_rate.rs", "engine/nvforever/src/frame_pace.rs", "engine/nvforever/src/main.rs"]
 env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SLOW_FRAMES = "25:35:30" }
-args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--physics-hz", "fps"]
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--physics-hz", "fps", "--log-frame-times", "60", "--frame-cap", "120"]
 run_seconds = 55
 order = [[
   { re = 'phys: physics rate \d+ Hz \(--physics-hz fps, Match FPS: ', label = "Match FPS from the command line" },
@@ -17833,6 +17833,21 @@ expect = [
   { re = 'grab: Teddy Bear \(00172D8B\) came to rest at', label = "dropped, it comes to rest" },
 ]
 forbid = [{ text = "no loose body", label = "the bear's bodies held keyframed" }]
+
+[[scenario]]
+name = "grab-plant-rooted"
+source = "[hypothesis] #3389: the grab key passes through a body on the non-collidable layer, so a pickable plant (White Horse Nettle: one dynamic box of 45 kg on layer 15) stays rooted; observer check 278"
+note = "the nettle 0016AF22 south of Goodsprings; Z held 3 s on it. Before the fix it was picked up as a loose object of 45 kg and dropped about 100 units off"
+areas = ["grab"]
+paths = ["engine/nvf-play/src/grab.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_NEAR = "0016AF22", NVF_PLAY_TEST_GRAB = "8:z:3:90:at=0016AF22" }
+args = ["--play", "--pos=-68223,-3700,8110", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { text = "test aid NVF_PLAY_TEST_GRAB: aimed at 0016AF22", label = "the view is turned to the nettle" },
+  { text = "grab: nothing under the crosshair to pick up", label = "Z finds nothing to pick up on the plant" },
+]
+forbid = [{ text = "grab: picked up loose object White Horse Nettle", label = "the plant comes off the ground" }]
 
 [[scenario]]
 name = "grab-skull"
