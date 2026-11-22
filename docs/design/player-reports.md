@@ -326,7 +326,7 @@ per unchanged lock. The detectors are registered only while reports are enabled.
 | hitch | a frame > 250 ms outside a load |
 | slow load | a load > 20 s; it says where the time went: each wait's end, the longest frame, the files read and the time in the reads (docs/design/loading-screen.md §1 step 7, #2407) |
 | memory | RAM or VRAM within 10 % of the budget |
-| missing asset | the first failure of each path |
+| missing asset | the first failure of each path. For a model or an actor file that a plugin's record names, the event says the `plugin` (the winning record's; a mod's over the game's own when both name it). A file the base game's or an add-on's own record names and no archive has is not reported: it is the data's own dangling name (`meshes\creatures\ghoul\mmm_ghoulvariant_v1.nif`, in FalloutNV.esm creatures' model lists, 11 of 49 installs of build 0.8.0) [observed, #3045; `reports/asset_sources.rs`]. A file of the game's that is there and does not read is still reported. Textures and particles have no record of their own and are reported as before |
 | save trouble | a save that fails to write, or a load that falls back (#1360) |
 | audio | the device lost or a voice file missing for a spoken line |
 | soft lock | the player is held and nothing moves on to let them go: scripts hold the movement controls (or the player is restrained) for 30 s with no story event; a conversation with no line and no choice for 5 s; one response said for 120 s; a menu set under a conversation that never opens (`fnv_game::softlock`, #2365) |

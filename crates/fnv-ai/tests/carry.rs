@@ -5599,7 +5599,11 @@ fn sandbox_interrupt_normal_spectator_flee_cancels_the_active_seat() {
     let player = s.game.world.get(FormId::PLAYER_REF).unwrap();
     (player.cell, player.pos) = (Some(FormId(CELL_C)), player_at);
     s.game.awareness.tactics.settings = Some(GroupSettings { flee_normal: 200.0, ..GroupSettings::default() });
-    // The non-resident loner fights the player; the sandboxer stays a neutral observer.
+    // The non-resident loner fights the player beside it; the sandboxer stays a neutral
+    // observer. The loner is put near: a foe with no place near the player is near no one
+    // (#3223), and its placed spot is in another cell.
+    let loner = s.game.world.get(FormId(R_LONER)).unwrap();
+    (loner.cell, loner.pos) = (Some(FormId(CELL_C)), [player_at[0] - 150.0, player_at[1], player_at[2]]);
     fighting(&mut s, R_LONER, player_at);
     let saved = s.ai.agents[&actor].sandbox.as_ref().unwrap().schedule();
     s.ai.social(&mut s.game, &s.nav, 0.5);

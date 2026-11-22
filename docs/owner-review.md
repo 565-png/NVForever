@@ -34,7 +34,7 @@ the spec it links to.
   change it, none built: (a) such a creature begins its forward lunge from as far as the
   lunge carries it (tried: it then lunges every 1.7 s, but half the lunges miss and the
   blows that land do not go up); (b) no knockback on the player from a creature's
-  ordinary blow; (c) leave it, if the original is the same. Observer check 250 asks the
+  ordinary blow; (c) leave it, if the original is the same. Observer check 253 asks the
   original. Until you rule, nothing changes
   ([combat rules](spec-notes/combat-rules.md), "Knockback").
 - **Automatic device switching (#2200).** [design, #2200] Switch the saved two-device
