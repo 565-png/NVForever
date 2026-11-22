@@ -807,6 +807,9 @@ struct Pilot {
     /// When the player last walked out of each unswitchable speaker's range: once in
     /// [`AWAY_AGAIN_SECS`], then the step's walk dashes through, as a player does.
     away_from: Vec<(FormId, f64)>,
+    /// The packages each actor of a coming `package … end` step has been on, in order: one
+    /// it has already left is not waited for, nor its end replayed ([`Action::Package`]).
+    pkg_history: std::collections::HashMap<FormId, Vec<FormId>>,
     title: String,
     given: Vec<Json>,
     actions: Vec<Action>,
@@ -897,6 +900,7 @@ impl Pilot {
             speakers: None,
             speaker_check: 0.0,
             away_from: Vec::new(),
+            pkg_history: std::collections::HashMap::new(),
             title: String::new(),
             given: Vec::new(),
             actions: Vec::new(),
@@ -1819,7 +1823,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
             } else if lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > PICK_AFTER_SECS) && pick_lock(p, h, door, false) {
                 // Picked: the next frame opens it, as the menu activates the door it opened.
                 w.door_since = None;
-            } else if lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) && try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, door, feet) {
+            } else if lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) && try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, door, feet, w.target) {
                 w.door_since = Some(p.now);
                 return Walked::Going;
             } else if lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) && fetch_key(p, &mut w.poked, &mut w.errand, h, nav, door, feet) {
@@ -1843,7 +1847,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 w.tried.push((door, lock));
                 (w.follower, w.door_since) = (None, None);
                 return Walked::Going;
-            } else if w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) && try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, door, feet) {
+            } else if w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) && try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, door, feet, w.target) {
                 // Not locked, but opened from elsewhere: the Fort's Securitron Vault hatch
                 // opens from the weather station's console ("Insert the Platinum Chip"),
                 // whose script names the hatch.
@@ -1896,7 +1900,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 let Some(lock) = lock else {
                     // A door opened from elsewhere (a vault door's console, a gate's
                     // switch): what names it, as for a locked one.
-                    if try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, d.door, feet) {
+                    if try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, d.door, feet, w.target) {
                         w.door_since = Some(p.now);
                         return Walked::Going;
                     }
@@ -1917,7 +1921,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                     w.door_since = None;
                     return Walked::Going;
                 }
-                if try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, d.door, feet) {
+                if try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, d.door, feet, w.target) {
                     w.door_since = Some(p.now);
                     return Walked::Going;
                 }
@@ -2170,7 +2174,11 @@ fn door_switch(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<Switch> {
     through.dedup();
     let refs: &[FormId] = cell.and_then(|c| g.world.placed.by_cell.get(&c)).map(|v| v.as_slice()).unwrap_or(&[]);
     for &r in refs {
-        if r.0 == door || used.iter().any(|(u, d)| *u == r.0 && *d == door) || g.is_dead(r) {
+        // Not a trigger box (an XPRM primitive) either, as for the activate parents: the
+        // dam's Legion battle triggers, "used" as Oliver's door's switch, set the battle
+        // state, Oliver fought and died, and the Lanius scene held the player's controls
+        // (dam-panel, rerun 3 [observed]).
+        if r.0 == door || used.iter().any(|(u, d)| *u == r.0 && *d == door) || g.is_dead(r) || g.world.placed.get(r).is_some_and(|p| p.primitive.is_some()) {
             continue;
         }
         let Some((_, pos)) = where_is(g, r) else { continue };
@@ -2234,7 +2242,7 @@ fn door_terminal(g: &Game, door: u32, used: &[(u32, u32)]) -> Option<DoorTermina
 
 /// A door stays locked: what opens it is used, or walked to first (`Walk::side`).
 /// Whether there was something to use.
-fn try_beside(p: &Pilot, poked: &mut Vec<(u32, u32)>, side: &mut Option<(FormId, u32, Box<Walk>)>, errands: &mut Option<(Errand, Place)>, h: &mut Hands, door: u32, feet: [f32; 3]) -> bool {
+fn try_beside(p: &Pilot, poked: &mut Vec<(u32, u32)>, side: &mut Option<(FormId, u32, Box<Walk>)>, errands: &mut Option<(Errand, Place)>, h: &mut Hands, door: u32, feet: [f32; 3], target: Option<FormId>) -> bool {
     let used = poked.clone();
     let switch = h.game(|g| door_switch(g, door, &used)).flatten();
     // A terminal entry that names the door comes before an activator that only stands
@@ -2244,6 +2252,13 @@ fn try_beside(p: &Pilot, poked: &mut Vec<(u32, u32)>, side: &mut Option<(FormId,
     let Some((r, cell, pos, away, what)) = switch.filter(|_| terminal.is_none()) else {
         // No switch: a terminal with an entry for the door is an errand of its own.
         let Some((terminal, menu, item, cell, pos)) = terminal else { return false };
+        // The walk's own goal: going to it as an errand loops round the door it opens
+        // (Beyond the Beef's freezer terminal stands 95 units from the freezer door and
+        // snaps to the freezer's side). Nothing to use: the walk gives the door up and the
+        // step reaches the terminal from this side (rerun 3 [observed]).
+        if Some(terminal) == target {
+            return false;
+        }
         poked.push((terminal.0, door));
         let space = cell.and_then(|c| crate::nav::space_of_cell(h.world, c.0)).unwrap_or(space_of(h.location));
         let name = h.game(|g| g.data.name(terminal)).unwrap_or_default();
@@ -3896,6 +3911,16 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
             };
             let wanted = h.game(|g| runner::resolve(g, package).ok()).flatten();
             let now_running = h.game(|g| g.extra.get(&r).and_then(|e| e.current_package)).flatten();
+            // Already run and left before the step came: neither waited for nor replayed.
+            // General Chase's move-to-marker package was over and his briefing on when the
+            // step began; its end script, replayed after 900 s, undid OA3Explain and the
+            // tent door never opened (Paving the Way, rerun 3 [observed]). Liberty Prime's
+            // march was never his package before its step, so it is still waited for.
+            if p.part == 0 && wanted.is_some() && now_running != wanted && p.pkg_history.get(&r).is_some_and(|v| v.iter().position(|x| Some(*x) == wanted).is_some_and(|i| i + 1 < v.len())) {
+                info!("pilot: step {}: {actor}'s {package} already ran and ended: not replayed", p.i);
+                (h.intent.forward, h.intent.right) = (0.0, 0.0);
+                return Some(None);
+            }
             if wanted.is_some() && now_running == wanted && p.part == 0 {
                 p.part = 1;
                 info!("pilot: step {}: {actor} is on {package}: the player goes along until it ends", p.i);
@@ -4951,6 +4976,23 @@ fn drive(
         }
         (Some(m), _) => p.menu_since = Some((m, p.now)),
         (None, _) => p.menu_since = None,
+    }
+    // The packages of the actors the chain's `package … end` steps escort, as they change.
+    if p.campaign && *state.get() != PlayState::Loading {
+        let actors: Vec<String> = p.actions.iter().skip(p.i).filter_map(|a| match a {
+            Action::Package { actor, event, .. } if event.eq_ignore_ascii_case("end") => Some(actor.clone()),
+            _ => None,
+        }).collect();
+        if !actors.is_empty() {
+            let now: Vec<(FormId, Option<FormId>)> = h.game(|g| actors.iter().filter_map(|n| runner::resolve(g, n).ok()).map(|r| (r, g.extra.get(&r).and_then(|e| e.current_package))).collect()).unwrap_or_default();
+            for (r, pk) in now {
+                let Some(pk) = pk else { continue };
+                let v = p.pkg_history.entry(r).or_default();
+                if v.last() != Some(&pk) {
+                    v.push(pk);
+                }
+            }
+        }
     }
     // A speaker that sets the collar counting down is switched off first, as a player
     // does when the collar beeps (Dead Money); before a fight too: the collar kills in
