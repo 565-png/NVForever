@@ -286,8 +286,11 @@ impl Game<'_> {
 /// nvftest, capture `fa_batch1_queries`]; ShowMap's canTravel, ShowAllMapMarkers' travel
 /// flag, and explicit script `SetMapMarkerVisible` / `SetMapMarkerTravel` /
 /// `SetMapMarkerHidden` changes feed visibility and travel consistently with the Pip-Boy
-/// map. The authored Can Travel To flag (`FNAM` bit 2) does not mark an undiscovered
-/// marker as known or return 2 before the player finds it or a script enables travel.
+/// map. An undiscovered marker authored Visible (`FNAM` bit 1) reads 1 rather than 0
+/// until found or shown [hypothesis: matches the Pip-Boy map, changes vanilla callers
+/// such as VMQ01; pending observer check 252 in #3340, `o31_mapmarker_visible`]. The
+/// authored Can Travel To flag (`FNAM` bit 2) does not mark an undiscovered marker as
+/// known or return 2 before the player finds it or a script enables travel.
 pub fn get_map_marker_visible(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
     let r = ctx.subject()?;
     let flags = g.marker_flags(r);
