@@ -1,5 +1,5 @@
 //! Live session overrides for `ARMO` (and shared item) traits/flags/slots
-//! (docs/spec-notes/ext-last-core.md §10): keeps `field_overrides`, `World::item_overrides`,
+//! (docs/spec-notes/ext-last-core.md §11): keeps `field_overrides`, `World::item_overrides`,
 //! `OtherState::power_armor`, and `Game::playable_overrides` synchronized across all
 //! setters (`SetEquipmentSlotsMask`, `SetEquipmentBipedMask`, `SetArmorClass`,
 //! `SetIsPowerArmor`, `SetIsPlayable`, `LNSetIsPlayable`, `SetArmorDT`,

@@ -2,7 +2,7 @@
 //! `SetEquipmentBipedMask`, `SetArmorClass`, `SetIsPowerArmor`, `SetIsPlayable`,
 //! `LNSetIsPlayable`, `SetArmorDT`, `SetArmorArmorRating`/`SetArmorARAlt`, `SetWeight`,
 //! `SetObjectHealth`, `SetRepairList`) and bi-directional `TempCloneForm` ARMO isolation
-//! (docs/spec-notes/ext-last-core.md §10).
+//! (docs/spec-notes/ext-last-core.md §11).
 
 use crate::common;
 

@@ -431,6 +431,9 @@ pub struct Snapshot {
     /// The game layer's weight rules ([`World::set_weight_rules`]); absent when none.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub weight_rules: BTreeMap<FormId, crate::inventory::WeightRules>,
+    /// Default-open overrides set at run time ([`World::set_default_open`]); absent when none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub default_open: BTreeMap<FormId, bool>,
 }
 
 /// What a world keeps for the session and not in a save: the edits of functions
@@ -528,6 +531,8 @@ pub struct World<'a> {
     detached_cells: BTreeMap<FormId, f32>,
     /// Quest-item flags set at run time (`set_quest_object`); they replace the record's.
     quest_objects: BTreeMap<FormId, bool>,
+    /// Default-open flags set at run time (`set_default_open`); they replace the placement's ONAM flag.
+    default_open: BTreeMap<FormId, bool>,
     /// Entries added to leveled item lists at run time ([`World::add_to_leveled_list`]).
     leveled_added: BTreeMap<FormId, Vec<LeveledEntry>>,
     /// Leveled item lists edited by script for the session (LeveledListAddForm and its
@@ -630,6 +635,7 @@ impl<'a> World<'a> {
             time_global_ids: TimeGlobalIds { hour: forms.by_edid(clock::GAME_HOUR), days_passed: forms.by_edid(clock::GAME_DAYS_PASSED) },
             detached_cells: BTreeMap::new(),
             quest_objects: BTreeMap::new(),
+            default_open: BTreeMap::new(),
             leveled_added: BTreeMap::new(),
             leveled_edits: BTreeMap::new(),
             base_edits: BTreeMap::new(),
@@ -821,9 +827,9 @@ impl<'a> World<'a> {
             // A reference with lock data starts locked. [hypothesis] A leveled lock's
             // level is set now (`World::lock_read_level`, `Lock::level_at`).
             lock: placed.and_then(|p| p.lock).map(|l| LockState { level: l.level_at(lock_level), key: l.key, locked: true }),
-            // A door flagged Open by Default starts open. [hypothesis from the flag's
-            // name; a gate so flagged let the player drop through it, physics.md §4]
-            open: placed.is_some_and(|p| p.open_by_default),
+            // A door flagged Open by Default (or overridden by SetDefaultOpen) starts open.
+            // [hypothesis from the flag's name; a gate so flagged let the player drop through it, physics.md §4]
+            open: self.default_open(id),
             extra: Extra {
                 condition: placed.and_then(|p| p.health),
                 owner: placed.and_then(|p| p.owner),
@@ -2082,6 +2088,54 @@ impl<'a> World<'a> {
         reset
     }
 
+    /// Whether `id`'s default open state is open: a runtime override ([`World::set_default_open`]),
+    /// else its placement's ONAM (`open_by_default`) flag.
+    pub fn default_open(&self, id: FormId) -> bool {
+        self.default_open
+            .get(&id)
+            .copied()
+            .unwrap_or_else(|| self.placed.get(id).is_some_and(|p| p.open_by_default))
+    }
+
+    /// Validated default-open query (`GetDefaultOpen`, `0x10D7`): checks that `id` is a live
+    /// reference without materializing an untouched placement.
+    pub fn check_default_open(&self, id: FormId) -> Result<bool, SimError> {
+        if self.deleted_created.contains_key(&id) || self.refs.get(&id).is_some_and(RefState::deleted) {
+            return Err(SimError::Deleted(id));
+        }
+        let authored = if let Some(p) = self.placed.get(id) {
+            p.open_by_default
+        } else if self.refs.contains_key(&id) || id == FormId::PLAYER_REF {
+            false
+        } else {
+            return Err(SimError::UnknownRef(id));
+        };
+        Ok(self.default_open.get(&id).copied().unwrap_or(authored))
+    }
+
+    /// Set `id`'s default open state (`SetDefaultOpen`). Rejects unknown or deleted references
+    /// without mutating state. Leaves an already-materialized reference's current `open` flag
+    /// untouched (`SetOpenState` owns live open state), while unmaterialized or reset
+    /// references inherit this default in [`World::initial`].
+    pub fn set_default_open(&mut self, id: FormId, open: bool) -> Result<(), SimError> {
+        if self.deleted_created.contains_key(&id) || self.refs.get(&id).is_some_and(RefState::deleted) {
+            return Err(SimError::Deleted(id));
+        }
+        let authored = if let Some(p) = self.placed.get(id) {
+            p.open_by_default
+        } else if self.refs.contains_key(&id) || id == FormId::PLAYER_REF {
+            false
+        } else {
+            return Err(SimError::UnknownRef(id));
+        };
+        if open == authored {
+            self.default_open.remove(&id);
+        } else {
+            self.default_open.insert(id, open);
+        }
+        Ok(())
+    }
+
     pub fn set_enabled(&mut self, id: FormId, enabled: bool) -> Result<(), SimError> {
         let s = self.get(id)?;
         if s.enabled != enabled {
@@ -2565,6 +2619,7 @@ impl<'a> World<'a> {
             power_armor_training: self.power_armor_training,
             carry_bonus: self.carry_bonus.clone(),
             weight_rules: self.weight_rules.clone(),
+            default_open: self.default_open.iter().filter(|(id, _)| kept(id)).map(|(&k, &v)| (k, v)).collect(),
             deleted_created,
         }
     }
@@ -2611,6 +2666,7 @@ impl<'a> World<'a> {
         w.power_armor_training = s.power_armor_training;
         w.carry_bonus = s.carry_bonus.clone();
         w.weight_rules = s.weight_rules.clone();
+        w.default_open = s.default_open.clone();
         w.made_at_from_saved_place();
         Ok(w)
     }
