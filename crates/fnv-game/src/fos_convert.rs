@@ -21,7 +21,7 @@ use fnv_sim::forms::{ItemKind, LeveledEntry};
 use fnv_sim::inventory::{Extra, Pick};
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const REPORT_FORMAT: &str = "fnv.save.fos_convert/1";
 pub const INSPECT_FORMAT: &str = "fnv.save.fos_inspect/1";
@@ -204,6 +204,12 @@ pub fn inspect_fos(fos: &Fos, cosave_present: bool) -> FosInspectReport {
     count_res("quests", q_ok, q_err);
     let (r_ok, r_err) = partition_results(fos.reference_changes());
     count_res("reference_changes", r_ok, r_err);
+    let (ci_ok, ci_err) = partition_results(fos.container_inventories());
+    count_res("container_inventories", ci_ok, ci_err);
+    let (mm_ok, mm_err) = partition_results(fos.map_markers());
+    count_res("map_markers", mm_ok, mm_err);
+    let (cr_ok, cr_err) = partition_results(fos.created_refs());
+    count_res("created_refs", cr_ok, cr_err);
     let (f_ok, f_err) = partition_results(fos.faction_relations());
     count_res("factions", f_ok, f_err);
     let (fl_ok, fl_err) = partition_results(fos.form_lists());
@@ -688,6 +694,112 @@ pub fn convert_fos(
         }
     }
 
+    // 7b. Container REFR inventories (bits 5/27, optional bit 28 tail; [hypothesis]).
+    for cres in fos.container_inventories() {
+        let Ok(cont) = cres else {
+            inc_skip("container", "inventory layout not understood");
+            continue;
+        };
+        let rid = match map_id(cont.form) {
+            Ok(id) if refs.get(id).is_some() => id,
+            Ok(_) => {
+                inc_skip("container", "not a placed reference of load order");
+                continue;
+            }
+            Err(why) => {
+                inc_skip("container", why);
+                continue;
+            }
+        };
+        let applied = apply_container_inventory(
+            &mut g,
+            forms,
+            rid,
+            &cont.items,
+            &map_id,
+            &mut inc_ok,
+            &mut inc_hyp,
+            &mut inc_skip,
+        );
+        let is_cont = refs.get(rid).is_some_and(|r| forms.sig(r.base).as_ref() == Some(b"CONT"));
+        if applied || (is_cont && cont.items.iter().all(|it| it.count == 0)) {
+            inc_ok("containers");
+            inc_hyp("container_inventories (REFR bits 5/27) [hypothesis]");
+        }
+    }
+
+    // 7c. Map marker REFR discovery/visibility flags (bit 31 extra 0x2C; [hypothesis]).
+    let mut handled_map_markers: BTreeSet<u32> = BTreeSet::new();
+    for mres in fos.map_markers() {
+        let Ok(mm) = mres else {
+            inc_skip("map_marker", "record layout not understood");
+            continue;
+        };
+        handled_map_markers.insert(mm.form);
+        let rid = match map_id(mm.form) {
+            Ok(id) if refs.get(id).is_some_and(|r| r.map_marker.is_some() || r.base == FormId(0x10)) => id,
+            Ok(_) => {
+                inc_skip("map_marker", "not a MapMarker reference of load order");
+                continue;
+            }
+            Err(why) => {
+                inc_skip("map_marker", why);
+                continue;
+            }
+        };
+        if mm.flags & 0x01 != 0 {
+            g.player.map_markers.insert(rid);
+        }
+        if mm.flags & 0x02 != 0 {
+            g.player.travel_markers.insert(rid);
+            g.player.found_markers.insert(rid);
+        }
+        inc_ok("map_markers");
+        inc_hyp("map_markers (REFR extra 0x2C) [hypothesis]");
+    }
+    if !g.player.found_markers.is_empty() {
+        let found_ids: Vec<u32> = g.player.found_markers.iter().map(|id| id.0).collect();
+        engine.extra.insert("map_markers_found".into(), serde_json::json!(found_ids));
+    }
+
+    // 7d. Created 0xFF REFR records (32-byte header -> World::place; [hypothesis]).
+    let mut handled_created_refs: BTreeSet<u32> = BTreeSet::new();
+    for cr_res in fos.created_refs() {
+        let Ok(cr) = cr_res else {
+            inc_skip("created_ref", "32-byte header not understood");
+            continue;
+        };
+        let base_id = match cr.base.ok_or("not in save form ID array").and_then(&map_id) {
+            Ok(id) => id,
+            Err(why) => {
+                inc_skip("created_ref", why);
+                continue;
+            }
+        };
+        let Some((raw_at, pos, rot)) = cr.place else {
+            inc_skip("created_ref", "missing cell or worldspace");
+            continue;
+        };
+        let at = match map_id(raw_at) {
+            Ok(id) => id,
+            Err(why) => {
+                inc_skip("created_ref", why);
+                continue;
+            }
+        };
+        let Some(cell) = resolve_cell(refs, at, pos) else {
+            inc_skip("created_ref", "cell or worldspace not present in load order");
+            continue;
+        };
+        if g.world.place(base_id, Some(cell), pos, rot, 1).is_ok() {
+            handled_created_refs.insert(cr.form);
+            inc_ok("created_refs");
+            inc_hyp("created_refs (0xFF REFR 32B header) [hypothesis]");
+        } else {
+            inc_skip("created_ref", "base form not placeable in load order");
+        }
+    }
+
     // 8. Faction relations (FACT flag 2).
     let mut factions_changed = false;
     for fres in fos.faction_relations() {
@@ -875,6 +987,9 @@ pub fn convert_fos(
     // 15. Truthfully account for all remaining unmapped/unsupported changed-form records.
     for cf in &fos.changed {
         if cf.form >> 24 == 0xFF {
+            if cf.kind == TYPE_REFR && handled_created_refs.contains(&cf.form) {
+                continue;
+            }
             inc_skip("changed_form", &format!("created {} (0xFF) unsupported", fnv_save::fos::kind_name(cf.kind)));
             continue;
         }
@@ -886,7 +1001,13 @@ pub fn convert_fos(
             TYPE_REPU | TYPE_CHAL => cf.flags & (1 << 1) != 0,
             TYPE_NPC => cf.form == PLAYER_BASE && (cf.flags & (1 << 2) != 0),
             TYPE_CLAS => cf.form == fnv_save::fos::PLAYER_CLASS && (cf.flags & (1 << 1) != 0),
-            TYPE_REFR | TYPE_ACHR | TYPE_ACRE => cf.form == PLAYER_REF || (cf.flags & 0b111 != 0),
+            TYPE_REFR => {
+                (cf.flags & 0b111 != 0)
+                    || ((cf.flags & ((1 << 5) | (1 << 27))) != 0
+                        && (cf.flags & !((1 << 5) | (1 << 27) | (1 << 28))) == 0)
+                    || handled_map_markers.contains(&cf.form)
+            }
+            TYPE_ACHR | TYPE_ACRE => cf.form == PLAYER_REF || (cf.flags & 0b111 != 0),
             _ => false,
         };
         if !handled {
@@ -962,6 +1083,102 @@ fn normalize_item_condition(forms: &FormStore, id: FormId, cond_hp: Option<f32>)
     let hp = cond_hp?;
     let max_hp = forms.item(id)?.health.filter(|&h| h > 0)? as f32;
     hp.is_finite().then_some((hp / max_hp).clamp(0.0, 1.0))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_container_inventory(
+    g: &mut Game<'_>,
+    forms: &FormStore,
+    holder: FormId,
+    items: &[FosItem],
+    map_id: &impl Fn(u32) -> Result<FormId, &'static str>,
+    inc_ok: &mut impl FnMut(&str),
+    inc_hyp: &mut impl FnMut(&str),
+    inc_skip: &mut impl FnMut(&str, &str),
+) -> bool {
+    let mut applied_any_item = false;
+    for it in items.iter().filter(|it| it.count != 0) {
+        match it.item.ok_or("not in save form ID array").and_then(map_id) {
+            Ok(id) => {
+                if it.count > 0 {
+                    let mut remaining = it.count;
+                    let mut added_any = false;
+                    let mut failed = false;
+                    for entry in &it.entries {
+                        if remaining <= 0 {
+                            break;
+                        }
+                        let stack_n = entry.count.map(i32::from).filter(|&n| n > 0).unwrap_or(1).min(remaining);
+                        let cond = normalize_item_condition(forms, id, entry.condition);
+                        let owner = match entry.owner {
+                            Some(Some(raw)) => match map_id(raw) {
+                                Ok(oid) => Some(oid),
+                                Err(why) => {
+                                    inc_skip("container_item_owner", why);
+                                    None
+                                }
+                            },
+                            Some(None) => {
+                                inc_skip("container_item_owner", "not in save form ID array");
+                                None
+                            }
+                            None => None,
+                        };
+                        let extra = Extra {
+                            condition: cond,
+                            owner,
+                            equipped: false,
+                            mods: entry.weapon_mods,
+                            live: false,
+                        };
+                        if g.world.add_item_extra(holder, id, stack_n, extra).is_ok() {
+                            remaining -= stack_n;
+                            added_any = true;
+                            if entry.count.is_some_and(|n| n > 0) {
+                                inc_hyp("player_item_stack_counts (extra 0x24) [hypothesis]");
+                            }
+                            if cond.is_some() {
+                                inc_hyp("player_item_conditions (extra 0x25) [hypothesis]");
+                            }
+                            if owner.is_some() {
+                                inc_hyp("player_item_owners (extra 0x21) [hypothesis]");
+                            }
+                            if entry.weapon_mods != 0 {
+                                inc_hyp("player_item_weapon_mods (extra 0x8D) [hypothesis]");
+                            }
+                        } else {
+                            failed = true;
+                            break;
+                        }
+                    }
+                    if !failed && remaining > 0 {
+                        if g.world.add_item(holder, id, remaining).is_ok() {
+                            added_any = true;
+                        } else {
+                            failed = true;
+                        }
+                    }
+                    if !failed && added_any {
+                        applied_any_item = true;
+                        inc_ok("container_items");
+                    } else {
+                        inc_skip("container_item", "unknown or non-container/non-inventory form");
+                    }
+                } else if let Some(remove) = it.count.checked_neg() {
+                    if g.world.remove_item(holder, id, remove).is_ok() {
+                        applied_any_item = true;
+                        inc_ok("container_items");
+                    } else {
+                        inc_skip("container_item", "unknown or non-container/non-inventory form");
+                    }
+                } else {
+                    inc_skip("container_item", "negative item count overflow");
+                }
+            }
+            Err(why) => inc_skip("container_item", why),
+        }
+    }
+    applied_any_item
 }
 
 #[allow(clippy::too_many_arguments)]

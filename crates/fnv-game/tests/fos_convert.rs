@@ -6,8 +6,8 @@ use fnv_game::game::{Game, GameConfig, GameSnapshot, InstKey};
 use fnv_game::GameData;
 use fnv_save::fos::{
     Fos, FORM_DELETED, FORM_DISABLED, FORM_TALKED_TO_PC, PLAYER_BASE, PLAYER_CLASS, PLAYER_REF,
-    TYPE_ACHR, TYPE_CHAL, TYPE_CLAS, TYPE_FACT, TYPE_FLST, TYPE_INFO, TYPE_LVLI, TYPE_NOTE,
-    TYPE_NPC, TYPE_QUST, TYPE_REFR, TYPE_REPU,
+    TYPE_ACHR, TYPE_ACRE, TYPE_CHAL, TYPE_CLAS, TYPE_FACT, TYPE_FLST, TYPE_INFO, TYPE_LVLI,
+    TYPE_NOTE, TYPE_NPC, TYPE_QUST, TYPE_REFR, TYPE_REPU,
 };
 use fnv_save::{PluginEntry, SaveBody, SaveHeader, SaveKind, BODY_FORMAT, ENGINE_FORMAT};
 use fnv_script::vm::Value;
@@ -38,6 +38,12 @@ const NOTE_ID: u32 = 0x0000_0870;
 const DIAL_ID: u32 = 0x0000_0880;
 const INFO_ID: u32 = 0x0000_0881;
 const WTHR_ID: u32 = 0x0000_0890;
+const CONT_BASE: u32 = 0x0000_08A0;
+const CONT_REF: u32 = 0x0000_08A1;
+const CONT28_REF: u32 = 0x0000_08A2;
+const MAP_MARKER_BASE: u32 = 0x0000_0010;
+const MARKER_VIS_REF: u32 = 0x0000_08B0;
+const MARKER_FOUND_REF: u32 = 0x0000_08B1;
 
 struct Fixture {
     data: GameData,
@@ -168,6 +174,16 @@ fn fixture() -> Fixture {
     );
     let dial_grp = [dial, group(DIAL_ID.to_le_bytes(), 7, &info)].concat();
     let wthr = record(b"WTHR", 0, WTHR_ID, &[sub(b"EDID", z("OwnClearWeather"))]);
+    let cont_base = record(
+        b"CONT",
+        0,
+        CONT_BASE,
+        &[
+            sub(b"EDID", z("OwnTestCrate")),
+            sub(b"CNTO", [ITEM_ID.to_le_bytes(), 3i32.to_le_bytes()].concat()),
+        ],
+    );
+    let marker_base = record(b"STAT", 0, MAP_MARKER_BASE, &[sub(b"EDID", z("MapMarker"))]);
 
     let prop_ref = record(
         b"REFR",
@@ -176,6 +192,52 @@ fn fixture() -> Fixture {
         &[
             sub(b"EDID", z("OwnPropRef")),
             sub(b"NAME", ITEM_ID.to_le_bytes().to_vec()),
+            sub(b"DATA", vec![0; 24]),
+        ],
+    );
+    let cont_ref = record(
+        b"REFR",
+        0,
+        CONT_REF,
+        &[
+            sub(b"EDID", z("OwnCrateRef")),
+            sub(b"NAME", CONT_BASE.to_le_bytes().to_vec()),
+            sub(b"DATA", vec![0; 24]),
+        ],
+    );
+    let cont28_ref = record(
+        b"REFR",
+        0,
+        CONT28_REF,
+        &[
+            sub(b"EDID", z("OwnCrate28Ref")),
+            sub(b"NAME", CONT_BASE.to_le_bytes().to_vec()),
+            sub(b"DATA", vec![0; 24]),
+        ],
+    );
+    let marker_vis_ref = record(
+        b"REFR",
+        0,
+        MARKER_VIS_REF,
+        &[
+            sub(b"EDID", z("OwnMarkerVis")),
+            sub(b"NAME", MAP_MARKER_BASE.to_le_bytes().to_vec()),
+            sub(b"XMRK", Vec::new()),
+            sub(b"FNAM", vec![0]),
+            sub(b"FULL", z("Visible Spot")),
+            sub(b"DATA", vec![0; 24]),
+        ],
+    );
+    let marker_found_ref = record(
+        b"REFR",
+        0,
+        MARKER_FOUND_REF,
+        &[
+            sub(b"EDID", z("OwnMarkerFound")),
+            sub(b"NAME", MAP_MARKER_BASE.to_le_bytes().to_vec()),
+            sub(b"XMRK", Vec::new()),
+            sub(b"FNAM", vec![0]),
+            sub(b"FULL", z("Found Spot")),
             sub(b"DATA", vec![0; 24]),
         ],
     );
@@ -211,7 +273,7 @@ fn fixture() -> Fixture {
         &group(
             ROOM_ID.to_le_bytes(),
             9,
-            &[prop_ref, npc_ref, player_ref].concat(),
+            &[prop_ref, cont_ref, cont28_ref, marker_vis_ref, marker_found_ref, npc_ref, player_ref].concat(),
         ),
     );
     let bytes = [
@@ -223,6 +285,8 @@ fn fixture() -> Fixture {
         top(b"ARMO", &armor),
         top(b"WEAP", &weap),
         top(b"AMMO", &ammo),
+        top(b"CONT", &cont_base),
+        top(b"STAT", &marker_base),
         top(b"NPC_", &[npc_player, npc_other].concat()),
         top(b"FACT", &[fact_a, fact_b].concat()),
         top(b"FLST", &flst),
@@ -969,6 +1033,202 @@ fn midgame_player_extras_weapon_magazine_and_dead_counts_convert_and_restore() {
         .iter()
         .any(|(e, n)| !e.equipped && e.owner == Some(FormId(NPC_BASE)) && e.condition == Some(0.5) && *n == 2));
     assert!(groups.iter().any(|(e, n)| e.is_plain() && *n == 1));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn container_stashes_map_markers_and_created_refs_convert_and_restore() {
+    let f = fixture();
+    // 1-based form ID array
+    let fids = [
+        ROOM_ID,          // 1
+        PLAYER_REF,       // 2
+        ITEM_ID,          // 3
+        WEAP_ID,          // 4
+        CONT_REF,         // 5
+        CONT28_REF,       // 6
+        MARKER_VIS_REF,   // 7
+        MARKER_FOUND_REF, // 8
+        PROP_REF,         // 9
+        NPC_REF,          // 10
+        0xFF00_0099,      // 11: created REFR
+        0xFF00_009A,      // 12: created ACRE (still unsupported)
+    ];
+
+    let mut h = Build { b: Vec::new() };
+    h.u32(0x30).bar();
+    h.b.extend([0u8; 64]);
+    h.bar()
+        .u32(0)
+        .bar()
+        .u32(0)
+        .bar()
+        .u32(25)
+        .bar()
+        .s_field("WorldTest", true)
+        .s_field("Wanderer", true)
+        .u32(10)
+        .bar()
+        .s_field("OwnTestRoom", true)
+        .s_field("005.00.00", false);
+
+    let mut b = b"FO3SAVEGAME".to_vec();
+    b.extend((h.b.len() as u32).to_le_bytes());
+    b.extend(&h.b);
+
+    let mut pl = Build { b: Vec::new() };
+    pl.u8(1).bar().s_field("FalloutNV.esm", true);
+    b.push(27);
+    b.extend((pl.b.len() as u32).to_le_bytes());
+    b.extend(&pl.b);
+
+    let table_at = b.len();
+    b.extend([0u8; 32 + 78]);
+
+    let g1 = b.len();
+    let cf = b.len();
+
+    // 1. Container CONT_REF (r(5), bits 5+27): remove 1 ITEM_ID (base 3 -> 2), add 2 WEAP_ID
+    //    (1 modded at 100/200 = 0.5 with extra 0x2F, 1 plain).
+    let mut c1 = Build { b: Vec::new() };
+    c1.vs(2).bar();
+    c1.r(3).bar().i32(-1).bar().vs(0).bar();
+    c1.r(4).bar().i32(2).bar().vs(1).bar().vs(3).bar();
+    c1.u8(0x2F).bar().u32(0x0000_0100).bar().u8(1).bar();
+    c1.u8(0x25).bar().f32(100.0).bar();
+    c1.u8(0x8D).bar().u8(0x02).bar();
+    push_record(&mut b, 5, (1 << 5) | (1 << 27), TYPE_REFR, &c1.b);
+
+    // 2. Container CONT28_REF (r(6), bits 5+27+28): add 4 ITEM_ID + 13-byte bit-28 tail.
+    let mut c2 = Build { b: Vec::new() };
+    c2.vs(1).bar().r(3).bar().i32(4).bar().vs(0).bar();
+    c2.b.extend([0u8; 13]);
+    push_record(&mut b, 6, (1 << 5) | (1 << 27) | (1 << 28), TYPE_REFR, &c2.b);
+
+    // 3. Map marker MARKER_VIS_REF (r(7), bit 31): 0x2C = 0x01 (visible only).
+    let mut m1 = Build { b: Vec::new() };
+    m1.vs(1).bar().u8(0x2C).bar().u8(0x01).bar();
+    push_record(&mut b, 7, 1 << 31, TYPE_REFR, &m1.b);
+
+    // 4. Map marker MARKER_FOUND_REF (r(8), bits 29+31): 0x2C = 0x03 + 0x74 companion ref.
+    let mut m2 = Build { b: Vec::new() };
+    m2.vs(2).bar().u8(0x2C).bar().u8(0x03).bar().u8(0x74).bar().r(10).bar();
+    push_record(&mut b, 8, (1 << 29) | (1 << 31), TYPE_REFR, &m2.b);
+
+    // 5. Non-marker bit-31 REFR PROP_REF (r(9)): must NOT error, must stay counted as unmapped.
+    let mut nm = Build { b: Vec::new() };
+    nm.vs(1).bar().u8(0x56).bar().u32(7).bar();
+    push_record(&mut b, 9, 1 << 31, TYPE_REFR, &nm.b);
+
+    // 6. Created 0xFF00_0099 REFR (r(11), bit 1): 32-byte header placing ITEM_ID in ROOM_ID.
+    let mut cr = Build { b: Vec::new() };
+    cr.r(1);
+    for v in [11.0f32, 22.0, 33.0, 0.0, 0.0, 1.0] {
+        cr.f32(v);
+    }
+    cr.u8(0x01).r(3).bar();
+    assert_eq!(cr.b.len(), 32);
+    push_record(&mut b, 11, 1 << 1, TYPE_REFR, &cr.b);
+
+    // 7. Created 0xFF00_009A ACRE (r(12), bit 1): still reported unsupported.
+    push_record(&mut b, 12, 1 << 1, TYPE_ACRE, &[0u8; 8]);
+
+    let g2 = b.len();
+    b.extend(1000u32.to_le_bytes());
+    b.extend(0u32.to_le_bytes());
+
+    let fid = b.len();
+    b.extend((fids.len() as u32).to_le_bytes());
+    for fid_val in fids {
+        b.extend(fid_val.to_le_bytes());
+    }
+    b.extend(0u32.to_le_bytes());
+    let tail = b.len();
+    b.extend([5, 0, 0, 0, 0, 0, 0, 0, BAR]);
+
+    let table = [fid, tail, g1, cf, g2, 0, 1, 7].map(|v| v as u32);
+    for (i, v) in table.iter().enumerate() {
+        b[table_at + 4 * i..table_at + 4 * i + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
+    let fos = Fos::parse(&b).unwrap();
+    let inspect = inspect_fos(&fos, false);
+    assert_eq!(inspect.decoded_counts.get("container_inventories"), Some(&2));
+    assert_eq!(inspect.decoded_counts.get("map_markers"), Some(&2));
+    assert_eq!(inspect.decoded_counts.get("created_refs"), Some(&1));
+    assert!(inspect.parse_errors.is_empty());
+
+    let opts = ConvertOptions {
+        kind: SaveKind::Manual,
+        plugins: vec![PluginEntry { name: "FalloutNV.esm".into(), size: 1234 }],
+        include_thumbnail: false,
+        cosave_present: false,
+    };
+    let converted = convert_fos(&fos, &f.data, &f.forms, &f.refs, &opts).unwrap();
+    assert_eq!(converted.report.converted.get("containers"), Some(&2));
+    assert_eq!(converted.report.converted.get("container_items"), Some(&3));
+    assert_eq!(converted.report.converted.get("map_markers"), Some(&2));
+    assert_eq!(converted.report.converted.get("created_refs"), Some(&1));
+    assert_eq!(
+        converted.report.hypothesis_fields.get("container_inventories (REFR bits 5/27) [hypothesis]"),
+        Some(&2)
+    );
+    assert_eq!(
+        converted.report.hypothesis_fields.get("map_markers (REFR extra 0x2C) [hypothesis]"),
+        Some(&2)
+    );
+    assert_eq!(
+        converted.report.hypothesis_fields.get("created_refs (0xFF REFR 32B header) [hypothesis]"),
+        Some(&1)
+    );
+    // Converted created REFR is NOT double-counted as unsupported; created ACRE and non-marker bit-31 REFR are.
+    assert!(!converted.report.skipped.contains_key("changed_form: created REFR (0xFF) unsupported"));
+    assert_eq!(converted.report.skipped.get("changed_form: created ACRE (0xFF) unsupported"), Some(&1));
+    assert_eq!(converted.report.skipped.get("changed_form: REFR (kind 0) unmapped"), Some(&1));
+
+    // Write .nvfsave and verify round-trip through read_body + World::restore + Game::restore.
+    let dir = std::env::temp_dir().join(format!("nvf-fos-convert-world-r4a-{}", std::process::id()));
+    let out = dir.join("world_r4a.nvfsave");
+    let body_bytes = serde_json::to_vec(&converted.body).unwrap();
+    fnv_save::write(&out, &converted.header, &converted.shot, &body_bytes, false).unwrap();
+
+    let (_h, _shot, body): (SaveHeader, Vec<u8>, SaveBody<GameSnapshot>) = fnv_save::read_body(&out).unwrap();
+    assert_eq!(body.engine.extra.get("map_markers_found"), Some(&serde_json::json!([MARKER_FOUND_REF])));
+    body.game.check().unwrap();
+
+    let restored_world = World::restore(&f.forms, &f.refs, &body.game.sim).unwrap();
+    let mut restored = Game::restore(&f.data, restored_world, GameConfig::default(), &body.game).unwrap();
+
+    // Container inventories: CONT_REF has 3 - 1 = 2 ITEM_ID and 2 WEAP_ID (1 modded at 0.5, 1 plain);
+    // CONT28_REF has 3 + 4 = 7 ITEM_ID.
+    assert_eq!(restored.world.item_count(FormId(CONT_REF), FormId(ITEM_ID)).unwrap(), 2);
+    assert_eq!(restored.world.item_count(FormId(CONT_REF), FormId(WEAP_ID)).unwrap(), 2);
+    let cont_inv = restored.world.peek(FormId(CONT_REF)).unwrap().inventory.as_ref().unwrap();
+    let weap_groups: Vec<_> = cont_inv
+        .groups()
+        .filter(|(id, _, _)| *id == FormId(WEAP_ID))
+        .map(|(_, e, n)| (e, n))
+        .collect();
+    assert_eq!(weap_groups.len(), 2);
+    assert!(weap_groups.iter().any(|(e, n)| !e.equipped && e.mods == 2 && e.condition == Some(0.5) && *n == 1));
+    assert!(weap_groups.iter().any(|(e, n)| e.is_plain() && *n == 1));
+    assert_eq!(restored.world.item_count(FormId(CONT28_REF), FormId(ITEM_ID)).unwrap(), 7);
+
+    // Map markers: MARKER_VIS_REF visible-only; MARKER_FOUND_REF visible + travel + found.
+    assert!(restored.player.map_markers.contains(&FormId(MARKER_VIS_REF)));
+    assert!(!restored.player.travel_markers.contains(&FormId(MARKER_VIS_REF)));
+    assert!(!restored.player.found_markers.contains(&FormId(MARKER_VIS_REF)));
+    assert!(restored.player.map_markers.contains(&FormId(MARKER_FOUND_REF)));
+    assert!(restored.player.travel_markers.contains(&FormId(MARKER_FOUND_REF)));
+    assert!(restored.player.found_markers.contains(&FormId(MARKER_FOUND_REF)));
+
+    // Created 0xFF REFR was placed into ROOM_ID at [11.0, 22.0, 33.0] with base ITEM_ID.
+    let created = restored.world.peek(FormId::FIRST_DYNAMIC).expect("created ref placed");
+    assert_eq!(created.base, FormId(ITEM_ID));
+    assert_eq!(created.cell, Some(FormId(ROOM_ID)));
+    assert_eq!(created.pos, [11.0, 22.0, 33.0]);
+    assert_eq!(created.rot, [0.0, 0.0, 1.0]);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

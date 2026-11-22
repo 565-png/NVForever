@@ -260,15 +260,26 @@ unknown].
 - bit 2: worldspace/cell ref, then six f32 with no separators (position, rotation), `|`.
   Seen on refs moved by physics (tumbleweeds, items) [hypothesis: "moved"].
 - bit 4: one f32 (1.0 seen) [hypothesis: scale or health].
-- bit 5 and bit 27: **item lists**: vsval count, then per item: ref, `|`, u32 count, `|`,
-  then a vsval-counted list of extra-data lists (type byte 0x2F, 0x24, 0x25 seen with
-  small payloads) [hypothesis: the container's inventory changes; extra types carry
-  condition, ownership, count]. Vendor containers and Doc Mitchell's dresser have them.
+- bit 5 and bit 27: **item lists**: reuses the exact bar-delimited inventory framing of
+  §6.4 (`vsval count, |`, then per item `ref, |, i32 count_delta, |, vsval lists, |`, per
+  list `vsval extras, |`, per extra `type, |, payload, |`) [observed across pure bit-5,
+  bit-27, bit-(5+27), and bit-(5+27+28) container `REFR`s in mid-game playthrough saves;
+  pure bit-5/27/5+27 records end exactly at `c.at_end()`, while bit-(5+27+28) carries a
+  13-byte trailing bit-28 block]. Observed container extra-data types include `0x0D`,
+  `0x24`, `0x25`, and container-specific `0x2F` (`u32, |, u8, |`) [hypothesis: container
+  inventory deltas against the base `CONT` stock; `0x2F` = `ExtraLeveledItem` / container
+  item origin]. Vendor containers and Doc Mitchell's dresser have them.
 - bit 12: door data (`2A`, a byte, a ref, two u32) on doors [hypothesis: lock or teleport].
-- bit 28 and bit 31: animation/script data: vsval, a script ref, then u32 index + f64
-  value pairs (as in quests) and short strings such as `Backward`, `Close`,
-  `SpecialIdle` [hypothesis: bit 31 = script variables of the reference, bit 28 =
-  animation state].
+- bit 28 and bit 31: animation/script data or `vsval`-counted `ExtraDataList`:
+  - on placed `MapMarker` `REFR`s (`NAME == 0x00000010`), bit 31 (optionally with bit 29)
+    stores a `vsval`-counted `ExtraDataList` containing type `0x2C` (`u8, |`; values `0x01`
+    and `0x03` seen) and optional bit-29 `0x74` (`ref, |`), ending exactly at `c.at_end()`
+    [observed in mid-game playthrough saves; hypothesis: `ExtraMapMarker` flags matching ESM
+    `FNAM`, `0x01` visible, `0x02` fast-travelable / discovered].
+  - on other bit-28/31 references: script variables (vsval, script ref, u32 index + f64
+    value pairs as in quests) and short strings such as `Backward`, `Close`, `SpecialIdle`
+    [hypothesis: bit 31 = script variables / extra data of the reference, bit 28 =
+    animation state].
 - bit 29: a short ref list ending `74 | ref` [unknown].
 
 **ACHR / ACRE**: flag 0x40000 (bit 18) on 2,020 of 2,418 ACHR records, data 297 bytes for
@@ -313,12 +324,14 @@ plugin's position in the save's list.
 - **Worldspace array**: 23 worldspaces, including the four story DLCs' (Zion, the Villa and
   its town worldspaces, Big MT, the Divide) and the Strip, Freeside, Boulder City.
   Together with B (none, never outdoors) this supports "worldspaces visited" [hypothesis].
-- **Created forms** (kind-2 refs, 0xFF…): 574 records: 556 REFR (type 0, 32–593 bytes),
-  15 ACRE (type 2, about 0.5–1.8 KB) and 3 of type 3 (546 bytes each, holding short
-  strings and a SOUN-like ref) [hypothesis: type 3 = placed projectile/missile]. A created
-  REFR's data starts like REFR bit 2 (cell ref, six f32) followed by a u16 and a 2-byte
-  value, then the usual `|`-separated fields [observed]; its base form is somewhere in that
-  data [hypothesis]. The next created form ID is 0xFF00155E.
+- **Created forms** (kind-2 refs, 0xFF…): 574 records in M (556 REFR, 15 ACRE, 3 type 3).
+  Every created `REFR` begins with a universal 32-byte header ending with `|` at byte 31:
+  `cell_or_world_ref` (3 bytes), six `f32` LE (position and rotation, no internal `|`),
+  `u8` header flag (`0x01` or `0x03` seen), `base_form_ref` (3 bytes), and `|` [observed
+  across M and mid-game playthrough saves: bit-1-only created `REFR`s are exactly 32 bytes;
+  additional change flags such as bit 0/2/3/4/29/31 follow at offset 32 with `|`-separated
+  blocks; hypothesis: created reference placement cell/world, transform, and base form].
+  The next created form ID in M is 0xFF00155E.
 - **Global table 1 grows with play**: type 2 is 4,329 bytes: vsval count 603, then
   (ref, `|`, u16, `|`) entries [hypothesis: a count per base form, such as the per-actor
   death counts Oblivion keeps, documented UESP Tes4Mod]; type 9 is 221,569 bytes (7 in
@@ -470,6 +483,10 @@ order plus the decoded sections of §§3–6.5, then emits a standard `NVFSAVE\0
     hotkeys),
   - global table 1 type 2 prefix per-base-form death counts (§5.1, §6.3; the unmapped
     trailing bytes remain counted in `skipped`),
+  - container `REFR` inventories (bits 5/27, optional bit-28 trailing block; §6.2),
+  - map marker `REFR` discovery/visibility flags (bit 31 extra `0x2C`, optional bit-29
+    `0x74`; §6.2),
+  - created `0xFF` `REFR` 32-byte placement headers (re-placed via `World::place`; §6.3),
   - placed reference form flags (`FORM_DISABLED`, `FORM_DELETED`, `FORM_TALKED_TO_PC`; §6.5),
   - `FACT` bit 2 faction relations (§6.2, §6.5), `NPC_` bit 2 player SPECIAL (§6.2),
     `CLAS` bit 1 tag skills (§6.2), global type 0 misc statistics (§5.1, §6.3), global
@@ -516,8 +533,9 @@ records (script variables), the player and every actor.
   effects, perks, AI state, the second and third actor value arrays, the record of
   nvfLanius and nvfSlides (flag 10, a different shape after the actor values), and any
   actor or item extra-data types beyond those listed in §6.4.
-- The full layout of created references (M has 574; their base form and extra data were
-  not decoded), and of global types 9 and 10, which grow with play.
+- The trailing fields past offset 32 on created `0xFF` `REFR`s (when change flags beyond
+  bit 1 are set), the full layout of created `ACRE`/`ACHR`/projectile forms, and global
+  types 9 and 10, which grow with play.
 - The QUST date stamp's day encoding.
 
 None of these is needed for NVForever's own format. The offline `fnvtool save convert`
@@ -525,9 +543,10 @@ importer (§6.6, `crates/fnv-game/src/fos_convert.rs`) converts only the decoded
 documented above, explicitly tags and counts every `[hypothesis]` field written into
 `.nvfsave` in `ConversionReport::hypothesis_fields` (including XP/karma at AV2 24/23,
 `REPU` fame/infamy, active quest, `FLST`, `LVLI`, `CHAL`, `NOTE`, `INFO`, global type 2
-death counts, item extras `0x16`/`0x21`/`0x24`/`0x25`/`0x6E`/`0x8D`, and reference form
-flags), and truthfully counts every unmapped global table (or unmapped trailing bytes of
-type 2), unpersisted item hotkey (`0x4A`), created `0xFF` form, missing-plugin form,
-unmapped changed-form record, and ignored `.nvse` co-save in `skipped` [design; converted
-field readings `[hypothesis]` where tagged in §§3–6.6]. The game runtime itself remains
-`.nvfsave`-only.
+death counts, item extras `0x16`/`0x21`/`0x24`/`0x25`/`0x6E`/`0x8D`, container `REFR`
+inventories, map marker `REFR` extra `0x2C`, created `0xFF` `REFR` 32-byte headers, and
+reference form flags), and truthfully counts every unmapped global table (or unmapped
+trailing bytes of type 2), unpersisted item hotkey (`0x4A`), unsupported created `0xFF`
+kind (`ACRE`/`ACHR`/etc.), missing-plugin form, unmapped changed-form record, and ignored
+`.nvse` co-save in `skipped` [design; converted field readings `[hypothesis]` where tagged
+in §§3–6.6]. The game runtime itself remains `.nvfsave`-only.

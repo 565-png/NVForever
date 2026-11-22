@@ -7,10 +7,12 @@
 //! global variables (type 3), misc statistics (type 0), player location/active quest
 //! (type 1), death-count prefix (type 2), sky/weather (type 8), quests (flags, delay,
 //! stages, objectives, variables), player SPECIAL, tag skills, AV arrays, and inventory
-//! (with actor ExtraDataList and all 9 observed item extra-data types), placed reference
-//! form flags and places, faction relations, form lists (`FLST`), leveled item lists
-//! (`LVLI`), reputations (`REPU`), challenges (`CHAL`), notes (`NOTE`), and said-once
-//! dialogue lines (`INFO`). Anything else is kept as raw bytes per changed form.
+//! (with actor ExtraDataList and all 9 observed item extra-data types), container `REFR`
+//! inventories (bits 5/27, including extra `0x2F`), map marker `REFR` discovery/visibility
+//! flags (extra `0x2C`), created `0xFF` `REFR` headers, placed reference form flags and
+//! places, faction relations, form lists (`FLST`), leveled item lists (`LVLI`),
+//! reputations (`REPU`), challenges (`CHAL`), notes (`NOTE`), and said-once dialogue
+//! lines (`INFO`). Anything else is kept as raw bytes per changed form.
 
 use std::fmt;
 
@@ -396,6 +398,34 @@ pub type Place = (u32, [f32; 3], [f32; 3]);
 pub const FORM_DELETED: u32 = 0x20;
 pub const FORM_TALKED_TO_PC: u32 = 0x40;
 pub const FORM_DISABLED: u32 = 0x800;
+
+/// A placed container reference's saved inventory deltas (`REFR` change flags bit 5 and/or
+/// bit 27; save-files.md §6.2) [hypothesis].
+#[derive(Debug, Clone, PartialEq)]
+pub struct FosContainerInventory {
+    pub form: u32,
+    pub items: Vec<FosItem>,
+}
+
+/// A placed map marker reference's saved visibility/travel flags (`REFR` change flag bit 31
+/// carrying extra-data type `0x2C`; save-files.md §6.2) [hypothesis: `0x01` visible, `0x02`
+/// fast-travelable].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FosMapMarker {
+    pub form: u32,
+    pub flags: u8,
+}
+
+/// A created placed reference (`REFR`, form ID `0xFFxxxxxx`) decoded from its 32-byte header
+/// (`cell_or_world_ref3 + 6*f32 + u8 + base_form_ref3 + |`; save-files.md §6.3) [hypothesis].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FosCreatedRef {
+    pub form: u32,
+    pub flags: u32,
+    pub base: Option<u32>,
+    pub place: Option<Place>,
+    pub header_flag: u8,
+}
 
 /// A placed reference's saved changes as far as the lab reads them (save-files.md §6.2).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -863,17 +893,109 @@ impl Fos {
         Ok(q)
     }
 
-    /// The flag word and place of every placed reference but the player (record types
-    /// REFR, ACHR, ACRE) whose change flags have a layout the reader knows (save-files.md
-    /// §6.2): REFR flag 0 alone (the flag word), REFR flags 1 or 2 without 0 (the place),
-    /// ACHR/ACRE flag 1 without 2 (the place, a byte, then the flag word when flag 0 is
-    /// set). Any other record of these types, or one whose markers do not fit, is an
-    /// `Err` and leaves the others.
+    /// The flag word and place of every non-created placed reference but the player (record
+    /// types REFR, ACHR, ACRE) whose change flags have a layout the reader knows
+    /// (save-files.md §6.2): REFR flag 0 alone (the flag word), REFR flags 1 or 2 without 0
+    /// (the place), ACHR/ACRE flag 1 without 2 (the place, a byte, then the flag word when
+    /// flag 0 is set). Created `0xFF` `REFR`s use a 32-byte header decoded by
+    /// [`Fos::created_refs`]. Any other record of these types, or one whose markers do not
+    /// fit, is an `Err` and leaves the others.
     pub fn reference_changes(&self) -> Vec<Result<FosRefChange, FosError>> {
         self.changed
             .iter()
-            .filter(|f| f.kind <= TYPE_ACRE && f.form != PLAYER_REF && f.flags & 0b111 != 0)
+            .filter(|f| {
+                f.kind <= TYPE_ACRE
+                    && f.form != PLAYER_REF
+                    && (f.form >> 24) != 0xFF
+                    && f.flags & 0b111 != 0
+            })
             .map(|f| self.reference_change(f).map_err(|e| FosError(format!("reference {:08X}: {e}", f.form))))
+            .collect()
+    }
+
+    /// Non-created container `REFR` inventories (change flags bit 5 and/or bit 27, with
+    /// optional bit 28 trailing block; save-files.md §6.2) [hypothesis].
+    pub fn container_inventories(&self) -> Vec<Result<FosContainerInventory, FosError>> {
+        const INV_BITS: u32 = (1 << 5) | (1 << 27);
+        const ALLOWED: u32 = INV_BITS | (1 << 28);
+        self.records(TYPE_REFR)
+            .filter(|f| (f.form >> 24) != 0xFF && (f.flags & INV_BITS) != 0 && (f.flags & !ALLOWED) == 0)
+            .map(|f| {
+                let mut c = Cur::new(&f.data, 0);
+                let items = self.parse_item_list(&mut c)?;
+                if !f.has(28) && !c.at_end() {
+                    return err(format!("{} bytes left after container inventory", f.data.len() - c.p));
+                }
+                Ok(FosContainerInventory { form: f.form, items })
+            })
+            .map(|r| r.map_err(|e: FosError| FosError(format!("container: {e}"))))
+            .collect()
+    }
+
+    /// Map marker visibility/travel flags from non-created `REFR` records with change flag
+    /// bit 31 (and optionally bit 29) whose `ExtraDataList` carries type `0x2C` (`u8 |`) and
+    /// optional `0x74` (`ref3 |`) (save-files.md §6.2) [hypothesis]. Bit-31 `REFR` records
+    /// with other extra-data types or payloads are omitted rather than returned as errors.
+    pub fn map_markers(&self) -> Vec<Result<FosMapMarker, FosError>> {
+        const ALLOWED: u32 = (1 << 29) | (1 << 31);
+        self.records(TYPE_REFR)
+            .filter(|f| (f.form >> 24) != 0xFF && (f.flags & (1 << 31)) != 0 && (f.flags & !ALLOWED) == 0)
+            .filter_map(|f| {
+                let mut c = Cur::new(&f.data, 0);
+                let count = c.vsval().ok()?;
+                c.bar().ok()?;
+                let mut marker_flags = None;
+                for _ in 0..count {
+                    let ty = c.u8().ok()?;
+                    c.bar().ok()?;
+                    match ty {
+                        0x2C => {
+                            marker_flags = Some(c.u8().ok()?);
+                            c.bar().ok()?;
+                        }
+                        0x74 => {
+                            c.ref3().ok()?;
+                            c.bar().ok()?;
+                        }
+                        _ => return None,
+                    }
+                }
+                let flags = marker_flags?;
+                if !c.at_end() {
+                    return Some(err(format!(
+                        "map marker {:08X}: {} bytes left after extra list",
+                        f.form,
+                        f.data.len() - c.p
+                    )));
+                }
+                Some(Ok(FosMapMarker { form: f.form, flags }))
+            })
+            .collect()
+    }
+
+    /// Created placed references (`REFR`, `form >> 24 == 0xFF`) decoded from their 32-byte
+    /// header (`cell_or_world_ref3 + 6*f32 + u8 + base_form_ref3 + |`; save-files.md §6.3)
+    /// [hypothesis].
+    pub fn created_refs(&self) -> Vec<Result<FosCreatedRef, FosError>> {
+        self.records(TYPE_REFR)
+            .filter(|f| (f.form >> 24) == 0xFF)
+            .map(|f| {
+                let mut c = Cur::new(&f.data, 0);
+                let at = self.reference(c.ref3()?).ok().flatten();
+                let mut v = [0.0f32; 6];
+                for x in &mut v {
+                    *x = c.f32()?;
+                }
+                let header_flag = c.u8()?;
+                let base = self.reference(c.ref3()?).ok().flatten();
+                c.bar()?;
+                if !v.iter().all(|x| x.is_finite()) {
+                    return err("non-finite position or rotation in created ref");
+                }
+                let place = at.map(|a| (a, [v[0], v[1], v[2]], [v[3], v[4], v[5]]));
+                Ok(FosCreatedRef { form: f.form, flags: f.flags, base, place, header_flag })
+            })
+            .map(|r| r.map_err(|e: FosError| FosError(format!("created ref: {e}"))))
             .collect()
     }
 
@@ -1067,6 +1189,13 @@ impl Fos {
                 t => return err(format!("actor extra data type {t:#04x} of unknown size")),
             }
         }
+        self.parse_item_list(&mut c)
+    }
+
+    /// Shared bar-delimited inventory item-list parser used by both the player record (§6.4)
+    /// and container `REFR` records (§6.2). Supports all 9 observed player item extra-data
+    /// types plus container extra type `0x2F` (`u32 | u8 |`).
+    fn parse_item_list(&self, c: &mut Cur<'_>) -> Result<Vec<FosItem>, FosError> {
         let n = c.vsval()?;
         c.bar()?;
         let mut items = Vec::new();
@@ -1141,6 +1270,14 @@ impl Fos {
                         0x25 => {
                             c.bar()?;
                             entry.condition = Some(c.f32()?);
+                            c.bar()?;
+                        }
+                        // Container leveled-item origin (u32 | u8 |) [hypothesis: ExtraLeveledItem]
+                        0x2F => {
+                            c.bar()?;
+                            c.u32()?;
+                            c.bar()?;
+                            c.u8()?;
                             c.bar()?;
                         }
                         // ExtraHotkey (u8 |)
@@ -1708,5 +1845,109 @@ mod tests {
         assert_eq!(huge_m.play_seconds(), None);
         let huge_sum = FosHeader { play_time: format!("{}.00.1", u64::MAX / 3600), ..Default::default() };
         assert!(huge_sum.play_seconds().is_some());
+    }
+
+    #[test]
+    fn reads_container_inventories_map_markers_and_created_refs() {
+        let mut f = Fos::parse(&save()).unwrap();
+
+        // 1. Container REFR (bits 5+27): 2 items — one removed (-1), one added (+2) with 0x2F, 0x24, 0x25, 0x8D.
+        let mut cont = Build { b: Vec::new() };
+        cont.vs(2).bar();
+        cont.r(4).bar().u32((-1i32) as u32).bar().vs(0).bar();
+        cont.r(4).bar().u32(2).bar().vs(1).bar().vs(4).bar();
+        cont.u8(0x2F).bar().u32(0x1122_3344).bar().u8(1).bar();
+        cont.u8(0x24).bar().i16(2).bar();
+        cont.u8(0x25).bar().f32(62.5).bar();
+        cont.u8(0x8D).bar().u8(0x02).bar();
+        f.changed.push(ChangedForm {
+            form: 0x0001_0001,
+            flags: (1 << 5) | (1 << 27),
+            kind: TYPE_REFR,
+            data: cont.b.clone(),
+        });
+
+        // Container REFR with bit 28 set: trailing 13-byte bit-28 block is allowed cleanly.
+        let mut cont28 = cont.b.clone();
+        cont28.extend([0u8; 13]);
+        f.changed.push(ChangedForm {
+            form: 0x0001_0002,
+            flags: (1 << 5) | (1 << 27) | (1 << 28),
+            kind: TYPE_REFR,
+            data: cont28,
+        });
+
+        // Pure bit-5 container with unexpected trailing byte must fail strict at_end check.
+        let mut bad_cont = Build { b: Vec::new() };
+        bad_cont.vs(0).bar().u8(0xAA);
+        f.changed.push(ChangedForm { form: 0x0001_0003, flags: 1 << 5, kind: TYPE_REFR, data: bad_cont.b });
+
+        // 2. Map marker REFRs: bit 31 visible-only (0x01), bit 29+31 visible+travel (0x03 + 0x74),
+        //    plus a non-marker bit-31 REFR (unknown extra 0x56) that must be omitted cleanly.
+        let mut mm1 = Build { b: Vec::new() };
+        mm1.vs(1).bar().u8(0x2C).bar().u8(0x01).bar();
+        f.changed.push(ChangedForm { form: 0x0002_0001, flags: 1 << 31, kind: TYPE_REFR, data: mm1.b });
+
+        let mut mm2 = Build { b: Vec::new() };
+        mm2.vs(2).bar().u8(0x2C).bar().u8(0x03).bar().u8(0x74).bar().r(8).bar();
+        f.changed.push(ChangedForm {
+            form: 0x0002_0002,
+            flags: (1 << 29) | (1 << 31),
+            kind: TYPE_REFR,
+            data: mm2.b,
+        });
+
+        let mut non_mm = Build { b: Vec::new() };
+        non_mm.vs(1).bar().u8(0x56).bar().u32(99).bar();
+        f.changed.push(ChangedForm { form: 0x0002_0003, flags: 1 << 31, kind: TYPE_REFR, data: non_mm.b });
+
+        // 3. Created 0xFF REFR (valid 32-byte header + optional trailing bytes) and one short malformed 0xFF REFR.
+        let mut cr = Build { b: Vec::new() };
+        cr.r(3); // world/cell 0xDA726
+        for v in [10.0f32, 20.0, 30.0, 0.0, 0.0, 1.25] {
+            cr.f32(v);
+        }
+        cr.u8(0x01).r(4).bar(); // header_flag=1, base=0x15169, bar at byte 31
+        assert_eq!(cr.b.len(), 32);
+        f.changed.push(ChangedForm { form: 0xFF00_0055, flags: 1 << 1, kind: TYPE_REFR, data: cr.b });
+        f.changed.push(ChangedForm { form: 0xFF00_0056, flags: 1 << 1, kind: TYPE_REFR, data: vec![0, 1, 2] });
+
+        let conts = f.container_inventories();
+        assert_eq!(conts.len(), 3);
+        let c1 = conts[0].as_ref().unwrap();
+        assert_eq!(c1.form, 0x0001_0001);
+        assert_eq!(c1.items.len(), 2);
+        assert_eq!(c1.items[0].count, -1);
+        assert_eq!(c1.items[1].count, 2);
+        assert_eq!(c1.items[1].condition, Some(62.5));
+        assert_eq!(c1.items[1].weapon_mods, 2);
+        assert_eq!(c1.items[1].entries[0].count, Some(2));
+        assert_eq!(conts[1].as_ref().unwrap().form, 0x0001_0002);
+        assert!(conts[2].is_err());
+
+        let mms = f.map_markers();
+        assert_eq!(
+            mms,
+            [
+                Ok(FosMapMarker { form: 0x0002_0001, flags: 0x01 }),
+                Ok(FosMapMarker { form: 0x0002_0002, flags: 0x03 }),
+            ]
+        );
+
+        let crs = f.created_refs();
+        assert_eq!(crs.len(), 2);
+        assert_eq!(
+            crs[0].as_ref().unwrap(),
+            &FosCreatedRef {
+                form: 0xFF00_0055,
+                flags: 1 << 1,
+                base: Some(0x15169),
+                place: Some((0xDA726, [10.0, 20.0, 30.0], [0.0, 0.0, 1.25])),
+                header_flag: 1,
+            }
+        );
+        assert!(crs[1].is_err());
+        // Created 0xFF REFRs must not show up as bogus errors in reference_changes().
+        assert!(f.reference_changes().is_empty());
     }
 }
