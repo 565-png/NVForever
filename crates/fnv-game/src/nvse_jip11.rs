@@ -524,7 +524,8 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // script takes it off (the world's NoUnequip lock, saved) [documented].
         "setnounequip" => {
             let Some((actor, item)) = subject.and_then(|r| g.temp_item(r)) else { return Some(Ok(zero)) };
-            if !g.world.equipment(actor).unwrap_or_default().contains(&item) {
+            let equipped = g.world.peek(actor).and_then(|s| s.inventory.as_ref()).is_some_and(|inv| inv.is_equipped(item));
+            if !equipped {
                 return Some(Ok(zero));
             }
             let lock = num(args, 0).is_some_and(|x| x != 0.0).then_some(fnv_sim::world::EquipLock::NoUnequip);

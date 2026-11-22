@@ -21,7 +21,9 @@
 //! is until they change).
 
 use crate::Args;
+use bevy::ecs::system::NonSendMarker;
 use bevy::prelude::*;
+use std::time::{Duration, Instant};
 use bevy::window::{Monitor, MonitorSelection, OnMonitor, PrimaryMonitor, PrimaryWindow, VideoMode, VideoModeSelection, WindowMode};
 
 /// `--window`: how the game's window is shown.
@@ -278,14 +280,170 @@ type DisplayWant = (WindowChoice, String, Option<UVec2>, Option<String>);
 struct DisplayState {
     /// The frame after a monitor move bounced through windowed: the target mode to enter.
     bounce: Option<WindowMode>,
+    /// Windows refused to put the desktop's display mode back on leaving exclusive full
+    /// screen: the window stays exclusive and the restore is asked again at this time (#3332).
+    restore_retry: Option<Instant>,
+}
+
+/// How long after a refused restore of the desktop's display mode it is asked again.
+const RESTORE_RETRY: Duration = Duration::from_secs(2);
+
+/// What a change of the window's mode asks of the display before winit is given it: a video
+/// mode to switch the monitor to (entering exclusive full screen, or another exclusive
+/// mode), the desktop's own mode back (leaving exclusive full screen), or nothing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum DisplayStep {
+    Enter(VideoMode),
+    Restore,
+    Nothing,
+}
+
+/// The display step of a change from `from` to `to`. winit 0.30 makes these two changes of
+/// the display's mode itself and panics on any answer but success from Windows
+/// [documented: winit 0.30.13 `platform_impl/windows/window.rs` `set_fullscreen`, the
+/// `assert_eq!(res, DISP_CHANGE_SUCCESSFUL)` after each `ChangeDisplaySettingsExW`;
+/// observed: #3332, -1 on the restore after the 20 s revert], so [`apply_display`] asks
+/// Windows first and does not hand winit a change Windows refuses.
+fn display_step(from: WindowMode, to: WindowMode) -> DisplayStep {
+    match (from, to) {
+        _ if from == to => DisplayStep::Nothing,
+        (_, WindowMode::Fullscreen(_, VideoModeSelection::Specific(m))) => DisplayStep::Enter(m),
+        // Exclusive to exclusive (the current video mode): winit only enters, no restore.
+        (WindowMode::Fullscreen(..), WindowMode::Fullscreen(..)) => DisplayStep::Nothing,
+        (WindowMode::Fullscreen(..), _) => DisplayStep::Restore,
+        _ => DisplayStep::Nothing,
+    }
+}
+
+/// The name of an answer of `ChangeDisplaySettingsExW` other than success, for the log
+/// [documented: Microsoft Learn, ChangeDisplaySettingsExW, return values].
+fn refusal_text(code: i32) -> String {
+    let name = match code {
+        1 => "DISP_CHANGE_RESTART",
+        -1 => "DISP_CHANGE_FAILED",
+        -2 => "DISP_CHANGE_BADMODE",
+        -3 => "DISP_CHANGE_NOTUPDATED",
+        -4 => "DISP_CHANGE_BADFLAGS",
+        -5 => "DISP_CHANGE_BADPARAM",
+        -6 => "DISP_CHANGE_BADDUALVIEW",
+        _ => "an unknown answer",
+    };
+    format!("{name} ({code})")
+}
+
+/// The display device of a monitor selection (winit names a Windows monitor by its device,
+/// e.g. `\\.\DISPLAY1` [documented: winit 0.30.13 `platform_impl/windows/monitor.rs`
+/// `name`]); `None`: the primary display.
+fn device_of(modes: &MonitorModes, selection: MonitorSelection) -> Option<String> {
+    match selection {
+        MonitorSelection::Entity(e) => modes.monitors.iter().find(|m| m.entity == e).map(|m| m.name.clone()),
+        _ => None,
+    }
+}
+
+/// The mode to give the window for a change from `from` to `to`, once Windows has been
+/// asked: a video mode Windows says it cannot set gives borderless full screen on the same
+/// display instead, and a refused restore of the desktop's mode keeps the window as it is
+/// (exclusive) until a later ask succeeds. Each refusal is logged.
+fn checked(from: WindowMode, to: WindowMode, selection: MonitorSelection, modes: &MonitorModes, state: &mut DisplayState) -> WindowMode {
+    let retrying = state.restore_retry.take();
+    match display_step(from, to) {
+        DisplayStep::Enter(m) => match display_check::can_enter(device_of(modes, selection).as_deref(), &m) {
+            Ok(()) => to,
+            Err(code) => {
+                warn!("window: Windows cannot set the video mode {} at {:.0} Hz ({}): borderless full screen instead", size_text(m.physical_size), m.refresh_rate_millihertz as f32 / 1000.0, refusal_text(code));
+                WindowMode::BorderlessFullscreen(selection)
+            }
+        },
+        DisplayStep::Restore => match display_check::restore() {
+            Ok(()) => {
+                if retrying.is_some() {
+                    info!("window: the display's own mode is back");
+                }
+                to
+            }
+            Err(code) => {
+                if retrying.is_none() {
+                    warn!("window: Windows refused to put the display's own mode back ({}): exclusive full screen stays, asked again every {} s", refusal_text(code), RESTORE_RETRY.as_secs());
+                }
+                state.restore_retry = Some(Instant::now() + RESTORE_RETRY);
+                from
+            }
+        },
+        DisplayStep::Nothing => to,
+    }
+}
+
+/// Asking Windows about a display-mode change before winit makes it (#3332).
+#[cfg(windows)]
+mod display_check {
+    use bevy::window::VideoMode;
+    use std::ptr::{null, null_mut};
+    use windows_sys::Win32::Graphics::Gdi::{ChangeDisplaySettingsExW, CDS_FULLSCREEN, CDS_TEST, DEVMODEW, DISP_CHANGE_SUCCESSFUL, DM_BITSPERPEL, DM_DISPLAYFREQUENCY, DM_PELSHEIGHT, DM_PELSWIDTH};
+
+    fn answer(res: i32) -> Result<(), i32> {
+        if res == DISP_CHANGE_SUCCESSFUL {
+            Ok(())
+        } else {
+            Err(res)
+        }
+    }
+
+    /// Whether Windows can switch `device` (`None`: the primary display) to `m`: the mode
+    /// is only tested (`CDS_TEST`), nothing changes [documented: Microsoft Learn,
+    /// ChangeDisplaySettingsExW, CDS_TEST].
+    pub fn can_enter(device: Option<&str>, m: &VideoMode) -> Result<(), i32> {
+        // SAFETY: DEVMODEW is a plain C struct; all zeros is a valid value, and only the
+        // fields named in dmFields are read.
+        let mut dm: DEVMODEW = unsafe { std::mem::zeroed() };
+        dm.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
+        dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL | DM_DISPLAYFREQUENCY;
+        dm.dmPelsWidth = m.physical_size.x;
+        dm.dmPelsHeight = m.physical_size.y;
+        dm.dmBitsPerPel = u32::from(m.bit_depth);
+        // winit reports dmDisplayFrequency * 1000 [documented: winit 0.30.13 monitor.rs].
+        dm.dmDisplayFrequency = m.refresh_rate_millihertz / 1000;
+        let name: Option<Vec<u16>> = device.map(|d| d.encode_utf16().chain([0]).collect());
+        let name_ptr = name.as_ref().map_or(null(), |n| n.as_ptr());
+        // SAFETY: name_ptr is null or a NUL-terminated UTF-16 string that outlives the call;
+        // dm is a valid DEVMODEW with dmSize set.
+        answer(unsafe { ChangeDisplaySettingsExW(name_ptr, &dm, null_mut(), CDS_TEST, null()) })
+    }
+
+    /// Put the desktop's own display mode back, as winit does on leaving exclusive full
+    /// screen (the same call: no device, no mode, `CDS_FULLSCREEN`) [documented: winit
+    /// 0.30.13 window.rs `set_fullscreen`]. Done first here so a refusal is an error and not
+    /// winit's panic; winit's own call after it then has nothing to change [hypothesis].
+    pub fn restore() -> Result<(), i32> {
+        // SAFETY: null device and mode are the documented "back to the registry's mode" call.
+        answer(unsafe { ChangeDisplaySettingsExW(null(), null(), null_mut(), CDS_FULLSCREEN, null()) })
+    }
+}
+
+/// Elsewhere winit does not change the display's mode with a panic on refusal: nothing to ask.
+#[cfg(not(windows))]
+mod display_check {
+    use bevy::window::VideoMode;
+
+    pub fn can_enter(_device: Option<&str>, _m: &VideoMode) -> Result<(), i32> {
+        Ok(())
+    }
+
+    pub fn restore() -> Result<(), i32> {
+        Ok(())
+    }
 }
 
 /// Make the window what `Args` (`window`, `size`) and [`FullScreenSize`] ask, when they
-/// change (and again once the monitor's modes are known, for exclusive full screen).
-fn apply_display(args: Res<Args>, full: Res<FullScreenSize>, modes: Res<MonitorModes>, monitor: Res<MonitorChoice>, mut windows: Query<&mut Window, With<PrimaryWindow>>, mut last: Local<Option<DisplayWant>>, mut state: Local<DisplayState>) {
+/// change (and again once the monitor's modes are known, for exclusive full screen). Runs
+/// on the main thread, where winit changes the display's mode too.
+#[allow(clippy::too_many_arguments)]
+fn apply_display(args: Res<Args>, full: Res<FullScreenSize>, modes: Res<MonitorModes>, monitor: Res<MonitorChoice>, mut windows: Query<&mut Window, With<PrimaryWindow>>, mut last: Local<Option<DisplayWant>>, mut state: Local<DisplayState>, _main_thread: NonSendMarker) {
     // The frame after a monitor move bounced through windowed: enter the target mode.
     if let Some(mode) = state.bounce {
         if let Ok(mut w) = windows.single_mut() {
+            let selection = borderless_selection(&modes, &monitor);
+            let mode = checked(w.mode, mode, selection, &modes, &mut state);
             if w.mode != mode {
                 w.mode = mode;
             }
@@ -294,9 +452,11 @@ fn apply_display(args: Res<Args>, full: Res<FullScreenSize>, modes: Res<MonitorM
         return;
     }
     let want = (args.window, args.size.clone(), full.0, monitor.0.clone());
+    let retry_due = state.restore_retry.is_some_and(|t| Instant::now() >= t);
     // Re-applied when the choice or the monitors change: a chosen monitor's entity is only
-    // known after the monitors are discovered, a frame or so after the start.
-    if last.as_ref() == Some(&want) && !modes.is_changed() {
+    // known after the monitors are discovered, a frame or so after the start. Also when a
+    // refused restore of the desktop's mode is due to be asked again.
+    if last.as_ref() == Some(&want) && !modes.is_changed() && !retry_due {
         return;
     }
     *last = Some(want);
@@ -316,7 +476,10 @@ fn apply_display(args: Res<Args>, full: Res<FullScreenSize>, modes: Res<MonitorM
             }
         },
     };
-    if w.mode != mode {
+    if w.mode == mode {
+        // Back to the mode the window has (a refused restore no longer wanted).
+        state.restore_retry = None;
+    } else {
         // Moving full screen to a different display: the compositor ignores a full-screen
         // request to another output while already full screen [observed: #1641], so bounce
         // through windowed (one frame) and re-enter on the next. Only when the chosen
@@ -328,16 +491,18 @@ fn apply_display(args: Res<Args>, full: Res<FullScreenSize>, modes: Res<MonitorM
         let moving = target.is_some() && modes.current != target
             && matches!(w.mode, WindowMode::BorderlessFullscreen(_) | WindowMode::Fullscreen(..))
             && matches!(mode, WindowMode::BorderlessFullscreen(_) | WindowMode::Fullscreen(..));
-        if moving {
-            w.mode = WindowMode::Windowed;
-            state.bounce = Some(mode);
-        } else {
-            w.mode = mode;
+        let next = if moving { WindowMode::Windowed } else { mode };
+        let next = checked(w.mode, next, selection, &modes, &mut state);
+        if next != w.mode {
+            if moving {
+                state.bounce = Some(mode);
+            }
+            w.mode = next;
         }
     }
     // A window of --size (leaving full screen keeps no size of its own [observed:
     // 800x600]). main checked --size at the start.
-    if let (WindowMode::Windowed, Some(s)) = (mode, parse_size(&args.size)) {
+    if let (WindowMode::Windowed, WindowMode::Windowed, Some(s)) = (mode, w.mode, parse_size(&args.size)) {
         if w.resolution.physical_size() != s {
             w.resolution.set_physical_resolution(s.x, s.y);
         }
@@ -424,5 +589,40 @@ mod tests {
         let ordered = ordered(vec![m(0, 100), m(-200, 0), m(0, 0), m(200, 0)]);
         let pos: Vec<IVec2> = ordered.iter().map(|m| m.position).collect();
         assert_eq!(pos, vec![IVec2::new(-200, 0), IVec2::new(0, 0), IVec2::new(0, 100), IVec2::new(200, 0)]);
+    }
+
+    #[test]
+    fn only_leaving_or_entering_exclusive_full_screen_asks_the_display() {
+        let mode = |x, y, hz| VideoMode { physical_size: UVec2::new(x, y), bit_depth: 32, refresh_rate_millihertz: hz };
+        let sel = MonitorSelection::Primary;
+        let small = WindowMode::Fullscreen(sel, VideoModeSelection::Specific(mode(640, 480, 144_000)));
+        let other = WindowMode::Fullscreen(sel, VideoModeSelection::Specific(mode(800, 600, 60_000)));
+        let borderless = WindowMode::BorderlessFullscreen(sel);
+        // #3332: the 20 s revert from 640x480 exclusive to borderless is a restore.
+        assert_eq!(display_step(small, borderless), DisplayStep::Restore);
+        assert_eq!(display_step(small, WindowMode::Windowed), DisplayStep::Restore);
+        assert_eq!(display_step(borderless, small), DisplayStep::Enter(mode(640, 480, 144_000)));
+        assert_eq!(display_step(WindowMode::Windowed, small), DisplayStep::Enter(mode(640, 480, 144_000)));
+        // One exclusive mode to another: winit only enters the new one.
+        assert_eq!(display_step(small, other), DisplayStep::Enter(mode(800, 600, 60_000)));
+        assert_eq!(display_step(small, small), DisplayStep::Nothing);
+        assert_eq!(display_step(borderless, WindowMode::Windowed), DisplayStep::Nothing);
+        assert_eq!(display_step(WindowMode::Windowed, borderless), DisplayStep::Nothing);
+    }
+
+    #[test]
+    fn a_refused_display_change_is_named_in_the_log() {
+        assert_eq!(refusal_text(-1), "DISP_CHANGE_FAILED (-1)");
+        assert_eq!(refusal_text(-2), "DISP_CHANGE_BADMODE (-2)");
+        assert_eq!(refusal_text(7), "an unknown answer (7)");
+    }
+
+    #[test]
+    fn the_display_device_is_the_chosen_monitor_s_name() {
+        let mut modes = MonitorModes::default();
+        let e = Entity::from_raw_u32(3).unwrap();
+        modes.monitors = vec![MonitorInfo { name: r"\.\DISPLAY2".to_string(), entity: e, size: UVec2::new(1920, 1080), position: IVec2::ZERO }];
+        assert_eq!(device_of(&modes, MonitorSelection::Entity(e)).as_deref(), Some(r"\.\DISPLAY2"));
+        assert_eq!(device_of(&modes, MonitorSelection::Primary), None);
     }
 }
