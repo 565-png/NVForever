@@ -215,7 +215,7 @@ https://www.nexusmods.com/newvegas/mods/66347?tab=logs]. The version reported ri
 verified step at a time once every feature for that step is built and checked; it is
 never the version of a DLL found on disk (the engine is not that DLL). A higher gate
 rises only when its full step is verified, with a row here and tests
-(`fnv_script::vm::jip::STEWIE_VERSION`; `stewie_945_960_970_qualification`).
+(`fnv_script::vm::jip::PLUGINS`; `stewie_945_960_970_qualification`).
 
 `GetPluginVersion "lStewieAl's Tweaks"` **remains `941`** until all remaining 9.45 items
 tracked in `#3179` (Sleep Healing Min Duration, Hit Location in Cinematic Killcams,
