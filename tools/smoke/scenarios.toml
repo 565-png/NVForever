@@ -2664,6 +2664,42 @@ forbid = [
 ]
 
 [[scenario]]
+name = "night-sky-detail"
+source = "[design, #2995] engine/nvforever/src/night_sky.rs, sky.wesl, docs/design/graphics-enhanced.md §3.19: the Night sky detail switch (off by default and in every preset) turned on in the pause menu outdoors at Goodsprings at 23:00 on day 0 (a full moon) works its figures from the shown weather and the moon (the debug multiplier 2 read once) and logs them, puts a twinkle into the stars' materials and a glow into the dome's (its applied line), and stays on after the game resumes; the sky parts' shader (with the twinkle, the moon glow and the moonlit clouds) compiles, without a rendering error"
+areas = ["renderer", "graphics", "settings", "sky"]
+paths = [
+  "engine/nvforever/src/night_sky.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/sky.wesl",
+  "engine/nvf-shader-tests/tests/sky.rs",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:night-sky-detail", NVF_PLAY_DEBUG_NIGHT_SKY = "2" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "23", "--day", "0"]
+run_seconds = 22
+expect = [
+  "debug switch NVF_PLAY_DEBUG_NIGHT_SKY: the night sky detail x2",
+  { re = 'night sky: detail on: .*?: haze [\d.]+, twinkle (\d+\.\d+), ', range = [0.3, 0.9], label = "the stars twinkle at night: (0.15 + 0.25 x the weather's haze) x 2" },
+  { re = 'night sky: detail on: .*, moon full lit 1\.00, strength 2\.00, ', label = "day 0 at 23:00: a full moon, fully up, x2" },
+  { re = 'night sky: applied: [1-9]\d* star material\(s\) twinkling \(amplitude [\d.]+\), the dome.s glow (?P<n>[\d.]+), \d+ cloud material\(s\) moonlit', range = [0.02, 0.4], label = "the stars' materials hold a twinkle and the dome's a glow, read back after the writes (0.06 x (1 + 0.5 haze) x 2 at the full moon)" },
+]
+order = [
+  [
+    "settings: night-sky-detail on",
+    { text = "night sky: detail on: ", label = "the detail's line once the switch is on, outdoors" },
+    { text = "night sky: applied: ", label = "then the parts' materials hold it" },
+  ],
+  [
+    "settings: night-sky-detail on",
+    { re = 'graphics: light glow, night sky detail$' },
+    { re = 'pause menu: resume$', label = "the game resumes with the row on" },
+  ],
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the night sky detail" },
+  { re = '(?i)failed to process shader', label = "a shader that does not compile (sky.wesl with the night sky detail)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "night sky: detail off", label = "the row stays on across the resume" },
+]
+
+[[scenario]]
 name = "terrain-height-blend-local-start"
 source = "[design, #2550] engine/nvforever/src/terrain.rs \"Height blending\": started with local height reference (0.10:4:local) and --graphics-only terrain-height-blend, the folded materials are made with it and their TERRAIN_HEIGHT_BLEND pipeline compiles and is ready, without a rendering or pipeline error"
 areas = ["renderer", "graphics", "terrain"]
@@ -7130,6 +7166,21 @@ order = [[
 ]]
 
 [[scenario]]
+name = "terminal-note-pages"
+source = "[hypothesis] #3409: E, Enter or a click turns a terminal note longer than the screen to its next page, and does nothing on its last page (hacking.md section 7; observer check 255)"
+note = "V21SheldonTerminal's mail: Messages, New Message from Sarah Weintraub (note V21SarahOutMail01, about 30 lines: two pages of 16) [observed: 2026-11-22, the first page ends mid-sentence and the second runs to 'Sarah.']. Three selects: the first turns, the other two find the last page"
+areas = ["terminal"]
+paths = ["engine/nvf-play/src/terminal*", "engine/nvf-play/src/terminal/**"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TERMINAL = "20:open:0011E3C3,22:item:0,24:item:0,26:item:0,28:select,30:select,32:select,34:back,36:exit" }
+args = ["--cell", "2EOMichaelAngelo", "--play", "--no-voice"]
+run_seconds = 40
+expect = [
+  { text = "note V21SarahOutMail01", count = 1, label = "the long mail opened as a note" },
+  { text = "terminal: note turned to line 16", count = 1, label = "one select turns it to its second page, the others find its last page" },
+]
+order = [["note V21SarahOutMail01", "terminal: note turned to line 16", "terminal: back from the note to the list"]]
+
+[[scenario]]
 name = "terminal-scripted-activate"
 source = "#1532: Lucky38MrHouseTerminal's OnActivate (SCPT 0x001746C1) ends in a bare Activate: a script's default activation of a terminal opens its screen for the player, after Terminal01.NIF's Open sequence (keyboard, then screen); leaving plays Close"
 note = "Lucky38MrHouseTerminalREF (0014B0A7, base Lucky38MrHouseTerminal 0014B08E: Hard, locked, model Terminals/Terminal01.NIF with Idle/Open/Close) [observed: FalloutNV.esm]; Science 80 so the script's first branch (Science 75, not locked for good) runs Activate and the hacking game opens"
@@ -7268,6 +7319,23 @@ order = [[
   { text = "quest message on screen: Talk to Sunny Smiles in the Prospector Saloon.", label = "drawn only after the terminal closes" },
 ]]
 expect = [{ text = "quest message on screen: Talk to Sunny Smiles in the Prospector Saloon.", count = 1, label = "shown once" }]
+
+[[scenario]]
+name = "blake-books"
+source = "[observed] #3350: Bitter Springs Infirmary Blues' two books lie on Blake's stand in WastelandNVmini, owned by him (VBSPsychologyBookREF 0x00178DB0, VBSPediatricsBookREF 0x00178DAF; in no merchant container); they are drawn there, can be taken (a theft), and each completes its objective (20, 40) by its OnAdd. Whether the original also sells them is observer check 256"
+note = "NEAR stands the player facing the pediatrics book (heading 45, pitch -60) and E takes it by the crosshair; the psychology book, on the upper shelf behind the barbed wire, is taken by a script activation (by the crosshair it needs a pitch of about -6 from its NEAR spot). The theft is seen, so Blake's side may turn on the player afterwards: god mode"
+areas = ["quests", "crime"]
+paths = ["engine/nvf-play/src/activate.rs", "engine/nvf-play/src/activate/**", "engine/nvf-play/src/menu/model.rs", "docs/spec-notes/barter-menu.md"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00178DAF", NVF_PLAY_TEST_ACTIVATE = "8", NVF_PLAY_TEST_SCRIPT = "5:start:VMS40,5.5:stage:VMS40:10,10:activate:VBSPsychologyBookREF" }
+args = ["--world", "WastelandNVmini", "--pos=13240,17420,9960", "--hour", "12", "--play", "--no-voice", "--no-messages"]
+run_seconds = 13
+expect = [
+  { text = "target 0x00178DAF Tiny, Tiny Babies: All You Need to Know About Pediatric Medicine (Take, owned)", label = "the pediatrics book is drawn on the stand and the crosshair finds it, owned" },
+  { text = "script: VMS40 objective 40 completed true", count = 1, label = "taking it completes objective 40" },
+  { text = "crime: the player took VBSPediatricsBook (0x00178DAF) x1, owned by someone else", label = "as a theft from Blake" },
+  { text = "script: VMS40 objective 20 completed true", count = 1, label = "the psychology book taken completes objective 20" },
+  { text = "crime: the player took VBSPsychologyBook (0x00178DB0) x1, owned by someone else", label = "as a theft too" },
+]
 
 [[scenario]]
 name = "hacking-owned"
@@ -17721,6 +17789,22 @@ expect = [
 ]
 
 [[scenario]]
+name = "grab-teddy-bear"
+source = "[design] #3428: a placed item whose model is several dynamic bodies (the teddy bear: six on five limited hinges) is joined into one rigid body as a dropped one is, so the grab key holds it; physics.md section 4.3.1"
+note = "the bear 00172D8B south of Goodsprings, lying in its designer's XRGD pose; Z held 3 s. Before: 'no loose body' (its bodies were held keyframed). It weighs 8 kg joined (1 x 5 + 3)"
+areas = ["grab", "physics"]
+paths = ["engine/nvf-play/src/phys/prepare.rs", "engine/nvf-play/src/grab.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_NEAR = "00172D8B", NVF_PLAY_TEST_GRAB = "8:z:3:90:at=00172D8B" }
+args = ["--play", "--pos=-68601,-54700,6370", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 22
+expect = [
+  { text = 'phys: 0x00172D8B meshes\clutter\teddybear\teddybear01.nif: collision posed from XRGD (6 bodies)', label = "the bear's bodies are posed as its designer left it" },
+  { re = 'grab: picked up loose object Teddy Bear \(00172D8B\) by Aid: 8\.0 kg', label = "Z picks the bear up as one body of its parts' summed mass" },
+  { re = 'grab: Teddy Bear \(00172D8B\) came to rest at', label = "dropped, it comes to rest" },
+]
+forbid = [{ text = "no loose body", label = "the bear's bodies held keyframed" }]
+
+[[scenario]]
 name = "grab-plant-rooted"
 source = "[hypothesis] #3389: the grab key passes through a body on the non-collidable layer, so a pickable plant (White Horse Nettle: one dynamic box of 45 kg on layer 15) stays rooted; observer check 263"
 note = "the nettle 0016AF22 south of Goodsprings; Z held 3 s on it. Before the fix it was picked up as a loose object of 45 kg and dropped about 100 units off"
@@ -18363,6 +18447,20 @@ order = [[
   { re = 'compass: \d+ actors .*, [1-9]\d* sneaking left off', label = "sneaking Ringo left off the compass" },
   { re = 'compass: \d+ actors .*, 0 sneaking left off', label = "standing up, nobody is left off" },
 ]]
+
+[[scenario]]
+name = "compass-tick-place"
+source = "#3310: the hand-built compass's actor ticks stood a little low; their bar now ends 22 units down the compass window, where the HUD file's tick box puts the original's (docs/spec-notes/hud.md §11, engine/nvf-play/src/compass.rs TICK_TOP)"
+note = "as compass-sneaking-npc: the HUD hand-built (NVF_PLAY_TEST_TILE_MENUS empty: no tile menus); Ringo is brought 300 units north of the player (heading north, in the compass's window) at 9 s, after the scripts' start (about 6.5 s; earlier steps are moved later by script_events::delay_late_aids while the shots keep their time), a frame at 12 s shows his amber tick; StartCombat sets him on the god-mode player at 14 s and a frame at 17 s shows the red tick. Look at the frames: each bar ends a few pixels above the strip's doubled line, not on it"
+areas = ["hud"]
+paths = ["engine/nvf-play/src/compass.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "9:moveto:RingoRef:player:0:300:0,14:call:RingoRef:StartCombat:player", NVF_PLAY_TEST_SHOTS = "12,17" }
+args = ["--play", "--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--hour", "12", "--no-voice", "--size", "1280x720"]
+run_seconds = 20
+expect = [
+  { re = 'compass: Actor tick drawn 26 x 26 at y 4\.125 of the window, its bar ending at 22\.0', label = "a neutral actor's tick, its bar ending at 22" },
+  { re = 'compass: Hostile tick drawn 26 x 26 at y 4\.125 of the window, its bar ending at 22\.0', label = "a hostile actor's red tick in the same place" },
+]
 
 [[scenario]]
 name = "body-weapons-handy-gutsy"
@@ -34719,3 +34817,19 @@ expect = [
   { json = "files.?tree=wastelandshrub01.stub_levels.#", schema = "fnv.spt.shape/1", equals = 0, count = 1, label = "WastelandShrub01 has no stub level" },
   { json = "files.?tree=whiteoak01.stub_levels.#", schema = "fnv.spt.shape/1", equals = 0, count = 1, label = "WhiteOak01 has no stub level" },
 ]
+
+[[scenario]]
+name = "vats-templated-name"
+source = "#3445: a Lonesome Road deathclaw of the nameless base NVDLC04DeathclawAmbusherLVL (template: the leveled creature list NVDLC04DeathClawGLENC, Base Data from the template) was named by that Editor ID in VATS; its name is the picked entry's FULL, Deathclaw (engine/nvf-play/src/sim.rs ref_shown_name)"
+areas = ["combat", "vats"]
+paths = ["engine/nvf-play/src/sim.rs", "engine/nvf-play/src/vats_mode.rs", "engine/nvf-play/src/hud_target.rs"]
+note = "vats-mode-miss's setup at Goodsprings with LonesomeRoad.esm loaded and both dogs killed at 3 s; one such deathclaw is made 500 units from the player (god mode), and the VATS mark at 10 s is on it, the nearest living actor [observed 2026-11-22: the lines below]"
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:kill:0x0013E5BB,3:kill:0x000F573F,3.2:call:player:PlaceAtMe:NVDLC04DeathclawAmbusherLVL:1:500:0", NVF_PLAY_TEST_EQUIP = "0008F216", NVF_PLAY_TEST_GIVE = "0008ED02:24", NVF_PLAY_TEST_CONTROL = "3:weapon,4.5:reload,10.3:aimvats", NVF_PLAY_TEST_KEYS = "10:v,10.32:mouse-left,10.36:e", NVF_PLAY_TEST_VATS_STYLE = "dead-eye" }
+args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm", "LonesomeRoad.esm"]
+run_seconds = 16
+expect = [
+  { re = 'ai .* NVDLC04DeathclawAmbusherLVL 0xFF000001: created by a script \(PlaceAtMe\)', label = "the deathclaw of the nameless base is made" },
+  { re = 'vats mode: preview Deathclaw FF000001', label = "VATS previews it by the picked entry's name" },
+  { re = 'vats mode: marked Deathclaw FF000001 ', label = "the mark names it Deathclaw" },
+]
+forbid = [{ re = 'vats mode: (preview|marked) NVDLC04', label = "VATS names an actor by an Editor ID" }]
