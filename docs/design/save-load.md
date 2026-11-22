@@ -282,7 +282,13 @@ and Lonesome Road dropped, 36 more by the game layer; the base game's changes ba
 5. **Physics**: objects load at rest where they were.
 6. **Another load order**: forms are remapped by name, those of missing plugins dropped
    with a notice; built 2026-10-21 (§4.1).
-7. **Importing a `.fos`**: not planned.
+7. **Importing a `.fos`**: the game runtime never reads or writes `.fos` files. An
+   offline `fnvtool save convert <input.fos> --out <output.nvfsave>` (and
+   `fnvtool save inspect-fos <input.fos>`) utility converts the documented/observed
+   `.fos` subset (`crates/fnv-save/src/fos.rs`, `crates/fnv-game/src/fos_convert.rs`) into
+   a standard `NVFSAVE\0` v1 save and emits a structured JSON report of converted and
+   skipped/unmapped sections (`.nvse` co-saves, created `0xFF` forms, perks/active effects,
+   and unmapped changed-form/global layouts are truthfully reported as skipped).
 8. **Thumbnail**: 512×288 from the main camera; built (§6), shown on the pause menu's load
    page.
 

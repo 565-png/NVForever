@@ -1,11 +1,11 @@
 # Save files (`.fos`): layout as observed
 
 Clean-room notes on the original game's save file, written to plan NVForever's own save
-and load system ([design/save-load.md](../design/save-load.md)). The game does not read or
-write `.fos` files; this note says what the original keeps, so our save keeps the same
-state. One reader exists, for the extender lab only: `fnv_save::fos` and `fnvtool ext
-queries --save` (and `ext probes --save`) start a probe run from the save the probes ran
-from (§6.4, §6.5, issue #1023). Tags: [documented] (public page named), [observed] (bytes in the saves below),
+and load system ([design/save-load.md](../design/save-load.md)). The game runtime itself
+does not read or write `.fos` files; this note says what the original keeps, so our save
+keeps the same state. `fnv_save::fos` reads the observed/documented sections below for the
+extender lab (`fnvtool ext queries --save` and `ext probes --save`, §6.4–§6.5, issue #1023)
+and the offline converter (`fnvtool save inspect-fos` and `fnvtool save convert`, §6.6). Tags: [documented] (public page named), [observed] (bytes in the saves below),
 [hypothesis] (a reading that fits the bytes but is not proven). Offsets are byte offsets
 in the file, little-endian unless stated.
 
@@ -84,7 +84,9 @@ From 0x0F, each field followed by a 0x7C byte:
 | location name | u16 length, 0x7C, bytes | the cell's or worldspace region's display name |
 | play time | u16 length, 0x7C, ASCII `HHH.MM.SS` | `000.11.50` |
 
-Strings are length-prefixed (u16), a `|`, then the bytes without a terminator. The header
+Strings are length-prefixed (u16), a `|`, then the bytes without a terminator; non-empty
+strings are followed by a trailing `|`, while zero-length strings (such as an unnamed
+new-game player) write only `00 00 7C` with no second `|` [observed]. The header
 size therefore varies with the strings (137 bytes in A/C/D, 141 in B) [observed]. The
 header holds no game date and no plugin list; the load menu's line is built from it alone
 [hypothesis].
@@ -292,10 +294,11 @@ been said", the say-once flag and the "said" condition functions].
 u32, `|`, u32, `|` [hypothesis: faction relations, ref + modifier + combat reaction;
 read by the lab, §6.5].
 
-**FLST** bit 31: vsval count, then refs [hypothesis: form lists changed by script,
-AddFormToFormList]. **LVLI** bit 31: entries of ref, u16 level, u16 count, f32
-[hypothesis: leveled list changed by script, AddItemToLeveledList]. **CHAL** bit 1:
-u32 1, u32 0 [hypothesis: challenge progress]. **CLAS** bit 1 (PlayerClass): four u32,
+**FLST** bit 31: `u32` count, `|`, then `count × (ref, |)` [observed: form lists changed
+by script, AddFormToFormList]. **LVLI** bit 31: `vsval` count, `|`, then entries of
+`ref, |, u16 level, |, u16 count, |, f32 condition, |` [observed: leveled list changed by
+script, AddItemToLeveledList]. **CHAL** bit 1: `u32, |, u32, |` (progress and flags word)
+[observed; hypothesis: progress + state flags]. **CLAS** bit 1 (PlayerClass): four u32,
 three skill-like values and −1 [hypothesis: the player's tag skills].
 
 ### 6.3 The max save (M) [observed unless tagged]
@@ -468,6 +471,12 @@ records (script variables), the player and every actor.
   not decoded), and of global types 9 and 10, which grow with play.
 - The QUST date stamp's day encoding.
 
-None of these is needed for NVForever's own format; they would matter only to import a
-`.fos`, which is not planned (design/save-load.md §6). The lab reader (§6.4) reads only
-what the probe sets need.
+None of these is needed for NVForever's own format. The offline `fnvtool save convert`
+importer (§6.6, `crates/fnv-game/src/fos_convert.rs`) converts only the decoded sections
+documented above (header, optional RGB->PNG thumbnail, globals, misc stats, active quest,
+weather, quests/stages/objectives/variables, player name/level/SPECIAL/tag skills/XP/karma/
+inventory/place, placed reference flags and places, faction relations, `FLST`, `LVLI`,
+`REPU`, `CHAL` progress, `NOTE`, and `INFO` said-once), and truthfully counts every
+unmapped global table, created `0xFF` form, missing-plugin form, unmapped changed-form
+record, and ignored `.nvse` co-save in its JSON conversion report [design]. The game
+runtime itself remains `.nvfsave`-only.

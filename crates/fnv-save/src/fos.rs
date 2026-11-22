@@ -1,12 +1,15 @@
-//! A reader of the original game's save files (`.fos`), for the extender lab only: its
-//! probe sets ran from the owner's save, so `fnvtool ext queries --save` starts the run
-//! from the state this reads (issue #1023). The game never loads a `.fos`.
+//! A reader of the original game's save files (`.fos`), for the extender lab and
+//! offline `fnvtool save` conversion/inspection (issue #1023, docs/spec-notes/save-files.md).
+//! The game runtime itself never loads or writes a `.fos`.
 //!
 //! The layout is in docs/spec-notes/save-files.md; every part read here is tagged there.
-//! Only what the lab needs is decoded: the header, the plugin list, the global variables,
-//! the player's place, quests (flags, stages, objectives, variables), the player's
-//! SPECIAL, tag skills, skill modifiers and inventory, other references' form flags and
-//! places, and faction relations. Anything else is kept as raw bytes per changed form.
+//! Decoded sections: header (including screenshot RGB bytes and play time), plugin list,
+//! global variables (type 3), misc statistics (type 0), player location/active quest
+//! (type 1), sky/weather (type 8), quests (flags, delay, stages, objectives, variables),
+//! player SPECIAL, tag skills, AV arrays, and inventory (with worn & condition extras),
+//! placed reference form flags and places, faction relations, form lists (`FLST`), leveled
+//! item lists (`LVLI`), reputations (`REPU`), challenges (`CHAL`), notes (`NOTE`), and
+//! said-once dialogue lines (`INFO`). Anything else is kept as raw bytes per changed form.
 
 use std::fmt;
 
@@ -30,14 +33,54 @@ fn err<T>(msg: impl Into<String>) -> Result<T, FosError> {
 const BAR: u8 = 0x7C;
 const MAGIC: &[u8] = b"FO3SAVEGAME";
 
-/// Changed-form record types (save-files.md §6.1).
+/// Changed-form record types (save-files.md §6.1, §6.3).
 pub const TYPE_REFR: u8 = 0;
 pub const TYPE_ACHR: u8 = 1;
 pub const TYPE_ACRE: u8 = 2;
+pub const TYPE_PMIS: u8 = 3;
+pub const TYPE_PGRE: u8 = 4;
+pub const TYPE_CELL: u8 = 7;
+pub const TYPE_INFO: u8 = 8;
 pub const TYPE_QUST: u8 = 9;
 pub const TYPE_NPC: u8 = 10;
+pub const TYPE_CREA: u8 = 11;
+pub const TYPE_TACT: u8 = 13;
+pub const TYPE_NOTE: u8 = 31;
+pub const TYPE_ECZN: u8 = 32;
 pub const TYPE_CLAS: u8 = 33;
 pub const TYPE_FACT: u8 = 34;
+pub const TYPE_PACK: u8 = 35;
+pub const TYPE_FLST: u8 = 37;
+pub const TYPE_LVLI: u8 = 40;
+pub const TYPE_REPU: u8 = 43;
+pub const TYPE_CHAL: u8 = 50;
+
+/// Human-readable record tag for a `.fos` changed-form type code (save-files.md §6.1, §6.3).
+pub fn kind_name(kind: u8) -> &'static str {
+    match kind {
+        TYPE_REFR => "REFR",
+        TYPE_ACHR => "ACHR",
+        TYPE_ACRE => "ACRE",
+        TYPE_PMIS => "PMIS",
+        TYPE_PGRE => "PGRE",
+        TYPE_CELL => "CELL",
+        TYPE_INFO => "INFO",
+        TYPE_QUST => "QUST",
+        TYPE_NPC => "NPC_",
+        TYPE_CREA => "CREA",
+        TYPE_TACT => "TACT",
+        TYPE_NOTE => "NOTE",
+        TYPE_ECZN => "ECZN",
+        TYPE_CLAS => "CLAS",
+        TYPE_FACT => "FACT",
+        TYPE_PACK => "PACK",
+        TYPE_FLST => "FLST",
+        TYPE_LVLI => "LVLI",
+        TYPE_REPU => "REPU",
+        TYPE_CHAL => "CHAL",
+        _ => "UNKNOWN",
+    }
+}
 
 /// The player's reference and base form.
 pub const PLAYER_REF: u32 = 0x14;
@@ -113,12 +156,16 @@ impl<'a> Cur<'a> {
     fn ref3(&mut self) -> Result<[u8; 3], FosError> {
         Ok(self.take(3)?.try_into().unwrap())
     }
-    /// A string: u16 length, `|`, the bytes (§3.1), in this run's code page
-    /// (fnv_util::text, #1439).
-    fn string(&mut self) -> Result<String, FosError> {
+    /// A `.fos` header/plugin string field followed by a trailing `|` when non-empty
+    /// [observed: empty strings write `00 00 7C` with no second `|`].
+    fn string_field(&mut self, trailing_bar: bool) -> Result<String, FosError> {
         let n = self.u16()? as usize;
         self.bar()?;
-        Ok(fnv_util::text::decode(self.take(n)?))
+        let s = fnv_util::text::decode(self.take(n)?);
+        if trailing_bar && n > 0 {
+            self.bar()?;
+        }
+        Ok(s)
     }
     fn at_end(&self) -> bool {
         self.p >= self.b.len()
@@ -134,6 +181,22 @@ pub struct FosHeader {
     pub level: u32,
     pub location: String,
     pub play_time: String,
+    pub screenshot_width: u32,
+    pub screenshot_height: u32,
+}
+
+impl FosHeader {
+    /// Parse the header's `HHH.MM.SS` play-time string into seconds (§3.1).
+    pub fn play_seconds(&self) -> Option<f64> {
+        let mut parts = self.play_time.trim().split('.');
+        let h: u64 = parts.next()?.parse().ok()?;
+        let m: u64 = parts.next()?.parse().ok()?;
+        let s: u64 = parts.next()?.parse().ok()?;
+        if parts.next().is_some() {
+            return None;
+        }
+        Some((h * 3600 + m * 60 + s) as f64)
+    }
 }
 
 /// One changed form (§6): its form ID (resolved through the form ID array), change
@@ -189,7 +252,7 @@ impl FosQuest {
 }
 
 /// An inventory entry of the player (§6.2): the item and its count change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FosItem {
     /// `None`: a reference the form ID array does not hold.
     pub item: Option<u32>,
@@ -198,9 +261,11 @@ pub struct FosItem {
     pub count: i32,
     /// An extra data list carries the worn marker (type 0x16) [hypothesis: worn].
     pub worn: bool,
+    /// Item health from extra data type 0x25 (f32 HP), when present [hypothesis: condition].
+    pub condition: Option<f32>,
 }
 
-/// The player's state that the lab reads.
+/// The player's state that the reader decodes.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FosPlayer {
     /// The worldspace (outdoors) or interior cell, position and rotation (radians).
@@ -209,12 +274,74 @@ pub struct FosPlayer {
     pub special: Option<[u8; 7]>,
     /// Tag skills, as actor value codes (PlayerClass, change flag 1).
     pub tag_skills: Vec<u32>,
+    /// Whether the 232-entry actor-value block matched the observed bar-separated layout.
+    pub av_parsed: bool,
     /// The first array of actor-value modifiers by code (§6.4), non-zero entries
     /// [observed: nvfairport's equal the worn Vault 21 Jumpsuit's enchantment; hypothesis:
     /// active effects' modifiers].
     pub av_modifiers: Vec<(u32, f32)>,
+    /// The second array of actor-value entries by code (§6.4), non-zero entries
+    /// [hypothesis: play-modified base values such as Karma (23) and Experience (24)].
+    pub av_base: Vec<(u32, f32)>,
     /// The inventory changes, `None` when the record's layout was not understood.
     pub inventory: Option<Vec<FosItem>>,
+}
+
+/// Global table 1 type 1: player location and active quest (§5.1, §6.4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FosLocationGlobal {
+    pub next_created_id: u32,
+    pub world: Option<u32>,
+    pub grid: [i32; 2],
+    pub cell_or_world: Option<u32>,
+    pub pos: [f32; 3],
+    pub active_quest: Option<u32>,
+}
+
+/// Global table 1 type 8: sky and weather references (§5.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FosWeather {
+    pub current: Option<u32>,
+    pub second: Option<u32>,
+}
+
+/// A form list's saved membership (FLST, change flag 31; save-files.md §6.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FosFormList {
+    pub form: u32,
+    pub forms: Vec<Option<u32>>,
+}
+
+/// One entry in a saved leveled item list (LVLI, change flag 31; save-files.md §6.2).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FosLeveledEntry {
+    pub item: Option<u32>,
+    pub level: u16,
+    pub count: u16,
+    pub condition: f32,
+}
+
+/// A leveled item list's saved additions (LVLI, change flag 31; save-files.md §6.2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FosLeveledList {
+    pub form: u32,
+    pub entries: Vec<FosLeveledEntry>,
+}
+
+/// A reputation's saved fame and infamy (REPU, change flag 1; save-files.md §6.3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FosReputation {
+    pub form: u32,
+    pub fame: f32,
+    pub infamy: f32,
+}
+
+/// A challenge's saved progress and state word (CHAL, change flag 1; save-files.md §6.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FosChallenge {
+    pub form: u32,
+    pub progress: u32,
+    pub flags: u32,
 }
 
 /// A cell or worldspace, a position and a rotation (radians).
@@ -254,6 +381,8 @@ pub struct FosFaction {
 #[derive(Debug, Clone, Default)]
 pub struct Fos {
     pub header: FosHeader,
+    /// Uncompressed RGB screenshot pixels (`screenshot_width * screenshot_height * 3`, §3.2).
+    pub screenshot_rgb: Vec<u8>,
     /// The load order the save was made with; a form ID's top byte indexes it (§4).
     pub plugins: Vec<String>,
     pub form_ids: Vec<u32>,
@@ -286,20 +415,30 @@ impl Fos {
         c.bar()?;
         let height = c.u32()? as usize;
         c.bar()?;
+        h.screenshot_width = width as u32;
+        h.screenshot_height = height as u32;
         h.save_number = c.u32()?;
         c.bar()?;
-        h.player_name = c.string()?;
-        c.bar()?;
-        h.karma_title = c.string()?;
-        c.bar()?;
+        h.player_name = c.string_field(true)?;
+        h.karma_title = c.string_field(true)?;
         h.level = c.u32()?;
         c.bar()?;
-        h.location = c.string()?;
-        c.bar()?;
-        h.play_time = c.string()?;
+        h.location = c.string_field(true)?;
+        h.play_time = c.string_field(false)?;
         // The screenshot follows the header (§3.2).
-        let shot = width.checked_mul(height).and_then(|n| n.checked_mul(3));
-        c.p = shot.and_then(|n| header_start.checked_add(header_size)?.checked_add(n)).ok_or_else(|| FosError("a header or screenshot size past any file".into()))?;
+        let shot_start = header_start
+            .checked_add(header_size)
+            .ok_or_else(|| FosError("a header size past any file".into()))?;
+        let shot_len = width
+            .checked_mul(height)
+            .and_then(|n| n.checked_mul(3))
+            .ok_or_else(|| FosError("a screenshot size past any file".into()))?;
+        let shot_end = shot_start
+            .checked_add(shot_len)
+            .filter(|&end| end <= b.len())
+            .ok_or_else(|| FosError("a header or screenshot size past any file".into()))?;
+        let screenshot_rgb = b[shot_start..shot_end].to_vec();
+        c.p = shot_end;
         let _form_version = c.u8()?;
         let plugin_block = c.u32()? as usize;
         let plugins_end = c.p.checked_add(plugin_block).ok_or_else(|| FosError("a plugin block size past any file".into()))?;
@@ -307,8 +446,7 @@ impl Fos {
         c.bar()?;
         let mut plugins = Vec::new();
         for _ in 0..n {
-            plugins.push(c.string()?);
-            c.bar()?;
+            plugins.push(c.string_field(true)?);
         }
         c.p = plugins_end;
         let mut t = [0u32; 8];
@@ -330,7 +468,7 @@ impl Fos {
                 globals_data.push((ty, g.take(len)?.to_vec()));
             }
         }
-        let mut fos = Fos { header: h, plugins, form_ids, worlds, globals_data, changed: Vec::new() };
+        let mut fos = Fos { header: h, screenshot_rgb, plugins, form_ids, worlds, globals_data, changed: Vec::new() };
         let mut r = Cur::new(b, cf_off);
         for _ in 0..cf_count {
             let rf = r.ref3()?;
@@ -397,25 +535,172 @@ impl Fos {
         Ok(out)
     }
 
+    /// Global table 1 type 0: miscellaneous statistics in code order (43 entries, §5.1).
+    pub fn misc_stats(&self) -> Result<Vec<u32>, FosError> {
+        let Some(d) = self.global(0) else { return Ok(Vec::new()) };
+        let mut c = Cur::new(d, 0);
+        let n = c.u32()? as usize;
+        c.bar()?;
+        let mut out = Vec::with_capacity(n.min(256));
+        for _ in 0..n {
+            out.push(c.u32()?);
+            c.bar()?;
+        }
+        Ok(out)
+    }
+
+    /// Global table 1 type 1: player location, created-form counter and active quest
+    /// (§5.1, §6.4).
+    pub fn player_location_global(&self) -> Option<FosLocationGlobal> {
+        let d = self.global(1)?;
+        let mut c = Cur::new(d, 0);
+        let next_created_id = c.u32().ok()?;
+        c.bar().ok()?;
+        let world = self.resolve(c.ref3().ok()?);
+        c.bar().ok()?;
+        let gx = c.i32().ok()?;
+        c.bar().ok()?;
+        let gy = c.i32().ok()?;
+        c.bar().ok()?;
+        let cell_or_world = self.resolve(c.ref3().ok()?);
+        c.bar().ok()?;
+        let px = c.f32().ok()?;
+        let py = c.f32().ok()?;
+        let pz = c.f32().ok()?;
+        c.bar().ok()?;
+        let active_quest = self.resolve(c.ref3().ok()?);
+        Some(FosLocationGlobal {
+            next_created_id,
+            world,
+            grid: [gx, gy],
+            cell_or_world,
+            pos: [px, py, pz],
+            active_quest,
+        })
+    }
+
     /// The quest that global table 1's type 1 entry names (§5.1) [hypothesis: the active
     /// quest].
     pub fn active_quest(&self) -> Option<u32> {
-        let d = self.global(1)?;
-        // next created ID |, world |, grid x |, grid y |, cell or world |, 3 f32 |, quest.
+        self.player_location_global()?.active_quest
+    }
+
+    /// Global table 1 type 8: current and second weather references (§5.1).
+    pub fn weather(&self) -> Result<Option<FosWeather>, FosError> {
+        let Some(d) = self.global(8) else { return Ok(None) };
         let mut c = Cur::new(d, 0);
-        c.u32().ok()?;
-        c.bar().ok()?;
-        c.ref3().ok()?;
-        c.bar().ok()?;
-        c.i32().ok()?;
-        c.bar().ok()?;
-        c.i32().ok()?;
-        c.bar().ok()?;
-        c.ref3().ok()?;
-        c.bar().ok()?;
-        c.take(12).ok()?;
-        c.bar().ok()?;
-        self.resolve(c.ref3().ok()?)
+        let current = self.resolve(c.ref3()?);
+        c.bar()?;
+        let second = self.resolve(c.ref3()?);
+        c.bar()?;
+        Ok(Some(FosWeather { current, second }))
+    }
+
+    /// Dialogue responses marked said-once (INFO, change flag 31, empty data; §6.2).
+    pub fn said_infos(&self) -> Vec<u32> {
+        self.records(TYPE_INFO)
+            .filter(|f| f.has(31) && f.data.is_empty() && f.form != 0)
+            .map(|f| f.form)
+            .collect()
+    }
+
+    /// Notes owned by the player (NOTE, change flag 31, empty data; §6.3).
+    pub fn notes(&self) -> Vec<u32> {
+        self.records(TYPE_NOTE)
+            .filter(|f| f.has(31) && f.data.is_empty() && f.form != 0)
+            .map(|f| f.form)
+            .collect()
+    }
+
+    /// Form lists changed by script (FLST, change flag 31: `u32 count |`, then `count * (ref |)`).
+    pub fn form_lists(&self) -> Vec<Result<FosFormList, FosError>> {
+        self.records(TYPE_FLST)
+            .filter(|f| f.has(31))
+            .map(|f| {
+                let mut c = Cur::new(&f.data, 0);
+                let n = c.u32()? as usize;
+                c.bar()?;
+                let mut forms = Vec::with_capacity(n.min(4096));
+                for _ in 0..n {
+                    let r = self.reference(c.ref3()?).ok().flatten();
+                    c.bar()?;
+                    forms.push(r);
+                }
+                if !c.at_end() {
+                    return err("bytes left after form list entries");
+                }
+                Ok(FosFormList { form: f.form, forms })
+            })
+            .map(|r| r.map_err(|e: FosError| FosError(format!("form list: {e}"))))
+            .collect()
+    }
+
+    /// Leveled item lists changed by script (LVLI, change flag 31: `vsval count |`, then
+    /// `ref | u16 level | u16 count | f32 condition |`; §6.2).
+    pub fn leveled_lists(&self) -> Vec<Result<FosLeveledList, FosError>> {
+        self.records(TYPE_LVLI)
+            .filter(|f| f.has(31))
+            .map(|f| {
+                let mut c = Cur::new(&f.data, 0);
+                let n = c.vsval()? as usize;
+                c.bar()?;
+                let mut entries = Vec::with_capacity(n.min(4096));
+                for _ in 0..n {
+                    let item = self.reference(c.ref3()?).ok().flatten();
+                    c.bar()?;
+                    let level = c.u16()?;
+                    c.bar()?;
+                    let count = c.u16()?;
+                    c.bar()?;
+                    let condition = c.f32()?;
+                    c.bar()?;
+                    entries.push(FosLeveledEntry { item, level, count, condition });
+                }
+                if !c.at_end() {
+                    return err("bytes left after leveled list entries");
+                }
+                Ok(FosLeveledList { form: f.form, entries })
+            })
+            .map(|r| r.map_err(|e: FosError| FosError(format!("leveled list: {e}"))))
+            .collect()
+    }
+
+    /// Reputations changed in play (REPU, change flag 1: `f32 fame | f32 infamy |`; §6.3).
+    pub fn reputations(&self) -> Vec<Result<FosReputation, FosError>> {
+        self.records(TYPE_REPU)
+            .filter(|f| f.has(1))
+            .map(|f| {
+                let mut c = Cur::new(&f.data, 0);
+                let fame = c.f32()?;
+                c.bar()?;
+                let infamy = c.f32()?;
+                c.bar()?;
+                if !c.at_end() {
+                    return err("bytes left after reputation");
+                }
+                Ok(FosReputation { form: f.form, fame, infamy })
+            })
+            .map(|r| r.map_err(|e: FosError| FosError(format!("reputation: {e}"))))
+            .collect()
+    }
+
+    /// Challenges changed in play (CHAL, change flag 1: `u32 progress | u32 flags |`; §6.2).
+    pub fn challenges(&self) -> Vec<Result<FosChallenge, FosError>> {
+        self.records(TYPE_CHAL)
+            .filter(|f| f.has(1))
+            .map(|f| {
+                let mut c = Cur::new(&f.data, 0);
+                let progress = c.u32()?;
+                c.bar()?;
+                let flags = c.u32()?;
+                c.bar()?;
+                if !c.at_end() {
+                    return err("bytes left after challenge");
+                }
+                Ok(FosChallenge { form: f.form, progress, flags })
+            })
+            .map(|r| r.map_err(|e: FosError| FosError(format!("challenge: {e}"))))
+            .collect()
     }
 
     fn records(&self, kind: u8) -> impl Iterator<Item = &ChangedForm> {
@@ -611,14 +896,33 @@ impl Fos {
         if let Some(at) = at {
             p.place = Some((at, [v[0], v[1], v[2]], [v[3], v[4], v[5]]));
         }
+        // Parse the 232-entry AV block fail-soft: saves with unmapped player change-flag
+        // blocks before the AV array still keep place, SPECIAL, and tag skills intact.
+        let mut av_cur = c.clone();
+        let mut mods = Vec::new();
+        let mut base = Vec::new();
+        let mut av_ok = true;
         for i in 0..AV_ENTRIES {
-            let x = c.f32()?;
-            c.bar()?;
+            let Ok(x) = av_cur.f32() else {
+                av_ok = false;
+                break;
+            };
+            if av_cur.bar().is_err() {
+                av_ok = false;
+                break;
+            }
             if i < AV_COUNT && x != 0.0 {
-                p.av_modifiers.push((i as u32, x));
+                mods.push((i as u32, x));
+            } else if (AV_COUNT..2 * AV_COUNT).contains(&i) && x != 0.0 {
+                base.push(((i - AV_COUNT) as u32, x));
             }
         }
-        p.inventory = self.player_inventory(r, c).ok();
+        if av_ok {
+            p.av_parsed = true;
+            p.av_modifiers = mods;
+            p.av_base = base;
+            p.inventory = self.player_inventory(r, av_cur).ok();
+        }
         Ok(p)
     }
 
@@ -670,30 +974,34 @@ impl Fos {
             let lists = c.vsval()?;
             c.bar()?;
             let mut worn = false;
+            let mut condition = None;
             for _ in 0..lists {
                 let extras = c.vsval()?;
                 c.bar()?;
                 for _ in 0..extras {
-                    let size = match c.u8()? {
+                    match c.u8()? {
                         // worn
                         0x16 => {
+                            c.bar()?;
                             worn = true;
-                            0
                         }
                         // a reference (an owner)
-                        0x21 => 3,
-                        // condition (f32)
-                        0x25 => 4,
+                        0x21 => {
+                            c.bar()?;
+                            c.take(3)?;
+                            c.bar()?;
+                        }
+                        // condition (f32 HP)
+                        0x25 => {
+                            c.bar()?;
+                            condition = Some(c.f32()?);
+                            c.bar()?;
+                        }
                         t => return err(format!("extra data type {t:#04x} of unknown size")),
-                    };
-                    c.bar()?;
-                    if size > 0 {
-                        c.take(size)?;
-                        c.bar()?;
                     }
                 }
             }
-            items.push(FosItem { item, count, worn });
+            items.push(FosItem { item, count, worn, condition });
         }
         Ok(items)
     }
@@ -880,7 +1188,13 @@ mod tests {
         assert_eq!(p.special, Some([5, 6, 5, 5, 5, 5, 10]));
         assert_eq!(p.tag_skills, [38, 43, 44]);
         assert_eq!(p.av_modifiers, [(38, 2.0)]);
-        assert_eq!(p.inventory.unwrap(), [FosItem { item: Some(0x15169), count: 9, worn: false }, FosItem { item: Some(0x15169), count: 1, worn: true }]);
+        assert_eq!(
+            p.inventory.unwrap(),
+            [
+                FosItem { item: Some(0x15169), count: 9, worn: false, condition: None },
+                FosItem { item: Some(0x15169), count: 1, worn: true, condition: Some(41.25) },
+            ]
+        );
     }
 
     /// The player record with other data in place of the test save's.
@@ -949,5 +1263,126 @@ mod tests {
         assert!(Fos::parse(b"NVFSAVE\0").is_err());
         let b = save();
         assert!(Fos::parse(&b[..b.len() / 2]).is_err());
+    }
+
+    #[test]
+    fn parses_empty_player_name_screenshot_play_time_and_extended_sections() {
+        let fids = [0x1234u32, 0x5678, 0xDA726, 0x15169, 0x14, 0x7, 0x57E6A, 0x4242, 0x9100, 0x9200, 0x9300, 0x9400, 0x9500, 0x9600];
+        let mut h = Build { b: Vec::new() };
+        h.u32(0x30).bar();
+        h.b.extend([0u8; 64]);
+        // Empty player_name has only ONE '|' after its u16(0) length (no double bar).
+        h.bar()
+            .u32(2)
+            .bar()
+            .u32(1)
+            .bar()
+            .u32(1)
+            .bar()
+            .s("")
+            .s("Dweller")
+            .bar()
+            .u32(5)
+            .bar()
+            .s("Synthetic Cell")
+            .bar()
+            .s("001.02.03");
+        let mut b = MAGIC.to_vec();
+        b.extend((h.b.len() as u32).to_le_bytes());
+        b.extend(&h.b);
+        b.extend([255, 0, 0, 0, 255, 0]); // 2x1 RGB screenshot
+        let mut pl = Build { b: Vec::new() };
+        pl.u8(1).bar().s("FalloutNV.esm").bar();
+        b.push(27);
+        b.extend((pl.b.len() as u32).to_le_bytes());
+        b.extend(&pl.b);
+        let table_at = b.len();
+        b.extend([0u8; 32 + 78]);
+        let g1 = b.len();
+        // Type 0: misc stats (3 values).
+        let mut t0 = Build { b: Vec::new() };
+        t0.u32(3).bar().u32(4).bar().u32(0).bar().u32(7).bar();
+        b.extend(0u32.to_le_bytes());
+        b.extend((t0.b.len() as u32).to_le_bytes());
+        b.extend(&t0.b);
+        // Type 8: weather (current=fids[8], second=none).
+        let mut t8 = Build { b: Vec::new() };
+        t8.r(9).bar().r(0).bar();
+        b.extend(8u32.to_le_bytes());
+        b.extend((t8.b.len() as u32).to_le_bytes());
+        b.extend(&t8.b);
+
+        let cf = b.len();
+        // INFO said-once (fids[9])
+        record(&mut b, 10, 1 << 31, TYPE_INFO, &[]);
+        // NOTE owned (fids[10])
+        record(&mut b, 11, 1 << 31, TYPE_NOTE, &[]);
+        // FLST (fids[11]): u32 count=2 | r(4) | r(8) |
+        let mut fl = Build { b: Vec::new() };
+        fl.u32(2).bar().r(4).bar().r(8).bar();
+        record(&mut b, 12, 1 << 31, TYPE_FLST, &fl.b);
+        // LVLI (fids[12]): vs(1) | r(4) | u16(2) | u16(3) | f32(0.75) |
+        let mut lv = Build { b: Vec::new() };
+        lv.vs(1).bar().r(4).bar();
+        lv.b.extend(2u16.to_le_bytes());
+        lv.bar();
+        lv.b.extend(3u16.to_le_bytes());
+        lv.bar().f32(0.75).bar();
+        record(&mut b, 13, 1 << 31, TYPE_LVLI, &lv.b);
+        // REPU (fids[13]): f32 fame | f32 infamy |
+        let mut rp = Build { b: Vec::new() };
+        rp.f32(12.5).bar().f32(2.0).bar();
+        record(&mut b, 14, 1 << 1, TYPE_REPU, &rp.b);
+        // CHAL (fids[0]): u32 progress | u32 flags |
+        let mut ch = Build { b: Vec::new() };
+        ch.u32(9).bar().u32(4).bar();
+        record(&mut b, 1, 1 << 1, TYPE_CHAL, &ch.b);
+        // Player with unmapped bit-2 block before AVs: place still decodes fail-soft.
+        let mut bad_p = Build { b: Vec::new() };
+        bad_p.r(3).f32(10.0).f32(20.0).f32(30.0).f32(0.0).f32(0.0).f32(1.0).bar();
+        bad_p.b.extend([0x11, 0x22, 0x33, 0x44]); // not bar-aligned AV array
+        record(&mut b, 5, PLAYER_FLAGS | (1 << 2), TYPE_ACHR, &bad_p.b);
+
+        let g2 = b.len();
+        b.extend(1000u32.to_le_bytes());
+        b.extend(0u32.to_le_bytes());
+        let fid = b.len();
+        b.extend((fids.len() as u32).to_le_bytes());
+        for f in fids {
+            b.extend(f.to_le_bytes());
+        }
+        b.extend(0u32.to_le_bytes());
+        let tail = b.len();
+        b.extend([5, 0, 0, 0, 0, 0, 0, 0, 0x7C]);
+        let table = [fid, tail, g1, cf, g2, 2, 1, 7].map(|v| v as u32);
+        for (i, v) in table.iter().enumerate() {
+            b[table_at + 4 * i..table_at + 4 * i + 4].copy_from_slice(&v.to_le_bytes());
+        }
+
+        let fos = Fos::parse(&b).unwrap();
+        assert_eq!(fos.header.player_name, "");
+        assert_eq!(fos.header.karma_title, "Dweller");
+        assert_eq!(fos.header.level, 5);
+        assert_eq!(fos.header.play_seconds(), Some(3723.0));
+        assert_eq!((fos.header.screenshot_width, fos.header.screenshot_height), (2, 1));
+        assert_eq!(fos.screenshot_rgb, [255, 0, 0, 0, 255, 0]);
+        assert_eq!(fos.misc_stats().unwrap(), [4, 0, 7]);
+        assert_eq!(fos.weather().unwrap(), Some(FosWeather { current: Some(0x9100), second: None }));
+        assert_eq!(fos.said_infos(), [0x9200]);
+        assert_eq!(fos.notes(), [0x9300]);
+        assert_eq!(fos.form_lists(), [Ok(FosFormList { form: 0x9400, forms: vec![Some(0x15169), Some(0x4242)] })]);
+        assert_eq!(
+            fos.leveled_lists(),
+            [Ok(FosLeveledList {
+                form: 0x9500,
+                entries: vec![FosLeveledEntry { item: Some(0x15169), level: 2, count: 3, condition: 0.75 }],
+            })]
+        );
+        assert_eq!(fos.reputations(), [Ok(FosReputation { form: 0x9600, fame: 12.5, infamy: 2.0 })]);
+        assert_eq!(fos.challenges(), [Ok(FosChallenge { form: 0x1234, progress: 9, flags: 4 })]);
+        let p = fos.player().unwrap();
+        assert!(p.place.is_some());
+        assert!(!p.av_parsed);
+        assert!(p.inventory.is_none());
     }
 }
