@@ -1884,6 +1884,11 @@ pub struct Game<'a> {
     /// next one [observed: OnLoad after Enable had not run on the line after Enable and
     /// had run by the next frame, layer5-captures.md §8.3 d].
     pub pending_onload: Vec<FormId>,
+    /// Living template-scripted actors of the loaded cells whose OnLoad runs at the first
+    /// frame after a restore (`Game::queue_template_onloads`, #3228); each is checked again
+    /// (present, loaded, alive) when its turn comes and dropped if a cell load ran its
+    /// OnLoad first. Not saved: a restore builds it again.
+    pub restored_onload: Vec<FormId>,
     /// OnLoad blocks of reference scripts entered so far (each block run, where the
     /// script runs it); not saved. A count for the engine's game digest test aid
     /// (nvforever game_digest.rs).
@@ -2724,6 +2729,7 @@ impl<'a> Game<'a> {
             frame: 0,
             time: 0.0,
             pending_onload: Vec::new(),
+            restored_onload: Vec::new(),
             onload_runs: 0,
             zone_levels_set: 0,
             scripts_held: BTreeSet::new(),
@@ -4121,6 +4127,7 @@ impl<'a> Game<'a> {
             // An OnLoad run by the caller (a cell load, or an engine that runs it
             // itself) settles one queued by Enable: OnLoad runs once per load.
             self.pending_onload.retain(|&x| x != r);
+            self.restored_onload.retain(|&x| x != r);
         }
         let Some(script) = self.ref_script(r) else { return false };
         let has = self.data.script(script).is_some_and(|u| u.has_block(event));
@@ -4342,8 +4349,28 @@ impl<'a> Game<'a> {
         if self.script_looks.fades.len() > 256 {
             self.script_looks.fades.drain(..128);
         }
-        for r in std::mem::take(&mut self.pending_onload) {
+        // Those queued before this frame, each still in its list until its turn: an earlier
+        // OnLoad that loads cells (a MoveTo of the player) runs a later one's OnLoad there,
+        // which takes it off (`Game::ref_blocks`), so none runs twice; one queued during
+        // this frame waits for the next.
+        let due = self.pending_onload.clone();
+        for r in due {
+            if !self.pending_onload.contains(&r) {
+                continue;
+            }
+            self.pending_onload.retain(|&x| x != r);
             if self.present(r) && self.cell_of(r).is_some_and(|c| self.loaded_cells.contains(&c)) {
+                self.ref_event(r, event::ON_LOAD, None, None);
+            }
+        }
+        // After a restore (`Game::queue_template_onloads`): alive when its turn comes.
+        let due = self.restored_onload.clone();
+        for r in due {
+            if !self.restored_onload.contains(&r) {
+                continue;
+            }
+            self.restored_onload.retain(|&x| x != r);
+            if self.present(r) && !self.is_dead(r) && self.cell_of(r).is_some_and(|c| self.loaded_cells.contains(&c)) {
                 self.ref_event(r, event::ON_LOAD, None, None);
             }
         }
@@ -5503,6 +5530,18 @@ impl<'a> Game<'a> {
         self.scripted_refs_in(&self.loaded_cells)
     }
 
+    /// Whether `r` is an actor scripted only through its template: its base has no script
+    /// of its own and takes the script from a template (template flag "Script") or is a
+    /// leveled list placed directly. Used to find moved actors for OnLoad when restoring
+    /// a save (docs/spec-notes/scripts.md §7.1) [design, #3228].
+    pub fn template_only(&self, r: FormId) -> bool {
+        let Some(base) = self.world.peek(r).map(|s| s.base).or_else(|| self.world.placed.get(r).map(|p| p.base)) else { return false };
+        if self.data.script_of_base(base).is_some() {
+            return false;
+        }
+        self.data.actors.get(&base).is_some_and(|a| a.template_script && a.template.is_some()) || self.data.leveled_actors.contains_key(&base)
+    }
+
     /// Scripted references now in `cells` and not deleted, disabled ones included, in
     /// FormID order: those placed there that stayed, and those moved or created there.
     fn scripted_refs_in(&self, cells: &BTreeSet<FormId>) -> Vec<FormId> {
@@ -5516,6 +5555,44 @@ impl<'a> Game<'a> {
         out.into_iter()
             .filter(|&r| self.cell_of(r).is_some_and(|c| cells.contains(&c)) && self.world.peek(r).is_none_or(|s| !s.deleted()))
             .collect()
+    }
+
+    /// Actors placed in `cell` that are scripted only through their template
+    /// ([`crate::data::GameData::template_scripted_by_cell`]), still there and not
+    /// deleted, in FormID order. This index schedules OnLoad and OnReset
+    /// (docs/spec-notes/scripts.md §7.1) [design].
+    pub(crate) fn template_scripted_in(&self, cell: FormId) -> Vec<FormId> {
+        self.data
+            .template_scripted_by_cell
+            .get(&cell)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|&r| self.cell_of(r) == Some(cell) && self.world.peek(r).is_none_or(|s| !s.deleted()))
+            .collect()
+    }
+
+    /// After a save is restored: the living actors now in a loaded cell (placed there or
+    /// moved there) that are scripted only through their template and whose script has an
+    /// OnLoad block run it at the start of the next frame (`restored_onload`, checked
+    /// again then). The cells stay loaded through a restore, so no cell load runs it; a
+    /// save from before #3228 holds leveled spawns' placeholders that never ran theirs and
+    /// are alive, some away from where they were placed (docs/spec-notes/dead-on-spawn.md
+    /// §4.1) [design; hypothesis: the original runs OnLoad when a reference's 3D loads, a
+    /// loaded save's too]. References scripted by their own base are left as before.
+    fn queue_template_onloads(&mut self) {
+        let mut refs: BTreeSet<FormId> = self.data.template_scripted_by_cell.values().flatten().copied().collect();
+        refs.extend(self.moved.iter().copied().filter(|&r| self.template_only(r)));
+        for r in refs {
+            let loaded = self.cell_of(r).is_some_and(|c| self.loaded_cells.contains(&c));
+            if !loaded || self.world.peek(r).is_some_and(|s| s.deleted()) || self.is_dead(r) {
+                continue;
+            }
+            let has = self.ref_script(r).and_then(|s| self.data.script(s)).is_some_and(|u| u.has_block(event::ON_LOAD));
+            if has && !self.restored_onload.contains(&r) {
+                self.restored_onload.push(r);
+            }
+        }
     }
 
     /// The cells loaded around `cell`: the cell itself for an interior; for an exterior,
@@ -5580,6 +5657,11 @@ impl<'a> Game<'a> {
                 let mut refs = self.scripted_refs_in(&BTreeSet::from([c]));
                 // MoveTo lists a scripted player as moved; no cell loads the player.
                 refs.retain(|&r| r != FormId::PLAYER_REF);
+                // Actors scripted only through their template run OnLoad too (#3228).
+                let mut templated = self.template_scripted_in(c);
+                templated.retain(|r| !refs.contains(r));
+                refs.extend(templated);
+                refs.sort();
                 // The extender's OnLoad handlers hear the unscripted references too.
                 let others = if all { self.refs_in_cell(c, false).into_iter().filter(|r| !refs.contains(r)).collect() } else { Vec::new() };
                 (refs, others)
@@ -6835,6 +6917,8 @@ impl<'a> Game<'a> {
         }
         // Crime enmities an older save holds undated start their cooldown now (#2467).
         g.date_crimes();
+        // Template-scripted actors' OnLoad after a load (#3228).
+        g.queue_template_onloads();
         let pos: u128 = s.rng_word_pos.parse().map_err(|_| format!("bad rng_word_pos {:?}", s.rng_word_pos))?;
         g.rng.set_word_pos(pos);
         Ok(g)
