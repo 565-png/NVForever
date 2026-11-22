@@ -1440,9 +1440,22 @@ fonts) and the owner's five DATA screenshots (§1), compared at 1280 × 720 with
     McCarran 8, Hoover Dam 7]), flags `FNAM`, radius `XRDS`. Shown when the player has been
     within the radius (`XRDS`) in the marker's own worldspace with its type's icon,
     or when ShowMap or the Visible flag made it known, with the undiscovered icon
-    [hypothesis]. What `GetMapMarkerVisible` returns for an undiscovered marker
-    authored Visible (0 on main, 1 in #3268) is open [hypothesis]: observer check 252
-    (`docs/handoff/observer-checks.md`, campaign `o31_mapmarker_visible`).
+    [hypothesis]. `GetMapMarkerVisible` reads the authored flags before the player has
+    found the marker: `FNAM` Visible (1) alone gives 1, Visible | Can Travel To (3)
+    gives 2, Can Travel To alone (2) gives 0, as does no flag [observed: observer check
+    252, 2026-11-22, campaign `o31_mapmarker_visible` with a probe plugin overriding
+    Coyote Den 0x00154A69 to 1, Hoover Dam 0x00135E5F to 3 and Jacobstown 0x000CDF57 to
+    2, and Honest Hearts' Southern Passage, authored 3, read as it ships]. JIP's
+    `GetMapMarkerTravel` read 0 for the Can Travel To alone marker and 1 for the
+    Visible | Can Travel To ones [observed: same runs], so Can Travel To without Visible
+    gives no fast travel either [hypothesis as a rule]. Unflagged markers in the same
+    save read 0 until shown or found; `ShowMap` 0 made one read 1 and `ShowMap` 1 made
+    one read 2; `ShowMap` 0 on a marker already at 2 left it at 2; walking into a marker's
+    radius after `player.MoveTo` made it read 2 and raised Locations Discovered by one
+    [observed: same runs, control run without the probe plugin]. In the base game only
+    Southern Passage sets any of these flags: every placed MapMarker of FalloutNV.esm (189),
+    DeadMoney.esm, OldWorldBlues.esm and LonesomeRoad.esm has `FNAM` 0, and HonestHearts.esm
+    has one at 3 among 55 [observed: a scan of every MapMarker reference, 2026-11-22].
     A marker without `XRDS` is found within `iMapMarkerRevealDistance`
     [documented: GECK wiki "Complete List of GameSettings", the Fallout: New Vegas default
     1000; no master sets it], that setting being this distance a [hypothesis] (#2338;
