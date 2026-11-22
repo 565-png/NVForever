@@ -86,8 +86,11 @@ bans, sources) for the root workspace; the root workspace's tests and clippy (`-
 smoke runner, the stress tool and the profile campaign; the engine workspace's tests and
 clippy. A pull request that changes only docs skips those steps and passes at once; a newer
 push to the same branch or pull request cancels the run still in progress. The repository
-is public, so runner minutes are free. Windows and macOS are not run in CI; the local
-checks in CLAUDE.md cover them before each push. The parity job that needs game data
+is public, so runner minutes are free. Since #3143 (2026-11-21) one Windows job,
+`windows-clippy`, lints both workspaces, so the `cfg(windows)` code is compiled and
+checked on every pull request; the tests on Windows and all of macOS are not run in CI:
+the local checks in CLAUDE.md cover them before each push. (The "one Linux job" above
+has been several parallel jobs with one `ci` result since #1956.) The parity job that needs game data
 stays in `parity-lab/ci/github-actions.yml`, a template for a self-hosted runner only.
 
 
