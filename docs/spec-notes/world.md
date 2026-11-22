@@ -1543,6 +1543,17 @@ byte, not needed yet) and 8 WATR records whose DATA holds an older 186-byte layo
   in 55 it is nearer than the fog's end (WinsResidence 1,800 against 3,300). As built:
   indoors the camera's far plane is the clip distance, 0 for none [hypothesis: 0 is no
   clip]; outdoors 400,000 units as before.
+- **Interior unset fog ranges** [observed, Fallout3.esm and FalloutNV.esm; #3038]: some
+  interiors store a fog range whose far is not beyond its clamped near
+  (`fog_far <= fog_near.max(0.0)`, most commonly `0..0` with black fog colour): 57 of 420
+  interiors in `Fallout3.esm` (48 without a lighting template, including `zGrandmaSparkle`,
+  and 9 whose `LTMP` also stores an unset range) and 9 of 388 in `FalloutNV.esm` (7 without
+  a template, 2 via `LTMP`). Cells such as `GermPoliceHQ01` store `0..0` in raw `XCLL` but
+  inherit a non-zero fog range (`64..6500`) from their `LTMP` (`NeoclassicalDefaultTemplateDC`).
+  Taken literally through `fog::falloff`'s `far.max(near + 1.0)` clamp, an opaque `0..0`
+  black fog would draw the room solid black past 1 game unit; matching exterior weathers
+  (*Unset fog ranges* above), `nvforever/src/sky.rs::apply_cell_fog` treats
+  `fog_far <= fog_near.max(0.0)` as no fog (`alpha = 0`, `NO_FOG_FAR`) [hypothesis].
 - **Fog power** (XCLL, LGTM, WTHR) varies (1.0 in 189 interiors, 0.5–2.0 in the rest;
   0.2–1.0 in the masters' 98 weathers, the Mojave's 0.6 by day and 0.5 by night, Dead
   Money's 0.21–0.5 [observed, `weather_dump.rs --fog`]). What curve it sets is not
@@ -1670,6 +1681,47 @@ Code: `engine/nvforever/src/underwater.rs` (`fog_bytes`, `DEEP_AT`).
   (the reference would then be the day value 1.21 alone: sunrise × 1.36, night × 0.91).
   The Mojave fit's per-hour sun factors (0.9-1.2 at 07:36 against 0.5 at 09:06) lean that
   way but are noisy; not changed without a check against Mojave sunrise frames.
+
+### Live session `IMGS` traits, `SetCellImageSpace`, exterior `WTHR` fog, and GMSTs
+
+- **Image spaces (`SetImageSpaceTrait`, `SetCellImageSpace`)** [documented: GECK wiki
+  `GetImageSpaceTrait` / `SetImageSpaceTrait` traits `0..=32`, `SetCellImageSpace` notes;
+  hypothesis: live in-place refresh for `SetImageSpaceTrait`]:
+  - `fnv_world::imagespace::apply_image_space_traits` overlays session `SetImageSpaceTrait`
+    values onto an `IMGS` record's `Cinematic` grade: HDR (`0..=14`), Bloom (`15..=17`),
+    and Cinematic (`25..=32`, converting tint RGB traits `29..=31` from 0–255 to 0–1).
+    Traits `18..=24` (`GetHit` / `NightEye`) remain stored in `Game::traits` for script
+    readback (`GetImageSpaceTrait`) and have no rendered `Cinematic` field.
+  - `SetCellImageSpace` preserves the original game's documented next-load behaviour
+    [documented: GECK wiki `SetCellImageSpace`, notes]: `nvforever::world::cell_image_space`
+    binds an interior cell's active `IMGS` FormID (`SetCellImageSpace` override, else
+    authored `CELL XCIM`) only when the cell loads (on travel, cell entry, or when the
+    script runtime with a loaded save's changes becomes ready). Calling
+    `SetCellImageSpace` on the cell the player is already in does not switch the active
+    grade until the cell next loads.
+  - Live `SetImageSpaceTrait` refresh on the already-loaded active `IMGS` (interior bound
+    `IMGS` or exterior `WRLD INAM`) is keyed on `(game_instance_id, image_space_revision)`
+    from `Game::image_space_sync_token()` — doing zero work on unchanged frames while
+    refreshing `SkyState::interior_grade` and `SkyState::image_space` in place without
+    re-reading pending `SetCellImageSpace` assignments [hypothesis: not yet independently
+    verified by an original-game capture].
+- **Exterior weather fog (`SetWeatherTraitNumeric` traits `15..=20`)** [documented: GECK
+  wiki `GetWeatherTraitNumeric` / `SetWeatherTraitNumeric` traits `15..=20` (day/night
+  near, far, power); hypothesis: live in-place refresh on active weather]:
+  - `nvforever::sky::sync_weather_fog` syncs session fog overrides from `Game::traits`
+    into `SkyState::weather_fog_overrides` keyed on `(game_instance_id,
+    weather_fog_revision)` (zero work on unchanged frames) and calls `SkyState::refresh()`.
+  - `SkyState::fog()` and `SkyState::fog_power()` evaluate `Weather::fog_at_with` and
+    `Weather::fog_power_at_with` in place (zero per-frame allocations) across both the
+    current and fading-out weather. Explicit console/CLI `SkyState::fog_override` retains
+    precedence.
+- **Game settings (`SetNumericGameSetting`, `SetStringSetting`)**:
+  - Vanilla numeric (`f*`, `i*`) and string (`s*`) GMST edits write directly to
+    `fnv_sim::World::setting_changes` and are visible live to `World::setting_f32`,
+    `World::setting_value`, and script getters. Non-vanilla shader/injector settings
+    authored for third-party D3D9 hooks (such as New Vegas Reloaded) are not ESM `GMST`
+    records and remain outside NVForever's clean-room charter; `SetNumericGameSetting`
+    returns `0` cleanly for unknown names.
 
 ## 7. Distant LOD
 

@@ -430,8 +430,13 @@ impl Game<'_> {
         }
         // Its effects end, but those whose base effect has "No Death Dispel" (a flamer's
         // burning) and abilities (docs/spec-notes/hit-effects.md §4).
-        let data = self.data;
-        self.dispel(r, None, |e| !e.permanent && !data.magic_effects.get(&e.effect).is_some_and(|m| m.has(MagicEffectDef::NO_DEATH_DISPEL)));
+        let keep: Vec<u32> = self
+            .effects
+            .iter()
+            .filter(|e| e.target == r && (e.permanent || self.magic_effect_def(e.effect).is_some_and(|m| m.has(MagicEffectDef::NO_DEATH_DISPEL))))
+            .map(|e| e.id)
+            .collect();
+        self.dispel(r, None, |e| !keep.contains(&e.id));
         self.death_line(r, killer);
         true
     }

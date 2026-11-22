@@ -499,7 +499,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // `effect`: the actor effect's type (SPEL SPIT), 0 actor effect, 1 disease,
         // 2 power, 3 lesser power, 4 ability, 5 poison, 10 addiction; -1 for anything
         // else [documented: GetActorEffectType].
-        "getactoreffecttype" => XVal::Num(of_sig(g, form(args, 0), b"SPEL").and_then(|s| g.data.spell_types.get(&s)).map_or(-1.0, |&t| t as f64)),
+        "getactoreffecttype" => XVal::Num(form(args, 0).and_then(|s| g.spell_type(s)).map_or(-1.0, |t| t as f64)),
         // ---- camera shots ----
         // `shot [flags]`: CAMS DATA flags, bits 0-5 [documented: Get/SetCameraShotFlags].
         "getcamerashotflags" => XVal::Num(form(args, 0).and_then(|s| camera_shot(g, s)).map_or(0.0, |c| f64::from(c.flags))),
