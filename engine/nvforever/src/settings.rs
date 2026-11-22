@@ -1364,7 +1364,7 @@ pub(crate) fn authored_after_ini(command_line: bool, given: Option<&nvf_play::se
 
 /// The Reflections on authored materials row's note (#2981 reflections): it needs a pack and
 /// Authored materials, and takes effect at the next start (main.rs).
-pub(crate) const AUTHORED_REFLECTIONS_NOTE: &str = "On: surfaces with a texture pack's material maps reflect the sky outdoors and the cell's ambient colours indoors. Needs such a pack and Authored materials on. Takes effect at the next start.";
+pub(crate) const AUTHORED_REFLECTIONS_NOTE: &str = "On: pack materials reflect the sky outdoors and an approximation of the room and nearby lights indoors. Needs a material pack and Authored materials on. Takes effect at the next start.";
 
 /// The run's Reflections on authored materials state (#2981 reflections), decided before the
 /// first NIF pipeline by [`authored_after_ini`]'s rule: the command line's

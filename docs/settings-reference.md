@@ -1232,14 +1232,15 @@ stretches drift downstream. Vanilla leaves the switch off. Enhanced turns it on.
 
 ### `authored-reflections`: Reflections on authored materials
 
-- On the page: On: surfaces with a texture pack's material maps reflect the sky outdoors and
-  the cell's ambient colours indoors. Needs such a pack and Authored materials on. Takes
-  effect at the next start.
+- On the page: On: pack materials reflect the sky outdoors and an approximation of the
+  room and nearby lights indoors. Needs a material pack and Authored materials on.
+  Takes effect at the next start.
 - In full: [design, #2981] Surfaces shaded from an authored set reflect a small cube of the
   world camera's surroundings, blurred by their roughness, and the `_orm`'s metallic channel
-  takes effect: outdoors the sky as drawn, sunlit ground and a broad glow toward
-  the sun or the moon; indoors the cell's ambient colour with its fog colour at the
-  horizon. No clouds, sun disc, nearby objects or rooms are reflected. A metal's base colour
+  takes effect. Outdoors it reflects the sky, ground and a broad glow toward the sun or
+  moon. Nearby lamps can light the ground in the cube at night. Indoors it approximates
+  the room with a box lit by the cell's ambient light and nearby lamps. The cube omits
+  cloud shapes, the sun disc and nearby objects. A metal's base colour
   is lifted by its set's metal gain (12 by default) so it reflects
   as a metal. Only authored materials reflect: the game's own materials, terrain, trees, grass and water are
   unchanged. Nothing changes without a pack, or with Authored materials off. Off: metallic

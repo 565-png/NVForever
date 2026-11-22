@@ -34560,6 +34560,34 @@ note = "Panels height and height-control: the same quad tilted 50 degrees about 
 manual = "Open readback-1.ppm in the evidence directory: in the sixth panel the stripe's lower half sits left of its upper half; in the seventh (the control) it runs straight."
 
 [[scenario]]
+name = "authored-reflections-room"
+source = "[design, #2981] docs/spec-notes/pbr-materials.md \"Reflections indoors: the analytic room\": indoors the world camera's reflection cube holds a lit box (room marker, physics rays or default box; the cell's placed lamps in reach); generated sets only (the reflection field's fixture written into a fresh folder and mounted over the loose layers for the run), no game-derived file"
+areas = ["renderer", "textures", "lights"]
+paths = ["engine/nvforever/src/reflection_sky.rs", "engine/nvforever/src/reflection_sky/", "engine/nvf-assets/src/reflection_room.rs", "engine/nvf-assets/src/reflection_room/", "engine/nvf-assets/src/reflection_cube.rs", "engine/nvf-assets/src/pbr_field/reflect.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/rooms.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/fog.rs", "engine/nvforever/src/main.rs"]
+env = { NVF_PLAY_TEST_PBR_MOUNT_PACK = "1", NVFOREVER_HOME = "pbr-reflect-home", NVF_PLAY_TEST_GOD = "1" }
+# Both rows pinned on (a given switch wins over a saved row in a timed run).
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--graphics-only", "authored-materials,authored-reflections"]
+run_seconds = 20
+timeout = 180
+expect = [
+  { re = 'pbr mount pack: \d+ generated files written under ', count = 1, label = "the generated sets are in the run's own fresh mount folder" },
+  { text = "authored reflections: on (", count = 1, label = "both rows on for the interior run" },
+  { text = "lights: reflection gate installed", count = 1, label = "the gate, before any cube" },
+  { re = "reflection sky: first fill of the world camera's cube \\((indoors|outdoors);", count = 1, label = "the first fill (outdoors only if the camera came before the interior)" },
+  { re = 'reflection sky: room fill in interior [0-9A-F]{8}: box from (room marker [0-9A-F]{8}|rays|default) \(\d+ x \d+ x \d+ game units, x y height\), [1-9]\d* lamps, level 0 toward the nearest lamp \[[^\]]+\], filled in [\d.]+ ms on a worker \(main thread: gather [\d.]+ ms, apply [\d.]+ ms\)', count = 1, label = "the first room fill with lamps in Doc Mitchell's house: the box's source, size and lamps in reach (the house has 25 placed lights, #1619), the fill's time on the worker and the main thread's part (#3238)" },
+  { re = 'reflection cube: attached to \S+ \(generation \d+', count = 1, label = "Bevy's component on the world camera once the fill is on the GPU" },
+  { re = 'reflection sky summary: [1-9]\d* fills \(\d+ outdoors, [1-9]\d* indoors\), \d+ checks skipped as unchanged; [1-9]\d* room fills \(\d+ marker, \d+ rays, \d+ default\), \d+ ground-lamp fills, slowest room or lamp fill [\d.]+ ms; refills: \d+ mode, \d+ cell, \d+ room, \d+ box, \d+ moved, \d+ lamps, \d+ light, \d+ profile; main thread slowest gather [\d.]+ ms, slowest apply [\d.]+ ms; \d+ fills for a replaced camera or cube discarded', count = 1, label = "the exit summary counts the room fills, the refills by reason and the main thread's slowest parts (#3238)" },
+]
+order = [["reflection sky: room fill in interior", "reflection sky summary:"]]
+forbid = [
+  { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error', label = "no shader or GPU error indoors" },
+  { re = 'reflection gate.*(not found|not installed)', label = "the gate in place, or no room could be attached" },
+  { re = 'reflection sky: off', label = "the cube is made in the interior" },
+  { re = 'pbr mount pack: FAIL', label = "the generated sets were written" },
+]
+note = "The analytic room (#2981 reflections, stage 2 version 1) in Doc Mitchell's house, a small interior with 25 placed lights (#1619): with the generated sets of authored-reflections-sky in the mount and both rows on, the interior content is a lit box around the camera, its box from the room marker the camera is in, else six physics rays (play mode), else the default box, lit by the cell's ambient, directional light and the placed lamps whose sphere reaches it (the nearest 16 within 4096 units). The first lit room fill is logged even when there was a room fill before the lamps loaded. Its line names the box's source and size, the lamp count, the level-0 texel toward the nearest lamp (its lobe: well above the wall colours) and the fill time on the worker with the main thread's gather and apply times (the main session reads them for the cost; the fill runs on the async compute pool since #3238, the main thread's part should stay well under a millisecond). Which source the house gives is not known in advance (whether it has room markers: the rooms: line tells), so any is accepted. Log lines only: nothing in the scene is authored, so no picture changes; pictures of a real pack with NVF_PBR_VIEW=reflection are the main session's."
+
+[[scenario]]
 name = "glass-mccarran-observation"
 source = "docs/spec-notes/nif.md §6 \"Window glass and environment maps\" (issue #2462, owner's playtest 2026-11-14: the interrogation room's window at Camp McCarran has no visible glass): CampMCTermInt02, the window 000FB2F4 (vwindow01.nif, Window_Environment_Mapping, ShinyBright_e.dds) seen from the observation side, south of it, looking north into the interrogation room; one frame in target/smoke (glass_mccarran_south.png)"
 areas = ["rendering"]
