@@ -120,7 +120,7 @@ changes. The engine's crafting menu (`engine/nvf-play/src/crafting.rs`) reads
 | AddNoteNS `note` | AddNote without the corner message [documented]: the note is filed and OnNoteAdded handlers run |
 | GetTimeStamp | the computer's local time as "HH-mm-SS" [documented] |
 | CrosshairRefInList `list` | 1 the reference under the crosshair is in the list, 2 its base is, else 0 [documented] |
-| GetRadius, SetRadius `[radius] [light]` | a light base's DATA radius (whole, a negative one kept) [observed: lutana1 radius.set.base.frac, radius.set.base.neg]; else the calling reference's XRDS as given, -16.59 too [observed: lutana1 radius.ref.fire, radius.set.ref], else its light base's radius [hypothesis], else 0 [documented: "a reference (any type) or Light BaseForm"]; the radiation markers keep the record's radius (follow-up) |
+| GetRadius, SetRadius `[radius] [light]` | a light base's DATA radius (whole, a negative one kept) [observed: lutana1 radius.set.base.frac, radius.set.base.neg]; else the calling reference's XRDS as given, -16.59 too [observed: lutana1 radius.ref.fire, radius.set.ref], else its light base's radius [hypothesis], else 0 [documented: "a reference (any type) or Light BaseForm"]; live reference radii reach radiation markers (`Game::radiation_markers_in`: player and Character Radiation exposure, `GetRadiationLevelAlt`, and AI avoidance) and are carried across same-run loads in `Game::Session` [hypothesis] |
 
 ## 8. Not built yet (53)
 
