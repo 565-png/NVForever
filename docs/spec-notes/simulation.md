@@ -749,8 +749,9 @@ average either way, but 60–140 in the original. A container's CNTO count is ta
     **A bed yields to what lies in it**: when a box of a bed (furniture whose FURN marker
     flags include Sleep, bit 31; furniture.md §1) holds, along the ray, the whole stretch
     through another reference's precise box (not an actor's rough one) that the player
-    can activate and that the ray enters before the first collision hit as it met it (not
-    a door found behind that hit), every box of that bed is set aside, and the rest is
+    can activate and that the ray enters before the first collision hit as it met it, or
+    within the 2 units behind it that pick.rs's `SURFACE_SLACK` allows (#3333; not a door
+    found behind that hit), every box of that bed is set aside, and the rest is
     picked by the nearest rule above. Full containment decides only this setting aside;
     nothing else changes. A bed's box runs from the floor to the top of its headboard and
     encloses what lies on the mattress, so the ray entered it before a suitcase lying

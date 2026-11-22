@@ -37,7 +37,7 @@ These choices are settled; pack authors and later versions can rely on them.
 | Reading BC7 and BC4 files (DDS with the DX10 header, or legacy `BC4U` / `BC4S`) | stage 1 of #2981 (`crates/fnv-dds`) |
 | Drawing a surface with its set (ORM, normal) | **implemented** in source (stage 3) [documented: `engine/nvf-assets/src/nif_spawn.rs` `shape_material`, `authored.rs` `retexture`]; the setting Authored materials (`authored-materials`, on by default, read at the start; `--graphics-only no-authored-materials`). Its check is the field test `pbr-authored-field` (below). A sample pack was drawn in the game with the setting off and on by the main session as of head `bebd7841a` (pictures not committed; they show the pack's own values, and no reference look exists to judge them by); those pictures are owed again after the fixes that followed that head |
 | Height maps (`_p`, parallax) | **implemented** (stage 4, below: "Height maps"). The game's own height slot (#2979) is not read |
-| Metallic | read with the ORM but **held at 0** (stage 3, implemented) until the engine has a reflection source (stage 5) |
+| Metallic | read with the ORM; acts where the view has a reflection cube while the setting Reflections on authored materials is on (`authored-reflections`, on by default, read at the start; `--graphics-only no-authored-reflections`), **held at 0** otherwise (section "Reflections on authored materials") |
 | A pack validator (`fnvtool pbr check`, `fnvtool pbr selftest`) | **implemented** (`crates/fnvtool/src/pbr_check.rs`, docs/cli-contract.md `fnv.pbr.check/1`) |
 
 Sections marked "planned" describe how the engine will use a set once those stages land.
@@ -165,11 +165,13 @@ A TOML file of plain keys, all optional:
 | `parallax_depth` | depth of the height map's darkest point below the surface, in UV units (stage 4); 0 draws no height map | 0 to 0.08 | 0.03 (`fnv_pbr::DEFAULT_PARALLAX_DEPTH`) |
 | `roughness_scale` | multiplies the ORM's roughness; the product is held to 0..1 when drawn, and to 0.089..1 for the highlight's shape (below) | 0 to 2 | 1.0 |
 | `reflectance` | the highlight strength of non-metals; F0 = 0.16 x reflectance² (0 to 16 %) | 0 to 1 | 0.5 (F0 4 %) |
+| `metal_gain` | how much brighter than the base colour a metal's reflectance is drawn, in a view with a reflection cube (section "Metal base colour") | 1 to 40 | 12 [design, owner 2026-11-21, #3237] |
 
 ```toml
 # textures\pbr\walls\brick07.toml
 roughness_scale = 0.9
 reflectance = 0.35
+metal_gain = 8
 ```
 
 [design: banding and wall streaks in the main session's pictures from 0.06 on a 512 map]
@@ -229,10 +231,12 @@ Maps tuned for other renderers need these notes:
   `perceptualRoughnessToRoughness`, `engine/vendor/bevy_pbr/src/render/pbr_lighting.wesl`),
   so a product below 0.089 draws a highlight as narrow as 0.089's. A raw green below 0.089
   can still end above that floor with a scale above 1.
-- **Metallic** will be read but **held at 0** in version 1: with no reflection source in the
-  engine, a metal would draw black except for lamp highlights. Until a later version adds
-  one, a metal surface draws as a dielectric of its diffuse colour with the authored
-  roughness. Author the blue channel correctly anyway; it will be used.
+- **Metallic** acts only where the surface has something to reflect: with the setting
+  Reflections on authored materials on and a reflection cube on the view (the world camera
+  where the mount has authored sets). Elsewhere, and with the setting off, it is **held at
+  0**: a metal surface draws as a dielectric of its diffuse colour with the authored
+  roughness, since without a reflection source it would draw black except for lamp
+  highlights. See "Reflections on authored materials".
 
 ## Where a set does not apply, and checking one (stage 3)
 
@@ -287,11 +291,19 @@ beyond the field test below):
 - Calibration aids, off by default, read at the start [documented: `authored.rs` `PbrView`,
   `metallic_debug`; `engine/nvf-assets/src/nif_material.wesl`]: `NVF_PBR_VIEW` =
   `roughness`, `metallic`, `occlusion`, `normal`, `authored` or (stage 4) `height`
-  draws that input in place of the lit colour of forward-drawn lit NIF surfaces. Refracting shapes return before the
+  draws that input in place of the lit colour of forward-drawn lit NIF surfaces;
+  `reflection` draws, on an authored
+  surface, what a white perfect mirror would write there (the view's reflection cube at
+  level 0 along the mirror direction, times the cube's intensity and the exposure, then
+  tone-mapped as the picture is), so its scale can be judged against the sky in the same
+  frame, and every other surface grey as `authored` does (authored ones orange where the view
+  has no cube or reflections are off; only the opted-in fragment reads the cube).
+  Refracting shapes return before the
   view; additive draws add the view's colour by their alpha and multiplied draws stay
   neutral, so effects fade out of it; depth and coverage are unchanged.
   `NVF_PBR_METALLIC=1` builds authored materials metallic by the ORM's blue channel and keeps
-  a metal's ambient highlight, a preview of a later metallic stage [design].
+  a metal's ambient highlight, a preview of a later metallic stage [design]; retired while
+  Reflections on authored materials is on (below), and working as before while it is off.
 - On the app's exit the log has one line `authored materials summary: ...` (or
   `authored materials summary: off (setting)`): counts of build events, not of visible
   shapes: material builds that applied an ORM set, the distinct ORM set stems seen at those
@@ -546,6 +558,185 @@ What holds for a texture swap while the shape fades, and what does not:
   This predates stage 3 and needs one
   owner of the drawn material (base opacity x actor alpha x fade); it is left for its own
   issue.
+
+## Reflections on authored materials
+
+[design] Surfaces shaded from an authored set reflect a small cube of the world camera's
+surroundings, blurred by their roughness, and the `_orm`'s metallic channel acts. NVForever's
+own rendering: the original draws no ambient reflection. Legacy materials, terrain, trees,
+grass and water get no direct contribution from the cube (the gate below keeps it from their
+shaders) [documented: `engine/nvforever/src/lights/reflection_gate.rs`]; that is parity of
+the cube's direct contribution, not a pixel comparison with the build before the feature,
+which has not been made (water's own screen trace, for one, shows the authored pixels it
+reflects as they are now drawn). The setting Reflections on authored
+materials (`authored-reflections`, Graphics > Detail and Distance after Authored materials,
+on in both looks [design, owner 2026-11-21, #3237], `--graphics-only no-authored-reflections`) is read once at the start
+(`engine/nvforever/src/main.rs`, `engine/nvf-assets/src/reflection_cube.rs` `set_enabled`);
+it acts only with Authored materials on, and changes no picture without a pack.
+
+- **Who reflects.** [design; documented: the files named] Bevy adds a view's environment map light (its `EnvironmentMapLight`
+  cube) to every lit shader of that view. NVForever patches bevy_pbr's `pbr_functions` at run
+  time so both environment blocks compile only for a fragment that opts in with the shader
+  def `NVF_PBR_REFLECT`, which only the NIF surface's main pass sets while the setting is on
+  (`engine/nvforever/src/lights/reflection_gate.rs`, `engine/nvf-assets/src/nif_material.rs`).
+  Inside it the reflection is weighted by the authored mark, the ORM's occlusion (red) and,
+  under the mesh terrain blend, the mesh's share (1 - w); every other NIF material weighs 0
+  and reads no cube (`nif_material.wesl`). If the patch cannot be made, no cube is ever
+  attached (a log line says so).
+- **Which view.** [design] Only the world camera has a cube, and only when the setting and Authored
+  materials are on, the mount has at least one authored set (`authored::mount_has_sets`)
+  and the patch is installed (`engine/nvforever/src/reflection_sky.rs` `decide`). Bevy's
+  component goes on once the first fill is on the GPU. The water mirror, the scope, the
+  minigame views and the terminal have none.
+- **Metallic.** [design] With the setting on, authored materials are built with metallic 1, so the
+  ORM's blue acts, but the NIF fragment holds it at 0 in any view without a cube of its own
+  on the GPU: the shader def `ENVIRONMENT_MAP` that Bevy sets from the view, and the view's
+  `view_cubemap_index` at 0 or above, since Bevy also sets the def for a view that only sees
+  a light-probe volume and leaves the index at -1 there [documented:
+  `engine/vendor/bevy_pbr/src/light_probe/mod.rs`; `nif_material.wesl` `nvf_view_has_cube`,
+  which the reflection weight, the metal base lift and the mirror debug view ask too]. So
+  those views, and the world camera's first frames, shade an authored metal as with the
+  setting off. No view of the game has a light-probe volume today [documented: no light
+  probe is spawned in the engine's source, per the code review of 2026-11-20]; the reflection field has no probe-only camera (a probe volume would
+  also change what its cube camera draws inside it), so the composition test alone covers it.
+  `NVF_PBR_VIEW=metallic` still shows the ORM's blue.
+- **The ambient highlight.** [design] Bevy's ambient highlight stays removed in full, also from a
+  metal: the cube takes its place. A metal with a black cube and no lamp is black.
+- **The cube.** [design] A specular cube of 32x32 RGBA16F faces with six levels and a black 1x1
+  diffuse cube (the ambient light stays the game's flat colour), written straight into the
+  texture on the GPU after each fill (`reflection_cube.rs`).
+- **What it holds** [design] (`reflection_sky.rs` `SkyContent`), per world direction and level:
+  - outdoors, above the horizon, the sky dome as it is drawn in that direction (clouds, the
+    sun disc and the glare aside): the weather's horizon, sky-lower and sky-upper colours at
+    the hour (blended across a weather fade) mixed as the dome mixes them (`sky.rs`
+    `dome_color`), by the dome's own weights for that height (`atmosphere.nif`'s vertex
+    colours averaged in 16 steps of the sine of elevation, `DomeProfile`), times the sky's
+    display scale (`SkyState::sky_scale`, the image space's LUM Ramp No Tex, as sky.wesl
+    scales the dome);
+  - outdoors, below the horizon, lit ground: an assumed albedo, a neutral warm grey of
+    display value (0.33, 0.30, 0.25), linear about (0.089, 0.073, 0.051), under the light
+    falling on level ground, the ambient light plus the directional light times the sine of
+    its elevation (the light as the sky aims it: the moon's, with its share, at night, and
+    the ambient alone where neither is above the horizon);
+  - a broad glow toward the directional light (the sun, or the moon at night), in its colour
+    and strength, peak 0.5 of it at level 0, added to the sky;
+  - indoors, the cell's ambient colour above, ground of the same albedo under the ambient
+    alone below (the cell's directional light is left out), and the cell's fog colour as a
+    band at the horizon (a Gaussian of half-width 0.2 in sine of elevation), as the water's
+    indoor sky takes the fog colour;
+  - each level is the same function with a wider kernel, not a filter of the level above:
+    each hemisphere mixes toward its mean by level / 5, the edge between sky and ground
+    widens from 0.05 to 0.5 (sine of elevation), and the glow's power, 16 at level 0, halves
+    per level with its total kept. Bevy reads level = perceptual roughness x 5.
+  [design] Every constant is NVForever's choice, chosen by reasoning; none was tuned against
+  pictures.
+- **Units.** [design; the renderer's units documented in the files named] Linear texels and intensity `light_unit()` (Bevy's default exposure's inverse),
+  so a white perfect mirror writes texel x intensity x exposure = the texel into the HDR
+  target at the default exposure. Each texel is what the thing it stands for writes there
+  before tone mapping, so the tone map and the grade treat mirror and original alike:
+  - the sky (`reflection_sky.rs` `sky_texel`): sky.wesl writes the dome's linear colour times
+    `params.x` (= `SkyState::sky_scale`, `engine/nvforever/src/sky.rs` `SkyState::light`
+    and `sky_scale`) through `tony_inverse` (`engine/nvforever/src/sky.wesl`), which is the
+    identity while the main view shows display values clipped (the default,
+    `engine/nvforever/src/lights.rs` `GAME_CLIP`) and the inverse of the Tony McMapface table
+    under `NVF_TONEMAP=tony`; the cube holds the same value, so a mirror shows the dome as
+    drawn;
+  - lit ground (`ground_texel`): the fork's display-value sum writes a diffuse surface as
+    min(diffuse x (ambient + direct)^2.2, 1) (`engine/nvforever/src/lights/display_shader.rs`,
+    the edit before "Total light"), with the ambient as the view's (display value x 0.9) and
+    the light as `nvf_directional_display` gives it for an upward normal;
+  - indoors (`texel`): no sky is drawn, so the ambient-matched identity stays: a display
+    value v with the ambient's share becomes v x max(v, 1e-6)^1.2, so a direction coloured
+    like the ambient reflects the converted ambient, about A^2.2.
+  The two rules conflict outdoors: an ambient-coloured sky is (linear colour x sky scale) by
+  the sky rule and (0.9 x display value)^2.2 by the ambient rule, and outdoors the sky rule
+  wins. The glow is the light's display colour times its strength in display units, taken
+  to linear light by the ambient rule's conversion and added to the sky in the sky's units
+  (exact with the clip; with Tony McMapface the glow goes through the inverse curve on its
+  own, an approximation). Sources add in linear light. A check of the scale by eye:
+  `NVF_PBR_VIEW=reflection` beside the sky in one frame.
+- **Metal base colour** (next section): a metal's reflection is tinted by its base colour,
+  lifted by the set's metal gain in a view with a cube.
+- **When it is written.** [design] A change of room (indoors against outdoors, another
+  interior cell) or a new dome profile refills at once; otherwise the inputs are checked at
+  most four times a second (real time) and the cube rewritten only when one moved past a
+  step from the last fill: a colour by 1/128 in display value, the light's direction by 3
+  degrees [documented: `reflection_sky.rs` `produce`, `room_changed`, `Inputs::moved`]. One log line at
+  the first fill (`reflection sky: first fill ...`, with the level-0 zenith, horizon and
+  nadir texels) and one at exit (`reflection sky summary: N fills (... outdoors, ...
+  indoors), M checks skipped as unchanged`, or `off (reason)`).
+- **Not there.** [documented: `reflection_sky.rs`] No clouds, no sun or moon disc, no stars; no scene objects (nothing near the
+  camera is drawn into the cube); one cube for the whole view, so no room's own reflection
+  and no parallax; no glass or see-through reflection; the game's own environment maps
+  (the shapes with the environment-map flag) are not drawn. The lightning flash and the
+  exterior fog are not in the cube; indoors the cell's fog colour is only the band at the
+  horizon (above).
+- **Checking it.** The smoke scenarios `pbr-reflect-field` and `pbr-reflect-field-off`
+  (`NVF_PLAY_TEST_PBR_REFLECT_FIELD=1`, `engine/nvf-assets/src/pbr_field/reflect.rs`, the
+  setting pinned with `--graphics-only`): thirteen generated panels drawn by a camera of the
+  field's own with a cube of a different colour per world face and by one without, under the
+  production kind of light (world-view ambient, Bevy's default exposure, MSAA). On: tilted
+  smooth metals show the faces their reflections point at, rougher metals lie nearer the
+  cube's mean, the legacy and zero-reflectance controls and every panel of the camera
+  without a cube are unchanged; a dark bronze metal at the default gain is clearly brighter
+  than the same at gain 1 with the same hue. Off: the cube stays on the camera and changes no
+  panel. The world camera's cube never replaces the field's: the field's cameras are its own.
+  [observed: the main session's reflection smoke runs at `8a9abf4a9` passed, with RGB
+  readbacks, before the third row; the comparator's thresholds are set from reasoning and
+  the third row's are not yet confirmed against a readback]
+  `authored-reflections-sky` and `authored-reflections-off` (the test aid
+  `NVF_PLAY_TEST_PBR_MOUNT_PACK=1` writes the field's generated sets into a fresh folder of
+  the run under an explicit, non-empty `NVFOREVER_HOME` (`pbr-mount-pack\run-*`, every file
+  created new, the folder removed again on a failure) and mounts it over every other loose
+  layer for that run only, so the mount has authored sets; no mods folder is written
+  [documented: `pbr_field/reflect.rs` `seed_mount_pack`, `fnv_vfs::Vfs::add_loose_root`]): with the setting on, the world camera's cube is
+  filled from Goodsprings' sky and attached; off, none is made. Log lines only.
+- **Composition.** `engine/nvf-shader-tests/tests/reflection_gate.rs` composes the patched
+  `pbr_functions` for the NIF fragment with and without the opt-in and for Bevy's own
+  fragment, terrain, grass and tree leaves in a view with a cube: only the opted-in NIF
+  fragment reads the cube, and only it compiles the metal base colour's lift.
+
+## Metal base colour
+
+[design] In the physically based model a metal has no diffuse colour: what it shows is its
+reflection, tinted by its base colour, which for a metal is its reflectance (steel about
+linear 0.56). The game's diffuse is not that: it is a painted look with the light already in
+it, and on metal far too dark to be a reflectance [observed: 2026-11-20, the main session's
+measurement of the first-person minigun's metal texels, median linear luminance about 0.02,
+mean 0.035]. Drawn as it is, an authored metal reflects almost nothing: the minigun at noon
+read as near black with reflections on [observed: the main session's pictures of 2026-11-20
+at `8a9abf4a9`, then with the experiment's gains at `8e1f196c6`].
+
+- **The gain.** In a view with a reflection cube (the opted-in NIF main pass, where the
+  ORM's metallic acts) an authored material's base colour for lighting is
+  mix(base, lifted, metallic), with the effective metallic (after the hold in views without
+  a cube and the mesh terrain blend's mix) and lifted = base x min(gain, 1 / brightest
+  channel), never below base: one gain on all three channels, limited so the brightest
+  channel reaches 1, so the hue is kept (`nif_material.wesl` `nvf_metal_base`; its CPU
+  mirror `authored.rs` `lifted_base`). The glow keeps the unlifted colour, alpha is
+  unchanged, and a dielectric (metallic 0) is untouched. Views without a cube, and the
+  setting Reflections on authored materials off, draw the base colour as it is.
+- **Per set.** The gain is the scalar file's `metal_gain` (1 to 40), by default 12
+  [design, owner 2026-11-21, #3237: the maintainer accepted 12 as a design value]. That
+  default was chosen from pictures of **one steel
+  weapon**, the first-person minigun at noon in Goodsprings, which read near black at gain 1,
+  dark bronze at 6, worn steel at 12 and brighter steel at 20 to 30 [observed: the main
+  session's pictures of 2026-11-20 at `8e1f196c6`, with the experiment's per-channel clip];
+  it is not a calibration of steel in general. A metal whose diffuse is already bright is held by the hue-preserving cap (its
+  brightest channel reaches 1) well before the gain, so the gain matters for dark diffuses. It reaches the shader per material in the NIF
+  surface uniform's spare `terrain.y` lane (`NifSurface::metal_gain`, set by `authored.rs`
+  `apply`, 0 on every material without a set, on restore and on unlit copies; a swap takes
+  the new set's).
+- **No `_albedo`.** The base colour stays the game's diffuse: `_albedo` stays reserved
+  [design, owner 2026-11-21, #3237, keeping the decision of 2026-11-20, #3104]; giving it a
+  meaning is a separate proposal.
+- **Tuning by picture.** `NVF_PBR_METAL_GAIN=<1..40>` (read once at the start, logged)
+  replaces every set's gain for the run, whatever its scalar file says; a value
+  that is no number or out of range is warned about once and ignored (`authored.rs`
+  `metal_gain_override`). Not a `NVF_PLAY_TEST_*` aid.
+- **Checking it.** The reflection field's third row (above) and the unit tests of
+  `authored.rs` (the lane through builds, swaps, restore and unlit copies, the gain's
+  defaults, the lift's rule).
 
 ## Load order: per file, so ship complete sets
 
