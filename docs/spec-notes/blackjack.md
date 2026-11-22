@@ -133,7 +133,6 @@ preference persistence.
 level, with an integer parameter in 0..4. Source:
 [GECK](https://geckwiki.com/index.php?title=SetCasinoWinningsLevel).
 
-<<<<<<< HEAD
 [observed: original FNV 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.3 + Stewie's Tweaks v1005,
 two-pass `bNoCasinoBans` 0 vs 1 live capture (2026-11-22, #3474)] On an untouched casino
 (Atomic Wrangler at `0` winnings, never entered in the player's casino list),
@@ -152,28 +151,6 @@ nonfinite numbers and nonintegral/out-of-range levels fail with an engine error 
 changing casino state. Native invalid-input behavior and interaction with the original
 game's quest scripts remain unobserved. Source-name admission does not admit native
 numeric encoding.
-=======
-[observed: same 2026-11-22 live capture, `bNoCasinoBans = 1`] On an untouched casino
-(Atomic Wrangler at `0` winnings), `SetCasinoWinningsLevel` left winnings and level
-at `0`; on an already-tracked casino (The Tops, `max_winnings = 10000`),
-`SetCasinoWinningsLevel 2` set net winnings to `5000` (`level = 2`) and
-`SetCasinoWinningsLevel 4` set net winnings to `10000` (`level = 3` clamped under
-`bNoCasinoBans = 1`), updating net winnings to `level * max_winnings / 4`.
-
-[design] Engine design choice (unchanged from #2878): source-name calls replace the
-existing saved per-casino level read by `GetCasinoWinningsLevel` and the casino
-opening/ban consumer while leaving net earnings unchanged (so lowering a level does
-not bypass an earnings-based ban), and return `0`. Subsequent rounds retain the
-existing monotonic advancement rule. Reconciling `SetCasinoWinningsLevel`'s
-net-winnings write and untouched-casino no-op with the live observation above is
-tracked in #3474.
-
-[design] Engine design choice: invalid casino forms, missing arguments, nonfinite
-numbers and nonintegral/out-of-range levels fail with an engine error without
-changing casino state. Native invalid-input behavior and interaction with the
-original game's quest scripts remain unobserved. Source-name admission does not
-admit native numeric encoding.
->>>>>>> refs/remotes/upstream/main
 
 - The player's earnings at each casino are kept with the game: the net chips won there
   over every round [documented: GECK wiki SetCasinoBan, GetCasinoWinnings].
