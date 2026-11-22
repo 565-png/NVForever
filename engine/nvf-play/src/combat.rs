@@ -2768,7 +2768,7 @@ pub fn splatter_impact(forms: &fnv_combat::fx::FxForms, part: Option<u8>, body: 
 /// none without a surface. At most one a hit
 /// [documented: GECK wiki ITR:OnWoundSpray, "the engine breaks out of the raycast loop
 /// on the first valid surface"]; the downward line is ours [hypothesis: observer check
-/// 251, the wiki names only the projectile's direction].
+/// 263, the wiki names only the projectile's direction].
 pub fn world_blood(hit: &ImpactFx, blood: FormId, roll: f32, chance: f32, mut surface: impl FnMut(V3, V3, f32) -> Option<(V3, V3)>) -> Option<ImpactFx> {
     if hit.actor.is_none() || hit.no_decal || hit.splatter || roll >= chance {
         return None;
