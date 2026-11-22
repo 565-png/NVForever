@@ -29,7 +29,9 @@ one).
 
 The Controls tab's own rows (Input Device, Automatic Input Switching, Rumble, Invert Y, the
 sensitivities, the controls) stand under the Controls headings the page shows them in. The
-Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md.
+Tweaks tab's rows (#1892) are listed in docs/design/settings-tweaks-layout.md (including
+`tweak-keep-chosen-ammo` — Keep Chosen Ammo, under Tweaks › Combat › Weapons and Armour,
+off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
 
 ## Gameplay › Game
 

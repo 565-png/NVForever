@@ -490,6 +490,7 @@ pub const SECTIONS: &[Section] = &[
             "tweak-npcs-disarm-player",
             "tweak-npc-melee-part-damage",
             "tweak-hold-release-throws",
+            "tweak-keep-chosen-ammo",
             "tweak-no-condition-damage-buffer",
             "tweak-no-condition-damage-penalty",
             "tweak-no-spin-up",
