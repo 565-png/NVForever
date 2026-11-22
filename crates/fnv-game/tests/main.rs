@@ -181,6 +181,7 @@ mod form_override_queries;
 mod is_in_air;
 mod is_in_kill_cam;
 mod no_unequip;
+mod nvse_stubs_batch2;
 mod preactivation_events;
 mod preactivation_mutation;
 mod stewie_945_960_970_qualification;

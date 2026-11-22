@@ -7,6 +7,15 @@ use crate::game::{Game, RunCtx};
 use fnv_script::vm::{ArrayKind, XKey, XVal};
 use fnv_sim::FormId;
 
+impl Game<'_> {
+    /// Whether `item` has been marked unique via `ToggleItemUnique` (and therefore
+    /// excluded as an optional repair-part source in the item repair menu)
+    /// [documented: GECK wiki ToggleItemUnique / IsItemUnique].
+    pub fn is_item_unique(&self, item: FormId) -> bool {
+        self.gaps.unique_items.contains(&item)
+    }
+}
+
 fn form(args: &[XVal], k: usize) -> Option<FormId> {
     match args.get(k)? {
         XVal::Ref(0) => None,
@@ -551,9 +560,33 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             g.list_edits.insert(l, members);
             XVal::Num(1.0)
         }
-        // Neither the stimpak nor the pistol reads unique, and toggling changes nothing
-        // the getter sees [observed: data3].
-        "isitemunique" | "toggleitemunique" => zero,
+        // `IsItemUnique item` / `ToggleItemUnique item/list 1/0`: tracks session unique
+        // status on repairable equipment forms (WEAP/ARMO, or FLST members of those types)
+        // so unique items are excluded as repair-part sources (`Game::player_repair_list`)
+        // [documented: GECK wiki ToggleItemUnique, IsItemUnique; observed: data3, ALCH
+        // stimpak ignores toggle and remains 0].
+        "isitemunique" => yes(form(args, 0).is_some_and(|f| g.is_item_unique(base(g, f)))),
+        "toggleitemunique" => {
+            if let Some(target) = form(args, 0) {
+                let on = num(args, 1, 0.0) != 0.0;
+                let tb = base(g, target);
+                let items: Vec<FormId> = if g.data.sig(tb) == Some(*b"FLST") {
+                    crate::functions::list_members(g, tb).into_iter().map(|m| base(g, m)).collect()
+                } else {
+                    vec![tb]
+                };
+                for item in items {
+                    if matches!(g.data.sig(g.unclone(item)).as_ref(), Some(b"WEAP" | b"ARMO")) {
+                        if on {
+                            g.gaps.unique_items.insert(item);
+                        } else {
+                            g.gaps.unique_items.remove(&item);
+                        }
+                    }
+                }
+            }
+            zero
+        }
         // The XP as given, no perk adjusting it [documented: RewardXPExact; observed:
         // data3, 10 + 5 reads 15 in the same frame].
         "rewardxpexact" => {

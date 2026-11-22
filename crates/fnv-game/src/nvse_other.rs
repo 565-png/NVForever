@@ -83,6 +83,10 @@ pub struct OtherState {
     pub package_lists: HashMap<FormId, Vec<FormId>>,
     /// SetFlagsLow/High's record flags.
     pub flags: HashMap<FormId, u32>,
+    /// Explicit `SetPersistent` session overrides (separate from `flags` so unrelated
+    /// `SetReferenceFlag` / `SetFlagsLow` writes do not clear persistent-group refs whose
+    /// static record lacks bit `0x400`) [design].
+    pub persistent_overrides: HashMap<FormId, bool>,
     /// SetActorBaseFlagsLow/High's 32-bit ACBS flags, by actor base form.
     pub acbs_flags: HashMap<FormId, u32>,
     /// Con_SCOF's file name (nothing is written).

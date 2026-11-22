@@ -237,7 +237,8 @@ their titles have a space where the name has an underscore).
 | ReadFromJSON `path [pointer] [mode] [useCache]`, WriteToJSON `value path [pointer] [mode] [useCache] [saveFile] [compact]` | files under the game's folder through NVForever's layer (`GameRoot`, never the game folder); objects are string maps, arrays lists, forms "@Plugin.esm:FormID" [documented]; every parser mode reads standard JSON, a pointer into a missing part makes the objects on the way [hypothesis]. ReadFromJSON on a missing file gives no value, the call fails [observed 2026-11-08: readjson.missing, TestExpr 0]; a file that is not JSON likewise, a pointer to nothing 0 [hypothesis]; WriteToJSON's failures 0 [hypothesis] |
 | CreateFolder (CreateDirectory) `path`, DumpFormList (FListDump) `list [file] [append]` | the folder made in NVForever's layer; the list's forms to the console or appended to a file there [documented], the lines in NVForever's own words |
 | GetActorFadeState | −1 for an actor not fading [observed 2026-11-08: fadestate.doc, Doc Mitchell in his house]; NVForever has no actor fade state to report, so always −1 [hypothesis: the other states unknown] |
-| GetCalculatedActorSpread, IsFormLoading | 0 [decision: the pages are marked Incomplete with no summary, arguments or result; nothing to build from] |
+| GetCalculatedActorSpread | live actor weapon spread from the Gun Spread Formula, stance, crippled arms, `SetNoGunWobble`, and spread perks (`Game::calculated_actor_spread`) [documented: Gun Spread Formula; hypothesis: `docs/spec-notes/nvse-stubs-persistent-fall-spread-unique.md`] |
+| IsFormLoading | 0 [decision: the page is marked Incomplete with no summary, arguments or result; nothing to build from] |
 
 Follow-ups: the engine's hotkey pictures should read SetItemHotkeyIconPath's override;
 the three Incomplete pages need their text.

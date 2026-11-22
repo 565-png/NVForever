@@ -218,6 +218,7 @@ impl crate::game::Game<'_> {
                 }
             }
         }
+        list.retain(|&c| !self.is_item_unique(c));
         list
     }
 }
