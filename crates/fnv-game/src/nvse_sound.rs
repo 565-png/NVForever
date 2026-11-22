@@ -14,15 +14,6 @@ use fnv_sim::FormId;
 use serde_json::Value as Json;
 use std::collections::HashMap;
 
-/// A source-scoped sound stop requested by `StopSoundAlt`, for the engine to take.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SoundStopAlt {
-    pub sound: FormId,
-    pub source: FormId,
-    pub fade_seconds: f32,
-    pub up_to_id: u32,
-}
-
 /// A sound a script asked for.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Played {
@@ -54,9 +45,6 @@ pub struct SoundState {
     /// nothing [engineering choice; hypothesis: what the original does with that order in
     /// one frame is not known, docs/spec-notes/audio.md §11.5, observer check 82].
     pub stops: Vec<(FormId, u32)>,
-    /// Source-scoped stops requested by `StopSoundAlt` (sound, source, fade seconds, last
-    /// sound id asked for before the stop), for the engine to take.
-    pub stops_alt: Vec<SoundStopAlt>,
     /// Session `SetSoundFlag` bitmask overrides (and `TempCloneForm` snapshots), by `SOUN`.
     pub flags: HashMap<FormId, u32>,
 }
@@ -104,24 +92,6 @@ impl SoundState {
         if any {
             self.stops.push((sound, self.next_id));
         }
-    }
-
-    /// `StopSoundAlt` of `sound` on `source` in `frame` with optional `fade_seconds`:
-    /// stops every active playing of `sound` attached to `source` while leaving other
-    /// sources and non-locational (`PlaySound`) playings untouched. Returns `true` when
-    /// at least one playing was stopped and enqueues a [`SoundStopAlt`] for the engine
-    /// [documented: GECK wiki StopSoundAlt].
-    pub fn stop_at(&mut self, sound: FormId, source: FormId, fade_seconds: f32, frame: u64) -> bool {
-        let mut any = false;
-        for p in self.played.iter_mut().filter(|p| p.sound == sound && p.source == Some(source) && p.stopped.is_none()) {
-            p.stopped = Some(frame);
-            any = true;
-        }
-        if any {
-            let fade = if fade_seconds.is_finite() { fade_seconds.max(0.0) } else { 0.0 };
-            self.stops_alt.push(SoundStopAlt { sound, source, fade_seconds: fade, up_to_id: self.next_id });
-        }
-        any
     }
 
     /// One frame of `dt` seconds ends; sounds over or stopped before `frame` are dropped.
@@ -252,17 +222,10 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
             }
             zero
         }
-        // JohnnyGuitar's `sound source [fadeTime]`: stops active playings of `sound` at
-        // `source` and queues a source-scoped stop for the engine; returns 1 when at least
-        // one playing matched, else 0 [documented: GECK wiki StopSoundAlt].
-        "stopsoundalt" => {
-            let (Some(s), Some(src)) = (form(args, 0), form(args, 1)) else { return Some(Ok(zero)) };
-            let fade = match args.get(2) {
-                Some(XVal::Num(x)) if x.is_finite() => (*x as f32).max(0.0),
-                _ => 0.0,
-            };
-            yes(g.gaps.sounds.stop_at(s, src, fade, frame))
-        }
+        // JohnnyGuitar's `sound ref`: returns 0 and leaves the sound playing [observed:
+        // sound1, a PlaySound3D on the player still playing 6 frames on; hypothesis: it
+        // stops only sounds the game attached to the reference itself].
+        "stopsoundalt" => zero,
         // JIP's `sound flagID [newValue]` (`0..=13`, SNDD/SNDX flags) [documented: GECK
         // wiki GetSoundFlag, SetSoundFlag; observed: gaps4, SetSoundFlag returns 0].
         "getsoundflag" => {
@@ -342,24 +305,5 @@ mod tests {
         st.stops.clear();
         st.stop(FormId(8), 10);
         assert!(st.stops.is_empty());
-    }
-
-    #[test]
-    fn stop_at_targets_only_matching_source_and_records_fade() {
-        let mut st = SoundState::default();
-        let a = FormId(10);
-        let b = FormId(20);
-        st.ask(FormId(7), Some(a), 1);
-        st.ask(FormId(7), Some(b), 1);
-        st.ask(FormId(7), None, 1);
-        assert!(st.stop_at(FormId(7), a, 0.75, 5));
-        assert_eq!(st.stops_alt.len(), 1);
-        assert_eq!(st.stops_alt[0].sound, FormId(7));
-        assert_eq!(st.stops_alt[0].source, a);
-        assert_eq!(st.stops_alt[0].fade_seconds, 0.75);
-        assert!(!st.stop_at(FormId(7), a, 0.25, 5));
-        st.tick(0.02, 6);
-        assert_eq!(st.played.len(), 2);
-        assert!(st.played.iter().all(|p| p.source != Some(a)));
     }
 }

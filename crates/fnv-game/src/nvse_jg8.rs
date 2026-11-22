@@ -68,51 +68,6 @@ pub struct Jg8State {
     pub sleep_menu: bool,
     /// TuneRadioRef's stations, by radio reference.
     pub radio_tuned: HashMap<FormId, FormId>,
-    /// Engine-reported live playback state for placed radio references, for
-    /// `IsRadioRefPlaying`.
-    pub radio_playing_refs: HashMap<FormId, bool>,
-}
-
-impl Game<'_> {
-    /// Record the engine's live playback state for placed radio reference `reference`.
-    pub fn set_radio_ref_playing(&mut self, reference: FormId, playing: bool) {
-        self.other.jg8.radio_playing_refs.insert(reference, playing);
-    }
-
-    /// Whether placed radio reference `reference` is currently playing (`IsRadioRefPlaying`)
-    /// [documented: GECK wiki IsRadioRefPlaying; hypothesis: combines live engine radio
-    /// playback reports (`radio_playing_refs`, `radio_playing`), `TuneRadioRef` station
-    /// state, and enabled station broadcast records (`radio_sites`, `radio_data`)].
-    pub fn is_radio_ref_playing(&self, reference: FormId) -> bool {
-        let mut cur = reference;
-        let mut visited = Vec::new();
-        loop {
-            if visited.contains(&cur) {
-                return false;
-            }
-            visited.push(cur);
-            if let Some(site) = self.gaps.radio_sites.iter().flatten().find(|s| s.station == cur) {
-                if !self.world.is_enabled(cur).unwrap_or(!site.initially_disabled) {
-                    return false;
-                }
-                return self.other.jg8.radio_playing_refs.get(&cur).copied().unwrap_or(true);
-            }
-            if !self.world.is_enabled(cur).unwrap_or(true) {
-                return false;
-            }
-            if let Some(&playing) = self.other.jg8.radio_playing_refs.get(&cur) {
-                return playing;
-            }
-            if self.other.itr.radio_playing.as_ref().and_then(|p| p.station) == Some(cur) {
-                return true;
-            }
-            if let Some(&station) = self.other.jg8.radio_tuned.get(&cur) {
-                cur = station;
-                continue;
-            }
-            return self.radio_data(cur).is_some();
-        }
-    }
 }
 
 impl Game<'_> {
@@ -626,16 +581,17 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         } else {
             1.0
         }),
-        // ---- radios: TuneRadioRef `[station]` kept for the reference [documented];
-        // IsRadioRefPlaying queries live radio reference playback state
-        // (`Game::is_radio_ref_playing`) [documented: GECK wiki IsRadioRefPlaying].
+        // ---- radios: TuneRadioRef `[station]` kept for the reference [documented]; the
+        // engine's radios do not read it yet. IsRadioRefPlaying: 0 [decision: the page
+        // says it "is currently broken and will crash the game", so no script relies on
+        // an answer].
         "tuneradioref" => {
             if let (Some(r), Some(s)) = (subject, form(args, 0)) {
                 g.other.jg8.radio_tuned.insert(r, s);
             }
             zero
         }
-        "isradiorefplaying" => yes(subject.is_some_and(|r| g.is_radio_ref_playing(r))),
+        "isradiorefplaying" => zero,
         _ => return None,
     };
     Some(Ok(v))

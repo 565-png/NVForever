@@ -54,7 +54,7 @@ fewer arguments than it is given.
 | GetSystemColor `id`, GetSystemColorAlt `id rOut gOut bOut` | 1 HUD, 2 HUD alt, 3 terminal, 4 Pip-Boy, 5 main menu [documented]: SetSystemColor's colour (`nvse_jip9`), else FFB642 for 1, 4 and 5, FF432A for 2 and 21E779 for 3 [observed: probe set jg8 on the owner's install; hypothesis: these are the owner's interface colour settings, which NVForever does not read]. GetSystemColor packs 0xRRGGBB [hypothesis]; 0 for another id |
 | GetSleepWaitMenuState | 0 closed, 1 wait, 2 sleep [documented]; the engine marks the sleep as it opens menu 1012 (`nvf-play` wait.rs) |
 | TuneRadioRef `[station]` | kept for the radio reference [documented]; the engine's radios do not read it yet |
-| IsRadioRefPlaying | live playback state of the calling radio reference (`Game::is_radio_ref_playing`): 0 when disabled or not a radio; otherwise respects engine playback reports (`Game::set_radio_ref_playing`, `radio_playing.station`), follows `TuneRadioRef` station state, and reads enabled station broadcast records (`radio_sites`, `radio_data`) [documented: GECK wiki IsRadioRefPlaying; hypothesis: live playback resolution in `fnv-game`] |
+| IsRadioRefPlaying | 0 [decision: the page says it "is currently broken and will crash the game", so no script relies on an answer] |
 
 ## 3. Follow-ups (engine)
 
