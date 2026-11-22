@@ -271,8 +271,9 @@ pub const MILESTONE_SECS: f64 = 45.0;
 pub const PICKS_DEEP: usize = 5;
 /// Seconds a conversation with no way out is waited on before the finding.
 pub const NO_WAY_OUT_SECS: f64 = 5.0;
-/// Picks made in a conversation with no Goodbye before it counts as having no way out.
-pub const TALK_PICKS: u8 = 12;
+/// Picks made in a conversation with no Goodbye before it counts as having no way out:
+/// Ulysses' talks through ED-E in Lonesome Road take 13 and more (sweep 2 [observed]).
+pub const TALK_PICKS: u8 = 24;
 /// Seconds of a line the pilot hears before it skips it.
 pub const SKIP_AFTER: f64 = 0.4;
 /// Seconds before the first step: the world has loaded and settled.
@@ -313,6 +314,9 @@ const AIM_HEIGHTS: [f32; 4] = [80.0, 40.0, 110.0, 8.0];
 const AIM_SECS: f64 = 0.25;
 /// The longest any one step lasts, seconds: then it is given up, whatever it waits for.
 pub const STEP_SECS: f64 = 240.0;
+/// How far away an item an `add_item` step wants is gone for; past it, given as the
+/// headless run gives it.
+pub const ITEM_FAR: f32 = 12000.0;
 /// Failed steps one after the other that end a chain.
 pub const FAILED_IN_A_ROW: u32 = 12;
 /// Real seconds without the pilot being able to act that end the run.
@@ -1812,7 +1816,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 // the announcer speaks, then opens the player's gate): what it is doing is
                 // waited for, so the door's time counts from when they are back.
                 w.door_since = Some(p.now);
-            } else if lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > PICK_AFTER_SECS) && pick_lock(p, h, door) {
+            } else if lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > PICK_AFTER_SECS) && pick_lock(p, h, door, false) {
                 // Picked: the next frame opens it, as the menu activates the door it opened.
                 w.door_since = None;
             } else if lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) && try_beside(p, &mut w.poked, &mut w.side, &mut w.errand, h, door, feet) {
@@ -1828,6 +1832,12 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 // away, 750 units for Wernher's, PKE2), and goes through when it is open.
                 w.owner_door = Some(door);
                 keep_by(h, feet, owner);
+            } else if lock_words(nav, door).is_some() && w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS) && pick_lock(p, h, door, true) {
+                // A lock past the character's skill, only after a switch beside it, its key
+                // and its owner were tried: picked at once, Hidden Valley's bunker door let the
+                // player in past its intercom, and Ramos's intruder talk took Veronica's
+                // escort another way (sweep 2 [observed]).
+                w.door_since = None;
             } else if let Some(lock) = lock_words(nav, door).filter(|_| w.door_since.is_some_and(|t| p.now - t > LOCKED_SECS)) {
                 info!("pilot: step {}: door {door:08X} on the way is {lock} and nothing opened it in {LOCKED_SECS:.0} s after the player tried it: another way round", p.i);
                 w.tried.push((door, lock));
@@ -1903,7 +1913,7 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                     p.finding("unreachable", why.clone());
                     return Walked::No(why);
                 };
-                if pick_lock(p, h, d.door) {
+                if pick_lock(p, h, d.door, false) {
                     w.door_since = None;
                     return Walked::Going;
                 }
@@ -1913,6 +1923,11 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                 }
                 if fetch_key(p, &mut w.poked, &mut w.errand, h, nav, d.door, feet) {
                     (w.follower, w.door_since) = (None, None);
+                    return Walked::Going;
+                }
+                // Past the character's skill: stood in once a switch and its key were tried.
+                if pick_lock(p, h, d.door, true) {
+                    w.door_since = None;
                     return Walked::Going;
                 }
                 info!("pilot: step {}: door {:08X} is {lock} and nothing opened it in {LOCKED_SECS:.0} s after the player tried it: another way round", p.i, d.door);
@@ -1954,7 +1969,9 @@ const PICK_AFTER_SECS: f64 = 1.0;
 /// unlocks it, with its XP (`fnv_game::lockpick::opened`); the game itself is stood in
 /// (logged as a headless step). Vault 101's Overseer's office door, Very Easy, with
 /// Amata's bobby pins: the escape stopped at it [observed, 2026-11-20].
-fn pick_lock(p: &mut Pilot, h: &mut Hands, door: u32) -> bool {
+/// With `stand_in`, a lock only the skill (or a pin) short of the bot's character is
+/// stood in too; without it only one the character can pick.
+fn pick_lock(p: &mut Pilot, h: &mut Hands, door: u32, stand_in: bool) -> bool {
     let picked = h.game(|g| {
         let skill = fnv_game::lockpick::skill(g);
         match fnv_game::lockpick::opening(g, FormId(door), skill) {
@@ -1965,7 +1982,7 @@ fn pick_lock(p: &mut Pilot, h: &mut Hands, door: u32) -> bool {
             // Only the skill (or a pin) short: a player who levelled Lockpick, or carries
             // a pin, picks it; the bot's character is not that player, so it is stood in
             // and said (a finding, not a stop: a skill gate is no soft lock).
-            fnv_game::lockpick::Opening::Refused(r @ (fnv_game::lockpick::Refusal::Skill { .. } | fnv_game::lockpick::Refusal::NoPins)) => {
+            fnv_game::lockpick::Opening::Refused(r @ (fnv_game::lockpick::Refusal::Skill { .. } | fnv_game::lockpick::Refusal::NoPins)) if stand_in => {
                 let level = fnv_game::lockpick::Level::of(g.world.peek(FormId(door)).and_then(|s| s.lock.map(|l| l.level)).unwrap_or(100));
                 fnv_game::lockpick::opened(g, FormId(door), level, true);
                 Some((true, format!("{level:?} lock, Lockpick {skill:.0}, refused: {r:?}")))
@@ -3568,7 +3585,10 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
             if beside && p.near_since.is_none() {
                 p.near_since = Some(p.now);
             }
-            if p.near_since.is_some_and(|t| p.now - t > LINE_SECS) || p.now - p.step_from > LINE_SECS * 3.0 {
+            // Far away: stood in before the step's own limit ends it without the line (a
+            // walk to Nellis with fights on the way took the 240 s, and Pearl's line was
+            // neither said nor stood in: Kings Gambit, sweep 2 [observed]).
+            if p.near_since.is_some_and(|t| p.now - t > LINE_SECS) || p.now - p.step_from > (LINE_SECS * 3.0).min(STEP_SECS - 10.0) {
                 p.finding("line_not_said", format!("{speaker} did not say {info} in {LINE_SECS:.0} s with the player beside it: said as the headless run says it"));
                 p.headless("say_info (a line not said)");
                 let mut applier = std::mem::take(&mut p.applier);
@@ -3748,7 +3768,14 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
             let state = h.game(|g| {
                 let it = runner::resolve(g, item).ok()?;
                 let have = g.world.item_count(FormId::PLAYER_REF, it).unwrap_or(0);
-                Some((it, have, find_item(g, it, feet)))
+                // Not across the map: a player gets such an item some other way (the tutorial
+                // hints walked 37421 units to NCRCF for a Jet, met a guard's conversation and
+                // the soft-lock watchdog, sweep 2 [observed]).
+                // Nor in another worldspace or interior: the x/y distance means nothing across
+                // them (Fort Gear Returned's 10mm pistol was fetched from the Divide, 314000
+                // units, and the player died on the way, sweep 2 [observed]).
+                let here = g.world.peek(FormId::PLAYER_REF).and_then(|s| s.cell);
+                Some((it, have, find_item(g, it, feet).filter(|f| hdist(f.2, feet) < ITEM_FAR && same_space(world, here, f.1))))
             });
             let Some(Some((it, have, found))) = state else { return Some(Some(format!("{item}: no such item"))) };
             if p.part == 0 {
@@ -3773,6 +3800,11 @@ fn step(p: &mut Pilot, h: &mut Hands) -> Option<Option<String>> {
                         p.finding("item_not_found", format!("{item} is not on any body, in any container or lying anywhere in the cells loaded: given as the headless run gives it"));
                     }
                     p.headless("add_item (not found in the world)");
+                    // The walk for it, if one is still going, is over too: it outlived the
+                    // step by 90 s in the tutorial hints (sweep 2 [observed]).
+                    if matches!(&p.errand, Some((Errand::Take { item: i, .. }, ..)) if *i == it) {
+                        p.errand = None;
+                    }
                     let mut applier = std::mem::take(&mut p.applier);
                     let r = h.game(|g| runner::apply_now(g, &mut applier, &a));
                     p.applier = applier;
@@ -4498,7 +4530,14 @@ fn watch_stall(p: &mut Pilot, h: &mut Hands) -> bool {
     // A `wait_quest` / `wait_menu` / `wait_frames` waits out its own `max_frames` too: Vault
     // 101's birth waits up to 120 s for each of Dad's lines and CG00's timers, and the
     // watchdog gave them up at 90 s [observed].
-    let purposeful = walk_waits || matches!(p.actions.get(p.i), Some(Action::CallUntil { .. } | Action::AdvanceSeconds { .. } | Action::WaitQuest { .. } | Action::WaitMenu { .. } | Action::WaitFrames { .. } | Action::Package { .. }));
+    // A line waited for beside its speaker waits out LINE_SECS: given up at 90 s, the dam
+    // panel's Yes Man line was not stood in and the chain went on without it (sweep 2,
+    // 2026-11-22 [observed]).
+    // So does one whose speaker is out of reach: its stand-in comes before the step's limit,
+    // and given up at 90 s, Trouble on the Homefront's radio line behind Vault 101's locked
+    // door failed the next 12 steps and the chain was abandoned (sweep 2 [observed]).
+    let beside = matches!(p.actions.get(p.i), Some(Action::SayInfo { .. }));
+    let purposeful = beside || walk_waits || matches!(p.actions.get(p.i), Some(Action::CallUntil { .. } | Action::AdvanceSeconds { .. } | Action::WaitQuest { .. } | Action::WaitMenu { .. } | Action::WaitFrames { .. } | Action::Package { .. }));
     if purposeful || p.i >= p.actions.len() || p.now - since < STALL_SECS {
         return false;
     }

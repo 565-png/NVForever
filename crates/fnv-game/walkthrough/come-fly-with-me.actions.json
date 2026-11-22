@@ -57,6 +57,7 @@
     {"op": "trigger_enter", "trigger": "scripted:0x000CE1BB", "actor": "0x000834C0"},
     {"op": "trigger_enter", "trigger": "scripted:0x000CE1BB", "actor": "ChrisHaversamREF"},
     {"op": "advance_seconds", "seconds": 1},
+    {"op": "call_until", "line": "000834C0.GetInCell RocketLabBasement", "max_frames": 3600, "label": "jason reached the basement: the player goes to him there, not to him on his way (his on-the-way greeting 0x000CE9EE has no basement topics; sweep 2 [observed])"},
     {"op": "move_player", "to": "0x000834C0"},
     {"op": "talk", "actor": "0x000834C0", "label": "jason in the basement"},
     {"op": "wait_talk"},

@@ -184,7 +184,17 @@ def run_one(chain: Path, args: argparse.Namespace, slot: int) -> dict:
         cmd += ["--size", args.size]
     if getattr(args, "window_at", ""):
         cmd += [f"--window-at={args.window_at}"]
-    cmd += ["--load", args.start] if start.exists() else ["--new-game"]
+    # A chain that names its own start ("save": the intro and new-game chains) begins there:
+    # that save if the home has it, else a new game. The intro run from the after-intro
+    # save found its quests long past and was abandoned (sweep 2, 2026-11-22).
+    own = json.loads(chain.read_text(encoding="utf-8")).get("save")
+    if own:
+        mine = Path(args.home) / "saves" / f"{own}.nvfsave"
+        if mine.exists():
+            shutil.copy2(mine, saves / mine.name)
+        cmd += ["--load", own] if mine.exists() else ["--new-game"]
+    else:
+        cmd += ["--load", args.start] if start.exists() else ["--new-game"]
     if order:
         cmd += ["--plugins", *order]
     cmd += ["--pilot", str(chain), "--pilot-campaign", "--pilot-given", "--pilot-out", str(report), "--pilot-minutes", str(args.minutes)]
