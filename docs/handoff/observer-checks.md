@@ -3506,49 +3506,37 @@ already talking takes over at once, same topic or another; nothing is queued or 
      place and heading. The hand moving the same way in both settles it. The reading
      back, `player.GetNifBlockRotation "Bip01 Translate" "Z" 0 2`, should be 30 in both.
 
+## Added 2026-11-21 (talking through cell bars, #3233)
+
+251. **Does the crosshair pass collision on the Transparent layer (3), and on Transparent
+     Small (26/28): can the player talk to, take, open or search what stands behind it?**
+     (P2; #3233, simulation.md §5 "Talking through bars".) The wiki says nothing but
+     projectiles passes Transparent and that actors see through it [documented: GECK wiki
+     "Collision layer"]; it says the player activates and loots through Invisible Wall
+     (27) only. Ours: Talk alone passes the see-through layers, when nothing else is
+     offered [design]. In Vault 3 (Vault3b), stand at the cell bars (JailCellDoorway01,
+     0x000EF3FA, layer 3) with Rick Lancer (V3Prisoner01Ref 0x000F47B0) behind them: does
+     the prompt show Talk and does E open the conversation? With an item dropped behind
+     the bars (`player.drop` then nudge it in, or one placed there with `PlaceAtMe`), is it
+     offered? A screenshot of each prompt answers it; `GetCrosshairRef` printed at the
+     bars says which reference the crosshair holds.
+
 ## Added 2026-11-21 (GetMapMarkerVisible on a marker authored Visible, #3268)
 
 252. **What does GetMapMarkerVisible return for a map marker the player has not found
-     whose record is authored Visible?** (P2: 41 calls in the shipped scripts read it,
-     VMQ01 among them [observed: script-function-audit.md]; #3268.) The wiki gives 0 not
-     on the map, 1 on it without fast travel, 2 on it and a fast-travel target
-     [documented: GECK wiki GetMapMarkerVisible]; it does not say whether a marker's
-     authored flags (REFR `FNAM`: 1 Visible, 2 Can Travel To, 4 "Show All" Hidden
-     [documented: xEdit, schemas/fnv/world.json]) count before the player finds it. Ours
-     on main: 0 until the player finds it (then 2) or a script shows it (ShowMap 0 gives
-     1, ShowMap 1 gives 2), whatever the record says [hypothesis]. #3268 makes an
-     undiscovered marker authored Visible read 1 (Visible | Can Travel To 1 too, Can
-     Travel To alone 0), as its Pip-Boy map shows it [hypothesis]. Also asked: the same
-     markers after ShowMap 0, ShowMap 1 and discovery.
-     Campaign `tools/capture/observe/o31_mapmarker_visible.campaign.json`, save `nvfdoc`
-     (Doc Mitchell's house, so the markers far from Goodsprings are not found yet
-     [hypothesis]), base game + xNVSE with three JIP readers. It reads, every 10 game
-     loops, `GetMapMarkerVisible` of four FalloutNV.esm markers whose IDs are in the
-     notes [observed: pipboy.md §5.3]: Goodsprings 0x000CDF51 (v1), Coyote Den 0x00154A69
-     (v2), Hoover Dam 0x00135E5F (v3), Jacobstown 0x000CDF57 (v4). v5-v8 hold
-     `IsMapMarker + 2 GetMapMarkerTravel + 4 GetMapMarkerHidden` of the same four (JIP
-     readers; 0 means the ID is no marker), v9 `GetPCMiscStat "Locations Discovered"`,
-     v10 a count of the reads; -1 means that read did not run. Sessions, in one game:
-     `a_before` (nothing done), `b_showmap` (ShowMap Hoover Dam 0, ShowMap Jacobstown 1),
-     `c_find_coyote`, `d_find_hoover`, `e_find_goodsprings` (`player.MoveTo` the marker,
-     300 loops, which should find it by its radius [hypothesis]).
-     **Before the run** the authored flags of the four are needed; the repository holds
-     none. Read each with `fnvtool esm decode "<Data>\FalloutNV.esm" --schema schemas/fnv
-     --formid CDF51` (then 154A69, 135E5F, CDF57) and note `FNAM`, "Map Marker Flags".
-     If none of Coyote Den, Hoover Dam and Jacobstown is Visible, find one that is
-     (`fnvtool world refs "<Data>" FalloutNV.esm --schema schemas/fnv --world
-     WastelandNV`, the rows whose base is 00000010, decoded as above) and put its FormID
-     in place of one of them everywhere in the campaign file; one Visible | Can Travel
-     To and one Can Travel To alone are wanted too. Run:
-     `python tools/capture/observe.py run tools/capture/observe/o31_mapmarker_visible.campaign.json
-     --game <FNV> --data <Data>` (JIP LN stays installed, ai-observer-jip.md §2).
-     Reading it: an undiscovered Visible marker in `a_before` reading 0 says main is
-     right; 1 says #3268 is right; 2 says the authored Can Travel To counts as well.
-     A Can Travel To alone marker reading anything but 0 is a third rule. `b_showmap`
-     should read 1 and 2 in both, the found markers 2 in both (Goodsprings 2 in
-     nvftest [observed: fa_batch1_queries]); v9 rising and v2-v4 changing in c-e shows
-     MoveTo found them. v5-v8 before and after say whether the original changes a
-     marker's Travel flag when it is found or shown.
+     whose record is authored Visible?** (P2; #3268, #3338.) **Answered 2026-11-22**
+     [observed: base game + xNVSE 6.4.9 + JIP LN, plugin version 10, save `nvfdoc`;
+     campaign `o31_mapmarker_visible` as a control (`o31_ctrl`) and again with a probe
+     plugin that overrode three FalloutNV.esm markers' `FNAM` (`o31_esp`); outputs
+     `obs_o31_ctrl_*`, `obs_o31_esp_*` in the private capture folder]: the authored flags
+     count before the player finds the marker. Visible alone reads 1, Visible | Can Travel
+     To reads 2, Can Travel To alone reads 0, no flags 0. The full rule and the readings
+     are in pipboy.md §5.3. #3268 is right for Visible alone and gives 1 where the
+     original gives 2 for Visible | Can Travel To. In the base game it matters for one
+     marker only: no FalloutNV.esm marker sets any `FNAM` flag (189 of 189), and of the
+     add-ons only Honest Hearts' Southern Passage (0x01008885 file-local, `FNAM` 3) does
+     [observed: every MapMarker reference of the six masters, 2026-11-22]. Not covered:
+     the Hidden flag (4).
 
 ## Added 2026-11-21 (melee creatures and a player who backs away, #3256)
 
@@ -3566,3 +3554,158 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the difference from a standing player is the original's too; counts near the standing
      ones mean the original closes the gap in a way ours does not (a lunge from further
      off, a faster chase, or no knockback on the player).
+
+## Added 2026-11-22 (terminal text typing out, #3327)
+
+254. **How fast and in what order does a terminal's text type out?** (P3: #3327; hacking.md
+     §7 "Typing out".) Ours [design]: each page's lines one after another, each left to
+     right, at 600 characters a second; a page starts again only when another page comes
+     up (not when the selection moves); no key skips it; no sound. In the original, record
+     at 60 fps: (a) an unlocked terminal with a long welcome text and several entries
+     (Goodsprings' schoolhouse or any office terminal), from activation to the last
+     character; (b) taking an entry that opens a note, and Tab back to the list; (c) a
+     locked terminal's hacking screen as it comes up, and after a wrong word. Count the
+     frames each page takes and the characters it shows, and say whether lines type one
+     after another or together, whether the selection box types with its row, whether a
+     key or click finishes it at once, and which sound plays while it types
+     (`UIHackingCharSingle`, `…Multiple` or the loop `UIHackingCharScrollLP`).
+
+## Added 2026-11-22 (a terminal note longer than the screen, #3409)
+
+255. **How does the player read on in a terminal entry longer than the screen?** (P3: #3409;
+     hacking.md §7.) Ours [hypothesis]: E, Enter or a click turns a page (the last page
+     shows the last lines), nothing on the last page; Up / Down scroll a line. In the
+     original, open a long entry (a long log, e.g. Vault 11's overseer entries or a
+     Lucky 38 terminal) and note how many lines a page holds, what E and a click do on the
+     first and on the last page (next page, back to the list, nothing), whether Up / Down
+     or the mouse wheel scroll, and any "more" mark the screen shows.
+
+## Added 2026-11-22 (Blake's books for Bitter Springs Infirmary Blues, #3350)
+
+256. **Does a merchant sell the owned items lying at its stand?** (P2: #3350, a player could
+     not buy the two books VMS40 asks for; barter-menu.md §4.) Ours [design]: the barter
+     list is the merchant container's stock alone. Blake's two books lie on his stand,
+     owned by him, and can only be taken as a theft. In the original, with VMS40 at stage
+     10 (`setstage VMS40 10`), go to Blake at the Crimson Caravan Company:
+     (a) open his barter menu and look for "Stress and the Modern Refugee: A Primer" and
+     "Tiny, Tiny Babies: All You Need to Know About Pediatric Medicine", and note their
+     prices;
+     (b) look at his stand for the two books (the upper shelf by the first aid boxes,
+     the lower shelf by the water bottles) and say whether the crosshair shows Take or
+     Steal;
+     (c) if they are in the list, buy one and see whether the one on the stand goes.
+     In the list: the rule is wider than the merchant container (owned loose items near
+     the merchant, or these two only), and a scan of owned items at other merchants'
+     stands sizes it. Not in the list: the original's way is the theft (or a speech or
+     barter line not in our list).
+
+## Added 2026-11-21 (the compass's actor ticks against the strip, #3310)
+
+261. **Where does an actor's tick on the compass end against the strip's line?** (P3;
+     #3310, hud.md §11.) The HUD file's box puts the tick's top at the compass window's
+     top (the group's run-time y 10, read from the original, over the template's 5, and
+     the tick's y -10); ours since #3310 draws the 26-unit tick so its bar ends 22 units
+     down the window, about 4 above the strip's upper line, where it ended on that line
+     before [hypothesis: the picture's bar is its top 22 texel rows, drawn a texel a
+     unit]. Outdoors at 1920 x 1080, HUD scale 100 % (1.125 pixels a unit, hud.md §4),
+     with a neutral NPC about 300 units ahead (Goodsprings, the settler of §14.5) and a
+     hostile one (a gecko), take one frame each, heading steady, and measure on the raw
+     1920 x 1080 capture, not a resized one: the tick's solid end, the top of its fade
+     and the span between, against the strip's doubled line and the bracket's long line
+     above it, in pixels. A fade and bar spanning about 25 pixels (22 units) agree with
+     the 22-row hypothesis, about 20 pixels (17.9 units) with our 26-unit size; a bar
+     ending about 4-5 pixels above the strip's upper line agrees with the new place, one
+     touching it says the old place was right.
+
+## Added 2026-11-21 (placing the custom map marker with the mouse, #3324)
+
+262. **What does a left click on an empty spot of the Pip-Boy's World Map and Local Map do
+     with the keyboard and mouse?** (P2; #3324, pipboy.md Place Marker.) The capture of
+     2026-11-10 showed placement with the X button [observed]; a player reports the
+     original places it with the mouse, and how is [hypothesis]. Ours [design]: a click
+     (press and release within 6 units) away from any marker does what X does (the same
+     question box, or under the No Place Marker Popup tweak an answer at once), of the place
+     under the highlight box; a click with a World Map marker under the box asks to travel;
+     a right click does nothing. On the World Map at 1280x720, click once an
+     empty spot well away from any marker, once a spot about 20 px from one (inside the
+     highlight box's reach), and once with the right button; repeat on the Local Map, once
+     on a door icon. Screenshot each result: whether a box asks (and its words) or the
+     marker appears at once, where it lands against the pointer, and whether a press dragged
+     a few pixels still counts as a click.
+
+## Added 2026-11-21 (blood on the world behind a shot actor, #3318)
+
+263. **Where does a shot on an actor leave blood on the walls and floor near it, and
+     which impact is it?** (P2; #3318, impact-decals.md §4a.) The engine rolls
+     `fCombatEnvironmentBloodChance` (default 0.75, FalloutNV.esm does not set it) and
+     casts up to 512 units from the hit in the projectile's direction, first surface only,
+     with the hit body part's impact [documented: GECK wiki ITR:OnWoundSpray,
+     FCombatEnvironmentBloodChance]. Ours [hypothesis]: a second line straight down when
+     the shot's line meets nothing; the body part's severable blood impact data set,
+     else its explodable one. Shoot an NPC in the chest ten times with a BB gun
+     (`resurrect` if it dies): in the Goodsprings general store from the door (counter
+     and wall behind Chet), and in the open street with nothing behind the target. Count
+     the splatters on the counter or wall (about 7 in 10 at 0.75), and whether any appear
+     on the ground below the target in the open (a frame after each shot does it); the
+     splatters' size tells the spurt's decal (`BloodSpoutRedData`, 70-90 wide) from the
+     bullet's (`BallisticOrganicImpact`, 12-19).
+
+## Added 2026-11-21 (is the HUD's condition bar see-through, #3309)
+
+264. **Does the world show through the HUD's weapon condition bar in the original?** (P3;
+     #3309, hud.md §4, §14.3 and §14.7.) A player report says the original draws the bar
+     with transparent parts and NVForever's is solid. The report's screenshot is
+     NVForever's: its fill reads (175, 125, 45) and its ground (100, 71, 26) over a bright
+     sky [observed: the screenshot attached to #3309]; that both are opaque there is
+     inferred from the colours they are drawn with and the sky beside them [hypothesis].
+     Static evidence, which does not prove the original never shows the bar translucent:
+     the ground's template `MeterBackground` is the plain picture `solid.dds` with no
+     `alpha` trait [documented: hudtemplates.xml], and the fill's picture `vats_bar.dds`
+     has an opaque block [documented: the texture]. On the private shots `hud_corners2` c0
+     and c4 the original's fill reads 175/255 and its ground 100/255 of the HUD's colour
+     [observed: hud.md §14.7]. Both NVForever drawings draw that. A fill translucent over
+     an opaque ground reads the same whatever lies behind the bar, so one background is
+     not enough. At 1280 x 720, a weapon at about three quarters' condition:
+     - four frames: the bright sky behind the bottom right corner and dark ground there,
+       each with HUD Opacity (the Display page's slider [documented: GECK wiki, Complete
+       List of GameSettings, `sHUDOpacity`]) at its highest and at a lower setting. In
+       each, sample the filled part and the uncovered ground right of the fill
+       separately, and the world just outside the bar;
+     - if xNVSE can read them, `GetUIFloat` of `alpha` on the fill
+       (`HUDMainMenu/ActionPoints/*:1`), on `ActionPoints/MeterBackground` and on
+       `ActionPoints` itself, at both slider settings;
+     - a low-condition sequence: bring the weapon to about 10 % (hud.md §14.3 records the
+       fill's `alpha` moving between samples there) and take several frames a fraction
+       of a second apart, with the fill's `alpha` read beside each, to see whether the
+       world shows through the fill while it flashes and from what condition it starts.
+     And what is the slider's default?
+
+## Added 2026-11-21 (a lakelurk standing on a deep lake bed, #2980)
+
+269. **How does a creature that swims stand on a lake bed deeper than it is tall?**
+     (P3; #2980, physics.md §6.6 "Actors standing on the bed".) Ours since #2980: an
+     actor whose character swims (on the ground with its feet 115 or more under the
+     surface; only an actor on its way has a character, not one that stands idle or
+     holds its ground in a fight) but stands still
+     with its feet on the bed plays its standing idle (`mirelurkking\mtidle.kf` for a
+     lakelurk); moving, its swimming clips [hypothesis]. Before, it held its swimming
+     idle (`swimidle.kf`) there; that this is the T-pose a player reported for idle
+     lakelurks is [hypothesis] too (an idle one has no character, so never swims). At
+     Boulder Beach (Lake Mead, surface 2600), from the shore at (56992, 37536) walk east
+     to about x 58300 (feet about 250 under the surface), `tgm` on, `placeatme 00145EDB`
+     (CrLakelurkCG), and look at it for 10 s (with `tai` if it moves at once); then `tai`
+     again and let it come at you, and watch it whenever it stands still on the bottom.
+     A lakelurk standing on the bottom in its standing idle agrees with ours; one held in
+     the floating swim pose (limbs out, slow loop) says the original keeps the swimming
+     idle at rest, and one that rises to float near the surface says swimming actors
+     have buoyancy. Note also how an idle lakelurk on the shore looks before it is alerted
+     (a T-pose there in the original would make #2980 the original's own look).
+
+## Added 2026-11-22 (the grab key on pickable plants, #3389)
+
+278. **Can the grab key pick up a White Horse Nettle or a Broc Flower?** (P3: #3389;
+     grab.md §3.) Ours [hypothesis]: no, the grab ray passes through a body on the
+     non-collidable layer, and these two plants' only body (a dynamic box of 45 kg) is
+     there. In the original, by Goodsprings (the nettles south of the town, 0016AF22 at
+     -68223, -3810), harvest one and not another, then hold Z on each; also shoot or throw
+     a grenade at one. Say whether either moves.

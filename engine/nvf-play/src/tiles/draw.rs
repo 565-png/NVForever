@@ -1917,6 +1917,24 @@ pub(crate) fn scroll(hud: Option<Res<HudView>>, mut images: ResMut<Assets<Image>
 mod layout_tests;
 
 #[cfg(test)]
+#[derive(Resource)]
+pub(super) struct TestPainted(pub Ui, pub TileId);
+
+#[cfg(test)]
+pub(super) fn paint_test_menu(
+    mut commands: Commands,
+    painted: Res<TestPainted>,
+    mut kit: FontKit,
+    mut nodes: Nodes,
+    glyphs: Res<crate::pad::PadGlyphs>,
+    mut drawn: Local<Drawn>,
+) {
+    let measure = |_: f64, _: &str, _: Option<f64>| (0.0, 0.0);
+    let (set, _) = pieces(&painted.0, painted.1, &measure, Select::Whole { kept: &[], strip: None }, true);
+    paint(&mut commands, &mut drawn, set, Target::window(1.0, 1), Brightness::File, 0.0, Some(&painted.0), &mut kit, &mut nodes, &glyphs);
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use fnv_ui::MemSource;
