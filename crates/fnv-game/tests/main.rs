@@ -100,6 +100,7 @@ mod packages;
 mod perk_combat;
 mod perk_talk;
 mod pp;
+mod projectile_trait_overrides;
 mod quest_marker_data;
 mod radiation;
 mod radio_data;
