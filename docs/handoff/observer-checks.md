@@ -3597,6 +3597,16 @@ already talking takes over at once, same topic or another; nothing is queued or 
      key or click finishes it at once, and which sound plays while it types
      (`UIHackingCharSingle`, `…Multiple` or the loop `UIHackingCharScrollLP`).
 
+## Added 2026-11-22 (a terminal note longer than the screen, #3409)
+
+255. **How does the player read on in a terminal entry longer than the screen?** (P3: #3409;
+     hacking.md §7.) Ours [hypothesis]: E, Enter or a click turns a page (the last page
+     shows the last lines), nothing on the last page; Up / Down scroll a line. In the
+     original, open a long entry (a long log, e.g. Vault 11's overseer entries or a
+     Lucky 38 terminal) and note how many lines a page holds, what E and a click do on the
+     first and on the last page (next page, back to the list, nothing), whether Up / Down
+     or the mouse wheel scroll, and any "more" mark the screen shows.
+
 ## Added 2026-11-21 (placing the custom map marker with the mouse, #3324)
 
 262. **What does a left click on an empty spot of the Pip-Boy's World Map and Local Map do
