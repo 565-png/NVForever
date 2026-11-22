@@ -836,7 +836,9 @@ mod tests {
             dropped_plugins: Vec::new(),
         };
         let mut lod = LodState::new(&world, crate::lod::LodSettings::default(), true, None);
-        lod.radius = 0;
+        // The chunks the old LOD square of radius 0 covered round (0, 0): cells -4..=3 by
+        // 0..=3, so (-1, 0), (0, 0) and (1, 0), not (4, 0).
+        lod.choose_for_test(vec![(4, -4, 0), (4, 0, 0)]);
         let streamer = Streamer {
             radius: 1,
             loaded: HashMap::new(),
@@ -858,6 +860,7 @@ mod tests {
             centre: None,
             waiting: Vec::new(),
             model_overrides: HashMap::new(),
+            travels: 0,
         };
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let dir = EmptyData(std::env::temp_dir().join(format!(
@@ -873,6 +876,7 @@ mod tests {
             .insert_resource(lod)
             .insert_resource(streamer)
             .insert_resource(data)
+            .insert_resource(crate::stream_pace::StreamPace::new(crate::stream_pace::Mode::Off))
             .init_resource::<DistantWater>()
             .init_resource::<WaterCache>()
             .init_resource::<Assets<Mesh>>()
