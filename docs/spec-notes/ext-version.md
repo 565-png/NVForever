@@ -176,7 +176,7 @@ low.
   TTW calls from both (`TTW_*`, StewieGetValue, `fnv_game::nvse_small`). Neither plugin
   is on the owner's install, so neither version was read: 941 is the lowest TTW accepts,
   and TTW never asks ttw_nvse's. Most of Stewie's tweaks are not built (ext-small.md).
-  Since 2026-11-18 Stewie's is 945 (§5.1).
+  Since 2026-11-22 Stewie's is 945 (§5.1).
 - **The other plugins the engine builds** (2026-11-12): until then a mod asking
   `IsPluginInstalled "SUP NVSE Plugin"` got 0 and `GetPluginVersion` -1 for every plugin
   outside the list above, though all of that plugin's catalogue functions run here
@@ -209,27 +209,32 @@ low.
 
 ### 5.1 Stewie's Tweaks: reported version by the features built
 
-[design, 2026-11-18] Mods gate on `GetPluginVersion "lStewieAl's Tweaks"` for a
+[design, updated 2026-11-22] Mods gate on `GetPluginVersion "lStewieAl's Tweaks"` for a
 feature that came in that version [documented: the plugin's public changelog,
-https://www.nexusmods.com/newvegas/mods/66347?tab=logs]. The version reported is the
-highest gate whose dependent mods' Stewie features are all built here; it is never the
-version of a DLL found on disk (the engine is not that DLL). A higher gate rises only
-when its features are built, with a row here and a test (`fnv_script::vm::jip::
-STEWIE_VERSION`; `jg3::stewie_945_gate_passes_with_the_casino_stage_fix_and_higher_gates_still_stop`).
+https://www.nexusmods.com/newvegas/mods/66347?tab=logs]. The version reported rises one
+verified step at a time once every feature that gating mods depend on is built and
+checked; it is never the version of a DLL found on disk (the engine is not that DLL).
+A higher gate rises only when its step is verified, with a row here and tests
+(`fnv_script::vm::jip::STEWIE_VERSION`;
+`jg3::stewie_945_gate_passes_with_the_casino_stage_fix_and_higher_gates_still_stop`;
+`stewie_945_960_970_qualification`).
 
-| Reported | Feature it stands for (changelog) | Built in NVForever | Mods unblocked (installed list, 2026-11-18) |
+| Reported | Feature it stands for (changelog) | Built & verified in NVForever | Mods unblocked (installed list) |
 |---|---|---|---|
 | 941 | TTW 3.4's minimum | TTW's `TTW_*` and StewieGetValue calls | Tale of Two Wastelands; gates 905/906 (Explosion Reactions, Animated Moments, Drowning Visuals, Modern Minimap's MCM list) |
-| 945 | 9.45 "No Casino Bans - make GetCasinoWinningStage not return banned" | `casino::script_winnings_level` (blackjack.md §4) | Casino Rewards Fix 1.1 (`< 945` guard; then GetCasinoWinningsLevel, dialogue/menu-close events) |
-| 960 (not reported) | 9.60 "Add Command StewieGetValue (alias StewVal)", xNVSE 6.3.0 | StewieGetValue for some keys only | Pip-Boy UI Tweaks (StewVal of item-stat, critical and weightless-item keys; menu search buttons), Quality of Life ESPless (`bKeepPipboyLightOnCellChange`), MCM Extender requirement lists asking 960 |
-| 970 (not reported) | 9.70 inventory/AddItem refresh and WASD menu changes | no | Barter Categories Icons (also reads `bSynchronizeContainerCategories` and `bPreventSwitchWhenEmptyingCategory` from Stewie's INI) |
+| 945 | 9.45 "No Casino Bans - make GetCasinoWinningStage not return banned" (9.42–9.45 step, #3179) | `casino::script_winnings_level` (#2878, live `bNoCasinoBans=0/1` observed in `blackjack.md` §4), Casino Rewards Fix 1.1 consumers (#3180: casino MenuMode 1080/1081/1082, `SetOnDialogTopicEventHandler`, 8-digit all-decimal bare hex FormIDs), and qualification E2E test (#3378) | Casino Rewards Fix 1.1 (`< 945` guard; then `GetCasinoWinningsLevel`, casino menu-close and dialogue-topic events) |
+| 960 (not reported) | 9.60 "Add Command StewieGetValue (alias StewVal)", xNVSE 6.3.0 (#3183) | Held for its own verified step PR (#3183) | Pip-Boy UI Tweaks, Quality of Life ESPless (`bKeepPipboyLightOnCellChange`), MCM Extender requirement lists asking 960 |
+| 970 (not reported) | 9.70 inventory/AddItem refresh and WASD menu changes (#3184) | Held for its own verified step PR (#3184) | Barter Categories Icons |
 
-[observed: the installed mods' scripts and requirement lists, read locally on
-2026-11-18; only the gate numbers and the function/key names they call are kept] The
-"Mods unblocked" column. [design] The reported number 945 is an engine design choice
-(the engine is not the plugin and has no version of its own). [hypothesis] The mods
-that pass the 945 gate need no Stewie feature from the changelog's 9.42 to 9.44
-entries beyond what is built here; that has not been observed in the original game.
+[observed: the installed mods' scripts and requirement lists, read locally; only the
+gate numbers and the function/key names they call are kept] The "Mods unblocked" column.
+[observed: original FNV 1.4.0.525 + Stewie's Tweaks v1005 + JIP LN 57.3, 2026-11-22,
+two-pass `bNoCasinoBans` 0 vs 1 capture] The `4 -> 3` clamp on `GetCasinoWinningsLevel`
+and quarter thresholds in `blackjack.md` §4. [design] The reported number 945 is an
+engine design choice (the engine is not the plugin and has no version of its own); 960
+(#3183) and 970 (#3184) remain unpromoted until their own step verifications land.
+[hypothesis] Full end-to-end execution of installed Casino Rewards Fix 1.1 in a live
+game and any unexercised 9.42–9.44 tweak remain unobserved.
 
 ## 6. Open (to observe)
 
