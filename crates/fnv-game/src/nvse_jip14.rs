@@ -692,8 +692,18 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // ---- nothing values by decision ----
         // [decision: line meshes are not built; 0, the page's failure]
         "attachline" => zero,
-        // [decision: the page is marked Incomplete]
-        "haskeywordcond" => zero,
+        // Condition-compatible variant of HasKeyword: accepts `ref.HasKeywordCond
+        // "keyword"` or `HasKeywordCond form "keyword"` over `Game::has_keyword`
+        // [documented: GECK wiki HasKeywordCond, HasKeyword; hypothesis: both calling
+        // conventions share the session keyword table].
+        "haskeywordcond" => {
+            let (target, keyword) = match (args.first(), args.get(1)) {
+                (Some(XVal::Str(k)), None) => (subject, Some(k.as_str())),
+                (_, Some(XVal::Str(k))) => (form(args, 0).or(subject), Some(k.as_str())),
+                _ => (None, None),
+            };
+            yes(target.zip(keyword).is_some_and(|(f, k)| g.has_keyword(f, k)))
+        }
         // [decision: NVForever does not crash the game on purpose; the page: "don't use
         // this"]
         "freeplayer" | "goodbyeworldspace" => zero,

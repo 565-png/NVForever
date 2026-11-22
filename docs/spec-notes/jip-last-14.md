@@ -61,10 +61,15 @@ original what the [hypothesis] values below leave open.
 | SetProjectileRefWeapon `weapon` | the weapon of the live projectile's record; returns it [documented]; what the impact takes from it is the engine's [hypothesis] |
 | GetSelfAsInventoryRef | from an item's script in a container: the item as an inventory reference [documented]; elsewhere the call fails [observed: jip14 selfinvref, "script call failed"] |
 
-## 6. Nothing values by decision
+## 6. Keyword condition and nothing values by decision
 
-AttachLine (line meshes; 0), HasKeywordCond (the page is marked Incomplete), FreePlayer
-(the page: "don't use this").
+- `HasKeywordCond`: evaluates `Game::has_keyword` (shared with `HasKeyword` over
+  `Jip2State::keywords`, case-insensitive, resolving references to base forms and
+  `TempCloneForm` origins), accepting both `ref.HasKeywordCond "keyword"` and
+  `HasKeywordCond form "keyword"` [documented: GECK wiki HasKeywordCond, HasKeyword;
+  hypothesis: both calling conventions share `Game::has_keyword`].
+- Nothing values by decision: AttachLine (line meshes; 0), FreePlayer (the page: "don't
+  use this").
 
 ## 7. Follow-ups
 
