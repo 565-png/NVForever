@@ -77,7 +77,7 @@ fn fixture() -> Fixture {
     scpt_subs.extend(unit(
         1,
         &script(&[(0, None, Vec::new())]),
-        &[(1, "fCount", 0), (2, "rTarget", 0)],
+        &[(1, "fCount", 0), (2, "rTarget", 0), (3, "fInf", 0), (4, "fGood", 0)],
         &[],
     ));
     let script = record(b"SCPT", 0, SCRIPT_ID, &scpt_subs);
@@ -907,7 +907,7 @@ fn midgame_player_extras_weapon_magazine_and_dead_counts_convert_and_restore() {
     b.extend(&t2.b);
 
     let cf = b.len();
-    // Player ACHR with f32 = 1.1 and 5-entry actor ExtraDataList (0x5E, 0x74, 0x1D, 0x60, 0x75; no 0x18).
+    // Player ACHR with f32 = 1.1 and 5-entry actor extra-data list (0x5E, 0x74, 0x1D, 0x60, 0x75; no 0x18).
     let mut pl_rec = Build { b: Vec::new() };
     pl_rec.r(1).f32(1.0).f32(2.0).f32(3.0).f32(0.0).f32(0.0).f32(0.0).bar();
     for _ in 0..232 {
@@ -1229,6 +1229,230 @@ fn container_stashes_map_markers_and_created_refs_convert_and_restore() {
     assert_eq!(created.cell, Some(FormId(ROOM_ID)));
     assert_eq!(created.pos, [11.0, 22.0, 33.0]);
     assert_eq!(created.rot, [0.0, 0.0, 1.0]);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn non_finite_fos_floats_are_sanitized_and_round_trip_cleanly() {
+    let f = fixture();
+    // 1-based form ID array
+    let fids = [
+        GLOB_HOUR,     // 1
+        GLOB_CUSTOM,   // 2
+        QUEST_ID,      // 3
+        ROOM_ID,       // 4
+        PLAYER_REF,    // 5
+        NPC_REF,       // 6
+        ITEM_WORN_ID,  // 7
+        WEAP_ID,       // 8
+        CONT_REF,      // 9
+        LVLI_ID,       // 10
+        REPU_ID,       // 11
+        ITEM_ID,       // 12
+        0xFF00_00AA,   // 13: created REFR with NaN pos
+    ];
+
+    let mut h = Build { b: Vec::new() };
+    h.u32(0x30).bar();
+    h.b.extend([0u8; 64]);
+    h.bar()
+        .u32(0)
+        .bar()
+        .u32(0)
+        .bar()
+        .u32(30)
+        .bar()
+        .s_field("Sanitized", true)
+        .s_field("Wanderer", true)
+        .u32(6)
+        .bar()
+        .s_field("OwnTestRoom", true)
+        .s_field("001.02.03", false);
+
+    let mut b = b"FO3SAVEGAME".to_vec();
+    b.extend((h.b.len() as u32).to_le_bytes());
+    b.extend(&h.b);
+
+    let mut pl = Build { b: Vec::new() };
+    pl.u8(1).bar().s_field("FalloutNV.esm", true);
+    b.push(27);
+    b.extend((pl.b.len() as u32).to_le_bytes());
+    b.extend(&pl.b);
+
+    let table_at = b.len();
+    b.extend([0u8; 32 + 78]);
+
+    let g1 = b.len();
+    // Global type 3: 2 non-finite globals (GLOB_HOUR = -Inf, GLOB_CUSTOM = NaN)
+    let mut t3 = Build { b: Vec::new() };
+    t3.vs(2)
+        .bar()
+        .r(1)
+        .bar()
+        .f32(f32::NEG_INFINITY)
+        .bar()
+        .r(2)
+        .bar()
+        .f32(f32::NAN)
+        .bar();
+    b.extend(3u32.to_le_bytes());
+    b.extend((t3.b.len() as u32).to_le_bytes());
+    b.extend(&t3.b);
+
+    let cf = b.len();
+    // 1. QUST (r(3)): NaN delay + 3 script vars: var 1 = NaN, var 3 = +Inf, var 4 = 12.5 (valid)
+    let mut q = Build { b: Vec::new() };
+    q.u8(0x01).bar().f32(f32::NAN).bar();
+    q.vs(0).bar();
+    q.vs(3)
+        .bar()
+        .u32(1)
+        .bar()
+        .f64(f64::NAN)
+        .bar()
+        .u32(3)
+        .bar()
+        .f64(f64::INFINITY)
+        .bar()
+        .u32(4)
+        .bar()
+        .f64(12.5)
+        .bar()
+        .vs(0)
+        .bar()
+        .vs(0)
+        .bar();
+    q.vs(0).bar();
+    push_record(&mut b, 3, (1 << 1) | (1 << 2) | (1 << 31) | (1 << 30) | (1 << 29), TYPE_QUST, &q.b);
+
+    // 2. Player ACHR (r(5)): non-finite rot[2] = +Inf, AV2 XP = NaN, worn item with condition (0x25) = +Inf
+    let mut pl_rec = Build { b: Vec::new() };
+    pl_rec.r(4).f32(1.0).f32(2.0).f32(3.0).f32(0.0).f32(0.0).f32(f32::INFINITY).bar();
+    for i in 0..232 {
+        let v = if i == 77 + 24 { f32::NAN } else { 0.0 };
+        pl_rec.f32(v).bar();
+    }
+    pl_rec.u8(0).bar().f32(1.0).bar().vs(0).bar();
+    pl_rec.vs(1).bar();
+    pl_rec
+        .r(7)
+        .bar()
+        .i32(1)
+        .bar()
+        .vs(1)
+        .bar()
+        .vs(2)
+        .bar()
+        .u8(0x16)
+        .bar()
+        .u8(0x25)
+        .bar()
+        .f32(f32::INFINITY)
+        .bar();
+    push_record(&mut b, 5, (1 << 1) | (1 << 4) | (1 << 5), TYPE_ACHR, &pl_rec.b);
+
+    // 3. NPC_REF (r(6)): place with NaN pos
+    let mut nr = Build { b: Vec::new() };
+    nr.r(4).f32(f32::NAN).f32(0.0).f32(0.0).f32(0.0).f32(0.0).f32(0.0).bar();
+    nr.u8(0).bar();
+    push_record(&mut b, 6, 1 << 1, TYPE_ACHR, &nr.b);
+
+    // 4. Container CONT_REF (r(9)): item with condition (0x25) = NaN
+    let mut cont = Build { b: Vec::new() };
+    cont.vs(1).bar();
+    cont.r(8).bar().i32(1).bar().vs(1).bar().vs(1).bar().u8(0x25).bar().f32(f32::NAN).bar();
+    push_record(&mut b, 9, (1 << 5) | (1 << 27), TYPE_REFR, &cont.b);
+
+    // 5. LVLI (r(10)): entry with condition = NaN
+    let mut lv = Build { b: Vec::new() };
+    lv.vs(1).bar().r(12).bar().u16(1).bar().u16(1).bar().f32(f32::NAN).bar();
+    push_record(&mut b, 10, 1 << 31, TYPE_LVLI, &lv.b);
+
+    // 6. REPU (r(11)): fame = NaN, infamy = 1.0
+    let mut rp = Build { b: Vec::new() };
+    rp.f32(f32::NAN).bar().f32(1.0).bar();
+    push_record(&mut b, 11, 1 << 1, TYPE_REPU, &rp.b);
+
+    // 7. Created 0xFF REFR (r(13)): 32-byte header with NaN pos[0]
+    let mut cr = Build { b: Vec::new() };
+    cr.r(4);
+    for v in [f32::NAN, 2.0, 3.0, 0.0, 0.0, 0.0] {
+        cr.f32(v);
+    }
+    cr.u8(0x01).r(12).bar();
+    assert_eq!(cr.b.len(), 32);
+    push_record(&mut b, 13, 1 << 1, TYPE_REFR, &cr.b);
+
+    let g2 = b.len();
+    b.extend(1000u32.to_le_bytes());
+    b.extend(0u32.to_le_bytes());
+
+    let fid = b.len();
+    b.extend((fids.len() as u32).to_le_bytes());
+    for fid_val in fids {
+        b.extend(fid_val.to_le_bytes());
+    }
+    b.extend(0u32.to_le_bytes());
+    let tail = b.len();
+    b.extend([5, 0, 0, 0, 0, 0, 0, 0, BAR]);
+
+    let table = [fid, tail, g1, cf, g2, 1, 1, 7].map(|v| v as u32);
+    for (i, v) in table.iter().enumerate() {
+        b[table_at + 4 * i..table_at + 4 * i + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
+    let fos = Fos::parse(&b).unwrap();
+    let opts = ConvertOptions {
+        kind: SaveKind::Manual,
+        plugins: vec![PluginEntry { name: "FalloutNV.esm".into(), size: 1234 }],
+        include_thumbnail: false,
+        cosave_present: false,
+    };
+    let converted = convert_fos(&fos, &f.data, &f.forms, &f.refs, &opts).unwrap();
+
+    // Every non-finite float was sanitized and truthfully reported in report.skipped.
+    assert_eq!(converted.report.skipped.get("quest_variable: non-finite value"), Some(&2));
+    assert_eq!(converted.report.skipped.get("quest_delay: non-finite value"), Some(&1));
+    assert_eq!(converted.report.skipped.get("global: non-finite value"), Some(&2));
+    assert_eq!(converted.report.skipped.get("player_av: non-finite value"), Some(&1));
+    assert_eq!(converted.report.skipped.get("player_place: non-finite transform"), Some(&1));
+    assert_eq!(converted.report.skipped.get("reference_place: non-finite transform"), Some(&1));
+    // Fos::created_refs already rejects non-finite 32-byte placement headers.
+    assert_eq!(converted.report.skipped.get("created_ref: 32-byte header not understood"), Some(&1));
+    assert_eq!(converted.report.skipped.get("player_item_condition: non-finite value"), Some(&1));
+    assert_eq!(converted.report.skipped.get("container_item_condition: non-finite value"), Some(&1));
+    assert_eq!(converted.report.skipped.get("leveled_list_condition: non-finite value"), Some(&1));
+    assert_eq!(converted.report.skipped.get("reputation: non-finite value"), Some(&1));
+
+    // Write .nvfsave and prove full typed SaveBody<GameSnapshot> round-trip succeeds without null floats.
+    let dir = std::env::temp_dir().join(format!("nvf-fos-convert-nan-{}", std::process::id()));
+    let out = dir.join("sanitized.nvfsave");
+    let body_bytes = serde_json::to_vec(&converted.body).unwrap();
+    fnv_save::write(&out, &converted.header, &converted.shot, &body_bytes, false).unwrap();
+
+    let (_h, _shot, body): (SaveHeader, Vec<u8>, SaveBody<GameSnapshot>) = fnv_save::read_body(&out).unwrap();
+    body.game.check().unwrap();
+    let restored_world = World::restore(&f.forms, &f.refs, &body.game.sim).unwrap();
+    let restored = Game::restore(&f.data, restored_world, GameConfig::default(), &body.game).unwrap();
+
+    // Valid quest var 4 survived while NaN (1) and +Inf (3) were omitted cleanly.
+    let q_inst = restored.instances.get(&InstKey::Quest { quest: FormId(QUEST_ID) }).unwrap();
+    assert_eq!(q_inst.vars.get(&1), None);
+    assert_eq!(q_inst.vars.get(&3), None);
+    assert_eq!(q_inst.vars.get(&4), Some(&Value::Num(12.5)));
+    assert_eq!(restored.quests.get(&FormId(QUEST_ID)).unwrap().delay, None);
+    // Globals kept their finite ESM defaults instead of -Inf / NaN.
+    assert_eq!(restored.world.global(FormId(GLOB_HOUR)), Ok(8.0));
+    assert_eq!(restored.world.global(FormId(GLOB_CUSTOM)), Ok(0.0));
+    // Worn item & container item survived with condition = None instead of Inf / NaN.
+    let p_inv = restored.world.peek(FormId::PLAYER_REF).unwrap().inventory.as_ref().unwrap();
+    assert!(p_inv.is_equipped(FormId(ITEM_WORN_ID)));
+    assert!(p_inv.groups().all(|(_, e, _)| e.condition.is_none()));
+    let c_inv = restored.world.peek(FormId(CONT_REF)).unwrap().inventory.as_ref().unwrap();
+    assert!(c_inv.groups().all(|(_, e, _)| e.condition.is_none()));
+    assert!(!restored.player.reputation.contains_key(&FormId(REPU_ID)));
+    assert!(restored.world.peek(FormId::FIRST_DYNAMIC).is_none());
 
     let _ = std::fs::remove_dir_all(&dir);
 }

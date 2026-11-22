@@ -135,7 +135,7 @@ documented layout].
 |---|---|---|
 | 0 | 220 | (every value below is followed by 0x7C) u32 count 43, 43 × (u32). All zero in B (new game); first two are 1 in A/C/D. The misc statistics by code: the values of 31 saves fit the names (misc-stats.md §1) [observed] |
 | 1 | 57 | **Player location and created-form counter**: u32 next created form ID (0xFF001313 in C, 0xFF001309 in B, 0xFF001317 in A); ref of the current worldspace (WastelandNV in C, a dummy worldspace FFEncounterWorld in B, which is indoors); two i32 cell grid coordinates (−18, 0 in C); ref of the worldspace or interior cell the player is in (GSDocMitchellHouse in B); three f32 position (no separator between them); ref of a quest (VCG01 in B, VCG02 in C) [hypothesis: the active quest shown in the Pip-Boy]; u32, f32, u32 unknown |
-| 2 | 107 | `vsval` count, `\|`, then `count × (ref, \|, u16, \|)`, followed by 105 unmapped trailing bytes (`count = 0` in A–D: `00 7C` + 105 bytes = 107; `count = 603` in M, §6.3; non-zero counts also seen in mid-game playthrough saves) [observed; hypothesis: per-base-form death counts, as Oblivion's equivalent documented on UESP Tes4Mod; trailing 105 bytes unknown] |
+| 2 | 107 | `vsval` count, `\|`, then `count × (ref, \|, u16, \|)`, followed by 105 unmapped trailing bytes (`count = 0` in A–D: `00 7C` + 105 bytes = 107; `count = 603` in M, §6.3 [observed: A–D, M]; `[hypothesis]` for general non-zero counts, per-base-form death counts as Oblivion's equivalent documented on UESP Tes4Mod, and the 105 unmapped trailing bytes) |
 | 3 | 1803 | **Global variables**: vsval count (200), then per global: ref and f32, each followed by 0x7C. 199 resolve to GLOB records, one to form 0x63 (no record in the masters [hypothesis: a hard-coded global]). Game time is here: GameHour, GameDaysPassed, GameDay/Month/Year, TimeScale (30) |
 | 4 | 30 | three f32 and six bytes; the third float moved between C and D (10.388 → 10.402); meaning unknown |
 | 5 | 36 | u32 1, flags, floats; two floats moved between C and D; meaning unknown |
@@ -260,22 +260,21 @@ unknown].
 - bit 2: worldspace/cell ref, then six f32 with no separators (position, rotation), `|`.
   Seen on refs moved by physics (tumbleweeds, items) [hypothesis: "moved"].
 - bit 4: one f32 (1.0 seen) [hypothesis: scale or health].
-- bit 5 and bit 27: **item lists**: reuses the exact bar-delimited inventory framing of
+- bit 5 and bit 27: **item lists**: reuses the bar-delimited inventory framing of
   §6.4 (`vsval count, |`, then per item `ref, |, i32 count_delta, |, vsval lists, |`, per
-  list `vsval extras, |`, per extra `type, |, payload, |`) [observed across pure bit-5,
-  bit-27, bit-(5+27), and bit-(5+27+28) container `REFR`s in mid-game playthrough saves;
-  pure bit-5/27/5+27 records end exactly at `c.at_end()`, while bit-(5+27+28) carries a
-  13-byte trailing bit-28 block]. Observed container extra-data types include `0x0D`,
-  `0x24`, `0x25`, and container-specific `0x2F` (`u32, |, u8, |`) [hypothesis: container
-  inventory deltas against the base `CONT` stock; `0x2F` = `ExtraLeveledItem` / container
-  item origin]. Vendor containers and Doc Mitchell's dresser have them.
+  list `vsval extras, |`, per extra `type, |, payload, |`) [hypothesis: pure bit-5,
+  bit-27, and bit-(5+27) container `REFR`s end at `c.at_end()`, while bit-(5+27+28)
+  carries a 13-byte trailing bit-28 block; container extra-data types include `0x0D`,
+  `0x24`, `0x25`, and container-extra `0x2F` (`u32, |, u8, |`); container inventory
+  deltas against the base `CONT` stock]. Vendor containers and Doc Mitchell's dresser
+  have them.
 - bit 12: door data (`2A`, a byte, a ref, two u32) on doors [hypothesis: lock or teleport].
-- bit 28 and bit 31: animation/script data or `vsval`-counted `ExtraDataList`:
+- bit 28 and bit 31: animation/script data or `vsval`-counted extra-data list:
   - on placed `MapMarker` `REFR`s (`NAME == 0x00000010`), bit 31 (optionally with bit 29)
-    stores a `vsval`-counted `ExtraDataList` containing type `0x2C` (`u8, |`; values `0x01`
-    and `0x03` seen) and optional bit-29 `0x74` (`ref, |`), ending exactly at `c.at_end()`
-    [observed in mid-game playthrough saves; hypothesis: `ExtraMapMarker` flags matching ESM
-    `FNAM`, `0x01` visible, `0x02` fast-travelable / discovered].
+    stores a `vsval`-counted extra-data list containing type `0x2C` (`u8, |`; values `0x01`
+    and `0x03`) and optional bit-29 `0x74` (`ref, |`), ending at `c.at_end()` [hypothesis:
+    map-marker flags matching ESM `FNAM`, `0x01` visible, `0x02` fast-travelable /
+    discovered].
   - on other bit-28/31 references: script variables (vsval, script ref, u32 index + f64
     value pairs as in quests) and short strings such as `Backward`, `Close`, `SpecialIdle`
     [hypothesis: bit 31 = script variables / extra data of the reference, bit 28 =
@@ -324,13 +323,13 @@ plugin's position in the save's list.
 - **Worldspace array**: 23 worldspaces, including the four story DLCs' (Zion, the Villa and
   its town worldspaces, Big MT, the Divide) and the Strip, Freeside, Boulder City.
   Together with B (none, never outdoors) this supports "worldspaces visited" [hypothesis].
-- **Created forms** (kind-2 refs, 0xFF…): 574 records in M (556 REFR, 15 ACRE, 3 type 3).
-  Every created `REFR` begins with a universal 32-byte header ending with `|` at byte 31:
+- **Created forms** (kind-2 refs, 0xFF…): 574 records in M (556 REFR, 15 ACRE, 3 type 3)
+  [observed: M]. Created `REFR`s begin with a 32-byte header ending with `|` at byte 31:
   `cell_or_world_ref` (3 bytes), six `f32` LE (position and rotation, no internal `|`),
-  `u8` header flag (`0x01` or `0x03` seen), `base_form_ref` (3 bytes), and `|` [observed
-  across M and mid-game playthrough saves: bit-1-only created `REFR`s are exactly 32 bytes;
-  additional change flags such as bit 0/2/3/4/29/31 follow at offset 32 with `|`-separated
-  blocks; hypothesis: created reference placement cell/world, transform, and base form].
+  `u8` header flag (`0x01` or `0x03`), `base_form_ref` (3 bytes), and `|` [hypothesis:
+  bit-1-only created `REFR`s are 32 bytes; additional change flags such as bit
+  0/2/3/4/29/31 follow at offset 32 with `|`-separated blocks; created reference
+  placement cell/world, transform, and base form].
   The next created form ID in M is 0xFF00155E.
 - **Global table 1 grows with play**: type 2 is 4,329 bytes: vsval count 603, then
   (ref, `|`, u16, `|`) entries [hypothesis: a count per base form, such as the per-actor
@@ -363,21 +362,21 @@ Read in the 19 `nvf*.fos` saves of the owner's `Saves` folder (2026-11-01; flags
 |---|---|---|
 | place | ref, six f32, `\|` | the worldspace outdoors (WastelandNV, TheStripWorldNew) or the interior cell (GSDocMitchellHouse), position, rotation in radians (nvfairport: z 1.309 = 75°) |
 | actor values | 232 × (f32, `\|`) | three arrays of 77 (the actor value count) and one more entry. First array: 2.0 at codes 38 (Melee Weapons) and 43 (Speech) in 17 saves, 2.0 at code 5 (Strength) in the two level-50 saves (nvfLanius, nvfSlides). Second array: code 24 holds 10 in nvfairport, 143 to 3,419 in mid-game saves and 186,200 in the level-50 ones, code 23 holds 50 to 1,000 [hypothesis: the second is the base values that play changes, experience (24) and karma (23)]. The first is not skill points spent, as read on 2026-11-01: nvfairport's +2 Melee Weapons and +2 Speech are exactly the enchantment of the Vault 21 Jumpsuit it wears (VaultSuit21's EITM EnchClothingVaultSuitNormal, Speech 2 and Melee Weapons 2) [observed, 2026-11-11]: giving them as skill points and putting the suit on counted them twice (Melee 36 against the probe's 34). [hypothesis: active effects' modifiers.] nvfairport's Melee is 34 = 2 + 2 × 5 + ⌈10 × 0.5⌉ + 15 tag + 2 (the suit), which matches its probe |
-| post-AV float | u8 (0x00), `\|`, f32, `\|` | `1.0` in the `nvf*.fos` saves and `1.1` in mid-game playthrough saves [observed; meaning unknown] |
-| actor ExtraDataList | vsval count, `\|`, then `count` entries: type byte, `\|`, payload, `\|` | Observed actor extra-data types: `0x5E` (`vsval n, \|, n × (ref, \|, u8, \|)` [hypothesis: faction changes]); `0x18` (`ref, \|, 12 bytes, \|, f32, \|`, seen in early saves); `0x74` (`ref, \|`, seen with change flag 29); `0x1D` (`vsval n, \|, n × (ref, \|)`, seen in `nvf1topsym`/`nvf38door`/`nvf47suite`/`nvfBoone` and mid-game playthrough saves); `0x60` (`u32, \|`); `0x75` (`ref, \|, ref, \|, u8, \|`). Mid-game playthrough saves carry 5 entries (`0x5E`, `0x74`, `0x1D`, `0x60`, `0x75`) with `0x18` absent [observed]. An unknown type stops inventory parsing rather than guessing |
-| inventory | vsval count, `\|`, then per item: ref, `\|`, i32 count, `\|`, vsval lists, `\|`, per list: vsval extras, `\|`, per extra: type byte, `\|`, payload, `\|` | nvfairport: 27 items, the same 27 kinds its probes counted; mid-game playthrough saves decode cleanly to the shared post-inventory boundary [observed] |
+| post-AV float | u8 (0x00), `\|`, f32, `\|` | `1.0` in the `nvf*.fos` saves [observed: `nvf*.fos`]; other finite values such as `1.1` accepted [hypothesis; meaning unknown] |
+| actor extra-data list | vsval count, `\|`, then `count` entries: type byte, `\|`, payload, `\|` | Actor extra-data types: `0x5E` (`vsval n, \|, n × (ref, \|, u8, \|)` [hypothesis: faction changes]), `0x18` (`ref, \|, 12 bytes, \|, f32, \|`, seen in early `nvf*.fos` saves), `0x74` (`ref, \|`, seen with change flag 29), and `0x1D` (`vsval n, \|, n × (ref, \|)`, seen in `nvf1topsym`/`nvf38door`/`nvf47suite`/`nvfBoone`) [observed: `nvf*.fos`]; `0x60` (`u32, \|`), `0x75` (`ref, \|, ref, \|, u8, \|`), and 5-entry lists with `0x18` absent [hypothesis]. An unknown type stops inventory parsing rather than guessing |
+| inventory | vsval count, `\|`, then per item: ref, `\|`, i32 count, `\|`, vsval lists, `\|`, per list: vsval extras, `\|`, per extra: type byte, `\|`, payload, `\|` | nvfairport: 27 items, the same 27 kinds its probes counted [observed: nvfairport] |
 
-Nine item extra-data types have been observed in the player inventory (`[observed]` byte framing; semantic meanings `[hypothesis]` unless noted):
+Nine item extra-data types are handled in the player inventory (framing `[observed: nvf*.fos]` where noted below, otherwise `[hypothesis]`; semantic meanings `[hypothesis]`):
 
-- `0x0D` (`ref, \|, vsval nv, \|, nv × (u32 idx, \|, ref if idx & 0x80000000 else f64, \|), vsval 0, \|, vsval 0, \|`): same script-variable framing as `QUST` bit 30, seen in `nvf31mainframe`, `nvfSlides`, and mid-game playthrough saves [hypothesis: `ExtraScript`, item script instance]; non-empty trailing lists fail soft.
-- `0x16` (0 payload bytes): on worn armour, weapon, Pip-Boy and glove [hypothesis: `ExtraWorn`].
-- `0x1C` (`ref, \|`): [hypothesis: `ExtraOriginalReference`].
-- `0x21` (`ref, \|`): [hypothesis: `ExtraOwnership`].
-- `0x24` (`i16, \|`): [hypothesis: `ExtraCount`, sub-stack count].
-- `0x25` (`f32, \|`): on weapons and armour (e.g. 41.25 on a pistol) [hypothesis: `ExtraHealth`, condition HP].
-- `0x4A` (`u8, \|`): [hypothesis: `ExtraHotkey`, quick-slot index; not persisted in `NVFSAVE` v1].
-- `0x6E` (`ref, \|, u32, \|`): on weapons [hypothesis: `ExtraAmmo`, loaded ammo form and round count].
-- `0x8D` (`u8, \|`): on modded weapons [hypothesis: `ExtraWeaponModFlags`, low 3 bits for slots 1–3].
+- `0x0D` (`ref, \|, vsval nv, \|, nv × (u32 idx, \|, ref if idx & 0x80000000 else f64, \|), vsval 0, \|, vsval 0, \|`): same script-variable framing as `QUST` bit 30, seen in `nvf31mainframe` and `nvfSlides` [observed: `nvf31mainframe`, `nvfSlides`; hypothesis: item script instance]; non-empty trailing lists fail soft.
+- `0x16` (0 payload bytes): on worn armour, weapon, Pip-Boy and glove [observed: `nvf*.fos`; hypothesis: worn].
+- `0x1C` (`ref, \|`): [hypothesis: original reference].
+- `0x21` (`ref, \|`): [hypothesis: owner].
+- `0x24` (`i16, \|`): [hypothesis: stack count].
+- `0x25` (`f32, \|`): on weapons and armour (e.g. 41.25 on a pistol) [observed: `nvf*.fos`; hypothesis: condition HP].
+- `0x4A` (`u8, \|`): [hypothesis: hotkey quick-slot index; not persisted in `NVFSAVE` v1].
+- `0x6E` (`ref, \|, u32, \|`): on weapons [hypothesis: loaded magazine ammo form and round count].
+- `0x8D` (`u8, \|`): on modded weapons [hypothesis: weapon mods, low 3 bits for slots 1–3].
 
 Any other item extra-data type fails soft so no inventory is guessed out of misaligned bytes.
 
@@ -497,9 +496,13 @@ Every `[hypothesis]` field actually written during a conversion is counted expli
 `ConversionReport::hypothesis_fields` (alongside a summary entry in `warnings`) so callers
 and users can see exactly which hypothesised `.fos` readings entered the `.nvfsave`. Every
 unmapped global table, created `0xFF` form, missing-plugin form, unmapped or
-non-empty-payload changed-form record, overflowed inventory delta, and sibling `.nvse`
-co-save is counted in `skipped` rather than guessed. The game runtime itself remains
-`.nvfsave`-only.
+non-empty-payload changed-form record, overflowed inventory delta, non-finite IEEE-754
+float (`NaN` / `±Infinity` in quest variables, globals, transforms, item conditions,
+reputations, delays, or actor values, which would otherwise serialize as JSON `null`),
+and sibling `.nvse` co-save is counted in `skipped` rather than guessed. After writing,
+`fnvtool save convert` verifies both `fnv_save::read_header` and full typed
+`fnv_save::read_body::<GameSnapshot>` + `GameSnapshot::check` round-trip. The game
+runtime itself remains `.nvfsave`-only.
 
 ## 7. What moves between C and D [observed]
 

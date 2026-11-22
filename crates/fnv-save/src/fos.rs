@@ -7,7 +7,7 @@
 //! global variables (type 3), misc statistics (type 0), player location/active quest
 //! (type 1), death-count prefix (type 2), sky/weather (type 8), quests (flags, delay,
 //! stages, objectives, variables), player SPECIAL, tag skills, AV arrays, and inventory
-//! (with actor ExtraDataList and all 9 observed item extra-data types), container `REFR`
+//! (with actor extra-data list and item extra-data types), container `REFR`
 //! inventories (bits 5/27, including extra `0x2F`), map marker `REFR` discovery/visibility
 //! flags (extra `0x2C`), created `0xFF` `REFR` headers, placed reference form flags and
 //! places, faction relations, form lists (`FLST`), leveled item lists (`LVLI`),
@@ -933,7 +933,7 @@ impl Fos {
     }
 
     /// Map marker visibility/travel flags from non-created `REFR` records with change flag
-    /// bit 31 (and optionally bit 29) whose `ExtraDataList` carries type `0x2C` (`u8 |`) and
+    /// bit 31 (and optionally bit 29) whose extra-data list carries type `0x2C` (`u8 |`) and
     /// optional `0x74` (`ref3 |`) (save-files.md §6.2) [hypothesis]. Bit-31 `REFR` records
     /// with other extra-data types or payloads are omitted rather than returned as errors.
     pub fn map_markers(&self) -> Vec<Result<FosMapMarker, FosError>> {
@@ -1121,7 +1121,7 @@ impl Fos {
     }
 
     /// The player's inventory list, following the `0x00 | f32 |` header and the
-    /// `vsval`-counted actor `ExtraDataList` after the actor-value block (save-files.md
+    /// `vsval`-counted actor extra-data list after the actor-value block (save-files.md
     /// §6.4). Every separator and extra-data type byte is verified; an unknown actor or
     /// item extra-data type fails soft so no inventory is guessed out of misaligned bytes.
     fn player_inventory(&self, mut c: Cur<'_>) -> Result<Vec<FosItem>, FosError> {
@@ -1219,7 +1219,7 @@ impl Fos {
                 let mut entry = FosItemEntry::default();
                 for _ in 0..extras {
                     match c.u8()? {
-                        // ExtraScript: ref3 | vsval(nv) | nv * (u32 idx | ref3/f64 |) | vsval(0) | vsval(0) |
+                        // Item script instance: ref3 | vsval(nv) | nv * (u32 idx | ref3/f64 |) | vsval(0) | vsval(0) |
                         0x0D => {
                             c.bar()?;
                             c.ref3()?;
@@ -1238,41 +1238,41 @@ impl Fos {
                             }
                             for _ in 0..2 {
                                 if c.vsval()? != 0 {
-                                    return err("non-empty trailing list in ExtraScript");
+                                    return err("non-empty trailing list in item script extra");
                                 }
                                 c.bar()?;
                             }
                         }
-                        // ExtraWorn (0 payload bytes)
+                        // Worn item marker (0 payload bytes)
                         0x16 => {
                             c.bar()?;
                             entry.worn = true;
                         }
-                        // ExtraOriginalReference (ref3 |)
+                        // Original reference (ref3 |)
                         0x1C => {
                             c.bar()?;
                             c.ref3()?;
                             c.bar()?;
                         }
-                        // ExtraOwnership (ref3 |)
+                        // Owner (ref3 |)
                         0x21 => {
                             c.bar()?;
                             entry.owner = Some(self.reference(c.ref3()?).ok().flatten());
                             c.bar()?;
                         }
-                        // ExtraCount (i16 |)
+                        // Stack count (i16 |)
                         0x24 => {
                             c.bar()?;
                             entry.count = Some(c.i16()?);
                             c.bar()?;
                         }
-                        // ExtraHealth (f32 HP |)
+                        // Condition HP (f32 HP |)
                         0x25 => {
                             c.bar()?;
                             entry.condition = Some(c.f32()?);
                             c.bar()?;
                         }
-                        // Container leveled-item origin (u32 | u8 |) [hypothesis: ExtraLeveledItem]
+                        // Container-extra 0x2F (u32 | u8 |) [hypothesis]
                         0x2F => {
                             c.bar()?;
                             c.u32()?;
@@ -1280,13 +1280,13 @@ impl Fos {
                             c.u8()?;
                             c.bar()?;
                         }
-                        // ExtraHotkey (u8 |)
+                        // Hotkey (u8 |)
                         0x4A => {
                             c.bar()?;
                             entry.hotkey = Some(c.u8()?);
                             c.bar()?;
                         }
-                        // ExtraAmmo (ref3 | u32 |)
+                        // Magazine ammo (ref3 | u32 |)
                         0x6E => {
                             c.bar()?;
                             let ammo_form = self.reference(c.ref3()?).ok().flatten();
@@ -1295,7 +1295,7 @@ impl Fos {
                             c.bar()?;
                             entry.ammo = Some((ammo_form, rounds));
                         }
-                        // ExtraWeaponModFlags (u8 |)
+                        // Weapon mods (u8 |)
                         0x8D => {
                             c.bar()?;
                             entry.weapon_mods = c.u8()? & 0x07;
@@ -1556,7 +1556,7 @@ mod tests {
 
     #[test]
     fn the_inventory_after_the_flag_29_block_and_none_for_another_shape() {
-        // Flag 29: `74 |` and a ref inside the actor ExtraDataList before the inventory.
+        // Flag 29: `74 |` and a ref inside the actor extra-data list before the inventory.
         let p = with_player(player_data(true, 0x5E, 0x25), PLAYER_FLAGS | 1 << 29);
         assert_eq!(p.inventory.map(|i| i.len()), Some(2));
         // An unknown actor extra-data type: no inventory, not items read out of other data.
@@ -1584,7 +1584,7 @@ mod tests {
         for _ in 0..AV_ENTRIES {
             p.f32(0.0).bar();
         }
-        // Finite non-1.0 float (1.1) and 5-entry actor ExtraDataList: 0x5E, 0x74, 0x1D, 0x60, 0x75 (no 0x18).
+        // Finite non-1.0 float (1.1) and 5-entry actor extra-data list: 0x5E, 0x74, 0x1D, 0x60, 0x75 (no 0x18).
         p.u8(0).bar().f32(1.1).bar().vs(5).bar();
         p.u8(0x5E).bar().vs(1).bar().r(4).bar().u8(2).bar();
         p.u8(0x74).bar().r(8).bar();

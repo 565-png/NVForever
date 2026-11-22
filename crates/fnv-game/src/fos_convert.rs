@@ -334,7 +334,7 @@ pub fn convert_fos(
     let world = World::new(forms, refs, SimConfig::default());
     let mut g = Game::new(data, world, GameConfig::default());
 
-    if let Some(secs) = fos.header.play_seconds() {
+    if let Some(secs) = fos.header.play_seconds().filter(|s| s.is_finite() && *s >= 0.0) {
         g.time = secs;
     }
 
@@ -342,6 +342,10 @@ pub fn convert_fos(
     match fos.global_variables() {
         Ok(globals) => {
             for (raw_id, val) in globals {
+                if !val.is_finite() {
+                    inc_skip("global", "non-finite value");
+                    continue;
+                }
                 match map_id(raw_id) {
                     Ok(id) if forms.globals.contains_key(&id) => {
                         if g.world.set_global(id, val).is_ok() {
@@ -463,8 +467,12 @@ pub fn convert_fos(
             let i = var_idx.expect("checked");
             match val {
                 VarValue::Num(x) => {
-                    g.store(InstKey::Quest { quest: qid }, Some(sid), i, Value::Num(*x), "fos_convert", false);
-                    inc_ok("quest_vars");
+                    if x.is_finite() {
+                        g.store(InstKey::Quest { quest: qid }, Some(sid), i, Value::Num(*x), "fos_convert", false);
+                        inc_ok("quest_vars");
+                    } else {
+                        inc_skip("quest_variable", "non-finite value");
+                    }
                 }
                 VarValue::Ref(None) => {
                     g.store(InstKey::Quest { quest: qid }, Some(sid), i, Value::Ref(0), "fos_convert", false);
@@ -497,6 +505,8 @@ pub fn convert_fos(
             if delay.is_finite() && delay >= 0.0 {
                 qs.delay = Some(f64::from(delay));
                 wrote_hyp_quest = true;
+            } else if !delay.is_finite() {
+                inc_skip("quest_delay", "non-finite value");
             }
         }
         for &(stage, done) in &q.stages {
@@ -572,6 +582,9 @@ pub fn convert_fos(
             if p.av_parsed {
                 for &(code, val) in &p.av_base {
                     if !val.is_finite() {
+                        if matches!(code as u16, AV_XP | AV_KARMA) {
+                            inc_skip("player_av", "non-finite value");
+                        }
                         continue;
                     }
                     match code as u16 {
@@ -622,24 +635,28 @@ pub fn convert_fos(
                     .and_then(|l| l.cell_or_world.map(|at| (at, l.pos, [0.0; 3])))
             });
             if let Some((raw_at, pos, rot)) = chosen_place {
-                match map_id(raw_at) {
-                    Ok(at) => {
-                        if let Some(cell) = resolve_cell(refs, at, pos) {
-                            if let Ok(st) = g.world.get(FormId::PLAYER_REF) {
-                                st.cell = Some(cell);
-                                st.pos = pos;
-                                st.rot = rot;
-                                g.player_entered(Some(cell));
-                                header_place = build_header_place(refs, loc_global.as_ref(), &map_id, cell, pos, rot);
-                                inc_ok("player_place");
+                if !finite_transform(pos, rot) {
+                    inc_skip("player_place", "non-finite transform");
+                } else {
+                    match map_id(raw_at) {
+                        Ok(at) => {
+                            if let Some(cell) = resolve_cell(refs, at, pos) {
+                                if let Ok(st) = g.world.get(FormId::PLAYER_REF) {
+                                    st.cell = Some(cell);
+                                    st.pos = pos;
+                                    st.rot = rot;
+                                    g.player_entered(Some(cell));
+                                    header_place = build_header_place(refs, loc_global.as_ref(), &map_id, cell, pos, rot);
+                                    inc_ok("player_place");
+                                } else {
+                                    inc_skip("player_place", "player reference missing in world");
+                                }
                             } else {
-                                inc_skip("player_place", "player reference missing in world");
+                                inc_skip("player_place", "cell or worldspace not present in load order");
                             }
-                        } else {
-                            inc_skip("player_place", "cell or worldspace not present in load order");
                         }
+                        Err(why) => inc_skip("player_place", why),
                     }
-                    Err(why) => inc_skip("player_place", why),
                 }
             }
         }
@@ -676,20 +693,24 @@ pub fn convert_fos(
             inc_hyp("reference_form_flags (REFR/ACHR/ACRE bit 0) [hypothesis]");
         }
         if let Some((raw_at, pos, rot)) = r.place {
-            match map_id(raw_at) {
-                Ok(at) => {
-                    if let Some(cell) = resolve_cell(refs, at, pos) {
-                        if let Ok(st) = g.world.get(rid) {
-                            st.cell = Some(cell);
-                            st.pos = pos;
-                            st.rot = rot;
-                            inc_ok("reference_places");
+            if !finite_transform(pos, rot) {
+                inc_skip("reference_place", "non-finite transform");
+            } else {
+                match map_id(raw_at) {
+                    Ok(at) => {
+                        if let Some(cell) = resolve_cell(refs, at, pos) {
+                            if let Ok(st) = g.world.get(rid) {
+                                st.cell = Some(cell);
+                                st.pos = pos;
+                                st.rot = rot;
+                                inc_ok("reference_places");
+                            }
+                        } else {
+                            inc_skip("reference_place", "cell or worldspace not present in load order");
                         }
-                    } else {
-                        inc_skip("reference_place", "cell or worldspace not present in load order");
                     }
+                    Err(why) => inc_skip("reference_place", why),
                 }
-                Err(why) => inc_skip("reference_place", why),
             }
         }
     }
@@ -780,6 +801,10 @@ pub fn convert_fos(
             inc_skip("created_ref", "missing cell or worldspace");
             continue;
         };
+        if !finite_transform(pos, rot) {
+            inc_skip("created_ref", "non-finite transform");
+            continue;
+        }
         let at = match map_id(raw_at) {
             Ok(id) => id,
             Err(why) => {
@@ -882,6 +907,9 @@ pub fn convert_fos(
         for entry in lv.entries {
             match entry.item.ok_or("not in save form ID array").and_then(&map_id) {
                 Ok(item_id) => {
+                    if !entry.condition.is_finite() {
+                        inc_skip("leveled_list_condition", "non-finite value");
+                    }
                     let le = LeveledEntry {
                         level: entry.level,
                         item: item_id,
@@ -1019,13 +1047,17 @@ pub fn convert_fos(
     let snapshot = g.checked_snapshot()?;
     let mut header = SaveHeader::new(opts.kind);
     header.plugins = opts.plugins.clone();
-    header.play_seconds = snapshot.time;
+    header.play_seconds = if snapshot.time.is_finite() { snapshot.time } else { 0.0 };
     if let Ok(cal) = g.world.calendar() {
-        header.game_year = cal.year.max(0.0) as u32;
-        header.game_month = cal.month.max(0.0) as u32;
-        header.game_day = cal.day.max(0.0) as u32;
-        header.game_hour = cal.hour;
-        header.game_days_passed = Some(cal.days_passed);
+        header.game_year = if cal.year.is_finite() { cal.year.max(0.0) as u32 } else { 0 };
+        header.game_month = if cal.month.is_finite() { cal.month.max(0.0) as u32 } else { 0 };
+        header.game_day = if cal.day.is_finite() { cal.day.max(0.0) as u32 } else { 0 };
+        if cal.hour.is_finite() {
+            header.game_hour = cal.hour;
+        }
+        if cal.days_passed.is_finite() {
+            header.game_days_passed = Some(cal.days_passed);
+        }
     }
     header.player_name = snapshot.player.name.clone().unwrap_or_else(|| "Courier".into());
     header.level = g.player_level().max(1.0) as u32;
@@ -1079,10 +1111,14 @@ pub fn convert_fos(
     Ok(ConvertedSave { header, shot, body, report })
 }
 
+fn finite_transform(pos: [f32; 3], rot: [f32; 3]) -> bool {
+    pos.iter().all(|v| v.is_finite()) && rot.iter().all(|v| v.is_finite())
+}
+
 fn normalize_item_condition(forms: &FormStore, id: FormId, cond_hp: Option<f32>) -> Option<f32> {
     let hp = cond_hp?;
     let max_hp = forms.item(id)?.health.filter(|&h| h > 0)? as f32;
-    hp.is_finite().then_some((hp / max_hp).clamp(0.0, 1.0))
+    hp.is_finite().then_some((hp / max_hp).clamp(0.0, 1.0)).filter(|v| v.is_finite())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1109,6 +1145,9 @@ fn apply_container_inventory(
                             break;
                         }
                         let stack_n = entry.count.map(i32::from).filter(|&n| n > 0).unwrap_or(1).min(remaining);
+                        if entry.condition.is_some_and(|hp| !hp.is_finite()) {
+                            inc_skip("container_item_condition", "non-finite value");
+                        }
                         let cond = normalize_item_condition(forms, id, entry.condition);
                         let owner = match entry.owner {
                             Some(Some(raw)) => match map_id(raw) {
@@ -1224,6 +1263,9 @@ fn apply_player_inventory(
                             break;
                         }
                         let stack_n = entry.count.map(i32::from).filter(|&n| n > 0).unwrap_or(1).min(remaining);
+                        if entry.condition.is_some_and(|hp| !hp.is_finite()) {
+                            inc_skip("player_item_condition", "non-finite value");
+                        }
                         let cond = normalize_item_condition(forms, id, entry.condition);
                         let owner = match entry.owner {
                             Some(Some(raw)) => match map_id(raw) {

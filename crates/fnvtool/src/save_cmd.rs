@@ -92,14 +92,19 @@ pub fn run(cmd: SaveCmd) -> anyhow::Result<Value> {
             let body_bytes = serde_json::to_vec(&converted.body)?;
             fnv_save::write(&out, &converted.header, &converted.shot, &body_bytes, false)
                 .with_context(|| out.display().to_string())?;
-            // Verify the written container header is immediately readable.
+            // Verify both the written container header and the full typed GameSnapshot body
+            // round-trip cleanly (catches any JSON serialization issue such as non-finite floats).
             let verified = fnv_save::read_header(&out).with_context(|| out.display().to_string())?;
+            let (_, _, verified_body): (fnv_save::SaveHeader, Vec<u8>, fnv_save::SaveBody<fnv_game::game::GameSnapshot>) =
+                fnv_save::read_body(&out).with_context(|| format!("verifying written save body {}", out.display()))?;
+            verified_body.game.check().map_err(anyhow::Error::msg)?;
             let mut doc = serde_json::to_value(&converted.report)?;
             doc["output"] = json!({
                 "path": out.display().to_string(),
                 "body_bytes": body_bytes.len(),
                 "thumbnail_bytes": converted.shot.len(),
                 "verified_header_format": verified.header.format,
+                "verified_body_format": verified_body.format,
                 "plugins": verified.header.plugins.len(),
             });
             Ok(doc)
@@ -118,6 +123,20 @@ mod tests {
         let bad = dir.join("bad.fos");
         std::fs::write(&bad, b"NOT_A_FOS").unwrap();
         assert!(run(SaveCmd::InspectFos { input: bad.clone() }).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_body_rejects_null_float_in_quest_var() {
+        let dir = std::env::temp_dir().join(format!("nvf-save-cmd-null-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("null_float.nvfsave");
+        let header = fnv_save::SaveHeader::new(SaveKind::Manual);
+        // Mimics serde_json serializing an unsanitized NaN/Inf Value::Num as JSON null.
+        let body = br#"{"format":"nvf.save.body/1","game":{"instances":[[{"kind":"quest","quest":"00000810"},{"script":null,"vars":{"7":{"num":null}}}]]},"engine":{"format":"nvf.engine.state/1"}}"#;
+        fnv_save::write(&path, &header, &[], body, false).unwrap();
+        let err = fnv_save::read_body::<fnv_save::SaveBody<fnv_game::game::GameSnapshot>>(&path).unwrap_err();
+        assert!(err.to_string().contains("invalid type: null, expected f64"), "unexpected error: {err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
