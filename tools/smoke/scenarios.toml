@@ -7130,6 +7130,21 @@ order = [[
 ]]
 
 [[scenario]]
+name = "terminal-note-pages"
+source = "[hypothesis] #3409: E, Enter or a click turns a terminal note longer than the screen to its next page, and does nothing on its last page (hacking.md section 7; observer check 255)"
+note = "V21SheldonTerminal's mail: Messages, New Message from Sarah Weintraub (note V21SarahOutMail01, about 30 lines: two pages of 16) [observed: 2026-11-22, the first page ends mid-sentence and the second runs to 'Sarah.']. Three selects: the first turns, the other two find the last page"
+areas = ["terminal"]
+paths = ["engine/nvf-play/src/terminal*", "engine/nvf-play/src/terminal/**"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TERMINAL = "20:open:0011E3C3,22:item:0,24:item:0,26:item:0,28:select,30:select,32:select,34:back,36:exit" }
+args = ["--cell", "2EOMichaelAngelo", "--play", "--no-voice"]
+run_seconds = 40
+expect = [
+  { text = "note V21SarahOutMail01", count = 1, label = "the long mail opened as a note" },
+  { text = "terminal: note turned to line 16", count = 1, label = "one select turns it to its second page, the others find its last page" },
+]
+order = [["note V21SarahOutMail01", "terminal: note turned to line 16", "terminal: back from the note to the list"]]
+
+[[scenario]]
 name = "terminal-scripted-activate"
 source = "#1532: Lucky38MrHouseTerminal's OnActivate (SCPT 0x001746C1) ends in a bare Activate: a script's default activation of a terminal opens its screen for the player, after Terminal01.NIF's Open sequence (keyboard, then screen); leaving plays Close"
 note = "Lucky38MrHouseTerminalREF (0014B0A7, base Lucky38MrHouseTerminal 0014B08E: Hard, locked, model Terminals/Terminal01.NIF with Idle/Open/Close) [observed: FalloutNV.esm]; Science 80 so the script's first branch (Science 75, not locked for good) runs Activate and the hacking game opens"
@@ -7268,6 +7283,23 @@ order = [[
   { text = "quest message on screen: Talk to Sunny Smiles in the Prospector Saloon.", label = "drawn only after the terminal closes" },
 ]]
 expect = [{ text = "quest message on screen: Talk to Sunny Smiles in the Prospector Saloon.", count = 1, label = "shown once" }]
+
+[[scenario]]
+name = "blake-books"
+source = "[observed] #3350: Bitter Springs Infirmary Blues' two books lie on Blake's stand in WastelandNVmini, owned by him (VBSPsychologyBookREF 0x00178DB0, VBSPediatricsBookREF 0x00178DAF; in no merchant container); they are drawn there, can be taken (a theft), and each completes its objective (20, 40) by its OnAdd. Whether the original also sells them is observer check 256"
+note = "NEAR stands the player facing the pediatrics book (heading 45, pitch -60) and E takes it by the crosshair; the psychology book, on the upper shelf behind the barbed wire, is taken by a script activation (by the crosshair it needs a pitch of about -6 from its NEAR spot). The theft is seen, so Blake's side may turn on the player afterwards: god mode"
+areas = ["quests", "crime"]
+paths = ["engine/nvf-play/src/activate.rs", "engine/nvf-play/src/activate/**", "engine/nvf-play/src/menu/model.rs", "docs/spec-notes/barter-menu.md"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00178DAF", NVF_PLAY_TEST_ACTIVATE = "8", NVF_PLAY_TEST_SCRIPT = "5:start:VMS40,5.5:stage:VMS40:10,10:activate:VBSPsychologyBookREF" }
+args = ["--world", "WastelandNVmini", "--pos=13240,17420,9960", "--hour", "12", "--play", "--no-voice", "--no-messages"]
+run_seconds = 13
+expect = [
+  { text = "target 0x00178DAF Tiny, Tiny Babies: All You Need to Know About Pediatric Medicine (Take, owned)", label = "the pediatrics book is drawn on the stand and the crosshair finds it, owned" },
+  { text = "script: VMS40 objective 40 completed true", count = 1, label = "taking it completes objective 40" },
+  { text = "crime: the player took VBSPediatricsBook (0x00178DAF) x1, owned by someone else", label = "as a theft from Blake" },
+  { text = "script: VMS40 objective 20 completed true", count = 1, label = "the psychology book taken completes objective 20" },
+  { text = "crime: the player took VBSPsychologyBook (0x00178DB0) x1, owned by someone else", label = "as a theft too" },
+]
 
 [[scenario]]
 name = "hacking-owned"
@@ -17719,6 +17751,22 @@ expect = [
   { re = 'radiation summary: .*\(\+0\.0\).*, 1 explosion zone\(s\)', label = "no rads gained in the zone" },
   { re = 'radiation: level .* taking (0\.0[1-9]|0\.[1-9]\d|[1-9]\d*\.\d\d)/s', count = 0, label = "never taking any" },
 ]
+
+[[scenario]]
+name = "grab-teddy-bear"
+source = "[design] #3428: a placed item whose model is several dynamic bodies (the teddy bear: six on five limited hinges) is joined into one rigid body as a dropped one is, so the grab key holds it; physics.md section 4.3.1"
+note = "the bear 00172D8B south of Goodsprings, lying in its designer's XRGD pose; Z held 3 s. Before: 'no loose body' (its bodies were held keyframed). It weighs 8 kg joined (1 x 5 + 3)"
+areas = ["grab", "physics"]
+paths = ["engine/nvf-play/src/phys/prepare.rs", "engine/nvf-play/src/grab.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_NEAR = "00172D8B", NVF_PLAY_TEST_GRAB = "8:z:3:90:at=00172D8B" }
+args = ["--play", "--pos=-68601,-54700,6370", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 22
+expect = [
+  { text = 'phys: 0x00172D8B meshes\clutter\teddybear\teddybear01.nif: collision posed from XRGD (6 bodies)', label = "the bear's bodies are posed as its designer left it" },
+  { re = 'grab: picked up loose object Teddy Bear \(00172D8B\) by Aid: 8\.0 kg', label = "Z picks the bear up as one body of its parts' summed mass" },
+  { re = 'grab: Teddy Bear \(00172D8B\) came to rest at', label = "dropped, it comes to rest" },
+]
+forbid = [{ text = "no loose body", label = "the bear's bodies held keyframed" }]
 
 [[scenario]]
 name = "grab-skull"
@@ -34704,3 +34752,19 @@ expect = [
   { json = "files.?tree=wastelandshrub01.stub_levels.#", schema = "fnv.spt.shape/1", equals = 0, count = 1, label = "WastelandShrub01 has no stub level" },
   { json = "files.?tree=whiteoak01.stub_levels.#", schema = "fnv.spt.shape/1", equals = 0, count = 1, label = "WhiteOak01 has no stub level" },
 ]
+
+[[scenario]]
+name = "vats-templated-name"
+source = "#3445: a Lonesome Road deathclaw of the nameless base NVDLC04DeathclawAmbusherLVL (template: the leveled creature list NVDLC04DeathClawGLENC, Base Data from the template) was named by that Editor ID in VATS; its name is the picked entry's FULL, Deathclaw (engine/nvf-play/src/sim.rs ref_shown_name)"
+areas = ["combat", "vats"]
+paths = ["engine/nvf-play/src/sim.rs", "engine/nvf-play/src/vats_mode.rs", "engine/nvf-play/src/hud_target.rs"]
+note = "vats-mode-miss's setup at Goodsprings with LonesomeRoad.esm loaded and both dogs killed at 3 s; one such deathclaw is made 500 units from the player (god mode), and the VATS mark at 10 s is on it, the nearest living actor [observed 2026-11-22: the lines below]"
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:kill:0x0013E5BB,3:kill:0x000F573F,3.2:call:player:PlaceAtMe:NVDLC04DeathclawAmbusherLVL:1:500:0", NVF_PLAY_TEST_EQUIP = "0008F216", NVF_PLAY_TEST_GIVE = "0008ED02:24", NVF_PLAY_TEST_CONTROL = "3:weapon,4.5:reload,10.3:aimvats", NVF_PLAY_TEST_KEYS = "10:v,10.32:mouse-left,10.36:e", NVF_PLAY_TEST_VATS_STYLE = "dead-eye" }
+args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--plugins", "FalloutNV.esm", "LonesomeRoad.esm"]
+run_seconds = 16
+expect = [
+  { re = 'ai .* NVDLC04DeathclawAmbusherLVL 0xFF000001: created by a script \(PlaceAtMe\)', label = "the deathclaw of the nameless base is made" },
+  { re = 'vats mode: preview Deathclaw FF000001', label = "VATS previews it by the picked entry's name" },
+  { re = 'vats mode: marked Deathclaw FF000001 ', label = "the mark names it Deathclaw" },
+]
+forbid = [{ re = 'vats mode: (preview|marked) NVDLC04', label = "VATS names an actor by an Editor ID" }]
