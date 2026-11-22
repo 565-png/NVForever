@@ -52,6 +52,9 @@ impl TextureSource for SetTextures {
     fn alpha_is_mask(&self, raw_path: &str) -> bool {
         raw_path.contains("mask")
     }
+    fn alpha_is_opaque(&self, _: &str) -> bool {
+        false
+    }
     fn resolve(&self, raw_path: &str) -> String {
         fnv_vfs::texture_path(raw_path)
     }
@@ -67,7 +70,7 @@ impl TextureSource for SetTextures {
 const KEY: &str = r"textures\walls\brick.dds";
 
 fn set(images: &mut Assets<Image>, normal: bool, scalars: Scalars) -> AuthoredSet {
-    AuthoredSet { stem: r"textures\pbr\walls\brick".into(), orm: images.add(Image::default()), normal: normal.then(|| images.add(Image::default())), height: None, scalars }
+    AuthoredSet { stem: r"textures\pbr\walls\brick".into(), orm: images.add(Image::default()), normal: normal.then(|| images.add(Image::default())), height: None, scalars, metal_gain: 7.0 }
 }
 
 /// A lit, masked, glossy shape with the game's diffuse and normal map.
@@ -86,7 +89,7 @@ fn drawn(m: &NifMaterial) -> String {
 #[test]
 fn an_authored_set_fills_its_fields_over_the_legacy_ones() {
     let mut scratch = Assets::<Image>::default();
-    let s = set(&mut scratch, true, Scalars { parallax_depth: None, roughness_scale: Some(0.7), reflectance: Some(0.3) });
+    let s = set(&mut scratch, true, Scalars { parallax_depth: None, roughness_scale: Some(0.7), reflectance: Some(0.3), metal_gain: None });
     let mut source = SetTextures::new(Some((KEY, s.clone())));
     let mut mesh = triangle();
     let (m, missing) = shape_material_with(&wall(), &mut mesh, &mut source, Tangents::Generate);
@@ -102,6 +105,7 @@ fn an_authored_set_fills_its_fields_over_the_legacy_ones() {
     assert!(b.flip_normal_map_y && matches!(b.alpha_mode, AlphaMode::Opaque) && !b.unlit);
     assert_eq!(m.extension.emissive_rule, Vec4::new(0.0, 0.0, 0.0, AUTHORED_MARK));
     assert_eq!(m.extension.soft, Vec4::ZERO, "soft stays zero: terrain blending still takes the material");
+    assert_eq!(m.extension.metal_gain, s.metal_gain, "the set's metal gain in its lane");
     assert_eq!(
         m.extension.legacy,
         Some(LegacyLook { normal: Some(game_normal.clone()), specular: Some(game_normal), roughness: gloss_roughness(50.0), reflectance: 2.0, metallic: 0.0, tangents: true, specular_tint: Color::WHITE, parallax: Parallax::default(), scripted_tint: None })
@@ -192,7 +196,7 @@ fn shapes_a_set_never_touches_keep_the_game_material_and_ask_nothing() {
 #[test]
 fn off_no_set_and_restored_materials_draw_the_same() {
     let mut scratch = Assets::<Image>::default();
-    let s = set(&mut scratch, true, Scalars { parallax_depth: None, roughness_scale: Some(0.2), reflectance: Some(0.9) });
+    let s = set(&mut scratch, true, Scalars { parallax_depth: None, roughness_scale: Some(0.2), reflectance: Some(0.9), metal_gain: None });
     let bare = Props { textures: vec![wall().textures[0].clone()], ..wall() };
     for (props, mask, gains_tangents) in [(wall(), true, false), (bare, false, true), (wall(), false, false)] {
         let mut source = SetTextures::new(Some((KEY, s.clone())));

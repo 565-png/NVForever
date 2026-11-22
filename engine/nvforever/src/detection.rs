@@ -291,6 +291,8 @@ struct Person {
     turning: u8,
     /// Its character swims (the physics' word; IsSwimming).
     swimming: bool,
+    /// Its character is airborne (physics: not grounded and not swimming; IsInAir).
+    in_air: bool,
 }
 
 impl Person {
@@ -900,6 +902,7 @@ fn measure(
         sneaking: control.as_deref().is_some_and(|c| c.sneak),
         turning: turning(FormId::PLAYER_REF.0, player.heading, &mut state.headings),
         swimming: phys.as_deref().and_then(|p| p.player.as_ref()).is_some_and(|c| c.swimming),
+        in_air: phys.as_deref().and_then(|p| p.player.as_ref()).is_some_and(|c| !c.grounded && !c.swimming),
     });
     // The drawn bodies (dying or dead), measured from the player's camera alone for
     // GetLineOfSight ([`bodies_seen`]), at the point the camera looks for.
@@ -935,6 +938,7 @@ fn measure(
             sneaking: rt.game.sneaks(FormId(rig.reference)),
             turning: turning(rig.reference, flat.x.atan2(flat.y), &mut state.headings),
             swimming: phys.as_deref().and_then(|p| p.npcs.get(&rig.reference)).is_some_and(|n| n.ch.swimming),
+            in_air: phys.as_deref().and_then(|p| p.npcs.get(&rig.reference)).is_some_and(|n| !n.ch.grounded && !n.ch.swimming),
         });
     }
     state.last.retain(|_, (_, t)| now - *t < 5.0);
@@ -1057,7 +1061,7 @@ fn measure(
         for p in &people {
             // The player's speed mode is the Walk toggle, moving or not (IsRunning).
             let run_mode = if p.id == FormId::PLAYER_REF.0 { player_run_mode } else { p.running };
-            g.set_motion(FormId(p.id), Motion { moving: p.moving, running: p.running, sneaking: p.sneaking, turning: p.turning, run_mode, swimming: p.swimming });
+            g.set_motion(FormId(p.id), Motion { moving: p.moving, running: p.running, sneaking: p.sneaking, turning: p.turning, run_mode, swimming: p.swimming, in_air: p.in_air });
         }
         // Every two within reach of each other, both ways; the player detects too.
         let feet: Vec<[f32; 3]> = people.iter().map(|p| p.feet).collect();

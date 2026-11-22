@@ -1172,9 +1172,9 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   checked]. Not known: how deep the original's relief is, whether it is one offset or
   stepped, whether it fades with distance, how the two fields enter, whether the DXT1
   maps are read as one channel or as luminance, and which shapes it leaves flat (observer
-  check #261).
+  check #265).
   *What NVForever implements* [design; the depth and method are **provisional**
-  [hypothesis] until observer check #261 and a frame-cost measurement]: a
+  [hypothesis] until observer check #265 and a frame-cost measurement]: a
   BSShaderPPLightingProperty with bit 11 and a non-empty slot 3 draws that texture as its
   height map (`nif_spawn::game_height_slot`; bit 28 is not asked), whatever the Authored
   materials setting, read from the red channel by the march authored `_p` maps use, **on
