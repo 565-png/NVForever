@@ -7285,6 +7285,23 @@ order = [[
 expect = [{ text = "quest message on screen: Talk to Sunny Smiles in the Prospector Saloon.", count = 1, label = "shown once" }]
 
 [[scenario]]
+name = "blake-books"
+source = "[observed] #3350: Bitter Springs Infirmary Blues' two books lie on Blake's stand in WastelandNVmini, owned by him (VBSPsychologyBookREF 0x00178DB0, VBSPediatricsBookREF 0x00178DAF; in no merchant container); they are drawn there, can be taken (a theft), and each completes its objective (20, 40) by its OnAdd. Whether the original also sells them is observer check 256"
+note = "NEAR stands the player facing the pediatrics book (heading 45, pitch -60) and E takes it by the crosshair; the psychology book, on the upper shelf behind the barbed wire, is taken by a script activation (by the crosshair it needs a pitch of about -6 from its NEAR spot). The theft is seen, so Blake's side may turn on the player afterwards: god mode"
+areas = ["quests", "crime"]
+paths = ["engine/nvf-play/src/activate.rs", "engine/nvf-play/src/activate/**", "engine/nvf-play/src/menu/model.rs", "docs/spec-notes/barter-menu.md"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00178DAF", NVF_PLAY_TEST_ACTIVATE = "8", NVF_PLAY_TEST_SCRIPT = "5:start:VMS40,5.5:stage:VMS40:10,10:activate:VBSPsychologyBookREF" }
+args = ["--world", "WastelandNVmini", "--pos=13240,17420,9960", "--hour", "12", "--play", "--no-voice", "--no-messages"]
+run_seconds = 13
+expect = [
+  { text = "target 0x00178DAF Tiny, Tiny Babies: All You Need to Know About Pediatric Medicine (Take, owned)", label = "the pediatrics book is drawn on the stand and the crosshair finds it, owned" },
+  { text = "script: VMS40 objective 40 completed true", count = 1, label = "taking it completes objective 40" },
+  { text = "crime: the player took VBSPediatricsBook (0x00178DAF) x1, owned by someone else", label = "as a theft from Blake" },
+  { text = "script: VMS40 objective 20 completed true", count = 1, label = "the psychology book taken completes objective 20" },
+  { text = "crime: the player took VBSPsychologyBook (0x00178DB0) x1, owned by someone else", label = "as a theft too" },
+]
+
+[[scenario]]
 name = "hacking-owned"
 source = "the owner 2026-10-22: a terminal still to hack shows its difficulty on the activate prompt as a lock does, an owned one in the crime colour, and hacking it is the crime of picking an owned lock (karma, the owner's side that sees it hostile): the Easy terminal in the Prospector Saloon (0010872F, cell owned)"
 areas = ["hacking", "terminal", "crime"]
