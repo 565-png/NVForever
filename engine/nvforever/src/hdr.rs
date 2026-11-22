@@ -1,16 +1,18 @@
-//! HDR output on an HDR screen [engineering choice]: the Display page's HDR rows (on at the
-//! next start; paper white and peak brightness live), or `NVF_HDR=1` for a run.
+//! HDR output on an HDR screen (docs/design/hdr-output.md): the Display page's HDR rows (on at
+//! the next start; the calibration rows live), or `NVF_HDR=1` for a run.
 //!
 //! - The window's surface is `Rgba16Float`, which wgpu's `SurfaceColorSpace::Auto` makes
 //!   scRGB (vendored bevy_render `view/window/mod.rs`).
-//! - The main view stays fp16 (graphics.rs), so nothing is cut to 8 bits on the way.
-//! - Before the HUD, [`hdr_expand`] (`hdr_expand.wesl`) keeps the graded, tonemapped
-//!   picture as it is up to a knee (default 0.6) and lets what lies above it reach the
-//!   screen's peak (`NVF_HDR_PEAK` nits, default 600). The game's look is unchanged below
-//!   the knee: sun, fire, neon, lightning and bright sky get the extra range.
-//! - The final blit to the window (vendored bevy_core_pipeline `blit`) multiplies by paper
-//!   white / 80 (`NVF_HDR_PAPER_WHITE` nits, default 200; scRGB's 1.0 is 80 nits), so the
-//!   picture's 1.0 and the HUD show at paper white.
+//! - The main view stays fp16 (graphics.rs) and keeps light above 1: the tonemapping pass
+//!   leaves out the SDR clip (lights.rs `GAME_HDR`) and the grade carries that light
+//!   (imagespace.wesl).
+//! - Before the HUD, [`hdr_expand`] (`hdr_expand.wesl`) spreads the top of the SDR range by
+//!   the expansion row and lifts the light past SDR white towards the screen's peak (Auto:
+//!   the window's screen as Windows reports it), never past it. Only the window's camera:
+//!   the water's reflection camera renders into a texture the frame samples, which must stay
+//!   in the picture's range.
+//! - The final blit to the window (vendored bevy_core_pipeline `blit`) decodes the SDR range
+//!   with gamma 2.2 and scales so the HUD's white shows at the HUD brightness.
 
 use bevy::core_pipeline::{Core3d, Core3dSystems, FullscreenShader};
 use bevy::prelude::*;
@@ -323,7 +325,7 @@ impl Plugin for HdrPlugin {
 }
 
 #[derive(Resource)]
-struct HdrPipeline {
+pub(crate) struct HdrPipeline {
     layout: BindGroupLayoutDescriptor,
     sampler: Sampler,
     id: CachedRenderPipelineId,
@@ -363,9 +365,12 @@ fn init_pipeline(mut commands: Commands, device: Res<RenderDevice>, assets: Res<
 }
 
 /// Stretch the highlights of an fp16 main view before the HUD is drawn.
-fn hdr_expand(view: ViewQuery<&ViewTarget>, pipeline: Option<Res<HdrPipeline>>, cache: Res<PipelineCache>, device: Res<RenderDevice>, queue: Res<bevy::render::renderer::RenderQueue>, mut ctx: RenderContext) {
-    let target = view.into_inner();
+pub(crate) fn hdr_expand(view: ViewQuery<(&ViewTarget, &bevy::render::camera::ExtractedCamera)>, pipeline: Option<Res<HdrPipeline>>, cache: Res<PipelineCache>, device: Res<RenderDevice>, queue: Res<bevy::render::renderer::RenderQueue>, mut ctx: RenderContext) {
+    let (target, camera) = view.into_inner();
     let Some(p) = pipeline else { return };
+    if !matches!(camera.target, Some(bevy::camera::NormalizedRenderTarget::Window(_))) {
+        return;
+    }
     if !bevy::render::view::window::NVF_HDR_SURFACE_ACTIVE.load(Relaxed) || target.main_texture_format() != TextureFormat::Rgba16Float {
         return;
     }
