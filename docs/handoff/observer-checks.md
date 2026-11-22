@@ -3566,3 +3566,19 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the difference from a standing player is the original's too; counts near the standing
      ones mean the original closes the gap in a way ours does not (a lunge from further
      off, a faster chase, or no knockback on the player).
+
+## Added 2026-11-21 (placing the custom map marker with the mouse, #3324)
+
+262. **What does a left click on an empty spot of the Pip-Boy's World Map and Local Map do
+     with the keyboard and mouse?** (P2; #3324, pipboy.md Place Marker.) The capture of
+     2026-11-10 showed placement with the X button [observed]; a player reports the
+     original places it with the mouse, and how is [hypothesis]. Ours [design]: a click
+     (press and release within 6 units) away from any marker does what X does (the same
+     question box, or under the No Place Marker Popup tweak an answer at once), of the place
+     under the highlight box; a click with a World Map marker under the box asks to travel;
+     a right click does nothing. On the World Map at 1280x720, click once an
+     empty spot well away from any marker, once a spot about 20 px from one (inside the
+     highlight box's reach), and once with the right button; repeat on the Local Map, once
+     on a door icon. Screenshot each result: whether a box asks (and its words) or the
+     marker appears at once, where it lands against the pointer, and whether a press dragged
+     a few pixels still counts as a click.
