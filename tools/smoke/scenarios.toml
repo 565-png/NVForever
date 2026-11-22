@@ -34534,3 +34534,92 @@ forbid = [
   { text = "failed and will not be tried again", label = "a pipeline that failed for good (terrain parallax switched)" },
   { text = "still being retried after", label = "a pipeline still retried at the cap (terrain parallax switched)" },
 ]
+
+[[scenario]]
+name = "terrain-parallax-ground-pack"
+source = "[design, #3322] engine/nvforever/src/terrain.rs \"Parallax\", docs/spec-notes/pbr-materials.md \"Terrain layers: parallax\": the Terrain parallax switch on over generated ground sets (the test aid NVF_PLAY_TEST_PBR_GROUND_PACK, engine/nvf-assets/src/pbr_field/ground.rs, its line engine/nvforever/src/main.rs:1366), judged by a readback of the world view (the test aid NVF_PLAY_TEST_TERRAIN_PARALLAX_AB, engine/nvforever/src/terrain_parallax_ab.rs: its switch lines :318, shot lines :388, result line :365): at a grazing view the ground's texture at the centre moves between the switch off and on, down the screen (towards the camera), and head-on it does not; the folded materials' lines terrain.rs:648 and :863. Engineering comparator policy (thresholds from reasoning, module constants), not original-game pixels"
+areas = ["renderer", "graphics", "terrain", "textures"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvforever/src/terrain_parallax_ab.rs", "engine/nvforever/src/terrain_parallax_ab/",
+  "engine/nvf-assets/src/pbr_field/ground.rs", "engine/nvf-assets/src/pbr_field/ground/", "engine/nvf-assets/src/texture.rs", "engine/nvf-assets/src/authored.rs",
+  "engine/nvf-assets/src/data.rs", "crates/fnv-pbr/",
+]
+env = { NVF_PLAY_TEST_PBR_GROUND_PACK = "1", NVFOREVER_HOME = "terrain-parallax-ground-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_PIPELINE_DEFS = "1", NVF_PLAY_TEST_LOOK = "7:90:-20,40:90:-88", NVF_PLAY_TEST_TERRAIN_PARALLAX_AB = "9,42" }
+# On from the start with Authored materials (the height maps load with it); the aid flips the
+# switch off, on, off for each sequence and puts it back on after.
+args = ["--pos=-72000,2152,8390", "--heading", "90", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720", "--graphics-only", "authored-materials,terrain-parallax"]
+run_seconds = 75
+timeout = 240
+expect = [
+  { re = 'pbr ground pack: [1-9]\d* height-only sets for the landscape textures \(\d+ generated files, depth 0\.08\) written under ', count = 1, label = "the generated ground sets are in the run's own fresh folder, mounted with the game's" },
+  "authored materials: on",
+  { re = 'authored materials: [1-9]\d* sets under ', count = 1, label = "the mount's index counts the generated sets" },
+  { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "the GPU folds the layers (bindless), so the folded materials are the ones the march draws" },
+  { re = 'terrain: first folded material with authored height maps: [1-6] of [1-6] layers', count = 1, label = "the folded materials took the generated height maps" },
+  { re = 'pipeline \d+ shader-defs: .*TERRAIN_PARALLAX', label = "a folded main-pass pipeline with the march was asked for" },
+  { re = 'test aid NVF_PLAY_TEST_TERRAIN_PARALLAX_AB: 2 sequences of three shots: 9 s \(flip\), 42 s \(flip\)', count = 1 },
+  { re = 'terrain parallax ab at 9 s \(flip\): A-B \d+\.\d+, A-C \d+\.\d+ levels over \d+x\d+ px at the centre; B = A moved by \([+-]\d, \+[1-9]\d*\) px .*; moved$', count = 1, label = "grazing (pitch -20): the texture at the centre moves down the screen with the switch on, about straight (sideways under 10 px)" },
+  { re = 'terrain parallax ab at 42 s \(flip\): .*; still$', count = 1, label = "head-on (pitch -88): no common shift at the centre" },
+]
+order = [[
+  { re = 'graphics: .*terrain parallax', label = "the switch is on from the start" },
+  { re = 'terrain: parallax on \(\d+ folded quadrant materials, \d+ with height maps, 0 changed', label = "on from the first frame: every material made with it" },
+  "terrain parallax ab at 9 s: switch off",
+  { re = 'terrain: parallax off \([1-9]\d* folded quadrant materials, [1-9]\d* with height maps, [1-9]\d* changed', label = "the flip edits the folded materials that hold height maps" },
+  { re = 'terrain parallax ab at 9 s: shot a with the switch off' },
+  "terrain parallax ab at 9 s: switch on",
+  { re = 'terrain parallax ab at 9 s: shot b with the switch on' },
+  "terrain parallax ab at 9 s: switch off",
+  { re = 'terrain parallax ab at 9 s: shot c with the switch off' },
+  "terrain parallax ab at 9 s: switch on",
+  { re = 'terrain parallax ab at 9 s \(flip\): ' },
+  { re = 'terrain parallax ab at 42 s: shot a with the switch off' },
+  { re = 'terrain parallax ab at 42 s \(flip\): ' },
+]]
+forbid = [
+  { re = 'terrain parallax ab at .*; (unclear|unsettled|flat)$', label = "a readback the measure could not judge (the view not on textured ground, pipelines not ready, or neither moved nor still)" },
+  { re = 'terrain parallax ab.*FAIL', label = "a shot that could not be measured" },
+  { text = "pbr ground pack: FAIL", label = "the ground pack was not written" },
+  { text = "Caught rendering error", label = "a rendering (validation) error with the march on" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good (terrain parallax)" },
+  { text = "still being retried after", label = "a pipeline still retried at the cap (terrain parallax)" },
+]
+note = "Data assumptions not yet checked by a run (2026-11-22): the start --pos=-72000,2152,8390 heading 90 is Goodsprings' main street looking east (taken from the movement-inertia trace scenarios, 'the street clear ahead'); the ground about 330 units ahead (pitch -20, eye about 120 units up) and straight underfoot (pitch -88) is landscape with painted layers (folded quadrants, not a road mesh, not a quadrant drawn by its base alone: the base takes no height map), within the fade's 1024 units; no NPC or creature crosses the 76x57 px box at the view's centre during a sequence (each about 6-10 s); the first-person view at pitch -88 shows ground (no first-person body without --first-person-body). The three shots of each sequence are saved as terrain_parallax_ab_<seconds>s_<a|b|c>.png in the shot folder: look at them first when a verdict is not the expected one. The expected direction (dy > 0, the texture towards the camera) is the module's [design expectation]: a sunk surface shows each pixel a point further along its ray. The thresholds are module constants set from reasoning; confirm them against the first real numbers in the result lines."
+manual = "Open terrain_parallax_ab_9s_a.png and _b.png: the street's texture in b sits lower on the screen than in a, ridges of the generated grid visible; the 42 s pair looks the same at the centre."
+
+[[scenario]]
+name = "terrain-parallax-ground-pack-off"
+source = "[design, #3322] engine/nvforever/src/terrain.rs \"Parallax\", docs/spec-notes/pbr-materials.md \"Terrain layers: parallax\": the generated ground sets mounted (NVF_PLAY_TEST_PBR_GROUND_PACK, engine/nvforever/src/main.rs:1366) and the Terrain parallax switch off: the folded materials hold the height maps (terrain.rs:863) but no pipeline carries TERRAIN_PARALLAX and the switch never logs on (terrain.rs:648), and the readback (NVF_PLAY_TEST_TERRAIN_PARALLAX_AB in hold mode, engine/nvforever/src/terrain_parallax_ab.rs:365, :388) finds the ground at the centre still at the same grazing and head-on views as terrain-parallax-ground-pack, which also shows that what that scenario measures as moved is not the view changing by itself"
+areas = ["renderer", "graphics", "terrain", "textures"]
+paths = [
+  "engine/nvforever/src/terrain.rs", "engine/nvforever/src/terrain.wesl", "engine/nvforever/src/terrain_parallax_ab.rs", "engine/nvforever/src/terrain_parallax_ab/",
+  "engine/nvf-assets/src/pbr_field/ground.rs", "engine/nvf-assets/src/pbr_field/ground/", "engine/nvf-assets/src/texture.rs", "engine/nvf-assets/src/authored.rs",
+  "engine/nvf-assets/src/data.rs", "crates/fnv-pbr/",
+]
+env = { NVF_PLAY_TEST_PBR_GROUND_PACK = "1", NVFOREVER_HOME = "terrain-parallax-ground-off-home", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PIPELINE_LOG = "1", NVF_PLAY_TEST_PIPELINE_DEFS = "1", NVF_PLAY_TEST_LOOK = "7:90:-20,40:90:-88", NVF_PLAY_TEST_TERRAIN_PARALLAX_AB = "9:hold,42:hold" }
+# Authored materials on (so the height maps load), Terrain parallax off.
+args = ["--pos=-72000,2152,8390", "--heading", "90", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720", "--graphics-only", "authored-materials"]
+run_seconds = 75
+timeout = 240
+expect = [
+  { re = 'pbr ground pack: [1-9]\d* height-only sets for the landscape textures \(\d+ generated files, depth 0\.08\) written under ', count = 1, label = "the generated ground sets are mounted" },
+  "authored materials: on",
+  { re = 'terrain: the first 6 texture layers of a quadrant are folded into its base', label = "the GPU folds the layers (bindless)" },
+  { re = 'terrain: first folded material with authored height maps: [1-6] of [1-6] layers', count = 1, label = "the folded materials hold the generated height maps with the switch off too" },
+  { re = 'pipeline \d+ shader-defs: ', label = "pipelines were logged with their definitions (so the absence of TERRAIN_PARALLAX below means something)" },
+  { re = 'test aid NVF_PLAY_TEST_TERRAIN_PARALLAX_AB: 2 sequences of three shots: 9 s \(hold\), 42 s \(hold\)', count = 1 },
+  { re = 'terrain parallax ab at 9 s: shot [abc] with the switch off \(held\)', count = 3, label = "the switch stays off for every shot" },
+  { re = 'terrain parallax ab at 9 s \(hold\): .*; still$', count = 1, label = "grazing (pitch -20), switch off: the ground at the centre does not move" },
+  { re = 'terrain parallax ab at 42 s \(hold\): .*; still$', count = 1, label = "head-on (pitch -88), switch off: still" },
+]
+forbid = [
+  { re = 'shader-defs: .*TERRAIN_PARALLAX', label = "no material takes the parallax pipeline with the switch off, though they hold height maps" },
+  { re = 'terrain: parallax on', label = "the switch is never on" },
+  { re = 'graphics: .*terrain parallax', label = "the switch is off from the start" },
+  { re = 'terrain parallax ab at .*: switch (on|off)$', label = "hold mode never touches the switch" },
+  { re = 'terrain parallax ab at .*; (moved|unclear|unsettled|flat)$', label = "a readback that is not still" },
+  { re = 'terrain parallax ab.*FAIL', label = "a held shot that could not be measured" },
+  { text = "pbr ground pack: FAIL", label = "the ground pack was not written (switch-off run)" },
+  { text = "Caught rendering error", label = "a rendering (validation) error" },
+]
+note = "The same pose and data assumptions as terrain-parallax-ground-pack (Goodsprings' main street at --pos=-72000,2152,8390 heading 90, painted landscape layers under the view's centre at pitch -20 and -88, nothing walking through the centre box); not yet checked by a run (2026-11-22). The shots are saved as terrain_parallax_ab_<seconds>s_<a|b|c>.png in the shot folder."

@@ -855,12 +855,30 @@ addition of NVForever's own until observer check 268 answers it [hypothesis: it 
   blend off, a generic one (the tests `the_capture_refresh_compares_its_inputs`,
   `an_edit_after_a_blend_off_interval_still_remakes_the_capture`,
   `a_generic_edit_remakes_the_capture_even_with_equal_inputs`).
-- **Not done in stage 1** (owed): a generated-ground field test that judges a readback (shift on a
-  tilted view, none head-on, none with the switch off: owed; the PBR field builds its own
-  panels, not the landscape, and an aid would have to mount generated `_p` files for a
-  landscape texture); the frame-time cost with and without the switch at a ground-heavy and
-  a layer-heavy place; before/after pictures with a ground pack; the base's own `_p`;
-  height maps for the separate landscape materials.
+- [design] **Checking it without a pack.** No data set has ground height maps, so two test
+  aids stand in for a pack. `NVF_PLAY_TEST_PBR_GROUND_PACK=1`
+  (`engine/nvf-assets/src/pbr_field/ground.rs`, the list from nvforever terrain.rs
+  `ground_pack_diffuses`) writes a height-only set for every landscape texture the load
+  order names (each LTEX's texture set's diffuse, and the default ground texture) into a
+  fresh folder of the run under an explicit `NVFOREVER_HOME`, mounted over every other loose
+  layer for that run only, as the reflections' mount pack is: a `_p` (unsigned BC4, 256
+  square, a full mip chain; low almost everywhere, crossed by a grid of raised ridges, from a
+  formula: no game pixel is read) and a scalar file at depth 0.08, nothing else.
+  `NVF_PLAY_TEST_TERRAIN_PARALLAX_AB=<seconds>[:hold]` (nvforever `terrain_parallax_ab.rs`)
+  takes three screenshots with the switch off, on, off (or left alone), each after the
+  pipelines have settled, and logs how the ground's texture in a small box at the centre of
+  the view moved: the best whole-pixel translation from the first to the second shot, the
+  differences against the first-to-third floor, and a verdict (`moved`, `still`, ...).
+  Smoke `terrain-parallax-ground-pack` wants it moved down the screen (towards the camera) at
+  a grazing view and still head-on; `terrain-parallax-ground-pack-off` (the switch off, the
+  pack mounted) wants no `TERRAIN_PARALLAX` pipeline and both views still. The direction is
+  a [design expectation] (a sunk surface shows each pixel a point further along its ray), the
+  thresholds an engineering policy from reasoning; neither has been seen running yet.
+- **Not done in stage 1** (owed): a run of the two ground-pack scenarios above (their pose,
+  Goodsprings' main street, is not yet checked to stand over painted layers); the frame-time
+  cost with and without the switch at a ground-heavy and a layer-heavy place; before/after
+  pictures with a ground pack (the readback aid saves its shots); the base's own `_p`; height
+  maps for the separate landscape materials.
 
 ## Load order: per file, so ship complete sets
 
