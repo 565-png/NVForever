@@ -1852,7 +1852,7 @@ impl Plugin for CombatPlugin {
             .add_systems(Startup, init_combat)
             .add_systems(
                 Update,
-                (track_limbs, (perk_speed, stat_speed), player_flinch, arm_sway, weapon_state, equip_sync, run_pace, reload_pace, weapon_sounds, fire, melee, actor_attacks, fly, crate::dismember::resolve, (crate::mines::tick, crate::grass_fire::tick).chain(), crate::thrown::land, disarm, death_drops, meltdown, log_combat_lines).chain().in_set(PlaySet::Activation).run_if(in_state(PlayState::Playing)).run_if(resource_exists::<Combat>),
+                (track_limbs, (perk_speed, stat_speed), player_flinch, arm_sway, weapon_state, equip_sync, run_pace, reload_pace, weapon_sounds, fire, melee, (actor_attacks, sync_player_anim_events).chain(), fly, crate::dismember::resolve, (crate::mines::tick, crate::grass_fire::tick).chain(), crate::thrown::land, disarm, death_drops, meltdown, log_combat_lines).chain().in_set(PlaySet::Activation).run_if(in_state(PlayState::Playing)).run_if(resource_exists::<Combat>),
             )
             .add_systems(Update, (draw_marks, watch_hit_effects, leave_space_shots).run_if(resource_exists::<Combat>))
             .add_systems(Last, report);
@@ -2471,6 +2471,101 @@ fn weapon_state(anim: Res<WeaponAnim>, mut script: Option<ResMut<ScriptState>>) 
     if let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) {
         rt.game.set_weapon_out(FormId::PLAYER_REF, anim.ready);
     }
+}
+
+/// The locomotion group name for a player movement direction and pace
+/// (`fnv_actor::locomotion::Move::group`, `fnv_game::anims`).
+pub fn movement_group(dir: fnv_game::anim_state::MoveDir, fast: bool) -> &'static str {
+    use fnv_game::anim_state::MoveDir;
+    match (dir, fast) {
+        (MoveDir::None, _) => "Idle",
+        (MoveDir::Forward, false) => "Forward",
+        (MoveDir::Backward, false) => "Backward",
+        (MoveDir::Left, false) => "Left",
+        (MoveDir::Right, false) => "Right",
+        (MoveDir::Forward, true) => "FastForward",
+        (MoveDir::Backward, true) => "FastBackward",
+        (MoveDir::Left, true) => "FastLeft",
+        (MoveDir::Right, true) => "FastRight",
+    }
+}
+
+/// Bridge the player's combat/weapon animation action and locomotion group into
+/// `fnv_game::Game::set_anim_state`, firing JIP `SetOnAnimActionEventHandler`
+/// (`animaction`) and `SetOnPlayGroupEventHandler` (`playgroup`) on state transitions
+/// while preserving any renderer-driven non-weapon action (such as `PlayIdle` or jump
+/// landing) when combat owns no action (`had_weapon_action`).
+#[allow(clippy::too_many_arguments)]
+pub fn bridge_player_anim_state(
+    game: &mut fnv_game::game::Game<'_>,
+    combat: &Combat,
+    anim: &WeaponAnim,
+    trigger: bool,
+    aiming: bool,
+    intent: Option<&MoveIntent>,
+    dt: f32,
+    had_weapon_action: &mut bool,
+) {
+    use fnv_game::anim_state::{AnimState, MoveDir};
+    let weapon_action = combat.player_anim_action(anim, trigger, aiming, dt);
+    let prev = game.anim_state(FormId::PLAYER_REF).cloned().unwrap_or_default();
+    let action = match weapon_action {
+        Some(a) => {
+            *had_weapon_action = true;
+            Some(a)
+        }
+        None => {
+            if *had_weapon_action {
+                *had_weapon_action = false;
+                None
+            } else {
+                prev.action
+            }
+        }
+    };
+    let (moving, group) = match intent {
+        Some(i) => {
+            let dir = MoveDir::of(i.right, i.forward, 0.01);
+            (dir, Some(movement_group(dir, !i.walk)))
+        }
+        None => (prev.moving, prev.group),
+    };
+    let iron_sights = combat.player_sights_up(anim, aiming);
+    let st = AnimState {
+        action,
+        moving,
+        group,
+        iron_sights,
+        throwing: prev.throwing,
+        mine: prev.mine,
+        forced_hit: prev.forced_hit,
+        clip: prev.clip,
+        at: 0.0,
+    };
+    game.set_anim_state(FormId::PLAYER_REF, st);
+}
+
+/// Bridge live player combat/weapon animation and movement group transitions from
+/// `CombatPlugin` into `ScriptState` inside `with_world` so `SetOnAnimActionEventHandler`
+/// and `SetOnPlayGroupEventHandler` handlers fire with live world access.
+#[allow(clippy::too_many_arguments)]
+fn sync_player_anim_events(
+    time: Res<Time>,
+    combat: Res<Combat>,
+    anim: Res<WeaponAnim>,
+    control: Option<Res<PlayerControl>>,
+    intent: Option<Res<MoveIntent>>,
+    mut sim: ResMut<SimState>,
+    mut script: Option<ResMut<ScriptState>>,
+    mut had_weapon_action: Local<bool>,
+) {
+    let Some(rt) = script.as_deref_mut().and_then(|s| s.rt.as_mut()) else { return };
+    let dt = time.delta_secs().min(0.1);
+    let trigger = control.as_deref().is_some_and(|c| c.trigger);
+    let aiming = control.as_deref().is_some_and(|c| c.aiming);
+    with_world(rt, &mut sim, |rt| {
+        bridge_player_anim_state(&mut rt.game, &combat, &anim, trigger, aiming, intent.as_deref(), dt, &mut had_weapon_action);
+    });
 }
 
 fn init_combat(mut commands: Commands, d: Res<PlayWorld>) {
@@ -7090,6 +7185,171 @@ mod tests {
             let blasted = blast_on(&mut g, Some(Cause { actor: player, weapon: launcher }), npc);
             assert!(direct.base > 0.0 && close(direct.modified, direct.base * 1.2), "{direct:?}");
             assert!(close(blasted.base, 100.0) && close(blasted.modified, 120.0), "{blasted:?}");
+        }
+
+        /// `bridge_player_anim_state` drives `fnv_game::Game::set_anim_state` from live
+        /// `Combat` + `WeaponAnim` + `MoveIntent`, firing JIP `SetOnAnimActionEventHandler`
+        /// (including literal action 0 Equip) and `SetOnPlayGroupEventHandler` (including
+        /// literal group 0 Idle) on transitions without clobbering renderer-driven idles.
+        #[test]
+        fn player_anim_bridge_fires_jip_animaction_and_playgroup_events() {
+            use fnv_combat::attack::{Cycle, Phase, Timing};
+            use fnv_game::anim_state::{AnimAction, AnimState};
+            use fnv_game::game::RunCtx;
+
+            let f = fixture();
+            let mut g = game(&f, &[]);
+            let mut xml = String::from("<menu name=\"HUDMainMenu\"><rect name=\"Probe\">");
+            for key in ["a0", "a1", "a2", "a9", "a13", "g0", "g3", "g7"] {
+                xml.push_str(&format!("<_{key}>0</_{key}>"));
+            }
+            xml.push_str("</rect></menu>");
+            let ui_src = fnv_ui::MemSource::default().with("owned.xml", &xml);
+            g.ui_tree.load_menu(&ui_src, "owned.xml").unwrap();
+            g.ui_tree.update();
+            let q = |g: &mut Game<'_>, src: &str| {
+                g.run_query(src, RunCtx::default()).unwrap_or_else(|e| panic!("{src}: {e}"))
+            };
+            let ui = |g: &Game<'_>, key: &str| g.ui_tree.get_float(&format!("HUDMainMenu/Probe/_{key}")).unwrap();
+
+            // Register Equip (0), Attack (2), Reload (9), ForceScriptAnim (13), Unequip (1),
+            // and PlayGroup Idle (0) + Forward (3) + FastForward (7) on PlayerREF.
+            q(
+                &mut g,
+                "ref fnEq\nBegin Function { }\n\
+                 let fnEq := (Begin Function {int a}\n\
+                   SetUIFloat \"HUDMainMenu/Probe/_a0\" ((GetUIFloat \"HUDMainMenu/Probe/_a0\") + 1)\n\
+                 End)\n\
+                 SetOnAnimActionEventHandler fnEq 1 PlayerREF 0\n\
+                 PlayerREF.AuxVarSetRef \"*fn_eq\" fnEq\nEnd\n",
+            );
+            q(&mut g, "Begin Function { }\nSetOnAnimActionEventHandler (Begin Function {int a}\nSetUIFloat \"HUDMainMenu/Probe/_a2\" ((GetUIFloat \"HUDMainMenu/Probe/_a2\") + 1)\nEnd) 1 PlayerREF 2\nEnd\n");
+            q(&mut g, "Begin Function { }\nSetOnAnimActionEventHandler (Begin Function {int a}\nSetUIFloat \"HUDMainMenu/Probe/_a9\" ((GetUIFloat \"HUDMainMenu/Probe/_a9\") + 1)\nEnd) 1 PlayerREF 9\nEnd\n");
+            q(&mut g, "Begin Function { }\nSetOnAnimActionEventHandler (Begin Function {int a}\nSetUIFloat \"HUDMainMenu/Probe/_a13\" ((GetUIFloat \"HUDMainMenu/Probe/_a13\") + 1)\nEnd) 1 PlayerREF 13\nEnd\n");
+            q(&mut g, "Begin Function { }\nSetOnAnimActionEventHandler (Begin Function {int a}\nSetUIFloat \"HUDMainMenu/Probe/_a1\" ((GetUIFloat \"HUDMainMenu/Probe/_a1\") + 1)\nEnd) 1 PlayerREF 1\nEnd\n");
+            q(&mut g, "Begin Function { }\nSetOnPlayGroupEventHandler (Begin Function {int gr}\nSetUIFloat \"HUDMainMenu/Probe/_g0\" ((GetUIFloat \"HUDMainMenu/Probe/_g0\") + 1)\nEnd) 1 PlayerREF Idle\nEnd\n");
+            q(&mut g, "Begin Function { }\nSetOnPlayGroupEventHandler (Begin Function {int gr}\nSetUIFloat \"HUDMainMenu/Probe/_g3\" ((GetUIFloat \"HUDMainMenu/Probe/_g3\") + 1)\nEnd) 1 PlayerREF Forward\nEnd\n");
+            q(&mut g, "Begin Function { }\nSetOnPlayGroupEventHandler (Begin Function {int gr}\nSetUIFloat \"HUDMainMenu/Probe/_g7\" ((GetUIFloat \"HUDMainMenu/Probe/_g7\") + 1)\nEnd) 1 PlayerREF FastForward\nEnd\n");
+
+            let timing = Timing { interval: 0.4, fire_delay: 0.05, reload: 1.5, spin_up: 0.0, rounds: None, attach: None };
+            let mut cycle = Cycle::new(&WeaponStats::default(), timing, false, 10);
+            let mut combat = Combat {
+                forms: CombatForms::default(),
+                rules: Rules::defaults(),
+                tuning: CombatTuning::default(),
+                weapon: Some(FormId(RIFLE)),
+                equipped: Some(Some(FormId(RIFLE))),
+                mods: 0,
+                silenced_logged: None,
+                fists: None,
+                ammo: None,
+                self_ammo: false,
+                melee: false,
+                swings: Melee::default(),
+                blows: 0,
+                boom: Vec::new(),
+                meltdowns: HashSet::new(),
+                debris: Vec::new(),
+                cycle: Some(cycle.clone()),
+                kick: Kick::default(),
+                flying: Vec::new(),
+                dropped_live: Vec::new(),
+                settled: Vec::new(),
+                landed: Vec::new(),
+                fire_landed: Vec::new(),
+                splashes: Vec::new(),
+                ghosts: Vec::new(),
+                looping: None,
+                ejects_seen: 0,
+                vats_throw: None,
+                last_shot: 0.0,
+                next_visual: 0,
+                pending: Vec::new(),
+                script_shots: Vec::new(),
+                guarding: HashMap::new(),
+                blocked_blows: Vec::new(),
+                fresh_reload: false,
+                guard_down_until: 0.0,
+                marks: Vec::new(),
+                rng: SplitMix(1),
+                swing_rng: SplitMix(2),
+                time: 0.0,
+                no_spread: false,
+                tracer_hold: None,
+                load_magazine: None,
+                load_ammo: None,
+                crosshair_cone: None,
+                player_spread: None,
+                grenade_hold: 0.0,
+                grenade_held: false,
+                vats_cone: None,
+                vats_blast: VatsBlast::default(),
+                player_blocked_at: None,
+                special_swing: None,
+                throw_logged: None,
+                spread_perks_logged: None,
+                flinch_until: 0.0,
+                flinch_end: None,
+                flinch_rng: SplitMix(3),
+                kick_rng: SplitMix(5),
+                kick_just_settled: false,
+                kick_left: [0.0; 2],
+                kick_back_goal: [0.0; 2],
+                kick_back: [crate::ease::Spring::default(); 2],
+                spent_rng: SplitMix(4),
+            };
+            let dt = 1.0 / 60.0;
+            let mut had_weapon = false;
+            let idle_intent = MoveIntent { forward: 0.0, right: 0.0, walk: false, ..Default::default() };
+
+            // 1. Drawing weapon -> Equip (0) + Idle (0); steady frame does not re-fire.
+            let mut anim = WeaponAnim { drawing: true, ready: false, ..Default::default() };
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
+            assert_eq!((ui(&g, "a0"), ui(&g, "g0")), (1.0, 1.0));
+
+            // 2. Ready + WindUp -> Attack (2); walk forward -> Forward (3).
+            anim.drawing = false;
+            anim.ready = true;
+            cycle.phase = Phase::WindUp { left: 0.03 };
+            combat.cycle = Some(cycle.clone());
+            let walk_fwd = MoveIntent { forward: 1.0, right: 0.0, walk: true, ..Default::default() };
+            bridge_player_anim_state(&mut g, &combat, &anim, true, false, Some(&walk_fwd), dt, &mut had_weapon);
+            assert_eq!((ui(&g, "a2"), ui(&g, "a0"), ui(&g, "g3")), (1.0, 1.0, 1.0));
+
+            // 3. Reloading -> Reload (9); run forward -> FastForward (7).
+            cycle.phase = Phase::Reloading { left: 1.0 };
+            combat.cycle = Some(cycle.clone());
+            let run_fwd = MoveIntent { forward: 1.0, right: 0.0, walk: false, ..Default::default() };
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&run_fwd), dt, &mut had_weapon);
+            assert_eq!((ui(&g, "a9"), ui(&g, "g7")), (1.0, 1.0));
+
+            // 4. Jammed -> ForceScriptAnim (13), then Ready clears weapon action cleanly.
+            cycle.phase = Phase::Jammed { left: 0.5 };
+            combat.cycle = Some(cycle.clone());
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
+            assert_eq!((ui(&g, "a13"), ui(&g, "g0")), (1.0, 2.0));
+            cycle.phase = Phase::Ready;
+            combat.cycle = Some(cycle.clone());
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
+            assert_eq!(g.anim_state(FormId::PLAYER_REF).and_then(|s| s.action), None);
+
+            // 5. Renderer-driven non-weapon action (WaitForSpecialIdle 12) is preserved when
+            //    combat owns no action.
+            g.set_anim_state(FormId::PLAYER_REF, AnimState { action: Some(AnimAction::WaitForSpecialIdle), group: Some("Idle"), ..Default::default() });
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
+            assert_eq!(g.anim_state(FormId::PLAYER_REF).and_then(|s| s.action), Some(AnimAction::WaitForSpecialIdle));
+
+            // 6. Holstering -> Unequip (1); removing Equip handler suppresses future Equip (0).
+            anim.ready = false;
+            anim.holstering = true;
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
+            assert_eq!(ui(&g, "a1"), 1.0);
+            q(&mut g, "ref fnEq\nBegin Function { }\nlet fnEq := PlayerREF.AuxVarGetRef \"*fn_eq\"\nSetOnAnimActionEventHandler fnEq 0 PlayerREF 0\nEnd\n");
+            anim.holstering = false;
+            anim.drawing = true;
+            bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
+            assert_eq!(ui(&g, "a0"), 1.0, "removed Equip handler must not fire");
         }
     }
 
