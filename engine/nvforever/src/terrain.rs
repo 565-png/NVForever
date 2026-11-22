@@ -372,12 +372,14 @@ pub const PARALLAX_LAYERS: f32 = 16.0;
 /// parallax_mapping.wesl "NVForever grazing clamp", #2979), so the full-depth shift stays
 /// under about 6.7 x the depth and a view along the ground gives finite coordinates
 /// [design, #3322 round 2; terrain.wesl's `PARALLAX_GRAZING`, the tests read it].
+#[cfg(test)]
 pub const PARALLAX_GRAZING: f32 = 0.15;
 
 /// The relief search's halvings after the linear search (Policarpo, Oliveira and Comba,
 /// "Real-Time Relief Mapping on Arbitrary Polygonal Surfaces", I3D 2005; Bevy's relief
 /// method), as NIF shapes take them (nvf-assets authored.rs `PARALLAX_METHOD`, relief:4)
 /// [design, #3322 round 2; terrain.wesl's `PARALLAX_RELIEF_STEPS`].
+#[cfg(test)]
 pub const PARALLAX_RELIEF_STEPS: u32 = 4;
 
 /// The terrain parallax march's scale, in texture-coordinate units: the deepest a set's
