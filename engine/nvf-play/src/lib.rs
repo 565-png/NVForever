@@ -12,6 +12,7 @@
 //! [`dialogue_look`] turns the player's view to the actor they talk to.
 
 pub mod after_combat;
+pub mod game_files;
 pub mod activate;
 pub mod aid;
 pub mod aim_zoom;
@@ -431,6 +432,8 @@ pub struct PlayPlugin(pub PlayData);
 impl Plugin for PlayPlugin {
     fn build(&self, app: &mut App) {
         let d = self.0;
+        // Whose record names a file that is not there (game_files.rs, #2757).
+        game_files::note_load_order(d.lo);
         app.insert_resource(PlayWorld(d))
             .insert_resource(Location { world: d.world, interior: d.interior })
             .insert_resource(sim::SimState::new(d.lo, d.schema, d.index))
