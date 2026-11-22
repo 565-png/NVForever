@@ -1568,7 +1568,7 @@ struct Window {
 
 /// How many lines the settings page's window shows at once (headings count): as many as fit
 /// between the rows' top and a note of [`NOTE_LINES`] lines over [`note_bottom`], at least
-/// one; 13 with today's layout [design: #2377, the menu overhaul]. Worked out here only and carried as a value
+/// one; 11 with today's layout [design: #2377, the menu overhaul; observed: `pause menu: inspect: window 11 lines` at 1280x720, 2026-11-22, #3375]. Worked out here only and carried as a value
 /// ([`PauseView::lines`], [`Drawn::lines`]) to everything that draws, scrolls or points at
 /// the window, so a later layout can make it depend on the view.
 fn window_lines() -> usize {
