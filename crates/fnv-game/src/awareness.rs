@@ -758,7 +758,7 @@ impl Game<'_> {
         self.hostility(actor, other, &aggression).filter(|h| h.is())
     }
 
-    /// [`Game::hostility_reason`] in words, for the `alert:` log: the rule, and for a
+    /// [`Game::hostility_reason`] in words, for the `hostility:` log line: the rule, and for a
     /// faction's flag which factions and since when; for a teammate, the reason against
     /// the player too.
     pub fn hostility_text(&mut self, actor: FormId, other: FormId) -> Option<String> {

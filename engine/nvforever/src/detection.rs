@@ -1426,7 +1426,7 @@ fn log_alerts(st: &mut Stats, people: &[Person], changes: &[(Change, Option<Stri
         let value = c.value.map_or(String::new(), |v| format!(", value {v:.1}"));
         info!("alert: {} {} → {}{what}{value}{away}", label(c.actor), c.from.name(), c.to.name());
         if let (Some(why), Some(o)) = (why, c.about) {
-            info!("alert: {} fights {}: {why}", label(c.actor), label(o));
+            info!("hostility: {} against {}: {why}", label(c.actor), label(o));
         }
     }
     for (topic, who, line) in barks {
