@@ -3626,6 +3626,24 @@ already talking takes over at once, same topic or another; nothing is queued or 
      stands sizes it. Not in the list: the original's way is the theft (or a speech or
      barter line not in our list).
 
+## Added 2026-11-21 (the compass's actor ticks against the strip, #3310)
+
+261. **Where does an actor's tick on the compass end against the strip's line?** (P3;
+     #3310, hud.md §11.) The HUD file's box puts the tick's top at the compass window's
+     top (the group's run-time y 10, read from the original, over the template's 5, and
+     the tick's y -10); ours since #3310 draws the 26-unit tick so its bar ends 22 units
+     down the window, about 4 above the strip's upper line, where it ended on that line
+     before [hypothesis: the picture's bar is its top 22 texel rows, drawn a texel a
+     unit]. Outdoors at 1920 x 1080, HUD scale 100 % (1.125 pixels a unit, hud.md §4),
+     with a neutral NPC about 300 units ahead (Goodsprings, the settler of §14.5) and a
+     hostile one (a gecko), take one frame each, heading steady, and measure on the raw
+     1920 x 1080 capture, not a resized one: the tick's solid end, the top of its fade
+     and the span between, against the strip's doubled line and the bracket's long line
+     above it, in pixels. A fade and bar spanning about 25 pixels (22 units) agree with
+     the 22-row hypothesis, about 20 pixels (17.9 units) with our 26-unit size; a bar
+     ending about 4-5 pixels above the strip's upper line agrees with the new place, one
+     touching it says the old place was right.
+
 ## Added 2026-11-21 (placing the custom map marker with the mouse, #3324)
 
 262. **What does a left click on an empty spot of the Pip-Boy's World Map and Local Map do
@@ -3641,6 +3659,36 @@ already talking takes over at once, same topic or another; nothing is queued or 
      on a door icon. Screenshot each result: whether a box asks (and its words) or the
      marker appears at once, where it lands against the pointer, and whether a press dragged
      a few pixels still counts as a click.
+
+## Added 2026-11-21 (is the HUD's condition bar see-through, #3309)
+
+264. **Does the world show through the HUD's weapon condition bar in the original?** (P3;
+     #3309, hud.md §4, §14.3 and §14.7.) A player report says the original draws the bar
+     with transparent parts and NVForever's is solid. The report's screenshot is
+     NVForever's: its fill reads (175, 125, 45) and its ground (100, 71, 26) over a bright
+     sky [observed: the screenshot attached to #3309]; that both are opaque there is
+     inferred from the colours they are drawn with and the sky beside them [hypothesis].
+     Static evidence, which does not prove the original never shows the bar translucent:
+     the ground's template `MeterBackground` is the plain picture `solid.dds` with no
+     `alpha` trait [documented: hudtemplates.xml], and the fill's picture `vats_bar.dds`
+     has an opaque block [documented: the texture]. On the private shots `hud_corners2` c0
+     and c4 the original's fill reads 175/255 and its ground 100/255 of the HUD's colour
+     [observed: hud.md §14.7]. Both NVForever drawings draw that. A fill translucent over
+     an opaque ground reads the same whatever lies behind the bar, so one background is
+     not enough. At 1280 x 720, a weapon at about three quarters' condition:
+     - four frames: the bright sky behind the bottom right corner and dark ground there,
+       each with HUD Opacity (the Display page's slider [documented: GECK wiki, Complete
+       List of GameSettings, `sHUDOpacity`]) at its highest and at a lower setting. In
+       each, sample the filled part and the uncovered ground right of the fill
+       separately, and the world just outside the bar;
+     - if xNVSE can read them, `GetUIFloat` of `alpha` on the fill
+       (`HUDMainMenu/ActionPoints/*:1`), on `ActionPoints/MeterBackground` and on
+       `ActionPoints` itself, at both slider settings;
+     - a low-condition sequence: bring the weapon to about 10 % (hud.md §14.3 records the
+       fill's `alpha` moving between samples there) and take several frames a fraction
+       of a second apart, with the fill's `alpha` read beside each, to see whether the
+       world shows through the fill while it flashes and from what condition it starts.
+     And what is the slider's default?
 
 ## Added 2026-11-21 (a suitcase lying on a bed, #3323)
 
