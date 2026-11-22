@@ -932,7 +932,7 @@ pub(crate) fn blended_cutout(props: &Props, cut: Option<f32>, alpha_mode: AlphaM
 /// SRC_ALPHA / INV_SRC_ALPHA and nothing gives it an alpha below 1. Its base texture is
 /// opaque in every texel (`opaque_texture`, asked last), its material alpha is 1, it has no
 /// vertex alpha, no vertex-alpha cut, no alpha animation, view-angle falloff, light,
-/// decal, refraction or hair shading. With alpha 1 the blend is `colour x 1 + behind x 0`:
+/// decal, refraction, hair shading or window environment map. With alpha 1 the blend is `colour x 1 + behind x 0`:
 /// the shape's own colour, as if opaque.
 ///
 /// Drawn opaque it is in the depth and motion prepasses, which a blended shape is not
@@ -955,7 +955,15 @@ pub(crate) fn blend_is_opaque(props: &Props, cut: Option<f32>, alpha_mode: Alpha
         && !props.unlit
         && !props.decal
         && props.refraction.is_none()
-        && !props.hair;
+        && !props.hair
+        // A shape with a window environment map (`window_env`) keeps its blend: blended,
+        // its reflection is added over it (`premultiply` below), and that path is left as
+        // it is [design, #3230]. (The drinking glass, the glass pitcher and the NCR
+        // glasses are not such shapes: they have the plain environment-map flag only,
+        // material alpha 1 and an opaque texture, so the rule takes them too; they drew
+        // at alpha 1 before as well [observed: fnvtool nif decode of
+        // `clutter\cafeteria\drinkingglass01.nif`; the smoke runs' summary lines].)
+        && props.window_env.is_none();
     matches!(alpha_mode, AlphaMode::Blend) && source_over && nothing_thins_it && opaque_texture()
 }
 
@@ -1674,8 +1682,10 @@ mod tests {
             Props { unlit: true, ..armour.clone() },
             Props { decal: true, ..armour.clone() },
             Props { hair: true, ..armour.clone() },
+            Props { window_env: Some(1.0), ..armour.clone() },
         ] {
             assert!(matches!(mode(&props), AlphaMode::Blend), "{props:?} drawn {:?}", mode(&props));
+            assert!(!blend_is_opaque(&props, None, AlphaMode::Blend, || props.textures.first().is_some_and(|t| t.contains("solid"))), "{props:?}");
         }
         // Other blends are not this one: additive stays additive, multiply multiply.
         assert!(matches!(mode(&Props { alpha: Some((4333 & !(0xF << 5), 0)), ..armour.clone() }), AlphaMode::Add));
