@@ -3492,3 +3492,47 @@ already talking takes over at once, same topic or another; nothing is queued or 
      0 0 30 0 2`, wait a frame and read it again; do the same in NVForever from the same
      place and heading. The hand moving the same way in both settles it. The reading
      back, `player.GetNifBlockRotation "Bip01 Translate" "Z" 0 2`, should be 30 in both.
+
+## Added 2026-11-21 (GetMapMarkerVisible on a marker authored Visible, #3268)
+
+252. **What does GetMapMarkerVisible return for a map marker the player has not found
+     whose record is authored Visible?** (P2: 41 calls in the shipped scripts read it,
+     VMQ01 among them [observed: script-function-audit.md]; #3268.) The wiki gives 0 not
+     on the map, 1 on it without fast travel, 2 on it and a fast-travel target
+     [documented: GECK wiki GetMapMarkerVisible]; it does not say whether a marker's
+     authored flags (REFR `FNAM`: 1 Visible, 2 Can Travel To, 4 "Show All" Hidden
+     [documented: xEdit, schemas/fnv/world.json]) count before the player finds it. Ours
+     on main: 0 until the player finds it (then 2) or a script shows it (ShowMap 0 gives
+     1, ShowMap 1 gives 2), whatever the record says [hypothesis]. #3268 makes an
+     undiscovered marker authored Visible read 1 (Visible | Can Travel To 1 too, Can
+     Travel To alone 0), as its Pip-Boy map shows it [hypothesis]. Also asked: the same
+     markers after ShowMap 0, ShowMap 1 and discovery.
+     Campaign `tools/capture/observe/o31_mapmarker_visible.campaign.json`, save `nvfdoc`
+     (Doc Mitchell's house, so the markers far from Goodsprings are not found yet
+     [hypothesis]), base game + xNVSE with three JIP readers. It reads, every 10 game
+     loops, `GetMapMarkerVisible` of four FalloutNV.esm markers whose IDs are in the
+     notes [observed: pipboy.md §5.3]: Goodsprings 0x000CDF51 (v1), Coyote Den 0x00154A69
+     (v2), Hoover Dam 0x00135E5F (v3), Jacobstown 0x000CDF57 (v4). v5-v8 hold
+     `IsMapMarker + 2 GetMapMarkerTravel + 4 GetMapMarkerHidden` of the same four (JIP
+     readers; 0 means the ID is no marker), v9 `GetPCMiscStat "Locations Discovered"`,
+     v10 a count of the reads; -1 means that read did not run. Sessions, in one game:
+     `a_before` (nothing done), `b_showmap` (ShowMap Hoover Dam 0, ShowMap Jacobstown 1),
+     `c_find_coyote`, `d_find_hoover`, `e_find_goodsprings` (`player.MoveTo` the marker,
+     300 loops, which should find it by its radius [hypothesis]).
+     **Before the run** the authored flags of the four are needed; the repository holds
+     none. Read each with `fnvtool esm decode "<Data>\FalloutNV.esm" --schema schemas/fnv
+     --formid CDF51` (then 154A69, 135E5F, CDF57) and note `FNAM`, "Map Marker Flags".
+     If none of Coyote Den, Hoover Dam and Jacobstown is Visible, find one that is
+     (`fnvtool world refs "<Data>" FalloutNV.esm --schema schemas/fnv --world
+     WastelandNV`, the rows whose base is 00000010, decoded as above) and put its FormID
+     in place of one of them everywhere in the campaign file; one Visible | Can Travel
+     To and one Can Travel To alone are wanted too. Run:
+     `python tools/capture/observe.py run tools/capture/observe/o31_mapmarker_visible.campaign.json
+     --game <FNV> --data <Data>` (JIP LN stays installed, ai-observer-jip.md §2).
+     Reading it: an undiscovered Visible marker in `a_before` reading 0 says main is
+     right; 1 says #3268 is right; 2 says the authored Can Travel To counts as well.
+     A Can Travel To alone marker reading anything but 0 is a third rule. `b_showmap`
+     should read 1 and 2 in both, the found markers 2 in both (Goodsprings 2 in
+     nvftest [observed: fa_batch1_queries]); v9 rising and v2-v4 changing in c-e shows
+     MoveTo found them. v5-v8 before and after say whether the original changes a
+     marker's Travel flag when it is found or shown.
