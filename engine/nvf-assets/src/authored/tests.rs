@@ -51,6 +51,10 @@ impl Pack {
             // `_orm` alone.
             ("textures/walls/nonormal.dds", dxt1.clone()),
             ("textures/pbr/walls/nonormal_orm.dds", dx10(98, 4, 4, &[0; 16])),
+            // A set whose scalar file sets its metal gain.
+            ("textures/walls/steel.dds", dxt1.clone()),
+            ("textures/pbr/walls/steel_orm.dds", dx10(98, 4, 4, &[0; 16])),
+            ("textures/pbr/walls/steel.toml", b"metal_gain = 3\n".to_vec()),
             // Height only: no authored set.
             ("textures/walls/stone.dds", dxt1.clone()),
             ("textures/pbr/walls/stone_p.dds", legacy(b"BC4U", 4, 4, &[0; 8])),
@@ -136,8 +140,11 @@ fn the_synchronous_source_loads_a_set_by_its_exact_member_paths() {
     };
     let set = authored(source.pbr_set(&key)).expect("authored set");
     assert_eq!(set.stem, r"textures\pbr\walls\brick");
-    assert_eq!(set.scalars, Scalars { parallax_depth: None, roughness_scale: Some(0.5), reflectance: Some(0.25) });
+    assert_eq!(set.scalars, Scalars { parallax_depth: None, roughness_scale: Some(0.5), reflectance: Some(0.25), metal_gain: None });
     assert!(set.height.is_none(), "brick has no _p");
+    if std::env::var_os(METAL_GAIN_ENV).is_none() {
+        assert_eq!(set.metal_gain, fnv_pbr::DEFAULT_METAL_GAIN, "no metal_gain: the default");
+    }
     let normal = set.normal.clone().expect("_n");
     let none = authored(source.pbr_set(&source.resolve("walls/nonormal.dds"))).expect("set without _n");
     assert!(none.normal.is_none());
@@ -639,4 +646,113 @@ fn alpha_tested_and_blended_shapes_are_refused_apart() {
     }
     assert_eq!(height_alpha(AlphaMode::Mask(0.5), false), Err(HeightSkip::AlphaTested));
     assert_eq!(height_alpha(AlphaMode::Mask(0.5), true), Ok(()));
+}
+
+/// The metal gain override's value: a gain from 1 to 40 (the scalar file's range), nothing for
+/// no value, a reason for anything else (the caller warns once and the sets keep their own).
+#[test]
+fn the_metal_gain_override_takes_a_gain_from_one_to_forty() {
+    assert_eq!(parse_metal_gain(None), Ok(None));
+    assert_eq!(parse_metal_gain(Some("  ")), Ok(None));
+    assert_eq!(parse_metal_gain(Some("1")), Ok(Some(1.0)));
+    assert_eq!(parse_metal_gain(Some(" 2.5 ")), Ok(Some(2.5)));
+    assert_eq!(parse_metal_gain(Some("40")), Ok(Some(40.0)));
+    assert!(parse_metal_gain(Some("0.5")).is_err_and(|e| e.contains("outside 1 to 40")));
+    assert!(parse_metal_gain(Some("41")).is_err());
+    assert!(parse_metal_gain(Some("NaN")).is_err(), "not in the range");
+    assert!(parse_metal_gain(Some("bright")).is_err_and(|e| e.contains("not a number")));
+    // The tests run without the variable: no override.
+    if std::env::var_os(METAL_GAIN_ENV).is_none() {
+        assert_eq!(metal_gain_override(), None);
+    }
+}
+
+/// A set's gain: the override over the file over the default (12).
+#[test]
+fn a_sets_metal_gain_is_the_override_the_file_or_the_default() {
+    let none = Scalars::default();
+    let six = Scalars { metal_gain: Some(6.0), ..Scalars::default() };
+    assert_eq!(set_metal_gain(&none, None), 12.0, "the default");
+    assert_eq!(set_metal_gain(&six, None), 6.0, "the file wins over the default");
+    assert_eq!(set_metal_gain(&six, Some(20.0)), 20.0, "the run's override wins over everything");
+    assert_eq!(set_metal_gain(&none, Some(1.0)), 1.0);
+}
+
+/// The CPU mirror of the shader's lift (nif_material.wesl `nvf_metal_base`): one gain on all
+/// channels, limited so the brightest reaches 1 (hue kept), never below the base, by the
+/// metallic; gain 1 and metallic 0 leave the base as it is.
+#[test]
+fn the_metal_lift_keeps_the_hue_and_stops_at_one() {
+    let near = |a: Vec3, b: Vec3| a.distance(b) < 1e-5;
+    let minigun = Vec3::new(0.03, 0.02, 0.015);
+    // Under the limit: the plain gain.
+    assert!(near(lifted_base(minigun, 12.0, 1.0), minigun * 12.0));
+    // Over it: the brightest channel reaches exactly 1 and the ratios stay.
+    let bronze = Vec3::new(0.4, 0.3, 0.2);
+    let l = lifted_base(bronze, 12.0, 1.0);
+    assert!((l.max_element() - 1.0).abs() < 1e-6, "{l}");
+    assert!(near(l / l.x, bronze / bronze.x), "hue kept: {l}");
+    assert!(near(l, Vec3::new(1.0, 0.75, 0.5)));
+    // The experiment's per-channel clip would have shifted it: min(base x 12, 1) is white.
+    assert!(near((bronze * 12.0).min(Vec3::ONE), Vec3::ONE));
+    // No lift: gain 1, metallic 0, or a base already at 1.
+    assert!(near(lifted_base(bronze, 1.0, 1.0), bronze));
+    assert!(near(lifted_base(bronze, 40.0, 0.0), bronze));
+    assert!(near(lifted_base(Vec3::new(1.0, 0.5, 0.1), 12.0, 1.0), Vec3::new(1.0, 0.5, 0.1)));
+    // Half metallic: half way.
+    assert!(near(lifted_base(bronze, 12.0, 0.5), (bronze + Vec3::new(1.0, 0.75, 0.5)) * 0.5));
+    // Never below the base (a base colour above 1, a gain lane of 0 on a material without a set).
+    assert!(near(lifted_base(Vec3::new(2.0, 1.0, 0.5), 12.0, 1.0), Vec3::new(2.0, 1.0, 0.5)));
+    assert!(near(lifted_base(bronze, 0.0, 1.0), bronze));
+    // Black stays black (the 1e-4 floor keeps the division finite).
+    assert!(lifted_base(Vec3::ZERO, 40.0, 1.0).is_finite() && near(lifted_base(Vec3::ZERO, 40.0, 1.0), Vec3::ZERO));
+}
+
+/// The metal gain lane (`NifSurface::metal_gain`, the uniform's `terrain.y`): a build with a
+/// set carries its gain, a build without one 0; a swap carries the new set's gain and the
+/// legacy look's 0; restore, make_legacy and an unlit copy clear it.
+#[test]
+fn the_metal_gain_lane_follows_the_set_on_the_material() {
+    use crate::nif_material::NifSurfaceUniform;
+    use crate::nif_spawn::{shape_material, Props};
+    use crate::texture::bc5_tests::triangle;
+    if std::env::var_os(METAL_GAIN_ENV).is_some() {
+        return; // an override replaces every set's gain
+    }
+    let pack = Pack::new();
+    let mut cache = TextureCache::default();
+    let mut images = Assets::<Image>::default();
+    let props = |t: &str| {
+        let mut p = Props::default();
+        p.textures = vec![t.into()];
+        p
+    };
+    let lane = |m: &crate::NifMaterial| (m.extension.metal_gain, NifSurfaceUniform::from(&m.extension).terrain.y);
+    let (brick, _) = shape_material(&props(r"walls\brick.dds"), &mut triangle(), &mut cache, &pack.data, &mut images, None);
+    let (steel, _) = shape_material(&props(r"walls\steel.dds"), &mut triangle(), &mut cache, &pack.data, &mut images, None);
+    let (plain, _) = shape_material(&props(r"walls\plain.dds"), &mut triangle(), &mut cache, &pack.data, &mut images, None);
+    assert_eq!(lane(&brick), (12.0, 12.0), "no metal_gain in brick's file: the default");
+    assert_eq!(lane(&steel), (3.0, 3.0), "the scalar file's");
+    assert_eq!(lane(&plain), (0.0, 0.0), "no set");
+    // Swaps: the new set's gain, the legacy look's 0, back again.
+    let mut m = plain.clone();
+    assert_eq!(retexture(&mut m, r"walls\steel.dds", &mut cache, &pack.data, &mut images, None), Retextured::Authored);
+    assert_eq!(lane(&m), (3.0, 3.0));
+    assert_eq!(retexture(&mut m, r"walls\brick.dds", &mut cache, &pack.data, &mut images, None), Retextured::Authored);
+    assert_eq!(lane(&m), (12.0, 12.0), "never the old set's");
+    assert_eq!(retexture(&mut m, r"walls\plain.dds", &mut cache, &pack.data, &mut images, None), Retextured::Legacy);
+    assert_eq!(lane(&m), (0.0, 0.0));
+    // A copy carries the lane (it is a field of the material).
+    let copy = steel.clone();
+    assert_eq!(lane(&copy), (3.0, 3.0));
+    // Restore, make_legacy, an unlit copy: cleared.
+    let mut restored = steel.clone();
+    restore(&mut restored, steel.extension.legacy.as_ref().unwrap());
+    assert_eq!(lane(&restored), (0.0, 0.0));
+    let mut legacy_for_good = steel.clone();
+    assert!(make_legacy(&mut legacy_for_good));
+    assert_eq!(lane(&legacy_for_good), (0.0, 0.0));
+    let mut unlit = steel.clone();
+    clear_for_unlit_copy(&mut unlit);
+    assert_eq!(lane(&unlit), (0.0, 0.0));
 }

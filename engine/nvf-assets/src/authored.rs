@@ -54,6 +54,10 @@ pub struct AuthoredSet {
     pub height: Option<Parallax>,
     /// The scalar file's values (all `None` without one).
     pub scalars: Scalars,
+    /// The base colour gain of the set's metals ([`set_metal_gain`]: the run's override, the
+    /// scalar file's `metal_gain`, or its default), carried to the shader by
+    /// `NifSurface::metal_gain` ([`apply`]).
+    pub metal_gain: f32,
 }
 
 /// A height-only set (`_p` without `_orm`) found for a shape's diffuse, its `_p` loaded: the
@@ -418,7 +422,8 @@ pub(crate) fn find(data: &GameData, enabled: bool, key: &str, memo: &Memo, mut l
             });
             let scalars = scalars(&found);
             let height = height_map(&found, &scalars, memo, &mut load);
-            Some(PbrSet::Authored(AuthoredSet { stem: found.stem, orm, normal, height, scalars }))
+            let metal_gain = set_metal_gain(&scalars, metal_gain_override());
+            Some(PbrSet::Authored(AuthoredSet { stem: found.stem, orm, normal, height, scalars, metal_gain }))
         }
         SetState::HeightOnly => {
             // Of the scalars only the depth applies to a height-only set.
@@ -620,12 +625,14 @@ pub fn key_eligible(key: &str) -> bool {
 }
 
 /// The metallic value an authored material is built with: 0 (the ORM's blue channel then has
-/// no effect: no reflection source exists yet, docs/spec-notes/pbr-materials.md "Metallic"),
-/// or 1 in the metallic channel view ([`PbrView::Metallic`]), so the material's sample of
-/// the blue channel is the per-texel value the view shows, and under the metallic debug
-/// switch ([`metallic_debug`]), so the blue channel takes effect.
+/// no effect: no reflection source, docs/spec-notes/pbr-materials.md "Metallic"), or 1 in the
+/// metallic channel view ([`PbrView::Metallic`]), so the material's sample of the blue
+/// channel is the per-texel value the view shows, under the metallic debug switch
+/// ([`metallic_debug`]), so the blue channel takes effect, and with reflections on
+/// (`reflection_cube::enabled`), where nif_material.wesl holds the sampled value at 0 in every
+/// view without a reflection cube, so only a view with one shades a metal as a metal.
 pub fn authored_metallic() -> f32 {
-    if view() == PbrView::Metallic || metallic_debug() { 1.0 } else { 0.0 }
+    if view() == PbrView::Metallic || metallic_debug() || crate::reflection_cube::enabled() { 1.0 } else { 0.0 }
 }
 
 /// The environment variable of the metallic debug switch ([`metallic_debug`]).
@@ -637,7 +644,10 @@ pub const METALLIC_ENV: &str = "NVF_PBR_METALLIC";
 /// the metal's share of it on authored materials ((1 - m) of it is removed, m the sampled
 /// metallic), so a metal shows the ambient light in its colour instead of drawing black where
 /// no lamp's highlight falls (`NVF_PBR_METALLIC` shader def) [design, DESIGN option (b)].
-/// Every other material is drawn as without it.
+/// Every other material is drawn as without it. With reflections on
+/// (`reflection_cube::enabled`) the "keep the metal share" rule is retired: the shader def is
+/// not set and the full ambient highlight is removed, also at metallic 1, since the cube
+/// replaces it (nif_material.rs, reflections slice 1).
 pub fn metallic_debug() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
@@ -649,6 +659,62 @@ pub fn metallic_debug() -> bool {
     })
 }
 
+/// The environment variable of the metal gain override ([`metal_gain_override`]).
+pub const METAL_GAIN_ENV: &str = "NVF_PBR_METAL_GAIN";
+
+/// The value of [`METAL_GAIN_ENV`] as a gain: `Ok(None)` for no value (or an empty one),
+/// `Ok(Some(g))` for a number in the scalar file's range (`fnv_pbr::METAL_GAIN_RANGE`, 1 to
+/// 40), `Err` with the reason otherwise.
+pub fn parse_metal_gain(text: Option<&str>) -> Result<Option<f32>, String> {
+    let range = fnv_pbr::METAL_GAIN_RANGE;
+    let Some(t) = text.map(str::trim).filter(|t| !t.is_empty()) else { return Ok(None) };
+    match t.parse::<f32>() {
+        Ok(g) if range.contains(&g) => Ok(Some(g)),
+        Ok(g) => Err(format!("{METAL_GAIN_ENV}={g} is outside {} to {}", range.start(), range.end())),
+        Err(_) => Err(format!("{METAL_GAIN_ENV}={t} is not a number")),
+    }
+}
+
+/// The metal gain override (a tuning aid, off by default; `NVF_PBR_METAL_GAIN=<gain>`, 1 to
+/// 40, read once at the start, NifMaterialPlugin): every set's metal gain
+/// ([`AuthoredSet::metal_gain`]) is this value for the run, whatever its scalar file says,
+/// so a gain can be judged by picture [design]. A value that is no number or
+/// out of range is warned about once and the sets keep their own gains. Not a
+/// `NVF_PLAY_TEST_*` aid: it does not make a run unattended.
+pub fn metal_gain_override() -> Option<f32> {
+    static GAIN: OnceLock<Option<f32>> = OnceLock::new();
+    *GAIN.get_or_init(|| match parse_metal_gain(std::env::var(METAL_GAIN_ENV).ok().as_deref()) {
+        Ok(Some(g)) => {
+            info!("authored materials: metal gain override ({METAL_GAIN_ENV}={g}): every authored set's metal gain is {g} for this run");
+            Some(g)
+        }
+        Ok(None) => None,
+        Err(reason) => {
+            warn!("authored materials: {reason}; each set keeps its own metal gain");
+            None
+        }
+    })
+}
+
+/// A set's metal gain: `over` (the run's override, [`metal_gain_override`]) when given, else
+/// the scalar file's `metal_gain`, else 12 (`fnv_pbr::DEFAULT_METAL_GAIN`) [design, owner
+/// 2026-11-21, #3237].
+pub fn set_metal_gain(scalars: &Scalars, over: Option<f32>) -> f32 {
+    over.unwrap_or_else(|| scalars.metal_gain_or_default())
+}
+
+/// The base colour an authored metal is lit with in a view with a reflection cube: the CPU
+/// mirror of nif_material.wesl's `nvf_metal_base` (tests compare the two by their rules):
+/// mix(base, lifted, metallic), lifted = base x min(gain, 1 / brightest channel), never below
+/// base. One gain on all three channels, limited so the brightest channel reaches 1, keeps
+/// the hue (the experiment before it clipped each channel at 1, which shifted bright texels
+/// towards white) [design].
+pub fn lifted_base(base: Vec3, gain: f32, metallic: f32) -> Vec3 {
+    let brightest = base.x.max(base.y).max(base.z.max(1e-4));
+    let lifted = base * gain.min(1.0 / brightest).max(1.0);
+    base.lerp(lifted, metallic)
+}
+
 /// The environment variable that picks a channel view ([`PbrView`]).
 pub const VIEW_ENV: &str = "NVF_PBR_VIEW";
 
@@ -658,8 +724,8 @@ pub const VIEW_ENV: &str = "NVF_PBR_VIEW";
 /// "NVF_PBR_VIEW"). Refracting shapes return before it; additive draws add it by their alpha
 /// and multiplied ones stay neutral, so effects fade out of the view. Picked once at
 /// the start by `NVF_PBR_VIEW` = `roughness` | `metallic` | `occlusion` | `normal` |
-/// `authored` | `height` [design]. Not a `NVF_PLAY_TEST_*` aid: it does not make a run
-/// unattended.
+/// `authored` | `reflection` | `height` [design]. Not a `NVF_PLAY_TEST_*` aid: it does not
+/// make a run unattended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PbrView {
     Off,
@@ -673,6 +739,13 @@ pub enum PbrView {
     Normal,
     /// Authored shapes tinted orange, every other shape grey, by its base colour's brightness.
     Authored,
+    /// What an authored surface reflects: the view's reflection cube at level 0 along the
+    /// surface's mirror direction, as a white perfect mirror writes it (texel x intensity x
+    /// exposure, tone-mapped as the rest of the picture), so its scale can be judged against
+    /// the sky in the same frame. Every other shape grey as in [`PbrView::Authored`];
+    /// authored shapes orange where the view has no cube or reflections are off. Only the
+    /// opted-in NIF fragment (`reflection_cube::REFLECT_DEF`) reads the cube.
+    Reflection,
     /// The height map as stored (0 black = low, 1 white = high), read at the unshifted
     /// texture coordinates: the original height, not the depth the march reads; dark blue on
     /// a shape without a depth map (#2981 stage 4).
@@ -680,7 +753,7 @@ pub enum PbrView {
 }
 
 impl PbrView {
-    pub const ALL: [PbrView; 6] = [PbrView::Roughness, PbrView::Metallic, PbrView::Occlusion, PbrView::Normal, PbrView::Authored, PbrView::Height];
+    pub const ALL: [PbrView; 7] = [PbrView::Roughness, PbrView::Metallic, PbrView::Occlusion, PbrView::Normal, PbrView::Authored, PbrView::Reflection, PbrView::Height];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -690,6 +763,7 @@ impl PbrView {
             PbrView::Occlusion => "occlusion",
             PbrView::Normal => "normal",
             PbrView::Authored => "authored",
+            PbrView::Reflection => "reflection",
             PbrView::Height => "height",
         }
     }
@@ -712,6 +786,7 @@ impl PbrView {
             PbrView::Occlusion => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_OCCLUSION"],
             PbrView::Normal => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_NORMAL"],
             PbrView::Authored => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_AUTHORED"],
+            PbrView::Reflection => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_REFLECTION"],
             PbrView::Height => &["NVF_PBR_VIEW", "NVF_PBR_VIEW_HEIGHT"],
         }
     }
@@ -731,7 +806,7 @@ pub fn view() -> PbrView {
                 v
             }
             None => {
-                warn!("authored materials: {VIEW_ENV}={text} is none of roughness, metallic, occlusion, normal, authored, height; no channel view");
+                warn!("authored materials: {VIEW_ENV}={text} is none of roughness, metallic, occlusion, normal, authored, reflection, height; no channel view");
                 PbrView::Off
             }
         }
@@ -742,8 +817,8 @@ pub fn view() -> PbrView {
 /// map (one image in both slots), no specular mask, the scalars' roughness scale and
 /// reflectance (their defaults without a file), [`authored_metallic`], the set's `_n` when it
 /// has one and the drawn mesh has tangents (else the game's normal map, its alpha no longer a
-/// mask), and the mark ([`AUTHORED_MARK`]). Everything else (base colour, alpha, glow,
-/// decal, the extension's other values) stays. Whether the set's `_n` was applied.
+/// mask), the mark ([`AUTHORED_MARK`]) and the set's metal gain (`NifSurface::metal_gain`).
+/// Everything else (base colour, alpha, glow, decal, the extension's other values) stays. Whether the set's `_n` was applied.
 pub fn apply(material: &mut crate::NifMaterial, set: &AuthoredSet, legacy: &LegacyLook) -> bool {
     let b = &mut material.base;
     b.metallic_roughness_texture = Some(set.orm.clone());
@@ -764,6 +839,7 @@ pub fn apply(material: &mut crate::NifMaterial, set: &AuthoredSet, legacy: &Lega
     let applied = normal.is_some();
     b.normal_map_texture = normal.or_else(|| legacy.normal.clone());
     material.extension.emissive_rule.w = AUTHORED_MARK;
+    material.extension.metal_gain = set.metal_gain;
     applied
 }
 
@@ -780,6 +856,7 @@ pub fn restore(material: &mut crate::NifMaterial, legacy: &LegacyLook) {
     b.metallic = legacy.metallic;
     b.specular_tint = legacy.specular_tint;
     material.extension.emissive_rule.w = 0.0;
+    material.extension.metal_gain = 0.0;
     remove_height(material, legacy);
 }
 
@@ -974,7 +1051,7 @@ pub fn make_legacy(material: &mut crate::NifMaterial) -> bool {
 /// Clear every authored map from an unlit copy (the Pip-Boy's glare and menus copies,
 /// nvforever `pipboy_arm.rs`, the terminal's glass and glare): the ORM in both slots, the
 /// depth map (Bevy applies parallax before its unlit test; a height overlay's other parallax
-/// fields go back to the legacy look's), the mark and the legacy look, so nothing of a set reaches it whatever its source wore [design, a second
+/// fields go back to the legacy look's), the mark, the metal gain and the legacy look, so nothing of a set reaches it whatever its source wore [design, a second
 /// guard beside the `textures\pipboy3000\` exclusion].
 pub fn clear_for_unlit_copy(material: &mut crate::NifMaterial) {
     material.base.metallic_roughness_texture = None;
@@ -989,6 +1066,7 @@ pub fn clear_for_unlit_copy(material: &mut crate::NifMaterial) {
     }
     material.base.depth_map = None;
     material.extension.emissive_rule.w = 0.0;
+    material.extension.metal_gain = 0.0;
 }
 
 /// What [`retexture`] did to a material.

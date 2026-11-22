@@ -305,9 +305,9 @@ mod tests {
     /// Inertia and Camera Motion in place of weapon sway and head bob, #2843's Shadow
     /// resolution row, Gore Shake and #2670's Cloud shadows; #2661's mesh terrain blend row, the
     /// Quick Loot rows; #2965's heat haze row; #2675's desert haze row; Sprint; #2671's terrain
-    /// shadows row; #2981's authored materials row; #2701's full-detail scenery row; #3014's
-    /// distant objects row), by the group it registers with.
-    const KNOWN: [(&str, &str); 144] = [
+    /// shadows row; #2981's authored materials row and its reflections row; #2701's
+    /// full-detail scenery row; #3014's distant objects row), by the group it registers with.
+    const KNOWN: [(&str, &str); 145] = [
         ("detached-camera", "Gameplay"),
         ("gore-shake", "Gameplay"),
         ("advanced-movement", "Gameplay"),
@@ -423,6 +423,7 @@ mod tests {
         ("sharpen", "Graphics"),
         ("anisotropic", "Graphics"),
         ("authored-materials", "Graphics"),
+        ("authored-reflections", "Graphics"),
         ("terrain-height-blend", "Graphics"),
         ("terrain-anti-tiling", "Graphics"),
         ("terrain-parallax", "Graphics"),
@@ -668,6 +669,7 @@ mod tests {
         assert_eq!(at("button-style"), "Controls > Input");
         assert_eq!(at("terrain-anti-tiling"), "Graphics > Detail and Distance", "beside terrain height blending (#2551)");
         assert_eq!(at("authored-materials"), "Graphics > Detail and Distance", "beside anisotropic filtering, the other texture row (#2981)");
+        assert_eq!(at("authored-reflections"), "Graphics > Detail and Distance", "right after Authored materials (#2981 reflections)");
         assert_eq!(at("mesh-terrain-blend"), "Graphics > Detail and Distance", "beside the terrain rows (#2661)");
         assert_eq!(at("terrain-parallax"), "Graphics > Detail and Distance", "after terrain anti-tiling (#3322)");
         assert_eq!(nvf_settings_layout::needs("terrain-parallax").iter().map(|r| r.parent).collect::<Vec<_>>(), ["authored-materials"], "it draws the authored height maps");
