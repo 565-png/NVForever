@@ -88,6 +88,7 @@ supports their text encoding.
 
 The game's 256-glyph bitmap fonts cover a single-byte code page. Windows-1252 covers
 German, French, Italian and Spanish in the shipped files. Windows-1251 covers Russian.
+Every file here keeps to its code page's letters (no `œ`).
 The bundled Sharp menu face covers Latin and Cyrillic. Displaying the Simplified
 Chinese translation requires a build with CJK font fallback and a font with the
 needed glyphs. On those builds, NVForever can use a system font or a TrueType or
