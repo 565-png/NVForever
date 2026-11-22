@@ -3523,14 +3523,19 @@ fn a_chase_is_planned_again_sooner_near_its_target_and_leads_one_that_moves() {
     assert!(keeps_way(to, 10.0, [20.0, 0.0, 0.0], 250.0, 150.0, 10.5));
     assert!(!keeps_way(to, 10.0, [30.0, 0.0, 0.0], 250.0, 150.0, 10.5), "the target moved 30 units, 25 allowed");
     assert!(!keeps_way(to, 10.0, [20.0, 0.0, 0.0], 250.0, 150.0, 11.6), "1.5 s have passed");
-    // The target's speed: measured over 0.05 s or more, evened with the one before.
+    // The target's speed: measured over 0.05 s or more; the first measurement as it is
+    // (#3256: evened with the "standing" it began with, a walking target read as half
+    // its speed and was taken for standing), each later one evened with the one before.
     let d = Drift::begin(to, 10.0);
-    assert_eq!(d.speed, [0.0, 0.0]);
+    assert_eq!((d.speed, d.measured), ([0.0, 0.0], false));
     assert_eq!(d.on([5.0, 0.0, 0.0], 10.02), d, "too soon to measure");
     let d = d.on([30.0, 0.0, 0.0], 10.1);
-    assert!((d.speed[0] - 150.0).abs() < 0.01 && d.speed[1] == 0.0, "{d:?}");
-    let d = d.on([60.0, 0.0, 0.0], 10.2);
-    assert!((d.speed[0] - 225.0).abs() < 0.01, "{d:?}");
+    assert!((d.speed[0] - 300.0).abs() < 0.01 && d.speed[1] == 0.0 && d.measured, "{d:?}");
+    let d = d.on([40.0, 0.0, 0.0], 10.2);
+    assert!((d.speed[0] - 200.0).abs() < 0.01, "{d:?}");
+    // A player walking backwards (69 units/s) is a moving target from the first measurement.
+    let walk = Drift::begin(to, 10.0).on([6.9, 0.0, 0.0], 10.1);
+    assert!(walk.speed[0] >= fnv_ai::alert::CHASE_LEAD_MIN_SPEED, "{walk:?}");
     // A moving target is closed in on 0.35 s ahead of it, at most 96 units; a slow one
     // where it is.
     assert_eq!(lead([100.0, 50.0, 7.0], [200.0, 0.0]), [170.0, 50.0, 7.0]);
