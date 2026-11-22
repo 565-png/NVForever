@@ -256,6 +256,9 @@ pub fn set_hardcore(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String>
 pub fn show_map(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let m = a.form(0)?;
     g.player.map_markers.insert(m);
+    if g.marker_flag_override(m, crate::nvse_lu2::MARKER_VISIBLE) == Some(false) {
+        g.clear_marker_flag_override(m, crate::nvse_lu2::MARKER_VISIBLE);
+    }
     if a.num_or(1, 0.0) != 0.0 {
         g.player.travel_markers.insert(m);
         if g.marker_flag_override(m, crate::nvse_lu2::MARKER_TRAVEL) == Some(false) {
@@ -282,30 +285,33 @@ impl Game<'_> {
 
 /// `marker.GetMapMarkerVisible`: 0 not on the map, 1 on it without fast travel, 2 on it
 /// and a fast-travel target [documented: GECK wiki GetMapMarkerVisible, "Marker State"].
-/// A marker the player found reads 2 [observed: the Goodsprings marker in the save
-/// nvftest, capture `fa_batch1_queries`]; ShowMap's canTravel, ShowAllMapMarkers' travel
-/// flag, and explicit script `SetMapMarkerVisible` / `SetMapMarkerTravel` /
-/// `SetMapMarkerHidden` changes feed visibility and travel consistently with the Pip-Boy
-/// map. An undiscovered marker authored Visible (`FNAM` bit 1) reads 1 rather than 0
-/// until found or shown [hypothesis: matches the Pip-Boy map, changes vanilla callers
-/// such as VMQ01; pending observer check 252 in #3340, `o31_mapmarker_visible`]. The
-/// authored Can Travel To flag (`FNAM` bit 2) does not mark an undiscovered marker as
-/// known or return 2 before the player finds it or a script enables travel.
+/// Before discovery, authored `FNAM` flags read 0 (`0`), 1 (`1` Visible), 2 (`3`
+/// Visible | Can Travel To, e.g. Honest Hearts' Southern Passage), and 0 (`2` Can Travel
+/// To alone); `ShowMap 0` gives 1 (and leaves a marker already at 2 at 2), `ShowMap 1`
+/// and player discovery give 2 (and set `GetMapMarkerTravel` to 1); `SetMapMarkerVisible`
+/// sets/clears only bit 0, `SetMapMarkerTravel 1` alone keeps 0 while setting travel,
+/// `SetMapMarkerTravel 0` drops 2 to 1, and `SetMapMarkerHidden 1` does not zero it
+/// [observed: original FNV 1.4.0.525 + JIP LN, #3468 (`o31_mapmarker_visible` control +
+/// probe plugin) and live map-marker probe].
 pub fn get_map_marker_visible(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
     let r = ctx.subject()?;
     let flags = g.marker_flags(r);
     let hidden = flags.is_some_and(|f| f & crate::nvse_lu2::MARKER_HIDDEN != 0);
     let visible_flag = flags.is_some_and(|f| f & crate::nvse_lu2::MARKER_VISIBLE != 0);
-    let script_travel = g.marker_flag_override(r, crate::nvse_lu2::MARKER_TRAVEL);
+    let script_visible = g.marker_flag_override(r, crate::nvse_lu2::MARKER_VISIBLE);
     let found = g.player.found_markers.contains(&r);
     let shown = g.map_marker_shown(r, hidden);
-    if !(found || shown || visible_flag) {
+    let visible = match script_visible {
+        Some(false) => shown,
+        _ => found || shown || visible_flag,
+    };
+    if !visible {
         return Ok(Value::Num(0.0));
     }
-    let by_script_travel = shown && (g.player.travel_markers.contains(&r) || g.player.all_markers.is_some_and(|a| a.shown && a.travel));
-    let travel = match script_travel {
-        Some(on) => on,
-        None => found || by_script_travel,
+    let travel = if flags.is_some() {
+        g.marker_travel(r)
+    } else {
+        found || (shown && (g.player.travel_markers.contains(&r) || g.player.all_markers.is_some_and(|a| a.shown && a.travel)))
     };
     Ok(Value::Num(if travel { 2.0 } else { 1.0 }))
 }

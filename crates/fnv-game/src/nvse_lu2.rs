@@ -89,6 +89,37 @@ impl Game<'_> {
         }
     }
 
+    /// Effective `MARKER_TRAVEL` bit for map marker `r` (`GetMapMarkerTravel`,
+    /// `GetMapMarkerVisible`, and Pip-Boy fast-travel):
+    /// - Explicit `SetMapMarkerTravel` override wins (`Some(on)`), cleared if a subsequent
+    ///   `ShowMap r 1` re-enables travel.
+    /// - Otherwise `true` when the player discovered `r` (`found_markers`), `ShowMap r 1`
+    ///   or `ShowAllMapMarkers` with travel enabled it on a shown marker, or the authored
+    ///   `FNAM` record sets BOTH `MARKER_VISIBLE` and `MARKER_TRAVEL` (`FNAM & 3 == 3`)
+    ///   [observed: original FNV 1.4.0.525 + JIP LN, #3468 (`o31_mapmarker_visible`
+    ///   control + probe plugin: authored `FNAM=3` reads Vis=2/Trv=1 while authored
+    ///   `FNAM=2` alone reads Vis=0/Trv=0; `ShowMap 1` and discovery set Vis=2/Trv=1)
+    ///   and live map-marker probe (`SetMapMarkerTravel 1` alone reads Vis=0/Trv=1;
+    ///   `SetMapMarkerTravel 0` on `FNAM=3` reads Vis=1/Trv=0)].
+    pub fn marker_travel(&self, r: FormId) -> bool {
+        let Some(m) = self.world.placed.get(r).and_then(|p| p.map_marker) else {
+            return false;
+        };
+        if let Some(on) = self.marker_flag_override(r, MARKER_TRAVEL) {
+            return on;
+        }
+        if self.player.found_markers.contains(&r) {
+            return true;
+        }
+        if m.flags & (MARKER_VISIBLE | MARKER_TRAVEL) == (MARKER_VISIBLE | MARKER_TRAVEL) {
+            return true;
+        }
+        let flags = self.marker_flags(r).unwrap_or(m.flags);
+        let hidden = flags & MARKER_HIDDEN != 0;
+        let shown = self.map_marker_shown(r, hidden);
+        shown && (self.player.travel_markers.contains(&r) || self.player.all_markers.is_some_and(|a| a.shown && a.travel))
+    }
+
     /// A map marker's type as it stands (the icon it shows).
     pub fn marker_kind(&self, r: FormId) -> Option<u8> {
         let m = self.world.placed.get(r).and_then(|p| p.map_marker)?;
@@ -149,7 +180,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // and is not changed.
         "ismapmarker" => yes(subject.and_then(|r| g.marker_flags(r)).is_some()),
         "getmapmarkerhidden" => yes(subject.and_then(|r| g.marker_flags(r)).is_some_and(|f| f & MARKER_HIDDEN != 0)),
-        "getmapmarkertravel" => yes(subject.and_then(|r| g.marker_flags(r)).is_some_and(|f| f & MARKER_TRAVEL != 0)),
+        "getmapmarkertravel" => yes(subject.is_some_and(|r| g.marker_travel(r))),
         "getmapmarkertype" => XVal::Num(subject.and_then(|r| g.marker_kind(r)).map_or(0.0, f64::from)),
         "setmapmarkerhidden" | "setmapmarkertravel" | "setmapmarkervisible" => {
             let bit = match name {
