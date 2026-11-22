@@ -767,6 +767,12 @@ impl MaterialExtension for NifSurface {
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         nif_prepass(descriptor, key.mesh_key);
+        // HDR output (nvforever hdr.rs): hot light keeps the strength it emits above white.
+        if hdr_output() {
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push("NVF_HDR".into());
+            }
+        }
         if key.bind_group_data.first_person {
             first_person_depth(descriptor, key.mesh_key);
         }
@@ -1020,6 +1026,13 @@ pub fn display_emissive(value: f32) -> f32 {
 /// white in the HDR view, while the Big MT's sky beams (display 1.5 at the core) pass
 /// whole].
 pub const ADD_DISPLAY_MAX: f32 = 2.0;
+
+/// Whether the window shows HDR output (nvforever hdr.rs): its surface is fp16 scRGB.
+/// Set when the surface is made, before the first frame's pipelines are specialized, and
+/// fixed for the run, so a pipeline's shader defs never go stale.
+fn hdr_output() -> bool {
+    bevy::render::view::window::NVF_HDR_SURFACE_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// The linear light an additive shape (NiAlphaProperty destination factor ONE, drawn as
 /// `AlphaMode::Add`) adds to a pixel whose opaque frame is `behind` (linear), for its

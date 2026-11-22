@@ -81,6 +81,7 @@ mod flashlight;
 mod eye_adapt;
 mod fog;
 mod haze;
+mod hdr;
 mod aerial;
 mod fly;
 mod foot_ik;
@@ -1916,7 +1917,7 @@ fn main() -> AppExit {
                 ..default()
             }),
     )
-    .add_plugins((window_icon::WindowIconPlugin, window_mode::WindowModePlugin))
+    .add_plugins((window_icon::WindowIconPlugin, window_mode::WindowModePlugin, hdr::HdrPlugin))
     .add_plugins(nvf_play::audio_out::AudioOutPlugin)
     .add_plugins((ArchivePlugin(game), lights::LightsPlugin, fog::FogPlugin, haze::HazePlugin, aerial::AerialPlugin, eye_adapt::EyeAdaptPlugin, emittance::EmittancePlugin, water::WaterPlugin, underwater_caustics::UnderwaterCausticsPlugin, tree::TreePlugin, terrain::TerrainPlugin, reflection::ReflectionPlugin, ripples::RipplesPlugin))
     .add_plugins(night_sky::NightSkyPlugin)

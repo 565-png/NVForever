@@ -74,6 +74,11 @@ const BEVY_TONY: &str = "} @elif(TONEMAP_METHOD_TONY_MC_MAPFACE) {\n    color = 
 /// the eye adaptation's exposure (eye_adapt.rs), which Bevy applies in that pass.
 const GAME_CLIP: &str = "} @elif(TONEMAP_METHOD_TONY_MC_MAPFACE) {\n    color = min(color, vec3(1.0));";
 
+/// With HDR output (hdr.rs) the values above 1 stay: the image-space grade keeps them
+/// apart from its clipped picture and the HDR pass maps them between paper white and the
+/// screen's peak. Everything at or below 1 is the same as with [`GAME_CLIP`].
+const GAME_HDR: &str = "} @elif(TONEMAP_METHOD_TONY_MC_MAPFACE) {\n    color = max(color, vec3(0.0));";
+
 /// Set once the clip is in place (`NVF_TONEMAP=tony` keeps Bevy's curve, a test aid);
 /// sky.rs then leaves out its inverse of Tony McMapface.
 static CLIP_INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -111,6 +116,11 @@ fn patch_clip(mut state: ResMut<TonemapShader>, mut shaders: ResMut<Assets<Shade
         return;
     }
     let Some(shader) = shaders.get(&state.handle) else { return };
+    // With HDR output asked for, wait for the window's surface: only an fp16 surface shows
+    // light above white; on an SDR surface the clip stays, so the picture is the SDR one.
+    if crate::hdr::on() && !bevy::render::view::window::NVF_HDR_SURFACE_DECIDED.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     state.patched = true;
     if std::env::var("NVF_TONEMAP").is_ok_and(|v| v.eq_ignore_ascii_case("tony")) {
         info!("lights: NVF_TONEMAP=tony, the main view keeps Tony McMapface");
@@ -125,13 +135,14 @@ fn patch_clip(mut state: ResMut<TonemapShader>, mut shaders: ResMut<Assets<Shade
         error!("{TONEMAPPING_SHARED}: Tony McMapface not found (Bevy changed?); the main view keeps it");
         return;
     }
-    let patched = crate::fog::with_source(shader, source.replace(BEVY_TONY, GAME_CLIP));
+    let hdr = bevy::render::view::window::NVF_HDR_SURFACE_ACTIVE.load(std::sync::atomic::Ordering::Relaxed);
+    let patched = crate::fog::with_source(shader, source.replace(BEVY_TONY, if hdr { GAME_HDR } else { GAME_CLIP }));
     let _ = shaders.insert(&state.handle, patched);
     CLIP_INSTALLED.store(true, std::sync::atomic::Ordering::Relaxed);
     if let Some(mut sky) = sky {
         sky.refresh();
     }
-    info!("lights: display values shown clipped (in Tony McMapface's place)");
+    info!("lights: display values shown {} (in Tony McMapface's place)", if hdr { "unclipped for HDR output" } else { "clipped" });
 }
 
 #[derive(Resource)]

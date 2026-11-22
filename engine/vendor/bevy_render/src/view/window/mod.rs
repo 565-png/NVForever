@@ -10,6 +10,14 @@ use bevy_app::{App, Plugin};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
 use bevy_log::{debug, info, warn};
+
+/// NVForever HDR output (nvforever hdr.rs): an fp16 scRGB surface is asked for when the
+/// window's surface is made.
+pub static NVF_HDR_SURFACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// NVForever HDR output: the window's surface is fp16 scRGB now.
+pub static NVF_HDR_SURFACE_ACTIVE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// NVForever HDR output: a window's surface has been made, so `NVF_HDR_SURFACE_ACTIVE` holds.
+pub static NVF_HDR_SURFACE_DECIDED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 use bevy_utils::default;
 use bevy_window::{
     CompositeAlphaMode, PresentMode, PrimaryWindow, RawHandleWrapper, Window, WindowClosing,
@@ -649,6 +657,11 @@ pub fn create_surfaces(
             };
             let caps = surface.get_capabilities(&render_adapter);
             let present_mode = present_mode(&window, &caps);
+            let nvf_fp16 = caps.formats.contains(&TextureFormat::Rgba16Float);
+            let nvf_hdr = NVF_HDR_SURFACE.load(core::sync::atomic::Ordering::Relaxed) || std::env::var("NVF_HDR").is_ok_and(|v| v.trim() == "1");
+            if nvf_hdr {
+                info!("hdr: surface offers {:?}", caps.format_capabilities);
+            }
             let formats = caps.formats;
             // For future HDR output support, we'll need to request a format that supports HDR,
             // but as of wgpu 0.15 that is not yet supported.
@@ -664,6 +677,19 @@ pub fn create_surfaces(
                 }
             }
 
+            // NVForever HDR output (nvforever hdr.rs): with `NVF_HDR=1`, an fp16 surface,
+            // which `SurfaceColorSpace::Auto` makes scRGB (extended linear sRGB).
+            NVF_HDR_SURFACE_ACTIVE.store(false, core::sync::atomic::Ordering::Relaxed);
+            if nvf_hdr {
+                if nvf_fp16 {
+                    format = TextureFormat::Rgba16Float;
+                    NVF_HDR_SURFACE_ACTIVE.store(true, core::sync::atomic::Ordering::Relaxed);
+                    bevy_log::info!("hdr: window surface Rgba16Float (scRGB)");
+                } else {
+                    bevy_log::warn!("hdr: this surface offers no Rgba16Float; staying SDR");
+                }
+            }
+            NVF_HDR_SURFACE_DECIDED.store(true, core::sync::atomic::Ordering::Relaxed);
             let texture_view_format = if !format.is_srgb() {
                 Some(format.add_srgb_suffix())
             } else {
