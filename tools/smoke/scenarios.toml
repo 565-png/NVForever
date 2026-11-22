@@ -561,7 +561,7 @@ args = ["--play", "--pos=56992,37536,2745", "--hour", "12", "--no-voice", "--no-
 run_seconds = 24
 expect = [
   "water reflection: on (the water of cell 13,9 on screen)",
-  "water reflection: off (no water on screen for 1 s)",
+  "water reflection: off (no water on screen for 1 s; ",
 ]
 
 [[scenario]]
@@ -590,7 +590,7 @@ run_seconds = 16
 order = [[
   "water reflection: on (the water of cell",
   { text = "console: Water off", label = "water hidden" },
-  { text = "water reflection: off (no water on screen for 1 s)", label = "camera off after the water is hidden" },
+  { text = "water reflection: off (no water on screen for 1 s; ", label = "camera off after the water is hidden (the line goes on with the reason: #3396)" },
 ]]
 
 [[scenario]]
@@ -749,7 +749,7 @@ env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_PROFILE = "5" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "14", "--sun-shadows"]
 run_seconds = 22
 expect = [
-  { re = 'profile batches: shadow 4 views, (?P<n>\d+) multi-drawn sets', range = [1, 200], label = "shadow batch sets stay few (about 49; about 830 without bindless)" },
+  { re = 'profile batches: shadow \d+ views, (?P<n>\d+) multi-drawn sets', range = [1, 200], label = "shadow batch sets stay few (about 49; about 830 without bindless; 4 views, or 5 with a second shadowed directional light [hypothesis: the player body's], #3397)" },
   { re = 'profile batches: .*; opaque 1 views, (?P<n>\d+) multi-drawn sets', range = [1, 60], label = "main-view opaque batch sets stay few (about 9; 169 without bindless)" },
 ]
 
@@ -16094,7 +16094,7 @@ expect = [
   { re = 'FaceGen: .* (?P<n>\d+) faces textured', range = [2, 200], label = "face offset images were made for the NPCs" },
   { re = 'FaceGen: .* (?P<n>\d+) skins textured', range = [2, 400], label = "body and hand skin offset images were made" },
   { re = 'FaceGen: .* (?P<n>\d+) shapes tinted in the shader', range = [6, 2000], label = "face and skin materials carry the offset" },
-  { re = '(?i)(shader|pipeline).*(error|failed)|(error|failed).*(nif_material|shader)', count = 0, label = "the material shader compiles with FACEGEN_TINT" },
+  { re = '(?i)(shader|pipeline).*(error|(?<! 0 )failed)|(error|failed).*(nif_material|shader)', count = 0, label = "the material shader compiles with FACEGEN_TINT (the pipeline list's summary '0 failed' is no failure, #3398)" },
 ]
 
 [[scenario]]
