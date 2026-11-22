@@ -34535,3 +34535,21 @@ expect = [
   { text = "test aid: aiming at 001767AB", label = "the view is turned to the key" },
   { re = 'target 0x001767AB .*\(Take', label = "the key on the shelf is the target, to take" },
 ]
+
+[[scenario]]
+name = "spt-shape"
+kind = "tool"
+source = "docs/spec-notes/speedtree.md §4 (billboard width : height [observed] against the generated trees) and §7 (#3126: EuonymusBush01 generated too wide)"
+note = "fnvtool spt shape generates every base-game tree under the generator's readings and the probe readings (fnv_spt::probe). The as_is row with full cards is what the renderer scales by. Since #3126 branches springing from a stub take their angle from the stub's axis (EuonymusBush01 2.19 -> 1.18, measured 2026-11-21 as the probe's angle_from_axis_level_1 row); angle_from_plane_everywhere is the reading before it."
+areas = ["renderer"]
+paths = ["crates/fnv-spt/", "crates/fnvtool/src/spt_cmd.rs"]
+commands = [["spt", "shape", "{data}/Fallout - Meshes.bsa"]]
+expect = [
+  { json = "files.?tree=wastelandshrub01.shapes.?reading=as_is.full_cards.aspect", schema = "fnv.spt.shape/1", range = [1.25, 1.31], count = 1, label = "WastelandShrub01 as measured 2026-11-21 (1.28; billboard 1.44, speedtree.md §4)" },
+  { json = "files.?tree=whiteoak01.shapes.?reading=as_is.full_cards.aspect", schema = "fnv.spt.shape/1", range = [0.60, 0.66], count = 1, label = "WhiteOak01 as measured 2026-11-21 (0.63; billboard 0.62, speedtree.md §4)" },
+  { json = "files.?tree=euonymusbush01.shapes.?reading=as_is.full_cards.aspect", schema = "fnv.spt.shape/1", range = [1.17, 1.43], count = 1, label = "EuonymusBush01 within 10 % of the billboard's 1.30 (2.19 before #3126: its stems on a 0.01 stub lay flat)" },
+  { json = "files.?tree=euonymusbush01.shapes.?reading=angle_from_plane_everywhere.full_cards.aspect", schema = "fnv.spt.shape/1", range = [2.16, 2.22], count = 1, label = "the reading before #3126 still gives EuonymusBush01's old 2.19 (the probe reproduces the old generator)" },
+  { json = "files.?tree=euonymusbush01.stub_levels.#", schema = "fnv.spt.shape/1", equals = 1, count = 1, label = "EuonymusBush01's stems spring from a stub (its level 1)" },
+  { json = "files.?tree=wastelandshrub01.stub_levels.#", schema = "fnv.spt.shape/1", equals = 0, count = 1, label = "WastelandShrub01 has no stub level" },
+  { json = "files.?tree=whiteoak01.stub_levels.#", schema = "fnv.spt.shape/1", equals = 0, count = 1, label = "WhiteOak01 has no stub level" },
+]
