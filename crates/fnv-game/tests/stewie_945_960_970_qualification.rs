@@ -2,9 +2,8 @@
 //! #3179 (941 -> 945), #3183 (945 -> 960), and #3184 (960 -> 970).
 //!
 //! Independently authored synthetic records, XML fixtures, and NVSE scripts only
-//! (no game data, no copied mod script text). `GetPluginVersion "lStewieAl's Tweaks"`
-//! reports `945` once #3179 is cleared while `960` (#3183) and `970` (#3184) gates
-//! remain stopped.
+//! (no game data, no copied mod script text, and no version bump: `GetPluginVersion
+//! "lStewieAl's Tweaks"` remains pinned at `941`).
 
 use crate::common::*;
 use fnv_esm::{LoadOrder, Plugin, Schema};
@@ -275,11 +274,8 @@ fn gate_945_casino_menu_close_decimal_info_dialog_topic_and_no_casino_bans() {
     let f = fixture();
     let mut g = new_game(&f);
 
-    // #3179 promoted the Stewie gate to 945; < 945 passes while < 960 and < 970 still stop.
-    assert_eq!(num(&mut g, r#"GetPluginVersion "lStewieAl's Tweaks""#), 945.0);
-    assert_eq!(num(&mut g, r#"(GetPluginVersion "lStewieAl's Tweaks") < 945"#), 0.0);
-    assert_eq!(num(&mut g, r#"(GetPluginVersion "lStewieAl's Tweaks") < 960"#), 1.0);
-    assert_eq!(num(&mut g, r#"(GetPluginVersion "lStewieAl's Tweaks") < 970"#), 1.0);
+    // Version remains pinned at 941 until original-game bNoCasinoBans capture clears #3179.
+    assert_eq!(num(&mut g, r#"GetPluginVersion "lStewieAl's Tweaks""#), 941.0);
 
     // Register SetOnMenuCloseEventHandler for documented casino menu codes 1080/1081/1082
     // and SetOnDialogTopicEventHandler using an 8-digit ALL-DECIMAL bare hex FormID (`00163183`).
@@ -359,7 +355,7 @@ fn gate_945_casino_menu_close_decimal_info_dialog_topic_and_no_casino_bans() {
 fn gate_960_live_stewval_pipboy_mode_and_menu_search_bar_offsets() {
     let f = fixture();
     let mut g = new_game(&f);
-    assert_eq!(num(&mut g, r#"GetPluginVersion "lStewieAl's Tweaks""#), 945.0);
+    assert_eq!(num(&mut g, r#"GetPluginVersion "lStewieAl's Tweaks""#), 941.0);
 
     // Seed a conflicting INI file to prove live bound engine settings override stale INI
     // for mapped keys while unmapped keys (bScaleCriticalDamage, bArmorConditionLabel)
@@ -436,7 +432,7 @@ fn gate_960_live_stewval_pipboy_mode_and_menu_search_bar_offsets() {
 fn gate_970_barter_container_open_click_wildcards_and_key_button_events() {
     let f = fixture();
     let mut g = new_game(&f);
-    assert_eq!(num(&mut g, r#"GetPluginVersion "lStewieAl's Tweaks""#), 945.0);
+    assert_eq!(num(&mut g, r#"GetPluginVersion "lStewieAl's Tweaks""#), 941.0);
 
     let src = pipboy_and_trade_ui();
     let barter = g.ui_tree.load_menu(&src, "menus\\barter_menu.xml").unwrap();

@@ -140,13 +140,13 @@ at `0`; on an already-tracked casino (The Tops, `max_winnings = 10000`),
 `SetCasinoWinningsLevel 4` set net winnings to `10000` (`level = 3` clamped under
 `bNoCasinoBans = 1`), updating net winnings to `level * max_winnings / 4`.
 
-[design] Engine design choice (kept unchanged from #2878 in this PR): source-name
-calls replace the existing saved per-casino level read by `GetCasinoWinningsLevel`
-and the casino opening/ban consumer while leaving net earnings unchanged (so lowering
-a level does not bypass an earnings-based ban), and return `0`. Subsequent rounds
-retain the existing monotonic advancement rule. Reconciling `SetCasinoWinningsLevel`'s
+[design] Engine design choice (unchanged from #2878): source-name calls replace the
+existing saved per-casino level read by `GetCasinoWinningsLevel` and the casino
+opening/ban consumer while leaving net earnings unchanged (so lowering a level does
+not bypass an earnings-based ban), and return `0`. Subsequent rounds retain the
+existing monotonic advancement rule. Reconciling `SetCasinoWinningsLevel`'s
 net-winnings write and untouched-casino no-op with the live observation above is
-deferred to a separate change.
+tracked in #3474.
 
 [design] Engine design choice: invalid casino forms, missing arguments, nonfinite
 numbers and nonintegral/out-of-range levels fail with an engine error without
