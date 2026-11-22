@@ -941,6 +941,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                     cur & !fnv_sim::refs::FLAG_PERSISTENT
                 };
                 g.other.flags.insert(r, next);
+                g.other.persistent_overrides.insert(r, on);
             }
             zero
         }
@@ -1107,7 +1108,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let loaded: Vec<FormId> = g.loaded_cells.iter().copied().collect();
             let mut refs: Vec<FormId> = loaded.iter().flat_map(|&c| g.refs_in_cell(c, false)).filter(|&r| base(g, r) == b).collect();
             refs.extend(g.world.placed.refs.iter().filter(|&(&r, p)| p.base == b && g.persistent(r)).map(|(&r, _)| r));
-            refs.extend(g.other.flags.keys().copied().filter(|&r| {
+            refs.extend(g.other.persistent_overrides.keys().copied().filter(|&r| {
                 g.world.placed.get(r).is_none()
                     && g.world.peek(r).is_some_and(|s| s.base == b && !s.deleted())
                     && g.persistent(r)

@@ -23,8 +23,10 @@ const CELL_LOADED: u32 = 0x200;
 const CELL_UNLOADED: u32 = 0x201;
 
 const STAT: u32 = 0x800;
+const STAT_GROUP: u32 = 0x801;
 const REF_TEMP: u32 = 0x301;
 const REF_PERSIST: u32 = 0x302;
+const REF_PERSIST_GROUP_ONLY: u32 = 0x303;
 const NPC_BASE: u32 = 0x820;
 const NPC_REF: u32 = 0x310;
 
@@ -129,7 +131,11 @@ fn placed_ref(sig: &[u8; 4], flags: u32, fid: u32, edid: &str, base: u32, pos: [
 }
 
 fn plugin_bytes() -> Vec<u8> {
-    let stat = record(b"STAT", 0, STAT, &[sub(b"EDID", z("TestCrate"))]);
+    let stat = [
+        record(b"STAT", 0, STAT, &[sub(b"EDID", z("TestCrate"))]),
+        record(b"STAT", 0, STAT_GROUP, &[sub(b"EDID", z("TestGroupCrate"))]),
+    ]
+    .concat();
     let weaps = [
         weap(WEAP_PISTOL, "TestPistol", 3, 0.5, 6, 50, Some(FLST_REPAIR)),
         weap(WEAP_PISTOL_DONOR, "TestPistolDonor", 3, 0.5, 4, 25, Some(FLST_REPAIR)),
@@ -182,7 +188,12 @@ fn plugin_bytes() -> Vec<u8> {
     .concat();
 
     let cell_loaded = record(b"CELL", 0, CELL_LOADED, &[sub(b"EDID", z("LoadedCell")), sub(b"DATA", vec![1])]);
-    let loaded_refs = placed_ref(b"ACHR", 0x400, NPC_REF, "TestActorRef", NPC_BASE, [0.0, 0.0, 600.8625]);
+    let loaded_refs = [
+        placed_ref(b"ACHR", 0x400, NPC_REF, "TestActorRef", NPC_BASE, [0.0, 0.0, 600.8625]),
+        // Placed in the persistent group (type 8) WITHOUT static record flag 0x400.
+        placed_ref(b"REFR", 0, REF_PERSIST_GROUP_ONLY, "PersistGroupOnlyRef", STAT_GROUP, [5.0, 0.0, 0.0]),
+    ]
+    .concat();
     let loaded_children = group(CELL_LOADED.to_le_bytes(), 6, &group(CELL_LOADED.to_le_bytes(), 8, &loaded_refs));
 
     let cell_unloaded = record(b"CELL", 0, CELL_UNLOADED, &[sub(b"EDID", z("UnloadedCell")), sub(b"DATA", vec![1])]);
@@ -295,9 +306,10 @@ fn set_persistent_toggles_flag_and_reaches_all_consumers() {
     assert_eq!(num(&mut g, "Ar_Size (GetFormRefs TestCrate)"), 0.0);
     assert_eq!(prc(&mut g), prc_before - 1);
 
-    // SetReferenceFlag 1024 stays synchronized with IsPersistent.
-    q(&mut g, "PersistCrateRef.SetReferenceFlag 1024 1");
+    // Re-enabling via SetPersistent 1 restores both IsPersistent and flag bit 0x400.
+    q(&mut g, "PersistCrateRef.SetPersistent 1");
     assert_eq!(num(&mut g, "PersistCrateRef.IsPersistent"), 1.0);
+    assert_eq!(num(&mut g, "PersistCrateRef.GetReferenceFlag 1024"), 1.0);
 
     // Runtime-placed reference toggled persistent reaches IsPersistent and GetFormRefs.
     let spawned = g.world.place(FormId(STAT), Some(FormId(CELL_UNLOADED)), [30.0, 0.0, 0.0], [0.0; 3], 1).unwrap();
@@ -327,6 +339,39 @@ fn set_persistent_toggles_flag_and_reaches_all_consumers() {
     // PlayerRef remains persistent even after SetPersistent 0.
     q(&mut g, "player.SetPersistent 0");
     assert_eq!(num(&mut g, "player.IsPersistent"), 1.0);
+}
+
+#[test]
+fn set_persistent_ignores_unrelated_flag_writes_on_persistent_group_ref() {
+    let f = fixture();
+    let mut g = game(&f);
+
+    // PersistGroupOnlyRef sits in a persistent cell group (type 8) with static record flags == 0.
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.IsPersistent"), 1.0);
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.GetReferenceFlag 1024"), 0.0);
+
+    // Writing an unrelated flag via SetReferenceFlag or SetFlagsLow writes `other.flags`
+    // without bit 0x400, which must NOT clear persistence.
+    q(&mut g, "PersistGroupOnlyRef.SetReferenceFlag 64 1");
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.GetReferenceFlag 64"), 1.0);
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.IsPersistent"), 1.0, "SetReferenceFlag must not clear persistent-group ref");
+
+    q(&mut g, "PersistGroupOnlyRef.SetFlagsLow 64");
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.GetReferenceFlag 64"), 1.0);
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.GetReferenceFlag 1024"), 0.0);
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.IsPersistent"), 1.0, "SetFlagsLow must not clear persistent-group ref");
+
+    // Explicit SetPersistent 0 clears persistence and keeps flag bit 0x400 clear while preserving bit 64.
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.SetPersistent 0"), 0.0);
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.IsPersistent"), 0.0);
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.GetReferenceFlag 1024"), 0.0);
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.GetReferenceFlag 64"), 1.0);
+
+    // Explicit SetPersistent 1 restores persistence and synchronizes flag bit 0x400 while preserving bit 64.
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.SetPersistent 1"), 0.0);
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.IsPersistent"), 1.0);
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.GetReferenceFlag 1024"), 1.0);
+    assert_eq!(num(&mut g, "PersistGroupOnlyRef.GetReferenceFlag 64"), 1.0);
 }
 
 #[test]

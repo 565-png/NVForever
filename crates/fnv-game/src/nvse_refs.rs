@@ -84,8 +84,8 @@ impl Game<'_> {
         if r == FormId::PLAYER_REF {
             return true;
         }
-        if let Some(&flags) = self.other.flags.get(&r) {
-            return flags & fnv_sim::refs::FLAG_PERSISTENT != 0;
+        if let Some(&on) = self.other.persistent_overrides.get(&r) {
+            return on;
         }
         self.world.placed.get(r).is_some_and(|p| p.flags & fnv_sim::refs::FLAG_PERSISTENT != 0 || p.in_persistent_group)
     }

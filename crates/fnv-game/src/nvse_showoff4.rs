@@ -78,6 +78,9 @@ impl Game<'_> {
 
             let left_arm = self.is_crippled(actor, crate::combat::LEFT_ARM);
             let right_arm = self.is_crippled(actor, crate::combat::RIGHT_ARM);
+            // Mirrors `fnv_combat::spread::one_handed` over `schemas/fnv/objects.json`
+            // `WEAP.DNAM.animation_type` `(1 Hand)` enum entries (1, 3, 4, 10..=13);
+            // Gun Spread Formula (New Vegas) explicitly names type 4 [hypothesis: 1, 3, 10..=13].
             let anim = field(self, "animation_type") as i64;
             let one_handed = matches!(anim, 1 | 3 | 4 | 10..=13);
             let arms = match (one_handed, left_arm && right_arm) {

@@ -10,14 +10,20 @@ Part of #2272. Core-only implementations in `crates/fnv-game` replacing four
   flag (`0x400`, `fnv_sim::refs::FLAG_PERSISTENT`) on the calling reference for
   the session.
 - [observed: `gaps6` probe `persistent.doc`] `SetPersistent` returns `0`.
-- [design] `SetPersistent` updates bit `0x400` in `OtherState::flags` (starting
-  from the reference's current record flags and persistent-group status, while
-  keeping `FormId::PLAYER_REF` always persistent). `Game::persistent` reads
-  `OtherState::flags` before falling back to static placed flags/group so
-  `IsPersistent`, `GetPermanent`, `GetReferenceFlag 1024`, `SetReferenceFlag`,
-  `GetFlagsLow`/`SetFlagsLow`, `GetFirstRefInCell`/`GetNumRefsInCell`/`GetRefsInCell`
-  on unloaded cells, `GetFormRefs`, and `PersistentRefCount` all stay
-  synchronized.
+- [design] `SetPersistent` records an explicit per-reference boolean in
+  `OtherState::persistent_overrides` and keeps bit `0x400` in
+  `OtherState::flags` synchronized (starting from the reference's current
+  record flags and persistent-group status, while keeping `FormId::PLAYER_REF`
+  always persistent). `Game::persistent` checks
+  `OtherState::persistent_overrides` first and otherwise falls back to static
+  placed flags (`0x400`) or `in_persistent_group`, so unrelated writes to
+  `OtherState::flags` via `SetReferenceFlag` or `SetFlagsLow` on a
+  persistent-group reference whose static record lacks bit `0x400` cannot
+  accidentally clear its persistence. `IsPersistent`, `GetPermanent`,
+  `GetReferenceFlag 1024`, `GetFlagsLow`, unloaded-cell walks
+  (`GetFirstRefInCell`/`GetNumRefsInCell`/`GetRefsInCell`), `GetFormRefs`, and
+  `PersistentRefCount` all stay synchronized with explicit `SetPersistent`
+  calls.
 - [hypothesis] Persistence changes made by `SetPersistent` are session-only and
   do not persist across save/load; `FormId::PLAYER_REF` ignores attempts to
   clear its persistent flag.
@@ -43,25 +49,50 @@ Part of #2272. Core-only implementations in `crates/fnv-game` replacing four
 
 - [documented: https://geckwiki.com/index.php?title=GetCalculatedActorSpread,
   https://geckwiki.com/index.php?title=Gun_Spread_Formula_(New_Vegas),
-  https://geckwiki.com/index.php?title=Perk_Entry_Points]
+  https://geckwiki.com/index.php?title=Perk_Entry_Points,
+  `crates/fnv-combat/src/tuning.rs`, `crates/fnv-combat/src/spread.rs`,
+  `schemas/fnv/objects.json` `WEAP.DNAM.animation_type`]
   `actor.GetCalculatedActorSpread` computes the calling actor's live weapon
   spread from the equipped weapon's skill, Strength/skill requirements, and
   animation type (`DNAM` with live `field_overrides`), actor skill/Strength,
   stance (iron sights/aiming, walking/running, sneaking), crippled arms (1H vs
   2H), `SetNoGunWobble`, and perk entry points (`MODIFY_WEAPON_STRENGTH_REQ`,
-  `MODIFY_AIMING_MOVE_SPEED`, `CALCULATE_GUN_SPREAD`), reading all Gun Spread
-  Formula GMSTs (`fUnaimedSpreadPenalty`, `fWalkingSpreadPenalty`,
-  `fRunningSpreadPenalty`, `fStandingSpreadPenalty`,
-  `fCrippledArm1HSpreadPenalty`, `fCrippledArm2HSpreadPenalty`,
-  `fCrippledArms1HSpreadPenalty`, `fCrippledArms2HSpreadPenalty`,
-  `fWeapStrengthReqPenalty`, `fWeapSkillReqPenalty`,
-  `fWobbleToSkillConversion`, `fMinGunSpreadValue`) from the load order with
-  documented defaults.
-- [hypothesis] Because ShowOff's wiki page for `GetCalculatedActorSpread` is
-  marked Incomplete, returning the actor-spread component (in spread units,
-  after `SetNoGunWobble` and `CALCULATE_GUN_SPREAD` perks, excluding weapon
-  `min_spread` and ammo spread modifiers, and `0.0` when unarmed or called
-  without a subject) is a hypothesis pending original-game capture.
+  `MODIFY_AIMING_MOVE_SPEED`, `CALCULATE_GUN_SPREAD`), reading all 12 Gun Spread
+  Formula GMSTs from the load order with fallback defaults matching
+  `crates/fnv-combat/src/tuning.rs` (`SETTINGS`, sourced from GECK wiki
+  `Gun Spread Formula (New Vegas)`):
+  - `fUnaimedSpreadPenalty = 0.2` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
+  - `fWalkingSpreadPenalty = 0.1` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
+  - `fRunningSpreadPenalty = 0.2` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
+  - `fStandingSpreadPenalty = 0.1` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
+  - `fCrippledArm1HSpreadPenalty = 0.2` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
+  - `fCrippledArm2HSpreadPenalty = 0.4` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
+  - `fCrippledArms1HSpreadPenalty = 0.4` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
+  - `fCrippledArms2HSpreadPenalty = 0.6` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
+  - `fWeapStrengthReqPenalty = 0.025` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
+  - `fWeapSkillReqPenalty = 0.01` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]` (note: the wiki page reports the original game applies `fWeapStrengthReqPenalty` to the skill shortfall as a bug; matching `fnv_combat::spread::actor_spread`, NVForever uses `fWeapSkillReqPenalty` `[design]`)
+  - `fWobbleToSkillConversion = 0.5` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
+  - `fMinGunSpreadValue = 0.01` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
+- [hypothesis] Items without a direct external source citation or original-game
+  observation:
+  1. **One-handed weapon animation types (`1 | 3 | 4 | 10..=13`)**: in
+     `schemas/fnv/objects.json` (`WEAP.DNAM.animation_type`), those seven enum
+     codes are all `"(1 Hand)"` entries (`1` Melee 1H, `3` Pistol Ballistic 1H,
+     `4` Pistol Energy 1H, `10` Grenade Throw 1H, `11` Land Mine 1H, `12` Mine
+     Drop 1H, `13` Thrown 1H), mirroring `fnv_combat::spread::one_handed`. The
+     GECK wiki `Gun Spread Formula (New Vegas)` page explicitly names only type
+     `4` (pistols); extending the 1H crippled-arm branch to types `1, 3, 10..=13`
+     is `[hypothesis]`.
+  2. **GMST fallback defaults when absent from masters**: per
+     `crates/fnv-combat/src/tuning.rs` and `docs/spec-notes/combat-data.md` §3,
+     falling back to the wiki GMST values when a load order omits those GMST
+     records is `[hypothesis]`.
+  3. **ShowOff `GetCalculatedActorSpread` output scope/units**: because
+     ShowOff's wiki page for `GetCalculatedActorSpread` is marked Incomplete,
+     returning the actor-spread component in spread units after `SetNoGunWobble`
+     and `CALCULATE_GUN_SPREAD` perks (excluding weapon `min_spread` and ammo
+     spread modifiers, and returning `0.0` when unarmed or called without a
+     subject) is `[hypothesis]` pending original-game capture.
 
 ## 4. `IsItemUnique` / `ToggleItemUnique` (`crates/fnv-game/src/nvse_plugins.rs`, `nvse_gaps.rs`, `repair.rs`)
 
