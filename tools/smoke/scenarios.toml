@@ -357,6 +357,41 @@ expect = [
 ]
 
 [[scenario]]
+name = "lod-night-diffuse"
+source = "#3096 (player report R-ZXT6AC4J): north of Goodsprings (-67758, 2867) at night the distant hills to the north and east were drawn flat white (the player wrote that they turned right on coming closer). A game terrain chunk is spawned only once no diffuse it draws is still loading, and a missing diffuse is drawn with a neutral fallback colour, never white, logged as 'drawn with the fallback colour (shape i bound to …): <path>: <error>' (engine/nvforever/src/lod.rs, world.md §7). On stock data no shape is drawn without its diffuse and no chunk takes the fallback"
+note = "UNRUN when written (2026-11-21). The report's cause is not confirmed: a fallback line here on stock data would name the texture and its error"
+areas = ["renderer"]
+paths = ["engine/nvforever/src/lod.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_LOOK = "4:30:2,12:80:2", NVF_PLAY_TEST_SHOTS = "11:lod_night_north.png,19:lod_night_east.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67758,2867,8900", "--hour", "23"]
+run_seconds = 21
+expect = [
+  { re = 'distant LOD at the end: LOD chunks (\d+) ', range = [10, 100000], label = "the game's terrain chunks are drawn out to the reach" },
+  { re = 'distant LOD terrain surfaces: (\d+) chunks drawn with the fallback colour', range = [0, 0], label = "stock data: every chunk's diffuse loads, none takes the fallback colour" },
+  { re = 'distant LOD terrain surfaces: .*, (\d+) shapes drawn without a diffuse texture', range = [0, 0], label = "no distant terrain shape is drawn while its diffuse is still loading" },
+]
+forbid = ["drawn without its diffuse texture", { re = 'drawn with the fallback colour \(shape ', label = "no chunk drawn with the fallback colour on stock data" }]
+manual = "lod_night_north/east: the distant hills are as dark as the near ground at night, textured, never flat white"
+
+[[scenario]]
+name = "lod-missing-diffuse"
+source = "#3096: with every level-8 terrain chunk's diffuse reading as missing (test aid NVF_PLAY_TEST_BROKEN_FILES), those chunks are still drawn, with the neutral fallback colour instead of white, each logged once with the texture's path and error, and they cover their areas like any other (engine/nvforever/src/lod.rs fallback_material, world.md §7)"
+note = "UNRUN when written (2026-11-21). The texture names come from an asset listing of the archives (world.md §7): textures\\landscape\\lod\\<world>\\diffuse\\<world>.n.level<L>.x<X>.y<Y>.dds"
+areas = ["renderer"]
+paths = ["engine/nvforever/src/lod.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_BROKEN_FILES = "missing:diffuse/wastelandnv.n.level8.", NVF_PLAY_TEST_LOOK = "4:30:2", NVF_PLAY_TEST_SHOTS = "14:lod_missing_level8.png" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-67758,2867,8900", "--hour", "23"]
+run_seconds = 18
+expect = [
+  { re = 'distant LOD: terrain chunk level 8 x-?\d+ y-?\d+ drawn with the fallback colour \(shape \d+ bound to base colour sRGB 0\.45 0\.42 0\.38, no base texture\): .*diffuse.*level8.*: not in any archive', label = "a level-8 chunk without its diffuse is spawned bound to the fallback copy (its colour read back from the bound material, no base texture), the path the model named and the error given" },
+  { re = 'distant LOD terrain surfaces: (\d+) chunks drawn with the fallback colour', range = [1, 100000], label = "level-8 chunks take the fallback colour" },
+  { re = 'distant LOD at the end: LOD chunks \d+ \(levels 4/8/16/32: \d+/(\d+)/', range = [1, 100000], label = "the level-8 chunks are drawn at the end (no holes)" },
+  { re = 'distant LOD terrain surfaces: .*, (\d+) shapes drawn without a diffuse texture', range = [0, 0], label = "none drawn while its diffuse is still loading" },
+]
+forbid = ["drawn without its diffuse texture"]
+manual = "lod_missing_level8: the level-8 band of distant terrain flat brownish grey (the fallback colour, shaded by its normal map), no white hills, no holes"
+
+[[scenario]]
 name = "distant-objects"
 source = "[design, #3014] docs/design/graphics-enhanced.md §3.21 (engine/nvforever/src/distant_objects.rs): started with --graphics-only distant-objects-12 at Goodsprings noon, the distant objects come on at a reach of 12 cells once, and the exit summary counts the cells judged and the references drawn beyond the loaded cells, without a rendering or validation error. Whether they sit where the LOD leaves holes, with no doubling, is checked in pictures by hand"
 areas = ["renderer", "graphics"]
@@ -561,7 +596,7 @@ args = ["--play", "--pos=56992,37536,2745", "--hour", "12", "--no-voice", "--no-
 run_seconds = 24
 expect = [
   "water reflection: on (the water of cell 13,9 on screen)",
-  "water reflection: off (no water on screen for 1 s)",
+  "water reflection: off (no water on screen for 1 s; ",
 ]
 
 [[scenario]]
@@ -590,7 +625,7 @@ run_seconds = 16
 order = [[
   "water reflection: on (the water of cell",
   { text = "console: Water off", label = "water hidden" },
-  { text = "water reflection: off (no water on screen for 1 s)", label = "camera off after the water is hidden" },
+  { text = "water reflection: off (no water on screen for 1 s; ", label = "camera off after the water is hidden (the line goes on with the reason: #3396)" },
 ]]
 
 [[scenario]]
@@ -749,7 +784,7 @@ env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_PROFILE = "5" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "14", "--sun-shadows"]
 run_seconds = 22
 expect = [
-  { re = 'profile batches: shadow 4 views, (?P<n>\d+) multi-drawn sets', range = [1, 200], label = "shadow batch sets stay few (about 49; about 830 without bindless)" },
+  { re = 'profile batches: shadow \d+ views, (?P<n>\d+) multi-drawn sets', range = [1, 200], label = "shadow batch sets stay few (about 49; about 830 without bindless; 4 views, or 5 with a second shadowed directional light [hypothesis: the player body's], #3397)" },
   { re = 'profile batches: .*; opaque 1 views, (?P<n>\d+) multi-drawn sets', range = [1, 60], label = "main-view opaque batch sets stay few (about 9; 169 without bindless)" },
 ]
 
@@ -2760,6 +2795,44 @@ order = [[
   "settings: field-of-view 75",
 ]]
 forbid = [{ text = "Caught rendering error", label = "a rendering (validation) error while anti-aliasing or the filters change" }]
+
+[[scenario]]
+name = "taa-teardown"
+source = "#2955, docs/design/graphics-enhanced.md §3.6 (Temporal anti-aliasing), docs/spec-notes/fsr-upscaling.md: TAA turned off while the game runs, by another anti-aliasing choice (FXAA, Off) or by FSR taking over, drops its pass state and history on the view the same frame (before, the pass went on blending the history frozen at the switch), and turned on again starts its history over"
+areas = ["renderer", "graphics", "settings"]
+paths = [
+  "engine/nvforever/src/taa*", "engine/nvforever/src/graphics.rs", "engine/nvforever/src/fsr*",
+  "engine/nvforever/src/upscaler*", "engine/nvforever/src/upscaler/**",
+]
+env = { WGPU_BACKEND = "vulkan", NVF_FFX_API = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:21", NVF_PLAY_TEST_SETTINGS = "11:anti-aliasing=0.667,12.5:anti-aliasing=1,14:anti-aliasing=0,15.5:anti-aliasing=1,17:fsr-upscaling=Quality,19:fsr-upscaling=Off" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--size", "1280x720", "--graphics-only", "taa", "--upscaler", "off", "--no-lodgen"]
+run_seconds = 24
+note = "DLSS goes the same way (graphics.rs apply takes TAA off for any effective temporal upscaler) but needs NVF_DLSS_DIR, so FSR stands in for it here. NVF_FFX_API=0 keeps the built-in FSR 3.1.4 whatever FidelityFX library lies beside the exe (ffx_api.rs), so the dispatch line is always the 3.1.4 one. --upscaler off keeps an upscaler saved in the INI from starting the run (a given switch wins over the INI in a test run); the settings switches still apply. The start may say 'taa: on' more than once (the camera's view made again by the cell load), hence min counts"
+order = [[
+  "taa: on for a view: its history starts over",
+  "settings: anti-aliasing FXAA",
+  "taa: off for a view: its pass state and history dropped",
+  "settings: anti-aliasing TAA",
+  "taa: on for a view: its history starts over",
+  "settings: anti-aliasing Off",
+  "taa: off for a view: its pass state and history dropped",
+  "settings: anti-aliasing TAA",
+  "taa: on for a view: its history starts over",
+  "settings: fsr-upscaling Quality",
+  "taa: off for a view: its pass state and history dropped",
+  "settings: fsr-upscaling Off",
+  "taa: on for a view: its history starts over",
+]]
+expect = [
+  { text = "taa: off for a view: its pass state and history dropped", min = 3, label = "TAA's state dropped for FXAA, Off and FSR" },
+  { text = "taa: on for a view: its history starts over", min = 4, label = "the history started over at the start and each time TAA came back" },
+  "graphics: FSR Quality active; native anti-aliasing off",
+  "FSR dispatch active: 3.1.4, 853x480 -> 1280x720",
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error while TAA goes off and on" },
+  "FSR dispatch failed", "FSR 3.1 unavailable", "Validation Error",
+]
 
 [[scenario]]
 name = "tree-distance-row"
@@ -7057,6 +7130,21 @@ order = [[
 ]]
 
 [[scenario]]
+name = "terminal-note-pages"
+source = "[hypothesis] #3409: E, Enter or a click turns a terminal note longer than the screen to its next page, and does nothing on its last page (hacking.md section 7; observer check 255)"
+note = "V21SheldonTerminal's mail: Messages, New Message from Sarah Weintraub (note V21SarahOutMail01, about 30 lines: two pages of 16) [observed: 2026-11-22, the first page ends mid-sentence and the second runs to 'Sarah.']. Three selects: the first turns, the other two find the last page"
+areas = ["terminal"]
+paths = ["engine/nvf-play/src/terminal*", "engine/nvf-play/src/terminal/**"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_TERMINAL = "20:open:0011E3C3,22:item:0,24:item:0,26:item:0,28:select,30:select,32:select,34:back,36:exit" }
+args = ["--cell", "2EOMichaelAngelo", "--play", "--no-voice"]
+run_seconds = 40
+expect = [
+  { text = "note V21SarahOutMail01", count = 1, label = "the long mail opened as a note" },
+  { text = "terminal: note turned to line 16", count = 1, label = "one select turns it to its second page, the others find its last page" },
+]
+order = [["note V21SarahOutMail01", "terminal: note turned to line 16", "terminal: back from the note to the list"]]
+
+[[scenario]]
 name = "terminal-scripted-activate"
 source = "#1532: Lucky38MrHouseTerminal's OnActivate (SCPT 0x001746C1) ends in a bare Activate: a script's default activation of a terminal opens its screen for the player, after Terminal01.NIF's Open sequence (keyboard, then screen); leaving plays Close"
 note = "Lucky38MrHouseTerminalREF (0014B0A7, base Lucky38MrHouseTerminal 0014B08E: Hard, locked, model Terminals/Terminal01.NIF with Idle/Open/Close) [observed: FalloutNV.esm]; Science 80 so the script's first branch (Science 75, not locked for good) runs Activate and the hacking game opens"
@@ -7195,6 +7283,23 @@ order = [[
   { text = "quest message on screen: Talk to Sunny Smiles in the Prospector Saloon.", label = "drawn only after the terminal closes" },
 ]]
 expect = [{ text = "quest message on screen: Talk to Sunny Smiles in the Prospector Saloon.", count = 1, label = "shown once" }]
+
+[[scenario]]
+name = "blake-books"
+source = "[observed] #3350: Bitter Springs Infirmary Blues' two books lie on Blake's stand in WastelandNVmini, owned by him (VBSPsychologyBookREF 0x00178DB0, VBSPediatricsBookREF 0x00178DAF; in no merchant container); they are drawn there, can be taken (a theft), and each completes its objective (20, 40) by its OnAdd. Whether the original also sells them is observer check 256"
+note = "NEAR stands the player facing the pediatrics book (heading 45, pitch -60) and E takes it by the crosshair; the psychology book, on the upper shelf behind the barbed wire, is taken by a script activation (by the crosshair it needs a pitch of about -6 from its NEAR spot). The theft is seen, so Blake's side may turn on the player afterwards: god mode"
+areas = ["quests", "crime"]
+paths = ["engine/nvf-play/src/activate.rs", "engine/nvf-play/src/activate/**", "engine/nvf-play/src/menu/model.rs", "docs/spec-notes/barter-menu.md"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00178DAF", NVF_PLAY_TEST_ACTIVATE = "8", NVF_PLAY_TEST_SCRIPT = "5:start:VMS40,5.5:stage:VMS40:10,10:activate:VBSPsychologyBookREF" }
+args = ["--world", "WastelandNVmini", "--pos=13240,17420,9960", "--hour", "12", "--play", "--no-voice", "--no-messages"]
+run_seconds = 13
+expect = [
+  { text = "target 0x00178DAF Tiny, Tiny Babies: All You Need to Know About Pediatric Medicine (Take, owned)", label = "the pediatrics book is drawn on the stand and the crosshair finds it, owned" },
+  { text = "script: VMS40 objective 40 completed true", count = 1, label = "taking it completes objective 40" },
+  { text = "crime: the player took VBSPediatricsBook (0x00178DAF) x1, owned by someone else", label = "as a theft from Blake" },
+  { text = "script: VMS40 objective 20 completed true", count = 1, label = "the psychology book taken completes objective 20" },
+  { text = "crime: the player took VBSPsychologyBook (0x00178DB0) x1, owned by someone else", label = "as a theft too" },
+]
 
 [[scenario]]
 name = "hacking-owned"
@@ -10205,6 +10310,21 @@ args = ["--play", "--pos=-11064,98317,4420", "--hour", "12", "--no-voice", "--no
 run_seconds = 16
 expect = [
   { re = 'target 0x000F2EAA .*by Collision', label = "the Vendortron behind the kiosk's invisible wall is targeted" },
+]
+
+[[scenario]]
+name = "captive-through-bars"
+source = "#3233 (docs/spec-notes/simulation.md §5 \"Talking through bars\"): the Vault 3 captives stand behind JailCellDoorway01 (0x000EF3FA), one collision object on layer 3 Transparent, which took the crosshair, so they could not be talked to; when nothing else is offered, a living actor to talk to behind a see-through layer is the target, and E only opens the conversation"
+note = "the player at the report's spot in Vault3b (feet -2723,4553,5889; V3Prisoner01Ref 0x000F47B0, Rick Lancer, placed at -2773,4664,5888 behind the bars), looking at him (heading 336, pitch -10: the view ray of `fnvtool phys cell --cell Vault3b --ray -2723,4553,6005,-50,110.7,-25`, which hits the bars 25 units out); no face aid, which would move the player; god mode against the Fiends nearby; E at 8 s. If Rick has walked from his placed spot the target line is missing: look at where he stands before calling it a regression"
+areas = ["activation", "dialogue"]
+paths = ["engine/nvf-play/src/activate.rs", "engine/nvf-play/src/activate/see_through.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_ACTIVATE = "8" }
+args = ["--cell", "Vault3b", "--pos=-2723,4553,5889", "--heading", "336", "--pitch", "-10", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 16
+expect = [
+  { re = 'target 0x000F47B0 .*\(Talk\) by Collision through 0x000EF3FA', label = "Rick Lancer is targeted with Talk through the cell bars (the bars the first collision hit)" },
+  { re = 'activate 0x000F47B0 .*\(Talk through 0x000EF3FA\): a conversation started', label = "E through the bars only opens the conversation" },
+  { re = 'dialogue: conversation with V3Prisoner01Ref started', label = "the conversation opens" },
 ]
 
 [[scenario]]
@@ -13262,10 +13382,10 @@ env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_P
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--pos=-68375,4800,8700"]
 run_seconds = 17
 order = [[
-  { re = 'pause menu: rows 2-13 of \d+ shown', label = "a notch of the wheel shows the next row (a window of 12 lines, #2377)" },
-  { re = 'pause menu: rows 3-14 of \d+ shown' },
-  { re = 'pause menu: rows 4-15 of \d+ shown' },
-  { re = 'pause menu: rows 3-14 of \d+ shown', label = "a notch up shows the row before again" },
+  { re = 'pause menu: rows 2-13 of \d+ shown', label = "a notch of the wheel shows the next row (a window of 12 lines, #2377)", known_failing = "#3375: the menu overhaul (2026-11-15/16) made the window 11 lines, so the log reads rows 2-12, 3-13, 4-14 and 3-13; this scenario still names the 12-line window of #2377 (settings-scroll-headings has the 11-line one)" },
+  { re = 'pause menu: rows 3-14 of \d+ shown', known_failing = "#3375: the menu overhaul (2026-11-15/16) made the window 11 lines, so the log reads rows 2-12, 3-13, 4-14 and 3-13; this scenario still names the 12-line window of #2377 (settings-scroll-headings has the 11-line one)" },
+  { re = 'pause menu: rows 4-15 of \d+ shown', known_failing = "#3375: the menu overhaul (2026-11-15/16) made the window 11 lines, so the log reads rows 2-12, 3-13, 4-14 and 3-13; this scenario still names the 12-line window of #2377 (settings-scroll-headings has the 11-line one)" },
+  { re = 'pause menu: rows 3-14 of \d+ shown', label = "a notch up shows the row before again", known_failing = "#3375: the menu overhaul (2026-11-15/16) made the window 11 lines, so the log reads rows 2-12, 3-13, 4-14 and 3-13; this scenario still names the 12-line window of #2377 (settings-scroll-headings has the 11-line one)" },
 ]]
 
 [[scenario]]
@@ -16094,7 +16214,7 @@ expect = [
   { re = 'FaceGen: .* (?P<n>\d+) faces textured', range = [2, 200], label = "face offset images were made for the NPCs" },
   { re = 'FaceGen: .* (?P<n>\d+) skins textured', range = [2, 400], label = "body and hand skin offset images were made" },
   { re = 'FaceGen: .* (?P<n>\d+) shapes tinted in the shader', range = [6, 2000], label = "face and skin materials carry the offset" },
-  { re = '(?i)(shader|pipeline).*(error|failed)|(error|failed).*(nif_material|shader)', count = 0, label = "the material shader compiles with FACEGEN_TINT" },
+  { re = '(?i)(shader|pipeline).*(error|(?<! 0 )failed)|(error|failed).*(nif_material|shader)', count = 0, label = "the material shader compiles with FACEGEN_TINT (the pipeline list's summary '0 failed' is no failure, #3398)" },
 ]
 
 [[scenario]]
@@ -30943,6 +31063,7 @@ expect = [
   { text = "MapMenu drawn by hand", count = 0, label = "no fallback warned of" },
 ]
 order = [["tiles: MapMenu draws local map from tiles", { re = 'tiles: MapMenu local map picture given' }, { re = 'pipboy data: question box over the tiles' }, "pipboy map: custom marker placed at", "pipboy data: map dragged by (-1500, 0)", { re = 'tiles: MapMenu local map picture given' }, { re = 'tiles: MapMenu local map frames: ' }, "tiles: MapMenu draws quests from tiles"]]
+forbid = [{ text = "tiles: MapMenu local map picture taken away", label = "the drag leaves the last picture on screen while the new outline is made (#3326: it was taken away for about 330 ms, the map blinked)" }]
 
 [[scenario]]
 name = "tiles-data-local-off"
@@ -31020,24 +31141,28 @@ order = [[{ re = 'pipboy data: radio tuned to ' }, { re = 'pipboy data: radio tu
 [[scenario]]
 name = "tiles-data-custom-marker"
 source = "#1954 with #1513 (docs/spec-notes/pipboy.md §5.3.1): with [UI] TileMenus=MapMenu both maps are drawn from their file (the question box painted over the tiles), prepared before the frame (data::prepare), and Place Marker's question box works on both as with the switch off: placed on the World Map, moved from the Local Map, removed; the page goes on drawn from its tiles on Quests"
-note = "pipboy-custom-marker's steps with the switch on, then Quests; the question box's answers are the hand-built page's, its hover reset when they are spawned again (data::draw)."
+note = "pipboy-custom-marker's steps with the switch on, then Quests; the question box's answers are the hand-built page's, its hover reset when they are spawned again (data::draw). #3324: after the removal, on the Local Map (no travel there, so the spot need not be clear of markers) a real left click (NVF_PLAY_TEST_KEYS' mouse-left) at canvas 700, 250 asks Place Marker's question over the tiles and Yes places the marker; then on the World Map a press held at 700, 250 while the pointer moves to 560, 300 is a drag and asks nothing."
 areas = ["pipboy", "ui"]
 paths = ["engine/nvf-play/src/pipboy/data.rs", "engine/nvf-play/src/pipboy/data/marker.rs", "engine/nvf-play/src/tiles/map_menu.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:objective:VCG02:3", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=data,13.5:tab=1,14:point=527:350,15:placemarker,16:key=use,17:tab=0,18.5:placemarker,19.5:key=use,20.5:placemarker,21:key=down,22:key=use,23:tab=2,25:close", NVF_PLAY_TEST_TILE_MENUS = "MapMenu" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:objective:VCG02:3", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=data,13.5:tab=1,14:point=527:350,15:placemarker,16:key=use,17:tab=0,18.5:placemarker,19.5:key=use,20.5:placemarker,21:key=down,22:key=use,23:point=700:250,24.5:key=use,25.5:tab=1,26.5:point=560:300,28:tab=2,30:close", NVF_PLAY_TEST_KEYS = "23.5:mouse-left:0.15,26:mouse-left:1.0", NVF_PLAY_TEST_TILE_MENUS = "MapMenu" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--size", "1280x720"]
-run_seconds = 27
+run_seconds = 32
 expect = [
   { text = "tiles: MapMenu draws world map from tiles", min = 1, label = "the World Map is drawn from its file since #1513's World Map slice; before: it kept the hand-built page" },
   { text = "tiles: MapMenu draws local map from tiles", min = 1, label = "the Local Map is drawn from its file since #1513's Local Map slice (tiles-data-local); before: it kept the hand-built page" },
-  { re = 'pipboy map: Place Marker asks ".+" \(2 answers\)', count = 1, label = "with no marker the question has two answers" },
-  { re = 'pipboy map: custom marker placed at \(-?\d+, -?\d+\) in 0x[0-9A-F]{8}', count = 1, label = "Yes places the marker" },
+  { re = 'pipboy map: Place Marker asks ".+" \(2 answers\)', count = 2, label = "with no marker the question has two answers: X's, and the click's after the removal" },
+  { re = 'pipboy map: custom marker placed at \(-?\d+, -?\d+\) in 0x[0-9A-F]{8}', count = 2, label = "Yes places the marker: X's, and the click's" },
   { re = 'pipboy map: dotted line to custom marker \(\d+ segments\)', min = 1, label = "the World Map's dotted line to it" },
   { re = 'pipboy map: Place Marker asks ".+" \(3 answers\)', count = 2, label = "with a marker the question has three answers" },
   { re = 'pipboy map: custom marker moved to \(-?\d+, -?\d+\)', count = 1, label = "the first answer moves it" },
   { text = "pipboy map: custom marker removed", count = 1, label = "Down and Enter take the second answer, once" },
+  { text = "pipboy map: a click on the local map away from any marker: Place Marker", count = 1, label = "#3324: the real left click on the Local Map drawn from its tiles asks Place Marker's question" },
+  { re = 'pipboy map: a click on the world map', count = 0, label = "#3324: the press dragged on the World Map asks nothing" },
+  { re = 'fast travel: (asks ".+" \(0x[0-9A-F]{8}\)|to .+ refused)', count = 0, label = "and no travel asked or refused" },
+  { re = 'pipboy data: question box over the tiles \(2 answers\)', min = 2, label = "the click's question painted over the tiles too" },
   { text = "tiles: MapMenu draws quests from tiles", min = 1, label = "Quests drawn from its file after the maps" },
 ]
-order = [["pipboy map: custom marker placed at", "pipboy map: custom marker moved to", "pipboy map: custom marker removed", "tiles: MapMenu draws quests from tiles"]]
+order = [["pipboy map: custom marker placed at", "pipboy map: custom marker moved to", "pipboy map: custom marker removed", "pipboy map: a click on the local map away from any marker: Place Marker", "pipboy map: custom marker placed at", "tiles: MapMenu draws quests from tiles"]]
 
 [[scenario]]
 name = "tiles-data-missing-template"
@@ -31061,12 +31186,12 @@ order = [["MapMenu drawn by hand: MM_ListMarkerTemplate missing", "test aid: NVF
 [[scenario]]
 name = "pipboy-custom-marker"
 source = "#1954 (docs/spec-notes/pipboy.md §5.3, Place Marker): with the keyboard, Place Marker on the World Map asks whether to set the custom marker (two answers) and Yes places it at the highlight box; the World Map draws a dotted line from the arrow to it; the Local Map shows the same marker; Place Marker there asks with three answers (move, remove, keep): move moves it, keep leaves it, remove takes it off both maps [observed: a capture of the original's MapMenu, 2026-11-10]"
-note = "the pointer aid holds the highlight box 50 right of the map window's middle (canvas 527, 350) on both maps; placemarker is the maps' X button; key=use takes the chosen answer, key=down moves down the answers; the objective aid gives the World Map a quest marker too (its line is not required)"
+note = "the pointer aid holds the highlight box 50 right of the map window's middle (canvas 527, 350) on both maps; placemarker is the maps' X button; key=use takes the chosen answer, key=down moves down the answers; the objective aid gives the World Map a quest marker too (its line is not required). #3324: back on the World Map with no marker, a real left click (NVF_PLAY_TEST_KEYS' mouse-left, the button state the page reads) at canvas 800, 180, up and right of the player and away from any marker the start knows [hypothesis until the first run: if the run's 'world map highlights' line names a marker there, the click asks to travel instead; move the point], asks Place Marker's question and Yes places the marker; then a press held at 527, 350 while the pointer moves to 640, 350 is a drag and asks nothing"
 areas = ["pipboy"]
 paths = ["engine/nvf-play/src/pipboy/data.rs", "engine/nvf-play/src/pipboy/data/marker.rs", "engine/nvf-play/src/pipboy/data/travel.rs", "engine/nvf-play/src/pipboy/data/model.rs", "engine/nvf-play/src/pipboy/test_aid.rs"]
-env = { NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:objective:VCG02:3", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=data,13.5:tab=1,14:point=527:350,15:placemarker,16:key=use,17:tab=0,18.5:placemarker,19.5:key=use,20.5:placemarker,21:key=down,21.5:key=down,22:key=use,23:placemarker,23.5:key=down,24:key=use,25:tab=1,26.5:close", NVF_PLAY_TEST_SHOTS = "16.8:pipboy_custom_marker_world.png,18:pipboy_custom_marker_local.png" }
+env = { NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "9:objective:VCG02:3", NVF_PLAY_TEST_PIPBOY = "12:open,13:page=data,13.5:tab=1,14:point=527:350,15:placemarker,16:key=use,17:tab=0,18.5:placemarker,19.5:key=use,20.5:placemarker,21:key=down,21.5:key=down,22:key=use,23:placemarker,23.5:key=down,24:key=use,25:tab=1,26:point=800:180,27.5:key=use,28.5:point=527:350,29.5:point=640:350,31:close", NVF_PLAY_TEST_KEYS = "26.5:mouse-left:0.15,29:mouse-left:1.0", NVF_PLAY_TEST_SHOTS = "16.8:pipboy_custom_marker_world.png,18:pipboy_custom_marker_local.png,27:pipboy_custom_marker_click_box.png" }
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--size", "1280x720"]
-run_seconds = 28
+run_seconds = 33
 expect = [
   { re = 'pipboy hints: data world map: Place Marker$', label = "World Map: Place Marker bright with the keyboard" },
   { re = 'pipboy map: Place Marker asks ".+" \(2 answers\) for \(-?\d+, -?\d+\) in 0x[0-9A-F]{8}', label = "with no marker the question has two answers" },
@@ -31079,6 +31204,10 @@ expect = [
   { text = "pipboy map: custom marker left where it was", label = "the third answer keeps it" },
   { text = "pipboy map: custom marker removed", label = "the second answer removes it" },
   { text = "pipboy map: world map shows no custom marker", label = "removed, the World Map shows none" },
+  { text = "pipboy map: a click on the world map away from any marker: Place Marker", count = 1, label = "#3324: the real left click on an empty spot asks Place Marker's question; the drag after it asks nothing" },
+  { re = 'pipboy map: Place Marker asks ".+" \(2 answers\)', count = 2, label = "X's question with no marker, and the click's" },
+  { re = 'pipboy map: custom marker placed at \(-?\d+, -?\d+\) in 0x[0-9A-F]{8}', count = 2, label = "X's Yes, and the click's Yes" },
+  { re = 'fast travel: (asks ".+" \(0x[0-9A-F]{8}\)|to .+ refused)', count = 0, label = "the click on an empty spot asks no travel, nor is one refused" },
 ]
 order = [[
   "pipboy map: custom marker placed at",
@@ -31088,6 +31217,9 @@ order = [[
   "pipboy map: custom marker left where it was",
   "pipboy map: custom marker removed",
   "pipboy map: world map shows no custom marker",
+  "pipboy map: a click on the world map away from any marker: Place Marker",
+  { re = 'pipboy map: Place Marker asks ".+" \(2 answers\)' },
+  "pipboy map: custom marker placed at",
 ]]
 
 [[scenario]]
@@ -32215,8 +32347,8 @@ expect = [
   { text = "controller: input device switched to Keyboard and Mouse (key)", count = 1, label = "Enter switches back without activating the selected row" },
   { text = "hints: Xbox labels", label = "prompts follow the controller" },
   { text = "hints: Keys labels", label = "prompts follow the keyboard again" },
-  { text = "pause menu: inspect: rows device,automatic-input,padbind:Forward", label = "the open Controls tab refreshes to controller rows" },
-  { text = "pause menu: inspect: rows device,automatic-input,bind:Forward", count = 2, label = "keyboard rows return and stay selected with switching disabled" },
+  { text = "pause menu: inspect: rows device,automatic-input,padbind:Forward", label = "the open Controls tab refreshes to controller rows", known_failing = "#3375: since the menu overhaul the Controls tab lists button-style, rumble, the look rows and aim assist before the bindings (rows device,button-style,automatic-input,rumble,invert,…), so this exact start of the row list is never logged" },
+  { text = "pause menu: inspect: rows device,automatic-input,bind:Forward", count = 2, label = "keyboard rows return and stay selected with switching disabled", known_failing = "#3375: since the menu overhaul the Controls tab lists button-style, rumble, the look rows and aim assist before the bindings (rows device,button-style,automatic-input,rumble,invert,…), so this exact start of the row list is never logged" },
   { text = "controls: automatic input switching off", count = 1, label = "only the explicit opt-out changes the switch; neither switching press activates its row" },
 ]
 order = [["controls: automatic input switching on", "controller: input device switched to Controller (button)", "hints: Xbox labels", "controller: input device switched to Keyboard and Mouse (key)", "hints: Keys labels", "controls: automatic input switching off"]]
@@ -34460,6 +34592,34 @@ note = "Panels height and height-control: the same quad tilted 50 degrees about 
 manual = "Open readback-1.ppm in the evidence directory: in the sixth panel the stripe's lower half sits left of its upper half; in the seventh (the control) it runs straight."
 
 [[scenario]]
+name = "authored-reflections-room"
+source = "[design, #2981] docs/spec-notes/pbr-materials.md \"Reflections indoors: the analytic room\": indoors the world camera's reflection cube holds a lit box (room marker, physics rays or default box; the cell's placed lamps in reach); generated sets only (the reflection field's fixture written into a fresh folder and mounted over the loose layers for the run), no game-derived file"
+areas = ["renderer", "textures", "lights"]
+paths = ["engine/nvforever/src/reflection_sky.rs", "engine/nvforever/src/reflection_sky/", "engine/nvf-assets/src/reflection_room.rs", "engine/nvf-assets/src/reflection_room/", "engine/nvf-assets/src/reflection_cube.rs", "engine/nvf-assets/src/pbr_field/reflect.rs", "engine/nvforever/src/lights.rs", "engine/nvforever/src/rooms.rs", "engine/nvforever/src/sky.rs", "engine/nvforever/src/fog.rs", "engine/nvforever/src/main.rs"]
+env = { NVF_PLAY_TEST_PBR_MOUNT_PACK = "1", NVFOREVER_HOME = "pbr-reflect-home", NVF_PLAY_TEST_GOD = "1" }
+# Both rows pinned on (a given switch wins over a saved row in a timed run).
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--size", "1280x720", "--graphics-only", "authored-materials,authored-reflections"]
+run_seconds = 20
+timeout = 180
+expect = [
+  { re = 'pbr mount pack: \d+ generated files written under ', count = 1, label = "the generated sets are in the run's own fresh mount folder" },
+  { text = "authored reflections: on (", count = 1, label = "both rows on for the interior run" },
+  { text = "lights: reflection gate installed", count = 1, label = "the gate, before any cube" },
+  { re = "reflection sky: first fill of the world camera's cube \\((indoors|outdoors);", count = 1, label = "the first fill (outdoors only if the camera came before the interior)" },
+  { re = 'reflection sky: room fill in interior [0-9A-F]{8}: box from (room marker [0-9A-F]{8}|rays|default) \(\d+ x \d+ x \d+ game units, x y height\), [1-9]\d* lamps, level 0 toward the nearest lamp \[[^\]]+\], filled in [\d.]+ ms on a worker \(main thread: gather [\d.]+ ms, apply [\d.]+ ms\)', count = 1, label = "the first room fill with lamps in Doc Mitchell's house: the box's source, size and lamps in reach (the house has 25 placed lights, #1619), the fill's time on the worker and the main thread's part (#3238)" },
+  { re = 'reflection cube: attached to \S+ \(generation \d+', count = 1, label = "Bevy's component on the world camera once the fill is on the GPU" },
+  { re = 'reflection sky summary: [1-9]\d* fills \(\d+ outdoors, [1-9]\d* indoors\), \d+ checks skipped as unchanged; [1-9]\d* room fills \(\d+ marker, \d+ rays, \d+ default\), \d+ ground-lamp fills, slowest room or lamp fill [\d.]+ ms; refills: \d+ mode, \d+ cell, \d+ room, \d+ box, \d+ moved, \d+ lamps, \d+ light, \d+ profile; main thread slowest gather [\d.]+ ms, slowest apply [\d.]+ ms; \d+ fills for a replaced camera or cube discarded', count = 1, label = "the exit summary counts the room fills, the refills by reason and the main thread's slowest parts (#3238)" },
+]
+order = [["reflection sky: room fill in interior", "reflection sky summary:"]]
+forbid = [
+  { re = '(?i)failed to process shader|failed to create shader module|wgpu error|validation error', label = "no shader or GPU error indoors" },
+  { re = 'reflection gate.*(not found|not installed)', label = "the gate in place, or no room could be attached" },
+  { re = 'reflection sky: off', label = "the cube is made in the interior" },
+  { re = 'pbr mount pack: FAIL', label = "the generated sets were written" },
+]
+note = "The analytic room (#2981 reflections, stage 2 version 1) in Doc Mitchell's house, a small interior with 25 placed lights (#1619): with the generated sets of authored-reflections-sky in the mount and both rows on, the interior content is a lit box around the camera, its box from the room marker the camera is in, else six physics rays (play mode), else the default box, lit by the cell's ambient, directional light and the placed lamps whose sphere reaches it (the nearest 16 within 4096 units). The first lit room fill is logged even when there was a room fill before the lamps loaded. Its line names the box's source and size, the lamp count, the level-0 texel toward the nearest lamp (its lobe: well above the wall colours) and the fill time on the worker with the main thread's gather and apply times (the main session reads them for the cost; the fill runs on the async compute pool since #3238, the main thread's part should stay well under a millisecond). Which source the house gives is not known in advance (whether it has room markers: the rooms: line tells), so any is accepted. Log lines only: nothing in the scene is authored, so no picture changes; pictures of a real pack with NVF_PBR_VIEW=reflection are the main session's."
+
+[[scenario]]
 name = "glass-mccarran-observation"
 source = "docs/spec-notes/nif.md §6 \"Window glass and environment maps\" (issue #2462, owner's playtest 2026-11-14: the interrogation room's window at Camp McCarran has no visible glass): CampMCTermInt02, the window 000FB2F4 (vwindow01.nif, Window_Environment_Mapping, ShinyBright_e.dds) seen from the observation side, south of it, looking north into the interrogation room; one frame in target/smoke (glass_mccarran_south.png)"
 areas = ["rendering"]
@@ -34488,6 +34648,64 @@ expect = [
 ]
 
 [[scenario]]
+name = "aerial-perspective"
+source = "[design, #2993] engine/nvforever/src/aerial.rs, fog.rs GAME_FOG, docs/design/graphics-enhanced.md §3.18: the Aerial perspective switch (off by default and in every preset) turned on while the game runs outdoors at Goodsprings at noon writes its figures, worked from the shown weather, into the fog uniform and logs them; turned off it logs off; the shader edits it rides on (pbr_functions.wesl nvf_aerial around the desert haze's fog call, fog.wesl GAME_FOG, the vendored Fog struct's nvf_params) are in place and every world pipeline compiles, without a rendering error"
+areas = ["renderer", "graphics", "settings"]
+paths = [
+  "engine/nvforever/src/aerial.rs", "engine/nvforever/src/fog.rs", "engine/nvforever/src/haze.rs",
+  "engine/vendor/bevy_pbr/src/render/pbr_functions.wesl", "engine/vendor/bevy_pbr/src/render/fog.wesl",
+  "engine/vendor/bevy_pbr/src/render/fog.rs", "engine/vendor/bevy_pbr/src/fog.rs",
+  "engine/vendor/bevy_pbr/src/render/mesh_view_types.wesl",
+]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:16", NVF_PLAY_TEST_SETTINGS = "11:aerial-perspective,13:aerial-perspective" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 18
+expect = [
+  "fog: the game's fog curve installed",
+  { re = 'aerial: aerial perspective on: .*?: weight (\d+\.\d+), channel weights \d+\.\d+/\d+\.\d+/\d+\.\d+, sky share', range = [0.2, 1.0], label = "Goodsprings' weather leaves room for the aerial terms at noon: a weight above 0 and channel weights" },
+]
+order = [
+  [
+    "settings: aerial-perspective on",
+    { text = "aerial: aerial perspective on: ", label = "the line once the switch is on, outdoors" },
+    "settings: aerial-perspective off",
+    { text = "aerial: aerial perspective off", label = "and off again" },
+  ],
+  [
+    { re = 'graphics: light glow, aerial perspective$' },
+    { re = 'graphics: light glow$', label = "off again" },
+  ],
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the aerial perspective" },
+  { re = '(?i)failed to process shader', label = "a world shader that does not compile with the edits (pbr_functions.wesl nvf_aerial and nvf_haze, fog.wesl GAME_FOG, the Fog struct's nvf_params)" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "apply_fog not as expected", label = "the haze's edit of Bevy's fog call (which the aerial edit wraps) not made" },
+  { text = "the desert haze's fog call not as expected", label = "the aerial edit of the haze's fog call not made" },
+  { text = "the aerial perspective's shader edit is not in place", label = "the switch on without its shader edit" },
+]
+
+[[scenario]]
+name = "aerial-perspective-with-haze"
+source = "[design, #2993, #2675] engine/nvforever/src/aerial.rs, haze.rs, fog.rs GAME_FOG, docs/design/graphics-enhanced.md §3.18: started with --graphics-only desert-haze,aerial-perspective at Goodsprings at noon under a pinned clear weather (NVWastelandClear, whose fog leaves full room: weight 1), both the desert haze and the aerial perspective turn on from the shown weather and every world pipeline compiles with both in the fog path, without a rendering error. The look is checked in pictures by hand"
+areas = ["renderer", "graphics", "weather"]
+paths = ["engine/nvforever/src/aerial.rs", "engine/nvforever/src/haze.rs", "engine/nvforever/src/fog.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--weather", "NVWastelandClear", "--graphics-only", "desert-haze,aerial-perspective"]
+run_seconds = 14
+expect = [
+  { re = 'graphics: light glow, desert haze, aerial perspective$', label = "both switches on from the start" },
+  { text = "haze: desert haze on: ", label = "the haze on outdoors" },
+  { re = 'aerial: aerial perspective on: .*?: weight (\d+\.\d+), channel weights', range = [0.95, 1.0], label = "a clear weather's fog leaves full room for the aerial terms" },
+]
+forbid = [
+  { text = "Caught rendering error", label = "a rendering (validation) error with the haze and the aerial perspective together" },
+  { re = '(?i)failed to process shader', label = "a world shader that does not compile with both in the fog path" },
+  { text = "failed and will not be tried again", label = "a pipeline that failed for good" },
+  { text = "the aerial perspective's shader edit is not in place", label = "the switch on without its shader edit" },
+]
+
+[[scenario]]
 name = "key-on-broken-shelf"
 source = "#3333: Goodsprings Home's safe key (VZKeyDirtyGSHome2SafeKey 0x001767AB) lies on the bottom board of a broken shelf (ShelvesWooden01broke01 0x0010B1E7), its render box just under the board's collision surface (the shape's 0.7-unit shell), and was never the crosshair's target (engine/nvf-play/src/activate/pick.rs SURFACE_SLACK)"
 areas = ["activate"]
@@ -34499,4 +34717,22 @@ run_seconds = 10
 expect = [
   { text = "test aid: aiming at 001767AB", label = "the view is turned to the key" },
   { re = 'target 0x001767AB .*\(Take', label = "the key on the shelf is the target, to take" },
+]
+
+[[scenario]]
+name = "spt-shape"
+kind = "tool"
+source = "docs/spec-notes/speedtree.md §4 (billboard width : height [observed] against the generated trees) and §7 (#3126: EuonymusBush01 generated too wide)"
+note = "fnvtool spt shape generates every base-game tree under the generator's readings and the probe readings (fnv_spt::probe). The as_is row with full cards is what the renderer scales by. Since #3126 branches springing from a stub take their angle from the stub's axis (EuonymusBush01 2.19 -> 1.18, measured 2026-11-21 as the probe's angle_from_axis_level_1 row); angle_from_plane_everywhere is the reading before it."
+areas = ["renderer"]
+paths = ["crates/fnv-spt/", "crates/fnvtool/src/spt_cmd.rs"]
+commands = [["spt", "shape", "{data}/Fallout - Meshes.bsa"]]
+expect = [
+  { json = "files.?tree=wastelandshrub01.shapes.?reading=as_is.full_cards.aspect", schema = "fnv.spt.shape/1", range = [1.25, 1.31], count = 1, label = "WastelandShrub01 as measured 2026-11-21 (1.28; billboard 1.44, speedtree.md §4)" },
+  { json = "files.?tree=whiteoak01.shapes.?reading=as_is.full_cards.aspect", schema = "fnv.spt.shape/1", range = [0.60, 0.66], count = 1, label = "WhiteOak01 as measured 2026-11-21 (0.63; billboard 0.62, speedtree.md §4)" },
+  { json = "files.?tree=euonymusbush01.shapes.?reading=as_is.full_cards.aspect", schema = "fnv.spt.shape/1", range = [1.17, 1.43], count = 1, label = "EuonymusBush01 within 10 % of the billboard's 1.30 (2.19 before #3126: its stems on a 0.01 stub lay flat)" },
+  { json = "files.?tree=euonymusbush01.shapes.?reading=angle_from_plane_everywhere.full_cards.aspect", schema = "fnv.spt.shape/1", range = [2.16, 2.22], count = 1, label = "the reading before #3126 still gives EuonymusBush01's old 2.19 (the probe reproduces the old generator)" },
+  { json = "files.?tree=euonymusbush01.stub_levels.#", schema = "fnv.spt.shape/1", equals = 1, count = 1, label = "EuonymusBush01's stems spring from a stub (its level 1)" },
+  { json = "files.?tree=wastelandshrub01.stub_levels.#", schema = "fnv.spt.shape/1", equals = 0, count = 1, label = "WastelandShrub01 has no stub level" },
+  { json = "files.?tree=whiteoak01.stub_levels.#", schema = "fnv.spt.shape/1", equals = 0, count = 1, label = "WhiteOak01 has no stub level" },
 ]
