@@ -168,7 +168,7 @@ pub fn register(app: &mut App) {
             key: "monitor",
             group: GROUP_PICTURE,
             label: "Monitor",
-            note: "The display the game opens on in full screen (the first display until you pick one).",
+            note: "The display the game opens on in full screen (the main display until you pick one).",
             switches: "--window",
             get: |_| false,
             set: |_, _| {},
@@ -1165,7 +1165,7 @@ fn register_graphics(app: &mut App) {
         Setting { key: AO_KEY, group: GROUP_GRAPHICS, label: "Ambient occlusion", note: AO_NOTE, switches: "--graphics, --ambient-occlusion", get: |_| false, set: |_, _| {}, slider: None },
         ChoiceList { names: |_| AO_CHOICES.iter().map(|c| (*c).to_string()).collect(), chosen: ao_chosen, pick: take_ao, save: ao_chosen, load: take_ao, ask_keep: false },
     );
-    let switches: [Switch; 20] = [
+    let switches: [Switch; 22] = [
         (
             "fine-shadows",
             "Longer sun shadows",
@@ -1302,6 +1302,22 @@ fn register_graphics(app: &mut App) {
             |w, on| w.resource_mut::<Graphics>().desert_haze = on,
         ),
         (
+            "aerial-perspective",
+            "Aerial perspective (experimental)",
+            "On: far land takes on the sky's colours with distance, bluer at noon, warmer at dusk, brighter toward the sun, inside the weather's fog. Not in the original.",
+            "--graphics, --graphics-only",
+            |w| w.resource::<Graphics>().aerial_perspective,
+            |w, on| w.resource_mut::<Graphics>().aerial_perspective = on,
+        ),
+        (
+            "night-sky-detail",
+            "Night sky detail (experimental)",
+            "On: stars twinkle a little, more near the horizon; the moon gets a glow and lights the clouds facing it, wider in hazy weather. Not in the original.",
+            "--graphics, --graphics-only",
+            |w| w.resource::<Graphics>().night_sky_detail,
+            |w, on| w.resource_mut::<Graphics>().night_sky_detail = on,
+        ),
+        (
             "water-reflections",
             "Screen-space reflections",
             "On: water the mirrored reflection does not reach (another height, interiors) reflects what is on the screen instead of only the sky.",
@@ -1364,7 +1380,7 @@ pub(crate) fn authored_after_ini(command_line: bool, given: Option<&nvf_play::se
 
 /// The Reflections on authored materials row's note (#2981 reflections): it needs a pack and
 /// Authored materials, and takes effect at the next start (main.rs).
-pub(crate) const AUTHORED_REFLECTIONS_NOTE: &str = "On: surfaces with a texture pack's material maps reflect the sky outdoors and the cell's ambient colours indoors. Needs such a pack and Authored materials on. Takes effect at the next start.";
+pub(crate) const AUTHORED_REFLECTIONS_NOTE: &str = "On: pack materials reflect the sky outdoors and an approximation of the room and nearby lights indoors. Needs a material pack and Authored materials on. Takes effect at the next start.";
 
 /// The run's Reflections on authored materials state (#2981 reflections), decided before the
 /// first NIF pipeline by [`authored_after_ini`]'s rule: the command line's
@@ -2913,6 +2929,8 @@ dlss-model=Preset K
             ("light-shafts", &["--graphics"]),
             ("heat-haze", &["--graphics-only"]),
             ("desert-haze", &["--graphics", "--graphics-only"]),
+            ("aerial-perspective", &["--graphics", "--graphics-only"]),
+            ("night-sky-detail", &["--graphics", "--graphics-only"]),
             ("water-reflections", &["--graphics"]),
             ("water-effects", &["--graphics", "--graphics-only"]),
             ("water-mirror", &["--graphics-only"]),

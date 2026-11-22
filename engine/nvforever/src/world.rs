@@ -1087,6 +1087,8 @@ pub fn report(mut exit: MessageReader<AppExit>, streamer: Res<Streamer>, models:
         s.cells_loaded, s.load_ms, s.spawn_frames, s.cells_waited, s.cells_forced, models.held(), models.in_flight(), late.marked
     );
     info!("{}", nvf_assets::tangents::summary());
+    // Shapes that asked to be blended and are drawn opaque (#3230).
+    info!("{}", nvf_assets::nif_spawn::blend_opaque_summary());
     // What the two readers of each model file cost (#3149).
     info!("{}", nvf_assets::load_times::summary());
     // The smoke scenario `terrain-smoothing` reads it (#2149).
@@ -1367,23 +1369,32 @@ pub(crate) fn effective_cell_lighting(world: &WorldData, game: Option<&fnv_game:
     }
 }
 
-/// Reapply lighting when the cell is applied by travel, or when its runtime
-/// becomes available/unavailable. Live setter-driven refresh is deliberately a
-/// separate timing policy; unchanged frames neither resolve fields nor allocate.
+type CellLightingKey = (Option<u32>, Option<(u64, u64)>);
+
+/// Reapply interior cell lighting on travel, runtime availability/replacement changes,
+/// or live session lighting edits (`Game::lighting_token` bumped by
+/// `SetCellLightingTemplate`, `SetCellFlag` 8..=16, `SetLightingTemplateTraitNumeric`,
+/// and `SetInteriorLightingTraitNumeric`). Unchanged frames neither resolve fields nor
+/// allocate; edits to unrelated cells/templates leave `SkyState` untouched.
 pub fn cell_lighting(
     mut travels: MessageReader<nvf_play::Travel>,
-    streamer: Res<Streamer>, world: Res<WorldData>,
+    streamer: Res<Streamer>,
+    world: Res<WorldData>,
     script: Option<Res<nvf_play::script::ScriptState>>,
     mut sky: ResMut<crate::sky::SkyState>,
-    mut seen: Local<Option<(Option<u32>, bool)>>,
+    mut seen: Local<Option<CellLightingKey>>,
 ) {
     let game = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
-    let key = (streamer.interior, game.is_some());
+    let key = (streamer.interior, game.map(fnv_game::Game::lighting_token));
     let travelled = travels.read().count() > 0;
-    if *seen == Some(key) && !travelled { return; }
+    if *seen == Some(key) && !travelled {
+        return;
+    }
     *seen = Some(key);
     let light = streamer.interior.and_then(|cell| effective_cell_lighting(&world, game, cell));
-    if sky.interior != light { sky.set_interior(light); }
+    if sky.interior != light {
+        sky.set_interior(light);
+    }
 }
 
 /// SetCellImageSpace (`fnv_game::game::FormChanges::cell_image_spaces`): an interior
@@ -2619,6 +2630,7 @@ mod tests {
             segments: Vec::new(),
             external_emittance: false,
             look: nvf_assets::material_anim::Look::stored([0.0; 3], 1.0, 1.0),
+            missing_diffuse: None,
         };
         let glow = shape(Some(1), Affine3A::from_translation(glow_at) * own);
         let stick = shape(Some(0), Affine3A::IDENTITY);

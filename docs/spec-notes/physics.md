@@ -661,7 +661,15 @@ display case, and a resting dropped item not woken by `SetPos` (§4.3, `pc_drop_
   they are struck (shots, explosions: `push_ref`, `push_dynamic`) or when a body they
   touch is removed (an item picked up from under them) [observed: fnv-phys tests
   `clutter_added_asleep_*`]. Dropped items (§4.3) are added awake, as before.
-- A placed reference with **two or more dynamic bodies keeps them keyframed** at its
+- A placed **item** (WEAP, ARMO, AMMO, MISC, ALCH, BOOK, KEYM, NOTE, IMOD, CHIP, CMNY,
+  CCRD) whose model is **two or more dynamic bodies** and nothing else (the teddy bear:
+  six on five limited hinges) is joined into **one rigid dynamic body**, as a dropped one
+  is (`one_dynamic_body`, #1604; `join_jointed_item`, tallied `jointed_item_joined`). It
+  moves as one piece in the pose its file draws [design: the hinges are not simulated]:
+  the grab key holds it, and shots and blasts move it (#3428). One posed from its XRGD
+  (the bear south of Goodsprings, 00172D8B, lying as its designer left it) is joined in
+  that pose.
+- Any other placed reference with **two or more dynamic bodies keeps them keyframed** at its
   placement (`hold_jointed` in `phys/prepare.rs`; tallied `jointed_held`): solid where it
   is drawn, never moving [engineering choice until constraints are modelled for placed
   references; then they would hang and swing as in the game]. Two kinds are let go
