@@ -97,6 +97,7 @@ mod magic_archetypes;
 mod npc_doors;
 mod null_call_context;
 mod nvse_itr2;
+mod nvse_stubs_batch1;
 mod nvsescript;
 mod one111;
 mod package_choice;
