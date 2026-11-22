@@ -11,13 +11,14 @@
 use crate::game::{Game, GameConfig, GameSnapshot, InstKey};
 use crate::GameData;
 use fnv_save::fos::{
-    Fos, FosItem, VarValue, FORM_DELETED, FORM_DISABLED, FORM_TALKED_TO_PC, PLAYER_BASE,
-    PLAYER_REF, TYPE_ACHR, TYPE_ACRE, TYPE_CHAL, TYPE_CLAS, TYPE_FACT, TYPE_FLST, TYPE_INFO,
-    TYPE_LVLI, TYPE_NOTE, TYPE_NPC, TYPE_QUST, TYPE_REFR, TYPE_REPU,
+    Fos, FosItem, FosItemEntry, VarValue, FORM_DELETED, FORM_DISABLED, FORM_TALKED_TO_PC,
+    PLAYER_BASE, PLAYER_REF, TYPE_ACHR, TYPE_ACRE, TYPE_CHAL, TYPE_CLAS, TYPE_FACT, TYPE_FLST,
+    TYPE_INFO, TYPE_LVLI, TYPE_NOTE, TYPE_NPC, TYPE_QUST, TYPE_REFR, TYPE_REPU,
 };
 use fnv_save::{EngineSnapshot, Place, PluginEntry, PluginRemap, SaveBody, SaveHeader, SaveKind};
 use fnv_script::vm::Value;
-use fnv_sim::forms::LeveledEntry;
+use fnv_sim::forms::{ItemKind, LeveledEntry};
+use fnv_sim::inventory::{Extra, Pick};
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -182,6 +183,14 @@ pub fn inspect_fos(fos: &Fos, cosave_present: bool) -> FosInspectReport {
         }
         Err(_) => {
             *parse_errors.entry("misc_stats".into()).or_default() += 1;
+        }
+    }
+    match fos.dead_counts() {
+        Ok(v) => {
+            decoded_counts.insert("dead_counts".into(), v.len());
+        }
+        Err(_) => {
+            *parse_errors.entry("dead_counts".into()).or_default() += 1;
         }
     }
 
@@ -359,6 +368,30 @@ pub fn convert_fos(
         Err(_) => inc_skip("global_table", "type 0 (misc stats) malformed"),
     }
 
+    // 2b. Global table 1 type 2 prefix: per-base-form death counts ([hypothesis]).
+    match fos.dead_counts_with_tail() {
+        Ok((counts, trailing)) => {
+            for (raw_form, count) in counts {
+                if count == 0 {
+                    continue;
+                }
+                match raw_form.ok_or("not in save form ID array").and_then(&map_id) {
+                    Ok(id) if matches!(data.sig(id).as_ref(), Some(b"NPC_") | Some(b"CREA")) => {
+                        g.player.dead_count.insert(id, u32::from(count));
+                        inc_ok("dead_counts");
+                        inc_hyp("dead_counts (global type 2 prefix) [hypothesis]");
+                    }
+                    Ok(_) => inc_skip("dead_count", "not an NPC_ or CREA record"),
+                    Err(why) => inc_skip("dead_count", why),
+                }
+            }
+            if trailing > 0 {
+                inc_skip("global_table", "type 2 trailing bytes unmapped");
+            }
+        }
+        Err(_) => inc_skip("global_table", "type 2 (dead counts) malformed"),
+    }
+
     // 3. Global table 1 type 8: sky/weather ([hypothesis]).
     let mut header_weather: Option<String> = None;
     let mut engine = EngineSnapshot::new();
@@ -387,7 +420,7 @@ pub fn convert_fos(
 
     // Count unmapped global data table entries truthfully.
     for &(ty, _) in &fos.globals_data {
-        if !matches!(ty, 0 | 1 | 3 | 8 | 1000) {
+        if !matches!(ty, 0 | 1 | 2 | 3 | 8 | 1000) {
             inc_skip("global_table", &format!("type {ty} layout unmapped"));
         }
     }
@@ -560,7 +593,16 @@ pub fn convert_fos(
 
             match &p.inventory {
                 Some(items) => {
-                    apply_player_inventory(&mut g, forms, items, &map_id, &mut inc_ok, &mut inc_hyp, &mut inc_skip);
+                    apply_player_inventory(
+                        &mut g,
+                        &mut engine,
+                        forms,
+                        items,
+                        &map_id,
+                        &mut inc_ok,
+                        &mut inc_hyp,
+                        &mut inc_skip,
+                    );
                 }
                 None => {
                     inc_skip("player_inventory", "not read (missing player record or unmapped layout)");
@@ -916,8 +958,16 @@ pub fn convert_fos(
     Ok(ConvertedSave { header, shot, body, report })
 }
 
+fn normalize_item_condition(forms: &FormStore, id: FormId, cond_hp: Option<f32>) -> Option<f32> {
+    let hp = cond_hp?;
+    let max_hp = forms.item(id)?.health.filter(|&h| h > 0)? as f32;
+    hp.is_finite().then_some((hp / max_hp).clamp(0.0, 1.0))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn apply_player_inventory(
     g: &mut Game<'_>,
+    engine: &mut EngineSnapshot,
     forms: &FormStore,
     items: &[FosItem],
     map_id: &impl Fn(u32) -> Result<FormId, &'static str>,
@@ -925,52 +975,152 @@ fn apply_player_inventory(
     inc_hyp: &mut impl FnMut(&str),
     inc_skip: &mut impl FnMut(&str, &str),
 ) {
-    for it in items.iter().filter(|it| it.count != 0) {
+    // Pass 1: count hotkeys (not persisted in NVFSAVE v1) and apply inventory deltas & sub-stacks.
+    for it in items {
+        for entry in &it.entries {
+            if entry.hotkey.is_some() {
+                inc_skip("player_hotkey", "not persisted in NVFSAVE v1");
+            }
+            if !entry.worn && entry.ammo.is_some() {
+                inc_skip("player_weapon_magazine", "unequipped weapon magazine not persisted in NVFSAVE v1");
+            }
+        }
+        if it.count == 0 {
+            continue;
+        }
         match it.item.ok_or("not in save form ID array").and_then(map_id) {
             Ok(id) => {
-                let mut applied_cond = false;
-                let res = if it.count > 0 {
-                    let cond = it.condition.and_then(|hp| {
-                        let max_hp = forms.item(id)?.health.filter(|&h| h > 0)? as f32;
-                        hp.is_finite().then_some((hp / max_hp).clamp(0.0, 1.0))
-                    });
-                    if cond.is_some() {
-                        applied_cond = true;
-                        g.world.add_item_at_condition(FormId::PLAYER_REF, id, it.count, cond).map(|_| ())
+                if it.count > 0 {
+                    let mut remaining = it.count;
+                    let mut added_any = false;
+                    let mut failed = false;
+                    // Process worn entries first so a worn sub-stack always receives its exact
+                    // condition/mods/owner before plain or unequipped sub-stacks exhaust `remaining`.
+                    let ordered_entries: Vec<&FosItemEntry> = it
+                        .entries
+                        .iter()
+                        .filter(|e| e.worn)
+                        .chain(it.entries.iter().filter(|e| !e.worn))
+                        .collect();
+                    for entry in ordered_entries {
+                        if remaining <= 0 {
+                            break;
+                        }
+                        let stack_n = entry.count.map(i32::from).filter(|&n| n > 0).unwrap_or(1).min(remaining);
+                        let cond = normalize_item_condition(forms, id, entry.condition);
+                        let owner = match entry.owner {
+                            Some(Some(raw)) => match map_id(raw) {
+                                Ok(oid) => Some(oid),
+                                Err(why) => {
+                                    inc_skip("player_item_owner", why);
+                                    None
+                                }
+                            },
+                            Some(None) => {
+                                inc_skip("player_item_owner", "not in save form ID array");
+                                None
+                            }
+                            None => None,
+                        };
+                        let extra = Extra {
+                            condition: cond,
+                            owner,
+                            equipped: false,
+                            mods: entry.weapon_mods,
+                            live: false,
+                        };
+                        if g.world.add_item_extra(FormId::PLAYER_REF, id, stack_n, extra).is_ok() {
+                            remaining -= stack_n;
+                            added_any = true;
+                            if entry.count.is_some_and(|n| n > 0) {
+                                inc_hyp("player_item_stack_counts (extra 0x24) [hypothesis]");
+                            }
+                            if cond.is_some() {
+                                inc_hyp("player_item_conditions (extra 0x25) [hypothesis]");
+                            }
+                            if owner.is_some() {
+                                inc_hyp("player_item_owners (extra 0x21) [hypothesis]");
+                            }
+                            if entry.weapon_mods != 0 {
+                                inc_hyp("player_item_weapon_mods (extra 0x8D) [hypothesis]");
+                            }
+                        } else {
+                            failed = true;
+                            break;
+                        }
+                    }
+                    if !failed && remaining > 0 {
+                        if g.world.add_item(FormId::PLAYER_REF, id, remaining).is_ok() {
+                            added_any = true;
+                        } else {
+                            failed = true;
+                        }
+                    }
+                    if !failed && added_any {
+                        inc_ok("player_items");
                     } else {
-                        g.world.add_item(FormId::PLAYER_REF, id, it.count).map(|_| ())
+                        inc_skip("player_item", "unknown or non-inventory form");
                     }
                 } else if let Some(remove) = it.count.checked_neg() {
-                    g.world.remove_item(FormId::PLAYER_REF, id, remove).map(|_| ())
-                } else {
-                    inc_skip("player_item", "negative item count overflow");
-                    continue;
-                };
-                if res.is_ok() {
-                    inc_ok("player_items");
-                    if applied_cond {
-                        inc_hyp("player_item_conditions (extra 0x25) [hypothesis]");
+                    if g.world.remove_item(FormId::PLAYER_REF, id, remove).is_ok() {
+                        inc_ok("player_items");
+                    } else {
+                        inc_skip("player_item", "unknown or non-inventory form");
                     }
                 } else {
-                    inc_skip("player_item", "unknown or non-inventory form");
+                    inc_skip("player_item", "negative item count overflow");
                 }
             }
             Err(why) => inc_skip("player_item", why),
         }
     }
+
+    // Pass 2: equip worn sub-stacks (after all counts are in place) and wire worn weapon magazine.
     for it in items.iter().filter(|it| it.worn) {
         match it.item.ok_or("not in save form ID array").and_then(map_id) {
             Ok(id) => {
-                let already = g
-                    .world
-                    .peek(FormId::PLAYER_REF)
-                    .and_then(|s| s.inventory.as_ref())
-                    .is_some_and(|inv| inv.is_equipped(id));
-                if already || g.world.equip(FormId::PLAYER_REF, id).is_ok() {
-                    inc_ok("player_equipped");
-                    inc_hyp("player_equipped (extra 0x16) [hypothesis]");
-                } else {
-                    inc_skip("player_equipped", "cannot equip item");
+                let worn_entries: Vec<&FosItemEntry> = it.entries.iter().filter(|e| e.worn).collect();
+                for entry in worn_entries {
+                    let cond = normalize_item_condition(forms, id, entry.condition);
+                    let pick = Pick::row(cond, entry.weapon_mods);
+                    let already = g
+                        .world
+                        .peek(FormId::PLAYER_REF)
+                        .and_then(|s| s.inventory.as_ref())
+                        .is_some_and(|inv| inv.is_equipped(id));
+                    let equipped = g.world.equip_at(FormId::PLAYER_REF, id, pick).is_ok()
+                        || already
+                        || g.world.equip(FormId::PLAYER_REF, id).is_ok();
+                    if equipped {
+                        inc_ok("player_equipped");
+                        inc_hyp("player_equipped (extra 0x16) [hypothesis]");
+                        if let Some((raw_ammo, rounds)) = entry.ammo {
+                            if forms.item(id).is_some_and(|item| item.kind == ItemKind::Weapon) {
+                                let ammo_id = match raw_ammo {
+                                    Some(raw) => match map_id(raw) {
+                                        Ok(aid) if forms.item(aid).is_some_and(|item| item.kind == ItemKind::Ammo) => {
+                                            Some(aid)
+                                        }
+                                        Ok(_) => {
+                                            inc_skip("player_weapon_magazine_ammo", "not an AMMO record");
+                                            None
+                                        }
+                                        Err(why) => {
+                                            inc_skip("player_weapon_magazine_ammo", why);
+                                            None
+                                        }
+                                    },
+                                    None => None,
+                                };
+                                engine.magazine = Some((id.0, rounds));
+                                engine.magazine_ammo = ammo_id.map(|a| a.0);
+                                inc_ok("player_weapon_magazine");
+                                inc_hyp("player_weapon_magazine (extra 0x6E) [hypothesis]");
+                            }
+                        }
+                    } else {
+                        inc_skip("player_equipped", "cannot equip item");
+                    }
                 }
             }
             Err(why) => inc_skip("player_equipped", why),

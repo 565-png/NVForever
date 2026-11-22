@@ -22,6 +22,8 @@ const QUEST_ID: u32 = 0x0000_0810;
 const SCRIPT_ID: u32 = 0x0000_0811;
 const ITEM_ID: u32 = 0x0000_0820;
 const ITEM_WORN_ID: u32 = 0x0000_0821;
+const WEAP_ID: u32 = 0x0000_0822;
+const AMMO_ID: u32 = 0x0000_0823;
 const ROOM_ID: u32 = 0x0000_0830;
 const PROP_REF: u32 = 0x0000_0831;
 const NPC_BASE: u32 = 0x0000_0832;
@@ -110,6 +112,25 @@ fn fixture() -> Fixture {
             ),
         ],
     );
+    let weap_data = [
+        &100i32.to_le_bytes()[..],
+        &200i32.to_le_bytes(),
+        &3.0f32.to_le_bytes(),
+        &15i16.to_le_bytes(),
+        &[12u8],
+    ]
+    .concat();
+    let weap = record(
+        b"WEAP",
+        0,
+        WEAP_ID,
+        &[
+            sub(b"EDID", z("OwnTestRifle")),
+            sub(b"NAM0", AMMO_ID.to_le_bytes().to_vec()),
+            sub(b"DATA", weap_data),
+        ],
+    );
+    let ammo = record(b"AMMO", 0, AMMO_ID, &[sub(b"EDID", z("OwnTestAmmo"))]);
     let npc_player = record(b"NPC_", 0, PLAYER_BASE, &[sub(b"EDID", z("Player"))]);
     let npc_other = record(b"NPC_", 0, NPC_BASE, &[sub(b"EDID", z("OwnNpcBase"))]);
     let fact_a = record(b"FACT", 0, FACT_A, &[sub(b"EDID", z("OwnFactA"))]);
@@ -200,6 +221,8 @@ fn fixture() -> Fixture {
         top(b"QUST", &quest),
         top(b"MISC", &item),
         top(b"ARMO", &armor),
+        top(b"WEAP", &weap),
+        top(b"AMMO", &ammo),
         top(b"NPC_", &[npc_player, npc_other].concat()),
         top(b"FACT", &[fact_a, fact_b].concat()),
         top(b"FLST", &flst),
@@ -252,6 +275,10 @@ impl Build {
         self
     }
     fn u16(&mut self, v: u16) -> &mut Self {
+        self.b.extend(v.to_le_bytes());
+        self
+    }
+    fn i16(&mut self, v: i16) -> &mut Self {
         self.b.extend(v.to_le_bytes());
         self
     }
@@ -479,7 +506,7 @@ fn synthetic_fos_bytes() -> Vec<u8> {
         .bar()
         .f32(1.0)
         .bar()
-        .vs(0)
+        .vs(2)
         .bar()
         .u8(0x5E)
         .bar()
@@ -720,13 +747,13 @@ fn malformed_truncated_and_unknown_extra_data_are_handled_without_panicking() {
     let valid = synthetic_fos_bytes();
     assert!(Fos::parse(&valid[..valid.len() / 2]).is_err());
 
-    // Mutate the player's inventory extra type from 0x25 to an unknown type 0x0D:
+    // Mutate the player's inventory extra type from 0x25 to an unknown type 0xFE:
     // conversion must succeed, keep the rest of the save, and count inventory as skipped.
     let mut fos = Fos::parse(&valid).unwrap();
     let player_rec = fos.changed.iter_mut().find(|c| c.form == PLAYER_REF).unwrap();
     let last_extra_pos = player_rec.data.len() - 7;
     assert_eq!(player_rec.data[last_extra_pos], 0x25);
-    player_rec.data[last_extra_pos] = 0x0D;
+    player_rec.data[last_extra_pos] = 0xFE;
     let opts = ConvertOptions {
         plugins: vec![PluginEntry { name: "FalloutNV.esm".into(), size: 1234 }],
         include_thumbnail: false,
@@ -759,4 +786,189 @@ fn malformed_truncated_and_unknown_extra_data_are_handled_without_panicking() {
     assert!(!edge_converted.report.hypothesis_fields.contains_key("notes (NOTE bit 31) [hypothesis]"));
     assert!(!edge_converted.report.hypothesis_fields.contains_key("said_infos (INFO bit 31) [hypothesis]"));
     edge_converted.body.game.check().unwrap();
+}
+
+#[test]
+fn midgame_player_extras_weapon_magazine_and_dead_counts_convert_and_restore() {
+    let f = fixture();
+    // 1-based form ID array
+    let fids = [
+        ROOM_ID,      // 1
+        PLAYER_REF,   // 2
+        WEAP_ID,      // 3
+        AMMO_ID,      // 4
+        NPC_BASE,     // 5
+        PROP_REF,     // 6
+        SCRIPT_ID,    // 7
+        NPC_REF,      // 8
+    ];
+
+    let mut h = Build { b: Vec::new() };
+    h.u32(0x30).bar();
+    h.b.extend([0u8; 64]);
+    h.bar()
+        .u32(0)
+        .bar()
+        .u32(0)
+        .bar()
+        .u32(20)
+        .bar()
+        .s_field("Midgame", true)
+        .s_field("Wanderer", true)
+        .u32(12)
+        .bar()
+        .s_field("OwnTestRoom", true)
+        .s_field("010.05.00", false);
+
+    let mut b = b"FO3SAVEGAME".to_vec();
+    b.extend((h.b.len() as u32).to_le_bytes());
+    b.extend(&h.b);
+
+    let mut pl = Build { b: Vec::new() };
+    pl.u8(1).bar().s_field("FalloutNV.esm", true);
+    b.push(27);
+    b.extend((pl.b.len() as u32).to_le_bytes());
+    b.extend(&pl.b);
+
+    let table_at = b.len();
+    b.extend([0u8; 32 + 78]);
+
+    let g1 = b.len();
+    // Global table 1 type 2: 1 dead_count entry (NPC_BASE = r(5), count = 7) + 105 unmapped trailing bytes.
+    let mut t2 = Build { b: Vec::new() };
+    t2.vs(1).bar().r(5).bar().u16(7).bar();
+    t2.b.extend([0u8; 105]);
+    b.extend(2u32.to_le_bytes());
+    b.extend((t2.b.len() as u32).to_le_bytes());
+    b.extend(&t2.b);
+
+    let cf = b.len();
+    // Player ACHR with f32 = 1.1 and 5-entry actor ExtraDataList (0x5E, 0x74, 0x1D, 0x60, 0x75; no 0x18).
+    let mut pl_rec = Build { b: Vec::new() };
+    pl_rec.r(1).f32(1.0).f32(2.0).f32(3.0).f32(0.0).f32(0.0).f32(0.0).bar();
+    for _ in 0..232 {
+        pl_rec.f32(0.0).bar();
+    }
+    pl_rec.u8(0).bar().f32(1.1).bar().vs(5).bar();
+    pl_rec.u8(0x5E).bar().vs(0).bar();
+    pl_rec.u8(0x74).bar().r(8).bar();
+    pl_rec.u8(0x1D).bar().vs(2).bar().r(6).bar().r(8).bar();
+    pl_rec.u8(0x60).bar().u32(42).bar();
+    pl_rec.u8(0x75).bar().r(6).bar().r(8).bar().u8(1).bar();
+
+    // 1 inventory item (WEAP_ID = r(3)), count = 4, 2 extra lists covering all 9 observed item extra types:
+    //   list 1 (worn modded weapon): 0x16, 0x25 (150/200 = 0.75), 0x8D (mods = 3), 0x6E (AMMO_ID = r(4), 9 rounds),
+    //                                0x4A (hotkey = 1), 0x0D (script r(7) with 1 num + 1 ref var)
+    //   list 2 (unworn owned sub-stack of 2): 0x24 (count = 2), 0x21 (owner NPC_BASE = r(5)),
+    //                                         0x1C (orig ref PROP_REF = r(6)), 0x25 (100/200 = 0.5)
+    //   + 1 remaining plain unit (total 1 + 2 + 1 = 4)
+    pl_rec.vs(1).bar();
+    pl_rec.r(3).bar().i32(4).bar().vs(2).bar();
+    pl_rec.vs(6).bar();
+    pl_rec.u8(0x16).bar();
+    pl_rec.u8(0x25).bar().f32(150.0).bar();
+    pl_rec.u8(0x8D).bar().u8(0x03).bar();
+    pl_rec.u8(0x6E).bar().r(4).bar().u32(9).bar();
+    pl_rec.u8(0x4A).bar().u8(1).bar();
+    pl_rec
+        .u8(0x0D)
+        .bar()
+        .r(7)
+        .bar()
+        .vs(2)
+        .bar()
+        .u32(1)
+        .bar()
+        .f64(3.25)
+        .bar()
+        .u32(0x8000_0002)
+        .bar()
+        .r(8)
+        .bar()
+        .vs(0)
+        .bar()
+        .vs(0)
+        .bar();
+    pl_rec.vs(4).bar();
+    pl_rec.u8(0x24).bar().i16(2).bar();
+    pl_rec.u8(0x21).bar().r(5).bar();
+    pl_rec.u8(0x1C).bar().r(6).bar();
+    pl_rec.u8(0x25).bar().f32(100.0).bar();
+    push_record(&mut b, 2, (1 << 1) | (1 << 4) | (1 << 5) | (1 << 29), TYPE_ACHR, &pl_rec.b);
+
+    let g2 = b.len();
+    b.extend(1000u32.to_le_bytes());
+    b.extend(0u32.to_le_bytes());
+
+    let fid = b.len();
+    b.extend((fids.len() as u32).to_le_bytes());
+    for fid_val in fids {
+        b.extend(fid_val.to_le_bytes());
+    }
+    b.extend(0u32.to_le_bytes());
+    let tail = b.len();
+    b.extend([5, 0, 0, 0, 0, 0, 0, 0, BAR]);
+
+    let table = [fid, tail, g1, cf, g2, 1, 1, 1].map(|v| v as u32);
+    for (i, v) in table.iter().enumerate() {
+        b[table_at + 4 * i..table_at + 4 * i + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
+    let fos = Fos::parse(&b).unwrap();
+    let inspect = inspect_fos(&fos, false);
+    assert_eq!(inspect.decoded_counts.get("dead_counts"), Some(&1));
+    assert_eq!(inspect.player_inventory_items, Some(1));
+
+    let opts = ConvertOptions {
+        kind: SaveKind::Manual,
+        plugins: vec![PluginEntry { name: "FalloutNV.esm".into(), size: 1234 }],
+        include_thumbnail: false,
+        cosave_present: false,
+    };
+    let converted = convert_fos(&fos, &f.data, &f.forms, &f.refs, &opts).unwrap();
+    assert_eq!(converted.report.converted.get("dead_counts"), Some(&1));
+    assert_eq!(converted.report.converted.get("player_items"), Some(&1));
+    assert_eq!(converted.report.converted.get("player_equipped"), Some(&1));
+    assert_eq!(converted.report.converted.get("player_weapon_magazine"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("dead_counts (global type 2 prefix) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("player_item_weapon_mods (extra 0x8D) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("player_item_owners (extra 0x21) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("player_item_stack_counts (extra 0x24) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("player_weapon_magazine (extra 0x6E) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.hypothesis_fields.get("player_item_conditions (extra 0x25) [hypothesis]"), Some(&2));
+    assert_eq!(converted.report.hypothesis_fields.get("player_equipped (extra 0x16) [hypothesis]"), Some(&1));
+    assert_eq!(converted.report.skipped.get("player_hotkey: not persisted in NVFSAVE v1"), Some(&1));
+    assert_eq!(converted.report.skipped.get("global_table: type 2 trailing bytes unmapped"), Some(&1));
+
+    // Write .nvfsave and verify round-trip through fnv_save::read_body + World::restore + Game::restore.
+    let dir = std::env::temp_dir().join(format!("nvf-fos-convert-midgame-{}", std::process::id()));
+    let out = dir.join("midgame.nvfsave");
+    let body_bytes = serde_json::to_vec(&converted.body).unwrap();
+    fnv_save::write(&out, &converted.header, &converted.shot, &body_bytes, false).unwrap();
+
+    let (_h, _shot, body): (SaveHeader, Vec<u8>, SaveBody<GameSnapshot>) = fnv_save::read_body(&out).unwrap();
+    assert_eq!(body.engine.magazine, Some((WEAP_ID, 9)));
+    assert_eq!(body.engine.magazine_ammo, Some(AMMO_ID));
+    body.game.check().unwrap();
+
+    let restored_world = World::restore(&f.forms, &f.refs, &body.game.sim).unwrap();
+    let mut restored = Game::restore(&f.data, restored_world, GameConfig::default(), &body.game).unwrap();
+    assert_eq!(restored.player.dead_count.get(&FormId(NPC_BASE)), Some(&7));
+    assert_eq!(restored.world.item_count(FormId::PLAYER_REF, FormId(WEAP_ID)).unwrap(), 4);
+
+    let inv = restored.world.peek(FormId::PLAYER_REF).unwrap().inventory.as_ref().unwrap();
+    assert!(inv.is_equipped(FormId(WEAP_ID)));
+    let groups: Vec<_> = inv
+        .groups()
+        .filter(|(id, _, _)| *id == FormId(WEAP_ID))
+        .map(|(_, e, n)| (e, n))
+        .collect();
+    assert_eq!(groups.len(), 3);
+    assert!(groups.iter().any(|(e, n)| e.equipped && e.mods == 3 && e.condition == Some(0.75) && *n == 1));
+    assert!(groups
+        .iter()
+        .any(|(e, n)| !e.equipped && e.owner == Some(FormId(NPC_BASE)) && e.condition == Some(0.5) && *n == 2));
+    assert!(groups.iter().any(|(e, n)| e.is_plain() && *n == 1));
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
