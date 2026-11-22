@@ -3582,6 +3582,31 @@ already talking takes over at once, same topic or another; nothing is queued or 
      ones mean the original closes the gap in a way ours does not (a lunge from further
      off, a faster chase, or no knockback on the player).
 
+## Added 2026-11-22 (terminal text typing out, #3327)
+
+254. **How fast and in what order does a terminal's text type out?** (P3: #3327; hacking.md
+     §7 "Typing out".) Ours [design]: each page's lines one after another, each left to
+     right, at 600 characters a second; a page starts again only when another page comes
+     up (not when the selection moves); no key skips it; no sound. In the original, record
+     at 60 fps: (a) an unlocked terminal with a long welcome text and several entries
+     (Goodsprings' schoolhouse or any office terminal), from activation to the last
+     character; (b) taking an entry that opens a note, and Tab back to the list; (c) a
+     locked terminal's hacking screen as it comes up, and after a wrong word. Count the
+     frames each page takes and the characters it shows, and say whether lines type one
+     after another or together, whether the selection box types with its row, whether a
+     key or click finishes it at once, and which sound plays while it types
+     (`UIHackingCharSingle`, `…Multiple` or the loop `UIHackingCharScrollLP`).
+
+## Added 2026-11-22 (a terminal note longer than the screen, #3409)
+
+255. **How does the player read on in a terminal entry longer than the screen?** (P3: #3409;
+     hacking.md §7.) Ours [hypothesis]: E, Enter or a click turns a page (the last page
+     shows the last lines), nothing on the last page; Up / Down scroll a line. In the
+     original, open a long entry (a long log, e.g. Vault 11's overseer entries or a
+     Lucky 38 terminal) and note how many lines a page holds, what E and a click do on the
+     first and on the last page (next page, back to the list, nothing), whether Up / Down
+     or the mouse wheel scroll, and any "more" mark the screen shows.
+
 ## Added 2026-11-22 (Blake's books for Bitter Springs Infirmary Blues, #3350)
 
 256. **Does a merchant sell the owned items lying at its stand?** (P2: #3350, a player could
