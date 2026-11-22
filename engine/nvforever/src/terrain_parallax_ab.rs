@@ -139,6 +139,11 @@ pub const STILL_SHARE: f64 = 0.3;
 /// gives about 0, an unchanged one 1. Grazing measured 0.231 (it would still pass at three
 /// times that); head-on 0.945 and the held-off runs 0.991 and 1.000 stay well above it.
 pub const CHANGED_CORRELATION: f64 = 0.7;
+/// The least mean change (grey levels over the centre box) a `changed` verdict needs, A to B
+/// and B to C: a decorrelation from a few pixels alone (one bright speck moving) stays out.
+/// The grazing readback measured 12.29 [observed: smoke run of 2026-11-22]; head-on 5.05
+/// is held back by its correlation (0.946), not by this floor.
+pub const CHANGED_LEVELS: f64 = 4.0;
 
 /// A-C's correlation may be no lower than this (measured 0.998 to 1.000: ten times the
 /// largest loss seen).
@@ -390,7 +395,7 @@ pub fn judge(m: &Measure, shifted: Option<f32>) -> &'static str {
     let len = m.shift.0.abs().max(m.shift.1.abs());
     if len >= MOVED_PX && m.ab >= MOVED_LEVELS && m.ab >= MOVED_RATIO * m.ac && m.bc >= MOVED_RATIO * m.ac && m.fit <= MOVED_FIT * m.ab {
         "moved"
-    } else if m.correlation[0] <= CHANGED_CORRELATION && m.correlation[2] <= CHANGED_CORRELATION {
+    } else if m.correlation[0] <= CHANGED_CORRELATION && m.correlation[2] <= CHANGED_CORRELATION && m.ab >= CHANGED_LEVELS && m.bc >= CHANGED_LEVELS {
         "changed"
     } else if len == 0 && m.ab <= STILL_SHARE * m.contrast[0] {
         "still"

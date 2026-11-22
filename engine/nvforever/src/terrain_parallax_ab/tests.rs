@@ -234,3 +234,20 @@ fn the_crosshair_is_left_out_of_every_sum() {
     assert_eq!((m.ab, m.bc, m.shift), (0.0, 0.0, (0, 0)));
     assert_eq!(m.contrast[0], m.contrast[1], "the reticle is not counted as texture");
 }
+
+/// One bright speck that moves only in B decorrelates the box but changes its mean by a
+/// fraction of a level: never `changed` (the [`CHANGED_LEVELS`] floor).
+#[test]
+fn a_moving_speck_is_not_changed() {
+    let m = Measure {
+        rect: (0, 0, 76, 57),
+        ab: 0.071,
+        ac: 0.0,
+        bc: 0.071,
+        shift: (0, 0),
+        fit: 0.071,
+        contrast: [2.13, 2.13, 2.13],
+        correlation: [0.02, 1.0, 0.02],
+    };
+    assert_ne!(judge(&m, Some(0.9)), "changed");
+}
