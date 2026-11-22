@@ -7479,7 +7479,6 @@ mod tests {
                 tuning: CombatTuning::default(),
                 blood_rng: SplitMix(6),
                 blood_chance_logged: false,
-                chosen_ammo: std::collections::BTreeMap::new(),
                 weapon: Some(FormId(RIFLE)),
                 equipped: Some(Some(FormId(RIFLE))),
                 mods: 0,
