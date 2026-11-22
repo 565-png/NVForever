@@ -3524,46 +3524,19 @@ already talking takes over at once, same topic or another; nothing is queued or 
 ## Added 2026-11-21 (GetMapMarkerVisible on a marker authored Visible, #3268)
 
 252. **What does GetMapMarkerVisible return for a map marker the player has not found
-     whose record is authored Visible?** (P2: 41 calls in the shipped scripts read it,
-     VMQ01 among them [observed: script-function-audit.md]; #3268.) The wiki gives 0 not
-     on the map, 1 on it without fast travel, 2 on it and a fast-travel target
-     [documented: GECK wiki GetMapMarkerVisible]; it does not say whether a marker's
-     authored flags (REFR `FNAM`: 1 Visible, 2 Can Travel To, 4 "Show All" Hidden
-     [documented: xEdit, schemas/fnv/world.json]) count before the player finds it. Ours
-     on main: 0 until the player finds it (then 2) or a script shows it (ShowMap 0 gives
-     1, ShowMap 1 gives 2), whatever the record says [hypothesis]. #3268 makes an
-     undiscovered marker authored Visible read 1 (Visible | Can Travel To 1 too, Can
-     Travel To alone 0), as its Pip-Boy map shows it [hypothesis]. Also asked: the same
-     markers after ShowMap 0, ShowMap 1 and discovery.
-     Campaign `tools/capture/observe/o31_mapmarker_visible.campaign.json`, save `nvfdoc`
-     (Doc Mitchell's house, so the markers far from Goodsprings are not found yet
-     [hypothesis]), base game + xNVSE with three JIP readers. It reads, every 10 game
-     loops, `GetMapMarkerVisible` of four FalloutNV.esm markers whose IDs are in the
-     notes [observed: pipboy.md §5.3]: Goodsprings 0x000CDF51 (v1), Coyote Den 0x00154A69
-     (v2), Hoover Dam 0x00135E5F (v3), Jacobstown 0x000CDF57 (v4). v5-v8 hold
-     `IsMapMarker + 2 GetMapMarkerTravel + 4 GetMapMarkerHidden` of the same four (JIP
-     readers; 0 means the ID is no marker), v9 `GetPCMiscStat "Locations Discovered"`,
-     v10 a count of the reads; -1 means that read did not run. Sessions, in one game:
-     `a_before` (nothing done), `b_showmap` (ShowMap Hoover Dam 0, ShowMap Jacobstown 1),
-     `c_find_coyote`, `d_find_hoover`, `e_find_goodsprings` (`player.MoveTo` the marker,
-     300 loops, which should find it by its radius [hypothesis]).
-     **Before the run** the authored flags of the four are needed; the repository holds
-     none. Read each with `fnvtool esm decode "<Data>\FalloutNV.esm" --schema schemas/fnv
-     --formid CDF51` (then 154A69, 135E5F, CDF57) and note `FNAM`, "Map Marker Flags".
-     If none of Coyote Den, Hoover Dam and Jacobstown is Visible, find one that is
-     (`fnvtool world refs "<Data>" FalloutNV.esm --schema schemas/fnv --world
-     WastelandNV`, the rows whose base is 00000010, decoded as above) and put its FormID
-     in place of one of them everywhere in the campaign file; one Visible | Can Travel
-     To and one Can Travel To alone are wanted too. Run:
-     `python tools/capture/observe.py run tools/capture/observe/o31_mapmarker_visible.campaign.json
-     --game <FNV> --data <Data>` (JIP LN stays installed, ai-observer-jip.md §2).
-     Reading it: an undiscovered Visible marker in `a_before` reading 0 says main is
-     right; 1 says #3268 is right; 2 says the authored Can Travel To counts as well.
-     A Can Travel To alone marker reading anything but 0 is a third rule. `b_showmap`
-     should read 1 and 2 in both, the found markers 2 in both (Goodsprings 2 in
-     nvftest [observed: fa_batch1_queries]); v9 rising and v2-v4 changing in c-e shows
-     MoveTo found them. v5-v8 before and after say whether the original changes a
-     marker's Travel flag when it is found or shown.
+     whose record is authored Visible?** (P2; #3268, #3338.) **Answered 2026-11-22**
+     [observed: base game + xNVSE 6.4.9 + JIP LN, plugin version 10, save `nvfdoc`;
+     campaign `o31_mapmarker_visible` as a control (`o31_ctrl`) and again with a probe
+     plugin that overrode three FalloutNV.esm markers' `FNAM` (`o31_esp`); outputs
+     `obs_o31_ctrl_*`, `obs_o31_esp_*` in the private capture folder]: the authored flags
+     count before the player finds the marker. Visible alone reads 1, Visible | Can Travel
+     To reads 2, Can Travel To alone reads 0, no flags 0. The full rule and the readings
+     are in pipboy.md §5.3. #3268 is right for Visible alone and gives 1 where the
+     original gives 2 for Visible | Can Travel To. In the base game it matters for one
+     marker only: no FalloutNV.esm marker sets any `FNAM` flag (189 of 189), and of the
+     add-ons only Honest Hearts' Southern Passage (0x01008885 file-local, `FNAM` 3) does
+     [observed: every MapMarker reference of the six masters, 2026-11-22]. Not covered:
+     the Hidden flag (4).
 
 ## Added 2026-11-21 (melee creatures and a player who backs away, #3256)
 
@@ -3660,6 +3633,23 @@ already talking takes over at once, same topic or another; nothing is queued or 
      marker appears at once, where it lands against the pointer, and whether a press dragged
      a few pixels still counts as a click.
 
+## Added 2026-11-21 (blood on the world behind a shot actor, #3318)
+
+263. **Where does a shot on an actor leave blood on the walls and floor near it, and
+     which impact is it?** (P2; #3318, impact-decals.md §4a.) The engine rolls
+     `fCombatEnvironmentBloodChance` (default 0.75, FalloutNV.esm does not set it) and
+     casts up to 512 units from the hit in the projectile's direction, first surface only,
+     with the hit body part's impact [documented: GECK wiki ITR:OnWoundSpray,
+     FCombatEnvironmentBloodChance]. Ours [hypothesis]: a second line straight down when
+     the shot's line meets nothing; the body part's severable blood impact data set,
+     else its explodable one. Shoot an NPC in the chest ten times with a BB gun
+     (`resurrect` if it dies): in the Goodsprings general store from the door (counter
+     and wall behind Chet), and in the open street with nothing behind the target. Count
+     the splatters on the counter or wall (about 7 in 10 at 0.75), and whether any appear
+     on the ground below the target in the open (a frame after each shot does it); the
+     splatters' size tells the spurt's decal (`BloodSpoutRedData`, 70-90 wide) from the
+     bullet's (`BallisticOrganicImpact`, 12-19).
+
 ## Added 2026-11-21 (is the HUD's condition bar see-through, #3309)
 
 264. **Does the world show through the HUD's weapon condition bar in the original?** (P3;
@@ -3712,6 +3702,27 @@ already talking takes over at once, same topic or another; nothing is queued or 
      altogether, the Pip-Boy still on, does the music come back (ours: yes)? Last, with
      the Radio volume at 0 and a station playing: is the music still turned down (ours:
      no)?
+
+## Added 2026-11-21 (a lakelurk standing on a deep lake bed, #2980)
+
+269. **How does a creature that swims stand on a lake bed deeper than it is tall?**
+     (P3; #2980, physics.md §6.6 "Actors standing on the bed".) Ours since #2980: an
+     actor whose character swims (on the ground with its feet 115 or more under the
+     surface; only an actor on its way has a character, not one that stands idle or
+     holds its ground in a fight) but stands still
+     with its feet on the bed plays its standing idle (`mirelurkking\mtidle.kf` for a
+     lakelurk); moving, its swimming clips [hypothesis]. Before, it held its swimming
+     idle (`swimidle.kf`) there; that this is the T-pose a player reported for idle
+     lakelurks is [hypothesis] too (an idle one has no character, so never swims). At
+     Boulder Beach (Lake Mead, surface 2600), from the shore at (56992, 37536) walk east
+     to about x 58300 (feet about 250 under the surface), `tgm` on, `placeatme 00145EDB`
+     (CrLakelurkCG), and look at it for 10 s (with `tai` if it moves at once); then `tai`
+     again and let it come at you, and watch it whenever it stands still on the bottom.
+     A lakelurk standing on the bottom in its standing idle agrees with ours; one held in
+     the floating swim pose (limbs out, slow loop) says the original keeps the swimming
+     idle at rest, and one that rises to float near the surface says swimming actors
+     have buoyancy. Note also how an idle lakelurk on the shore looks before it is alerted
+     (a T-pose there in the original would make #2980 the original's own look).
 
 ## Added 2026-11-22 (the grab key on pickable plants, #3389)
 

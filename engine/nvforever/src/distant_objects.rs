@@ -116,7 +116,7 @@ use bevy::prelude::*;
 use bevy::tasks::{futures::check_ready, Task};
 use fnv_esm::{LoadOrder, Schema as EsmSchema};
 use fnv_world::alt_textures::AltTexture;
-use fnv_world::placed::{base_object, placement, placement_visible_when_distant, BaseObject, Placement};
+use fnv_world::placed::{base_object, placement_visible_when_distant, BaseObject, Placement};
 use fnv_world::CELL_SIZE;
 use nvf_assets::model::ModelCtx;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -267,12 +267,12 @@ type ListedBase = Option<(Arc<BaseObject>, String, Option<String>)>;
 
 /// Read cell list: the STAT and SCOL references of `refs` that pass the scenery filter
 /// (module notes), each with what [`choose`] needs. Runs on a worker thread.
-pub fn list_cell(lo: &LoadOrder, schema: &EsmSchema, refs: &[u32], hide: &[String], inner: i32, exists: impl Fn(&str) -> bool) -> CellList {
+pub fn list_cell(lo: &LoadOrder, schema: &EsmSchema, index: &fnv_world::WorldIndex, refs: &[u32], hide: &[String], inner: i32, exists: impl Fn(&str) -> bool) -> CellList {
     let mut out = CellList { inner, ..default() };
     let mut bases: HashMap<u32, ListedBase> = HashMap::new();
     let small = SIZE_RATIO * HYSTERESIS * nearest(inner);
     for &r in refs {
-        let Some(p) = placement(lo, schema, r) else { continue };
+        let Some(p) = index.placement(lo, schema, r) else { continue };
         if p.deleted() || p.imposter || !p.draws_base_model() {
             continue;
         }
@@ -1419,8 +1419,8 @@ fn list_cells(world: &WorldData, st: &mut DistantState, want: &[Grid], centre: G
             st.listed.insert(c, Arc::new(CellList { inner, ..default() }));
             continue;
         }
-        let (lo, schema, hide, vfs) = (world.lo, world.schema, hide.to_vec(), vfs.clone());
-        let task = nvf_assets::read_pool::read_pool().spawn(async move { list_cell(lo, schema, &refs, &hide, inner, |p| vfs.exists(p)) });
+        let (lo, schema, index, hide, vfs) = (world.lo, world.schema, world.index, hide.to_vec(), vfs.clone());
+        let task = nvf_assets::read_pool::read_pool().spawn(async move { list_cell(lo, schema, index, &refs, &hide, inner, |p| vfs.exists(p)) });
         st.listing.insert(c, task);
     }
 }
