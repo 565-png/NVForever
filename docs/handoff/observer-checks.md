@@ -3700,6 +3700,28 @@ already talking takes over at once, same topic or another; nothing is queued or 
      idle at rest, and one that rises to float near the surface says swimming actors
      have buoyancy. Note also how an idle lakelurk on the shore looks before it is alerted
      (a T-pose there in the original would make #2980 the original's own look).
+     **Partly answered 2026-11-22** [observed: base game + xNVSE 6.4.9 + JIP LN, plugin
+     version 10, save `nvfdoc`, the window in front; campaigns `o33_lakelurk_bed`,
+     `o34_lakelurk_near`, `o35_lakelurk_deep`, `o36_lakelurk_view`, fight field set every
+     game loop]:
+     - **Where it lands.** With the player at (58300, 37536, 2380), `PlaceAtMe`
+       CrLakelurkCG at 250 units put the lakelurk on the deep bed about 3,000 units east,
+       at about (61200–61300, 38700–38800), in both runs. A `MoveTo` beside the player
+       afterwards did not take.
+     - **No buoyancy.** With AI on, it rose from where it was placed (z 1302–1332) to
+       z 1409–1413 within half a second and stayed there. That was the bed: the player,
+       put at z 1420 on the same spot, stood upright on the sand in the screenshot. It
+       never rose toward the surface while it wandered (procedure 7, about 13 s), stood
+       idle (procedure 0, about 25 s), or held its ground in combat without moving
+       (procedure 13, about 35 s).
+     - **While it wandered** over about 130 units, its z stayed within 2 units (1408.7–1410.7).
+       The terrain's `LAND` heights under those points read 1306–1336. Why they lie
+       75–105 units below the bed the player stood on was not looked into.
+     - **Not seen: its pose.** In every screenshot the lakelurk was out of view, behind
+       the bed's rocks. `GetAnimAction` read -1 throughout. The shore idle was not
+       observed: the placed lakelurk again landed on the deep bed.
+     Still open: the pose at rest on the bed (standing idle or swim idle) and the
+     T-pose question, which need someone at the controls.
 
 ## Added 2026-11-22 (the grab key on pickable plants, #3389)
 
