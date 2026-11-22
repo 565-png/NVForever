@@ -809,7 +809,8 @@ pub fn convert_fos(
         let handled = match cf.kind {
             TYPE_QUST => true,
             TYPE_FACT => cf.flags & (1 << 2) != 0,
-            TYPE_FLST | TYPE_LVLI | TYPE_INFO | TYPE_NOTE => cf.flags & (1 << 31) != 0,
+            TYPE_FLST | TYPE_LVLI => cf.flags & (1 << 31) != 0,
+            TYPE_INFO | TYPE_NOTE => cf.flags & (1 << 31) != 0 && cf.data.is_empty(),
             TYPE_REPU | TYPE_CHAL => cf.flags & (1 << 1) != 0,
             TYPE_NPC => cf.form == PLAYER_BASE && (cf.flags & (1 << 2) != 0),
             TYPE_CLAS => cf.form == fnv_save::fos::PLAYER_CLASS && (cf.flags & (1 << 1) != 0),
@@ -897,8 +898,11 @@ fn apply_player_inventory(
                     } else {
                         g.world.add_item(FormId::PLAYER_REF, id, it.count).map(|_| ())
                     }
+                } else if let Some(remove) = it.count.checked_neg() {
+                    g.world.remove_item(FormId::PLAYER_REF, id, remove).map(|_| ())
                 } else {
-                    g.world.remove_item(FormId::PLAYER_REF, id, -it.count).map(|_| ())
+                    inc_skip("player_item", "negative item count overflow");
+                    continue;
                 };
                 if res.is_ok() {
                     inc_ok("player_items");

@@ -195,7 +195,8 @@ impl FosHeader {
         if parts.next().is_some() {
             return None;
         }
-        Some((h * 3600 + m * 60 + s) as f64)
+        let total = h.checked_mul(3600)?.checked_add(m.checked_mul(60)?)?.checked_add(s)?;
+        Some(total as f64)
     }
 }
 
@@ -1384,5 +1385,13 @@ mod tests {
         assert!(p.place.is_some());
         assert!(!p.av_parsed);
         assert!(p.inventory.is_none());
+
+        // Regression: overflowing HHH.MM.SS strings must return None without panicking.
+        let huge_h = FosHeader { play_time: format!("{}.00.00", u64::MAX), ..Default::default() };
+        assert_eq!(huge_h.play_seconds(), None);
+        let huge_m = FosHeader { play_time: format!("0.{}.00", u64::MAX), ..Default::default() };
+        assert_eq!(huge_m.play_seconds(), None);
+        let huge_sum = FosHeader { play_time: format!("{}.00.1", u64::MAX / 3600), ..Default::default() };
+        assert!(huge_sum.play_seconds().is_some());
     }
 }

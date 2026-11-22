@@ -436,6 +436,20 @@ SetEnemy/SetAlly would; the modifier is not used.
 **Reputations**: nvfairport has no REPU record (M has nine, §6.3), so every reputation
 is at its start [observed].
 
+### 6.6 Offline `.fos` converter (`fnvtool save inspect-fos` / `convert`) [design]
+
+`crates/fnv-game/src/fos_convert.rs` and `crates/fnvtool/src/save_cmd.rs` build an offline
+converter on top of `fnv_save::fos`. It populates a `World` and `Game` from the active load
+order plus the decoded sections of §§3–6.5 (header metadata and optional RGB→PNG thumbnail,
+global variables, misc statistics, player place and active quest, weather, quests/stages/
+objectives/script variables, player SPECIAL/tag skills/XP/karma/inventory/worn state, placed
+reference flags and places, faction relations, `FLST`, `LVLI`, `REPU`, `CHAL`, empty-payload
+`NOTE`, and empty-payload `INFO` said-once records), then emits a standard `NVFSAVE\0` v1 file
+through `Game::checked_snapshot` and `fnv_save::write`. Every unmapped global table, created
+`0xFF` form, missing-plugin form, unmapped or non-empty-payload changed-form record, overflowed
+inventory delta, and sibling `.nvse` co-save is counted in the JSON conversion report rather
+than guessed. The game runtime itself remains `.nvfsave`-only.
+
 ## 7. What moves between C and D [observed]
 
 C and D: same starting save, same door, about a second of game time apart (GameHour

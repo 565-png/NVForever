@@ -717,4 +717,21 @@ fn malformed_truncated_and_unknown_extra_data_are_handled_without_panicking() {
     assert!(converted.report.skipped.contains_key("player_inventory: not read (missing player record or unmapped layout)"));
     assert_eq!(converted.report.converted.get("quests"), Some(&1));
     converted.body.game.check().unwrap();
+
+    // Regression: i32::MIN inventory delta must skip cleanly without negation overflow,
+    // and non-empty TYPE_INFO/TYPE_NOTE flag-31 records must be reported as skipped.
+    let mut edge_fos = Fos::parse(&valid).unwrap();
+    let edge_player = edge_fos.changed.iter_mut().find(|c| c.form == PLAYER_REF).unwrap();
+    // First item in synthetic_fos_bytes() has count = 3i32 right before its 0-lists vsval.
+    let item1_count_pos = edge_player.data.windows(5).position(|w| w == [3, 0, 0, 0, BAR]).unwrap();
+    edge_player.data[item1_count_pos..item1_count_pos + 4].copy_from_slice(&i32::MIN.to_le_bytes());
+    let info_rec = edge_fos.changed.iter_mut().find(|c| c.kind == TYPE_INFO).unwrap();
+    info_rec.data.push(0xAA);
+    let note_rec = edge_fos.changed.iter_mut().find(|c| c.kind == TYPE_NOTE).unwrap();
+    note_rec.data.push(0xBB);
+    let edge_converted = convert_fos(&edge_fos, &f.data, &f.forms, &f.refs, &opts).unwrap();
+    assert!(edge_converted.report.skipped.contains_key("player_item: negative item count overflow"));
+    assert!(edge_converted.report.skipped.contains_key("changed_form: INFO (kind 8) unmapped"));
+    assert!(edge_converted.report.skipped.contains_key("changed_form: NOTE (kind 31) unmapped"));
+    edge_converted.body.game.check().unwrap();
 }
