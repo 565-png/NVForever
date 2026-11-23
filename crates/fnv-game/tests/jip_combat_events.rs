@@ -621,14 +621,16 @@ fn jip_hit_info_queries_cover_projectile_melee_explosion_fatigue_base_and_3d_dat
     assert_eq!(aux_flt(&mut g, "*hi_a1sz", 3), 0.0);
     assert_eq!(aux_flt(&mut g, "*hi_b2sz", 3), 0.0);
 
-    // 5. ToggleImmortalMode 2 on the player zeroes GetHitFatigueDamage as well as health damage.
+    // 5. ToggleImmortalMode 2 on the player zeroes health damage only (jip-ui-9.md §3);
+    // GetHitFatigueDamage still records the hit's fatigue damage.
     q(&mut g, "ToggleImmortalMode 2");
     g.hit(
         FormId::PLAYER_REF,
         15.0,
         HitInfo { attacker: Some(GUARD_REF), fatigue_damage: 90.0, location: 0, ..HitInfo::default() },
     );
-    assert_eq!(q(&mut g, "SetFunctionValue (PlayerREF.GetHitFatigueDamage)"), XVal::Num(0.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (PlayerREF.GetHitHealthDamage)"), XVal::Num(0.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (PlayerREF.GetHitFatigueDamage)"), XVal::Num(90.0));
 }
 
 #[test]

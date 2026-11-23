@@ -660,7 +660,7 @@ impl Game<'_> {
             | (u16::from(info.sneak_attack) << 7)
             | (u16::from(info.explosion) << 8);
         let limb_damage = info.limb.map_or(0.0, |l| l.damage);
-        let fatigue_damage = if immortal == 2 || !info.fatigue_damage.is_finite() { 0.0 } else { info.fatigue_damage.max(0.0) };
+        let fatigue_damage = if info.fatigue_damage.is_finite() { info.fatigue_damage.max(0.0) } else { 0.0 };
         let base_weapon_damage = if info.base_weapon_damage.is_finite() { info.base_weapon_damage.max(0.0) } else { 0.0 };
         let (hit_pos, hit_angles) = if info.explosion {
             (Some([0.0; 3]), Some([0.0; 3]))

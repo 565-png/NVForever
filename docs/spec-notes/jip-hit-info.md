@@ -118,8 +118,7 @@ record, which fnv-esm decodes; SetWeaponOnHitSetting changes it for the session.
   multiplier, and armour) `[documented: GetHitBaseWeaponDamage]`; `0` on explosions
   `[hypothesis: explosion damage comes from EXPL rather than the weapon formula]`.
 - `GetHitFatigueDamage`: returns fatigue damage dealt by the hit (from ammo `Fatigue Mod`
-  effects or scripted `FakeHitEx` fatigue damage); `0` when none or under
-  `ToggleImmortalMode 2`.
+  effects or scripted `FakeHitEx` fatigue damage), or `0` when none.
 - `GetHit3DData`: type `0` returns `[x, y, z]` impact position, type `1` returns
   `[rx, ry, rz]` Euler angles in degrees (`[hypothesis: pitch about X and
   clockwise-from-north heading about Z derived from the incoming direction vector, roll 0;
