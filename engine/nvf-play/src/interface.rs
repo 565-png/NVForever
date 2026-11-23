@@ -566,18 +566,18 @@ fn decode_texture(bytes: &[u8], bc: bool, decode_dds: fn(&[u8], bool, bool) -> R
 /// A font's picture from its `.tex` file, read before the `.dds` (docs/spec-notes/fonts.md
 /// §2.2): a Russian install's fonts describe the letters of their `.tex`, while the `.dds`
 /// beside it is the English one [observed: #1439]; in an English install the two are the
-/// same picture. Only where the `.dds` is there too, so a font with a `.tex` alone (font 9)
-/// still draws nothing, as in the original (§3.1). None, with a warning for a broken file,
-/// when there is none.
+/// same picture; modded bitmap fonts often ship `.fnt` + `.tex`/`.Tex` without a sibling
+/// `.dds` [design]. None, with a warning for a broken file, when there is none.
 pub fn font_tex(font: &Font, data: &GameData) -> Option<fnv_font::Tex> {
-    if !data.vfs.exists(&font.texture_path()) {
-        return None;
-    }
     let path = font.tex_path();
     match fnv_font::Tex::parse(&data.read(&path)?) {
         Ok(t) => Some(t),
         Err(e) => {
-            warn!("interface: {path}: {e}; the .dds is drawn instead");
+            if data.vfs.exists(&font.texture_path()) {
+                warn!("interface: {path}: {e}; the .dds is drawn instead");
+            } else {
+                warn!("interface: {path}: {e}");
+            }
             None
         }
     }
@@ -1151,6 +1151,10 @@ mod layout_tests;
 #[cfg(test)]
 #[path = "interface/bitmap_text_tests.rs"]
 mod bitmap_text_tests;
+
+#[cfg(test)]
+#[path = "interface/font_tex_tests.rs"]
+pub(crate) mod font_tex_tests;
 
 #[cfg(test)]
 #[path = "interface/tga_consumer_tests.rs"]

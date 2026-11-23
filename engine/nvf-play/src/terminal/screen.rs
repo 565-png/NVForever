@@ -1249,4 +1249,18 @@ mod tests {
         assert_eq!(shown.last().map(String::as_str), Some(">19"));
         assert_eq!(shown_log(&log[..3]).len(), 3);
     }
+
+    #[test]
+    fn soft_faces_loads_tex_only_font_without_dds() {
+        use crate::interface::font_tex_tests::{synthetic_fnt, synthetic_tex, OwnedFontFiles};
+        let files = OwnedFontFiles::new(&[
+            ("term_tex.fnt", synthetic_fnt("Term_Tex_Only")),
+            ("Term_Tex_Only.Tex", synthetic_tex(32, 64, [255, 255, 255, 220])),
+        ]);
+        let data = files.data();
+        let mut images = Assets::<Image>::default();
+        let (text, lit) = soft_faces("textures\\fonts\\term_tex.fnt", &data, &mut images)
+            .expect("terminal soft_faces should load .tex-only font without .dds");
+        assert!(text.image.is_some() && lit.image.is_some());
+    }
 }
