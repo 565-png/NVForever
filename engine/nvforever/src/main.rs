@@ -65,6 +65,7 @@ mod death_cam;
 mod deaths;
 mod decals;
 mod dismember;
+mod distant_lights;
 mod knockouts;
 mod player_knockdown;
 mod detection;
@@ -109,6 +110,7 @@ mod limbs;
 mod lips;
 mod memory_budget;
 mod gpu_poll;
+mod pilot;
 mod pipeline_gate;
 mod pipeline_disk_cache;
 mod pipeline_prewarm;
@@ -584,7 +586,7 @@ struct Args {
     dlss_model: Option<upscaler::DlssModel>,
     /// Instead of --graphics: exactly these improvements on, by the settings page's keys
     /// (ambient-occlusion, fine-shadows, bloom, sharpen, anisotropic, light-shafts,
-    /// water-reflections, water-effects, terrain-height-blend, terrain-anti-tiling, cloud-shadows, terrain-shadows, heat-haze, desert-haze, aerial-perspective, night-sky-detail, and
+    /// water-reflections, water-effects, terrain-height-blend, terrain-anti-tiling, cloud-shadows, terrain-shadows, heat-haze, desert-haze, aerial-perspective, night-sky-detail, distant-lights, and
     /// mesh-terrain-blend, which no look turns on) and choices (fxaa, smaa or taa instead of --msaa;
     /// shadow-filter-hardware or shadow-filter-temporal; full-detail-7x7 or full-detail-9x9;
     /// distant-objects-8 or distant-objects-12), for comparing them one at a time.
@@ -692,6 +694,45 @@ struct Args {
     /// or jumps up the ledge (docs/spec-notes/actor-jumps.md).
     #[arg(long, requires = "npc_travel")]
     npc_ledges: bool,
+    /// With --play: the quest pilot (pilot.rs, issue #2365) plays this headless
+    /// walkthrough chain (`fnv.script.actions/1`) with the player character, then exits.
+    /// Given several times: the chains are played one after the other in the one game.
+    #[arg(long, requires = "play")]
+    pilot: Vec<PathBuf>,
+    /// The headless trace of the chain at the same place in the list (`fnvtool script
+    /// run --actions`): the pilot's labelled reads are compared with it.
+    #[arg(long, requires = "pilot")]
+    pilot_expect: Vec<PathBuf>,
+    /// The pilot's chains go on from the game's own state (use with --new-game): their
+    /// given states are checked as preconditions, not set.
+    #[arg(long, requires = "pilot")]
+    pilot_campaign: bool,
+    /// With --pilot-campaign: each chain's given state is set as the headless run sets
+    /// it, instead of being checked (a chain no campaign has reached yet).
+    #[arg(long, requires = "pilot_campaign")]
+    pilot_given: bool,
+    /// The pilot's player can be hurt and runs out of ammunition (god mode is on for
+    /// the pilot otherwise).
+    #[arg(long, requires = "pilot")]
+    pilot_no_god: bool,
+    /// Differences from the headless runs known not to be bugs (a JSON list of
+    /// `{chain, label, reason}`): reported apart, not as divergences.
+    #[arg(long, requires = "pilot")]
+    pilot_known: Option<PathBuf>,
+    /// The game's state goes through a save and a load before each milestone is read.
+    #[arg(long, requires = "pilot")]
+    pilot_save_load: bool,
+    /// The run ends after this many minutes of real time, with the report written (a
+    /// game's own `--run-seconds` does not count time in menus and dialogue).
+    #[arg(long, requires = "pilot")]
+    pilot_minutes: Option<f64>,
+    /// The first chain begins at this step (0-based), from the game's state as loaded: a
+    /// stall replayed from a save near it (with --load).
+    #[arg(long, requires = "pilot")]
+    pilot_from: Option<usize>,
+    /// Where the pilot writes its report (`fnv.pilot.report/1`).
+    #[arg(long, requires = "pilot")]
+    pilot_out: Option<PathBuf>,
     /// Walking speed of --npc-travel NPCs, game units per second.
     #[arg(long, default_value_t = nav::WALK_SPEED)]
     npc_speed: f32,
@@ -1858,6 +1899,8 @@ fn main() -> AppExit {
     .add_plugins(light_shadows::LightShadowsPlugin(args.light_shadows.unwrap_or(light_shadows::LightShadowMode::Off)))
     .add_plugins(light_shadow_detail::LightShadowDetailPlugin)
     .add_plugins(mesh_terrain_blend::MeshTerrainBlendPlugin)
+    // Glows of placed lights beyond the loaded cells at night (the Distant lights switch).
+    .add_plugins(distant_lights::DistantLightsPlugin)
     // The switches the settings page weighs against the INI (`--play` only), for the
     // frame split's start-time decision (perf_overlay/split.rs).
     .add_plugins(perf_overlay::PerfOverlayPlugin(args.fps, play.is_some().then(|| settings::given_switches(&args, &command_line()))))
@@ -2252,6 +2295,9 @@ fn main() -> AppExit {
             .add_systems(Startup, furniture::log_startup)
             .add_systems(Update, (furniture::seat_orders, furniture::drive_actors).chain().after(nav::drive).before(locomotion::walk_test))
             .add_systems(Last, furniture::report);
+    }
+    if !args.pilot.is_empty() {
+        app.add_plugins(pilot::PilotPlugin { chains: args.pilot.clone(), expect: args.pilot_expect.clone(), out: args.pilot_out.clone(), campaign: args.pilot_campaign, set_given: args.pilot_given, god: !args.pilot_no_god, known: args.pilot_known.clone(), save_load: args.pilot_save_load, minutes: args.pilot_minutes, from: args.pilot_from });
     }
     if let Some(n) = nav_state {
         let follow = n.follow;
