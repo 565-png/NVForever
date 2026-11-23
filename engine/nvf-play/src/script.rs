@@ -1170,7 +1170,7 @@ impl Runtime {
     /// Something the player does to the game between ticks (a choice on the dialogue
     /// screen, a skipped response): inventory changes the menus made are seen first, and
     /// what the action's scripts change is the scripts' own.
-    pub(crate) fn player_action<R>(&mut self, f: impl FnOnce(&mut Game<'static>) -> R) -> R {
+    pub fn player_action<R>(&mut self, f: impl FnOnce(&mut Game<'static>) -> R) -> R {
         self.observe_inventory();
         let r = f(&mut self.game);
         self.snapshot_inventory();
@@ -1180,7 +1180,7 @@ impl Runtime {
     /// The player activates `r` as E does, wherever the crosshair is (test aids). Nobody
     /// else applies a default action's outcome here: its trace events become effects like
     /// a script's.
-    pub(crate) fn activate_as_player(&mut self, r: FormId) -> Result<ByHand, String> {
+    pub fn activate_as_player(&mut self, r: FormId) -> Result<ByHand, String> {
         let from = self.game.events.len();
         let done = self.by_hand(r)?;
         if !matches!(done, ByHand::Talk | ByHand::Greeted | ByHand::Wheel) {
@@ -1206,7 +1206,17 @@ impl Runtime {
                 let (r, m) = (resolve(g, r)?, resolve(g, m)?);
                 let ctx = fnv_game::functions::Ctx { unit: "test aid".into(), opcode: MOVE_TO, on: Some(r), self_ref: Some(r), action_ref: None, quest: None, inst: None, in_condition: false };
                 let args: Vec<ArgValue> = std::iter::once(ArgValue::Value(Value::Ref(m.0))).chain(off.iter().map(|v| ArgValue::Value(Value::Num(f64::from(*v))))).collect();
+                // A MoveTo the game refuses fails the aid, as a `call:` does (#2841: a
+                // scenario's forbid on failed steps must see it). Only the aid's own call
+                // counts: a script the move sets off (a destination's OnLoad) may fail a
+                // call of its own in the same frame.
+                let from = g.events.len();
                 g.call_function(&ctx, &args);
+                let opcode = format!("0x{MOVE_TO:04X}");
+                let own = |k: &EventKind| matches!(k, EventKind::CallFailed { unit, opcode: o, .. } if unit == "test aid" && *o == opcode);
+                if let Some(EventKind::CallFailed { error, .. }) = g.events[from..].iter().map(|e| &e.kind).find(|k| own(k)) {
+                    return Err(format!("MoveTo: {error}"));
+                }
             }
             ScriptAid::Stop(q) => {
                 let q = resolve(g, q)?;
