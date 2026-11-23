@@ -4,17 +4,20 @@ NVForever natively loads SoundExtender JSON per-form collision sound configs
 (`crates/fnv-game/src/sound_extender.rs`) and consumes them in dynamic loose-body physics
 knocks (`engine/nvf-play/src/world_sounds.rs`), without requiring a native DLL plugin.
 
-**Provenance.** All SoundExtender configuration schema facts in §2 are derived strictly
-from the public Nexus Mods mod description for lStewieAl's **Sound Extender** (mod 78637,
-`https://www.nexusmods.com/newvegas/mods/78637`). SoundExtender's DLL binary and any
-implementation source code were never opened, disassembled, or consulted. NVForever's own
+**Provenance.** All SoundExtender configuration schema facts in §1–§2 are derived strictly
+from the public Nexus Mods mod description page for **Sound Extender** (mod 78637,
+`https://www.nexusmods.com/newvegas/mods/78637`, **version 1.0**, uploaded 13 October 2022,
+**Created by / Uploaded by `lStewieAl`**). Neither SoundExtender's compiled DLL binary nor
+its separate source download was opened, disassembled, or consulted. NVForever's own
 discovery, validation, fallback, and consumer wiring choices are tagged `[design]`;
 uncaptured native plugin runtime details remain `[hypothesis]`.
 
 ## 1. File discovery and vanilla-unchanged fast path
 
-- `[documented: Nexus Mods "Sound Extender" (mod 78637) description]` Custom per-form
-  collision sound configs live in `Data\NVSE\Plugins\SoundExtender\`.
+- `[documented: Nexus Mods "Sound Extender" (mod 78637, v1.0, by lStewieAl), Description -> FEATURES -> Per-form collision sounds]`
+  Custom per-form collision sound JSON files live in `Data\NVSE\Plugins\SoundExtender`:
+  > "To use this feature, simply create a JSON file with a name of your choice, place it in
+  > the folder `Data\NVSE\Plugins\SoundExtender`, and type away!"
 - `[design]` NVForever discovers direct `*.txt` children under
   `nvse\plugins\soundextender\` (case-insensitive directory and extension match, ignoring
   subdirectories and non-`.txt` files) through the engine VFS (`fnv_vfs::Vfs`, covering
@@ -30,20 +33,28 @@ uncaptured native plugin runtime details remain `[hypothesis]`.
 
 ## 2. JSON format and validation
 
-- `[documented: Nexus Mods "Sound Extender" (mod 78637) description]` Each file is a JSON
-  array of objects with three string keys:
-  ```json
-  [
-    {
-      "mod": "FalloutNV.esm",
-      "form": "4353",
-      "sound": "UIMenuCancel"
-    }
-  ]
-  ```
-  - `"mod"`: plugin filename containing the target form.
-  - `"form"`: target form ID as a hexadecimal string.
-  - `"sound"`: EditorID of the replacement `SOUN` record.
+- `[documented: Nexus Mods "Sound Extender" (mod 78637, v1.0, by lStewieAl), Description -> FEATURES -> Per-form collision sounds]`
+  Per-form collision sound replacement and `{mod, form, sound}` JSON syntax, verbatim from
+  the mod description:
+  > "The vanilla game restricts collision sounds to one of a small handful of predefined
+  > material types, and unfortunately has no way of defining new ones. Instead, this mod
+  > allows you to define collision sounds on a per-form basis via a JSON file with the
+  > following syntax:
+  > ```json
+  > [
+  > {
+  > "mod":"FalloutNV.esm",
+  > "form":"4353",
+  > "sound":"UIMenuCancel"
+  > }
+  > ]
+  > ```
+  > In this example, the object with formID `4353` (in this case `WeapSniperRifle`) would
+  > have its collision sounds replaced with those defined in the form with editorID
+  > `UIMenuCancel`."
+  - `"mod"`: plugin filename containing the target form (`"FalloutNV.esm"` in the example).
+  - `"form"`: target form ID as a hexadecimal string (`"4353"` for `WeapSniperRifle`).
+  - `"sound"`: EditorID of the replacement sound form (`"UIMenuCancel"`, a `SOUN` record).
 - `[design]` An optional leading UTF-8 BOM (`U+FEFF`) is stripped. Unreadable files,
   non-UTF-8 files, malformed JSON, and JSON documents whose root is not an array fail
   closed (`files_malformed` incremented, `tracing::warn!` emitted) without panicking and
