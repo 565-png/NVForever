@@ -1,7 +1,7 @@
 //! The Anh NVSE plugin's functions on the game: armor rating, quest completion and
 //! encounter zones [documented: each page in the wiki export; docs/spec-notes/ext-anh.md].
-//! Anh is not installed in the probe game, so nothing here is observed. Changes last for
-//! the session.
+//! Zone level/min-level/owner round-trips are `[observed]` in Fallout: New Vegas 1.4.0.525
+//! + xNVSE 6.4.9 + AnhNVSE 131. Changes last for the session.
 
 use crate::game::{Game, RunCtx};
 use fnv_script::vm::XVal;
@@ -65,17 +65,19 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let s = form(args, 0).and_then(|q| g.quests.get(&q));
             XVal::Num(f64::from(u8::from(s.is_some_and(|s| s.completed && !s.failed))))
         }
-        // [documented: GetZoneLevel, "the current level"]: the level the zone took when
-        // its first cell loaded; 0 before then [hypothesis].
+        // [documented: GetZoneLevel, "the current level"; observed: Fallout: New Vegas
+        // 1.4.0.525 + xNVSE 6.4.9 + AnhNVSE 131, probe anh_07_zone_level_min_owner: 0 on
+        // unentered Vault11Zone].
         "getzonelevel" => XVal::Num(form(args, 0).and_then(|z| g.world.zone_level(z)).map_or(0.0, f64::from)),
         // [documented: GetZoneMinLevel; GetZoneMatchLevel, "Match PC Below Minimum Level";
         // GetZoneOwner].
         "getzoneminlevel" => XVal::Num(form(args, 0).and_then(|z| g.zone(z)).map_or(0.0, |d| f64::from(d.min_level))),
         "getzonematchlevel" => XVal::Num(form(args, 0).and_then(|z| g.zone(z)).map_or(0.0, |d| f64::from(u8::from(d.match_pc_below_min)))),
         "getzoneowner" => XVal::Ref(form(args, 0).and_then(|z| g.zone(z)).and_then(|d| d.owner).map_or(0, |o| o.0)),
-        // `zone level` and `zone owner` [documented: SetZoneMinLevel; SetZoneOwner]; for
-        // the session, read by the getters and by `World::enter_zone` / `World::level_at`
-        // (a zone already entered keeps its level [hypothesis]).
+        // `zone level` and `zone owner` [documented: SetZoneMinLevel; SetZoneOwner;
+        // observed: anh_07_zone_level_min_owner and anh_11_zone_owner_roundtrip read back
+        // via GetZoneMinLevel / GetZoneOwner]; session-only lifetime and keeping an
+        // already-entered zone's level remain [hypothesis].
         "setzoneminlevel" | "setzoneowner" => {
             if let Some(z) = form(args, 0).filter(|z| g.world.forms.zones.contains_key(z)) {
                 if name == "setzoneminlevel" {

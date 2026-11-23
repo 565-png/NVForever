@@ -1144,6 +1144,121 @@ end",
 }
 
 #[test]
+fn anh_wave4_degrees_scancode_and_guards() {
+    // [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + AnhNVSE 131, Wave 4 probes
+    // anh_01..anh_05, anh_09, anh_10]: GetAngleQuadrant and QFromAxisAngleAlt take
+    // degrees, ScancodeToChar returns uppercase letters and DirectInput key names, and
+    // Ar_Max/Ar_Min/Ar_RangeMath return safe 0 [design] on empty/string arrays.
+    let h = run(
+        "float q0
+float q45
+float q90
+float q135
+float q180
+float q225
+float q270
+float q315
+float qNeg45
+float qNegHalf
+float q0w
+float q0z
+float q90w
+float q90x
+float q90y
+float q90z
+float qSmallZ
+float eMax
+float eMin
+float eRng
+float sMax
+float lerpMid
+float lerpEx2
+float lerpExNeg
+string_var kEsc
+string_var kF1
+string_var kE
+string_var kA
+string_var kNone
+string_var kMouse
+array_var aAxis
+array_var aQ
+array_var aEmpty
+array_var aStrs
+array_var aA
+array_var aB
+array_var aL
+begin GameMode
+let q0 := GetAngleQuadrant 0
+let q45 := GetAngleQuadrant 45
+let q90 := GetAngleQuadrant 90
+let q135 := GetAngleQuadrant 135
+let q180 := GetAngleQuadrant 180
+let q225 := GetAngleQuadrant 225
+let q270 := GetAngleQuadrant 270
+let q315 := GetAngleQuadrant 315
+let qNeg45 := GetAngleQuadrant -45
+let qNegHalf := GetAngleQuadrant -0.5
+let aAxis := ar_List 0, 0, 1
+let aQ := QFromAxisAngleAlt aAxis 0
+let q0w := aQ[0]
+let q0z := aQ[3]
+let aQ := QFromAxisAngleAlt aAxis 90
+let q90w := aQ[0]
+let q90x := aQ[1]
+let q90y := aQ[2]
+let q90z := aQ[3]
+let aQ := QFromAxisAngleAlt aAxis 1.570796
+let qSmallZ := aQ[3]
+let aEmpty := ar_Construct \"array\"
+let eMax := Ar_Max aEmpty
+let eMin := Ar_Min aEmpty
+let eRng := Ar_RangeMath aEmpty
+let aStrs := ar_List \"alpha\", \"beta\"
+let sMax := Ar_Max aStrs
+let aA := ar_List 0, 0, 0
+let aB := ar_List 10, 20, 30
+let aL := V3Lerp aA aB 0.5
+let lerpMid := aL[1]
+let aL := V3Lerp aA aB 2
+let lerpEx2 := aL[0]
+let aL := V3Lerp aA aB -1
+let lerpExNeg := aL[0]
+let kEsc := ScancodeToChar 1
+let kF1 := ScancodeToChar 59
+let kE := ScancodeToChar 18
+let kA := ScancodeToChar 30
+let kNone := ScancodeToChar 999
+let kMouse := ScancodeToChar 256
+end",
+    );
+    assert_eq!(h.0[&1], Value::Num(1.0), "0 deg -> Q1");
+    assert_eq!(h.0[&2], Value::Num(1.0), "45 deg -> Q1");
+    assert_eq!(h.0[&3], Value::Num(2.0), "90 deg -> Q2");
+    assert_eq!(h.0[&4], Value::Num(2.0), "135 deg -> Q2");
+    assert_eq!(h.0[&5], Value::Num(3.0), "180 deg -> Q3");
+    assert_eq!(h.0[&6], Value::Num(3.0), "225 deg -> Q3");
+    assert_eq!(h.0[&7], Value::Num(4.0), "270 deg -> Q4");
+    assert_eq!(h.0[&8], Value::Num(4.0), "315 deg -> Q4");
+    assert_eq!(h.0[&9], Value::Num(4.0), "-45 deg -> Q4");
+    assert_eq!(h.0[&10], Value::Num(1.0), "-0.5 truncates to 0 -> Q1");
+    assert_eq!((h.0[&11], h.0[&12]), (Value::Num(1.0), Value::Num(0.0)), "0 deg -> [1,0,0,0]");
+    let half_sqrt2 = std::f64::consts::FRAC_1_SQRT_2;
+    assert!(matches!(h.0[&13], Value::Num(v) if (v - half_sqrt2).abs() < 1e-6), "90 deg w: {:?}", h.0[&13]);
+    assert!(matches!(h.0[&14], Value::Num(v) if v.abs() < 1e-6), "90 deg x: {:?}", h.0[&14]);
+    assert!(matches!(h.0[&15], Value::Num(v) if v.abs() < 1e-6), "90 deg y: {:?}", h.0[&15]);
+    assert!(matches!(h.0[&16], Value::Num(v) if (v - half_sqrt2).abs() < 1e-6), "90 deg z: {:?}", h.0[&16]);
+    assert!(matches!(h.0[&17], Value::Num(v) if (v - (std::f64::consts::FRAC_PI_2.to_radians() / 2.0).sin()).abs() < 1e-6), "1.570796 deg z: {:?}", h.0[&17]);
+    assert_eq!((h.0[&18], h.0[&19], h.0[&20], h.0[&21]), (Value::Num(0.0), Value::Num(0.0), Value::Num(0.0), Value::Num(0.0)));
+    assert_eq!((h.0[&22], h.0[&23], h.0[&24]), (Value::Num(10.0), Value::Num(20.0), Value::Num(-10.0)));
+    assert_eq!(h.text(25), "Escape");
+    assert_eq!(h.text(26), "F1");
+    assert_eq!(h.text(27), "E");
+    assert_eq!(h.text(28), "A");
+    assert_eq!(h.text(29), "");
+    assert_eq!(h.text(30), "");
+}
+
+#[test]
 fn jip_aux_variables_and_refmaps_follow_the_probes() {
     // [observed: jip-stores rows, jip-variable-stores.md] on the calling reference.
     let src = [
