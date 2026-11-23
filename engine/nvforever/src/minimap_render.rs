@@ -8,10 +8,11 @@
 //! player, north up, `_FrustumSize` game units each way, the world layer only (not the
 //! player's body or arms, not the water's own layer), no fog, black where nothing is. The
 //! file's classic tint (`systemcolor`, `brightness`) is applied by the tiles themselves.
-//! The picture defaults to 1024 texels square [documented: ModernMinimap.ini, Modern
-//! Minimap v1 (`NVSE\Plugins\ModernMinimap.ini`, comment `"; Controls the texture size
-//! of the minimap render"`, `[General] textureSize=1024`; no DLL or plugin source
-//! consulted)]. When that INI is present in the VFS, `[General] textureSize` is read
+//! The picture defaults to 1024 texels square [documented: Modern Minimap - ESPless
+//! v4.2.1 (by Stentorious & xConfused, `https://www.nexusmods.com/newvegas/mods/90574`),
+//! shipped `Data\NVSE\Plugins\ModernMinimap.ini`, comment `"; Controls the texture size
+//! of the minimap render"`, default `[General] textureSize=1024`; no DLL or plugin source
+//! consulted]. When that INI is present in the VFS, `[General] textureSize` is read
 //! dynamically and clamped/snapped to a power of two in `256..=2048` [design], driving
 //! both the render-target texture and the size published to `RuntimeImages`.
 
@@ -27,11 +28,13 @@ use nvf_play::tiles::modern_minimap::{rendered, request, Request};
 /// The runtime picture's name (`nvf_play::tiles::runtime_images`).
 const IMAGE: &str = "modern_minimap";
 /// Relative VFS path of Modern Minimap's INI (case-insensitive lookup via `Vfs`)
-/// [documented: ModernMinimap.ini, Modern Minimap v1 (`NVSE\Plugins\ModernMinimap.ini`)].
+/// [documented: Modern Minimap - ESPless v4.2.1 (`https://www.nexusmods.com/newvegas/mods/90574`),
+/// shipped `Data\NVSE\Plugins\ModernMinimap.ini`].
 const INI_PATH: &str = r"NVSE\Plugins\ModernMinimap.ini";
-/// Default picture size, texels [documented: ModernMinimap.ini, Modern Minimap v1
-/// (`NVSE\Plugins\ModernMinimap.ini`, comment `"; Controls the texture size of the
-/// minimap render"`, `[General] textureSize=1024`)].
+/// Default picture size, texels [documented: Modern Minimap - ESPless v4.2.1
+/// (`https://www.nexusmods.com/newvegas/mods/90574`), shipped
+/// `Data\NVSE\Plugins\ModernMinimap.ini`, comment `"; Controls the texture size of the
+/// minimap render"`, default `[General] textureSize=1024`].
 const DEFAULT_SIZE: u32 = 1024;
 /// Minimum clamped render-target size, texels [design: NVForever render-target bound].
 const MIN_SIZE: u32 = 256;
