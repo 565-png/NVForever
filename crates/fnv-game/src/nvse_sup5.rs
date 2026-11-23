@@ -206,14 +206,18 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
         }
         // `file sheet row col` / `file sheet`: the cell emptied, the sheet's cells all
-        // emptied (the sheet kept) [documented: ExcelEraseCell; ExcelEraseSheet, "Will
-        // erase all cells in Sheet"]; 1 done, -1 for a missing file [documented] or sheet
-        // [hypothesis].
+        // emptied (the sheet and its row/column extent kept) [documented: ExcelEraseCell;
+        // ExcelEraseSheet, "Will erase all cells in Sheet"; observed: Fallout: New Vegas
+        // 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855, probe sup_14_excel_bounds_and_erase_sheet:
+        // cell (0,0) type becomes 0 while ExcelGetRowCount stays 1; no DLL or source
+        // consulted]; 1 done, -1 for a missing file [documented] or sheet [observed: sup_14].
         "excelerasecell" | "excelerasesheet" => {
             let Some(path) = xls_path(args) else { return Some(Ok(minus)) };
             let Ok(mut b) = load_book(g, &path) else { return Some(Ok(minus)) };
             let Some(s) = index(args, 1).and_then(|i| b.sheets.get_mut(i)) else { return Some(Ok(minus)) };
             if name == "excelerasesheet" {
+                s.min_rows = s.rows();
+                s.min_cols = s.cols();
                 s.cells.clear();
             } else if let Some(at) = cell_at(args, 2) {
                 s.cells.remove(&at);
@@ -323,19 +327,35 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // [documented: GetFileSize, "relative to Fallout root folder", in bytes]; a
         // missing file -1 [hypothesis].
         "getfilesize" => XVal::Num(safe_path(&text(args, 0).unwrap_or_default()).and_then(|p| g.mod_files.root_file(&p)).map_or(-1.0, |(n, _)| n as f64)),
-        // `file request`: [year, month, day, hour, minute, second] in local time
-        // [documented: GetFileTime, an array; hypothesis: its fields]; a missing file, a
-        // session-only write or a request outside 0-2 gives an empty array [hypothesis].
+        // `file request`: 5-element StringMap in local time on existing files and an empty
+        // StringMap (`ar_Size == 0`) on missing files or requests outside 0-2 [documented:
+        // GetFileTime; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855,
+        // probe sup_19_file_size_and_time_missing: StringMap of size 5 on existing file,
+        // size 0 on missing file; no DLL or source consulted; hypothesis: key names Year,
+        // Month, Day, Hour, Minute matching GetFileTimeSTR's 5 fields].
         "getfiletime" => {
             let t = file_time(g, &text(args, 0).unwrap_or_default(), num(args, 1, 0.0));
-            let items = t.map(|t| [f64::from(t.year()), f64::from(t.month()), f64::from(t.day()), f64::from(t.hour()), f64::from(t.minute()), f64::from(t.second())].map(XVal::Num).to_vec()).unwrap_or_default();
-            list(g, items)
+            let entries = t
+                .map(|t| {
+                    vec![
+                        (XKey::Str("Year".into()), XVal::Num(f64::from(t.year()))),
+                        (XKey::Str("Month".into()), XVal::Num(f64::from(t.month()))),
+                        (XKey::Str("Day".into()), XVal::Num(f64::from(t.day()))),
+                        (XKey::Str("Hour".into()), XVal::Num(f64::from(t.hour()))),
+                        (XKey::Str("Minute".into()), XVal::Num(f64::from(t.minute()))),
+                    ]
+                })
+                .unwrap_or_default();
+            XVal::Array(g.ext.new_array(ArrayKind::StringMap, entries))
         }
-        // `file request type`: "DD/MM/YY HH:MM", or "MM/DD/YY HH:MM" with type 1
-        // [documented: GetFileTimeSTR]; "" when there is no time [hypothesis].
+        // `file request type`: "DD/MM/YYYY  HH:MM", or "MM/DD/YYYY  HH:MM" with type 1
+        // [documented: GetFileTimeSTR; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9
+        // + SUP NVSE 855, probe sup_33_file_time_str_formats: `28/09/2026  21:12` /
+        // `09/28/2026  21:12`; no DLL or source consulted]; "" when there is no time
+        // [observed: sup_19].
         "getfiletimestr" => {
             let t = file_time(g, &text(args, 0).unwrap_or_default(), num(args, 1, 0.0));
-            let fmt = if num(args, 2, 0.0) as i32 == 1 { "%m/%d/%y %H:%M" } else { "%d/%m/%y %H:%M" };
+            let fmt = if num(args, 2, 0.0) as i32 == 1 { "%m/%d/%Y  %H:%M" } else { "%d/%m/%Y  %H:%M" };
             XVal::Str(t.map(|t| t.strftime(fmt).to_string()).unwrap_or_default())
         }
         // The load order into SUPNVSE.log in the game's folder [documented: DumpLoadOrder]

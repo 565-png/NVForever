@@ -68,17 +68,24 @@ pub struct Sheet {
     pub name: String,
     /// By (row, column), both from 0.
     pub cells: BTreeMap<(u32, u32), Cell>,
+    /// Minimum row/column extent carried across BIFF `DIMENSIONS` (`0x0200`) when
+    /// `ExcelEraseSheet` clears cells without shrinking the sheet's reported row count
+    /// [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855, probe
+    /// sup_14_excel_bounds_and_erase_sheet: cell type 0 while row count stays 1;
+    /// no DLL or source consulted].
+    pub min_rows: u32,
+    pub min_cols: u32,
 }
 
 impl Sheet {
-    /// The rows in use: the last used row + 1, 0 when empty.
+    /// The rows in use: the last used row + 1 (or preserved `min_rows`), 0 when empty.
     pub fn rows(&self) -> u32 {
-        self.cells.keys().map(|&(r, _)| r + 1).max().unwrap_or(0)
+        self.cells.keys().map(|&(r, _)| r + 1).max().unwrap_or(0).max(self.min_rows)
     }
 
-    /// The columns in use: the last used column + 1, 0 when empty.
+    /// The columns in use: the last used column + 1 (or preserved `min_cols`), 0 when empty.
     pub fn cols(&self) -> u32 {
-        self.cells.keys().map(|&(_, c)| c + 1).max().unwrap_or(0)
+        self.cells.keys().map(|&(_, c)| c + 1).max().unwrap_or(0).max(self.min_cols)
     }
 }
 
@@ -98,7 +105,7 @@ impl Book {
     pub fn sheet_mut(&mut self, i: usize) -> &mut Sheet {
         while self.sheets.len() <= i {
             let n = self.sheets.len() + 1;
-            self.sheets.push(Sheet { name: format!("Sheet{n}"), cells: BTreeMap::new() });
+            self.sheets.push(Sheet { name: format!("Sheet{n}"), ..Sheet::default() });
         }
         &mut self.sheets[i]
     }
@@ -510,17 +517,30 @@ fn parse_biff(s: &[u8]) -> Option<Book> {
     }
     let mut book = Book::default();
     for (off, name) in sheets {
-        let mut sheet = Sheet { name, cells: BTreeMap::new() };
+        let mut sheet = Sheet { name, ..Sheet::default() };
         let mut it = records(s, off);
         match it.next() {
             Some((BOF, _, _)) => {}
             _ => continue,
         }
         let mut pending_string: Option<(u32, u32)> = None;
+        let (mut dim_rows, mut dim_cols) = (0u32, 0u32);
         for (t, b, _) in it {
             let rc = || Some((u32::from(u16_at(b, 0)?), u32::from(u16_at(b, 2)?)));
             match t {
                 EOF => break,
+                0x0200 => {
+                    // BIFF DIMENSIONS [documented: MS-XLS 2.4.90]: rwMac (rows) and colMac (cols).
+                    if biff8 {
+                        if let (Some(r), Some(c)) = (u32_at(b, 4), u16_at(b, 10)) {
+                            dim_rows = r.min(65536);
+                            dim_cols = u32::from(c).min(256);
+                        }
+                    } else if let (Some(r), Some(c)) = (u16_at(b, 2), u16_at(b, 6)) {
+                        dim_rows = u32::from(r);
+                        dim_cols = u32::from(c).min(256);
+                    }
+                }
                 NUMBER => {
                     if let (Some(at), Some(x)) = (rc(), b.get(6..14)) {
                         sheet.cells.insert(at, Cell::Float(f64::from_le_bytes(x.try_into().unwrap_or([0; 8]))));
@@ -585,6 +605,12 @@ fn parse_biff(s: &[u8]) -> Option<Book> {
                 _ => {}
             }
         }
+        if dim_rows > sheet.rows() {
+            sheet.min_rows = dim_rows;
+        }
+        if dim_cols > sheet.cols() {
+            sheet.min_cols = dim_cols;
+        }
         book.sheets.push(sheet);
     }
     Some(book)
@@ -642,7 +668,7 @@ fn sst_records(strings: &[(String, bool)], total: u32) -> Vec<Vec<u8>> {
 fn write_biff(book: &Book) -> Vec<u8> {
     let mut sheets = book.sheets.clone();
     if sheets.is_empty() {
-        sheets.push(Sheet { name: "Sheet1".into(), cells: BTreeMap::new() });
+        sheets.push(Sheet { name: "Sheet1".into(), ..Sheet::default() });
     }
     // The shared strings, each once, in the order the cells use them.
     let mut strings: Vec<(String, bool)> = Vec::new();
@@ -768,6 +794,22 @@ mod tests {
         assert_eq!(back.sheets[0].rows(), 5);
         assert_eq!(back.sheets[0].cols(), 4);
         assert_eq!(back.sheets[2].cells[&(1, 1)].kind(), 4);
+    }
+
+    #[test]
+    fn erased_sheet_keeps_dimensions_across_round_trip() {
+        let mut b = Book::default();
+        b.sheet_mut(0).cells.insert((0, 0), Cell::Float(1.0));
+        let sh = b.sheet_mut(0);
+        sh.min_rows = sh.rows();
+        sh.min_cols = sh.cols();
+        sh.cells.clear();
+        let bytes = b.to_bytes().unwrap();
+        let back = Book::parse(&bytes).unwrap();
+        assert_eq!(back, b);
+        assert!(back.sheets[0].cells.is_empty());
+        assert_eq!(back.sheets[0].rows(), 1);
+        assert_eq!(back.sheets[0].cols(), 1);
     }
 
     #[test]

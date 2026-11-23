@@ -129,8 +129,11 @@ always, as the name says it is broken].
   [observed: rest1.funcname.*: 4110 GetActorValue, 10361 AttachLight, 1 and 65000 "script
   call failed"]. NVForever gives the catalogue's name, else the longest of the opcode
   table's names for the code (an alias is the shorter) [hypothesis].
-- **IsNewGame**: 0 in a loaded save [observed: rest1.isnewgame]. NVForever gives 1 from the
-  New Game menu until a save is loaded [hypothesis].
+- **IsNewGame**: 0 in a loaded save [observed: rest1.isnewgame], 1 in a fresh New Game
+  session [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855 with the
+  10 official base masters, clean-room script probe sup_12_is_new_game (IsNewGame): 1;
+  no DLL or source consulted]. NVForever gives 1 from the New Game menu until a save is
+  loaded.
 
 ## 6. SUP's JSON commands (batch 2)
 
@@ -143,16 +146,23 @@ never the game folder (`crate::mod_files`). Code: `crates/fnv-game/src/nvse_json
 - **JSONToString** `path`: the cached copy in one line, keys sorted; "" when not cached.
 - **JSONCloseFile** `path flag [n]`: `1` drops the cached copy and gives 0; `0` gives -5
   and keeps it.
-- **JSONCacheFileFromString** `text name`: -3 both times, with either order, for text whose
-  quotes came through escaped [hypothesis: -3 is "not JSON"; NVForever caches valid text
-  under the name].
-- **JSONGetValueType** `path key flag`: object 1, array 2, string 3, number 5, missing -2
-  [hypothesis: boolean 4, null 0]. Only top-level keys: `obj/inner`, `obj.inner` and
-  `/obj/inner` all gave -2.
-- **JSONGetValueArray** `path key flag`: an array of 3 for a 3-element array. Its elements
-  read back neither as numbers nor as strings, and an object gave an array of 1 and a
-  number one of 2 [observed: json1.arr.*, json2.arr.*]. NVForever gives the array's
-  elements, an object's pairs as a string map, and nothing for a scalar [hypothesis; open].
+- **JSONCacheFileFromString** `text name`: -3 for invalid JSON text [observed: json1/json2;
+  observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855 with the 10 official
+  base masters, clean-room script probe sup_18_json_cache_from_string
+  (JSONCacheFileFromString/JSONGetValueType): -3; no DLL or source consulted]; NVForever
+  caches valid text under the name [hypothesis].
+- **JSONGetValueType** `path key flag`: object 1, array 2, string 3, boolean 4, number 5,
+  null 0, missing -2 [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855
+  with the 10 official base masters, clean-room script probe
+  sup_17_json_get_value_types_and_paths (JSONGetValueType/JSONGetValue/JSONGetValueArray):
+  1,2,3,4,5,0,-2 ; 1; no DLL or source consulted]. Only top-level keys: `obj/inner`,
+  `obj.inner` and `/obj/inner` all gave -2.
+- **JSONGetValueArray** `path key flag`: an array of 3 for a 3-element array, an object
+  gives 1, and a number gives 2 [observed: json1.arr.*, json2.arr.*; observed: Fallout:
+  New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855 with the 10 official base masters,
+  clean-room script probe sup_31_json_get_value_array_shapes (JSONGetValueArray): 3,1,2;
+  no DLL or source consulted]. NVForever gives the array's elements, an object's pairs as
+  a string map, and nothing for a scalar [hypothesis; open].
 - **The last flag of the readers and writers**: 0 is the file on disk, 1 the cached copy.
   With 0 the file is rewritten at once, indented by four spaces, and the cache keeps its
   old copy. With 1 a file that is not cached gives -4 (`json2.uncached.set.cache`).

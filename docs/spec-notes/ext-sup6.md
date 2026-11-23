@@ -72,8 +72,8 @@ Get/SetHUDVisibilityOverride (`crate::nvse_hud`, `Game::hud.visibility`).
 
 | Function | NVForever |
 |---|---|
-| GetLockPickMenuValue `request` | 0 the pin's angle (0 left, 90 up, 180 right, as NVForever's menu, `fnv_game::lockpick::Picking::pin`), 1 the lock's level (0, 25, 50, 75, 100 by its class [hypothesis]), 2 the Lockpick skill; -1 with the menu shut [documented] |
-| SetBobbyPinHealth `[health]` | sets the pin's health, above 1 too, and returns it; without a value returns it; a new pin starts at 1 [documented; `fnv_game::lockpick::PIN_HEALTH` is 1]; -1 with the menu shut [hypothesis] |
+| GetLockPickMenuValue `request` | 0 the pin's angle (0 left, 90 up, 180 right, as NVForever's menu, `fnv_game::lockpick::Picking::pin`), 1 the lock's level (0, 25, 50, 75, 100 by its class [hypothesis]), 2 the Lockpick skill; -1 with the menu shut [documented; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855 with the 10 official base masters, clean-room script probe sup_20_lockpick_and_bobbypin_closed (GetLockPickMenuValue/SetBobbyPinHealth): -1.00,-1.00,-1.00,-1.00; no DLL or source consulted] |
+| SetBobbyPinHealth `[health]` | sets the pin's health, above 1 too, and returns it; without a value returns it; a new pin starts at 1 [documented; `fnv_game::lockpick::PIN_HEALTH` is 1]; -1 with the menu shut [observed: sup_20_lockpick_and_bobbypin_closed] |
 | GetGrenadeTimeHeld | the seconds the attack was held with a throwable weapon in hand (Grenade Throw, Thrown, Land Mine, Mine Drop), kept after the throw and reset at the next press [documented: the page's note] |
 
 The engine writes the menu's state into `Game::sup.lockpick` before the scripts and takes

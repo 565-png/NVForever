@@ -84,8 +84,13 @@ fn arrays() {
         let m = s(&mut g, "Ar_GetRandomKeyMap (Ar_Map \"LALALA\"::1, \"TROLOLO\"::2)");
         assert!(m == "LALALA" || m == "TROLOLO", "{m}");
     }
-    // An empty array 0 [observed: sup4 randomkey].
+    // An empty array 0 [observed: sup4 randomkey; Wave 4 sup_08_ar_getrandomkey_empty].
     assert_eq!(n(&mut g, "let aR := Ar_List\nSetFunctionValue (Ar_GetRandomKey aR)"), 0.0);
+    // Numeric map keys format as 6-decimal float strings [observed: Wave 4
+    // sup_26_ar_getrandomkey_num_map (`Ar_Map 7::100` -> `"7.000000"`), SUP NVSE 855];
+    // list index `0` follows the same numeric-key formatting.
+    assert_eq!(s(&mut g, "Ar_GetRandomKeyMap (Ar_Map 7::100)"), "7.000000");
+    assert_eq!(s(&mut g, "Ar_GetRandomKeyMap (Ar_List 42)"), "0.000000");
     // An empty reference is an invalid one; a dimension searches the inner array.
     assert_eq!(n(&mut g, "let aR := Ar_List PlayerREF, TestMarkRef\nSetFunctionValue (Ar_HasInvalidRefs aR)"), 0.0);
     assert_eq!(n(&mut g, "let aR := Ar_List PlayerREF, rNone\nSetFunctionValue (Ar_HasInvalidRefs aR)"), 1.0);
