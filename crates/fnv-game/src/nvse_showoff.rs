@@ -17,6 +17,11 @@ pub const ON_PRE_SCRIPTED_ACTIVATE: &str = "showoff:onprescriptedactivate";
 pub const ON_PRE_ACTIVATE_INVENTORY_ITEM: &str = "showoff:onpreactivateinventoryitem";
 pub const ON_PRE_ACTIVATE_INVENTORY_ITEM_ALT: &str = "showoff:onpreactivateinventoryitemalt";
 pub const ON_POV_CHANGE: &str = "showoff:onpovchange";
+pub const ON_FIRE_WEAPON: &str = "showoff:onfireweapon";
+
+/// Safety cap on unconsumed `ForceWeaponJamAnim` requests in headless runs where no engine
+/// drains `ShowOffState::force_jam_requests` [design].
+pub const MAX_FORCE_JAM_REQUESTS: usize = 64;
 
 #[derive(Debug, Default)]
 pub struct ShowOffState {
@@ -69,6 +74,13 @@ pub struct ShowOffState {
     /// Re-entrancy guard while `ShowOff:OnPreActivateInventoryItem[Alt]` handlers run,
     /// so a handler calling `EquipItem` / `UseAidItem` does not recurse infinitely [design].
     pub in_pre_activate_item: bool,
+    /// `(frame, [(actor, weapon)])` already dispatched to `ShowOff:OnFireWeapon` this
+    /// frame, deduplicating `weapon_fired` -> `projectile_fired` and multi-pellet bursts
+    /// [hypothesis].
+    pub fired_this_frame: (u64, Vec<(FormId, FormId)>),
+    /// Actors asked by `ForceWeaponJamAnim` / `ForceJamAnim` to play their weapon's jam
+    /// animation (`Game::take_force_jam_requests`, consumed by `nvf_play::combat::fire`).
+    pub force_jam_requests: Vec<FormId>,
 }
 
 fn num(args: &[XVal], k: usize, dflt: f64) -> f64 {
@@ -254,6 +266,47 @@ impl Game<'_> {
         );
     }
 
+    /// `ShowOff:OnFireWeapon`: fired when an actor fires a ranged weapon. Calling
+    /// reference (`0::`) is `actor`; first argument (`1::` / `"first"::`) is `weapon`
+    /// base form [documented: GECK wiki Category:Event Handlers (ShowOff NVSE),
+    /// SetEventHandlerAlt; hypothesis: calling reference = firing actor, arg0 = weapon
+    /// base form, non-actors and melee animation types 0..=2 excluded, not suppressed in
+    /// god mode, per-frame deduplication across `weapon_fired` and multi-pellet
+    /// `projectile_fired`]. Free when no handler is registered.
+    pub(crate) fn showoff_on_fire_weapon(&mut self, actor: FormId, weapon: FormId, dedup_same_frame: bool) -> usize {
+        if !self.handled(ON_FIRE_WEAPON) || weapon.0 == 0 {
+            return 0;
+        }
+        let is_actor = actor == FormId::PLAYER_REF
+            || matches!(
+                crate::functions::base_of(self, actor).and_then(|b| self.data.sig(b)).as_ref(),
+                Some(b"NPC_") | Some(b"CREA")
+            );
+        if !is_actor {
+            return 0;
+        }
+        if matches!(self.data.weapon_anim_types.get(&self.unclone(weapon)), Some(0..=2)) {
+            return 0;
+        }
+        if self.showoff.fired_this_frame.0 != self.frame {
+            self.showoff.fired_this_frame = (self.frame, Vec::new());
+        }
+        let key = (actor, weapon);
+        if dedup_same_frame && self.showoff.fired_this_frame.1.contains(&key) {
+            return 0;
+        }
+        if !self.showoff.fired_this_frame.1.contains(&key) {
+            self.showoff.fired_this_frame.1.push(key);
+        }
+        self.dispatch_event("ShowOff:OnFireWeapon", vec![XVal::Ref(weapon.0)], Some(actor))
+    }
+
+    /// Take queued `ForceWeaponJamAnim` / `ForceJamAnim` actor requests for the engine's
+    /// combat playback (`nvf_play::combat::fire`).
+    pub fn take_force_jam_requests(&mut self) -> Vec<FormId> {
+        std::mem::take(&mut self.showoff.force_jam_requests)
+    }
+
     /// The stop handlers of an aux timer that ran out or was stopped with its event: each
     /// gets the timer's name and its owner [documented: SetOnAuxTimerStopHandler; observed:
     /// showoff1, once when a 0.1 s timer ran out and once on AuxTimerStop 1, the owner the
@@ -302,16 +355,43 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
             }
             XVal::Num(1.0)
         }
-        // 1 when the actor has a weapon out, 0 with it away [observed: showoff1, the 10mm
-        // pistol]. A weapon without a jam animation gives 0 [documented]; which weapons have
-        // one is not read yet, so every drawn weapon counts [hypothesis], and the engine does
-        // not play the animation yet [not built].
+        // 1 when the actor is alive, has a weapon out, and the weapon has a jam animation;
+        // 0 otherwise [documented: GECK wiki ForceWeaponJamAnim (.357 revolver has no jam
+        // animation and returns 0) and GetWeaponAnimJamTime; observed: showoff1, 10mm
+        // pistol away = 0 and drawn = 1; observed: FalloutNV.esm WEAP DNAM Weap10mmPistol
+        // jam_time = 1.4 vs WeapNV357Revolver jam_time = 0.0; hypothesis: animation_type
+        // 3..=9 + DNAM/jam_time > 0 as the rules-side jam-animation check]. Queues the
+        // actor for `nvf_play::combat::fire` to trigger `Cycle::jam` and `WeaponAnim::jams`.
         "forceweaponjamanim" | "forcejamanim" => {
             let a = subject.unwrap_or(FormId::PLAYER_REF);
-            let out = g.extra.get(&a).is_some_and(|e| e.weapon_out) && crate::functions::items::equipped_weapon(g, a).is_some();
-            XVal::Num(f64::from(u8::from(out)))
+            let ok = !g.is_dead(a)
+                && g.extra.get(&a).is_some_and(|e| e.weapon_out)
+                && crate::functions::items::equipped_weapon(g, a).is_some_and(|w| weapon_has_jam_anim(g, w));
+            if ok && !g.showoff.force_jam_requests.contains(&a) && g.showoff.force_jam_requests.len() < MAX_FORCE_JAM_REQUESTS {
+                g.showoff.force_jam_requests.push(a);
+            }
+            XVal::Num(f64::from(u8::from(ok)))
         }
         _ => return None,
     };
     Some(Ok(v))
+}
+
+/// Whether `weapon` is a gun with a jam animation [documented: GECK wiki
+/// ForceWeaponJamAnim and GetWeaponAnimJamTime; observed: FalloutNV.esm WEAP DNAM
+/// WeapNV357Revolver has jam_time = 0.0 while Weap10mmPistol has jam_time = 1.4;
+/// hypothesis: checking `DNAM/animation_type` in 3..=9 (guns, excluding melee 0..=2 and
+/// thrown/mines 10..=13) and finite `DNAM/jam_time > 0.0`].
+fn weapon_has_jam_anim(g: &Game, weapon: FormId) -> bool {
+    let anim_type = match crate::nvse::record_value(g, weapon, "DNAM", "animation_type") {
+        Some(XVal::Num(n)) if n.is_finite() => Some(n.trunc() as i64),
+        _ => g.data.weapon_anim_types.get(&g.unclone(weapon)).copied(),
+    };
+    if !matches!(anim_type, Some(3..=9)) {
+        return false;
+    }
+    matches!(
+        crate::nvse::record_value(g, weapon, "DNAM", "jam_time"),
+        Some(XVal::Num(t)) if t.is_finite() && t > 0.0
+    )
 }

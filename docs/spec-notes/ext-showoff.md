@@ -48,9 +48,27 @@ ran.
 - It returned 0 with the 10mm pistol away and 1 with it drawn [observed]. IsAnimPlayingEx 4
   (reload) never read 1 over the 60 frames after [observed], so the jam is not a reload as
   that function counts them.
-- A weapon without a jam animation gives 0 [documented: the .357 revolver cannot jam].
-  NVForever does not read which weapons have one yet, so any drawn weapon gives 1
-  [hypothesis], and the engine does not play the animation [not built].
+- A weapon without a jam animation gives 0 [documented: GECK wiki
+  [ForceWeaponJamAnim](https://geckwiki.com/index.php?title=ForceWeaponJamAnim), the .357
+  Magnum Revolver cannot jam], and calling it interrupts the actor's current hand action
+  (such as canceling an active reload and replacing it with the jam animation)
+  [documented: ForceWeaponJamAnim].
+- NVForever checks that the actor is alive, has its weapon drawn, and has an equipped gun
+  (`DNAM/animation_type` in `3..=9`) with finite `DNAM/jam_time > 0` (`GetWeaponAnimJamTime`;
+  honoring session overrides and `TempCloneForm` clones) [observed: FalloutNV.esm WEAP
+  DNAM `Weap10mmPistol` `jam_time = 1.4` vs `WeapNV357Revolver` `jam_time = 0.0`;
+  hypothesis: using `animation_type` `3..=9` + `DNAM/jam_time > 0` as the rules-side
+  availability gate without probing BSA `.kf` presence].
+- On success, `ForceWeaponJamAnim` / `ForceJamAnim` queues the actor (deduplicated per
+  frame, capped at 64 entries for headless runs [design]) for `nvf_play::combat::fire`
+  (`Game::take_force_jam_requests`). For the player, `nvf_play::combat::fire` interrupts
+  any active reload or attack phase via `Cycle::jam` and increments `WeaponAnim::jams`
+  (which `nvforever::player_body` plays on the reload layer, interrupting any active reload
+  clip) while reporting `AnimAction::ForceScriptAnim` (13), so `IsAnimPlayingEx 4` remains
+  0 and `SetOnReloadWeaponEventHandler` does not fire. Repeated calls while `Cycle::jammed`
+  is already true do not restart the active jam timer [design]. NPC jam animation playback
+  remains [not built] (`nvf-play` models `Cycle` for the player only). No ShowOff DLL or
+  source code was consulted.
 
 ## 5. The 2026-10-30 batch (#1010, `nvse_showoff2.rs`)
 
@@ -272,3 +290,23 @@ RemoveAllItemsShowOff.
   **`ShowOff:OnPreActivateInventoryItemAlt`**: see
   [preactivation-events.md](preactivation-events.md). No extender DLL or source code
   was consulted.
+
+## 10. `ShowOff:OnFireWeapon`
+
+- **`ShowOff:OnFireWeapon`** [documented: GECK wiki Category:Event Handlers (ShowOff NVSE),
+  [SetEventHandlerAlt](https://geckwiki.com/index.php?title=SetEventHandlerAlt)]:
+  dispatched when an actor fires a ranged weapon, with the firing actor reference as the
+  calling reference (`0::` filter, `GetSelf`/`GetSelfAlt`) and the weapon base form as
+  the first argument (`1::` / `"first"::` filter, `Begin Function { ref rWeapon }`)
+  [hypothesis: calling reference and argument list inferred from public GECK wiki event
+  conventions; no standalone `ShowOff:OnFireWeapon` wiki article existed in the dump].
+- Dispatched from `Game::weapon_fired` (player shots) and `Game::projectile_fired`
+  (NPC shots and scripted `FireWeapon` shots), deduplicated per `(frame, actor, weapon)`
+  so `weapon_fired` followed by `projectile_fired` or a multi-pellet shotgun burst fires
+  once per round [hypothesis: per-frame deduplication across `weapon_fired` and pellets].
+- Excludes non-actors (e.g., trap activators) and melee weapons (`DNAM/animation_type`
+  `0..=2`), and is not suppressed by player god mode (`ToggleGodMode`), unlike JIP's
+  `SetOnFireWeaponEventHandler` whose god-mode omission is a JIP-documented quirk
+  [hypothesis: non-actor, melee, and god-mode edge cases unprobed in original ShowOff].
+- Free when no `ShowOff:OnFireWeapon` handler is registered (unmodded vanilla weapon
+  firing is unchanged). No ShowOff DLL or source code was consulted.

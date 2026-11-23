@@ -151,6 +151,8 @@ mod critical_damage_hit_tests;
 mod world_blood_tests;
 #[cfg(test)]
 mod weapon_sound_bridge_tests;
+#[cfg(test)]
+mod showoff_combat_tests;
 
 /// The shooter's id for projectiles (the player has no hit volume).
 const PLAYER: ActorId = u64::MAX;
@@ -3634,6 +3636,12 @@ pub(crate) fn fire(
     // Scripts' EjectCasing requests (`fnv_game::nvse_jg10`) are taken every frame, so
     // those made with no gun out (or for other actors) do not pile up or fire later.
     let asked = script.as_deref_mut().and_then(|s| s.rt.as_mut()).map(|rt| rt.game.take_casing_requests()).unwrap_or_default();
+    // Scripts' ForceWeaponJamAnim / ForceJamAnim requests (`fnv_game::nvse_showoff`) are
+    // drained every frame for the same reason; NPC playback is not built yet.
+    let force_jam = script
+        .as_deref_mut()
+        .and_then(|s| s.rt.as_mut())
+        .is_some_and(|rt| rt.game.take_force_jam_requests().contains(&FormId::PLAYER_REF));
     if c.melee {
         c.vats_cone = None;
         return;
@@ -3784,6 +3792,16 @@ pub(crate) fn fire(
         info!("combat: {} {} (tweak)", w.edid.as_deref().unwrap_or("?"), if held_left.is_some() { "held at its release" } else { "let go" });
     }
     anim.throw_held = held_left.is_some();
+    // Scripted ForceWeaponJamAnim / ForceJamAnim interrupts the current reload or attack
+    // phase immediately before stepping the cycle [documented: GECK wiki ForceWeaponJamAnim].
+    if force_jam && apply_forced_player_jam(cycle, &mut anim, &mut stats, &w, &c.tuning, script.as_deref()) {
+        if c.vats_throw.take().is_some() {
+            if let Some(v) = vats.as_deref_mut() {
+                v.throw_left();
+            }
+        }
+        vats_shot = None;
+    }
     let own_dt = held_left.map_or(own_dt, |left| (left - 1e-4).max(0.0));
     let events = cycle.step(&c.tuning, Input { trigger: control.trigger && !broken_in_hand(&sim, id), reload: reload && !god, dt: own_dt, carried });
     // VATS mode's throw that wound up leaves now, at its point; one that no longer winds
@@ -4080,10 +4098,8 @@ pub(crate) fn fire(
                         break;
                     }
                     if jams {
-                        // The jam clip's length, else the weapon's Jam Time, else the default.
-                        let secs = anim.timing.jam_len.or(Some(w.jam_time).filter(|&t| t > 0.0)).unwrap_or(c.tuning.jam_fallback);
-                        // The player's tweak: the jam clears at the reload's pace [design: docs/design/tweaks.md].
-                        let secs = if script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.jam_at_reload_pace) && anim.reload_rate > 0.0 { secs / anim.reload_rate } else { secs };
+                        let at_reload_pace = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.jam_at_reload_pace);
+                        let secs = jam_duration(anim.timing.jam_len, w.jam_time, c.tuning.jam_fallback, anim.reload_rate, at_reload_pace);
                         cycle.jam(secs);
                         anim.jams += 1;
                         stats.jams += 1;
@@ -4128,6 +4144,50 @@ pub(crate) fn fire(
             Event::Cleared => info!("combat: the jam is cleared"),
         }
     }
+    // Also apply ForceWeaponJamAnim / ForceJamAnim if a handler invoked during Event::Fired
+    // (e.g. OnFire, SetOnFireWeaponEventHandler, ShowOff:OnFireWeapon) requested a jam.
+    let fired_force_jam = script
+        .as_deref_mut()
+        .and_then(|s| s.rt.as_mut())
+        .is_some_and(|rt| rt.game.take_force_jam_requests().contains(&FormId::PLAYER_REF));
+    if fired_force_jam && !broken_in_hand(&sim, id) {
+        apply_forced_player_jam(cycle, &mut anim, &mut stats, &w, &c.tuning, script.as_deref());
+    }
+}
+
+/// Duration of a weapon jam: the loaded jam clip's length, else the weapon's `DNAM/jam_time`,
+/// else `fallback`, scaled by `reload_rate` when `jam_at_reload_pace` is enabled
+/// [design: docs/design/tweaks.md].
+fn jam_duration(jam_len: Option<f32>, jam_time: f32, fallback: f32, reload_rate: f32, jam_at_reload_pace: bool) -> f32 {
+    let secs = jam_len.or(Some(jam_time).filter(|&t| t > 0.0)).unwrap_or(fallback);
+    if jam_at_reload_pace && reload_rate > 0.0 { secs / reload_rate } else { secs }
+}
+
+/// Apply a scripted `ForceWeaponJamAnim` / `ForceJamAnim` request to the player's weapon
+/// cycle and `WeaponAnim`, interrupting any active reload or attack phase [documented:
+/// GECK wiki ForceWeaponJamAnim]. Does not restart an already-active jam [design].
+fn apply_forced_player_jam(
+    cycle: &mut Cycle,
+    anim: &mut WeaponAnim,
+    stats: &mut CombatStats,
+    w: &WeaponStats,
+    tuning: &CombatTuning,
+    script: Option<&ScriptState>,
+) -> bool {
+    if cycle.no_ammo || cycle.jammed() || anim.jam.is_none() || (anim.timing.jam_len.is_none() && w.jam_time <= 0.0) {
+        return false;
+    }
+    let at_reload_pace = script.and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.jam_at_reload_pace);
+    let secs = jam_duration(anim.timing.jam_len, w.jam_time, tuning.jam_fallback, anim.reload_rate, at_reload_pace);
+    cycle.jam(secs);
+    anim.jams += 1;
+    stats.jams += 1;
+    info!(
+        "combat: {} forced jam by script (clip {}, {secs:.2} s)",
+        w.edid.as_deref().unwrap_or("?"),
+        anim.jam.as_deref().unwrap_or("none")
+    );
+    true
 }
 
 /// The target's DT and DR from the armour it wears (its carried ARMO by the wearing rule).
