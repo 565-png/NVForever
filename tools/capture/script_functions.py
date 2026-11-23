@@ -306,15 +306,6 @@ PARAM_FIXES = {
     # [documented: DisableAlt's example "TerminalRef.DisableAlt" passes nothing; the table
     # writes the optional mark as "Optional = Optional", which the parser does not read].
     "DisableAlt": [{"name": "FadeOut", "type": "Int", "kind": "int", "optional": True}],
-    # [hypothesis: GECK wiki GetReticleRange omits optional arguments in its template,
-    # while scripts call `GetReticleRange [filter:int] [maxRange:float]`]. Source syntax
-    # only: this does not establish a native bytecode encoding.
-    "GetReticleRange": [{"name": "filter", "type": "int", "kind": "int", "optional": True},
-                        {"name": "maxRange", "type": "float", "kind": "float", "optional": True}],
-    # [hypothesis: GECK wiki StopIdle documents `reference.StopIdle` with no arguments,
-    # while scripts pass an optional idle form argument `reference.StopIdle [idleForm]`].
-    # Source syntax only: this does not establish a native bytecode encoding.
-    "StopIdle": [{"name": "idleForm", "type": "form", "kind": "form", "optional": True}],
     "AddConditionFormTwo": [{"name": "FormTwoEntity", "type": "ref", "kind": "reference"},
                             {"name": "First", "type": "int", "kind": "int"},
                             {"name": "Condition", "type": "int", "kind": "int",

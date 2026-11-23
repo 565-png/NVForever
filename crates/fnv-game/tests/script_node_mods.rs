@@ -74,46 +74,6 @@ fn insert_node_on_the_player_goes_into_each_model_with_the_target() {
 fn reticle_range_is_minus_one_with_nothing_under_the_crosshair() {
     with_game(|g| {
         assert_eq!(query(g, "SetFunctionValue (GetReticleRange)"), XVal::Num(-1.0));
-        assert_eq!(query(g, "SetFunctionValue (GetReticleRange 19)"), XVal::Num(-1.0));
-        assert_eq!(query(g, "SetFunctionValue (GetReticleRange 19 300)"), XVal::Num(-1.0));
-    });
-}
-
-#[test]
-fn reticle_range_uses_second_argument_as_max_range_not_filter() {
-    with_game(|g| {
-        g.senses.reticle = Some(fnv_game::functions::senses::Reticle {
-            start: [0.0, 0.0, 0.0],
-            dir: [0.0, 1.0, 0.0],
-            hit: Some(250.0),
-        });
-        assert_eq!(query(g, "SetFunctionValue (GetReticleRange)"), XVal::Num(250.0));
-        // Arg 0 is the optional filter, not maxRange: 19 must not clamp 250 down to 19.
-        assert_eq!(query(g, "SetFunctionValue (GetReticleRange 19)"), XVal::Num(250.0));
-        assert_eq!(query(g, "SetFunctionValue (GetReticleRange 19 300)"), XVal::Num(250.0));
-        assert_eq!(query(g, "SetFunctionValue ((GetReticleRange 19 300) < 130)"), XVal::Num(0.0));
-        // Arg 1 caps hits beyond maxRange, while 0 leaves the distance uncapped.
-        assert_eq!(query(g, "SetFunctionValue (GetReticleRange 19 100)"), XVal::Num(100.0));
-        assert_eq!(query(g, "SetFunctionValue (GetReticleRange 19 0)"), XVal::Num(250.0));
-
-        // Closer hit within threshold reports exact distance.
-        g.senses.reticle.as_mut().unwrap().hit = Some(80.0);
-        assert_eq!(query(g, "SetFunctionValue (GetReticleRange 19 300)"), XVal::Num(80.0));
-        assert_eq!(query(g, "SetFunctionValue ((GetReticleRange 19 300) < 130)"), XVal::Num(1.0));
-    });
-}
-
-#[test]
-fn stop_idle_runs_with_zero_or_one_optional_argument() {
-    with_game(|g| {
-        g.gaps.idle_stops.clear();
-        query(g, "PlayerREF.StopIdle");
-        assert_eq!(g.gaps.idle_stops, vec![FormId::PLAYER_REF]);
-        g.gaps.idle_stops.clear();
-
-        // Optional idle argument (direct ref or expression) compiles cleanly and queues the stop.
-        query(g, "PlayerREF.AuxVarSetRef \"*test_idle\" OwnedRefA\nPlayerREF.StopIdle (PlayerREF.AuxVarGetRef \"*test_idle\")");
-        assert_eq!(g.gaps.idle_stops, vec![FormId::PLAYER_REF]);
     });
 }
 

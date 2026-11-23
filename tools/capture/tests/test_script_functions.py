@@ -97,24 +97,6 @@ class WikiParsing(unittest.TestCase):
         self.assertEqual([x["kind"] for x in rec["params"]], ["form", "int", "float"])
         self.assertEqual(rec["params"][0]["name"], "FactionID")
 
-    def test_reticle_range_and_stop_idle_param_fixes_regenerate_optional_params(self):
-        ret_page = PAGE.replace("FrobWidget", "GetReticleRange").replace("GECK1", "JIP").split(" |arguments")[0] + "\n}}"
-        ret = sf.parse_page("GetReticleRange", ret_page)
-        self.assertEqual(
-            ret["params"],
-            [
-                {"name": "filter", "type": "int", "kind": "int", "optional": True},
-                {"name": "maxRange", "type": "float", "kind": "float", "optional": True},
-            ],
-        )
-        ret.pop("calling_reference", None)
-        self.assertEqual(sf.jip_probe(ret), "pure")
-
-        stop_page = PAGE.replace("FrobWidget", "StopIdle").replace("GECK1", "JIP").split(" |arguments")[0] + "\n}}"
-        stop = sf.parse_page("StopIdle", stop_page)
-        self.assertEqual(stop["params"], [{"name": "idleForm", "type": "form", "kind": "form", "optional": True}])
-        self.assertEqual(sf.jip_probe(stop), "form")
-
     def test_parameter_type_stops_at_the_type_word(self):
         page = PAGE.replace("|Type = ref", "|Type = int == Flags == kOne = 0x1,// BIT - 0 kTwo = 0x2")
         rec = sf.parse_page("FrobWidget", page)

@@ -631,12 +631,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             }
             zero
         }
-        // The special idle stops (the engine takes it at its next frame)
-        // [documented: https://geckwiki.com/index.php?title=StopIdle;
-        // https://geckwiki.com/index.php?title=ForceStopIdle]. `StopIdle` also accepts an
-        // optional `idleForm` argument without a surplus-argument warning [hypothesis];
-        // per-idle filtering is unverified in the original game, so any optional argument
-        // queues the same actor idle stop [design].
+        // The special idle stops (the engine takes it at its next frame).
         "stopidle" | "forcestopidle" => {
             if let Some(a) = subject {
                 g.gaps.idle_stops.push(a);

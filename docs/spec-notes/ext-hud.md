@@ -21,15 +21,6 @@ Plain-language notes for `crates/fnv-game/src/nvse_hud.rs` and the control funct
   spot is not valid [documented]. In game, aimed at the ground or sky, it had 3 entries
   [observed: hud1]. NVForever takes the point from the engine's crosshair ray; a headless run
   has no ray and gives ar_Null.
-- `GetReticleRange [filter] [maxRange]` gives the distance along the crosshair to what it
-  meets, or -1 when the point is not valid [documented:
-  https://geckwiki.com/index.php?title=GetReticleRange; observed: gaps8, 93.84 on the save].
-  The wiki template lists no arguments, while scripts pass optional `[filter:int]` and
-  `[maxRange:float]` (`PARAM_FIXES` in `tools/capture/script_functions.py`, synced into
-  `schemas/script/functions.json`) [hypothesis]. NVForever reads `maxRange` from argument 1
-  (leaving argument 0's collision filter unfiltered on `Senses::reticle`, and clamping a
-  positive `maxRange` with `.min(maxRange)` while leaving `<= 0` or omitted uncapped)
-  [hypothesis]/[design].
 - `GetReticleTargetLimb` reads -1 with no actor in the crosshair [observed: hud1]. The limb
   under the crosshair is not told by the engine, so it reads -1 for actors too [not built].
 

@@ -351,7 +351,7 @@ Under the compiler override, then, a call's argument takes the arithmetic after 
 the rule is a hypothesis drawn from two cases]. Whether `==`, as in the wiki's example,
 behaves like `>`: open.
 
-## 12. Extender parameter typing and optional-argument schema fixes
+## 12. Extender `actor_value` parameter typing
 
 - **Unnumbered extender `actor_value` parameters** (`crates/fnv-script/src/compile/gen/x.rs`):
   extender functions whose catalogue parameter has `kind: "actor_value"` — including
@@ -365,14 +365,3 @@ behaves like `>`: open.
   without emitting `unquoted_argument` [design]. Quoted strings, numeric codes, local
   variables, globals, dotted quest variables, function calls, and unknown bare words retain
   their existing `ParamEnc::Value` handling.
-- **`GetReticleRange [filter] [maxRange]` and `StopIdle [idleForm]`** (`PARAM_FIXES` in
-  `tools/capture/script_functions.py` and `schemas/script/functions.json`): the GECK wiki
-  templates for [GetReticleRange](https://geckwiki.com/index.php?title=GetReticleRange) and
-  [StopIdle](https://geckwiki.com/index.php?title=StopIdle) omit optional arguments, while
-  extender scripts pass `[filter:int] [maxRange:float]` to `GetReticleRange` and an optional
-  `[idleForm:form]` to `StopIdle` [hypothesis]. Adding those optional source-syntax entries
-  avoids `rest_of_parentheses_dropped` / `surplus_arguments` warnings without asserting a
-  native bytecode encoding. At runtime, `GetReticleRange` reads `maxRange` from `args[1]`
-  (leaving `args[0]`'s collision filter unfiltered on `Senses::reticle` [hypothesis]/[design]),
-  and `StopIdle` queues the same actor idle stop whether the optional `idleForm` is omitted
-  or supplied [design: per-idle filtering is unverified in the original game].

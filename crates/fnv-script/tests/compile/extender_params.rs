@@ -1,15 +1,13 @@
-//! Compiler regressions for extender parameter schemas and `actor_value` typing:
-//! `GetReticleRange [filter] [maxRange]`, `StopIdle [idleForm]`, and unnumbered
-//! `kind: "actor_value"` commands (`GetThresholdAV` / `GetThresholdedActorValue`, etc.).
+//! Compiler regressions for unnumbered extender `kind: "actor_value"` parameter typing
+//! (`GetThresholdAV` / `GetThresholdedActorValue`, `GetAVMod`, `GetAVDamage`, etc.).
 
-use fnv_script::compile::{compile, compile_mod_runtime, compile_runtime, Compiled, Env, FormInfo};
+use fnv_script::compile::{compile, Compiled, Env, FormInfo};
 use fnv_script::ir::XExpr;
 use fnv_script::{decode, FunctionTable, Stmt, VarDecl, VarType};
 use std::path::Path;
 
 const QUEST: u32 = 0x0100_1000;
 const GLOBAL: u32 = 0x0100_2000;
-const IDLE: u32 = 0x0100_4000;
 const NIGHT_EYE_MGEF: u32 = 0x0100_5000;
 
 struct TestEnv;
@@ -19,20 +17,19 @@ impl Env for TestEnv {
         let (form, sig) = match editor_id.to_ascii_lowercase().as_str() {
             "testquest" => (QUEST, *b"QUST"),
             "testglobal" => (GLOBAL, *b"GLOB"),
-            "testidle" => (IDLE, *b"IDLE"),
             "nighteye" => (NIGHT_EYE_MGEF, *b"MGEF"),
             _ => return None,
         };
         Some(FormInfo { form, sig })
     }
     fn info(&self, form: u32) -> Option<FormInfo> {
-        [("testquest", QUEST), ("testglobal", GLOBAL), ("testidle", IDLE), ("nighteye", NIGHT_EYE_MGEF)]
+        [("testquest", QUEST), ("testglobal", GLOBAL), ("nighteye", NIGHT_EYE_MGEF)]
             .iter()
             .find(|(_, f)| *f == form)
             .and_then(|(n, _)| self.form(n))
     }
     fn editor_id(&self, form: u32) -> Option<String> {
-        [("TestQuest", QUEST), ("TestGlobal", GLOBAL), ("TestIdle", IDLE), ("NightEye", NIGHT_EYE_MGEF)]
+        [("TestQuest", QUEST), ("TestGlobal", GLOBAL), ("NightEye", NIGHT_EYE_MGEF)]
             .iter()
             .find(|(_, f)| *f == form)
             .map(|(n, _)| n.to_string())
@@ -57,79 +54,6 @@ fn decoded_body(c: &Compiled, t: &FunctionTable) -> Vec<Stmt> {
     let p = decode(&c.bytes, t);
     assert!(p.report.issues.is_empty(), "decode issues: {:?}", p.report.issues);
     p.program.blocks[0].body.clone()
-}
-
-#[test]
-fn get_reticle_range_accepts_zero_one_and_two_optional_args_without_warnings() {
-    let t = table();
-    let src = "float a\nfloat b\nfloat c\nint hit\nBegin GameMode\n\
-               let a := GetReticleRange\n\
-               let b := GetReticleRange 19\n\
-               let c := GetReticleRange 19 300\n\
-               if eval (GetReticleRange 19 300) < 130\n\
-                 let hit := 1\n\
-               endif\n\
-               End\n";
-    for c in [compile(src, &t, &TestEnv, None), compile_mod_runtime(src, &t, &TestEnv)] {
-        assert_eq!(c.errors().count(), 0, "errors: {:?}", c.diags);
-        assert!(
-            !c.diags.iter().any(|d| matches!(d.kind, "rest_of_parentheses_dropped" | "surplus_arguments")),
-            "unexpected arg-drop warning: {:?}",
-            c.diags
-        );
-    }
-
-    let c = compile(src, &t, &TestEnv, None);
-    let body = decoded_body(&c, &t);
-    let rhs_args = |stmt: &Stmt| -> usize {
-        match stmt {
-            Stmt::Let { expr: XExpr::Assign { value, .. } } => match value.as_ref() {
-                XExpr::Call { call } => call.args.len(),
-                other => panic!("expected call, got {other:?}"),
-            },
-            other => panic!("expected let, got {other:?}"),
-        }
-    };
-    assert_eq!(rhs_args(&body[0]), 0, "0-arg GetReticleRange");
-    assert_eq!(rhs_args(&body[1]), 1, "1-arg GetReticleRange");
-    assert_eq!(rhs_args(&body[2]), 2, "2-arg GetReticleRange");
-
-    // In strict runtime compilation, arg 0 (`filter:int`) refuses a fractional literal
-    // while arg 1 (`maxRange:float`) accepts one.
-    let ok_rt = compile_runtime("Begin Function {}\nSetFunctionValue (GetReticleRange 19 300.5)\nEnd\n", &t, &TestEnv);
-    assert_eq!(ok_rt.errors().count(), 0, "float maxRange allowed: {:?}", ok_rt.diags);
-    let bad_rt = compile_runtime("Begin Function {}\nSetFunctionValue (GetReticleRange 19.5 300)\nEnd\n", &t, &TestEnv);
-    assert!(bad_rt.errors().any(|d| d.kind == "fraction_for_int_parameter"), "fractional filter refused: {:?}", bad_rt.diags);
-}
-
-#[test]
-fn stop_idle_accepts_zero_or_one_optional_idle_arg_without_warnings() {
-    let t = table();
-    let src = "ref rIdle\nBegin GameMode\n\
-               PlayerREF.StopIdle\n\
-               PlayerREF.StopIdle TestIdle\n\
-               PlayerREF.StopIdle rIdle\n\
-               PlayerREF.StopIdle (PlayerREF.AuxVarGetRef \"*idle\")\n\
-               End\n";
-    for c in [compile(src, &t, &TestEnv, None), compile_mod_runtime(src, &t, &TestEnv)] {
-        assert_eq!(c.errors().count(), 0, "errors: {:?}", c.diags);
-        assert!(
-            !c.diags.iter().any(|d| matches!(d.kind, "surplus_arguments" | "rest_of_parentheses_dropped")),
-            "unexpected arg-drop warning: {:?}",
-            c.diags
-        );
-    }
-
-    let c = compile(src, &t, &TestEnv, None);
-    let body = decoded_body(&c, &t);
-    let arg_counts: Vec<usize> = body
-        .iter()
-        .map(|s| match s {
-            Stmt::Eval { expr: XExpr::Call { call } } => call.args.len(),
-            other => panic!("expected eval call, got {other:?}"),
-        })
-        .collect();
-    assert_eq!(arg_counts, [0, 1, 1, 1]);
 }
 
 #[test]
