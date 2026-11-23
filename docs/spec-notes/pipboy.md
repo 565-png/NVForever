@@ -2297,3 +2297,27 @@ still need runtime checks after this review revision.
 - [hypothesis] Original-game clipping of nested grandchildren inside a `<clips>` list
   row and full installed-profile visual verification remain unqualified without an
   original-game capture.
+
+### Restructured container & `<hotrect>` scrollbar fallbacks (`InventoryMenu`, `MapMenu`)
+
+- [design] `InventoryMenu` and `MapMenu` resolve required and written tiles by exact
+  vanilla path first (`Ui::find_tile`) so unmodded menu files behave identically, and
+  fall back segment-by-segment to direct child or live descendant search under each
+  enclosing container (`tiles::stats_menu::resolve_tile`) when a UI overhaul wraps a
+  tile (such as `IM_ItemIcon`, `IM_ModButton`, or `MM_QuestObjectivesList`) inside an
+  extra container `<rect>`. Scoping each segment to the previously resolved container
+  keeps generic child names (`button_text`, `CI_TitleText`, scrollbar pieces) from
+  matching sibling subtrees, and still rejects menus where a required tile is absent.
+- [design] `InventoryMenu::built` checks `IM_InventoryListTemplate`'s
+  `IM_Template_ItemMarker` as `<image>` first (vanilla), falling back to `<rect>` when
+  a modded row template implements the equipped marker as a composite `<rect>` container
+  (the adapter only writes `visible` on `IM_Template_ItemMarker`).
+- [design] `tiles::layout::tile_box` evaluates a single live tile's laid-out rectangle,
+  inherited clip window, and ancestor-propagated visibility using the same ancestor walk
+  as `tiles::layout::layout`, including `<hotrect>` containers that `layout` does not
+  emit as drawable pieces. `MapMenu::pane_window`, `MapMenu`'s scrolling text-scrollbar
+  marker visibility check, and `tiles::list::marker_grab_on` read `tile_box` so modded
+  `list_box.xml` / `scrollbar_vert.xml` layouts that declare `lb_scrollbar` or
+  `scrollbar_vert_marker` as `<hotrect>` containers stay on the tile tree without
+  falling back to hand-drawn pages.
+
