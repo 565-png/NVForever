@@ -8,17 +8,22 @@
 //! typed `nvf.save.body/1` body, and a truthful [`ConversionReport`] accounting for every
 //! converted and skipped/unsupported `.fos` section.
 
+use crate::actor_values::{CARRY_WEIGHT, HEALTH, LIMB_CONDITIONS, SPECIALS};
+use crate::aid::{grows as av_grows, RAD_LEVEL};
+use crate::chargen::Look;
 use crate::game::{Game, GameConfig, GameSnapshot, InstKey};
 use crate::GameData;
 use fnv_save::fos::{
-    Fos, FosItem, FosItemEntry, VarValue, FORM_DELETED, FORM_DISABLED, FORM_TALKED_TO_PC,
-    PLAYER_BASE, PLAYER_REF, TYPE_ACHR, TYPE_ACRE, TYPE_CHAL, TYPE_CLAS, TYPE_FACT, TYPE_FLST,
-    TYPE_INFO, TYPE_LVLI, TYPE_NOTE, TYPE_NPC, TYPE_QUST, TYPE_REFR, TYPE_REPU,
+    Fos, FosItem, FosItemEntry, FosScriptVars, VarValue, FORM_DEAD, FORM_DELETED, FORM_DISABLED,
+    FORM_TALKED_TO_PC, PLAYER_BASE, PLAYER_REF, TYPE_ACHR, TYPE_ACRE, TYPE_CELL, TYPE_CHAL,
+    TYPE_CLAS, TYPE_ECZN, TYPE_FACT, TYPE_FLST, TYPE_INFO, TYPE_LVLI, TYPE_NOTE, TYPE_NPC,
+    TYPE_QUST, TYPE_REFR, TYPE_REPU,
 };
 use fnv_save::{EngineSnapshot, Place, PluginEntry, PluginRemap, SaveBody, SaveHeader, SaveKind};
 use fnv_script::vm::Value;
-use fnv_sim::forms::{ItemKind, LeveledEntry};
+use fnv_sim::forms::{ItemKind, LeveledEntry, SPECIAL};
 use fnv_sim::inventory::{Extra, Pick};
+use fnv_sim::world::LockState;
 use fnv_sim::{FormId, FormStore, RefTable, SimConfig, World};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -220,8 +225,23 @@ pub fn inspect_fos(fos: &Fos, cosave_present: bool) -> FosInspectReport {
     count_res("reputations", rp_ok, rp_err);
     let (ch_ok, ch_err) = partition_results(fos.challenges());
     count_res("challenges", ch_ok, ch_err);
+    let (ez_ok, ez_err) = partition_results(fos.encounter_zones());
+    count_res("encounter_zones", ez_ok, ez_err);
+    let (cl_ok, cl_err) = partition_results(fos.cells());
+    count_res("cells", cl_ok, cl_err);
+    decoded_counts.insert("ref_extras".into(), fos.ref_extras().len());
+    decoded_counts.insert("actor_changes".into(), fos.actor_changes().len());
     decoded_counts.insert("notes".into(), fos.notes().len());
     decoded_counts.insert("said_infos".into(), fos.said_infos().len());
+    match fos.radio_state() {
+        Ok(Some(r)) => {
+            decoded_counts.insert("radio_on".into(), usize::from(r.on));
+        }
+        Ok(None) => {}
+        Err(_) => {
+            *parse_errors.entry("radio".into()).or_default() += 1;
+        }
+    }
 
     let weather_current = match fos.weather() {
         Ok(Some(w)) => w.current.map(|id| format!("0x{id:08X}")),
@@ -235,13 +255,21 @@ pub fn inspect_fos(fos: &Fos, cosave_present: bool) -> FosInspectReport {
 
     let (player_has_place, player_has_special, player_tag_skill_count, player_av_parsed, player_inventory_items) =
         match fos.player() {
-            Ok(p) => (
-                p.place.is_some(),
-                p.special.is_some(),
-                p.tag_skills.len(),
-                p.av_parsed,
-                p.inventory.as_ref().map(Vec::len),
-            ),
+            Ok(p) => {
+                decoded_counts.insert("player_skill_points".into(), p.skill_points.len());
+                decoded_counts.insert("player_perks".into(), p.perks.len());
+                decoded_counts.insert("player_teammate_perks".into(), p.teammate_perks.len());
+                decoded_counts.insert("player_teammates".into(), p.teammates.len());
+                decoded_counts.insert("player_factions".into(), p.factions.len());
+                decoded_counts.insert("player_spells".into(), p.spells.len());
+                (
+                    p.place.is_some(),
+                    p.special.is_some(),
+                    p.tag_skills.len(),
+                    p.av_parsed,
+                    p.inventory.as_ref().map(Vec::len),
+                )
+            }
             Err(_) => {
                 *parse_errors.entry("player".into()).or_default() += 1;
                 (false, false, 0, false, None)
@@ -428,9 +456,33 @@ pub fn convert_fos(
         Err(_) => inc_skip("global_table", "type 8 (weather) malformed"),
     }
 
+    // 3b. Global table 1 type 10: Pip-Boy radio playback state ([hypothesis]).
+    let mut radio_decoded = false;
+    match fos.radio_state() {
+        Ok(Some(radio)) => {
+            radio_decoded = true;
+            g.radio.pipboy.on = radio.on;
+            inc_ok("radio_state");
+            inc_hyp("radio_state (global type 10) [hypothesis]");
+            if let Some(raw_st) = radio.station {
+                match map_id(raw_st) {
+                    Ok(sid) if refs.get(sid).is_some() => {
+                        g.radio.pipboy.station = Some(sid);
+                        inc_ok("radio_station");
+                        inc_hyp("radio_station (global type 10) [hypothesis]");
+                    }
+                    Ok(_) => inc_skip("radio_station", "not a placed reference of load order"),
+                    Err(why) => inc_skip("radio_station", why),
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(_) => inc_skip("global_table", "type 10 (radio) malformed"),
+    }
+
     // Count unmapped global data table entries truthfully.
     for &(ty, _) in &fos.globals_data {
-        if !matches!(ty, 0 | 1 | 2 | 3 | 8 | 1000) {
+        if !matches!(ty, 0 | 1 | 2 | 3 | 8 | 1000) && !(ty == 10 && radio_decoded) {
             inc_skip("global_table", &format!("type {ty} layout unmapped"));
         }
     }
@@ -555,12 +607,68 @@ pub fn convert_fos(
     let mut header_place = Place::default();
     match fos.player() {
         Ok(p) => {
+            if let Some(female) = p.female {
+                g.player.female = Some(female);
+                inc_ok("player_sex");
+                inc_hyp("player_sex (NPC_ bit 1) [hypothesis]");
+            }
+            for raw_sp in &p.spells {
+                match raw_sp.ok_or("not in save form ID array").and_then(&map_id) {
+                    Ok(sid) if data.sig(sid).as_ref() == Some(b"SPEL") => {
+                        let list = &mut g.extra.entry(FormId::PLAYER_REF).or_default().spells;
+                        if !list.contains(&sid) {
+                            list.push(sid);
+                        }
+                        inc_ok("player_spells");
+                        inc_hyp("player_spells (NPC_ bit 4) [hypothesis]");
+                    }
+                    Ok(_) => inc_skip("player_spell", "not a SPEL record"),
+                    Err(why) => inc_skip("player_spell", why),
+                }
+            }
             if let Some(special) = p.special {
                 for (i, &val) in special.iter().enumerate() {
                     let code = AV_STRENGTH + i as u16;
                     g.extra.entry(FormId::PLAYER_REF).or_default().actor_values.insert(code, f64::from(val));
+                    let _ = g.world.set_actor_value(FormId::PLAYER_REF, SPECIAL[i], f32::from(val));
                     inc_ok("player_special");
                     inc_hyp("player_special (NPC_ bit 2) [hypothesis]");
+                }
+            }
+            if let Some(ref app) = p.appearance {
+                let morphs_finite = app.fggs.iter().all(|v| v.is_finite())
+                    && app.fgga.iter().all(|v| v.is_finite())
+                    && app.fgts.iter().all(|v| v.is_finite())
+                    && app.hair_length.is_finite();
+                if !morphs_finite {
+                    inc_skip("player_appearance", "non-finite FaceGen morph");
+                } else if let Some(race) = data
+                    .actors
+                    .get(&FormId(PLAYER_BASE))
+                    .and_then(|a| a.race)
+                    .or_else(|| (data.sig(FormId(0x19)).as_ref() == Some(b"RACE")).then_some(FormId(0x19)))
+                {
+                    let hair = app.hair.and_then(|id| map_id(id).ok()).filter(|&id| data.sig(id).as_ref() == Some(b"HAIR"));
+                    let eyes = app.eyes.and_then(|id| map_id(id).ok()).filter(|&id| data.sig(id).as_ref() == Some(b"EYES"));
+                    let head_parts = app
+                        .head_parts
+                        .iter()
+                        .filter_map(|opt| (*opt).and_then(|id| map_id(id).ok()))
+                        .filter(|&id| data.sig(id).as_ref() == Some(b"HDPT"))
+                        .collect();
+                    g.player.look = Some(Look {
+                        race,
+                        female: p.female.unwrap_or(false),
+                        hair,
+                        hair_color: Some(app.hair_color),
+                        eyes,
+                        head_parts,
+                        fggs: app.fggs.clone(),
+                        fgga: app.fgga.clone(),
+                        fgts: app.fgts.clone(),
+                    });
+                    inc_ok("player_appearance");
+                    inc_hyp("player_appearance (NPC_ bit 11) [hypothesis]");
                 }
             }
             if !p.tag_skills.is_empty() {
@@ -580,14 +688,14 @@ pub fn convert_fos(
                 inc_skip("player_av_modifier", "active-effect modifier (re-applied by worn gear)");
             }
             if p.av_parsed {
+                let mut sync_carry_needed = false;
                 for &(code, val) in &p.av_base {
                     if !val.is_finite() {
-                        if matches!(code as u16, AV_XP | AV_KARMA) {
-                            inc_skip("player_av", "non-finite value");
-                        }
+                        inc_skip("player_av", "non-finite value");
                         continue;
                     }
-                    match code as u16 {
+                    let code_u16 = code as u16;
+                    match code_u16 {
                         AV_XP if val >= 0.0 => {
                             g.player.xp = f64::from(val);
                             inc_ok("player_xp");
@@ -602,12 +710,159 @@ pub fn convert_fos(
                             inc_ok("player_karma");
                             inc_hyp("player_karma (AV2 code 23) [hypothesis]");
                         }
+                        c if c < 77 => {
+                            g.extra
+                                .entry(FormId::PLAYER_REF)
+                                .or_default()
+                                .av_permanent
+                                .insert(c, f64::from(val));
+                            if SPECIALS.contains(&c) {
+                                let i = (c - AV_STRENGTH) as usize;
+                                let base_sp = p.special.map_or(5.0, |s| f32::from(s[i]));
+                                let _ = g.world.set_actor_value(FormId::PLAYER_REF, SPECIAL[i], base_sp + val);
+                                sync_carry_needed = true;
+                            } else if c == CARRY_WEIGHT {
+                                sync_carry_needed = true;
+                            }
+                            inc_ok("player_av_permanent");
+                            inc_hyp("player_av_permanent (AV2 permanent modifiers) [hypothesis]");
+                        }
                         _ => {}
+                    }
+                }
+                if sync_carry_needed {
+                    crate::functions::actor::sync_carry(&mut g, FormId::PLAYER_REF, CARRY_WEIGHT);
+                }
+                // AV3: current damage deltas (negative for AP/limbs/etc.) and growing rads/needs (positive).
+                for &(code, val) in &p.av_damage {
+                    if !val.is_finite() {
+                        inc_skip("player_av_damage", "non-finite value");
+                        continue;
+                    }
+                    let code_u16 = code as u16;
+                    if av_grows(code_u16) {
+                        if val > 0.0 {
+                            g.extra
+                                .entry(FormId::PLAYER_REF)
+                                .or_default()
+                                .actor_values
+                                .insert(code_u16, f64::from(val));
+                            if code_u16 == RAD_LEVEL {
+                                inc_ok("player_rads");
+                                inc_hyp("player_rads (AV3 code 54) [hypothesis]");
+                            } else {
+                                inc_ok("player_hardcore_needs");
+                                inc_hyp("player_hardcore_needs (AV3 codes 73-75) [hypothesis]");
+                            }
+                        }
+                    } else if val < 0.0 {
+                        g.extra
+                            .entry(FormId::PLAYER_REF)
+                            .or_default()
+                            .av_damage
+                            .insert(code_u16, f64::from(-val));
+                        if LIMB_CONDITIONS.contains(&code_u16) {
+                            inc_ok("player_limb_damage");
+                            inc_hyp("player_limb_damage (AV3 codes 25-31) [hypothesis]");
+                        } else {
+                            inc_ok("player_av_damage");
+                            inc_hyp("player_av_damage (AV3 damage deltas) [hypothesis]");
+                        }
+                    }
+                }
+                // AV entry 231: player Health damage delta (negative when injured).
+                if let Some(hd) = p.health_damage {
+                    if !hd.is_finite() {
+                        inc_skip("player_health_damage", "non-finite value");
+                    } else if hd < 0.0 {
+                        g.extra
+                            .entry(FormId::PLAYER_REF)
+                            .or_default()
+                            .av_damage
+                            .insert(HEALTH, f64::from(-hd));
+                        inc_ok("player_health_damage");
+                        inc_hyp("player_health_damage (AV entry 231) [hypothesis]");
                     }
                 }
             } else if fos.changed.iter().any(|c| c.form == PLAYER_REF && c.kind == TYPE_ACHR) {
                 inc_skip("player_av_array", "player record layout after place not recognized");
                 warnings.push("player AV/inventory block had an unmapped change-flag layout and was skipped".into());
+            }
+
+            if let Some(sc) = p.scale {
+                if sc.is_finite() && sc > 0.0 && (sc - 1.0).abs() > 1e-5 {
+                    if let Ok(st) = g.world.get(FormId::PLAYER_REF) {
+                        st.scale = Some(sc);
+                        inc_ok("player_scale");
+                        inc_hyp("player_scale (post-AV float) [hypothesis]");
+                    }
+                }
+            }
+
+            for &(raw_fac, rank) in &p.factions {
+                match raw_fac.ok_or("not in save form ID array").and_then(&map_id) {
+                    Ok(fid) if data.sig(fid).as_ref() == Some(b"FACT") => {
+                        g.extra.entry(FormId::PLAYER_REF).or_default().factions.insert(fid, rank);
+                        inc_ok("player_factions");
+                        inc_hyp("player_factions (actor extra 0x5E) [hypothesis]");
+                    }
+                    Ok(_) => inc_skip("player_faction", "not a FACT record"),
+                    Err(why) => inc_skip("player_faction", why),
+                }
+            }
+
+            for &raw_tm in &p.teammates {
+                match raw_tm.ok_or("not in save form ID array").and_then(&map_id) {
+                    Ok(tid) if refs.get(tid).is_some() => {
+                        g.extra.entry(tid).or_default().teammate = true;
+                        inc_ok("player_teammates");
+                        inc_hyp("player_teammates (actor extra 0x1D) [hypothesis]");
+                    }
+                    Ok(_) => inc_skip("player_teammate", "not a placed reference of load order"),
+                    Err(why) => inc_skip("player_teammate", why),
+                }
+            }
+
+            for &(code, pts) in &p.skill_points {
+                if !pts.is_finite() {
+                    inc_skip("player_skill_points", "non-finite value");
+                    continue;
+                }
+                if pts >= 0.0 {
+                    g.player.skill_points.insert(u16::from(code), f64::from(pts));
+                    inc_ok("player_skill_points");
+                    inc_hyp("player_skill_points (ACHR bit 22) [hypothesis]");
+                }
+            }
+
+            for &(raw_perk, rank) in &p.perks {
+                if rank == 0 {
+                    continue;
+                }
+                match raw_perk.ok_or("not in save form ID array").and_then(&map_id) {
+                    Ok(pid) if data.perks.contains_key(&pid) || data.sig(pid).as_ref() == Some(b"PERK") => {
+                        g.player.perks.insert(pid, rank);
+                        inc_ok("player_perks");
+                        inc_hyp("player_perks (ACHR tail) [hypothesis]");
+                    }
+                    Ok(_) => inc_skip("player_perk", "not a PERK record"),
+                    Err(why) => inc_skip("player_perk", why),
+                }
+            }
+
+            for &(raw_perk, rank) in &p.teammate_perks {
+                if rank == 0 {
+                    continue;
+                }
+                match raw_perk.ok_or("not in save form ID array").and_then(&map_id) {
+                    Ok(pid) if data.perks.contains_key(&pid) || data.sig(pid).as_ref() == Some(b"PERK") => {
+                        g.player.teammate_perks.insert(pid);
+                        inc_ok("player_teammate_perks");
+                        inc_hyp("player_teammate_perks (ACHR tail) [hypothesis]");
+                    }
+                    Ok(_) => inc_skip("player_teammate_perk", "not a PERK record"),
+                    Err(why) => inc_skip("player_teammate_perk", why),
+                }
             }
 
             match &p.inventory {
@@ -686,8 +941,15 @@ pub fn convert_fos(
         if let Some(flags) = r.form_flags {
             let _ = g.world.set_enabled(rid, flags & FORM_DISABLED == 0);
             let _ = g.world.set_deleted(rid, flags & FORM_DELETED != 0);
-            if r.kind != TYPE_REFR && (flags & FORM_TALKED_TO_PC != 0) {
-                g.extra.entry(rid).or_default().talked_to_pc = true;
+            if r.kind != TYPE_REFR {
+                if flags & FORM_TALKED_TO_PC != 0 {
+                    g.extra.entry(rid).or_default().talked_to_pc = true;
+                }
+                if flags & FORM_DEAD != 0 {
+                    g.extra.entry(rid).or_default().dead = true;
+                    inc_ok("actor_dead");
+                    inc_hyp("actor_dead (ACHR/ACRE form flag 0x10000) [hypothesis]");
+                }
             }
             inc_ok("references");
             inc_hyp("reference_form_flags (REFR/ACHR/ACRE bit 0) [hypothesis]");
@@ -716,6 +978,7 @@ pub fn convert_fos(
     }
 
     // 7b. Container REFR inventories (bits 5/27, optional bit 28 tail; [hypothesis]).
+    let mut handled_containers: BTreeSet<u32> = BTreeSet::new();
     for cres in fos.container_inventories() {
         let Ok(cont) = cres else {
             inc_skip("container", "inventory layout not understood");
@@ -744,8 +1007,195 @@ pub fn convert_fos(
         );
         let is_cont = refs.get(rid).is_some_and(|r| forms.sig(r.base).as_ref() == Some(b"CONT"));
         if applied || (is_cont && cont.items.iter().all(|it| it.count == 0)) {
+            handled_containers.insert(cont.form);
             inc_ok("containers");
             inc_hyp("container_inventories (REFR bits 5/27) [hypothesis]");
+        }
+    }
+
+    // 7b2. Non-player actor state (flags/dead, scale, script vars 0x0D, factions 0x5E, inventory/worn gear; [hypothesis]).
+    let mut handled_actors: BTreeSet<u32> = BTreeSet::new();
+    for ac in fos.actor_changes() {
+        let rid = match map_id(ac.form) {
+            Ok(id) if refs.get(id).is_some() => id,
+            Ok(_) => continue,
+            Err(_) => continue,
+        };
+        let mut applied_any = false;
+        if let Some(sc) = ac.scale {
+            if !sc.is_finite() {
+                inc_skip("actor_scale", "non-finite value");
+            } else if sc > 0.0 && (sc - 1.0).abs() > 1e-5 {
+                if let Ok(st) = g.world.get(rid) {
+                    st.scale = Some(sc);
+                    inc_ok("actor_scales");
+                    inc_hyp("actor_scales (ACHR/ACRE bit 4) [hypothesis]");
+                    applied_any = true;
+                }
+            }
+        }
+        for &(raw_fac, rank) in &ac.factions {
+            match raw_fac.ok_or("not in save form ID array").and_then(&map_id) {
+                Ok(fid) if data.sig(fid).as_ref() == Some(b"FACT") => {
+                    g.extra.entry(rid).or_default().factions.insert(fid, rank);
+                    inc_ok("actor_factions");
+                    inc_hyp("actor_factions (actor extra 0x5E) [hypothesis]");
+                    applied_any = true;
+                }
+                Ok(_) => inc_skip("actor_faction", "not a FACT record"),
+                Err(why) => inc_skip("actor_faction", why),
+            }
+        }
+        if let Some(ref sv) = ac.script_vars {
+            if apply_ref_script_vars(
+                &mut g,
+                data,
+                refs,
+                rid,
+                sv,
+                &map_id,
+                "actor_script_vars",
+                "actor_script_vars (actor extra 0x0D) [hypothesis]",
+                "actor_script_var",
+                &mut inc_ok,
+                &mut inc_hyp,
+                &mut inc_skip,
+            ) {
+                applied_any = true;
+            }
+        }
+        if let Some(ref items) = ac.inventory {
+            if apply_actor_inventory(
+                &mut g,
+                forms,
+                rid,
+                items,
+                &map_id,
+                &mut inc_ok,
+                &mut inc_hyp,
+                &mut inc_skip,
+            ) {
+                inc_ok("actor_inventories");
+                inc_hyp("actor_inventories (ACHR/ACRE bits 5/27) [hypothesis]");
+                applied_any = true;
+            }
+        }
+        if applied_any {
+            handled_actors.insert(ac.form);
+        }
+    }
+
+    // 7b3. Placed REFR extras: locks (0x2A), door open state (bit 23/28), owners (0x21),
+    // script variables (0x0D), and locked-container inventories (bit 12 + bits 5/27) ([hypothesis]).
+    let mut handled_ref_extras: BTreeSet<u32> = BTreeSet::new();
+    for re in fos.ref_extras() {
+        let rid = match map_id(re.form) {
+            Ok(id) if refs.get(id).is_some() => id,
+            Ok(_) => continue,
+            Err(_) => continue,
+        };
+        let mut applied_any = false;
+        let base_sig = refs.get(rid).and_then(|r| forms.sig(r.base));
+        if let Some(sc) = re.scale {
+            if !sc.is_finite() {
+                inc_skip("ref_scale", "non-finite value");
+            } else if sc > 0.0 && (sc - 1.0).abs() > 1e-5 {
+                if let Ok(st) = g.world.get(rid) {
+                    st.scale = Some(sc);
+                    inc_ok("ref_scales");
+                    inc_hyp("ref_scales (REFR bit 4) [hypothesis]");
+                    applied_any = true;
+                }
+            }
+        }
+        if let Some(lk) = re.lock {
+            if matches!(base_sig.as_ref(), Some(b"DOOR" | b"CONT")) {
+                let mapped_key = match lk.key {
+                    Some(raw_k) => match map_id(raw_k) {
+                        Ok(kid) if forms.item(kid).is_some() => Some(kid),
+                        Ok(_) => {
+                            inc_skip("lock_key", "not an inventory item");
+                            None
+                        }
+                        Err(why) => {
+                            inc_skip("lock_key", why);
+                            None
+                        }
+                    },
+                    None => None,
+                };
+                if let Ok(st) = g.world.get(rid) {
+                    st.lock = Some(LockState { level: lk.level, key: mapped_key, locked: lk.is_locked() });
+                    inc_ok("locks");
+                    inc_hyp("locks (REFR extra 0x2A) [hypothesis]");
+                    applied_any = true;
+                }
+            }
+        }
+        if let Some(open) = re.door_open {
+            if base_sig.as_ref() == Some(b"DOOR") {
+                if let Ok(st) = g.world.get(rid) {
+                    st.open = open;
+                    inc_ok("doors_open_state");
+                    inc_hyp("doors_open_state (REFR bit 23/28) [hypothesis]");
+                    applied_any = true;
+                }
+            }
+        }
+        if let Some(raw_owner) = re.owner {
+            match raw_owner.ok_or("not in save form ID array").and_then(&map_id) {
+                Ok(oid) if matches!(data.sig(oid).as_ref(), Some(b"NPC_" | b"FACT")) => {
+                    if let Ok(st) = g.world.get(rid) {
+                        st.extra.owner = Some(oid);
+                        inc_ok("ref_owners");
+                        inc_hyp("ref_owners (REFR extra 0x21) [hypothesis]");
+                        applied_any = true;
+                    }
+                }
+                Ok(_) => inc_skip("ref_owner", "not an NPC_ or FACT record"),
+                Err(why) => inc_skip("ref_owner", why),
+            }
+        }
+        if let Some(ref sv) = re.script_vars {
+            if apply_ref_script_vars(
+                &mut g,
+                data,
+                refs,
+                rid,
+                sv,
+                &map_id,
+                "ref_script_vars",
+                "ref_script_vars (REFR extra 0x0D) [hypothesis]",
+                "ref_script_var",
+                &mut inc_ok,
+                &mut inc_hyp,
+                &mut inc_skip,
+            ) {
+                applied_any = true;
+            }
+        }
+        if let Some(ref items) = re.inventory {
+            if !handled_containers.contains(&re.form) {
+                let inv_ok = apply_container_inventory(
+                    &mut g,
+                    forms,
+                    rid,
+                    items,
+                    &map_id,
+                    &mut inc_ok,
+                    &mut inc_hyp,
+                    &mut inc_skip,
+                );
+                if inv_ok || (base_sig.as_ref() == Some(b"CONT") && items.iter().all(|it| it.count == 0)) {
+                    handled_containers.insert(re.form);
+                    inc_ok("containers");
+                    inc_hyp("container_inventories (REFR bits 5/27) [hypothesis]");
+                    applied_any = true;
+                }
+            }
+        }
+        if applied_any {
+            handled_ref_extras.insert(re.form);
         }
     }
 
@@ -1012,6 +1462,81 @@ pub fn convert_fos(
         }
     }
 
+    // 14b. Encounter zones (ECZN bit 31: locked zone level; [hypothesis]).
+    for ezres in fos.encounter_zones() {
+        let Ok(ez) = ezres else {
+            inc_skip("encounter_zone", "record not understood");
+            continue;
+        };
+        let zid = match map_id(ez.form) {
+            Ok(id) if forms.zones.contains_key(&id) || data.sig(id).as_ref() == Some(b"ECZN") => id,
+            Ok(_) => {
+                inc_skip("encounter_zone", "no ECZN record");
+                continue;
+            }
+            Err(why) => {
+                inc_skip("encounter_zone", why);
+                continue;
+            }
+        };
+        if let Some(level) = u16::try_from(ez.level).ok().filter(|&l| l >= 1) {
+            g.world.set_zone_level(zid, level);
+            inc_ok("encounter_zones");
+            inc_hyp("encounter_zones (ECZN bit 31) [hypothesis]");
+        } else {
+            inc_skip("encounter_zone", "zone level out of range");
+        }
+    }
+
+    // 14c. Cells (CELL bits 3/30/31: visited cells, detach timestamps, cell owners; [hypothesis]).
+    let mut handled_cells: BTreeSet<u32> = BTreeSet::new();
+    for cres in fos.cells() {
+        let Ok(cell) = cres else {
+            inc_skip("cell", "record not understood");
+            continue;
+        };
+        let cid = match map_id(cell.form) {
+            Ok(id) if data.sig(id).as_ref() == Some(b"CELL") => id,
+            Ok(_) => {
+                inc_skip("cell", "no CELL record");
+                continue;
+            }
+            Err(why) => {
+                inc_skip("cell", why);
+                continue;
+            }
+        };
+        let mut applied_any = false;
+        if cell.detach_hours.is_some() || cell.has_fog {
+            g.forms.visited_cells.insert(cid);
+            inc_ok("visited_cells");
+            inc_hyp("visited_cells (CELL bits 30/31) [hypothesis]");
+            applied_any = true;
+        }
+        if let Some(hours) = cell.detach_hours {
+            let days = (hours as f32) / 24.0;
+            g.world.set_cell_detached_at(cid, days);
+            inc_ok("detached_cells");
+            inc_hyp("detached_cells (CELL bit 30) [hypothesis]");
+            applied_any = true;
+        }
+        if let Some(raw_owner) = cell.owner {
+            match raw_owner.ok_or("not in save form ID array").and_then(&map_id) {
+                Ok(oid) if matches!(data.sig(oid).as_ref(), Some(b"NPC_" | b"FACT")) => {
+                    g.forms.cell_owners.insert(cid, oid);
+                    inc_ok("cell_owners");
+                    inc_hyp("cell_owners (CELL bit 3) [hypothesis]");
+                    applied_any = true;
+                }
+                Ok(_) => inc_skip("cell_owner", "not an NPC_ or FACT record"),
+                Err(why) => inc_skip("cell_owner", why),
+            }
+        }
+        if applied_any {
+            handled_cells.insert(cell.form);
+        }
+    }
+
     // 15. Truthfully account for all remaining unmapped/unsupported changed-form records.
     for cf in &fos.changed {
         if cf.form >> 24 == 0xFF {
@@ -1024,18 +1549,20 @@ pub fn convert_fos(
         let handled = match cf.kind {
             TYPE_QUST => true,
             TYPE_FACT => cf.flags & (1 << 2) != 0,
-            TYPE_FLST | TYPE_LVLI => cf.flags & (1 << 31) != 0,
+            TYPE_FLST | TYPE_LVLI | TYPE_ECZN => cf.flags & (1 << 31) != 0,
             TYPE_INFO | TYPE_NOTE => cf.flags & (1 << 31) != 0 && cf.data.is_empty(),
             TYPE_REPU | TYPE_CHAL => cf.flags & (1 << 1) != 0,
-            TYPE_NPC => cf.form == PLAYER_BASE && (cf.flags & (1 << 2) != 0),
+            TYPE_CELL => handled_cells.contains(&cf.form),
+            TYPE_NPC => cf.form == PLAYER_BASE && (cf.flags & ((1 << 1) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 11)) != 0),
             TYPE_CLAS => cf.form == fnv_save::fos::PLAYER_CLASS && (cf.flags & (1 << 1) != 0),
             TYPE_REFR => {
                 (cf.flags & 0b111 != 0)
                     || ((cf.flags & ((1 << 5) | (1 << 27))) != 0
                         && (cf.flags & !((1 << 5) | (1 << 27) | (1 << 28))) == 0)
                     || handled_map_markers.contains(&cf.form)
+                    || handled_ref_extras.contains(&cf.form)
             }
-            TYPE_ACHR | TYPE_ACRE => cf.form == PLAYER_REF || (cf.flags & 0b111 != 0),
+            TYPE_ACHR | TYPE_ACRE => cf.form == PLAYER_REF || (cf.flags & 0b111 != 0) || handled_actors.contains(&cf.form),
             _ => false,
         };
         if !handled {
@@ -1420,4 +1947,210 @@ fn build_header_place(
         heading_deg: rot[2].to_degrees(),
         pitch_deg: rot[0].to_degrees(),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_ref_script_vars(
+    g: &mut Game<'_>,
+    data: &GameData,
+    refs: &RefTable,
+    rid: FormId,
+    sv: &FosScriptVars,
+    map_id: &impl Fn(u32) -> Result<FormId, &'static str>,
+    ok_key: &str,
+    hyp_key: &str,
+    skip_key: &str,
+    inc_ok: &mut impl FnMut(&str),
+    inc_hyp: &mut impl FnMut(&str),
+    inc_skip: &mut impl FnMut(&str, &str),
+) -> bool {
+    let script_id = sv
+        .script
+        .and_then(|raw| map_id(raw).ok())
+        .filter(|&sid| data.script(sid).is_some())
+        .or_else(|| refs.get(rid).and_then(|r| data.script_of_base(r.base)).filter(|&sid| data.script(sid).is_some()));
+    let Some(sid) = script_id else {
+        if !sv.vars.is_empty() {
+            inc_skip(skip_key, "reference has no script in load order");
+        }
+        return false;
+    };
+    let mut applied_any = false;
+    for (idx, val) in &sv.vars {
+        let var_idx = u16::try_from(*idx).ok();
+        let declared = var_idx.and_then(|i| data.script(sid)?.var_name(i)).is_some();
+        if !declared {
+            inc_skip(skip_key, "not declared in script");
+            continue;
+        }
+        let i = var_idx.expect("checked");
+        match val {
+            VarValue::Num(x) => {
+                if x.is_finite() {
+                    g.store(InstKey::Ref { reference: rid }, Some(sid), i, Value::Num(*x), "fos_convert", false);
+                    inc_ok(ok_key);
+                    inc_hyp(hyp_key);
+                    applied_any = true;
+                } else {
+                    inc_skip(skip_key, "non-finite value");
+                }
+            }
+            VarValue::Ref(None) => {
+                g.store(InstKey::Ref { reference: rid }, Some(sid), i, Value::Ref(0), "fos_convert", false);
+                inc_ok(ok_key);
+                inc_hyp(hyp_key);
+                applied_any = true;
+            }
+            VarValue::Ref(Some(raw_r)) => match map_id(*raw_r) {
+                Ok(r) => {
+                    g.store(InstKey::Ref { reference: rid }, Some(sid), i, Value::Ref(r.0), "fos_convert", false);
+                    inc_ok(ok_key);
+                    inc_hyp(hyp_key);
+                    applied_any = true;
+                }
+                Err(why) => inc_skip(skip_key, why),
+            },
+            VarValue::Unresolved => inc_skip(skip_key, "not in save form ID array"),
+        }
+    }
+    applied_any
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_actor_inventory(
+    g: &mut Game<'_>,
+    forms: &FormStore,
+    holder: FormId,
+    items: &[FosItem],
+    map_id: &impl Fn(u32) -> Result<FormId, &'static str>,
+    inc_ok: &mut impl FnMut(&str),
+    inc_hyp: &mut impl FnMut(&str),
+    inc_skip: &mut impl FnMut(&str, &str),
+) -> bool {
+    let mut applied_any = false;
+    for it in items.iter().filter(|it| it.count != 0) {
+        match it.item.ok_or("not in save form ID array").and_then(map_id) {
+            Ok(id) => {
+                if it.count > 0 {
+                    let mut remaining = it.count;
+                    let mut added_any = false;
+                    let mut failed = false;
+                    let ordered_entries: Vec<&FosItemEntry> = it
+                        .entries
+                        .iter()
+                        .filter(|e| e.worn)
+                        .chain(it.entries.iter().filter(|e| !e.worn))
+                        .collect();
+                    for entry in ordered_entries {
+                        if remaining <= 0 {
+                            break;
+                        }
+                        let stack_n = entry.count.map(i32::from).filter(|&n| n > 0).unwrap_or(1).min(remaining);
+                        if entry.condition.is_some_and(|hp| !hp.is_finite()) {
+                            inc_skip("actor_item_condition", "non-finite value");
+                        }
+                        let cond = normalize_item_condition(forms, id, entry.condition);
+                        let owner = match entry.owner {
+                            Some(Some(raw)) => match map_id(raw) {
+                                Ok(oid) => Some(oid),
+                                Err(why) => {
+                                    inc_skip("actor_item_owner", why);
+                                    None
+                                }
+                            },
+                            Some(None) => {
+                                inc_skip("actor_item_owner", "not in save form ID array");
+                                None
+                            }
+                            None => None,
+                        };
+                        let extra = Extra {
+                            condition: cond,
+                            owner,
+                            equipped: false,
+                            mods: entry.weapon_mods,
+                            live: false,
+                        };
+                        if g.world.add_item_extra(holder, id, stack_n, extra).is_ok() {
+                            remaining -= stack_n;
+                            added_any = true;
+                            if entry.count.is_some_and(|n| n > 0) {
+                                inc_hyp("actor_item_stack_counts (extra 0x24) [hypothesis]");
+                            }
+                            if cond.is_some() {
+                                inc_hyp("actor_item_conditions (extra 0x25) [hypothesis]");
+                            }
+                            if owner.is_some() {
+                                inc_hyp("actor_item_owners (extra 0x21) [hypothesis]");
+                            }
+                            if entry.weapon_mods != 0 {
+                                inc_hyp("actor_item_weapon_mods (extra 0x8D) [hypothesis]");
+                            }
+                        } else {
+                            failed = true;
+                            break;
+                        }
+                    }
+                    if !failed && remaining > 0 {
+                        if g.world.add_item(holder, id, remaining).is_ok() {
+                            added_any = true;
+                        } else {
+                            failed = true;
+                        }
+                    }
+                    if !failed && added_any {
+                        applied_any = true;
+                        inc_ok("actor_items");
+                    } else {
+                        inc_skip("actor_item", "unknown or non-inventory form");
+                    }
+                } else if let Some(remove) = it.count.checked_neg() {
+                    if g.world.remove_item(holder, id, remove).is_ok() {
+                        applied_any = true;
+                        inc_ok("actor_items");
+                    } else {
+                        inc_skip("actor_item", "unknown or non-inventory form");
+                    }
+                } else {
+                    inc_skip("actor_item", "negative item count overflow");
+                }
+            }
+            Err(why) => inc_skip("actor_item", why),
+        }
+    }
+
+    let mut equipped_any = false;
+    for it in items.iter().filter(|it| it.worn) {
+        match it.item.ok_or("not in save form ID array").and_then(map_id) {
+            Ok(id) => {
+                for entry in it.entries.iter().filter(|e| e.worn) {
+                    let cond = normalize_item_condition(forms, id, entry.condition);
+                    let pick = Pick::row(cond, entry.weapon_mods);
+                    let already = g
+                        .world
+                        .peek(holder)
+                        .and_then(|s| s.inventory.as_ref())
+                        .is_some_and(|inv| inv.is_equipped(id));
+                    let equipped = g.world.equip_at(holder, id, pick).is_ok()
+                        || already
+                        || g.world.equip(holder, id).is_ok();
+                    if equipped {
+                        equipped_any = true;
+                        applied_any = true;
+                        inc_ok("actor_equipped");
+                        inc_hyp("actor_equipped (extra 0x16/0x17) [hypothesis]");
+                    } else {
+                        inc_skip("actor_equipped", "cannot equip item");
+                    }
+                }
+            }
+            Err(why) => inc_skip("actor_equipped", why),
+        }
+    }
+    if equipped_any {
+        if let Ok(st) = g.world.get(holder) {
+            st.outfitted = true;
+        }
+    }
+    applied_any
 }

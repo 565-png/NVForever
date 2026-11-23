@@ -143,7 +143,7 @@ documented layout].
 | 7 | 2 | one byte (0) |
 | 8 | 71 | **Sky and weather**: ref current weather, ref second weather (NVWastelandGS and NVWastelandClear in C; WastelandClear twice in B), then f32 values; two of them equal GameHour exactly (9.4697 in C) [observed: matches the GameHour global]; the rest unknown |
 | 9 | 7 | u32 0 and a byte |
-| 10 | 96 (C), 80 (B) | a vsval-counted list of refs (18 in C, 14 in B); meaning unknown |
+| 10 | 96 (C), 80 (B) | a vsval-counted list of refs (18 in C, 14 in B) [observed]; Pip-Boy radio and music playback state: `u32, \|, u8 on, \|, string song_path, \|, vsval n, \|, n × (ref, \|)` (`on != 0` = radio enabled; first ref in the list = tuned station reference; trailing playback bytes follow) [hypothesis] |
 | 11 | 4 | one ref (resolves to a SOUN record in C) [hypothesis: unknown; the resolution may be meaningless] |
 
 ### 5.2 Global data table 2
@@ -259,43 +259,69 @@ unknown].
   the lab, §6.5].
 - bit 2: worldspace/cell ref, then six f32 with no separators (position, rotation), `|`.
   Seen on refs moved by physics (tumbleweeds, items) [hypothesis: "moved"].
-- bit 4: one f32 (1.0 seen) [hypothesis: scale or health].
+- bit 4: one f32 (1.0 seen) [hypothesis: reference scale (`SetScale`)].
 - bit 5 and bit 27: **item lists**: reuses the bar-delimited inventory framing of
   §6.4 (`vsval count, |`, then per item `ref, |, i32 count_delta, |, vsval lists, |`, per
   list `vsval extras, |`, per extra `type, |, payload, |`) [hypothesis: pure bit-5,
   bit-27, and bit-(5+27) container `REFR`s end at `c.at_end()`, while bit-(5+27+28)
   carries a 13-byte trailing bit-28 block; container extra-data types include `0x0D`,
-  `0x24`, `0x25`, and container-extra `0x2F` (`u32, |, u8, |`); container inventory
-  deltas against the base `CONT` stock]. Vendor containers and Doc Mitchell's dresser
-  have them.
-- bit 12: door data (`2A`, a byte, a ref, two u32) on doors [hypothesis: lock or teleport].
-- bit 28 and bit 31: animation/script data or `vsval`-counted extra-data list:
+  `0x24`, `0x25`, `0x26`, `0x28`, `0x30`, and container-extra `0x2F` (`u32, |, u8, |`);
+  container inventory deltas against the base `CONT` stock; when combined with bit 12 on
+  locked containers, the inventory item list follows the extra-data list]. Vendor
+  containers and Doc Mitchell's dresser have them.
+- bit 12: `vsval`-counted extra-data list carrying lock entry `0x2A` (`u8 level, |, u8
+  flags, |, ref key, |, u32 tries, |, u32 unlocked, |`; bit 0 of `flags` = locked) on
+  doors and containers [hypothesis: lock state].
+- bit 23 and bit 28: animation state (`0x28 | u16 len | bytes |` string such as `"Open"`,
+  `"Close"`, `"Backward"`, `"SpecialIdle"` [hypothesis: on `DOOR` references, `"Open"` /
+  `"Close"` records the door's open state]).
+- bit 31 (and bit 29): `vsval`-counted extra-data list:
   - on placed `MapMarker` `REFR`s (`NAME == 0x00000010`), bit 31 (optionally with bit 29)
     stores a `vsval`-counted extra-data list containing type `0x2C` (`u8, |`; values `0x01`
     and `0x03`) and optional bit-29 `0x74` (`ref, |`), ending at `c.at_end()` [hypothesis:
     map-marker flags matching ESM `FNAM`, `0x01` visible, `0x02` fast-travelable /
     discovered].
-  - on other bit-28/31 references: script variables (vsval, script ref, u32 index + f64
-    value pairs as in quests) and short strings such as `Backward`, `Close`, `SpecialIdle`
-    [hypothesis: bit 31 = script variables / extra data of the reference, bit 28 =
-    animation state].
+  - on other bit-12/29/31 references: `0x0D` script variables (`ref script, |, vsval nv, |,
+    nv × (u32 index, |, ref if index & 0x80000000 else f64, |), vsval 0, |, vsval 0, |`),
+    `0x21` owner (`ref, |`), `0x2A` lock (above), plus auxiliary reference extras skipped
+    while walking the list (`0x18`, `0x1B`, `0x1C`, `0x22`, `0x23`, `0x28`, `0x2C`, `0x2E`,
+    `0x2F`, `0x30`, `0x46`, `0x56`, `0x60`, `0x73`, `0x74`, `0x75`, `0x7C`, `0x8B`)
+    [hypothesis: reference script variables, ownership, lock state, and auxiliary extra data].
 - bit 29: a short ref list ending `74 | ref` [unknown].
 
 **ACHR / ACRE**: flag 0x40000 (bit 18) on 2,020 of 2,418 ACHR records, data 297 bytes for
 most [observed]. These include an f32 near 17,634 that moved with game time between C and
-D and a u32 that grew by 765 [observed]; meanings unknown. The player ref (0x14) record is
-4,429 bytes in C (flags 0xB0000832) and starts with a ref and six f32 like REFR bit 2
-[observed]. Not decoded further: the player's inventory, actor values, effects and
-perks are somewhere in it [hypothesis].
+D and a u32 that grew by 765 [observed]; meanings unknown. Non-player `ACHR`/`ACRE` records (without bit-2 ragdoll layout) begin
+with optional placement (bit 1: `ref, 6 × f32, |`), `u8 process_level, |`, optional form
+flag word (bit 0: `u32, |`, where bit 16 = `0x0001_0000` is read as actor dead state),
+optional scale (bit 4: `f32, |`), optional `vsval`-counted actor extra-data list (when
+bits 11/17/18/29/31 are present: `0x0D` actor script variables, `0x5E` actor faction
+ranks, plus auxiliary actor extras `0x04`, `0x18`, `0x19`, `0x1B`, `0x1D`, `0x1F`, `0x2E`,
+`0x46`, `0x56`, `0x60`, `0x73`, `0x74`, `0x75`, `0x7C`, `0x8B`), and optional inventory
+item list (bits 5/27) [hypothesis]. The player ref (0x14) record is 4,429 bytes in C
+(flags 0xB0000832) and starts with a ref and six f32 like REFR bit 2 [observed]; see §6.4
+for the decoded player layout.
 
-**NPC_ 0x7 (player base)**: bit 2: seven bytes `05 05 05 05 05 05 0A` [hypothesis: the
-seven SPECIAL values]; bit 5: the player's name (u16 length, `|`, string) [observed: the
-same name as the header].
+**NPC_ 0x7 (player base)**: fields follow in fixed change-flag order (`|`-delimited)
+[hypothesis for multi-flag ordering and bits 1, 3, 4, 9, 11]:
+- bit 1: 24-byte base stats block (`u32` flags at offset 0: bit 0 = female) `|`,
+- bit 4: two `vsval`-counted spell/ability ref lists (`vsval n, |, n × (ref, |)`)
+  [hypothesis: player spells/abilities/traits],
+- bit 2: seven bytes `05 05 05 05 05 05 0A` `|` [hypothesis: the seven SPECIAL values],
+- bit 3: 20-byte AI block `|`,
+- bit 9: 28-byte skills block `|`,
+- bit 5: the player's name (u16 length, `|`, string) [observed: the same name as the header],
+- bit 11: FaceGen appearance (`u8, |`, 50 `f32, |` geometry-symmetric morphs, 30 `f32, |`
+  geometry-asymmetric morphs, 50 `f32, |` texture-symmetric morphs, `ref hair, |`,
+  `ref eyes, |`, `f32 hair_length, |`, `u32 hair_color_rgb, |`, `vsval n, |, n × (ref
+  head_part, |)`) [hypothesis].
 
-**CELL**: bit 1: one byte (cell flags) [hypothesis]; bits 30/31: blocks with the value
-0x129 = 297 [observed: 297 = GameDaysPassed (12.39) × 24, so hours passed;
-hypothesis: the cell's detach time, for respawn and reset] and runs of `0F 00` / `F0 00`
-bytes [hypothesis: local map fog-of-war bits, interiors].
+**CELL**: fields follow in fixed change-flag order [hypothesis for multi-flag order and
+bits 1, 3, 29]: bit 29 (4-byte exterior cell grid), bit 30 (`u32, |` hours passed, e.g.
+0x129 = 297 [observed: 297 = GameDaysPassed (12.39) × 24; hypothesis: the cell's detach
+time in hours, converted to days as `hours / 24.0` for respawn/reset]), bit 1 (`u8, |`
+cell flags), bit 3 (`ref, |` cell owner `NPC_`/`FACT`), and bit 31 (runs of `0F 00` /
+`F0 00` bytes [hypothesis: local map fog-of-war bits, interiors; implies cell visited]).
 
 **INFO**: bit 31, no data. 13 in B (new game), 52 in C [hypothesis: "this response has
 been said", the say-once flag and the "said" condition functions].
@@ -361,19 +387,27 @@ Read in the 19 `nvf*.fos` saves of the owner's `Saves` folder (2026-11-01; flags
 | Part | Encoding | Notes |
 |---|---|---|
 | place | ref, six f32, `\|` | the worldspace outdoors (WastelandNV, TheStripWorldNew) or the interior cell (GSDocMitchellHouse), position, rotation in radians (nvfairport: z 1.309 = 75°) |
-| actor values | 232 × (f32, `\|`) | three arrays of 77 (the actor value count) and one more entry. First array: 2.0 at codes 38 (Melee Weapons) and 43 (Speech) in 17 saves, 2.0 at code 5 (Strength) in the two level-50 saves (nvfLanius, nvfSlides). Second array: code 24 holds 10 in nvfairport, 143 to 3,419 in mid-game saves and 186,200 in the level-50 ones, code 23 holds 50 to 1,000 [hypothesis: the second is the base values that play changes, experience (24) and karma (23)]. The first is not skill points spent, as read on 2026-11-01: nvfairport's +2 Melee Weapons and +2 Speech are exactly the enchantment of the Vault 21 Jumpsuit it wears (VaultSuit21's EITM EnchClothingVaultSuitNormal, Speech 2 and Melee Weapons 2) [observed, 2026-11-11]: giving them as skill points and putting the suit on counted them twice (Melee 36 against the probe's 34). [hypothesis: active effects' modifiers.] nvfairport's Melee is 34 = 2 + 2 × 5 + ⌈10 × 0.5⌉ + 15 tag + 2 (the suit), which matches its probe |
-| post-AV float | u8 (0x00), `\|`, f32, `\|` | `1.0` in the `nvf*.fos` saves [observed: `nvf*.fos`]; other finite values such as `1.1` accepted [hypothesis; meaning unknown] |
-| actor extra-data list | vsval count, `\|`, then `count` entries: type byte, `\|`, payload, `\|` | Actor extra-data types: `0x5E` (`vsval n, \|, n × (ref, \|, u8, \|)` [hypothesis: faction changes]), `0x18` (`ref, \|, 12 bytes, \|, f32, \|`, seen in early `nvf*.fos` saves), and `0x74` (`ref, \|`, seen with change flag 29) [observed: `nvf*.fos`]; `0x1D` (`vsval n, \|, n × (ref, \|)`), `0x60` (`u32, \|`), `0x75` (`ref, \|, ref, \|, u8, \|`), and 5-entry lists with `0x18` absent [hypothesis]. An unknown type stops inventory parsing rather than guessing |
+| actor values | 232 × (f32, `\|`) | three arrays of 77 (the actor value count) and one more entry (`index 231`). First array (`0..77`): 2.0 at codes 38 (Melee Weapons) and 43 (Speech) in 17 saves, 2.0 at code 5 (Strength) in the two level-50 saves (nvfLanius, nvfSlides). Second array (`77..154`): code 24 holds 10 in nvfairport, 143 to 3,419 in mid-game saves and 186,200 in the level-50 ones, code 23 holds 50 to 1,000 [hypothesis: the second is the permanent/base values that play changes — experience (24), karma (23), and other permanent SPECIAL/skill/stat modifiers (`ModAV`)]. The first is not skill points spent, as read on 2026-11-01: nvfairport's +2 Melee Weapons and +2 Speech are exactly the enchantment of the Vault 21 Jumpsuit it wears (VaultSuit21's EITM EnchClothingVaultSuitNormal, Speech 2 and Melee Weapons 2) [observed, 2026-11-11]: giving them as skill points and putting the suit on counted them twice (Melee 36 against the probe's 34). [hypothesis: active effects' modifiers; not applied as base points to avoid double-counting worn gear.] nvfairport's Melee is 34 = 2 + 2 × 5 + ⌈10 × 0.5⌉ + 15 tag + 2 (the suit), which matches its probe. Third array (`154..231`): current damage/accumulated deltas — negative deltas on AP (code 12) and limb conditions (codes 25–31), positive accumulation on growing meters such as radiation (54), dehydration (73), hunger (74), and sleep deprivation (75) [hypothesis]. Entry `231` (the 232nd float): current health damage delta (negative when injured) [hypothesis] |
+| post-AV float | u8 (0x00), `\|`, f32, `\|` | `1.0` in the `nvf*.fos` saves [observed: `nvf*.fos`]; other finite values accepted [hypothesis: player scale (`SetScale`)] |
+| actor extra-data list | vsval count, `\|`, then `count` entries: type byte, `\|`, payload, `\|` | Actor extra-data types: `0x5E` (`vsval n, \|, n × (ref, \|, i8 rank, \|)` [hypothesis: faction ranks]), `0x18` (`ref, \|, 12 bytes, \|, f32, \|`, seen in early `nvf*.fos` saves), and `0x74` (`ref, \|`, seen with change flag 29) [observed: `nvf*.fos`]; `0x1D` (`vsval n, \|, n × (ref, \|)` [hypothesis: active companion/teammate references]), `0x60` (`u32, \|`), `0x75` (`ref, \|, ref, \|, u8, \|`), and 5-entry lists with `0x18` absent [hypothesis]. An unknown type stops inventory parsing rather than guessing |
 | inventory | vsval count, `\|`, then per item: ref, `\|`, i32 count, `\|`, vsval lists, `\|`, per list: vsval extras, `\|`, per extra: type byte, `\|`, payload, `\|` | nvfairport: 27 items, the same 27 kinds its probes counted [observed: nvfairport] |
+| post-inventory tail | bit-22 spent skill points, perks, and teammate perks | When change flag bit 22 is set, `vsval n, \|, n × (u8 skill_code, \|, f32 points, \|)` appears immediately before `FF FF \| FF FF \| 00 \| 01 01 00 00 \|` [hypothesis: spent level-up skill points]. Later in the tail (after `AD DE AD DE \|`), the player's perk list `vsval n, \|, n × (ref perk, \|, u8 rank, \|)` precedes the 5-zero-`u32` boundary, and the teammate-perk list `vsval n, \|, n × (ref perk, \|, u8 rank, \|)` immediately precedes the fixed 54-byte end trailer (`00 \| 01 \| 01 \| 8 × (u32 \|) \| 4 × (u8 \|)`) [hypothesis] |
 
-Nine item extra-data types are handled in the player inventory (framing `[observed: nvf*.fos]` where noted below, otherwise `[hypothesis]`; semantic meanings `[hypothesis]`):
+Sixteen item extra-data types are handled in inventory item lists (framing `[observed: nvf*.fos]` where noted below, otherwise `[hypothesis]`; semantic meanings `[hypothesis]`):
 
 - `0x0D` (`ref, \|, vsval nv, \|, nv × (u32 idx, \|, ref if idx & 0x80000000 else f64, \|), vsval 0, \|, vsval 0, \|`): same script-variable framing as `QUST` bit 30 [hypothesis: layout and item script instance]; non-empty trailing lists fail soft.
 - `0x16` (0 payload bytes): on worn armour, Pip-Boy and glove [observed: `nvf*.fos`], and on equipped weapons [hypothesis] [hypothesis: worn].
+- `0x17` (0 payload bytes): [hypothesis: secondary worn marker].
 - `0x1C` (`ref, \|`): [hypothesis: original reference].
 - `0x21` (`ref, \|`): [hypothesis: owner].
+- `0x22` (`ref, \|`): [hypothesis: ownership global].
+- `0x23` (`i32, \|`): [hypothesis: owner faction rank].
 - `0x24` (`i16, \|`): [hypothesis: stack count].
 - `0x25` (`f32, \|`): on weapons and armour (e.g. 41.25 on a pistol) [observed: `nvf*.fos`; hypothesis: condition HP].
+- `0x26` (`f32, \|`): [hypothesis: time left].
+- `0x28` (`f32, \|`): [hypothesis: enchantment charge].
+- `0x2F` (`u32, \|, u8, \|`): [hypothesis: container extra data].
+- `0x30` (`f32, \|`): [hypothesis: item scale].
 - `0x4A` (`u8, \|`): [hypothesis: hotkey quick-slot index; not persisted in `NVFSAVE` v1].
 - `0x6E` (`ref, \|, u32, \|`): on weapons [hypothesis: loaded magazine ammo form and round count].
 - `0x8D` (`u8, \|`): on modded weapons [hypothesis: weapon mods, low 3 bits for slots 1–3].
@@ -430,7 +464,7 @@ at (1087.0, 2198.5, 7362.0) in GSDocMitchellHouse in nvfairport, against (2288.8
 **The form flag word.** The values seen are combinations of 0x1, 0x2, 0x8, 0x20, 0x40,
 0x400, 0x800, 0x20000, 0x40000, 0x100000, 0x800000 and 0x1000000; 0x1 and 0x8 are on
 every one. 0x400 matched the ESM's Persistent bit on the nine references checked against
-the ESM [observed]. Three bits are read [hypothesis for each meaning, from the references that carry it]:
+the ESM [observed]. Three bits are read by `ext queries --save` and a fourth (`0x10000`) by `fnvtool save convert` [hypothesis for each meaning, from the references that carry it]:
 
 - **0x800, disabled**: the ESM's "Initially Disabled" header bit. Reference 0x001475B8 is
   initially disabled in the ESM and saved without it (enabled since); VCG00PropEnabler
@@ -443,6 +477,8 @@ the ESM [observed]. Three bits are read [hypothesis for each meaning, from the r
 - **0x40, talked to the player**: on DocMitchellREF and RingoRef (0x449), both spoken to
   in the opening, and on VMQTopsSecMessengerREF; not on any of the 28 other actors that
   have a flag word. B (before the player speaks to Doc) has no flag word for Doc.
+- **0x10000, dead** (`FORM_DEAD`, bit 16): on killed `ACHR` and `ACRE` records [hypothesis:
+  actor dead flag].
 
 `fnvtool ext queries --save` gives each reference with a flag word its disabled and
 removed state (and, for actors, talked to), and each place, to the run.
@@ -470,27 +506,44 @@ order plus the decoded sections of §§3–6.5, then emits a standard `NVFSAVE\0
   reference positions/rotations, quest stage and script-variable tables, and player
   inventory item-list framing (`[observed]` in named saves A–D, M, and the `nvf*.fos` set).
 - **Hypothesised fields written into `.nvfsave` `[hypothesis]`**:
-  - player XP and Karma from AV array 2 codes 24 and 23 (§6.4),
+  - player XP and Karma from AV array 2 codes 24 and 23, plus permanent AV2 modifiers
+    (`av_permanent`), AV3 damage deltas (AP, limbs `25..=31`, etc.) and growing meters
+    (radiation, dehydration, hunger, sleep deprivation), and AV entry `231` health damage
+    (§6.4),
+  - player base `NPC_ 0x7` multi-flag walk: bit 1 sex (`female`), bit 4 spell/ability
+    list, bit 2 SPECIAL, and bit 11 FaceGen appearance morphs/hair/eyes/head parts (§6.2),
+  - player post-AV scale, `0x5E` faction ranks, `0x1D` active teammates/companions,
+    bit-22 spent skill points, post-inventory perks, and teammate perks (§6.4),
+  - non-player `ACHR`/`ACRE` form flag `FORM_DEAD` (`0x10000`), scale (bit 4), `0x0D`
+    actor script variables, `0x5E` actor faction ranks, and bits 5/27 actor inventories
+    and worn gear (`0x16`/`0x17`) (§6.2, §6.5),
+  - placed `REFR` lock state (`0x2A`, bit 12), door open state (bit 23/28 `"Open"` /
+    `"Close"`), reference scale (bit 4), reference owner (`0x21`), reference script
+    variables (`0x0D`), and locked-container inventories (bit 12 + bits 5/27) (§6.2),
+  - `ECZN` bit 31 locked encounter-zone levels (§6.3), `CELL` bits 3/30/31 visited cells,
+    detach hours (`hours / 24.0` days), and cell owners (§6.2),
+  - global table 1 type 10 Pip-Boy radio on/off state and tuned station reference (§5.1),
   - `REPU` bit 1 fame and infamy floats (§6.3),
   - global table 1 type 1 active quest (§5.1),
   - `FLST` bit 31 form lists (`u32` count; §6.2), `LVLI` bit 31 leveled item lists (§6.2),
     and `CHAL` bit 1 challenge progress/flags (§6.2),
   - empty-payload `NOTE` bit 31 (§6.3) and empty-payload `INFO` bit 31 said-once (§6.2),
-  - inventory extra data `0x16` worn marker, `0x21` owner, `0x24` sub-stack count, `0x25`
-    item condition, `0x6E` worn-weapon magazine rounds & ammo, and `0x8D` weapon mod flags
-    (§6.4; `0x4A` hotkeys are counted in `skipped` because `NVFSAVE` v1 does not persist
-    hotkeys),
+  - inventory extra data `0x16`/`0x17` worn markers, `0x21` owner, `0x24` sub-stack count,
+    `0x25` item condition, `0x6E` worn-weapon magazine rounds & ammo, and `0x8D` weapon mod
+    flags, plus parsed pass-through item extras `0x1C`, `0x22`, `0x23`, `0x26`, `0x28`,
+    `0x2F`, `0x30` (§6.4; `0x4A` hotkeys remain counted in `skipped` because `NVFSAVE` v1
+    does not persist hotkeys),
   - global table 1 type 2 prefix per-base-form death counts (§5.1, §6.3; the unmapped
     trailing bytes remain counted in `skipped`),
   - container `REFR` inventories (bits 5/27, optional bit-28 trailing block; §6.2),
   - map marker `REFR` discovery/visibility flags (bit 31 extra `0x2C`, optional bit-29
     `0x74`; §6.2),
   - created `0xFF` `REFR` 32-byte placement headers (re-placed via `World::place`; §6.3),
-  - placed reference form flags (`FORM_DISABLED`, `FORM_DELETED`, `FORM_TALKED_TO_PC`; §6.5),
-  - `FACT` bit 2 faction relations (§6.2, §6.5), `NPC_` bit 2 player SPECIAL (§6.2),
-    `CLAS` bit 1 tag skills (§6.2), global type 0 misc statistics (§5.1, §6.3), global
-    type 8 current weather (§5.1), quest flags/delay/objectives (§6.2), and screenshot RGB
-    channel order (§3.2).
+  - placed reference form flags (`FORM_DISABLED`, `FORM_DELETED`, `FORM_TALKED_TO_PC`,
+    `FORM_DEAD`; §6.5),
+  - `FACT` bit 2 faction relations (§6.2, §6.5), `CLAS` bit 1 tag skills (§6.2), global
+    type 0 misc statistics (§5.1, §6.3), global type 8 current weather (§5.1), quest
+    flags/delay/objectives (§6.2), and screenshot RGB channel order (§3.2).
 
 Every `[hypothesis]` field actually written during a conversion is counted explicitly in
 `ConversionReport::hypothesis_fields` (alongside a summary entry in `warnings`) so callers
@@ -531,25 +584,22 @@ records (script variables), the player and every actor.
 ## 8. Open questions
 
 - The meaning of global types 2 (105 unmapped trailing bytes after the death-count prefix),
-  4, 5, 6, 9, 10, 11 and of the 9-byte tail.
-- The ACHR/ACRE layouts (flags 1, 11, 18, 29, 31) and the rest of the player record:
-  effects, perks, AI state, the second and third actor value arrays, the record of
-  nvfLanius and nvfSlides (flag 10, a different shape after the actor values), and any
-  actor or item extra-data types beyond those listed in §6.4.
+  4, 5, 6, 9, 10 (trailing playback bytes after the station list), 11 and of the 9-byte tail.
+- Non-player `ACHR`/`ACRE` AI packages, active magic effects, bit-2 ragdoll layouts, and
+  complex variable-length actor extras (such as `0x5F` dismembered-limb blocks), plus the
+  player record of nvfLanius and nvfSlides (flag 10, a different shape after the actor
+  values), and any actor or item extra-data types beyond those listed in §§6.2 and 6.4.
 - The trailing fields past offset 32 on created `0xFF` `REFR`s (when change flags beyond
   bit 1 are set), the full layout of created `ACRE`/`ACHR`/projectile forms, and global
-  types 9 and 10, which grow with play.
+  type 9, which grows with play.
 - The QUST date stamp's day encoding.
 
 None of these is needed for NVForever's own format. The offline `fnvtool save convert`
 importer (§6.6, `crates/fnv-game/src/fos_convert.rs`) converts only the decoded sections
 documented above, explicitly tags and counts every `[hypothesis]` field written into
-`.nvfsave` in `ConversionReport::hypothesis_fields` (including XP/karma at AV2 24/23,
-`REPU` fame/infamy, active quest, `FLST`, `LVLI`, `CHAL`, `NOTE`, `INFO`, global type 2
-death counts, item extras `0x16`/`0x21`/`0x24`/`0x25`/`0x6E`/`0x8D`, container `REFR`
-inventories, map marker `REFR` extra `0x2C`, created `0xFF` `REFR` 32-byte headers, and
-reference form flags), and truthfully counts every unmapped global table (or unmapped
-trailing bytes of type 2), unpersisted item hotkey (`0x4A`), unsupported created `0xFF`
-kind (`ACRE`/`ACHR`/etc.), missing-plugin form, unmapped changed-form record, and ignored
-`.nvse` co-save in `skipped` [design; converted field readings `[hypothesis]` where tagged
-in §§3–6.6]. The game runtime itself remains `.nvfsave`-only.
+`.nvfsave` in `ConversionReport::hypothesis_fields`, and truthfully counts every unmapped
+global table (or unmapped trailing bytes of type 2), unpersisted item hotkey (`0x4A`),
+unsupported created `0xFF` kind (`ACRE`/`ACHR`/etc.), missing-plugin form, unmapped
+changed-form record, and ignored `.nvse` co-save in `skipped` [design; converted field
+readings `[hypothesis]` where tagged in §§3–6.6]. The game runtime itself remains
+`.nvfsave`-only.
