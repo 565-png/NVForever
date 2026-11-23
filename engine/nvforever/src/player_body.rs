@@ -2282,6 +2282,8 @@ fn build_rig(commands: &mut Commands, parent: Entity, world: &ActorWorld, ctx: &
         translate,
         weapon_node,
         weapon_parent,
+        holstered_weapon: None,
+        furniture_logged: None,
         attached: weapon_parent,
         weapon_model: None,
         weapon_emitter: None,
