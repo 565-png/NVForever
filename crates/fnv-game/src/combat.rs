@@ -812,14 +812,35 @@ impl Game<'_> {
 
     /// Tell the scripts whether an actor has its weapon out (IsWeaponOut). The animating
     /// side tells it every frame for the actors it draws; for the others the rule decides
-    /// ([`Game::wants_weapon_out`]). Transitioning from holstered (`false`) to drawn
-    /// (`true`) dispatches `ShowOff:OnWeaponUnholster`.
+    /// ([`Game::wants_weapon_out`]). If transitioning from holstered (`false`) to drawn
+    /// (`true`) without an earlier draw-start dispatch (`showoff_begin_unholster`),
+    /// dispatches `ShowOff:OnWeaponUnholster` PRE-update so `IsWeaponOut` reads `0`
+    /// inside the callback [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
+    /// ShowOffNVSE Plugin 184].
     pub fn set_weapon_out(&mut self, actor: FormId, out: bool) {
         self.senses.weapon_told.insert(actor, self.time);
-        if self.extra.get(&actor).is_some_and(|e| e.weapon_out) != out {
-            self.extra.entry(actor).or_default().weapon_out = out;
-            if out {
+        let was = self.extra.get(&actor).is_some_and(|e| e.weapon_out);
+        if was != out {
+            let already_fired = self.showoff.unholster_pending.remove(&actor).is_some();
+            if out && !already_fired {
                 self.showoff_on_weapon_unholster(actor);
+            }
+            self.extra.entry(actor).or_default().weapon_out = out;
+        } else if !out {
+            // Do NOT clear active draw-start deduplication (`None`) while a draw is still
+            // in progress (`weapon_state` / `idles.rs` call `set_weapon_out(actor, false)`
+            // every frame until draw completes). Only clear a stale `Some(ended)` latch
+            // left by an `AnimAction::Equip` that ended on an earlier frame without
+            // completing and with no scripted draw pending.
+            let draw_due = self.hud.weapon_due.get(&actor).is_some_and(|(o, _, _)| *o);
+            if !draw_due
+                && self
+                    .showoff
+                    .unholster_pending
+                    .get(&actor)
+                    .is_some_and(|ended| ended.is_some_and(|f| f < self.frame))
+            {
+                self.showoff.unholster_pending.remove(&actor);
             }
         }
     }

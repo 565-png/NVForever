@@ -452,19 +452,24 @@ original-game captures.
 `nvse_handler_lists::KNOWN`) triggered when an image space modifier (`IMAD`) is applied
 to or removed from the screen.
 
-[hypothesis] NVForever dispatches `OnApplyIMOD` from `Game::apply_image_modifier` (after
-updating `Game::image_modifiers` so `IsImageSpaceActive` reads `1` inside the callback)
-and `OnRemoveIMOD` from `Game::remove_image_modifier` (only when the modifier was active)
-and `Game::update_image_modifiers` (when an animatable modifier's duration expires, with
-`IsImageSpaceActive` already reading `0`). Both pass the `IMAD` form as the single first
-argument (`vec![XVal::Ref(modifier.0)]`, matched by `"first"::` in `SetEventHandler` and
-`1::` in `SetEventHandlerAlt`) with `on = None` (an `IMAD` is a base form, not a placed
-reference). Re-applying an already active modifier dispatches `OnApplyIMOD` again;
-applying an invalid non-`IMAD` form or removing an inactive modifier does not dispatch;
-restoring a snapshot assigns `Game::image_modifiers` directly without firing
-`OnApplyIMOD`. Exact argument count (1 vs 2 with trailing 0), re-apply dispatch, and
-whether natural duration expiry dispatches `OnRemoveIMOD` have not been measured in
-original-game captures.
+[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 10 official masters] Both
+`OnApplyIMOD` and `OnRemoveIMOD` work via `SetEventHandler` and `SetEventHandlerAlt` with
+`on = None` (`00000000`) and a single `IMAD` form argument (`vec![XVal::Ref(modifier.0)]`,
+matched by `"first"::` / `1::`), and both dispatch **PRE-update**:
+- `Game::apply_image_modifier` dispatches `OnApplyIMOD` before pushing the new
+  `ActiveImageModifier`, so `IsImageSpaceActive` reads `0` on the first apply and `1` when
+  re-applying an already-active `IMAD`. Re-applying an active `IMAD` stacks a second
+  instance rather than replacing the existing one.
+- `Game::remove_image_modifier` removes all active instances of the `IMAD`, dispatching
+  `OnRemoveIMOD` PRE-removal once per removed instance (so `IsImageSpaceActive` reads `1`
+  inside each callback, and removing two stacked instances fires `OnRemoveIMOD` twice
+  before leaving `IsImageSpaceActive == 0`). Calling `RemoveImageSpaceModifier` on an
+  inactive `IMAD` does not fire.
+- `Game::update_image_modifiers` dispatches `OnRemoveIMOD` PRE-removal when an animatable
+  `IMAD`'s duration expires (confirmed on `GetHit` 0.4 s with `IsImageSpaceActive == 1`
+  inside the callback).
+- Applying an invalid non-`IMAD` form fails without firing `OnApplyIMOD`; restoring a
+  snapshot assigns `Game::image_modifiers` directly without firing `OnApplyIMOD` [design].
 
 [design] Both dispatch sites check `Game::handled("onapplyimod")` /
 `Game::handled("onremoveimod")` before allocating an argument vector, leaving unmodded

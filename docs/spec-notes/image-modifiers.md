@@ -98,9 +98,12 @@ at once), `fnv_game` (`Game::image_modifiers`, the three script functions),
 - Between keys the value moves in a straight line; before the first and after the last
   key it holds [hypothesis: xEdit calls the lists interpolators, the curve is not
   documented].
-- **Applying one that is already playing starts it again** (one instance per record)
-  [hypothesis; the game may stack instances. VCG00 applies Addiction01ISFX at stages 27
-  and 30, half a second apart].
+- **Applying one that is already playing stacks another instance** [observed: Fallout: New
+  Vegas 1.4.0.525 + xNVSE 6.4.9, 10 official masters: re-applying an active IMAD fires
+  `OnApplyIMOD` with `IsImageSpaceActive == 1` and stacks a second instance; a single
+  `RemoveImageSpaceModifier` removes all matching instances and fires `OnRemoveIMOD` once
+  per removed instance (twice for two stacked instances). VCG00 also applies
+  Addiction01ISFX at stages 27 and 30, half a second apart].
 - **A modifier's time passes with the game outside menus and loading screens,
   conversations included** [hypothesis: `Game::tick` ages modifiers where it advances a
   conversation's lines]. Not known: whether an animated modifier goes on behind a
