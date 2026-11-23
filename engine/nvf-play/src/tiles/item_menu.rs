@@ -43,6 +43,8 @@ pub struct RowShown {
     pub name: String,
     pub text: String,
     pub equipped: bool,
+    /// Resolved ySI tag/icon/template for this row when ySI is active (`None` otherwise).
+    pub ysi: Option<fnv_game::ui_ysi::YsiItemDisplay>,
 }
 
 /// A list as shown.
@@ -89,7 +91,7 @@ pub fn rows_shown(rows: &[Row]) -> Vec<RowShown> {
     let mut out: Vec<RowShown> = Vec::with_capacity(rows.len());
     for (index, r) in rows.iter().enumerate() {
         let Some(key) = RowKey::at(rows, index) else { continue };
-        out.push(RowShown { key, name: r.name.clone(), text: look::row_text(r), equipped: r.equipped });
+        out.push(RowShown { key, name: r.name.clone(), text: look::row_text(r), equipped: r.equipped, ysi: r.ysi.clone() });
     }
     out
 }
@@ -172,6 +174,7 @@ pub fn write_lists(ui: &mut Ui, s: &Snapshot, st: &mut MenuTiles) {
             if let Some(t) = list::child(ui, row.tile, st.paths.row_mark) {
                 ui.set_trait(t, "visible", on(shown.equipped));
             }
+            fnv_game::ui_ysi::apply_row_icon(ui, &fnv_ui::MemSource::default(), row.tile, shown.ysi.as_ref());
         }
         set(ui, st.paths.titles[i], "string", Value::Str(s.titles[i].clone()));
         set(ui, st.paths.lists[i], "_num_filtered", Value::Num(s.lists[i].filtered as f64));

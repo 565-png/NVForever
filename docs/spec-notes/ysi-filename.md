@@ -44,8 +44,16 @@ remain [hypothesis] until an interactive-desktop multi-rule capture runs.
   including an explicit clear of an authored flag. [engine design choice] Rules are
   cached, while this predicate reads current World state on each query; native
   classification timing after a flag edit is unobserved.
-- [engine design choice] Other predicates, including `formlist: 2` and
-  weapon/aid/armor/misc property conditions, are **unknown**, rather than false.
+- [engine design choice] Other predicates, including `formlist: 2`, threshold comparisons
+  (such as `armorDT`), and unmapped property conditions, remain **unknown**, rather than
+  false. Orthogonal record-backed and text predicates implemented in `ysi_predicates.rs`
+  (`weaponClipRounds`, `weaponNumProjectiles`, `weaponAttackAnim`, `weaponHandgrip`,
+  `weaponSoundLevel`, `ammoMod` + `ammoForm`, `aidRestoresAV`, `aidDamagesAV`,
+  `aidIsWater`, `aidIsPoisonous`, `bookSkill`, `isSkillBook`, `noteType`,
+  `ammoIgnoresDTDR`, `miscComponent`, `miscProduct`, `prefix`, `suffix`, `edid`,
+  `edidPrefix`) are evaluated `[hypothesis]` against existing `Game` / `GameData` /
+  `FormStore` views, disqualifying mismatched record types as `Match::No` while keeping
+  malformed values and dangling `ammoMod` without `ammoForm` as `Match::Unknown`.
   A certainly false supported predicate rejects a rule even if it also has unknown
   predicates. A possible unknown rule at or above the winning priority refuses the
   query; an unknown lower rule cannot win.
@@ -137,6 +145,51 @@ items, and menu XML to cover:
     conservative `Match::Unknown` refusal for `"formlist": 2` and non-`FLST` targets.
 15. Empty/comment-only auxiliary `.json` stub files ignored cleanly while empty
     `ySI.json` and unterminated auxiliary comments continue to refuse explicitly.
+16. Orthogonal record, recipe, and text predicates (`weaponClipRounds`,
+    `weaponNumProjectiles`, `weaponAttackAnim`, `weaponHandgrip`, `weaponSoundLevel`,
+    `ammoMod` + `ammoForm`, `aidRestoresAV`, `aidDamagesAV`, `aidIsWater`,
+    `aidIsPoisonous`, `bookSkill`, `isSkillBook`, `noteType`, `ammoIgnoresDTDR`,
+    `miscComponent`, `miscProduct`, `prefix`, `suffix`, `edid`, `edidPrefix`), icon
+    `"template"` resolution through `Game::ysi_item_display`, cross-type disqualification,
+    and dangling `ammoMod` refusal.
 
-These are source and UI-trait consumer checks, not texture decoding, GPU rendering,
-multi-rule native parity, or complete installed ySI/JAM acceptance.
+## Engine list-row sorting and tile icons (`nvf-play`)
+
+- **Display resolution** `[design]`: `Game::ysi_active` and `Game::ysi_item_display`
+  resolve each item's effective sorting tag, icon texture path, and XML template name
+  (`template` from the winning icon rule, defaulting to `ySIDefault` when tagged/icon-bearing
+  or `ySINoTag` otherwise) using the same `ySISetTrait` > JSON precedence as `ySIGetTrait`.
+  When no ySI configuration, session overrides, or injected `ySI` UI tiles are present,
+  `ysi_active` returns `false` and vanilla menus pay zero cost and keep identical order.
+- **Sorting** `[hypothesis]`: When ySI is active, `MenuModel::apply_ysi` attaches resolved
+  `YsiItemDisplay` metadata to non-folder rows in Pip-Boy Inventory, Container, and Barter
+  lists and sorts item rows by `(bartered first, tagged before untagged, tag byte order,
+  display name byte order, FormID, condition, mods)`, keeping Misc folder rows (`Keyring`,
+  `Caravan Cards`, `Back`) pinned at the top, preserving `usable_ammo` and `SortBy`
+  (`Value`/`Weight`) stable re-sorts, and tracking the selected row across re-sorts.
+- **Tile-row icons** `[design]`: `ui_ysi::apply_row_icon` is wired into the shared
+  `tiles::item_menu::write_lists` (covering `InventoryMenu`, `ContainerMenu`, and
+  `BarterMenu`) as well as `tiles::repair_menu` (`RepairMenu`) and `tiles::item_mod_menu`
+  (`ItemModMenu`). When `menus/ySI/ySI.xml` is present on the menu, each row instantiates
+  or updates a `ySIImage` child tile using the resolved template (`ySIDefault` fallback for
+  unknown custom templates, `ySINoTag` for untagged rows) and writes its `filename`. When
+  `menus/ySI/ySI.xml` is absent, `apply_row_icon` is a strict no-op.
+
+## `yUI` version gate evaluation (`GetPluginVersion "yUI"`)
+
+Per `docs/design/extender-compat.md` §5.7 and `docs/spec-notes/ext-version.md` §5,
+`IsPluginInstalled "yUI"` remains `0` and `GetPluginVersion "yUI"` remains `-1.0`
+(unregistered in `fnv_script::vm::jip::PLUGINS`). Remaining `yUI 140` gaps before
+advertising `yUI`:
+- `ySIGetTrait "string"` formatted output and native default/fallback icon + equal-priority
+  file-order tie policies (unprobed in original FNV).
+- Remaining unmapped ySI JSON predicates (`formlist: 2`, threshold comparisons such as
+  `armorDT`, and any additional unprobed schema keys).
+- Row icon wiring for `RecipeMenu`, `RepairServicesMenu`, and hand-built (non-tiled)
+  fallback views.
+- Non-ySI `yUI` plugin modules (`yUI.ini` features outside ySI) and end-to-end installed
+  mod acceptance (`ln_ySIContextualPrompts.txt:25` `yUI < 140` gate and `JustAssortedMods`
+  `HUDMainMenu/ySI/_ySI` flow).
+
+These are source, model, and tile-tree consumer checks, not GPU rendering, multi-rule
+native parity, or complete installed ySI/JAM acceptance.

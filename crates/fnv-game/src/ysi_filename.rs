@@ -28,7 +28,7 @@ struct Book {
     icons: Vec<Rule>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Match {
+pub(crate) enum Match {
     Yes,
     No,
     Unknown,
@@ -106,11 +106,25 @@ pub(crate) fn json_tag(g: &mut Game<'_>, form: FormId) -> Option<String> {
 /// Resolves the certain winning JSON icon `filename` for a ySI sorting tag using
 /// the session's cached configuration snapshot.
 pub(crate) fn json_icon_filename(g: &mut Game<'_>, tag: &str) -> Option<String> {
+    json_icon_spec(g, tag).map(|(filename, _)| filename)
+}
+
+/// Resolves the certain winning JSON icon `(filename, optional template)` for a ySI
+/// sorting tag using the session's cached configuration snapshot.
+pub(crate) fn json_icon_spec(g: &mut Game<'_>, tag: &str) -> Option<(String, Option<String>)> {
     if g.ysi_filename.book.is_none() {
         g.ysi_filename.book = Some(Book::load());
     }
     let book = g.ysi_filename.book.as_ref()?.as_ref().ok()?;
-    book.icon_filename(tag).ok()
+    book.icon_spec(tag).ok()
+}
+
+/// Whether a valid `menus/ySI/*.json` configuration book is loaded in this session.
+pub(crate) fn has_loaded_book(g: &mut Game<'_>) -> bool {
+    if g.ysi_filename.book.is_none() {
+        g.ysi_filename.book = Some(Book::load());
+    }
+    g.ysi_filename.book.as_ref().is_some_and(Result::is_ok)
 }
 
 impl Book {
@@ -233,6 +247,10 @@ impl Book {
     }
 
     fn icon_filename(&self, tag: &str) -> Result<String, String> {
+        self.icon_spec(tag).map(|(filename, _)| filename)
+    }
+
+    fn icon_spec(&self, tag: &str) -> Result<(String, Option<String>), String> {
         let priority = self
             .icons
             .iter()
@@ -240,6 +258,7 @@ impl Book {
             .map(|r| r.priority)
             .max();
         let mut filenames = BTreeSet::new();
+        let mut templates = BTreeSet::new();
         for rule in self
             .icons
             .iter()
@@ -251,6 +270,15 @@ impl Book {
                 .and_then(Json::as_str)
                 .ok_or("selected ySI icon has no filename string")?;
             filenames.insert(filename);
+            if let Some(tpl) = rule
+                .fields
+                .get("template")
+                .and_then(Json::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                templates.insert(tpl);
+            }
         }
         if filenames.len() != 1 {
             return Err(
@@ -258,7 +286,12 @@ impl Book {
                     .into(),
             );
         }
-        Ok((*filenames.first().expect("one filename")).to_string())
+        let template = if templates.len() == 1 {
+            templates.first().map(|s| (*s).to_string())
+        } else {
+            None
+        };
+        Ok(((*filenames.first().expect("one filename")).to_string(), template))
     }
 }
 
@@ -297,7 +330,7 @@ impl Rule {
                     }
                     _ => Match::Unknown,
                 },
-                _ => Match::Unknown,
+                _ => crate::ysi_predicates::eval(g, item, &self.fields, name, value),
             };
             if part == Match::No {
                 return Match::No;
@@ -310,6 +343,9 @@ impl Rule {
         if (self.fields.contains_key("mod") || self.fields.contains_key("formlist"))
             && !self.fields.contains_key("form")
         {
+            return Match::Unknown;
+        }
+        if crate::ysi_predicates::has_dangling_companions(&self.fields) {
             return Match::Unknown;
         }
         answer
@@ -384,7 +420,7 @@ impl Rule {
     }
 }
 
-fn parse_local_form(v: &Json) -> Option<u32> {
+pub(crate) fn parse_local_form(v: &Json) -> Option<u32> {
     let text = v.as_str()?;
     u32::from_str_radix(
         text.strip_prefix("0x")
@@ -396,7 +432,7 @@ fn parse_local_form(v: &Json) -> Option<u32> {
     .filter(|n| *n <= 0x00ff_ffff)
 }
 
-fn any(values: impl Iterator<Item = Match>) -> Match {
+pub(crate) fn any(values: impl Iterator<Item = Match>) -> Match {
     let mut answer = Match::No;
     for v in values {
         if v == Match::Yes {
@@ -408,7 +444,7 @@ fn any(values: impl Iterator<Item = Match>) -> Match {
     }
     answer
 }
-fn number_set(value: &Json, number: i64) -> Match {
+pub(crate) fn number_set(value: &Json, number: i64) -> Match {
     let one = |v: &Json| match v.as_i64() {
         Some(n) if n == number => Match::Yes,
         Some(_) => Match::No,
