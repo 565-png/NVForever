@@ -320,8 +320,8 @@ fn foley_of(lo: &fnv_esm::LoadOrder, schema: &fnv_esm::Schema, worn: &[FormId]) 
 /// the New West's TNWFootstepUDF) look every frame for it starting].
 const TOLD_SECONDS: f64 = 0.5;
 
-/// A clip's `Sound:` key: the player's own, or another actor's (`actor`: by the record's
-/// distances whatever its flags, [`ActorSound`]).
+/// A sound an actor makes (a clip's key, a step, a rustle, a jump): the player's own, or
+/// another actor's (`actor`: by the record's distances whatever its flags, [`ActorSound`]).
 fn play_key(out: &mut MessageWriter<PlaySound>, actor: Option<&mut MessageWriter<ActorSound>>, sound: FormId, at: Option<[f32; 3]>) {
     match (actor, at) {
         (Some(actor), Some(at)) => {
@@ -337,7 +337,7 @@ fn play_key(out: &mut MessageWriter<PlaySound>, actor: Option<&mut MessageWriter
 fn sound_heard(
     s: &mut AnimSounds,
     out: &mut MessageWriter<PlaySound>,
-    actor: Option<&mut MessageWriter<ActorSound>>,
+    mut actor: Option<&mut MessageWriter<ActorSound>>,
     phys: &mut Option<ResMut<PhysState>>,
     d: &PlayWorld,
     world: u32,
@@ -381,13 +381,13 @@ fn sound_heard(
             }
             *s.counts.grounds.entry(family).or_default() += 1;
             debug!("anim sounds: {:?} footstep {family}{} {:?} {side:?}", h.who, if stairs { " stairs" } else { "" }, gait);
-            out.write(PlaySound { sound, at });
+            play_key(out, actor.as_deref_mut(), sound, at);
             s.told.push((sound, source));
             // Armour's footfall, beside the ground's step (#2541).
             if let Some(step) = armour.filter(|_| !swimming) {
                 if let Some(sound) = s.sound(step.record(side)) {
                     s.counts.armour_steps += 1;
-                    out.write(PlaySound { sound, at });
+                    play_key(out, actor, sound, at);
                     s.told.push((sound, source));
                 }
             }
@@ -406,7 +406,7 @@ fn sound_heard(
             // body, not at the ear (docs/design/tweaks.md).
             let body = h.who == Who::Player(false) && nvf_play::tweaks::ARMOR_3D.load(std::sync::atomic::Ordering::Relaxed);
             let at = if body { at.or(Some(feet)) } else { at };
-            out.write(PlaySound { sound: FormId(f.sound), at });
+            play_key(out, actor, FormId(f.sound), at);
         }
     }
 }
@@ -652,7 +652,7 @@ fn creature_hits(
     d: Res<PlayWorld>,
     actor_world: Option<Res<crate::actors::ActorWorld>>,
     actors: Query<(&ActorRig, &GlobalTransform)>,
-    mut out: MessageWriter<PlaySound>,
+    mut out: MessageWriter<ActorSound>,
 ) {
     let s = &mut *s;
     for h in hits.read() {
@@ -667,7 +667,7 @@ fn creature_hits(
             s.counts.creature_hits += 1;
         }
         debug!("anim sounds: creature {:08X} {}", h.form_id, creature_sound_type_name(kind));
-        out.write(PlaySound { sound: FormId(sound), at: Some(bevy_to_game(gt.translation()).to_array()) });
+        out.write(ActorSound { sound: FormId(sound), at: bevy_to_game(gt.translation()).to_array() });
     }
 }
 
@@ -688,7 +688,7 @@ fn jumps_and_landings(s: &mut AnimSounds, out: &mut MessageWriter<PlaySound>, ph
     if swimming {
         return;
     }
-    let Some(family) = jump_sound(s, out, p, d, world, player.feet, vec![key], landing, None) else { return };
+    let Some(family) = jump_sound(s, out, None, p, d, world, player.feet, vec![key], landing, None) else { return };
     if landing {
         s.counts.landings += 1;
     } else {
@@ -700,11 +700,11 @@ fn jumps_and_landings(s: &mut AnimSounds, out: &mut MessageWriter<PlaySound>, ph
 /// The ground's `FST…Jump` (`landing` false) or `FST…Land` sound under `feet`, played
 /// `at` (`None`: at the listener); the ground's family, `None` when no record is found.
 #[allow(clippy::too_many_arguments)]
-fn jump_sound(s: &mut AnimSounds, out: &mut MessageWriter<PlaySound>, p: &mut PhysState, d: &PlayWorld, world: u32, feet: [f32; 3], exclude: Vec<Key>, landing: bool, at: Option<[f32; 3]>) -> Option<&'static str> {
+fn jump_sound(s: &mut AnimSounds, out: &mut MessageWriter<PlaySound>, actor: Option<&mut MessageWriter<ActorSound>>, p: &mut PhysState, d: &PlayWorld, world: u32, feet: [f32; 3], exclude: Vec<Key>, landing: bool, at: Option<[f32; 3]>) -> Option<&'static str> {
     let what = if landing { "Land" } else { "Jump" };
     let (family, _) = ground(s, p, d, world, feet, exclude);
     let sound = s.first_of(&[format!("FST{family}{what}"), format!("FSTDirt{what}")])?;
-    out.write(PlaySound { sound, at });
+    play_key(out, actor, sound, at);
     Some(family)
 }
 
@@ -722,7 +722,7 @@ fn actor_jumps(
     location: Res<Location>,
     actor_world: Option<Res<crate::actors::ActorWorld>>,
     rigs: Query<&ActorRig>,
-    mut out: MessageWriter<PlaySound>,
+    (mut out, mut by_actors): (MessageWriter<PlaySound>, MessageWriter<ActorSound>),
 ) {
     let (Some(sfx), Some(player), Some(p)) = (sfx, player, phys.as_deref_mut()) else {
         air.clear();
@@ -749,7 +749,7 @@ fn actor_jumps(
             continue;
         }
         let exclude = vec![Key::Actor(m.reference), Key::Character(m.reference)];
-        let Some(family) = jump_sound(s, &mut out, p, &d, location.world, m.feet, exclude, landing, Some(m.feet)) else { continue };
+        let Some(family) = jump_sound(s, &mut out, Some(&mut by_actors), p, &d, location.world, m.feet, exclude, landing, Some(m.feet)) else { continue };
         if landing {
             s.counts.actor_landings += 1;
         } else {
@@ -883,6 +883,8 @@ impl Plugin for AnimSoundsPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+    use fnv_actor::anim_sounds::Gait;
 
     fn clip(keys: &[(f32, &str)]) -> Clip {
         Clip {
@@ -905,21 +907,50 @@ mod tests {
         }
     }
 
-    /// Another actor's key goes by its record's distances ([`ActorSound`]), the player's
-    /// own at the listener does not (#3444).
+    fn played_by(app: &mut App) -> (Vec<(FormId, [f32; 3])>, Vec<(FormId, Option<[f32; 3]>)>) {
+        let actors = app.world_mut().resource_mut::<Messages<ActorSound>>().drain().map(|a| (a.sound, a.at)).collect();
+        let own = app.world_mut().resource_mut::<Messages<PlaySound>>().drain().map(|p| (p.sound, p.at)).collect();
+        (actors, own)
+    }
+
+    /// Every sound a clip of another actor's names (a `Sound:` key, a footfall, the armour's
+    /// footfall, a rustle) goes by its record's distances ([`ActorSound`]); the player's own
+    /// plays at the listener as it did (#3444). So does a creature's hit, once, as the blow
+    /// lands.
     #[test]
-    fn an_actors_key_is_an_actors_sound() {
+    fn an_actors_sounds_are_actor_sounds() {
+        const AT: [f32; 3] = [1.0, 2.0, 3.0];
         let mut app = App::new();
-        app.add_message::<PlaySound>().add_message::<ActorSound>();
-        app.add_systems(Update, |mut out: MessageWriter<PlaySound>, mut actors: MessageWriter<ActorSound>| {
-            play_key(&mut out, Some(&mut actors), FormId(1), Some([1.0, 2.0, 3.0]));
-            play_key(&mut out, None, FormId(2), None);
-        });
-        app.update();
-        let actors: Vec<_> = app.world_mut().resource_mut::<Messages<ActorSound>>().drain().map(|a| (a.sound, a.at)).collect();
-        assert_eq!(actors, vec![(FormId(1), [1.0, 2.0, 3.0])]);
-        let own: Vec<_> = app.world_mut().resource_mut::<Messages<PlaySound>>().drain().map(|p| (p.sound, p.at)).collect();
-        assert_eq!(own, vec![(FormId(2), None)]);
+        app.add_message::<PlaySound>().add_message::<ActorSound>().add_message::<ActorHit>();
+        let (lo, schema): (&'static fnv_esm::LoadOrder<'static>, &'static fnv_esm::Schema) = (Box::leak(Box::new(fnv_esm::LoadOrder::new(&[]).unwrap())), Box::leak(Box::default()));
+        app.insert_resource(PlayWorld(nvf_play::PlayData {
+            lo, schema, index: Box::leak(Box::default()),
+            world: 1, interior: None, eye: [0.0; 3], heading_deg: 0.0, pitch_deg: 0.0, auto_walk: 0.0, start_at_cell_spot: false, packages: false,
+        }));
+        let mut s = AnimSounds { built: true, ..Default::default() };
+        s.by_edid = [("testkey", 1), ("fstdirtwalkl", 2), ("fstarmorl", 3)].into_iter().map(|(n, i)| (n.to_string(), FormId(i))).collect();
+        s.creatures.insert(7, Some(Arc::new(vec![CreatureSound { kind: creature_sound::HIT, sound: 5, chance: 100 }])));
+        app.insert_resource(s);
+        let keys = |player: bool| {
+            move |mut s: ResMut<AnimSounds>, d: Res<PlayWorld>, mut out: MessageWriter<PlaySound>, mut actors: MessageWriter<ActorSound>| {
+                let clip = clip(&[]);
+                let worn = (vec![FoleySound { sound: 4, chance: 100, armor: true, gait: Some(Gait::Walk) }], Some(ArmourStep::Heavy));
+                for key in [KeySound::Sound("TestKey"), KeySound::Foot(Side::Left), KeySound::Foley { armor: true, gait: Gait::Walk }] {
+                    let (who, actor, at) = if player { (Who::Player(false), None, None) } else { (Who::Actor(Entity::PLACEHOLDER), Some(&mut actors), Some(AT)) };
+                    sound_heard(&mut s, &mut out, actor, &mut None, &d, 1, Heard { who, clip: &clip, key }, at, AT, Vec::new(), &worn, false, FormId(0));
+                }
+            }
+        };
+        app.world_mut().run_system_once(keys(false)).unwrap();
+        assert_eq!(played_by(&mut app), ((1..=4).map(|i| (FormId(i), AT)).collect(), vec![]), "another actor's");
+        app.world_mut().run_system_once(keys(true)).unwrap();
+        assert_eq!(played_by(&mut app), (vec![], (1..=4).map(|i| (FormId(i), None)).collect()), "the player's own");
+
+        let rig = ActorRig { reference: 7, base: 8, body: 8, skeleton: String::new(), skel: Default::default(), nodes: vec![], base_scale: 1.0 };
+        app.world_mut().spawn((rig, GlobalTransform::IDENTITY));
+        app.world_mut().write_message(ActorHit { form_id: 7, died: false, knocked_out: false, location: 0, crippled: false, part_crippled: false, torso_crippled: false, by: None, share: 0.5, guard_broken: false, weapon: None });
+        app.world_mut().run_system_once(creature_hits).unwrap();
+        assert_eq!(played_by(&mut app), (vec![(FormId(5), [0.0; 3])], vec![]), "a creature's hit");
     }
 
     #[test]
