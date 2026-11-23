@@ -121,6 +121,32 @@ class Original(unittest.TestCase):
         self.assertEqual(doc["setups"][0]["difficulty"], 1)
         self.assertEqual(doc["setups"][0]["p_weapon_health"], 100)
 
+    def test_a_formid_used_again_and_a_small_fall_are_no_hit(self):
+        m = small()
+        person, creature = m["targets"]
+        a = "FF000001"
+        pb, cb = person["base"][2:], creature["base"][2:]
+        samples = [
+            [(a, pb, 5000, 2, 0, 1, 3, -1, 0, 0)],
+            [(a, pb, 4999.98, 2, 0, 1, 3, -1, 0, 0)],         # not a shot: under 0.1
+            [(a, pb, 4982.48, 2, 0, 1, 4, 0, 17.5, 0)],
+            [(a, cb, 60, 0, 10, 4, 0, -1, 0, 0)],             # the next target, placed, under the same FormID
+            [(a, cb, 5000, 0, 10, 4, 1, -1, 0, 0)],
+            [(a, cb, 4970, 0, 10, 4, 3, 0, 30, 0)],
+            [(a, cb, 40, 0, 10, 4, 0, -1, 0, 0)],             # and the same record again
+        ]
+        rows = dp.original_rows(m, [("x.jsonl", output(m, m["weapons"][0]["key"], samples))])["rows"]
+        self.assertEqual([(r["target"], r["shot"], r["damage"]) for r in rows],
+                         [(person["key"], 1, 17.5), (creature["key"], 0, 30.0)])
+
+    def test_people_lose_their_weapon_and_creatures_their_ai(self):
+        lines = dp.place_script(dp.load_matrix())["lines"]
+        text = "|".join(x.strip() for x in lines)
+        self.assertIn("if rA.GetIsCreature|if fV >= 1|if fV <= 2|rA.SetActorsAI 0", text)
+        self.assertIn("else|let rGun := rA.GetEquippedObject 5|if rGun|rA.RemoveItem rGun 1 1", text)
+        # the move and the AI's end are not in the same run of the script
+        self.assertLess(lines.index("        rA.MoveTo player 0 300 0"), lines.index("              rA.SetActorsAI 0"))
+
     def test_other_actors_and_other_campaigns_are_left_out(self):
         m = small()
         stray = [[("FF000009", "00000007", 100, 0, 0, 1, 0, -1, 0, 0)], [("FF000009", "00000007", 50, 0, 0, 1, 0, 0, 50, 0)]]

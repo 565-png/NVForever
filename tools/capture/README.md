@@ -518,7 +518,7 @@ record after record. Change the matrix, then write the campaign again (a test ke
 two in step).
 ```
 python tools/capture/damage_parity.py campaign
-python tools/capture/observe.py run tools/capture/observe/damage_parity.campaign.json --game "<FNV folder>" --data "<Data>"
+python tools/capture/observe.py run tools/capture/observe/damage_parity.campaign.json --only pistol9mm --game "<FNV folder>" --data "<Data>"   # and so on, one weapon a launch
 python tools/capture/damage_parity.py original C:/fnv-private/capture/out/obs_damage_parity_*.jsonl -o C:/fnv-private/capture/observe/damage_parity/original.rows.json
 
 python tools/capture/damage_parity.py scenarios -o <dir>/damage-parity.toml
@@ -539,6 +539,18 @@ python tools/capture/damage_parity.py rule <dir>/nvforever.rows.json
   lines. `compare` gives, per weapon, record and aim, the plain hit's damage on both
   sides (no critical, no sneak attack), the target's DT and DR as each game reads them
   and where the hits landed, and says `match`, `differs`, or which side has no hit.
+- One weapon a game launch (`--only`): with all ten sessions in one launch the first
+  one's shots landed and most of the later ones' went wide [observed 2026-11-21].
+- What the original's run does to make the shots land [observed 2026-11-21, the trial
+  sessions]: a person's weapon is taken away (a restrained person's rifle took the shots
+  aimed at the torso: hit location 14, no health lost); creatures and robots have their
+  AI turned off one run of the placing script after they are moved (in the same run the
+  move was lost), people keep theirs (with it off most shots after the first hit
+  missed); the weapon's spread is set to 0 in the running game; the weapon is mended
+  every 10 loops; the skills are set with SetAV and then ForceAV, after Luck (SetAV
+  alone left Guns at 65 on the save's character). A FireWeapon hit on the unarmoured
+  wastelander's torso was base damage × (0.5 + 0.5 × skill / 100), at skill 65 and at
+  skill 50: FireWeapon's damage is a normal shot's.
 - A row whose DT, DR or level differ between the games says the set-up differs (a
   leveled outfit, a level that follows the player's), not only the hit.
 - The rows and the comparison hold figures measured in the original: keep them private.
