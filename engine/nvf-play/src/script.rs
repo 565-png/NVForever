@@ -1532,10 +1532,10 @@ impl EffectCtx for PlayCtx<'_> {
         (m.icon.and_then(|i| self.data.menu_icons.get(&i).cloned()), self.game.message_seconds(message).map(|s| s as f32))
     }
 
-    fn skill_look(&self, code: u16) -> (String, Option<String>) {
+    fn skill_name(&self, code: u16) -> String {
         let info = self.data.actor_value_info(code);
         let name = info.map(|i| i.name.clone()).filter(|n| !n.trim().is_empty());
-        (name.unwrap_or_else(|| fnv_game::functions::AV_NAMES.get(code as usize).copied().unwrap_or("?").to_string()), info.and_then(|i| i.icon.clone()))
+        name.unwrap_or_else(|| fnv_game::functions::AV_NAMES.get(code as usize).copied().unwrap_or("?").to_string())
     }
 
     fn pops_in(&self, r: FormId) -> bool {
