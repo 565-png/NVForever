@@ -21,8 +21,13 @@ Plain-language notes for `crates/fnv-game/src/nvse_hud.rs` and the control funct
   spot is not valid [documented]. In game, aimed at the ground or sky, it had 3 entries
   [observed: hud1]. NVForever takes the point from the engine's crosshair ray; a headless run
   has no ray and gives ar_Null.
-- `GetReticleTargetLimb` reads -1 with no actor in the crosshair [observed: hud1]. The limb
-  under the crosshair is not told by the engine, so it reads -1 for actors too [not built].
+- `GetReticleTargetLimb [maxRange]` reads -1 with no actor in the crosshair [observed:
+  hud1]. On an actor hit by the crosshair's far ray, NVForever resolves the hit capsule's
+  BPTD body part to its `BodyLocation` code (0 torso, 1–2 head, 3–4 left arm, 5–6 right
+  arm, 7–9 left leg, 10–12 right leg, 13 brain, 14 held weapon) [documented:
+  GetReticleTargetLimb, GetHitLocation], honouring the optional `maxRange` cap (0 or
+  omitted uses the full reticle reach). Non-actors, misses, gore pieces, and actors
+  without posed body parts (single-capsule fallback) read -1 [design].
 
 ## 3. Corner messages
 

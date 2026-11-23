@@ -143,9 +143,19 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
             }
             None => XVal::Array(0),
         },
-        // -1 with no actor in the crosshair [observed: hud1]; the engine does not tell the
-        // limb the ray meets, so an actor reads -1 too [not built: the limb].
-        "getreticletargetlimb" => XVal::Num(-1.0),
+        // Body part location (0..=14) of the actor under the crosshair within optional
+        // maxRange, else -1 [documented: GetReticleTargetLimb; observed: hud1 reads -1
+        // with no actor].
+        "getreticletargetlimb" => {
+            let range = num(args, 0, 0.0);
+            let limb = g
+                .senses
+                .reticle
+                .filter(|r| range <= 0.0 || r.hit.is_some_and(|d| f64::from(d) <= range))
+                .and_then(|r| r.limb)
+                .unwrap_or(-1);
+            XVal::Num(f64::from(limb))
+        }
         // ---- corner messages ----
         "getnumqueuedcornermessages" => XVal::Num(g.hud.corner_queue as f64),
         // [observed: hud1, 0 in its frame and the next]
