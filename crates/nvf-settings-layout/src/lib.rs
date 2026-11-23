@@ -356,6 +356,7 @@ pub const SECTIONS: &[Section] = &[
             "tweak-power-armor-fall",
             "tweak-power-armor-limbs",
             "tweak-sleep-heal-min-hours",
+            "tweak-sleep-misc-stat-requires-duration",
         ],
     ),
     group_section(
@@ -378,6 +379,7 @@ pub const SECTIONS: &[Section] = &[
             "tweak-pickpocket-caught-detects",
             "tweak-force-spares-lock",
             "tweak-grabbing-is-theft",
+            "tweak-grabbing-is-theft-min-value",
             "tweak-hack-dud-when-full",
             "tweak-hack-spare-guessed",
             "tweak-hack-no-repeat-words",
@@ -454,6 +456,7 @@ pub const SECTIONS: &[Section] = &[
             "tweak-no-companion-item-damage",
             "tweak-revive-companions",
             "tweak-revive-down-seconds",
+            "tweak-revive-on-cell-change",
             "tweak-map-summon-companions",
             "tweak-summon-unconscious",
         ],
@@ -506,7 +509,14 @@ pub const SECTIONS: &[Section] = &[
     group_section(
         "Combat",
         "Companions and Blasts",
-        &["tweak-no-disarm-companions", "tweak-teammates-meltdown", "tweak-no-self-meltdown", "tweak-no-companion-kill-xp", "tweak-no-self-explosion-damage"],
+        &[
+            "tweak-no-disarm-companions",
+            "tweak-teammates-meltdown",
+            "tweak-no-self-meltdown",
+            "tweak-no-companion-kill-xp",
+            "tweak-no-self-explosion-damage",
+            "tweak-no-self-explosion-non-hostiles",
+        ],
     ),
     // Tweaks > Quality of Life.
     group_section(
@@ -975,6 +985,9 @@ pub const NEEDS: &[(&str, &str, &str)] = &[
     ("fps-counter-low", "fps-counter", "Needs the Frame Rate Counter."),
     ("fps-counter-low", "fps-counter-fps", "Needs Counter: Frame Rate."),
     ("tweak-hack-keep-matching-chars", "tweak-hack-mark-guesses-as-duds", "Needs Hacking: Mark Guesses as Duds."),
+    ("tweak-revive-on-cell-change", "tweak-revive-companions", "Needs Revive Unconscious Companions."),
+    ("tweak-no-self-explosion-non-hostiles", "tweak-no-self-explosion-damage", "Needs Own Blasts Spare the Player."),
+    ("tweak-grabbing-is-theft-min-value", "tweak-grabbing-is-theft", "Needs Grabbing Is Stealing."),
 ];
 
 /// The Controls tab's rows that are shown only while the input device is a controller
