@@ -27,7 +27,11 @@
   in `Band::Detected` inside `Game::detection.pairs`, sorted deterministically
   by `FormId`. Both handlers return `ar_Null` (`0`) when empty or when the
   calling reference is omitted.
-- [hypothesis] Original-game ordering of returned arrays, whether unloaded or
+- [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10
+  official base masters, clean-room script probe jip_37_followers_and_detecting_empty
+  (GetFollowers/GetDetectingActors): -1,-1; no DLL or source consulted] Both return
+  `ar_Null` (`ar_Size == -1`) when empty.
+- [hypothesis] Original-game ordering of returned arrays when non-empty, whether unloaded or
   low-process followers are included, whether `Escort` packages count as
   followers, and whether non-actor or stale detection pairs are filtered the
   same way in JIP LN NVSE remain unverified against an original-game capture.

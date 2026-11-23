@@ -62,8 +62,10 @@ NVForever: the node goes into the script's NIF mirror at once (`Game::attach_lig
 so JIP's NIF block functions see it, and the engine draws it as a point light with the
 LIGH's colour, brightness and radius, as a muzzle flash's light is drawn
 (`engine/nvforever/src/nif_mirror.rs`, `SceneEdit::Light`). One light per node: a second
-AttachLight on the node replaces the first [hypothesis: the probe did not count the
-children after two attaches]. The lights last for the session [hypothesis].
+AttachLight on the node executes cleanly and RemoveLight cleans up [observed: Fallout: New
+Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, clean-room
+script probe jip_55_attach_light_twice_count (AttachLight/RemoveLight): attach2_remove_ok;
+no DLL or source consulted; hypothesis: replacing vs appending child light]. The lights last for the session [hypothesis].
 
 ### 2.2 LockEquipment
 

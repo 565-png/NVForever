@@ -3016,7 +3016,15 @@ impl<'a> Game<'a> {
         if !self.quest(q).completed {
             self.start_quest(q);
         }
-        self.quest(q).stages_done.insert(stage);
+        let qst = self.quest(q);
+        qst.stages_done.insert(stage);
+        if let Some(cur) = qst.current_stage {
+            if stage >= qst.stages_done.iter().next_back().copied().unwrap_or(stage) {
+                qst.current_stage = None;
+            } else if stage > cur {
+                qst.current_stage = Some(stage);
+            }
+        }
         let player = Some(FormId::PLAYER_REF);
         let label = format!("QUST {q} stage {stage}");
         let mut ran = Vec::new();

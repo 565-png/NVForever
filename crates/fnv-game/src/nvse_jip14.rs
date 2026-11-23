@@ -395,8 +395,11 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
     let v = match name {
         // ---- magic items ----
         // A new entry at the top, or appended (1), of an ingestible's, object effect's or
-        // actor effect's list; the new count, -1 when not added [documented]; for the
-        // session [hypothesis: the page says nothing of saving].
+        // actor effect's list; returns the 0-based inserted index (`n0` when appended, 0
+        // when prepended [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN
+        // 57.30, probe jip_48_addneweffect_duplicate_return: n0=4, ret=4, n1=5; hypothesis:
+        // 0 when prepended]), or -1 when not added [documented]; for the session
+        // [hypothesis: the page says nothing of saving].
         "addneweffect" => {
             let (Some(item), Some(mgef), Some(dur), Some(mag)) = (form(args, 0), form(args, 1), num(args, 2), num(args, 3)) else { return Some(Ok(XVal::Num(-1.0))) };
             let kind_ok = g.data.sig(item).is_some_and(|s| MAGIC_ITEMS.contains(&&s));
@@ -405,13 +408,15 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             }
             // [decision: the range is not kept, as NVForever's effect entries have none]
             let e = EffectItem { effect: mgef, magnitude: mag.max(0.0) as u32, area: num(args, 5).unwrap_or(0.0).max(0.0) as u32, duration: dur.max(0.0) as u32, actor_value: None, conditions: Vec::new() };
+            let append = num(args, 6).unwrap_or(0.0) != 0.0;
             let entry = g.other.jip14.added_effects.entry(item).or_default();
-            if num(args, 6).unwrap_or(0.0) != 0.0 {
+            if append {
                 entry.1.push(e);
+                XVal::Num(g.effect_count(item).saturating_sub(1) as f64)
             } else {
                 entry.0.push(e);
+                XVal::Num(0.0)
             }
-            XVal::Num(g.effect_count(item) as f64)
         }
         // Any effect of the list's items on the actor [documented], as IsSpellTarget.
         "isspelltargetlist" => {

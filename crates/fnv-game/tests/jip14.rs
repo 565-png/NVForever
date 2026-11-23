@@ -112,9 +112,13 @@ fn added_effects_in_the_list_and_applied() {
     let f = fixture();
     let mut g = game(&f);
     assert_eq!(n(&mut g, "GetNumEffects TestDrink"), 1.0);
-    // At the top by default, appended with the flag [documented]; the new count.
-    assert_eq!(n(&mut g, "AddNewEffect TestDrink TestEffectTwo 30 7 0 0"), 2.0);
-    assert_eq!(n(&mut g, "AddNewEffect TestDrink TestEffectTwo 30 9 0 0 1"), 3.0);
+    // At the top by default (0-based inserted index 0), appended with the flag (0-based
+    // inserted index n0 = n1 - 1) [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
+    // JIP LN 57.30, Wave 4 probe jip_48_addneweffect_duplicate_return: n0=4, ret=4, n1=5].
+    assert_eq!(n(&mut g, "AddNewEffect TestDrink TestEffectTwo 30 7 0 0"), 0.0);
+    assert_eq!(n(&mut g, "GetNumEffects TestDrink"), 2.0);
+    assert_eq!(n(&mut g, "AddNewEffect TestDrink TestEffectTwo 30 9 0 0 1"), 2.0);
+    assert_eq!(n(&mut g, "GetNumEffects TestDrink"), 3.0);
     assert_eq!(n(&mut g, "GetNthEffectBase TestDrink 0"), f64::from(MGEF2));
     assert_eq!(n(&mut g, "GetNthEffectBase TestDrink 1"), f64::from(MGEF1));
     assert_eq!(n(&mut g, "GetNthEffectBase TestDrink 2"), f64::from(MGEF2));
@@ -130,16 +134,18 @@ fn added_effects_in_the_list_and_applied() {
 fn nth_effect_functions_share_one_index() {
     let f = fixture();
     let mut g = game(&f);
-    // [front 7] [record 5] [back 9]
-    assert_eq!(n(&mut g, "AddNewEffect TestDrink TestEffectTwo 30 7 0 0"), 2.0);
-    assert_eq!(n(&mut g, "AddNewEffect TestDrink TestEffectTwo 40 9 0 0 1"), 3.0);
+    // [front 7] [record 5] [back 9]; AddNewEffect returns 0-based inserted index
+    // [observed: Wave 4 jip_48_addneweffect_duplicate_return: n0=4, ret=4, n1=5].
+    assert_eq!(n(&mut g, "AddNewEffect TestDrink TestEffectTwo 30 7 0 0"), 0.0);
+    assert_eq!(n(&mut g, "AddNewEffect TestDrink TestEffectTwo 40 9 0 0 1"), 2.0);
     // The record's entry goes: [front 7] [back 9].
     assert_eq!(n(&mut g, "RemoveNthEffect TestDrink 1"), 2.0);
     assert_eq!(n(&mut g, "GetNumEffects TestDrink"), 2.0);
-    // The count AddNewEffect gives is the list's, so the new entry is reachable by it.
-    let count = n(&mut g, "AddNewEffect TestDrink TestEffectOne 50 11 0 0 1");
-    assert_eq!(count, 3.0);
-    assert_eq!(n(&mut g, &format!("GetNthEffectBase TestDrink {}", count - 1.0)), f64::from(MGEF1));
+    // AddNewEffect returns the 0-based inserted index, so GetNthEffectBase reads it directly.
+    let idx = n(&mut g, "AddNewEffect TestDrink TestEffectOne 50 11 0 0 1");
+    assert_eq!(idx, 2.0);
+    assert_eq!(n(&mut g, "GetNumEffects TestDrink"), 3.0);
+    assert_eq!(n(&mut g, &format!("GetNthEffectBase TestDrink {idx}")), f64::from(MGEF1));
     // A loop over 0..GetNumEffects-1 reads matching bases and traits.
     let mut seen = Vec::new();
     for i in 0..n(&mut g, "GetNumEffects TestDrink") as u32 {

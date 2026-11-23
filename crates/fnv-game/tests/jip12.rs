@@ -312,8 +312,12 @@ fn barter_and_item_menus() {
     g.set_barter_view(None);
     assert_eq!(g.barter_price_mults(), [None, None], "the trade's multipliers go with it");
 
-    // The item menus: before one was open, weapons for the inventory [observed].
+    // The item menus: before menus are opened, inventory (1002) defaults to 1 while
+    // container (1008) and barter (1053) return -1 [observed: jip12 filter.inventory;
+    // Wave 4 jip_40_barter_and_filter_defaults: 1, -1, -1].
     assert_eq!(n(&mut g, "GetMenuItemFilter 1002"), 1.0);
+    assert_eq!(n(&mut g, "GetMenuItemFilter 1008"), -1.0);
+    assert_eq!(n(&mut g, "GetMenuItemFilter 1053"), -1.0);
     let view = ItemMenuView { filter: [3, 0], lists: [MenuList { owner: Some(FormId::PLAYER_REF), rows: vec![(0, FormId(MISC), false), (2, FormId(STAT), true)] }, MenuList::default()] };
     g.set_item_menu_view(1008, Some(view));
     assert_eq!(n(&mut g, "GetMenuItemFilter 1008"), 3.0);

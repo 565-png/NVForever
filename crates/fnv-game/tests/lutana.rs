@@ -41,6 +41,7 @@ const LIGH: u32 = 0x920;
 const NOTE2: u32 = 0x921;
 const ROOM: u32 = 0x930;
 const TERM_REF: u32 = 0x931;
+const LIGHT_REF: u32 = 0x932;
 
 fn le(v: u32) -> Vec<u8> {
     v.to_le_bytes().to_vec()
@@ -96,7 +97,8 @@ fn plugin_bytes() -> Vec<u8> {
     // LIGH DATA: time, radius 200, colour, flags, falloff, FOV, value, weight.
     let ligh = edid(b"LIGH", LIGH, "TestLight", &[sub(b"DATA", [le(0), le(200), vec![255, 255, 255, 0], le(0), f32b(1.0), f32b(90.0), le(0), f32b(0.0)].concat())]);
     let term_ref = edid(b"REFR", TERM_REF, "TestTerminalRef", &[sub(b"NAME", le(TERM)), sub(b"DATA", vec![0; 24])]);
-    let cell = [edid(b"CELL", ROOM, "TestRoom", &[sub(b"DATA", vec![1])]), group(ROOM.to_le_bytes(), 6, &group(ROOM.to_le_bytes(), 9, &term_ref))].concat();
+    let light_ref = edid(b"REFR", LIGHT_REF, "TestLightRef", &[sub(b"NAME", le(LIGH)), sub(b"DATA", vec![0; 24])]);
+    let cell = [edid(b"CELL", ROOM, "TestRoom", &[sub(b"DATA", vec![1])]), group(ROOM.to_le_bytes(), 6, &group(ROOM.to_le_bytes(), 9, &[term_ref, light_ref].concat()))].concat();
     let cells = top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &cell)));
     [
         tes4(),
@@ -292,6 +294,16 @@ AddRecipeInputForm TestRecipe ItemC 2");
     q(&mut g, "SetRecipeRequiredSkill TestRecipe -1");
     assert_eq!(n(&mut g, "GetRecipeRequiredSkill TestRecipe"), -1.0);
     assert_eq!(n(&mut g, "GetRecipeRequiredSkillLevel TestRecipe"), 45.0);
+    // Wave 4 jip_02_recipe_add_neg_count & jip_03_recipe_set_neg_count [observed]:
+    // negative counts are accepted by AddRecipeInputForm and stored verbatim by
+    // SetRecipeInputCount.
+    let before = forms(&mut g, "GetRecipeInputForms TestRecipe").len();
+    q(&mut g, "AddRecipeInputForm TestRecipe ItemC -1");
+    assert_eq!(forms(&mut g, "GetRecipeInputForms TestRecipe").len(), before + 1);
+    assert_eq!(n(&mut g, "GetRecipeInputCount TestRecipe ItemC"), -1.0);
+    q(&mut g, "SetRecipeInputCount TestRecipe ItemB -5");
+    assert_eq!(n(&mut g, "GetRecipeInputCount TestRecipe ItemB"), -5.0);
+    q(&mut g, "RemoveRecipeInputForm TestRecipe ItemC");
     // The recipe no longer takes ItemA.
     assert_eq!(forms(&mut g, "GetFormRecipes ItemA"), vec![RCPE2]);
 }
@@ -372,8 +384,13 @@ SetActivatorRadioStation 0 TestActivator");
     assert_eq!(n(&mut g, "GetLoadScreenType TestScreen"), f64::from(LSCT));
     q(&mut g, "SetLoadScreenType TestScreen TestType2");
     assert_eq!(n(&mut g, "GetLoadScreenType TestScreen"), f64::from(LSCT2));
-    // Lights.
+    // Lights: base LIGH returns DATA radius; placed Light ref without XRDS returns 0.0
+    // (does not fall back to base LIGH radius) [observed: Wave 4
+    // jip_06_radius_ref_fallback_base: base 200.000, placed ref 0.000].
     assert_eq!(n(&mut g, "GetRadius TestLight"), 200.0);
+    assert_eq!(n(&mut g, "TestLightRef.GetRadius"), 0.0);
+    q(&mut g, "TestLightRef.SetRadius 125");
+    assert_eq!(n(&mut g, "TestLightRef.GetRadius"), 125.0);
     q(&mut g, "PlayerREF.SetRadius 350 TestLight");
     assert_eq!(n(&mut g, "GetRadius TestLight"), 350.0);
     // Form flags, as GetFlagsLow reads them.

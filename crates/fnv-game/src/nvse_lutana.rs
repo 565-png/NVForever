@@ -324,7 +324,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         "getrecipeinputcount" | "getrecipeoutputcount" => {
             let (Some(r), Some(item)) = (form(args, 0).and_then(|r| recipe(g, r)), form(args, 1)) else { return Some(Ok(zero)) };
             let entries = if name == "getrecipeinputcount" { &r.ingredients } else { &r.outputs };
-            XVal::Num(entries.iter().find(|e| e.0 == item).map_or(0.0, |e| f64::from(e.1)))
+            XVal::Num(entries.iter().find(|e| e.0 == item).map_or(0.0, |e| f64::from(e.1 as i32)))
         }
         // The actor value code; a recipe with no skill -1 [documented: the record's DATA].
         "getreciperequiredskill" => XVal::Num(form(args, 0).and_then(|r| recipe(g, r)).and_then(|r| r.skill).map_or(-1.0, |s| f64::from(s.0))),
@@ -357,10 +357,11 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             zero
         }
         // `recipe item count`: a new entry first, also for an item already listed, a count
-        // of 0 too [observed: lutana1 rcpe.addinput, rcpe.addinput.zero,
-        // rcpe.addinput.existing]; a negative count adds nothing [hypothesis].
+        // of 0 or a negative count too [observed: lutana1 rcpe.addinput, rcpe.addinput.zero,
+        // rcpe.addinput.existing; Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30,
+        // probe jip_02_recipe_add_neg_count: count -1 adds the entry (1 -> 2)].
         "addrecipeinputform" | "addrecipeoutputform" => {
-            let (item, count) = (form(args, 1), num(args, 2).filter(|v| v.is_finite() && *v >= 0.0).map(|v| v.trunc().min(U32.1) as u32));
+            let (item, count) = (form(args, 1), num(args, 2).filter(|v| v.is_finite()).map(|v| v.trunc().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32 as u32));
             if let (Some(item), Some(count)) = (item, count) {
                 if let Some(r) = form(args, 0).and_then(|r| recipe_mut(g, r)) {
                     let entries = if name == "addrecipeinputform" { &mut r.ingredients } else { &mut r.outputs };
@@ -390,11 +391,12 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             }
             zero
         }
-        // `recipe item count`: the first entry's count, 0 too [observed: lutana1
-        // rcpe.setincount.0, rcpe.setoutcount.0]; an item not listed is not added
-        // [hypothesis]; a negative count is refused [hypothesis].
+        // `recipe item count`: the first entry's count, 0 or negative stored verbatim
+        // [observed: lutana1 rcpe.setincount.0, rcpe.setoutcount.0; Fallout: New Vegas
+        // 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, probe jip_03_recipe_set_neg_count: -5
+        // stored verbatim (1 -> -5)]; an item not listed is not added [hypothesis].
         "setrecipeinputcount" | "setrecipeoutputcount" => {
-            let (item, count) = (form(args, 1), num(args, 2).filter(|v| v.is_finite() && *v >= 0.0).map(|v| v.trunc().min(U32.1) as u32));
+            let (item, count) = (form(args, 1), num(args, 2).filter(|v| v.is_finite()).map(|v| v.trunc().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32 as u32));
             if let (Some(item), Some(count)) = (item, count) {
                 if let Some(r) = form(args, 0).and_then(|r| recipe_mut(g, r)) {
                     let entries = if name == "setrecipeinputcount" { &mut r.ingredients } else { &mut r.outputs };
@@ -778,16 +780,16 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             })
         }
         // `[light]`: a light base's radius (LIGH DATA); else the calling reference's XRDS
-        // (SetRadius's first), else its light base's radius [hypothesis], else 0
-        // [documented: GetRadius, "a reference (any type) or Light BaseForm"].
+        // (SetRadius's first), else 0 — does NOT fall back to a placed Light ref's base
+        // LIGH radius [documented: GetRadius, "a reference (any type) or Light BaseForm";
+        // observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, probe
+        // jip_06_radius_ref_fallback_base: base LIGH 200.000, placed ref without XRDS
+        // 0.000].
         "getradius" => {
             if let Some(l) = form(args, 0) {
                 XVal::Num(record_num(g, l, "DATA", "radius").unwrap_or(0.0))
             } else if let Some(r) = subject {
-                let own = g.ref_radius(r);
-                let b = base(g, r);
-                let light = || (g.data.sig(b) == Some(*b"LIGH")).then(|| record_num(g, b, "DATA", "radius")).flatten();
-                XVal::Num(own.map(|x| crate::nvse::record_float(f64::from(x))).or_else(light).unwrap_or(0.0))
+                XVal::Num(g.ref_radius(r).map_or(0.0, |x| crate::nvse::record_float(f64::from(x))))
             } else {
                 zero
             }

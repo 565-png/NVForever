@@ -249,11 +249,18 @@ fn immortal_mode_keeps_the_player_alive() {
     assert_eq!(n(&mut g, "ToggleImmortalMode 2"), 5.0);
     let r = g.hit(FormId::PLAYER_REF, 30.0, HitInfo { location: -1, ..HitInfo::default() });
     assert_eq!((r.dealt, health(&mut g)), (0.0, 100.0), "no damage in mode 2");
+    // Wave 4 jip_45_immortal_mode_damageav_bypass [observed]: ToggleImmortalMode 2 also
+    // blocks scripted DamageAV Health on the player.
+    q(&mut g, "player.DamageAV Health 10");
+    assert_eq!(health(&mut g), 100.0, "DamageAV Health blocked in mode 2");
     q(&mut g, "ToggleImmortalMode 1");
     let r = g.hit(FormId::PLAYER_REF, 500.0, HitInfo { location: -1, ..HitInfo::default() });
     assert_eq!((r.dealt, health(&mut g)), (99.0, 1.0), "never below 1 HP in mode 1");
     assert!(!g.is_dead(FormId::PLAYER_REF));
     q(&mut g, "ToggleImmortalMode 0");
+    q(&mut g, "player.RestoreAV Health 99");
+    q(&mut g, "player.DamageAV Health 10");
+    assert_eq!(health(&mut g), 90.0, "DamageAV Health resumes in mode 0");
     let r = g.hit(FormId::PLAYER_REF, 5.0, HitInfo { location: -1, ..HitInfo::default() });
     assert!(r.dealt > 0.0);
 }

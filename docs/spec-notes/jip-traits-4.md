@@ -114,7 +114,9 @@ not decode yet.
 - 5 (shown in the Pip-Boy) reads 1 for a named quest that runs or ran, or after a script
   sets it [observed: jip4, 1 on VCG01 and VCG02, which the save has run, 0 on VMS01 and
   VMS20, which it has not, and 0 on VDeadSea, which runs from the start with no name;
-  SetQuestFlag 5 1 reads back 1; hypothesis: the rule].
+  SetQuestFlag 5 1 reads back 1; Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30
+  with the 10 official base masters, clean-room script probe jip_27_quest_flag_5_shown
+  (GetQuestFlag): 0,0; no DLL or source consulted; hypothesis: the rule].
 - 7 is unknown and reads as a script set it.
 
 ## 9. Factions, cells, waters, sounds
@@ -174,7 +176,10 @@ not decode yet.
 ## 10. Game-state getters
 
 - `GetGameDifficulty`, `SetGameDifficulty n` [documented: 0 very easy … 4 very hard]:
-  NVForever's difficulty. A number outside 0–4 changes nothing [hypothesis].
+  NVForever's difficulty. A number outside 0–4 changes nothing [observed: Fallout: New
+  Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters,
+  clean-room script probe jip_26_game_difficulty_out_of_range
+  (GetGameDifficulty/SetGameDifficulty): 3,3,3; no DLL or source consulted].
 - `GetSessionTime` [documented: "the game's current session duration in seconds"]: the
   seconds run since the game started, menus included, as each frame's own length added
   up (the engine's frame time changes every frame, so the frame count times the current

@@ -149,6 +149,8 @@ a byte search of FalloutNV.esm for `.rdt`, 16 records].
 
 All of the above are pure record lookups on fnv-esm's decoded records (with overrides
 from later plugins). Flag getters test bit n of the flags field. A trait number outside
-the table gives 0 [hypothesis: not probed]. The setters (SetProjectileTraitNumeric,
+the table gives 0 [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30
+with the 10 official base masters, clean-room script probe jip_25_expl_trait_out_of_range
+(GetExplosionTraitNumeric): 0,0; no DLL or source consulted]. The setters (SetProjectileTraitNumeric,
 SetExplosionTraitNumeric …) change the loaded form for the session, as the base game's
 form setters do.

@@ -874,11 +874,13 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let code = num(args, 0).unwrap_or(0.0) as u16;
             let side = usize::from(num(args, 1).unwrap_or(0.0) != 0.0);
             // The menu's filter, kept after it closes; before it was ever open, 1
-            // (weapons) for the inventory [observed: jip12 filter.inventory], 0 otherwise
-            // [hypothesis].
-            let first = if code == 1002 { 1 } else { 0 };
+            // (weapons) for the inventory (1002) and -1 for container (1008) / barter
+            // (1053) / other menus [observed: jip12 filter.inventory; Fallout: New Vegas
+            // 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, probe jip_40_barter_and_filter_defaults:
+            // 1002 -> 1, 1008 -> -1, 1053 -> -1].
+            let first: i16 = if code == 1002 { 1 } else { -1 };
             let f = g.other.jip12.item_menus.get(&code).map(|m| m.filter).or_else(|| g.other.jip12.item_filters.get(&code).copied());
-            XVal::Num(f64::from(f.map_or(first, |f| f[side])))
+            XVal::Num(f.map_or(f64::from(first), |f| f64::from(f[side])))
         }
         // The open menu's rows as inventory references, keyed by their index in the
         // unfiltered list [documented]; the shown ones, or all (1); the right panel (1).

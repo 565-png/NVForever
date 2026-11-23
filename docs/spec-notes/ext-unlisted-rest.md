@@ -272,9 +272,15 @@ commands that touch the menus, the sky or the minimap ran one per launch].
 - **GetRaceAgeRace** `race which`: 0 the older race (ONAM), 1 the younger (YNAM)
   (Caucasian: CaucasianOld, CaucasianChild; CaucasianOld 0: none). **GetRaceVoice** `race
   which`: 0 the male voice, 1 the female (VTCK). **SetRaceAgeRace / SetRaceVoice** answer 0;
-  NVForever's getters read the change back for the session [hypothesis].
+  NVForever's getters read the change back for the session [observed: Fallout: New Vegas
+  1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, clean-room
+  script probe jip_52_race_age_voice_setters (GetRaceAgeRace/SetRaceAgeRace/GetRaceVoice/SetRaceVoice):
+  0,1,000042C2; no DLL or source consulted].
 - **GetEquippedArmorRefs**: the actor's equipped armour, 3 for the player and 1 for Doc.
-  NVForever lists the base forms [hypothesis: the original's are inventory references].
+  The original returns inventory references (`FFxxxxxx`) [observed: Fallout: New Vegas
+  1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, clean-room
+  script probe jip_53_equipped_armor_refs_kind (GetEquippedArmorRefs): 2,FF001342; no DLL
+  or source consulted]; NVForever currently lists the base forms [design: follow-up].
 - **GetArrayValue** `array index`: the element (20 for index 1 of [10 20 30]); 0 for a
   reference given instead of an array.
 - **SetContainerOpenSound / SetContainerCloseSound** `sound [container]`: the container's
@@ -284,7 +290,12 @@ commands that touch the menus, the sky or the minimap ran one per launch].
   holds one key. **RefMapArrayGetValue** `name key` gave a one-element list. Its element
   read back as a float with a denormal value (2.1e-310) when 5 was set, so how the value is
   stored is open. NVForever keeps the value as given and lists it.
-- **HasActionRef**: 1 for Doc [hypothesis: 1 for an actor, 0 otherwise].
+- **HasActionRef**: returned `0` on Player, `1` on Doc Mitchell, and `1` on a door in
+  `GSDocMitchellHouse` [observed: rest5.hasactionref.doc; Fallout: New Vegas 1.4.0.525 +
+  xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, clean-room script probe
+  jip_54_hasactionref_non_actor (HasActionRef): 0,1,1; no DLL or source consulted];
+  contradicts the earlier actor-only hypothesis (NVForever currently returns 1 for actors,
+  0 otherwise [design: open follow-up to determine exact ActionRef predicate]).
 
 **Constant answers** (each [observed] for the inputs probed; what each changes is not seen):
 

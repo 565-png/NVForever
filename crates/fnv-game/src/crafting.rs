@@ -115,7 +115,7 @@ impl RecipeDef {
 
     /// The total quantity made of the first output (what the menu shows after the name).
     pub fn made(&self) -> u32 {
-        self.outputs.first().map_or(0, |o| o.1)
+        self.outputs.first().map_or(0, |o| (o.1 as i32).max(0) as u32)
     }
 }
 
@@ -160,7 +160,7 @@ pub fn missing(r: &RecipeDef, times: u32, skill: impl Fn(u16) -> f64, have: impl
     }
     for &(item, n) in &r.ingredients {
         let h = have(item).max(0) as u32;
-        let need = n.saturating_mul(times.max(1));
+        let need = ((n as i32).max(0) as u32).saturating_mul(times.max(1));
         if h < need {
             out.push(Missing::Ingredient(item, h, need));
         }
@@ -170,7 +170,7 @@ pub fn missing(r: &RecipeDef, times: u32, skill: impl Fn(u16) -> f64, have: impl
 
 /// How many times a recipe can be made with what the player has (the skill aside).
 pub fn times_possible(r: &RecipeDef, have: impl Fn(FormId) -> i64) -> u32 {
-    r.ingredients.iter().map(|&(item, n)| (have(item).max(0) as u32).checked_div(n).unwrap_or(u32::MAX)).min().unwrap_or(u32::MAX)
+    r.ingredients.iter().map(|&(item, n)| (have(item).max(0) as u32).checked_div((n as i32).max(0) as u32).unwrap_or(u32::MAX)).min().unwrap_or(u32::MAX)
 }
 
 /// The skills' names by actor value code [documented: GECK wiki Actor Value Codes; the
