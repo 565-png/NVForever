@@ -3996,3 +3996,20 @@ capture setup, so every part of a check that needs an interior is still open.
        neither plant's reading changed. Whether a bullet struck the plant itself was not
        confirmed: the crosshair read no reference at 150 units. These positions are
        meaningful because the same reading followed the grabbed nettles above.
+
+## Added 2026-11-23 (unlit shapes faded by vertex alpha alone, #3443)
+
+286. **Is an unlit shape with a fading vertex alpha, no texture and no NiAlphaProperty
+     see-through?** (P3: #3443; nif.md §6 "Unlit shapes faded by vertex alpha alone".)
+     Ours [hypothesis]: yes, blended by its vertex alpha. Two places in the original:
+     - base game: a bare gurney in the Camp McCarran Concourse (`CampMCTermInt01`,
+       `gurney01.nif`, 000FBA8F at 4032, -616, 18240), from standing height beside it. Its
+       shape `Gurney01:2` is a black sheet of 144 × 64 units lying under it, alpha 0.6 to 0
+       towards the edges. Say whether the floor under the gurney shows a soft dark patch, a
+       hard-edged black rectangle or nothing.
+     - Lonesome Road: the end of the silo lift (`NVDLC04Silo2Elevator`), from -87, 3502,
+       2069 facing 167°. Ride the lift, or play `Right` on
+       `NVDLC04SiloElevatorShaft01Ref` to `06Ref` and enable
+       `NVDLC04SiloElevatorLightsEndREF`. Say whether the cone of light (350 units wide,
+       500 high, from 0, 3126, 2575 down) lets the hall behind it through, how bright it
+       is, and whether it lightens the floor under it.
