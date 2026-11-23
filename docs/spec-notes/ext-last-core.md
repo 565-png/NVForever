@@ -126,10 +126,18 @@ out-of-range and nonnumeric conversion needs a game probe. These cases are not
 qualified for native parity. The accepted generic setter's explicit invalid
 weapon-argument fallback remains unchanged pending behavioral evidence.
 
-[hypothesis] The spelling `SetCritDam` is not established by the consulted public
-function documentation or accepted catalogue. Keep its registration open pending
-an original-game command-identity capture; identity alone will not establish wire
-encoding. This note does not import FOSE opcode numbers into New Vegas.
+[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base
+masters, clean-room black-box script probes `wave1c`/`wave1g` and
+`b3_core_02_setcritdam_alias_check` (reproducible via `#3678` / PR `#3679`,
+`tools/capture/nvse/`); no DLL or source consulted] `SetCritDam` is a live alias
+for `SetWeaponCritDamage` with identical argument order (`[ref.]SetCritDam <int>
+[weapon]`: `SetCritDam 55 Weap10mmPistol` compiles and updates `GetWeaponCritDamage`
+`22.0 -> 55.0`; `SetCritDam 200 r10mm` raises live critical hit base damage by
+`+178`, while swapped argument order `SetCritDam r10mm 77` fails to compile).
+`SetCritDam` is registered as an unnumbered alias of `SetWeaponCritDamage` in
+`schemas/script/functions.json` and `crates/fnv-script/data/encodings.json`
+(`#2704`). [hypothesis] Native wire/opcode encoding remains uncaptured; this note
+does not import FOSE opcode numbers into New Vegas.
 
 [design] Overrides retain this module's existing session lifetime: save/load
 resets them, and a weapon clone without its own override reads its source
