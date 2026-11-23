@@ -120,17 +120,18 @@ pub const JIP_NAMES: [&str; 1] = ["JIP NVSE Plugin"];
 ///   1.2 for both; GetPluginVersion, "usually the version times 100"]. The numbers read
 ///   on the owner's install for the plugins above are at or over the same figure for
 ///   theirs (JIP 57.30 = 57.30, JohnnyGuitar 528 = 5.28, ShowOff 184 ≥ 1.83, kNVSE 37 ≥ 30).
-/// - SUP, JIP PP LN, AnhNVSE, NX and UIO at [`UNOBSERVED_VERSION`]: their pages name no
-///   version and none was read in the original.
+/// - SUP, JIP PP LN, AnhNVSE, NX, UIO and Improved Console at [`UNOBSERVED_VERSION`]:
+///   their pages name no version and none was read in the original.
 ///
 /// UIO has no script functions: the engine reads its `uio\public` lists itself
 /// (`fnv_ui`), which is all the plugin does for a mod that asks whether it is there.
-/// Improved Console (`"Improved Console"`, version 3) has no script functions of its own:
+/// Improved Console (`"Improved Console"`) has no script functions of its own:
 /// NVForever provides persistent console locals (`int`/`float`/`ref`/`string_var`/
 /// `array_var`) and transparent expression/statement result printing directly in the
 /// interactive console (`docs/design/console.md`, `docs/spec-notes/ext-version.md` §5)
-/// [documented: public Nexus release v3 (mod 70801); hypothesis: exact native
-/// GetPluginVersion return value unobserved in original game].
+/// [documented: ext-version.md §2a registered name `"Improved Console"`]. Its version is
+/// [`UNOBSERVED_VERSION`] until `GetPluginVersion "Improved Console"` is read in the
+/// original game.
 /// Not reported, though the catalogue has functions of theirs: yUI (its two ySI trait
 /// functions are built, its menus are not, and a mod that finds it goes on to read its
 /// tiles), and the plugins whose registered name no page gives (ITR, One111, ppNVSE,
@@ -151,7 +152,7 @@ pub const PLUGINS: [(&str, f64); 16] = [
     ("AnhNVSE", UNOBSERVED_VERSION),
     ("Extensions for NVSE", UNOBSERVED_VERSION),
     ("UI Organizer Plugin", UNOBSERVED_VERSION),
-    ("Improved Console", 3.0),
+    ("Improved Console", UNOBSERVED_VERSION),
 ];
 
 /// The version reported for a plugin the engine builds whose own number is neither

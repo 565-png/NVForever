@@ -187,19 +187,17 @@ low.
     GetPluginVersion, "usually the version times 100"]. For the plugins read on the owner's
     install that figure is at or under the number the game gave (JIP 57.30, JohnnyGuitar
     5.28 → 528, ShowOff 1.83 → 184 read, kNVSE 30 → 37 read), so it is a floor.
-  - `"SUP NVSE Plugin"`, `"JIP PP LN"`, `"AnhNVSE"`, `"Extensions for NVSE"` (NX) and
-    `"UI Organizer Plugin"` at 9999 [design: no page names a version and none was read;
-    §4, too high is safer than too low; `fnv_script::vm::jip::UNOBSERVED_VERSION`], to be
-    replaced by the numbers read in the original (observer check 118). UIO has no script
-    functions; the engine reads its `uio\public` lists itself (menu-xml.md), which is
-    what a mod asking for it needs.
-  - `"Improved Console"` at `3` (`3.0`): Improved Console (NVSE) has no script functions
-    of its own; NVForever implements persistent console locals (`int`/`float`/`ref`/
-    `string_var`/`array_var`) and transparent expression/statement result printing
-    directly in the interactive console (`docs/design/console.md`,
-    `Game::run_console_line`) [documented: §2a registered name `"Improved Console"` and
-    public Nexus release v3 (mod 70801); hypothesis: exact native `GetPluginVersion`
-    return value unobserved in the original game].
+  - `"SUP NVSE Plugin"`, `"JIP PP LN"`, `"AnhNVSE"`, `"Extensions for NVSE"` (NX),
+    `"UI Organizer Plugin"` and `"Improved Console"` at 9999 [design: no page names a
+    plugin version number and none was read; §4, too high is safer than too low;
+    `fnv_script::vm::jip::UNOBSERVED_VERSION`], to be replaced by the numbers read in the
+    original (observer check 118). UIO has no script functions; the engine reads its
+    `uio\public` lists itself (menu-xml.md), which is what a mod asking for it needs.
+    Improved Console (NVSE) likewise has no script functions of its own; NVForever
+    implements persistent console locals (`int`/`float`/`ref`/`string_var`/`array_var`)
+    and transparent expression/statement result printing directly in the interactive
+    console (`docs/design/console.md`, `Game::run_console_line`) [documented: §2a
+    registered name `"Improved Console"`].
   - Still not reported: `"yUI"` (its two ySI trait functions are built, its menus are
     not; a mod that finds it goes on to read its tiles [observed: JustAssortedMods.esp
     4.6 asks `IsPluginInstalled "yUI"` and then reads `HUDMainMenu/ySI/_ySI`]), and the
