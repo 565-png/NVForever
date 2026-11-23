@@ -150,6 +150,55 @@ fn loaded() -> Ui {
 }
 
 #[test]
+fn mended_mod_hud_traits_evaluate_end_to_end() {
+    // Synthetic end-to-end check: missing-slash trait closing tags and an unclosed trait
+    // before a sibling trait/child tile all evaluate into live tile traits and children.
+    let src = MemSource::default().with(
+        "menus/mod_hud.xml",
+        r#"<menu name="HUDMainMenu">
+            <rect name="Panel">
+                <_base> 20 <_base>
+                <height> <copy src="screen()" trait="height"/> <div> 4 </div> <height>
+                <x> <copy src="me()" trait="_base"/> <add> 5 </add> </x>
+                <image name="Meter">
+                    <alpha>
+                        <copy> 100 </copy>
+                        <add> 55 </add>
+                    <brightness> 220 </brightness>
+                </image>
+            </rect>
+        </menu>"#,
+    );
+    let mut ui = Ui::new();
+    let s = ui.screen();
+    ui.set_trait(s, "height", Value::Num(960.0));
+    ui.load_menu(&src, "menus/mod_hud.xml").unwrap();
+    ui.update();
+    assert_eq!(ui.get_float("HUDMainMenu/Panel/_base"), Some(20.0));
+    assert_eq!(ui.get_float("HUDMainMenu/Panel/height"), Some(240.0));
+    assert_eq!(ui.get_float("HUDMainMenu/Panel/x"), Some(25.0));
+    assert_eq!(ui.get_float("HUDMainMenu/Panel/Meter/alpha"), Some(155.0));
+    assert_eq!(ui.get_float("HUDMainMenu/Panel/Meter/brightness"), Some(220.0));
+    assert!(
+        !ui.warnings.iter().any(|w| w.contains("is no operator")),
+        "mended sibling traits must not be dropped as unknown operators: {:?}",
+        ui.warnings
+    );
+}
+
+#[test]
+fn include_with_parent_segment_resolves_sibling_under_menus() {
+    let src = MemSource::default()
+        .with("menus/test.xml", r#"<menu name="TestMenu"><include src="..\ext\piece.xml"/></menu>"#)
+        .with("menus/ext/piece.xml", r#"<_flag> 7 </_flag>"#);
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "menus/test.xml").unwrap();
+    ui.update();
+    assert_eq!(ui.get_float("TestMenu/_flag"), Some(7.0));
+    assert!(ui.warnings.is_empty(), "{:?}", ui.warnings);
+}
+
+#[test]
 fn builds_tiles_from_the_file_and_its_includes() {
     let ui = loaded();
     assert!(ui.warnings.is_empty(), "{:?}", ui.warnings);

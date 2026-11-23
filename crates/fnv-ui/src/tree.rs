@@ -702,7 +702,7 @@ impl Ui {
             }
             let target = match &decision.entry.tile {
                 Some(name) => named_nodes(&mut doc.nodes, name),
-                None => Some(&mut doc.nodes),
+                None => untargeted_nodes(&mut doc.nodes),
             };
             if let Some(nodes) = target {
                 nodes.push(uio_include(&decision.entry.include));
@@ -1621,10 +1621,33 @@ fn named_nodes<'a>(nodes: &'a mut [Node], name: &str) -> Option<&'a mut Vec<Node
     None
 }
 
+fn untargeted_nodes(nodes: &mut Vec<Node>) -> Option<&mut Vec<Node>> {
+    match nodes.iter().position(|n| matches!(n, Node::Element(e) if e.is("menu"))) {
+        Some(i) => match &mut nodes[i] {
+            Node::Element(e) => Some(&mut e.children),
+            _ => unreachable!(),
+        },
+        None => Some(nodes),
+    }
+}
+
 /// An include's file: under `menus\prefabs\` [observed: every vanilla include names a
-/// file there; MCM's `MCM\MCM.xml` a file in a folder under it].
+/// file there; MCM's `MCM\MCM.xml` a file in a folder under it], collapsing `.` and
+/// `..` path segments so sibling paths under `menus\` (such as `..\sibling\file.xml`)
+/// match UIO's path resolution while preserving authored case [design].
 fn prefab_path(file: &str) -> String {
-    format!("menus\\prefabs\\{}", file.trim().replace('/', "\\"))
+    let raw = format!("menus\\prefabs\\{}", file.trim().replace('/', "\\"));
+    let mut parts = Vec::new();
+    for part in raw.split('\\') {
+        match part {
+            "" | "." => {}
+            ".." if parts.last().is_some_and(|p| *p != "..") => {
+                parts.pop();
+            }
+            _ => parts.push(part),
+        }
+    }
+    parts.join("\\")
 }
 
 fn split(path: &str) -> Vec<&str> {
