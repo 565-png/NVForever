@@ -44,8 +44,29 @@ remain [hypothesis] until an interactive-desktop multi-rule capture runs.
   including an explicit clear of an authored flag. [engine design choice] Rules are
   cached, while this predicate reads current World state on each query; native
   classification timing after a flag edit is unobserved.
-- [engine design choice] Other predicates, including `formlist: 2` and
-  weapon/aid/armor/misc property conditions, are **unknown**, rather than false.
+- Record-backed `WEAP`, `ALCH`, and `ARMO` predicates are evaluated against existing
+  `Game` record/override views (`schemas/fnv/objects.json`, `nvse.rs`, `nvse_jip7.rs`,
+  `nvse_jip8.rs`) [hypothesis]:
+  - `WEAP` (`Match::No` for non-weapons): `weaponSkill` (`DNAM/skill`, scalar or int
+    array), `weaponType` (`DNAM/animation_type`, scalar or int array), `weaponIsAutomatic`
+    (`DNAM/flags1` bit 1), `weaponHasScope` (`DNAM/flags1` bit 2), and `weaponIgnoresDTDR`
+    (`DNAM/flags1` bit 0).
+  - `ALCH` (`Match::No` for non-ingestibles): `aidIsFood` (`ENIT` flag `0x02`),
+    `aidIsMedicine` (`ENIT` flag `0x04`), and `aidIsAddictive` (`ENIT` withdrawal form
+    present).
+  - `ARMO` (`Match::No` for non-armor): `armorClass` (`1` Light, `2` Medium, `3` Heavy
+    via `Game::armor_class`, scalar or int array), `armorPower` (power-armor state via
+    `IsPowerArmor`), and the 11 `BMDT/biped_flags` slot booleans (`armorHead` bit 0,
+    `armorHair` bit 1, `armorUpperBody` bit 2, `armorPipBoy` bit 6, `armorBackpack` bit 7,
+    `armorHeadband` bit 9, `armorHat` bit 10, `armorEyeglasses` bit 11, `armorMask` bit 14,
+    `armorChoker` bit 15, `armorMouthObject` bit 16).
+  - For boolean record flags above, `1` matches true and `0` or `-1` matches false; any
+    other JSON value remains `Match::Unknown`.
+- [engine design choice] Other predicates, including `formlist: 2`, threshold/ammo/misc
+  predicates (`armorDT`, `weaponClipRounds`, `weaponNumProjectiles`, `weaponAttackAnim`,
+  `weaponHandgrip`, `weaponSoundLevel`, `aidRestoresAV`, `aidDamagesAV`, `aidIsWater`,
+  `aidIsPoisonous`, `miscComponent`, `miscProduct`, `ammoMod`, `ammoForm`), remain
+  **unknown**, rather than false.
   A certainly false supported predicate rejects a rule even if it also has unknown
   predicates. A possible unknown rule at or above the winning priority refuses the
   query; an unknown lower rule cannot win.
@@ -67,10 +88,11 @@ remain [hypothesis] until an interactive-desktop multi-rule capture runs.
   session, including a load failure. Restore creates a fresh cache. This timing avoids
   repeated filesystem/rule parsing during inventory comparisons; it does not establish
   native hot-reload timing or recover after late file attachment in the same session.
-- [engine design choice] Accepted configuration is capped at 32 files, 4 MiB total
-  parsed input and 20,000 rules (resource bounds, not native limits). The existing
-  reader obtains a file before its accepted-size check; this is not a pre-read
-  allocation cap.
+- [engine design choice] Accepted configuration is capped at 128 files, 4 MiB total
+  parsed input and 20,000 rules (resource bounds, not native limits; raised from 32 files
+  so heavily patched load orders with 50+ loose `menus/ySI/*.json` files do not fail the
+  file-count cap). The existing reader obtains a file before its accepted-size check; this
+  is not a pre-read allocation cap.
 
 `ysi_filename` handles the `"filename"` trait on `ySIGetTrait` (case-insensitive)
 with strict refusal: missing/default outputs, unsupported potentially winning
@@ -103,7 +125,7 @@ authored paths and values. Compiler, VM and UI string-argument behavior are unch
 
 ## Authored controls
 
-Fifteen source controls live in the dedicated `ysi_filename_source` test target
+Sixteen source controls live in the dedicated `ysi_filename_source` test target
 (`crates/fnv-game/tests/ysi_filename_source.rs`), isolated because the existing
 file-reader roots are process-wide. They use independently authored configuration,
 items, and menu XML to cover:
@@ -120,7 +142,7 @@ items, and menu XML to cover:
    which creates a fresh cache while retaining inventory).
 6. Local commented/trailing-comma JSON parsing preserving quoted content while
    leaving generic `ReadFromJSON` strict.
-7. File-count cap (32 files) and malformed/unterminated comment refusal.
+7. File-count cap (128 files) and malformed/unterminated comment refusal.
 8. Authored, script-set, and script-cleared `questItem` flags through source and save.
 9. `questItem` false-rule disqualification vs possible/malformed `questItem` refusal.
 10. Aggregate 4 MiB accepted-byte bound (exact limit accepted across two files;
@@ -137,6 +159,11 @@ items, and menu XML to cover:
     conservative `Match::Unknown` refusal for `"formlist": 2` and non-`FLST` targets.
 15. Empty/comment-only auxiliary `.json` stub files ignored cleanly while empty
     `ySI.json` and unterminated auxiliary comments continue to refuse explicitly.
+16. Record-backed `WEAP`, `ALCH`, and `ARMO` predicates (`weaponSkill`, `weaponType`,
+    `weaponIsAutomatic`, `weaponHasScope`, `weaponIgnoresDTDR`, `aidIsFood`,
+    `aidIsMedicine`, `aidIsAddictive`, `armorClass`, `armorPower`, and `BMDT/biped_flags`
+    slot booleans with `1` / `0` / `-1`), cross-type `Match::No` disqualification, and
+    conservative `Match::Unknown` refusal for malformed boolean values.
 
 These are source and UI-trait consumer checks, not texture decoding, GPU rendering,
 multi-rule native parity, or complete installed ySI/JAM acceptance.

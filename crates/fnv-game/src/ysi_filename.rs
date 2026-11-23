@@ -7,7 +7,7 @@ use serde_json::{Map, Value as Json};
 use std::collections::BTreeSet;
 
 // Mapped configuration resource bounds, not native limits.
-const MAX_FILES: usize = 32;
+const MAX_FILES: usize = 128;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
 const MAX_RULES: usize = 20_000;
 
@@ -297,6 +297,19 @@ impl Rule {
                     }
                     _ => Match::Unknown,
                 },
+                "weaponSkill" => weapon_int_field(g, item, "DNAM", "skill", value),
+                "weaponType" => weapon_int_field(g, item, "DNAM", "animation_type", value),
+                "weaponIsAutomatic" => weapon_flag1(g, item, 1 << 1, value),
+                "weaponHasScope" => weapon_flag1(g, item, 1 << 2, value),
+                "weaponIgnoresDTDR" => weapon_flag1(g, item, 1 << 0, value),
+                "aidIsFood" => aid_flag(g, item, crate::data::IngestibleDef::FOOD, value),
+                "aidIsMedicine" => aid_flag(g, item, crate::data::IngestibleDef::MEDICINE, value),
+                "aidIsAddictive" => aid_addictive(g, item, value),
+                "armorClass" => armor_class_match(g, item, value),
+                "armorPower" => armor_power_match(g, item, value),
+                slot if armor_biped_bit(slot).is_some() => {
+                    armor_biped_match(g, item, armor_biped_bit(slot).expect("checked"), value)
+                }
                 _ => Match::Unknown,
             };
             if part == Match::No {
@@ -420,6 +433,104 @@ fn number_set(value: &Json, number: i64) -> Match {
     }
 }
 
+/// Match a `0`/`1` or `-1`/`1` boolean ySI predicate (`1` = true, `0`/`-1` = false;
+/// other values remain `Match::Unknown`) [hypothesis].
+fn bool_pred(value: &Json, actual: bool, allow_neg_one: bool) -> Match {
+    match value.as_i64() {
+        Some(1) => if actual { Match::Yes } else { Match::No },
+        Some(0) => if !actual { Match::Yes } else { Match::No },
+        Some(-1) if allow_neg_one => if !actual { Match::Yes } else { Match::No },
+        _ => Match::Unknown,
+    }
+}
+
+fn weapon_int_field(g: &Game<'_>, item: FormId, sub: &str, path: &str, value: &Json) -> Match {
+    if g.data.sig(item) != Some(*b"WEAP") {
+        return Match::No;
+    }
+    match crate::nvse::record_value(g, item, sub, path) {
+        Some(XVal::Num(n)) if n.is_finite() => number_set(value, n.trunc() as i64),
+        _ => Match::Unknown,
+    }
+}
+
+fn weapon_flag1(g: &Game<'_>, item: FormId, bit: u8, value: &Json) -> Match {
+    let Some(flags) = g.weapon_flags1(item) else {
+        return Match::No;
+    };
+    bool_pred(value, flags & bit != 0, true)
+}
+
+fn aid_flag(g: &Game<'_>, item: FormId, bit: u8, value: &Json) -> Match {
+    if g.data.sig(item) != Some(*b"ALCH") {
+        return Match::No;
+    }
+    let Some(def) = g.ingestible_def(item) else {
+        return Match::Unknown;
+    };
+    bool_pred(value, def.flags & bit != 0, true)
+}
+
+fn aid_addictive(g: &Game<'_>, item: FormId, value: &Json) -> Match {
+    if g.data.sig(item) != Some(*b"ALCH") {
+        return Match::No;
+    }
+    let Some(def) = g.ingestible_def(item) else {
+        return Match::Unknown;
+    };
+    bool_pred(value, def.withdrawal.is_some(), true)
+}
+
+fn armor_class_match(g: &Game<'_>, item: FormId, value: &Json) -> Match {
+    if g.data.sig(item) != Some(*b"ARMO") {
+        return Match::No;
+    }
+    number_set(value, i64::from(g.armor_class(item)))
+}
+
+fn armor_power_match(g: &Game<'_>, item: FormId, value: &Json) -> Match {
+    if g.data.sig(item) != Some(*b"ARMO") {
+        return Match::No;
+    }
+    let is_power = g
+        .other
+        .power_armor
+        .get(&item)
+        .copied()
+        .unwrap_or_else(|| g.world.effective_power_armor(item));
+    bool_pred(value, is_power, true)
+}
+
+/// ARMO `BMDT/biped_flags` bit index for documented ySI armor slot predicates
+/// (`schemas/fnv/objects.json` `BMDT.biped_flags`) [hypothesis].
+fn armor_biped_bit(name: &str) -> Option<u32> {
+    Some(match name {
+        "armorHead" => 0,
+        "armorHair" => 1,
+        "armorUpperBody" => 2,
+        "armorPipBoy" => 6,
+        "armorBackpack" => 7,
+        "armorHeadband" => 9,
+        "armorHat" => 10,
+        "armorEyeglasses" => 11,
+        "armorMask" => 14,
+        "armorChoker" => 15,
+        "armorMouthObject" => 16,
+        _ => return None,
+    })
+}
+
+fn armor_biped_match(g: &Game<'_>, item: FormId, bit: u32, value: &Json) -> Match {
+    if g.data.sig(item) != Some(*b"ARMO") {
+        return Match::No;
+    }
+    let mask = match crate::nvse::record_value(g, item, "BMDT", "biped_flags") {
+        Some(XVal::Num(n)) if n.is_finite() => n.trunc() as i64 as u64,
+        _ => 0,
+    };
+    bool_pred(value, (mask >> bit) & 1 != 0, true)
+}
+
 /// ySI-local commented configuration, leaving generic strict JSON APIs unchanged.
 fn commented_json(text: &str) -> Result<String, String> {
     let bytes = text.trim_start_matches('\u{feff}').as_bytes();
@@ -528,5 +639,21 @@ mod tests {
         assert_eq!(number_set(&serde_json::json!([31, 40]), 40), Match::Yes);
         assert_eq!(number_set(&serde_json::json!([31, "bad"]), 40), Match::Unknown);
         assert_eq!(number_set(&serde_json::json!([31, "bad"]), 31), Match::Yes);
+    }
+
+    #[test]
+    fn bool_pred_and_biped_bits_handle_documented_values_and_reject_unknowns() {
+        assert_eq!(bool_pred(&Json::from(1), true, true), Match::Yes);
+        assert_eq!(bool_pred(&Json::from(1), false, true), Match::No);
+        assert_eq!(bool_pred(&Json::from(0), false, true), Match::Yes);
+        assert_eq!(bool_pred(&Json::from(-1), false, true), Match::Yes);
+        assert_eq!(bool_pred(&Json::from(-1), true, true), Match::No);
+        assert_eq!(bool_pred(&Json::from(2), false, true), Match::Unknown);
+        assert_eq!(bool_pred(&Json::from("1"), true, true), Match::Unknown);
+        assert_eq!(armor_biped_bit("armorHead"), Some(0));
+        assert_eq!(armor_biped_bit("armorHat"), Some(10));
+        assert_eq!(armor_biped_bit("armorMask"), Some(14));
+        assert_eq!(armor_biped_bit("armorMouthObject"), Some(16));
+        assert_eq!(armor_biped_bit("armorUnknown"), None);
     }
 }
