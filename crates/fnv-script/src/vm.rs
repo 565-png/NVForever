@@ -294,7 +294,8 @@ pub trait Host {
         None
     }
     /// A value of an actor's current or last hit (JIP's GetHit…, jip-hit-info.md):
-    /// `what` is attacker, weapon, health, limb or flag (`k` the flag number).
+    /// `what` is attacker, weapon, projectile, health, limb, fatigue, base_weapon,
+    /// flag (`k` the flag number) or 3d (`k` the data type 0..=2).
     fn hit_value(&mut self, _actor: u32, _what: &str, _k: i64) -> Option<XVal> {
         None
     }
