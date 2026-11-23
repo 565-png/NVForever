@@ -1401,10 +1401,17 @@ centre is written to `_MapOriginX`/`_MapOriginY`. The file's own tint (`systemco
 `brightness`) colours it. Engine design choices: the camera draws the world layer only
 (not the player's body or the water's own layer), without fog, clearing to black, with
 no MSAA; it draws to 20,000 units below its height over the player; when `_CameraOffset`
-does not read, it uses the file's 10,000.
+does not read, it uses the file's 10,000. At startup, `nvforever::minimap_render` reads
+`NVSE\Plugins\ModernMinimap.ini` case-insensitively through the VFS (`[observed: public
+INI NVSE\Plugins\ModernMinimap.ini shipped with Modern Minimap v1, [General]
+textureSize=1024; no DLL or plugin source consulted]`) using a BOM-, comment-, and
+UTF-8-safe byte parser; positive finite `[General] textureSize` values are clamped to
+`256..=2048` and snapped to the nearest power of two (`256`, `512`, `1024`, `2048`),
+driving both the render-target `Image` extent and the size published to `RuntimeImages`.
+When the INI is absent, omits `textureSize`, or specifies a non-finite / `< 1` / invalid
+value, NVForever defaults to `1024` so unmodded vanilla behavior is unchanged.
 
-[hypothesis] The plugin's camera is orthographic with north up, and its picture is 1024
-texels square (`textureSize=1024`, taken to be the plugin INI's default). Neither has
-been observed in the original game. Open: the plugin's
-exact look (classic mode's shading, interiors under a ceiling 10,000 over the player)
-and the INI's other settings are not read; the picture is the lit scene from above.
+[hypothesis] The plugin's camera is orthographic with north up. This has not been observed
+in the original game. Open: the plugin's exact look (classic mode's shading, interiors
+under a ceiling 10,000 over the player) and any other INI settings future versions may add
+are not read; the picture is the lit scene from above.
