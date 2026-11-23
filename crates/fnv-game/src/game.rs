@@ -1111,6 +1111,9 @@ pub mod menus {
     /// GetSelectedItemRef, "Pipboy DATA Menu (1023) - Quest/Note/Challenge";
     /// GetMenuTargetRef, "1023 The Map Marker on which the mouse is over"].
     pub const MAP: u16 = 1023;
+    /// The book/scroll reading menu [documented: GECK wiki Hardcoded UI Shortcuts,
+    /// revision 39903, `BookMenu` class ID 1026; `fnv_ui::value::MENU_CLASSES`].
+    pub const BOOK: u16 = 1026;
     /// The sleep/wait menu (`nvf-play` wait.rs opens it as 1012) [documented: GECK wiki
     /// MenuMode].
     pub const SLEEP_WAIT: u16 = 1012;
