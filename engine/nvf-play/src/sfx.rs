@@ -889,17 +889,31 @@ impl Sfx {
 
     /// Register a synthetic sound backed by a pre-listed VFS folder of `.wav`/`.ogg`
     /// files (used by `crate::bullet_snap` when `BulletSnap.ini` is present).
+    ///
+    /// Never overwrites an already-loaded `SOUN` record in `self.forms.sounds`: tries
+    /// `preferred` first and, if occupied, scans `fallback_start..range_end` for the
+    /// first unoccupied `FormId`, returning the assigned `FormId` (or `None` if no slot
+    /// is free) so loaded records always win [design].
     #[allow(clippy::too_many_arguments)]
     pub fn register_folder_sound(
         &mut self,
-        id: FormId,
+        preferred: FormId,
+        fallback_start: u32,
+        range_end: u32,
         name: &str,
         fnam_folder: &str,
         min_distance: f32,
         max_distance: f32,
         attenuation_curve: Option<[f32; 5]>,
         files: Vec<String>,
-    ) {
+    ) -> Option<FormId> {
+        let id = if !self.forms.sounds.contains_key(&preferred) {
+            preferred
+        } else {
+            (fallback_start..range_end)
+                .map(FormId)
+                .find(|candidate| !self.forms.sounds.contains_key(candidate))?
+        };
         let s = Sound {
             edid: Some(name.to_string()),
             file: Some(fnam_folder.to_string()),
@@ -912,6 +926,7 @@ impl Sfx {
             self.folders.insert(folder, files);
         }
         self.forms.sounds.insert(id, s);
+        Some(id)
     }
 }
 

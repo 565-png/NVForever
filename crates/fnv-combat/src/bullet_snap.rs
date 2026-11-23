@@ -1,23 +1,28 @@
 //! Clean-room support for `BulletSnap.ini` projectile pass-by snap audio
 //! (docs/spec-notes/audio.md §19).
 //!
-//! Configuration schema, section/key names and defaults are taken strictly from the
-//! public `Data\NVSE\Plugins\BulletSnapConfig\BulletSnap.ini` file and public loose
-//! sound folder layout under `Data\Sound\fx\`; the plugin's binary/source was not
-//! consulted.
+//! Configuration schema, section/key names, inline key comments, and default values come
+//! strictly from **Bullet Snap - ReRedux v1.2**
+//! (`https://www.nexusmods.com/newvegas/mods/89474`, by LowbeeBob), shipped
+//! `Data\NVSE\Plugins\BulletSnapConfig\BulletSnap.ini`; the ten loose audio folder paths
+//! under `Data\Sound\fx\` are `[observed]` from that same v1.2 release archive. The
+//! plugin's DLL/binary and source code were never consulted.
 //!
 //! When `BulletSnap.ini` is absent, callers keep BulletSnap inactive so unmodded
-//! vanilla projectile audio and physics remain unchanged.
+//! vanilla projectile audio and physics remain unchanged [design].
 
 use std::collections::HashMap;
 
 use crate::vec::{self, V3};
 
-/// Case-insensitive VFS path (relative to `Data\`) of `BulletSnap.ini`
-/// [documented: `Data\NVSE\Plugins\BulletSnapConfig\BulletSnap.ini`].
+/// Case-insensitive VFS path (relative to `Data\`) of `BulletSnap.ini` [documented:
+/// Bullet Snap - ReRedux v1.2 (`https://www.nexusmods.com/newvegas/mods/89474`), shipped
+/// archive install path `Data\NVSE\Plugins\BulletSnapConfig\BulletSnap.ini`].
 pub const BULLET_SNAP_INI_PATH: &str = "nvse\\plugins\\bulletsnapconfig\\bulletsnap.ini";
 
-/// Default INI values [documented: `Data\NVSE\Plugins\BulletSnapConfig\BulletSnap.ini`].
+/// Default INI values [documented: Bullet Snap - ReRedux v1.2
+/// (`https://www.nexusmods.com/newvegas/mods/89474`), shipped
+/// `Data\NVSE\Plugins\BulletSnapConfig\BulletSnap.ini`].
 pub const DEFAULT_IMPACTED_PLAYER_SNAP: bool = false;
 pub const DEFAULT_DISTANCED_BASED_SNAP: bool = true;
 pub const DEFAULT_SUBSONIC: bool = true;
@@ -33,30 +38,53 @@ pub const DEFAULT_HIGH_DMG: f32 = 46.0;
 /// Parsed `BulletSnap.ini` settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BulletSnapConfig {
-    /// `[General] ImpactedPlayerSnap`: play a snap when a projectile hits the player.
+    /// `[General] ImpactedPlayerSnap`: play a snap when a projectile hits the player
+    /// [documented: Bullet Snap - ReRedux v1.2 shipped `BulletSnap.ini` comment
+    /// "; Snap when hit player"].
     pub impacted_player_snap: bool,
-    /// `[General] DistancedBasedSnap`: select snap sound bands using `[DistanceBased]`.
+    /// `[General] DistancedBasedSnap`: select snap sound bands using `[DistanceBased]`
+    /// [documented: Bullet Snap - ReRedux v1.2 shipped `BulletSnap.ini` comment
+    /// "; Will check distance between projectile and player when bullet pass by player
+    /// when enable"].
     pub distanced_based_snap: bool,
-    /// `[General] Subsonic`: enable subsonic pass-by audio below `subsonic_threshold_speed`.
+    /// `[General] Subsonic`: enable subsonic pass-by audio below `subsonic_threshold_speed`
+    /// [documented: Bullet Snap - ReRedux v1.2 shipped `BulletSnap.ini` comment
+    /// "; enable subsonic bullet pass sound"].
     pub subsonic: bool,
     /// `[General] SubsonicThresholdSpeed`: projectile speed (game units/s) below which
-    /// pass-by audio is treated as subsonic rather than supersonic.
+    /// pass-by audio is treated as subsonic rather than supersonic [documented: Bullet
+    /// Snap - ReRedux v1.2 shipped `BulletSnap.ini` comment "; Will do subsonic 'snap'
+    /// when projectiles' speed lower than this value"].
     pub subsonic_threshold_speed: f32,
     /// `[General] SnapAngle`: angle (degrees, 0..=180) between projectile flight direction
     /// and the vector from projectile to the player camera; angles strictly greater than
-    /// this trigger a pass-by snap (90° is perpendicular / closest approach).
+    /// this trigger a pass-by snap (90° is perpendicular / closest approach) [documented:
+    /// Bullet Snap - ReRedux v1.2 shipped `BulletSnap.ini` comments "; Check the angle
+    /// between projectiles and player camera / ; Greater than this angle will do snap. /
+    /// ; 90 Means that the projs' direction is perpendicular to the vector of proj to
+    /// player's camera"].
     pub snap_angle_deg: f32,
-    /// `[DistanceBased] VeryClose`: maximum distance (game units) for the very-close band.
+    /// `[DistanceBased] VeryClose`: maximum distance (game units) for the very-close band
+    /// [documented: Bullet Snap - ReRedux v1.2 shipped `BulletSnap.ini`].
     pub very_close: f32,
-    /// `[DistanceBased] Close`: maximum distance (game units) for the close band.
+    /// `[DistanceBased] Close`: maximum distance (game units) for the close band
+    /// [documented: Bullet Snap - ReRedux v1.2 shipped `BulletSnap.ini`].
     pub close: f32,
-    /// `[DistanceBased] Distance`: maximum distance (game units) for the mid/distance band.
+    /// `[DistanceBased] Distance`: maximum distance (game units) for the mid/distance band
+    /// [documented: Bullet Snap - ReRedux v1.2 shipped `BulletSnap.ini`].
     pub distance: f32,
-    /// `[DistanceBased] Far`: maximum distance (game units) for the far band.
+    /// `[DistanceBased] Far`: maximum distance (game units) for the far band
+    /// [documented: Bullet Snap - ReRedux v1.2 shipped `BulletSnap.ini`].
     pub far: f32,
-    /// `[DamageBased] middledmg`: weapon base damage threshold for the medium/high-caliber tier.
+    /// `[DamageBased] middledmg`: key name and default `32` [documented: Bullet Snap -
+    /// ReRedux v1.2 shipped `BulletSnap.ini`]; shipped INI has no comment stating what
+    /// damage quantity is measured, so comparing against weapon `base_damage` to select
+    /// the high-caliber supersonic audio tier is `[hypothesis]`.
     pub middle_dmg: f32,
-    /// `[DamageBased] highdmg`: weapon base damage threshold for the very-high-caliber tier.
+    /// `[DamageBased] highdmg`: key name and default `46` [documented: Bullet Snap -
+    /// ReRedux v1.2 shipped `BulletSnap.ini`]; shipped INI has no comment stating what
+    /// damage quantity is measured, so comparing against weapon `base_damage` to select
+    /// the very-high-caliber supersonic audio tier is `[hypothesis]`.
     pub high_dmg: f32,
 }
 
@@ -78,8 +106,9 @@ impl Default for BulletSnapConfig {
     }
 }
 
-/// The four distance bands of `[DistanceBased]`
-/// [documented: `Data\NVSE\Plugins\BulletSnapConfig\BulletSnap.ini`].
+/// The four distance bands of `[DistanceBased]` [documented: Bullet Snap - ReRedux v1.2
+/// (`https://www.nexusmods.com/newvegas/mods/89474`), shipped
+/// `Data\NVSE\Plugins\BulletSnapConfig\BulletSnap.ini`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SnapBand {
     VeryClose,
@@ -97,8 +126,10 @@ pub enum SnapKind {
     VeryHighCaliber,
 }
 
-/// The ten loose audio folders under `Data\Sound\fx\` used by BulletSnap sound packs
-/// [hypothesis: mapping from sonic/damage tier and distance band to the shipped folders].
+/// The ten loose audio folders under `Data\Sound\fx\` [observed: Bullet Snap - ReRedux
+/// v1.2 (`https://www.nexusmods.com/newvegas/mods/89474`) release archive directory
+/// layout under `sound\fx\`]; mapping from `(SnapKind, SnapBand)` onto those folders is
+/// `[hypothesis]` / `[design]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SoundFolder {
     SubsonicClose,

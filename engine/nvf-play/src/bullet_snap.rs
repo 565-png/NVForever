@@ -16,10 +16,18 @@ use crate::player::Player;
 use crate::sfx::{ScaledSound, Sfx, SfxSet};
 use crate::PlaySet;
 
-/// First reserved synthetic SOUN FormID for BulletSnap's 10 sound folders [design: high
-/// in the `0xFFF1_0000` range, disjoint from load-order forms, runtime references and
-/// `fnv_game::nvse_jg9::PATH_SOUND_BASE` (`0xFFF0_0000..0xFFF0_0FFF`)].
-pub const BULLET_SNAP_SOUND_BASE: u32 = 0xFFF1_0000;
+/// Reserved synthetic `SOUN` FormID range (`[BULLET_SNAP_SOUND_BASE,
+/// BULLET_SNAP_SOUND_END)`) for BulletSnap's 10 sound folders [design: placed in
+/// `0xFE7E_0000..0xFE7F_0000`, strictly below `CAMERA_OVERLAY_BASE` (`0xFE7F_0000`),
+/// `LAMBDA_BASE` / `MADE_PACKAGE_BASE` (`0xFE80_0000`), and `FormId::FIRST_DYNAMIC`
+/// (`0xFF00_0000`), and disjoint from normal plugin indices `0x00..=0xFD`, `CLONE_BASE`
+/// (`0xFE00_0000..0xFE20_0000`), `COMPILED_BASE` (`0xFE20_0000..0xFE40_0000`), and low
+/// `TEMP_REF_BASE` (`0xFE40_0000..`) indices. Registration never overwrites an existing
+/// loaded `SOUN` record: any loaded record at the same ID wins and BulletSnap skips to
+/// the first free slot in `[BULLET_SNAP_SOUND_BASE + 10, BULLET_SNAP_SOUND_END)`].
+pub const BULLET_SNAP_SOUND_BASE: u32 = 0xFE7E_0000;
+/// Exclusive upper bound of BulletSnap's reserved synthetic `SOUN` FormID range [design].
+pub const BULLET_SNAP_SOUND_END: u32 = 0xFE7F_0000;
 
 /// Attenuation curve for BulletSnap synthetic sounds [design: keeps distant snaps
 /// audible out to the configured `Far` threshold while still attenuating with distance].
@@ -197,11 +205,14 @@ impl BulletSnap {
         let Some(cfg) = self.config else { return };
         let min_distance = cfg.very_close.max(128.0);
         let max_distance = cfg.max_reach();
+        let fallback_start = BULLET_SNAP_SOUND_BASE + SoundFolder::ALL.len() as u32;
         for folder in SoundFolder::ALL {
             let idx = folder.index();
-            let Some(id) = self.folder_sounds[idx] else { continue };
-            sfx.register_folder_sound(
-                id,
+            let Some(preferred) = self.folder_sounds[idx] else { continue };
+            self.folder_sounds[idx] = sfx.register_folder_sound(
+                preferred,
+                fallback_start,
+                BULLET_SNAP_SOUND_END,
                 folder.label(),
                 folder.sfx_fnam(),
                 min_distance,
@@ -629,6 +640,103 @@ mod tests {
         assert_eq!(app.world().resource::<BulletSnap>().tracker.tracked_len(), 0);
         app.world_mut().resource_mut::<BulletSnap>().retain_active(|_| false);
         assert_eq!(app.world().resource::<BulletSnap>().tracker.tracked_len(), 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn synthetic_sound_ids_avoid_dynamic_and_callable_ranges_and_loaded_records_win() {
+        let dir = temp_data_dir("formid-guard");
+        let ini_path = dir.join("NVSE").join("Plugins").join("BulletSnapConfig").join("BulletSnap.ini");
+        std::fs::create_dir_all(ini_path.parent().unwrap()).unwrap();
+        std::fs::write(&ini_path, "[General]\nDistancedBasedSnap = 1\nSnapAngle = 75\n").unwrap();
+        populate_all_folders(&dir);
+
+        let vfs = fnv_vfs::Vfs::open(&dir, &[]).unwrap();
+        let snap = BulletSnap::from_vfs(&vfs);
+        assert!(snap.active());
+
+        // Every preferred ID sits strictly inside [BULLET_SNAP_SOUND_BASE, BULLET_SNAP_SOUND_END),
+        // completely outside 0x00..=0xFD plugin slots, CLONE_BASE, COMPILED_BASE, low TEMP_REF_BASE,
+        // CAMERA_OVERLAY_BASE (0xFE7F_0000), LAMBDA_BASE (0xFE80_0000), and FIRST_DYNAMIC (0xFF00_0000).
+        const {
+            assert!(BULLET_SNAP_SOUND_BASE > fnv_game::game::TEMP_REF_BASE);
+            assert!(BULLET_SNAP_SOUND_END <= 0xFE7F_0000);
+            assert!(BULLET_SNAP_SOUND_END < fnv_game::game::LAMBDA_BASE);
+            assert!(BULLET_SNAP_SOUND_END < FormId::FIRST_DYNAMIC.0);
+        }
+        let first_dynamic = FormId::FIRST_DYNAMIC.0;
+        let clone_base = fnv_game::nvse_data::CLONE_BASE;
+        let compiled_base = fnv_game::game::COMPILED_BASE;
+        let temp_ref_base = fnv_game::game::TEMP_REF_BASE;
+        let lambda_base = fnv_game::game::LAMBDA_BASE;
+        for folder in SoundFolder::ALL {
+            let id = snap.sound_id(folder).unwrap().0;
+            assert!((BULLET_SNAP_SOUND_BASE..BULLET_SNAP_SOUND_END).contains(&id));
+            assert_eq!(id >> 24, 0xFE, "must not collide with normal plugin indices 0x00..=0xFD");
+            assert!(!(clone_base..compiled_base).contains(&id));
+            assert!(!(compiled_base..temp_ref_base).contains(&id));
+            assert!(id < lambda_base);
+            assert!(id < first_dynamic);
+        }
+
+        // Pre-populate a loaded SOUN record at HighCaliberClose's preferred FormID:
+        // the loaded record must win untouched and BulletSnap must move to a free fallback ID.
+        let colliding_id = snap.sound_id(SoundFolder::HighCaliberClose).unwrap();
+        let mut fx = FxForms::default();
+        fx.sounds.insert(
+            colliding_id,
+            fnv_combat::fx::Sound {
+                edid: Some("LoadedModSound".into()),
+                file: Some("fx\\loaded\\keep.wav".into()),
+                min_distance: 50.0,
+                max_distance: 500.0,
+                ..Default::default()
+            },
+        );
+
+        let player = test_player();
+        let eye_z = player.eye()[2];
+        let mut app = App::new();
+        app.insert_resource(snap)
+            .insert_resource(player)
+            .insert_resource(Sfx::new(fx))
+            .add_message::<ScaledSound>()
+            .add_systems(Update, tick);
+
+        app.world_mut().resource_mut::<BulletSnap>().push(SnapInput::Segment {
+            id: 42,
+            from: [-500.0, 300.0, eye_z],
+            to: [500.0, 300.0, eye_z],
+            dir: [1.0, 0.0, 0.0],
+            speed: 25_000.0,
+            damage: 38.0, // HighCaliber tier
+            is_player_owned: false,
+            eligible: true,
+        });
+        app.update();
+
+        let b = app.world().resource::<BulletSnap>();
+        let assigned = b.sound_id(SoundFolder::HighCaliberClose).unwrap();
+        assert_ne!(assigned, colliding_id, "must skip colliding loaded SOUN FormID");
+        assert!(
+            (BULLET_SNAP_SOUND_BASE..BULLET_SNAP_SOUND_END).contains(&assigned.0),
+            "fallback ID {assigned:?} must stay within reserved BulletSnap range"
+        );
+        assert!(assigned.0 < first_dynamic && assigned.0 < lambda_base);
+
+        let sfx = app.world().resource::<Sfx>();
+        let loaded = sfx.forms.sounds.get(&colliding_id).unwrap();
+        assert_eq!(loaded.edid.as_deref(), Some("LoadedModSound"), "loaded SOUN record must win");
+        assert_eq!(loaded.file.as_deref(), Some("fx\\loaded\\keep.wav"));
+        assert_eq!(loaded.max_distance, 500.0);
+
+        let snap_soun = sfx.forms.sounds.get(&assigned).unwrap();
+        assert_eq!(snap_soun.edid.as_deref(), Some(SoundFolder::HighCaliberClose.label()));
+
+        let emitted: Vec<ScaledSound> = app.world_mut().resource_mut::<Messages<ScaledSound>>().drain().collect();
+        assert_eq!(emitted.len(), 1);
+        assert_eq!(emitted[0].sound, assigned);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
