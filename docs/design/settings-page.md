@@ -46,6 +46,7 @@ one is broken. Read §1–§4 for how the page works.
    (the GPU, missing files, a run's command line); the launcher cannot follow those. The
    rows hidden so far, where the owner asked: the upscaler's own rows (Upscaling Mode, DLSS
    Model, FSR Library, Anti-Aliasing), Generated Frames, the colour channels unless Custom,
+   the difficulty's Player Damage, NPC Damage and Kill XP unless Custom (#3569),
    the controller rows, and Advanced Movement's categories while its Global Toggle is off.
 7. **Words**: write the label in sentence case; the page shows it in Title Case in English,
    and so in another language until its file has a line for it (`pause::on_page`: the short words a, an, the, and, but, or, nor, for, so, yet, as,

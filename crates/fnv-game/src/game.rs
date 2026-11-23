@@ -1552,6 +1552,12 @@ pub struct Game<'a> {
     pub ui_pointer: fnv_ui::input::Pointer,
     /// The game's difficulty (`crate::difficulty`): the engine sets it from its settings.
     pub difficulty: crate::difficulty::Difficulty,
+    /// The Custom level's multipliers (`crate::difficulty`): the engine sets them from its
+    /// settings.
+    pub difficulty_custom: crate::difficulty::CustomDifficulty,
+    /// The level a script's `SetGameDifficulty` chose, for the engine to keep as the
+    /// player's choice and clear (`crate::difficulty`); `None`: none since it last looked.
+    pub difficulty_request: Option<crate::difficulty::Difficulty>,
     /// The player's tweaks (`crate::tweaks`): the engine sets them from its settings.
     pub tweaks: crate::tweaks::Tweaks,
     /// What scripts asked of the engine's combat (`crate::combat::CombatRequest`), for
@@ -2646,6 +2652,8 @@ impl<'a> Game<'a> {
             ui_extra: Default::default(),
             ui_pointer: fnv_ui::input::Pointer::default(),
             difficulty: Default::default(),
+            difficulty_custom: Default::default(),
+            difficulty_request: None,
             tweaks: Default::default(),
             combat_requests: Vec::new(),
             destruction_changes: Vec::new(),

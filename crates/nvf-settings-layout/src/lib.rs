@@ -101,7 +101,7 @@ pub const NVF_FEATURES_KEYS: [&str; 16] = [
 pub const SECTIONS: &[Section] = &[
     // #2688's sound cover with the game's own rules (a bigger gameplay change: NVF Features is the
     // owner's call, recommended to them, not moved there).
-    section("Gameplay", Some("Game"), &["difficulty", "hardcore", "reload-slows", "UsePipBoy", "sound-cover"]),
+    section("Gameplay", Some("Game"), &["difficulty", "difficulty-player-damage", "difficulty-npc-damage", "difficulty-kill-xp", "hardcore", "reload-slows", "UsePipBoy", "sound-cover"]),
     // "V.A.T.S." as the data spells it (MESG `HelpVATS`).
     section("Gameplay", Some("V.A.T.S."), &["vats-style", "vats-slowdown", "kill-camera"]),
     section("Gameplay", Some("Camera"), &["detached-camera", "true-iron-sights", "first-person-body", "weapon-lower", "gore-shake", "field-of-view", "viewmodel-field-of-view"]),
@@ -993,7 +993,8 @@ pub const CONTROLLER_DEVICE: &str = "Controller";
 
 /// Rows shown only while a list row has one of the named choices: (the row, the list row,
 /// the choices by name) [design: the menu overhaul, owner 2026-11-15: the upscaler's own rows
-/// and Generated Frames are hidden, not greyed, while they cannot apply]. While hidden, the
+/// and Generated Frames are hidden, not greyed, while they cannot apply; #3569: the
+/// Custom difficulty's sliders]. While hidden, the
 /// list row stands for the row (the search, the Changed list). The game's page
 /// (`nvf_play::settings::Settings::hidden`) and the launcher both go by this table: a row
 /// hidden by another row's choice is written here, not in code, so the two stay one.
@@ -1003,6 +1004,11 @@ pub const SHOWN_WITH: &[(&str, &str, &[&str])] = &[
     ("fsr-library", "upscaler", &["FSR 3.1"]),
     ("anti-aliasing", "upscaler", &["Off"]),
     ("frame-generation-frames", "frame-generation", &["DLSS"]),
+    // The Custom difficulty's own three [design: #3569: "when player select this
+    // difficulty, 3 sliders will appear below the dropdown"].
+    ("difficulty-player-damage", "difficulty", &["Custom"]),
+    ("difficulty-npc-damage", "difficulty", &["Custom"]),
+    ("difficulty-kill-xp", "difficulty", &["Custom"]),
 ];
 
 /// Rows greyed unless a list row has one of the named choices: (the row, the list row, the

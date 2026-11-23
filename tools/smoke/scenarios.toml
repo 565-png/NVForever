@@ -15186,6 +15186,90 @@ expect = [
 ]
 
 [[scenario]]
+name = "difficulty-script-kept"
+source = "#3569: a script's SetGameDifficulty (JIP) was put back by the engine's own level on the next frame; it is kept as the chosen level now (docs/spec-notes/difficulty.md §4)"
+note = "in Goodsprings, Easy Pete is brought 300 units north of the player at 3 s; at 8 s the console's eval runs SetGameDifficulty 0 through the script engine (not the console's by-name word); four and five seconds later the hit aid's 10-point hits still go by Very Easy (the player takes 5, deals 20), and GetGameDifficulty still answers 0. Before the fix the hits were Normal's 10"
+areas = ["combat", "scripts"]
+paths = ["crates/fnv-game/src/difficulty.rs", "engine/nvf-play/src/difficulty.rs", "crates/fnv-game/src/nvse_jip4.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:EasyPeteRef:player:0:300:0", NVF_PLAY_TEST_CONSOLE = "8:eval SetGameDifficulty 0;8.3:close;15:GetGameDifficulty;15.3:close", NVF_PLAY_TEST_HIT = "12:player:10:by=EasyPeteRef,13:EasyPeteRef:10" }
+args = ["--play", "--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--hour", "12", "--no-voice"]
+run_seconds = 18
+expect = [
+  { text = "difficulty: a script chose Very Easy (0); kept as the chosen level", count = 1, label = "the script's level is taken as the chosen one" },
+  { re = 'difficulty: Normal \(2\)', count = 0, label = "Normal is not handed back" },
+  { text = "console: GetGameDifficulty >> 0.00", label = "GetGameDifficulty still answers Very Easy" },
+]
+order = [[
+  { text = "difficulty: a script chose Very Easy (0)" },
+  { re = 'test aid: 0x[0-9A-F]{8} hits 0x00000014 for 5: health', label = "four seconds later Pete's 10-point hit takes Very Easy's 5" },
+  { re = 'test aid: the player hits 0x[0-9A-F]{8} for 20: health', label = "and the player's does Very Easy's 20" },
+]]
+
+[[scenario]]
+name = "difficulty-custom"
+source = "#3569: the Difficulty list's Custom shows three sliders under it (Player Damage, NPC Damage, Kill XP, 50-300%, 100% until moved) that set the damage the player deals and takes and the XP for a kill (docs/spec-notes/difficulty.md §5)"
+note = "in Goodsprings with Easy Pete 300 units north (3 s); no home, so no INI: the sliders start at 100%. At 6 s the console asks Pete's kill XP at Normal. Pause 8-14: under Normal the three rows are hidden; Custom shows them at 100% (Normal's multipliers); then Player Damage 300% (part 1), NPC Damage 50% (part 0), Kill XP 200% (part 0.6). At 16 s his kill XP is asked again, at 18-19 s the hit aid's 10-point hits (the player takes 5, deals 30), at 21 s the player kills him"
+areas = ["combat", "settings"]
+paths = ["crates/fnv-game/src/difficulty.rs", "engine/nvf-play/src/difficulty.rs", "crates/nvf-settings-layout/src/lib.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:EasyPeteRef:player:0:300:0", NVF_PLAY_TEST_CONSOLE = "6:eval EasyPeteRef.GetKillXP;6.3:close;16:eval EasyPeteRef.GetKillXP;GetGameDifficulty;16.3:close", NVF_PLAY_TEST_PAUSE = "8:14", NVF_PLAY_TEST_SETTINGS = "8.5:select:difficulty,9.5:difficulty=Custom,11:difficulty-player-damage=1.0,11.5:difficulty-npc-damage=0,12:difficulty-kill-xp=0.6", NVF_PLAY_TEST_PAUSE_MENU = "9:inspect,9.2:shot,10.5:inspect,12.5:inspect", NVF_PLAY_TEST_HIT = "18:player:10:by=EasyPeteRef,19:EasyPeteRef:10,21:EasyPeteRef:9999" }
+args = ["--play", "--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--hour", "12", "--no-voice"]
+run_seconds = 25
+expect = [
+  { text = "console: GetGameDifficulty >> 2.00", label = "scripts see Custom as Normal" },
+]
+order = [[
+  { text = "console: EasyPeteRef.GetKillXP >> 10", label = "Pete's kill XP at Normal: 10 (observed 2026-11-22)" },
+  { re = 'pause menu: inspect: shown \[Gameplay > Game\], difficulty, hardcore,', label = "under Normal the Custom rows are hidden" },
+  "settings: difficulty Custom",
+  { text = "difficulty: Custom: damage by the player x1.00, to the player x1.00, kill XP x1.00", label = "each at 100% when Custom is first chosen (the rows show their getters' value, the same as these)" },
+  { re = 'pause menu: inspect: shown \[Gameplay > Game\], difficulty, difficulty-player-damage, difficulty-npc-damage, difficulty-kill-xp, hardcore,', label = "Custom shows its three rows under the list" },
+  "settings: difficulty-player-damage 300%",
+  "settings: difficulty-npc-damage 50%",
+  "settings: difficulty-kill-xp 200%",
+  { text = "difficulty: Custom: damage by the player x3.00, to the player x0.50, kill XP x2.00", label = "the game takes what was set" },
+  { text = "console: EasyPeteRef.GetKillXP >> 20", label = "Kill XP 200%: twice Normal's" },
+  { re = 'test aid: 0x[0-9A-F]{8} hits 0x00000014 for 5: health', label = "NPC Damage 50%: Pete's 10-point hit takes 5" },
+  { re = 'test aid: the player hits 0x[0-9A-F]{8} for 30: health', label = "Player Damage 300%: the player's does 30" },
+  { text = "xp: +20 XP from a kill", label = "the kill earns twice Normal's XP" },
+]]
+manual = "pause_settings.png (9.2 s, Difficulty chosen, Normal): the note under the rows names the five levels' numbers as the load order gives them, You deal / take / kill XP: Very Easy 200/50/100%, Easy 150/75/100%, Normal 100/100/100%, Hard 75/150/100%, Very Hard 50/200/100%, on two lines"
+
+[[scenario]]
+name = "difficulty-custom-write"
+source = "#3569: the Custom difficulty and its sliders are saved: the first half of the round trip, difficulty-custom-read starts with what this run keeps in its home"
+note = "the home's INI may hold any level and values from an earlier run: Normal, then Custom, its sliders to 100% (part 0.2), then to 150% (part 0.4), 75% (part 0.1) and 250% (part 0.8), so each is a change logged"
+areas = ["settings"]
+paths = ["engine/nvf-play/src/difficulty.rs", "crates/fnv-game/src/difficulty.rs", "engine/nvf-play/src/settings.rs"]
+env = { NVFOREVER_HOME = "difficulty-custom-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_PLAY_TEST_SETTINGS = "10.3:difficulty=Normal,10.6:difficulty=Custom,10.9:difficulty-player-damage=0.2,11.2:difficulty-npc-damage=0.2,11.5:difficulty-kill-xp=0.2,11.9:difficulty-player-damage=0.4,12.3:difficulty-npc-damage=0.1,12.7:difficulty-kill-xp=0.8", NVF_PLAY_TEST_PAUSE_MENU = "13.5:inspect" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 17
+expect = [
+  { text = "difficulty: Custom: damage by the player x1.50, to the player x0.75, kill XP x2.50", label = "the game takes the three" },
+  { text = "settings: difficulty Custom", label = "Custom chosen" },
+  { text = "settings: difficulty-player-damage 150%", label = "Player Damage set" },
+  { text = "settings: difficulty-npc-damage 75%", label = "NPC Damage set" },
+  { text = "settings: difficulty-kill-xp 250%", label = "Kill XP set" },
+  { re = 'pause menu: inspect: shown \[Gameplay > Game\], difficulty, difficulty-player-damage, difficulty-npc-damage, difficulty-kill-xp, hardcore,', label = "the three rows are shown under the list" },
+]
+
+[[scenario]]
+name = "difficulty-custom-read"
+source = "#3569: the second half of the Custom difficulty's round trip: the next start reads Custom and its three sliders from the home difficulty-custom-write kept them in, and the hits go by them"
+note = "Runs after difficulty-custom-write in its home. In Goodsprings, Easy Pete 300 units north (3 s); the hit aid's 20-point hits: Pete's takes 15 from the player (75%), the player's does 30 (150%)"
+areas = ["settings", "combat"]
+paths = ["engine/nvf-play/src/difficulty.rs", "crates/fnv-game/src/difficulty.rs", "engine/nvf-play/src/settings.rs"]
+env = { NVFOREVER_HOME = "difficulty-custom-home", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:EasyPeteRef:player:0:300:0", NVF_PLAY_TEST_HIT = "10:player:20:by=EasyPeteRef,11:EasyPeteRef:20" }
+args = ["--play", "--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 14
+expect = [
+  { re = 'settings: .* read from .*difficulty Custom', label = "the INI's Custom is read at the start" },
+  { re = 'settings: .* read from .*difficulty-player-damage 150%, difficulty-npc-damage 75%, difficulty-kill-xp 250%', label = "and its three sliders" },
+  { text = "difficulty: Custom: damage by the player x1.50, to the player x0.75, kill XP x2.50", label = "the game takes them" },
+  { re = 'test aid: 0x[0-9A-F]{8} hits 0x00000014 for 15: health', label = "NPC Damage 75%: Pete's 20-point hit takes 15" },
+  { re = 'test aid: the player hits 0x[0-9A-F]{8} for 30: health', label = "Player Damage 150%: the player's does 30" },
+]
+
+[[scenario]]
 name = "damageav-health-kills"
 source = "#1568: DamageActorValue on Health past zero kills an NPC and the player and knocks an essential actor out; no killer, so no XP (docs/spec-notes/unconscious.md §2.2, a hypothesis: observer-checks.md check 89)"
 note = "in Goodsprings: Easy Pete (not essential) survives 10 and dies of 9999, and is still dead 5 s later; Sunny Smiles is made essential and is knocked out; the player last, as the death ends the play"

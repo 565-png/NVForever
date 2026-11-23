@@ -7,7 +7,7 @@ use crate::common;
 use common::*;
 use fnv_esm::{LoadOrder, Plugin, Schema};
 use fnv_game::combat::{HitInfo, LimbHit};
-use fnv_game::difficulty::Difficulty;
+use fnv_game::difficulty::{CustomDifficulty, Difficulty};
 use fnv_game::game::{Game, GameConfig};
 use fnv_game::GameData;
 use fnv_script::FunctionTable;
@@ -129,4 +129,48 @@ fn the_level_line_names_the_multipliers() {
     let mut g = game(&f, Difficulty::Normal);
     assert_eq!(g.set_difficulty(Difficulty::VeryHard), "difficulty: Very Hard (4): damage by the player x0.50, to the player x2.00, kill XP x2.00");
     assert_eq!(g.difficulty, Difficulty::VeryHard);
+}
+
+/// Custom: the player's own three multipliers in place of the game settings, each held to
+/// 50-300%; 100% each (the default) is Normal.
+#[test]
+fn custom_takes_the_players_multipliers() {
+    let f = fixture();
+    let custom = |c: CustomDifficulty| {
+        let mut g = game(&f, Difficulty::Custom);
+        g.set_custom_difficulty(c);
+        g
+    };
+    let normal_xp = game(&f, Difficulty::Normal).kill_xp(RAIDER_REF);
+    let mut g = custom(CustomDifficulty::default());
+    assert_eq!(g.hit(RAIDER_REF, 10.0, by(FormId::PLAYER_REF)).dealt, 10.0, "100%: Normal's");
+    assert_eq!(g.kill_xp(RAIDER_REF), normal_xp);
+    let mut g = custom(CustomDifficulty { dealt: 3.0, taken: 0.5, kill_xp: 2.0 });
+    assert_eq!(g.hit(RAIDER_REF, 10.0, by(FormId::PLAYER_REF)).dealt, 30.0, "the player's hits at 300%");
+    assert_eq!(g.hit(FormId::PLAYER_REF, 10.0, by(RAIDER_REF)).dealt, 5.0, "hits on the player at 50%");
+    assert_eq!(g.hit(GUARD_REF, 10.0, by(RAIDER_REF)).dealt, 10.0, "others' hits on others are not scaled");
+    assert_eq!(g.kill_xp(RAIDER_REF), normal_xp * 2.0);
+    let mut g = custom(CustomDifficulty { dealt: 9.0, taken: 0.1, kill_xp: 1.0 });
+    assert_eq!(g.hit(RAIDER_REF, 10.0, by(FormId::PLAYER_REF)).dealt, 30.0, "held to 300%");
+    assert_eq!(g.hit(FormId::PLAYER_REF, 10.0, by(RAIDER_REF)).dealt, 5.0, "held to 50%");
+    // The values wait while another level is chosen.
+    g.set_custom_difficulty(CustomDifficulty { dealt: 2.0, taken: 2.0, kill_xp: 2.0 });
+    g.set_difficulty(Difficulty::VeryHard);
+    assert_eq!(g.hit(RAIDER_REF, 10.0, by(FormId::PLAYER_REF)).dealt, 5.0, "Very Hard's, not Custom's");
+    assert_eq!(g.set_difficulty(Difficulty::Custom), "difficulty: Custom: damage by the player x2.00, to the player x2.00, kill XP x2.00");
+    assert_eq!(g.difficulty.code(), 2, "GetGameDifficulty: Normal");
+    // Every level's multipliers, whichever is chosen (the settings page's note).
+    let m = g.difficulty_multipliers(Difficulty::Hard);
+    assert_eq!((m.dealt, m.taken, m.kill_xp), (0.75, 1.5, 1.5));
+    assert_eq!(g.difficulty_multipliers(Difficulty::Custom), CustomDifficulty { dealt: 2.0, taken: 2.0, kill_xp: 2.0 });
+}
+
+/// A script's SetGameDifficulty sets the level and leaves it for the engine to keep.
+#[test]
+fn a_scripts_level_is_left_for_the_engine() {
+    let f = fixture();
+    let mut g = game(&f, Difficulty::Normal);
+    assert_eq!(g.difficulty_request, None);
+    g.script_set_difficulty(Difficulty::VeryEasy);
+    assert_eq!((g.difficulty, g.difficulty_request), (Difficulty::VeryEasy, Some(Difficulty::VeryEasy)));
 }
