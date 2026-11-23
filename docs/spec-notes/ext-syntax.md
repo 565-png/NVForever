@@ -350,3 +350,18 @@ Under the compiler override, then, a call's argument takes the arithmetic after 
 (`Abs -3 + 1` is 2) but stops at a comparison (`Sin 90 > 0.5` is 1) [observed: both rows;
 the rule is a hypothesis drawn from two cases]. Whether `==`, as in the wiki's example,
 behaves like `>`: open.
+
+## 12. Extender `actor_value` parameter typing
+
+- **Unnumbered extender `actor_value` parameters** (`crates/fnv-script/src/compile/gen/x.rs`):
+  extender functions whose catalogue parameter has `kind: "actor_value"` — including
+  `GetThresholdedActorValue` / `GetThresholdAV` [documented:
+  https://geckwiki.com/index.php?title=GetThresholdedActorValue], `GetActorValueModifier`
+  (`GetAVMod`), `GetActorValueModifierAlt` (`GetAVModAlt`), `GetBaseActorValueAlt`
+  (`GetBaseAVAlt`), `ModBaseActorValue` (`ModBaseAV`), `SetEmbeddedWeaponAV`, `UnforceAV`,
+  `UnsetAV`, `GetActorValueDamage` (`GetAVDamage`), and `GetActorValueName` (`GetAVName`) —
+  resolve a bare known actor-value keyword (when not shadowed by a local variable, a `GLOB`
+  record, or a function name) to `ParamEnc::Enum("actor_value")` (`XExpr::Enum { code }`)
+  without emitting `unquoted_argument` [design]. Quoted strings, numeric codes, local
+  variables, globals, dotted quest variables, function calls, and unknown bare words retain
+  their existing `ParamEnc::Value` handling.
