@@ -4173,3 +4173,21 @@ capture setup, so every part of a check that needs an interior is still open.
      his chest and to the table top. A student's `aostudenttestpaper.nif` hangs the same
      way, if one is easier to find.
 
+
+## Added 2026-11-23 (how long the quest lines stay, #3436)
+
+291. **How long do "Quest added", "Quest completed" and "Location discovered" stay on
+     screen, and how do they come and go?** (P2; #3436, quest-messages.md §5–§6, hud.md
+     "Location discovered".) Ours [design]: each banner 4 s, an objective list 4 s and
+     1.5 s more for each objective after the first, each fading in and out over 0.25 s,
+     the name's letters coming in over 0.6 s; a player found them too fast against the
+     original (#3436). The data does not say: `hud_main_menu.xml` gives the HUD's
+     `menufade` 0.25 and no times for `QuestReminder`, and `fDefaultNoticeTextDisplayTime`
+     (0.5) is not known to apply. Record at 60 fps, from the first frame a line shows to
+     the last: (a) the first "Quest added" of a new game (Ain't That a Kick in the Head, at
+     Doc Mitchell's); (b) its
+     objective line after the banner, and a list of two or more objectives; (c) "Quest
+     completed"; (d) "Location discovered" with its name and "+10 XP" (walk into
+     Goodsprings Source from the town). For each: when the words appear, when the name
+     has fully come in (and whether it comes letter by letter or fades), when it starts
+     to go and how long the fade lasts, and the gap before the next line.
