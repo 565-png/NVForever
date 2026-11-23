@@ -314,10 +314,15 @@ pub struct Awareness {
     #[serde(default)]
     pub rolled_for: Option<FormId>,
     /// Targets a script's StartCombat gave it that the engine has not measured since:
-    /// not being measured yet does not hide them ([`Awareness::lose_unmeasured`]).
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    /// not being measured yet does not hide them ([`Awareness::lose_unmeasured`]). Saved
+    /// as `GameSnapshot::scripted_combat`.
+    #[serde(skip)]
     pub scripted: BTreeSet<FormId>,
 }
+
+/// The detection value StartCombat gives its target, until it is measured
+/// ([`Game::start_combat`]) [engineering choice].
+const STARTED_VALUE: f64 = 100.0;
 
 /// A fighter keeps its target while it detects it, unless another detected one is more
 /// than this above it in detection value [design: owner 2026-10-16, NCR troopers
@@ -1400,6 +1405,27 @@ impl Game<'_> {
 }
 
 impl Game<'_> {
+    /// The StartCombat targets not measured since, for a save.
+    pub(crate) fn scripted_combat(&self) -> BTreeSet<(FormId, FormId)> {
+        self.awareness.actors.iter().flat_map(|(&a, x)| x.scripted.iter().map(move |&t| (a, t))).collect()
+    }
+
+    /// [`Game::scripted_combat`] from a save, after its actors and forced pairs. `None`: a
+    /// save from before it was kept (#3390). There a forced pair's target counts as not
+    /// measured while it still has what StartCombat gave it, the value above all: a
+    /// measurement overwrites it, and a measured value (a sum of unclamped terms,
+    /// `Settings::evaluate`) is exactly that only by coincidence. So an enemy a script set
+    /// on the player that was measured and then left behind is not taken for one [design].
+    pub(crate) fn restore_scripted_combat(&mut self, saved: Option<&BTreeSet<(FormId, FormId)>>) {
+        let untouched = |x: &Target| x.band == Band::Detected && x.value == STARTED_VALUE && x.detected.is_some() && x.hidden_since.is_none();
+        for &(actor, target) in saved.unwrap_or(&self.awareness.forced) {
+            let Some(a) = self.awareness.actors.get_mut(&actor) else { continue };
+            if a.targets.get(&target).is_some_and(|x| saved.is_some() || untouched(x)) {
+                a.scripted.insert(target);
+            }
+        }
+    }
+
     /// `actor.StartCombat target`: the actor fights `target` from now on, whatever the
     /// records say of hostility, until StopCombat [documented: catalogue notes, "Forces
     /// the calling actor to start combat with a target actor"]. It counts as detecting the
@@ -1417,7 +1443,7 @@ impl Game<'_> {
         let now = self.time;
         let at = position(self, target).unwrap_or_default();
         let a = self.awareness.actors.entry(actor).or_default();
-        a.targets.insert(target, Target { band: Band::Detected, value: 100.0, at, detected: Some(now), hidden_since: None });
+        a.targets.insert(target, Target { band: Band::Detected, value: STARTED_VALUE, at, detected: Some(now), hidden_since: None });
         a.scripted.insert(target);
         if let Some(c) = a.settle(actor, now, &t, true) {
             self.awareness.changes.push(c);

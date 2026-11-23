@@ -70,7 +70,8 @@ Tags as in the spec notes: [documented: source], [observed], [hypothesis], and
   Out of the loaded area the AI carries out no search (`fnv_ai` process.rs), so a Lost
   actor there gives a target up once hidden for `forget_target`, as outside a search. Kept as
   they are: a target a script's StartCombat set and no round has measured since
-  (`Awareness::scripted`, saved with the fight), actors with their AI off, the player as a
+  (`Awareness::scripted`, saved as `scripted_combat`; in a save from before it, a forced
+  pair's target still holding the value StartCombat gave it counts), actors with their AI off, the player as a
   target under `tdetect`, and every fight where nothing is measured (headless runs). What
   the original does with a fighter whose cell unloads: observer check 281.
 - An event heard while searching puts its owner on the target list, undetected

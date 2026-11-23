@@ -947,22 +947,79 @@ fn a_scripts_target_is_held_until_it_is_measured() {
 #[test]
 fn a_save_made_with_an_enemy_left_behind_recovers() {
     let f = fixture();
-    let mut g = game(&f);
     let (raider, player) = (FormId(RAIDER_REF), FormId::PLAYER_REF);
-    fight(&mut g, raider, player);
-    g.time += 1000.0;
-    // As a build before #3390 wrote it: without the field.
-    let mut old = serde_json::to_value(g.snapshot()).unwrap();
-    for a in old["awareness"].as_object_mut().unwrap().values_mut() {
-        a.as_object_mut().unwrap().remove("scripted");
+    // By its records, and set on the player by a script: measured, then left behind.
+    for scripted in [false, true] {
+        let mut g = game(&f);
+        if scripted {
+            g.start_combat(raider, player);
+        }
+        fight(&mut g, raider, player);
+        g.time += 1000.0;
+        let mut h = reloaded(&f, &g, true);
+        assert!(danger(&h, raider));
+        for _ in 0..40 {
+            round(&mut h, 1.0, &[], &[]);
+        }
+        assert_eq!(h.awareness.state(raider), State::Normal, "scripted: {scripted}");
     }
-    let back: fnv_game::game::GameSnapshot = serde_json::from_value(old).unwrap();
-    let mut h = Game::restore(&f.data, World::restore(&f.forms, &f.refs, &back.sim).unwrap(), g.cfg, &back).unwrap();
-    assert!(danger(&h, raider));
+}
+
+/// `g` saved and loaded, the save as a build before #3390 wrote it when `old`.
+fn reloaded<'a>(f: &'a Fixture, g: &Game, old: bool) -> Game<'a> {
+    let mut json = serde_json::to_value(g.snapshot()).unwrap();
+    let field = json.as_object_mut().unwrap();
+    assert_eq!(field.contains_key("scripted_combat"), field.contains_key("forced_combat"));
+    if old {
+        field.remove("scripted_combat");
+    }
+    let back: fnv_game::game::GameSnapshot = serde_json::from_value(json).unwrap();
+    Game::restore(&f.data, World::restore(&f.forms, &f.refs, &back.sim).unwrap(), g.cfg, &back).unwrap()
+}
+
+#[test]
+fn an_old_save_keeps_a_scripts_fight_not_measured_yet() {
+    // Saved between StartCombat on two unloaded actors and their first measurement, by a
+    // build that did not write which targets were not measured yet.
+    let f = fixture();
+    let (raider, watchman) = (FormId(RAIDER_REF), FormId(WATCHMAN_REF));
+    let mut g = game(&f);
+    g.start_combat(watchman, raider);
+    g.start_combat(raider, watchman);
+    for _ in 0..40 {
+        round(&mut g, 1.0, &[], &[]);
+    }
+    let mut h = reloaded(&f, &g, true);
     for _ in 0..40 {
         round(&mut h, 1.0, &[], &[]);
     }
-    assert_eq!(h.awareness.state(raider), State::Normal);
+    assert_eq!(h.fighting_target_of(watchman), Some(raider));
+    assert_eq!(h.fighting_target_of(raider), Some(watchman));
+    // Once measured they can be lost, as in a game that was not loaded.
+    round(&mut h, 1.0, &[raider, watchman], &[(watchman, raider, Band::Detected)]);
+    for _ in 0..40 {
+        round(&mut h, 1.0, &[], &[]);
+    }
+    assert_eq!(h.awareness.state(watchman), State::Normal);
+    assert_eq!(h.awareness.state(raider), State::Combat, "its own target was not measured");
+}
+
+#[test]
+fn a_new_save_says_which_targets_were_not_measured() {
+    // A measured value that happens to be StartCombat's own: a new save's empty list says
+    // it was measured, so nothing is guessed from the value.
+    let f = fixture();
+    let (raider, watchman) = (FormId(RAIDER_REF), FormId(WATCHMAN_REF));
+    let mut g = game(&f);
+    g.start_combat(watchman, raider);
+    assert!(reloaded(&f, &g, false).awareness.get(watchman).unwrap().scripted.contains(&raider));
+    g.observe_threat(watchman, raider, &Detection { value: 100.0, band: Band::Detected, ..Detection::default() }, [100.0, 0.0, 0.0]);
+    let mut h = reloaded(&f, &g, false);
+    assert!(h.awareness.get(watchman).unwrap().scripted.is_empty());
+    for _ in 0..40 {
+        round(&mut h, 1.0, &[], &[]);
+    }
+    assert_eq!(h.awareness.state(watchman), State::Normal);
 }
 
 #[test]
