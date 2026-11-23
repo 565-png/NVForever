@@ -38,7 +38,13 @@
 //!     is divided by (`fg_cap.rs`, #2731): the frames DLSS-G presents while it generates, 1 in
 //!     menus and while it presents one per real frame; each change is one `frame cap:` line.
 //! - **UI buffer** ([`ui_buffer`], stage 4 item 2; after the UI, before Bevy's upscaling blit,
-//!   where FSR's frame generation's `generate` sits): on a tagged frame a full-screen pass writes
+//!   where FSR's frame generation's `generate` sits): on a tagged frame the UI is drawn a second
+//!   time, alone, over transparent black (`fg_ui_layer.rs`, two textures used in turn, the main
+//!   texture's format), which leaves its colour premultiplied by its coverage, and tagged
+//!   `kBufferTypeUIColorAndAlpha` `eValidUntilPresent` [documented: `ProgrammingGuideDLSS_G.md`
+//!   §5.1: "the RGB channels must be pre-multiplied by alpha", `Final_Color.RGB = UI.RGB + (1 -
+//!   UI.Alpha) x Hudless.RGB`]: see-through HUD pixels keep their own alpha. With
+//!   `NVF_FG_UI_LAYER=0`, as before, a full-screen pass writes
 //!   a display-sized `R16Float` UI alpha from the frame (with the UI) and its HUD-less copy: 1
 //!   where they differ, 0 elsewhere. With alpha 1 the UI's colour is the frame's, so the guide's
 //!   rules hold: 0 where there is no UI, above 0 where there is, and `Final = UI.RGB + (1 -
@@ -146,7 +152,7 @@ use bevy::render::sync_world::MainEntity;
 use bevy::render::view::{create_surfaces, extract_windows, prepare_view_targets, ExtractedView, ExtractedWindow, HoldSurfaceReconfigure, SurfaceData, ViewTarget};
 use bevy::render::{Extract, ExtractSchedule, Render, RenderSystems};
 use bevy::window::{PrimaryWindow, WindowClosing};
-use bevy::ui_render::ui_pass;
+use bevy::ui_render::{ui_pass, UiCameraView};
 
 use super::evaluate::{constants_for, describe, ConstantsInput, VIEWPORT};
 use super::ffi::{
@@ -185,8 +191,8 @@ struct Decision {
     output: UVec2,
 }
 
-/// The frame without the HUD: two textures used in turn, at the output size and in the main
-/// texture's format.
+/// The frame without the HUD, or the UI drawn alone (`fg_ui_layer.rs`): two textures used in
+/// turn, at the output size and in the main texture's format.
 struct Hudless {
     textures: [wgpu::Texture; 2],
     views: [wgpu::TextureView; 2],
@@ -250,8 +256,10 @@ struct FrameGen {
     exit_off: bool,
     /// This frame's HUD-less copy, for the UI buffer ([`ui_buffer`]); set by a tagged frame.
     ui_source: Option<wgpu::TextureView>,
-    /// The UI buffer's pass and its two textures.
+    /// The UI buffer's pass and its two textures (`NVF_FG_UI_LAYER=0`: the UI alpha).
     ui: Option<UiPass>,
+    /// The UI drawn alone, the UI colour and alpha tagged (the module comment's "UI buffer").
+    ui_layer: Option<Hudless>,
     /// The UI buffer was tagged once (said).
     ui_said: bool,
     /// The swapchain was just made again by the live toggle: the mode stays off one frame more
@@ -341,6 +349,7 @@ impl FrameGen {
             exit_off: false,
             ui_source: None,
             ui: None,
+            ui_layer: None,
             ui_said: false,
             just_switched: false,
             cap: super::fg_cap::CapDivisor::default(),
@@ -882,13 +891,20 @@ fn null_tags() -> [ResourceTag; 5] {
 /// The UI buffer on a tagged frame (the module comment's "UI buffer"): the pass, the move to
 /// `RESOURCE`, the tag. When it cannot be made, whatever the reason, the frame is not
 /// generated: its tags go null.
-fn ui_buffer(view: ViewQuery<(&ViewTarget, &PreparedUpscale)>, adapter: Res<RenderAdapter>, mut ctx: RenderContext) {
-    let (target, prepared) = view.into_inner();
+fn ui_buffer(
+    world: &World,
+    view: ViewQuery<(&ViewTarget, &PreparedUpscale, &ExtractedCamera, Option<&UiCameraView>)>,
+    adapter: Res<RenderAdapter>,
+    mut ctx: RenderContext,
+) {
+    let (target, prepared, camera, ui) = view.into_inner();
     let mut guard = frame_gen();
     let Some(fg) = guard.as_mut() else { return };
     let hudless_view = fg.ui_source.take();
     let (Some(index), Some(decision)) = (fg.last_index, fg.decision.filter(|d| d.generate)) else { return };
+    let layer = *crate::fg_ui_layer::ENABLED;
     let result = match hudless_view {
+        Some(_) if layer => draw_ui_layer(fg, &mut ctx, &adapter, world, ui, camera, target, prepared, index),
         Some(hudless_view) => draw_ui_alpha(fg, &mut ctx, &adapter, target, prepared, index, &hudless_view),
         None => Err("no HUD-less copy this frame".to_string()),
     };
@@ -896,10 +912,15 @@ fn ui_buffer(view: ViewQuery<(&ViewTarget, &PreparedUpscale)>, adapter: Res<Rend
         Ok(()) => {
             if !fg.ui_said {
                 fg.ui_said = true;
+                let what = if layer {
+                    format!("{:?} UI colour and alpha (the UI drawn alone over transparent black, premultiplied)", target.main_texture().format())
+                } else {
+                    "R16Float UI alpha (1 where the frame differs from its HUD-less copy, 0 elsewhere)".to_string()
+                };
                 note_fg(
                     Level::INFO,
                     format!(
-                        "UI buffer: {}x{} R16Float UI alpha (1 where the frame differs from its HUD-less copy, 0 elsewhere), tagged eValidUntilPresent with the HUD-less copy; user interface recomposition on",
+                        "UI buffer: {}x{} {what}, tagged eValidUntilPresent with the HUD-less copy; user interface recomposition on",
                         prepared.output_size.x, prepared.output_size.y
                     ),
                 );
@@ -916,7 +937,51 @@ fn ui_buffer(view: ViewQuery<(&ViewTarget, &PreparedUpscale)>, adapter: Res<Rend
     }
 }
 
-/// The UI alpha's pass, transition and tag for frame number `index`.
+/// The UI drawn alone (`fg_ui_layer.rs`), its transition and its tag as the UI colour and alpha
+/// for frame number `index`: `Final = UI.RGB + (1 - UI.A) * Hudless` with the colour
+/// premultiplied, as DLSS-G asks [documented: `ProgrammingGuideDLSS_G.md` §5.1].
+#[allow(clippy::too_many_arguments)]
+fn draw_ui_layer(
+    fg: &mut FrameGen,
+    ctx: &mut RenderContext,
+    adapter: &RenderAdapter,
+    world: &World,
+    ui: Option<&UiCameraView>,
+    camera: &ExtractedCamera,
+    target: &ViewTarget,
+    prepared: &PreparedUpscale,
+    index: u32,
+) -> Result<(), String> {
+    let main: &wgpu::Texture = target.main_texture();
+    let device = ctx.render_device().wgpu_device().clone();
+    if fg.ui_layer.as_ref().is_none_or(|l| l.textures[0].size() != main.size() || l.textures[0].format() != main.format()) {
+        let textures: [wgpu::Texture; 2] = std::array::from_fn(|_| crate::fg_ui_layer::layer_texture(&device, main.size(), main.format(), "dlssg_ui_color_alpha"));
+        let views = std::array::from_fn(|i| textures[i].create_view(&wgpu::TextureViewDescriptor::default()));
+        fg.ui_layer = Some(Hudless { textures, views, next: 0 });
+    }
+    let Some(layer) = fg.ui_layer.as_mut() else { return Err("no UI layer texture".to_string()) };
+    let at = layer.next;
+    layer.next = 1 - at;
+    let (ui_texture, ui_view) = (layer.textures[at].clone(), layer.views[at].clone());
+    let described = {
+        // SAFETY: only read.
+        let Some(hal) = (unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }) else { return Err("not a Vulkan adapter".to_string()) };
+        describe(&hal, &ui_texture, &ui_view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+    };
+    let Some(mut ui_res) = described else { return Err("the UI layer has no Vulkan handle".to_string()) };
+    crate::fg_ui_layer::draw(world, ui, camera, ctx, &ui_view)?;
+    ctx.command_encoder().transition_resources(std::iter::empty(), std::iter::once(wgpu::TextureTransition { texture: &ui_texture, selector: None, state: wgpu::TextureUses::RESOURCE }));
+    let output = Extent { top: 0, left: 0, width: prepared.output_size.x, height: prepared.output_size.y };
+    let tag = [ResourceTag::new(&raw mut ui_res, BUFFER_UI_COLOR_AND_ALPHA, LIFECYCLE_VALID_UNTIL_PRESENT, output)];
+    let result = frame_token::set_tags(index, &tag);
+    if let Some(kept) = fg.kept.back_mut() {
+        kept.0.push(ui_texture);
+        kept.1.push(ui_view);
+    }
+    if result.is_ok() { Ok(()) } else { Err(format!("slSetTagForFrame {}", result.name())) }
+}
+
+/// The UI alpha's pass, transition and tag for frame number `index` (`NVF_FG_UI_LAYER=0`).
 #[allow(clippy::too_many_arguments)]
 fn draw_ui_alpha(
     fg: &mut FrameGen,
@@ -1163,6 +1228,7 @@ fn toggle_switch(world: &mut World) {
     if result.is_ok() && !load {
         // Nothing reads them while DLSS-G is unloaded (the GPU was drained above).
         fg.hudless = None;
+        fg.ui_layer = None;
         fg.kept.clear();
         if let Some(pass) = fg.ui.as_mut() {
             pass.textures = None;

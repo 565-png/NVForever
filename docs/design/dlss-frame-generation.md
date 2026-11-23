@@ -79,7 +79,13 @@ and calls after: at most three moves can happen meanwhile).
    prepass motion (its render rectangle) and that copy are moved to `RESOURCE` and tagged
    `eValidUntilPresent`, each with the layout wgpu-hal gives `RESOURCE`. Other frames tag them
    null. A camera cut is not a reason to stop: the constants' reset says it.
-3. **UI alpha** (after the UI, before Bevy's upscaling blit): `R16Float` (Streamline's Vulkan format
+3. **UI colour and alpha** (after the UI, before Bevy's upscaling blit; 2026-11-23): the UI drawn a
+   second time, alone, over transparent black (`fg_ui_layer.rs`), in the main texture's format
+   (`Rgba16Float`); every Bevy UI pipeline blends with `ALPHA_BLENDING`, so the colour comes out
+   premultiplied, as DLSS-G asks (`Final = UI.RGB + (1 - UI.A) * Hudless`, §5.1). Tagged
+   `kBufferTypeUIColorAndAlpha`; user interface recomposition is asked for (Hudless + UI buffer,
+   §6.6). See-through HUD pixels keep their own alpha.
+   With `NVF_FG_UI_LAYER=0`, as before, the **UI alpha**: `R16Float` (Streamline's Vulkan format
    table has no `R8_UNORM` [documented: `sl.chi/vulkan.cpp` `getFormat`]), 1 where the frame
    differs from its HUD-less copy, 0 elsewhere, tagged `kBufferTypeUIAlpha`; user interface
    recomposition is asked for (Hudless + UI alpha). A see-through HUD pixel counts as opaque UI.
@@ -211,7 +217,7 @@ play, the live switch and exit as designed.
 
 - Windows, Vulkan, NVIDIA RTX 40 series or newer; vsync off on Vulkan.
 - Only while the game's window is in front.
-- The UI alpha treats translucent HUD pixels as opaque.
+- With `NVF_FG_UI_LAYER=0`, the UI alpha treats translucent HUD pixels as opaque.
 - The picture has been judged by eye only in passing (the HUD smear without the UI buffer before
   stage 4; screenshots show the real frame, never a generated one).
 - Not tested on more than one GPU.
