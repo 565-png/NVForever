@@ -1684,7 +1684,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 g.ask_sound(crate::sound::SoundRequest { sound: s, at: None, system: true, id: 0, point: None });
             }
             if !text.trim().is_empty() {
-                g.queue_corner_message(&text, icon.as_deref().unwrap_or(""), f64::from(seconds));
+                g.count_corner_message();
             }
             g.emit(crate::trace::EventKind::NoteShown { text, icon, seconds });
             zero

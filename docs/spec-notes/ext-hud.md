@@ -30,9 +30,11 @@ Plain-language notes for `crates/fnv-game/src/nvse_hud.rs` and the control funct
   screen included [documented]. Three `MessageEx` calls raise it by 3 in their own frame, and
   it stays there the next frame [observed: hud1, 2 → 5 → 5].
 - `ClearMessageQueue` (JIP) empties the queue: 0 in its frame and the next [observed: hud1].
-- Messages shown without a box (MessageEx, MessageExAlt, ShowMessage of a non-box message)
-  join the queue. In headless `fnv-game`, the one on screen leaves after 2 seconds
-  [hypothesis: the pace was not measured].
+- Messages shown without a box (MessageEx, ShowMessage of a non-box message) join the
+  queue. `MessageExAlt` also increments the corner-message count for
+  `GetNumQueuedCornerMessages` without enqueueing ShowOff `corner_pending` handlers
+  [design]. In headless `fnv-game`, the one on screen leaves after 2 seconds [hypothesis:
+  the pace was not measured].
 - The 2 messages already queued when hud1 started came from loading the save. A headless run
   starts with none.
 - In `nvf-play` (`engine/nvf-play/src/corner_messages.rs` and `script.rs`), the live

@@ -113,6 +113,14 @@ impl Game<'_> {
         if !self.showoff.corner_handlers.is_empty() {
             self.showoff.corner_pending.push((text.to_string(), icon.to_string(), seconds));
         }
+        self.count_corner_message();
+    }
+
+    /// Increment the corner-message queue count (and arm the headless fallback timer when
+    /// unsynced) without enqueueing ShowOff `corner_pending` callbacks [design]. Used by
+    /// `MessageExAlt` so same-frame `GetNumQueuedCornerMessages` stays accurate without
+    /// changing ShowOff handler dispatch behavior.
+    pub(crate) fn count_corner_message(&mut self) {
         if !self.hud.corner_queue_synced && self.hud.corner_queue == 0 {
             self.hud.corner_until = self.time + CORNER_SECONDS;
         }
@@ -353,5 +361,33 @@ mod tests {
         assert_eq!(g.hud.corner_clears, 1);
         assert!(g.hud.take_corner_clear());
         assert_eq!(g.hud.take_corner_clear_event_index(), Some(1));
+    }
+
+    #[test]
+    fn message_ex_alt_counts_without_enqueueing_showoff_corner_pending() {
+        let f = fixture();
+        let mut g = game(&f);
+        g.showoff.corner_handlers.push(XVal::Ref(1));
+
+        // MessageExAlt increments GetNumQueuedCornerMessages without pushing to ShowOff
+        // corner_pending, while MessageEx still enqueues ShowOff corner_pending.
+        let count = eval(
+            &mut g,
+            "MessageExAlt 3 \"alt notice\"\nSetFunctionValue (GetNumQueuedCornerMessages)",
+        );
+        assert_eq!(count, 1.0);
+        assert!(g.showoff.corner_pending.is_empty(), "MessageExAlt must not enqueue ShowOff corner_pending");
+
+        let count2 = eval(
+            &mut g,
+            "MessageEx \"plain notice\"\nSetFunctionValue (GetNumQueuedCornerMessages)",
+        );
+        assert_eq!(count2, 2.0);
+        assert_eq!(g.showoff.corner_pending.len(), 1);
+        assert_eq!(g.showoff.corner_pending[0].0, "plain notice");
+
+        let cleared = eval(&mut g, "ClearMessageQueue\nSetFunctionValue (GetNumQueuedCornerMessages)");
+        assert_eq!(cleared, 0.0);
+        assert!(g.hud.take_corner_clear());
     }
 }

@@ -517,13 +517,13 @@ mod tests {
         // Engine gameplay system pushes two corner notices directly to CornerMessages.
         {
             let mut corner = app.world_mut().resource_mut::<CornerMessages>();
-            assert!(corner.push(note("Game saved", Some(4.0))));
-            assert!(corner.push(note("You cannot sleep when enemies are nearby.", Some(4.0))));
+            assert!(corner.push(note("Notice one", Some(4.0))));
+            assert!(corner.push(note("Notice two", Some(4.0))));
         }
 
-        // First update promotes "Game saved" onto screen, spawns AreaRoot, and syncs count=2.
+        // First update promotes "Notice one" onto screen, spawns AreaRoot, and syncs count=2.
         app.update();
-        assert_eq!(app.world().resource::<CornerMessages>().showing().unwrap().text, "Game saved");
+        assert_eq!(app.world().resource::<CornerMessages>().showing().unwrap().text, "Notice one");
         assert_eq!(app.world().resource::<CornerMessages>().waiting(), 1);
         assert_eq!(app.world_mut().query_filtered::<Entity, With<AreaRoot>>().iter(app.world()).count(), 1);
         assert_eq!(run_query_num(app.world_mut(), "SetFunctionValue (GetNumQueuedCornerMessages)"), 2.0);
