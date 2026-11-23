@@ -337,10 +337,12 @@ impl Game<'_> {
         if !add {
             return;
         }
-        // Refuse null/zero callable tokens at registration time with registrar
+        // Refuse null/zero callable tokens — including any numeric value that
+        // `run_function_here` (`*x as u32`) would coerce to form 0 (0.0, negative
+        // numbers, fractions below 1.0, NaN) — at registration time with registrar
         // attribution rather than enqueuing a form-0 callback that fails every frame
         // (#2603) [design].
-        let is_zero = matches!(func, XVal::Ref(0)) || matches!(func, XVal::Num(n) if n == 0.0);
+        let is_zero = matches!(func, XVal::Ref(0)) || matches!(func, XVal::Num(n) if (n as u32) == 0);
         if is_zero {
             let receiver = on.map_or_else(|| "none".into(), |r| format!("0x{:08X}", r.0));
             let callable = diagnostic_value(&func);
