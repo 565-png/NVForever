@@ -24,14 +24,27 @@
 //!   (sneaking in) neither its OnActivate (SCPT 000A418A) nor Veronica's trigger (SCPT
 //!   0015B6D5) has set Ramos, and without a line the controls that line 0016329B took
 //!   never come back; observer check 185].
-//! - **IsActorTalkingThroughActivator** is 1 on that actor while its lines are chosen
-//!   and while the conversation through the activator runs [documented: catalogue,
+//! - **IsActorTalkingThroughActivator** is 1 on that actor while its lines are chosen,
+//!   while the conversation through the activator runs, and while it says a line through
+//!   the activator outside one (Say or SayTo on the activator, a conversation between
+//!   actors through it), its result scripts included [documented: catalogue,
 //!   "returns true if the actor is speaking via an activator; the actor must first be
-//!   registered through the talking-activator setter"; the 92 conditions of the masters'
-//!   lines use it so, observed; hypothesis: that it holds during the conversation].
+//!   registered through the talking-activator setter"; GECK wiki
+//!   IsActorTalkingThroughActivator: it tests whether the actor "is currently talking
+//!   through an Activator", and "only returns true when the actor is actually in dialogue
+//!   through the activator"; the 92 conditions of the masters' lines use it so, observed;
+//!   hypothesis: that it holds during the conversation and the line, #2768]. The wiki's
+//!   note that it is false when the talking actor was set by script is not followed: the
+//!   masters' intercom lines whose actor only scripts set (Ramos's, Benny's) test it == 1
+//!   [observed: docs/spec-notes/talking-activators.md §1].
 //!   Outside one it is 0 with the actor set [observed: capture ac6]. The catalogue's
 //!   note that IsTalkingActivatorActor is false "if the talking actor was assigned by
 //!   script" does not hold: it read 1 after SetTalkingActivatorActor [observed: ac6].
+//! - **Talking to one as an actor.** An actor's Say To Dialogue package or conversation
+//!   aimed at a talking activator with a talking actor talks to that actor: the lines'
+//!   conditions run on the target test it ([`Game::conditions_target`]), and the
+//!   activator's replies are its lines [hypothesis, issue #3020: TTW's Dad at Vault 101's
+//!   diner intercom, whose CG02IntercomConv lines test GetIsID CG02Jonas on the target].
 //! - The engine looks at the activator, not at the far-away actor, while the
 //!   conversation runs (`Conversation::through`).
 //! - **A Goodbye greeting** through one opens a conversation, as a force greet's does
@@ -70,6 +83,22 @@ impl Game<'_> {
         };
         let actor = actor.filter(|&a| !self.is_dead(a));
         (actor.unwrap_or(r), Some(r))
+    }
+
+    /// Who a line's conditions run on the target test when `r` is the listener: a talking
+    /// activator's talking actor while one speaks for it ([`Game::talker`]), else `r`
+    /// (module notes, "Talking to one"). An actor talking to an intercom talks to the
+    /// actor on the other end: Dad's Dialogue package aimed at Vault 101's diner intercom
+    /// (CG02DadTalkToJonasOnIntercom, TTW) says CG02IntercomConv, whose first line tests
+    /// GetIsID CG02Jonas on the target [observed: `fnvtool dialogue lines`; hypothesis:
+    /// the original makes the talking actor the other party, issue #3020; documented:
+    /// SetTalkingActivatorActor "makes a talking activator use the dialogue of a given
+    /// actor"].
+    pub fn conditions_target(&self, r: FormId) -> FormId {
+        if !self.is_talking_activator(r) {
+            return r;
+        }
+        self.talker(r).0
     }
 
     /// The talking actor the load order's scripts give the talking activator `r`, when
@@ -118,12 +147,19 @@ impl Game<'_> {
         named
     }
 
-    /// The activator `actor` talks through now, if any (module notes).
+    /// The activator `actor` talks through now, if any (module notes): while its line is
+    /// chosen or its end script runs (`Game::talking_through`), while it says a line
+    /// through one outside the conversation with the player (`Speech::through`: Say or
+    /// SayTo on the activator, a conversation between actors through it; its begin script
+    /// runs then), and in the conversation with the player through one.
     pub fn talking_through(&self, actor: FormId) -> Option<FormId> {
         if let Some((a, t)) = self.talking_through {
             if a == actor {
                 return Some(t);
             }
+        }
+        if let Some(t) = self.speech.iter().find(|s| s.speaker == actor).and_then(|s| s.through) {
+            return Some(t);
         }
         self.dialogue.as_ref().filter(|c| c.actor == actor).and_then(|c| c.through)
     }

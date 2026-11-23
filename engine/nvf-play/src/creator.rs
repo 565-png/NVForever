@@ -131,6 +131,11 @@ pub struct CreatorMenu {
 }
 
 impl CreatorMenu {
+    /// [design, #2403 / file refs] Read-only creator edits, navigation and camera view;
+    /// excludes drawing/pointer caches in `CreatorMenu`.
+    pub fn progress(&self) -> Option<impl std::fmt::Debug + '_> {
+        self.model.as_ref().map(|m| (m.progress(), self.answered))
+    }
     pub fn is_open(&self) -> bool {
         self.model.is_some()
     }
@@ -800,13 +805,16 @@ fn draw(
     mut images: ResMut<Assets<Image>>,
     formats: Option<Res<CompressedImageFormatSupport>>,
     windows: Query<&Window, With<PrimaryWindow>>,
+    mut font_revision: Local<u32>,
 ) {
     let view_w = windows.single().map_or(1707.0, view_width);
-    if !st.dirty && st.drawn_w == view_w {
+    let revision = crate::cjk_font::revision();
+    if !st.dirty && st.drawn_w == view_w && *font_revision == revision {
         return;
     }
     st.dirty = false;
     st.drawn_w = view_w;
+    *font_revision = revision;
     for e in &roots {
         commands.entity(e).despawn();
     }
@@ -822,6 +830,32 @@ fn draw(
     // At the UI scale the menu keeps to the view's middle (#1631).
     commands.spawn((crate::interface::framed_root(root, crate::interface::MIDDLE), GlobalZIndex(30), CreatorRoot)).with_children(|r| hits = view::spawn(r, m, kit, view_w));
     st.hits = hits;
+}
+
+/// [design, #2403] Synthetic logical/ineffective states for detector regressions.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_progress_fixture(step: usize) -> CreatorMenu {
+    let look = fnv_actor::Look {
+        race: fnv_sim::FormId(42),
+        female: false,
+        hair: None,
+        hair_color: None,
+        eyes: None,
+        head_parts: vec![],
+        facegen: fnv_actor::creator::full(&FaceGen::default()),
+    };
+    let mut m = Model::new(Arc::new(Creator::default()), look);
+    if step >= 1 {
+        m.tab = Tab::Hair;
+    }
+    if step >= 2 {
+        m.look.female = true;
+    }
+    if step >= 3 {
+        m.view.turn = 0.5;
+    }
+    CreatorMenu { model: Some(m), dirty: step >= 4, last_pointer: (step >= 4).then_some(Vec2::ONE), ..Default::default() }
 }
 
 #[cfg(test)]

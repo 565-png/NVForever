@@ -25,6 +25,9 @@ pub struct Jip4State {
     /// SetQuestFlag's changes to the record flags of a quest (IDs 2–5 and 7), as the
     /// whole flag byte.
     pub quest_flags: HashMap<FormId, u8>,
+    /// Invalidates placed-light and light-backed emittance consumers. Values remain
+    /// in canonical field_overrides (light-session-consumers.md).
+    pub light_revision: u64,
 }
 
 fn form(args: &[XVal], k: usize) -> Option<FormId> {
@@ -330,6 +333,25 @@ fn set_climate_trait(g: &mut Game, c: FormId, t: i64, v: f64) {
 }
 
 impl Game<'_> {
+    /// Read canonical session edits through the existing record reader. Rendering
+    /// keeps its original data for fields absent from that reader, with the same
+    /// field conversions as fnv_world::lighting::light_data.
+    pub fn session_light_data(&self, form: FormId, mut original: fnv_world::lighting::LightData) -> fnv_world::lighting::LightData {
+        let value = |sub, path| match crate::nvse::record_value(self, form, sub, path) {
+            Some(XVal::Num(n)) => Some(n),
+            _ => None,
+        };
+        if let Some(v) = value("DATA", "radius") { original.radius = v as f32; }
+        for (channel, path) in ["color.red", "color.green", "color.blue"].iter().enumerate() {
+            if let Some(v) = value("DATA", path) { original.color[channel] = v as u8; }
+        }
+        if let Some(v) = value("DATA", "flags") { original.flags = v as u32; }
+        if let Some(v) = value("DATA", "falloff_exponent") { original.falloff_exponent = v as f32; }
+        if let Some(v) = value("DATA", "fov") { original.fov = v as f32; }
+        if let Some(v) = value("FNAM", "") { original.fade = v as f32; }
+        original
+    }
+
     /// A quest's record flag byte, with SetQuestFlag's changes.
     fn jip4_quest_bits(&self, q: FormId) -> u8 {
         self.gaps.jip4.quest_flags.get(&q).copied().unwrap_or_else(|| self.data.quests.get(&q).map_or(0, |d| d.flags))
@@ -391,12 +413,7 @@ impl Game<'_> {
     /// `nvse_gaps`) [documented: GetIsPoisoned, "under the influence of a poison-type
     /// effect"; hypothesis: the rule].
     fn jip4_poisoned(&self, a: FormId) -> bool {
-        self.effects.iter().filter(|e| e.target == a).any(|e| {
-            self.data.sig(e.source) == Some(*b"ALCH") && {
-                let list = self.data.effect_items.get(&e.source).map(Vec::as_slice).unwrap_or_default();
-                !list.is_empty() && list.iter().all(|x| self.data.magic_effects.get(&x.effect).is_some_and(|m| m.flags & 0x5 == 0x5))
-            }
-        })
+        self.effects.iter().filter(|e| e.target == a).any(|e| self.is_poison(e.source))
     }
 }
 
@@ -449,13 +466,20 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         // Get/SetLightTraitNumeric].
         "getlightflag" => yes(get_bit(g, f0, "DATA", "flags", k)),
         "setlightflag" => {
+            let before = get_num(g, f0, "DATA", "flags");
             set_bit(g, f0, "DATA", "flags", k, num(args, 2, 0.0) != 0.0);
+            if before != get_num(g, f0, "DATA", "flags") {
+                g.gaps.jip4.light_revision = g.gaps.jip4.light_revision.wrapping_add(1);
+            }
             zero
         }
         "getlighttraitnumeric" => XVal::Num(light_trait(k).map_or(0.0, |(s, p)| get_num(g, f0, s, p))),
         "setlighttraitnumeric" => {
             if let Some((s, p)) = light_trait(k) {
-                set(g, f0, s, p, XVal::Num(num(args, 2, 0.0)));
+                let value = num(args, 2, 0.0);
+                let changed = get_num(g, f0, s, p) != value;
+                set(g, f0, s, p, XVal::Num(value));
+                if changed { g.gaps.jip4.light_revision = g.gaps.jip4.light_revision.wrapping_add(1); }
             }
             zero
         }
@@ -507,7 +531,16 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         "getcellnoisetexture" => XVal::Str(get_str(g, f0, "XNAM", "")),
         "setcellclimate" | "setcelllightingtemplate" => {
             let sub = if name == "setcellclimate" { "XCCM" } else { "LTMP" };
-            set(g, f0, sub, "", XVal::Ref(form(args, 1).map_or(0, |r| r.0)));
+            let next = XVal::Ref(form(args, 1).map_or(0, |r| r.0));
+            let prev = if name == "setcelllightingtemplate" {
+                g.field_overrides.get(&(f0, "LTMP/".into())).cloned()
+            } else {
+                None
+            };
+            set(g, f0, sub, "", next.clone());
+            if name == "setcelllightingtemplate" && prev != Some(next) {
+                g.bump_lighting_revision();
+            }
             zero
         }
         "setcellnoisetexture" => {
@@ -525,12 +558,6 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         "setwaternoisetexture" => {
             set(g, f0, "NNAM", "", XVal::Str(text(args, 1)));
             zero
-        }
-        // Sounds: the IDs are SNDD flags' bits (SNDX in older records) [documented:
-        // GetSoundFlag; the schema's SOUN].
-        "getsoundflag" => {
-            let sub = if json(g, f0, "SNDD", "").is_some() { "SNDD" } else { "SNDX" };
-            yes(get_bit(g, f0, sub, "flags", k))
         }
         // [documented: GetGameDifficulty, SetGameDifficulty: 0 very easy … 4 very hard].
         "getgamedifficulty" => XVal::Num(g.difficulty.code() as f64),

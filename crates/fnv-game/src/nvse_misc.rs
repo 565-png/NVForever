@@ -74,12 +74,12 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         "isquestitem" => yes(g.world.is_quest_item(item(g, 0))),
         "isplayable" => {
             let it = item(g, 0);
-            yes(g.playable_overrides.get(&it).copied().unwrap_or_else(|| g.world.forms.item(it).is_some_and(|i| !i.non_playable)))
+            yes(g.is_item_playable(it))
         }
         "ispowerarmor" => {
             let f = item(g, 0);
-            // SetIsPowerArmor's change first.
-            yes(g.other.power_armor.get(&f).copied().unwrap_or_else(|| g.world.forms.item(f).is_some_and(|i| i.power_armor)))
+            // SetIsPowerArmor and SetEquipmentBipedMask (BMDT bit 5) stay synchronized.
+            yes(g.other.power_armor.get(&f).copied().unwrap_or_else(|| g.world.effective_power_armor(f)))
         }
         // [documented: IsModLoaded] a plugin of the load order, by file name.
         "ismodloaded" => {
@@ -151,8 +151,10 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         // the record's stats. A form that is no class changes nothing.
         "setclass" => {
             let (Some(r), Some(class)) = (subject, form(args, 0)) else { return Some(Ok(XVal::Num(0.0))) };
-            if g.data.sig(class) == Some(*b"CLAS") {
-                let b = crate::functions::base_of(g, r).unwrap_or(r);
+            let b = crate::functions::base_of(g, r).unwrap_or(r);
+            // Class changes belong to actors, including the actor selected for a
+            // placed leveled list; a carrier's signature alone does not classify it.
+            if g.data.sig(class) == Some(*b"CLAS") && g.template_source(b, r, |_| false).is_some() {
                 g.forms.classes.insert(b, class);
             }
             XVal::Num(0.0)

@@ -44,6 +44,7 @@ const HEIR: u32 = 0x838;
 const EXILE: u32 = 0x839;
 const TRINKET: u32 = 0x850;
 const SHOP: u32 = 0x200;
+const BARRACKS: u32 = 0x201;
 const SHOPKEEPER_REF: u32 = 0x320;
 const TOWNSMAN_REF: u32 = 0x321;
 const FIEND_REF: u32 = 0x322;
@@ -51,6 +52,7 @@ const STRANGER_REF: u32 = 0x323;
 const TRINKET_REF: u32 = 0x330;
 const GANG_TRINKET_REF: u32 = 0x331;
 const HEIR_TRINKET_REF: u32 = 0x332;
+const BARRACKS_TRINKET_REF: u32 = 0x333;
 const SHOP_DOOR: u32 = 0x860;
 /// Two teleport doors into the shop: the first flagged No Alarm (XTEL), the second not.
 const QUIET_DOOR_REF: u32 = 0x340;
@@ -63,6 +65,18 @@ const WATCHMAN_REF: u32 = 0x327;
 const TOWNSMAN2_REF: u32 = 0x328;
 /// The clock's globals (GameDaysPassed starts at 5).
 const DAYS_PASSED_START: f64 = 5.0;
+/// #2456: two sides, enemies by the republic's record, and a tag faction (Hidden, Track
+/// Crime, naming only itself) that holds people of both, as FalloutNV.esm's
+/// ArmorVCaesarsLegionFaction holds Legionaries and four NCR troopers.
+const LEGION: u32 = 0x903;
+const REPUBLIC: u32 = 0x904;
+const TAG: u32 = 0x905;
+const LEGIONARY: u32 = 0x83D;
+const LEGIONARY_REF: u32 = 0x32A;
+const DECANUS: u32 = 0x83E;
+const DECANUS_REF: u32 = 0x32B;
+const TROOPER: u32 = 0x83F;
+const TROOPER_REF: u32 = 0x32C;
 
 const GET_ACTOR_CRIME_PLAYER_ENEMY: u16 = 0x11CB;
 const GET_MINOR_CRIME_COUNT: u16 = 0x1074;
@@ -153,6 +167,10 @@ fn plugin_bytes() -> Vec<u8> {
         // Evil (first byte, bit 1) and Track Crime.
         record(b"FACT", 0, GANG, &[sub(b"EDID", z("Gang")), sub(b"DATA", vec![2, 1, 0, 0]), wmi1(REP_GANG)]),
         record(b"FACT", 0, MARKET, &[sub(b"EDID", z("Market")), sub(b"DATA", vec![0, 1, 0, 0]), wmi1(REP_TOWN)]),
+        record(b"FACT", 0, LEGION, &[sub(b"EDID", z("Legion")), sub(b"DATA", vec![0, 1, 0, 0])]),
+        // XNAM: faction, modifier, reaction (1 Enemy, 3 Friend).
+        record(b"FACT", 0, REPUBLIC, &[sub(b"EDID", z("Republic")), sub(b"DATA", vec![0, 1, 0, 0]), sub(b"XNAM", [LEGION.to_le_bytes(), 0i32.to_le_bytes(), 1u32.to_le_bytes()].concat())]),
+        record(b"FACT", 0, TAG, &[sub(b"EDID", z("LegionTag")), sub(b"DATA", vec![1, 1, 0, 0]), sub(b"XNAM", [TAG.to_le_bytes(), 0i32.to_le_bytes(), 3u32.to_le_bytes()].concat())]),
     ]
     .concat();
     let npcs = [
@@ -169,6 +187,10 @@ fn plugin_bytes() -> Vec<u8> {
         record(b"NPC_", 0, HEIR, &[sub(b"EDID", z("Heir")), acbs_templated(0.0, 0x04), snam(GANG), sub(b"TPLT", SHOPKEEPER.to_le_bytes().to_vec()), aidt(0)]),
         record(b"NPC_", 0, EXILE, &[sub(b"EDID", z("Exile")), acbs(0.0), snam_at_rank(TOWN, -1), aidt(0)]),
         record(b"NPC_", 0, WATCHMAN, &[sub(b"EDID", z("Watchman")), acbs(0.0), snam(TOWN), aidt(0)]),
+        record(b"NPC_", 0, LEGIONARY, &[sub(b"EDID", z("Legionary")), acbs(0.0), snam(LEGION), snam(TAG), aidt(0)]),
+        record(b"NPC_", 0, DECANUS, &[sub(b"EDID", z("Decanus")), acbs(0.0), snam(LEGION), snam(TAG), aidt(0)]),
+        // Aggressive (1): attacks enemies on sight.
+        record(b"NPC_", 0, TROOPER, &[sub(b"EDID", z("Trooper")), acbs(0.0), snam(REPUBLIC), snam(TAG), aidt(1)]),
     ]
     .concat();
     let misc = record(b"MISC", 0, TRINKET, &[sub(b"EDID", z("Trinket")), sub(b"DATA", [5i32.to_le_bytes(), 1f32.to_le_bytes()].concat())]);
@@ -178,23 +200,35 @@ fn plugin_bytes() -> Vec<u8> {
     // An interior cell, not public, owned by the shopkeeper.
     let cell = record(b"CELL", 0, SHOP, &[sub(b"EDID", z("Shop")), sub(b"DATA", vec![0x01]), sub(b"XOWN", SHOPKEEPER.to_le_bytes().to_vec())]);
     let refs = [
-        placed(b"ACHR", SHOPKEEPER_REF, SHOPKEEPER, vec![]),
-        placed(b"ACHR", TOWNSMAN_REF, TOWNSMAN, vec![]),
-        placed(b"ACHR", FIEND_REF, FIEND, vec![]),
-        placed(b"ACHR", STRANGER_REF, STRANGER, vec![]),
+        placed(b"ACHR", SHOPKEEPER_REF, SHOPKEEPER, vec![sub(b"EDID", z("ShopkeeperRef"))]),
+        placed(b"ACHR", TOWNSMAN_REF, TOWNSMAN, vec![sub(b"EDID", z("TownsmanRef"))]),
+        placed(b"ACHR", FIEND_REF, FIEND, vec![sub(b"EDID", z("FiendRef"))]),
+        placed(b"ACHR", STRANGER_REF, STRANGER, vec![sub(b"EDID", z("StrangerRef"))]),
         placed(b"ACHR", CONVICT_REF, CONVICT, vec![]),
         placed(b"ACHR", BOSS_REF, BOSS, vec![]),
         placed(b"ACHR", SAINT_REF, SAINT, vec![]),
         placed(b"ACHR", WATCHMAN_REF, WATCHMAN, vec![]),
         placed(b"ACHR", TOWNSMAN2_REF, TOWNSMAN, vec![]),
-        placed(b"REFR", TRINKET_REF, TRINKET, vec![]),
-        placed(b"REFR", GANG_TRINKET_REF, TRINKET, vec![sub(b"XOWN", GANG.to_le_bytes().to_vec()), sub(b"XRNK", 1i32.to_le_bytes().to_vec())]),
+        placed(b"ACHR", LEGIONARY_REF, LEGIONARY, vec![]),
+        placed(b"ACHR", DECANUS_REF, DECANUS, vec![]),
+        placed(b"ACHR", TROOPER_REF, TROOPER, vec![]),
+        placed(b"REFR", TRINKET_REF, TRINKET, vec![sub(b"EDID", z("TrinketRef"))]),
+        placed(b"REFR", GANG_TRINKET_REF, TRINKET, vec![sub(b"EDID", z("GangTrinketRef")), sub(b"XOWN", GANG.to_le_bytes().to_vec()), sub(b"XRNK", 1i32.to_le_bytes().to_vec())]),
         placed(b"REFR", HEIR_TRINKET_REF, TRINKET, vec![sub(b"XOWN", HEIR.to_le_bytes().to_vec())]),
         placed(b"REFR", QUIET_DOOR_REF, SHOP_DOOR, vec![xtel(LOUD_DOOR_REF, 1)]),
         placed(b"REFR", LOUD_DOOR_REF, SHOP_DOOR, vec![xtel(QUIET_DOOR_REF, 0)]),
     ]
     .concat();
     let children = group(SHOP.to_le_bytes(), 6, &group(SHOP.to_le_bytes(), 9, &refs));
+    // A second interior cell owned by Gang at required rank 2, with an unowned trinket inheriting it.
+    let barracks = record(
+        b"CELL",
+        0,
+        BARRACKS,
+        &[sub(b"EDID", z("GangBarracks")), sub(b"DATA", vec![0x01]), sub(b"XOWN", GANG.to_le_bytes().to_vec()), sub(b"XRNK", 2i32.to_le_bytes().to_vec())],
+    );
+    let barracks_refs = placed(b"REFR", BARRACKS_TRINKET_REF, TRINKET, vec![sub(b"EDID", z("BarracksTrinketRef"))]);
+    let barracks_children = group(BARRACKS.to_le_bytes(), 6, &group(BARRACKS.to_le_bytes(), 9, &barracks_refs));
     let glob = |fid: u32, name: &str, v: f32| record(b"GLOB", 0, fid, &[sub(b"EDID", z(name)), sub(b"FNAM", vec![b'f']), sub(b"FLTV", v.to_le_bytes().to_vec())]);
     let globals = [
         glob(0x940, "GameYear", 2281.0),
@@ -215,7 +249,7 @@ fn plugin_bytes() -> Vec<u8> {
         top(b"NPC_", &npcs),
         top(b"MISC", &misc),
         top(b"DOOR", &door),
-        top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat()))),
+        top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children, barracks, barracks_children].concat()))),
     ]
     .concat()
 }
@@ -399,6 +433,37 @@ fn a_reference_counts_towards_the_factions_it_is_in_now() {
     g.extra.entry(FormId(STRANGER_REF)).or_default().factions.insert(FormId(GANG), 0);
     assert_eq!(reputations_of(&g, FormId(STRANGER_REF)), vec![FormId(REP_GANG)]);
     assert!(reputations_of(&g, FormId(STRANGER)).is_empty());
+}
+
+/// #2456, #2498: a Legionary murdered before a fellow Legionary makes the player an enemy
+/// of every crime-tracking faction of the victim's, the tag faction both are in too, which
+/// also holds a trooper of the Legion's enemy, as the original flags
+/// ArmorVCaesarsLegionFaction (observer check 203). The trooper turns on the player while
+/// the flag lasts; 0.18 game hours later the flags are gone and only the witness's own
+/// grudge is left.
+#[test]
+fn a_murder_flags_the_victims_factions_for_minutes() {
+    let f = fixture();
+    let mut g = game(&f);
+    assert!(!g.would_attack(FormId(TROOPER_REF), FormId::PLAYER_REF));
+    sees(&mut g, DECANUS_REF);
+    g.crimes.take_notes();
+    assert!(g.kill(FormId(LEGIONARY_REF), Some(FormId::PLAYER_REF)));
+    let notes = g.crimes.take_notes();
+    assert!(notes.iter().any(|n| matches!(n, Note::Crime { kind: Kind::Murder, hostile, .. } if hostile == &vec![FormId(DECANUS_REF)])));
+    assert!(g.player.enemy_of.contains(&FormId(LEGION)));
+    assert!(g.player.enemy_of.contains(&FormId(TAG)), "a faction whose members fight each other is flagged too");
+    assert!(g.would_attack(FormId(TROOPER_REF), FormId::PLAYER_REF), "by the tag's flag");
+    // 0.17 game hours: still flagged.
+    pass_hours(&mut g, 0.17);
+    assert!(g.would_attack(FormId(TROOPER_REF), FormId::PLAYER_REF));
+    // 0.19: both flags cleared; the witness still fights by its own crime.
+    pass_hours(&mut g, 0.02);
+    let (mut factions, actors) = ended(&mut g);
+    factions.sort();
+    assert_eq!((factions, actors), (vec![FormId(LEGION), FormId(TAG)], vec![]));
+    assert!(!g.would_attack(FormId(TROOPER_REF), FormId::PLAYER_REF));
+    assert!(g.would_attack(FormId(DECANUS_REF), FormId::PLAYER_REF));
 }
 
 #[test]
@@ -627,25 +692,34 @@ fn ended(g: &mut Game) -> (Vec<FormId>, Vec<FormId>) {
     (factions, actors)
 }
 
+/// The faction's flag lasts 0.18 game hours (observer check 203, #2498); the witness's
+/// own grudge iCoolDownTimerSetting days.
 #[test]
-fn a_seen_murders_enmity_ends_after_icooldowntimersetting_days() {
+fn a_seen_murders_flag_ends_in_minutes_and_the_witnesss_grudge_in_three_days() {
     let f = fixture();
     let mut g = game(&f);
     assert_eq!(days(&g), DAYS_PASSED_START);
     assert!(!g.would_attack(FormId(WATCHMAN_REF), FormId::PLAYER_REF), "before the crime");
     murder_townsman(&mut g);
     g.crimes.take_notes();
-    // 71 hours waited: not yet three days.
-    pass_hours(&mut g, 71.0);
+    // 0.17 game hours: the town's flag holds.
+    pass_hours(&mut g, 0.17);
     assert!(g.would_attack(FormId(WATCHMAN_REF), FormId::PLAYER_REF));
+    assert_eq!(ended(&mut g), (vec![], vec![]));
+    // 0.19: cleared; the witness still fights by its own crime.
+    pass_hours(&mut g, 0.02);
+    assert!(!g.would_attack(FormId(WATCHMAN_REF), FormId::PLAYER_REF), "the flag is cleared");
+    assert!(g.would_attack(FormId(SHOPKEEPER_REF), FormId::PLAYER_REF));
+    assert_eq!(ended(&mut g), (vec![FormId(TOWN)], vec![]));
+    assert_eq!(faction_flag(&mut g, TOWN), 0.0);
+    // 71 hours: not yet three days for the witness.
+    pass_hours(&mut g, 71.0 - 0.19);
     assert!(g.would_attack(FormId(SHOPKEEPER_REF), FormId::PLAYER_REF));
     assert_eq!(ended(&mut g), (vec![], vec![]));
-    // Two more (a sleep): the crime is three days old, both enmities end.
+    // Two more (a sleep): the crime is three days old, the witness forgives.
     pass_hours(&mut g, 2.0);
-    assert!(!g.would_attack(FormId(WATCHMAN_REF), FormId::PLAYER_REF), "the flag is cleared");
     assert!(!g.would_attack(FormId(SHOPKEEPER_REF), FormId::PLAYER_REF), "the witness forgave");
-    assert_eq!(ended(&mut g), (vec![FormId(TOWN)], vec![FormId(SHOPKEEPER_REF)]));
-    assert_eq!(faction_flag(&mut g, TOWN), 0.0);
+    assert_eq!(ended(&mut g), (vec![], vec![FormId(SHOPKEEPER_REF)]));
     assert_eq!(call(&mut g, GET_ACTOR_CRIME_PLAYER_ENEMY, Some(SHOPKEEPER_REF), &[]), 0.0);
     assert!(g.player.enemy_of_crimes.is_empty() && g.player.crime_enemy_since.is_empty());
 }
@@ -699,18 +773,19 @@ fn a_later_crime_restarts_the_count() {
     let f = fixture();
     let mut g = game(&f);
     murder_townsman(&mut g);
-    // Day 2: the shopkeeper, a crime enemy, killed in front of the second townsman (still
-    // murder: a crime of the player's made it hostile) dates the town's flag again.
-    pass_hours(&mut g, 48.0);
+    // 0.1 game hours on: the shopkeeper, a crime enemy, killed in front of the second
+    // townsman (still murder: a crime of the player's made it hostile) dates the town's
+    // flag again.
+    pass_hours(&mut g, 0.1);
     g.detection.pairs.clear();
     sees(&mut g, TOWNSMAN2_REF);
     assert!(g.kill(FormId(SHOPKEEPER_REF), Some(FormId::PLAYER_REF)));
-    assert!((g.player.enemy_of_crimes[&FormId(TOWN)] - (DAYS_PASSED_START + 2.0)).abs() < 1e-3);
-    // Four days after the first murder, two after the second: still an enemy.
-    pass_hours(&mut g, 48.0);
+    assert!((g.player.enemy_of_crimes[&FormId(TOWN)] - (DAYS_PASSED_START + 0.1 / 24.0)).abs() < 1e-4);
+    // 0.25 hours after the first murder, 0.15 after the second: still an enemy.
+    pass_hours(&mut g, 0.15);
     assert!(g.would_attack(FormId(WATCHMAN_REF), FormId::PLAYER_REF));
-    // Three days after the second: no more.
-    pass_hours(&mut g, 25.0);
+    // 0.19 after the second: no more.
+    pass_hours(&mut g, 0.04);
     assert!(!g.would_attack(FormId(WATCHMAN_REF), FormId::PLAYER_REF));
     // A witness's own enmity restarts with a later crime it sees: a theft on day 2.
     let mut g = game(&f);
@@ -785,8 +860,10 @@ fn a_murder_seen_only_by_hostile_witnesses_restarts_the_count() {
     murder_townsman(&mut g);
     assert!(g.player.crime_enemies.contains(&FormId(TOWNSMAN2_REF)));
     // Day 2: the second townsman (a crime enemy: still murder) killed in front of the
-    // shopkeeper alone, who is a crime enemy already and turns no further.
+    // shopkeeper alone, who is a crime enemy already and turns no further. The town's
+    // flag, gone since minutes after the first murder, is set again.
     pass_hours(&mut g, 48.0);
+    assert!(!g.would_attack(FormId(WATCHMAN_REF), FormId::PLAYER_REF));
     g.detection.pairs.clear();
     sees(&mut g, SHOPKEEPER_REF);
     g.crimes.take_notes();
@@ -794,12 +871,237 @@ fn a_murder_seen_only_by_hostile_witnesses_restarts_the_count() {
     assert!(g.crimes.take_notes().iter().any(|n| matches!(n, Note::Crime { kind: Kind::Murder, hostile, .. } if hostile.is_empty())));
     assert!((g.player.enemy_of_crimes[&FormId(TOWN)] - (DAYS_PASSED_START + 2.0)).abs() < 1e-3, "the town's count restarts");
     assert!((g.player.crime_enemy_since[&FormId(SHOPKEEPER_REF)] - (DAYS_PASSED_START + 2.0)).abs() < 1e-3, "so does the witness's");
-    // Four days after the first murder, two after the second: still enemies.
-    pass_hours(&mut g, 48.0);
     assert!(g.would_attack(FormId(WATCHMAN_REF), FormId::PLAYER_REF));
+    // Four days after the first murder, two after the second: the witness still fights,
+    // the town's flag is long gone.
+    pass_hours(&mut g, 48.0);
+    assert!(!g.would_attack(FormId(WATCHMAN_REF), FormId::PLAYER_REF));
     assert!(g.would_attack(FormId(SHOPKEEPER_REF), FormId::PLAYER_REF));
     // Three days after the second: no more.
     pass_hours(&mut g, 25.0);
-    assert!(!g.would_attack(FormId(WATCHMAN_REF), FormId::PLAYER_REF));
     assert!(!g.would_attack(FormId(SHOPKEEPER_REF), FormId::PLAYER_REF));
+}
+
+const SEND_ASSAULT_ALARM: u16 = 0x105F;
+
+/// `stranger.SendAssaultAlarm Player Gang`, as a freed Techatticup hostage calls it on the
+/// mine's Legion faction (#2926).
+fn alarm_on_gang(g: &mut Game) {
+    call(g, SEND_ASSAULT_ALARM, Some(STRANGER_REF), &[ArgValue::Value(Value::Ref(0x14)), ArgValue::Value(Value::Ref(GANG))]);
+}
+
+/// The trace's last `assault_alarm` event: (victim, alive, absent, dead).
+fn last_alarm(g: &Game) -> Option<(Option<FormId>, usize, usize, usize)> {
+    g.events.iter().rev().find_map(|e| match &e.kind {
+        fnv_game::trace::EventKind::AssaultAlarm { caller, faction, victim, alive, absent, dead } => {
+            assert_eq!((*caller, *faction), (Some(FormId(STRANGER_REF)), Some(FormId(GANG))));
+            Some((*victim, *alive, *absent, *dead))
+        }
+        _ => None,
+    })
+}
+
+/// #2926: with the player named and a faction given, the victim is a present member of the
+/// faction [documented: GECK wiki SendAssaultAlarm], never the calling actor, which is in
+/// no faction.
+#[test]
+fn an_assault_alarm_on_a_faction_turns_a_member_not_the_caller() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.crimes.take_notes();
+    alarm_on_gang(&mut g);
+    assert_eq!(crimes(&mut g), vec![(Kind::Assault, vec![FormId(FIEND_REF)])]);
+    assert!(g.crime_enemy(FormId(FIEND_REF)));
+    assert!(!g.crime_enemy(FormId(STRANGER_REF)));
+    assert_eq!(last_alarm(&g), Some((Some(FormId(FIEND_REF)), 1, 0, 0)));
+}
+
+/// #2926: with no member present (disabled) or alive, nobody is the victim: no crime, and
+/// the caller is not turned [design, #2926; hypothesis: the original does nothing].
+#[test]
+fn an_assault_alarm_on_a_faction_with_no_member_turns_nobody() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.world.set_enabled(FormId(FIEND_REF), false).unwrap();
+    g.crimes.take_notes();
+    alarm_on_gang(&mut g);
+    assert_eq!(crimes(&mut g), vec![]);
+    assert!(!g.crime_enemy(FormId(STRANGER_REF)) && !g.crime_enemy(FormId(FIEND_REF)));
+    assert_eq!(last_alarm(&g), Some((None, 0, 1, 0)));
+
+    let mut g = game(&f);
+    assert!(g.kill(FormId(FIEND_REF), None));
+    g.crimes.take_notes();
+    alarm_on_gang(&mut g);
+    assert_eq!(crimes(&mut g), vec![]);
+    assert!(!g.crime_enemy(FormId(STRANGER_REF)));
+    assert_eq!(last_alarm(&g), Some((None, 0, 0, 1)));
+}
+
+/// The form with no faction keeps the calling actor as the victim (SCPT 0x0002A43C's
+/// OnHit calls it alone).
+#[test]
+fn an_assault_alarm_without_a_faction_turns_the_caller() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.crimes.take_notes();
+    call(&mut g, SEND_ASSAULT_ALARM, Some(STRANGER_REF), &[]);
+    assert_eq!(crimes(&mut g), vec![(Kind::Assault, vec![FormId(STRANGER_REF)])]);
+    assert!(g.crime_enemy(FormId(STRANGER_REF)));
+    assert_eq!(last_alarm(&g), None, "the form without a faction picks no member");
+}
+
+/// The kill loop of the headless walkthrough techatticup-hostages-dead-2926.actions.json
+/// (every actor of a faction in the player's cell killed, as when the player has cleared a
+/// mine): with the faction's one member killed, the alarm on the faction turns nobody, not
+/// the caller (#2926, the reporter's case).
+#[test]
+fn an_assault_alarm_after_the_factions_members_were_killed_turns_nobody() {
+    let f = fixture();
+    let mut g = game(&f);
+    let script = "Begin Function { }\nref rActor\nint iKilled\nlet rActor := GetFirstRef 200 0\nwhile rActor\n  if rActor.GetInFaction Gang\n    rActor.Kill\n    let iKilled += 1\n  endif\n  let rActor := GetNextRef\nloop\nSetFunctionValue iKilled\nEnd\n";
+    let killed = g.run_query(script, Default::default());
+    assert_eq!(killed, Ok(fnv_script::vm::XVal::Num(1.0)), "{:?}", g.events);
+    assert!(g.is_dead(FormId(FIEND_REF)));
+    g.crimes.take_notes();
+    alarm_on_gang(&mut g);
+    assert_eq!(crimes(&mut g), vec![]);
+    assert!(!g.crime_enemy(FormId(STRANGER_REF)));
+}
+
+fn restore<'a>(f: &'a Fixture, snap: &fnv_game::game::GameSnapshot) -> Game<'a> {
+    let world = World::restore(&f.forms, &f.refs, &snap.sim).unwrap();
+    Game::restore(&f.data, world, GameConfig { strict: true, ..GameConfig::default() }, snap).unwrap()
+}
+
+fn eval_num(g: &mut Game, expr: &str) -> f64 {
+    let src = format!("Begin Function {{ }}\nSetFunctionValue ({expr})\nEnd\n");
+    match g.run_query(&src, Default::default()) {
+        Ok(fnv_script::vm::XVal::Num(n)) => n,
+        other => panic!("expected Num for `{expr}`, got {other:?} (events: {:?})", g.events),
+    }
+}
+
+fn eval_ref(g: &mut Game, expr: &str) -> u32 {
+    let src = format!("Begin Function {{ }}\nSetFunctionValue ({expr})\nEnd\n");
+    match g.run_query(&src, Default::default()) {
+        Ok(fnv_script::vm::XVal::Ref(r)) => r,
+        other => panic!("expected Ref for `{expr}`, got {other:?} (events: {:?})", g.events),
+    }
+}
+
+fn run_stmt(g: &mut Game, stmt: &str) {
+    let src = format!("Begin Function {{ }}\n{stmt}\nEnd\n");
+    g.run_query(&src, Default::default()).unwrap_or_else(|e| panic!("stmt `{stmt}` failed: {e:?} (events: {:?})", g.events));
+}
+
+#[test]
+fn set_owning_faction_required_rank_drives_ownership_theft_and_session_transfer() {
+    let f = fixture();
+    let mut g = game(&f);
+
+    // Baseline: GangTrinketRef has authored XOWN = Gang, XRNK = 1.
+    // Player at Gang rank 1 owns it across Game::ownership, IsOwned, and HasOwnership.
+    g.extra.entry(FormId::PLAYER_REF).or_default().factions.insert(FormId(GANG), 1);
+    assert_eq!(eval_num(&mut g, "GangTrinketRef.GetOwningFactionRequiredRank"), 1.0);
+    assert_eq!(g.ownership(FormId(GANG_TRINKET_REF)).map(|o| (o.owner, o.rank)), Some((FormId(GANG), Some(1))));
+    assert!(g.owned_by_other(FormId(GANG_TRINKET_REF)).is_none());
+    assert_eq!(eval_num(&mut g, "GangTrinketRef.IsOwned PlayerREF"), 1.0);
+    assert_eq!(eval_num(&mut g, "PlayerREF.HasOwnership GangTrinketRef"), 1.0);
+
+    // Raise required rank to 2: rank-1 player loses ownership everywhere, and a seen theft turns FiendRef hostile.
+    run_stmt(&mut g, "GangTrinketRef.SetOwningFactionRequiredRank 2");
+    assert_eq!(eval_num(&mut g, "GangTrinketRef.GetOwningFactionRequiredRank"), 2.0);
+    assert_eq!(g.ownership(FormId(GANG_TRINKET_REF)).map(|o| (o.owner, o.rank)), Some((FormId(GANG), Some(2))));
+    assert!(g.owned_by_other(FormId(GANG_TRINKET_REF)).is_some());
+    assert_eq!(eval_num(&mut g, "GangTrinketRef.IsOwned PlayerREF"), 0.0);
+    assert_eq!(eval_num(&mut g, "PlayerREF.HasOwnership GangTrinketRef"), 0.0);
+
+    sees(&mut g, FIEND_REF);
+    assert!(!g.would_attack(FormId(FIEND_REF), FormId::PLAYER_REF));
+    assert!(g.player_stole(Some(FormId(GANG_TRINKET_REF)), None, FormId(TRINKET), 1));
+    assert_eq!(crimes(&mut g), vec![(Kind::Theft, vec![FormId(FIEND_REF)])]);
+    assert!(g.would_attack(FormId(FIEND_REF), FormId::PLAYER_REF));
+
+    // Fresh-run restore without put_session resets session-only rank override back to authored XRNK = 1.
+    let snap = g.snapshot();
+    let mut fresh = restore(&f, &snap);
+    assert_eq!(eval_num(&mut fresh, "GangTrinketRef.GetOwningFactionRequiredRank"), 1.0);
+    assert_eq!(fresh.ownership(FormId(GANG_TRINKET_REF)).map(|o| o.rank), Some(Some(1)));
+    assert!(fresh.owned_by_other(FormId(GANG_TRINKET_REF)).is_none());
+    assert_eq!(eval_num(&mut fresh, "GangTrinketRef.IsOwned PlayerREF"), 1.0);
+
+    // Same-run save load transfers session-only owner_ranks through Game::take_session / put_session.
+    let session = g.take_session();
+    let mut same_run = restore(&f, &snap);
+    same_run.put_session(session);
+    assert_eq!(eval_num(&mut same_run, "GangTrinketRef.GetOwningFactionRequiredRank"), 2.0);
+    assert_eq!(same_run.ownership(FormId(GANG_TRINKET_REF)).map(|o| o.rank), Some(Some(2)));
+    assert!(same_run.owned_by_other(FormId(GANG_TRINKET_REF)).is_some());
+    assert_eq!(eval_num(&mut same_run, "GangTrinketRef.IsOwned PlayerREF"), 0.0);
+    assert_eq!(eval_num(&mut same_run, "PlayerREF.HasOwnership GangTrinketRef"), 0.0);
+
+    // Negative required rank does not grant ownership to a non-member (faction_rank == -1), only members (>= 0).
+    run_stmt(&mut same_run, "GangTrinketRef.SetOwningFactionRequiredRank -1");
+    assert_eq!(eval_num(&mut same_run, "GangTrinketRef.GetOwningFactionRequiredRank"), -1.0);
+    assert_eq!(eval_num(&mut same_run, "GangTrinketRef.IsOwned StrangerRef"), 0.0);
+    assert_eq!(eval_num(&mut same_run, "StrangerRef.HasOwnership GangTrinketRef"), 0.0);
+    assert_eq!(eval_num(&mut same_run, "GangTrinketRef.IsOwned FiendRef"), 1.0);
+    assert_eq!(eval_num(&mut same_run, "FiendRef.HasOwnership GangTrinketRef"), 1.0);
+}
+
+#[test]
+fn live_ownership_edits_flow_to_get_owner_is_owned_and_get_owner_of_cell() {
+    let f = fixture();
+    let mut g = game(&f);
+
+    // Baseline authored ownership.
+    assert_eq!(eval_ref(&mut g, "GangTrinketRef.GetOwner"), GANG);
+    assert_eq!(eval_ref(&mut g, "TrinketRef.GetOwner"), 0);
+    assert_eq!(eval_ref(&mut g, "GetOwnerOfCell Shop"), SHOPKEEPER);
+    assert_eq!(eval_num(&mut g, "TrinketRef.IsOwned ShopkeeperRef"), 1.0);
+    assert_eq!(eval_num(&mut g, "ShopkeeperRef.HasOwnership TrinketRef"), 1.0);
+    assert_eq!(eval_num(&mut g, "TrinketRef.IsOwned PlayerREF"), 0.0);
+
+    // Inherited cell XRNK: GangBarracks requires Gang rank 2.
+    g.extra.entry(FormId::PLAYER_REF).or_default().factions.insert(FormId(GANG), 1);
+    assert_eq!(eval_num(&mut g, "BarracksTrinketRef.IsOwned PlayerREF"), 0.0);
+    assert_eq!(eval_num(&mut g, "PlayerREF.HasOwnership BarracksTrinketRef"), 0.0);
+    g.extra.entry(FormId::PLAYER_REF).or_default().factions.insert(FormId(GANG), 2);
+    assert_eq!(eval_num(&mut g, "BarracksTrinketRef.IsOwned PlayerREF"), 1.0);
+    assert_eq!(eval_num(&mut g, "PlayerREF.HasOwnership BarracksTrinketRef"), 1.0);
+    g.extra.entry(FormId::PLAYER_REF).or_default().factions.remove(&FormId(GANG));
+
+    // SetOwnership on a reference flows to GetOwner, IsOwned, and HasOwnership.
+    run_stmt(&mut g, "TrinketRef.SetOwnership");
+    assert_eq!(eval_ref(&mut g, "TrinketRef.GetOwner"), FormId::PLAYER_BASE.0);
+    assert_eq!(eval_num(&mut g, "TrinketRef.IsOwned PlayerREF"), 1.0);
+    assert_eq!(eval_num(&mut g, "PlayerREF.HasOwnership TrinketRef"), 1.0);
+    assert_eq!(eval_num(&mut g, "TrinketRef.IsOwned ShopkeeperRef"), 0.0);
+
+    // ClearOwnership clears live reference ownership so GetOwner returns 0 and IsOwned falls back to the cell.
+    run_stmt(&mut g, "GangTrinketRef.ClearOwnership");
+    assert_eq!(eval_ref(&mut g, "GangTrinketRef.GetOwner"), 0);
+    assert_eq!(eval_num(&mut g, "GangTrinketRef.IsOwned ShopkeeperRef"), 1.0);
+    assert_eq!(eval_num(&mut g, "GangTrinketRef.IsOwned FiendRef"), 0.0);
+
+    // SetCellOwnership flows to GetOwnerOfCell and inherited reference ownership.
+    run_stmt(&mut g, "SetCellOwnership Shop Town");
+    assert_eq!(eval_ref(&mut g, "GetOwnerOfCell Shop"), TOWN);
+    assert_eq!(eval_num(&mut g, "GangTrinketRef.IsOwned TownsmanRef"), 1.0);
+    assert_eq!(eval_num(&mut g, "TownsmanRef.HasOwnership GangTrinketRef"), 1.0);
+    assert_eq!(eval_num(&mut g, "GangTrinketRef.IsOwned FiendRef"), 0.0);
+
+    // SetOwnershipTemp flows to GetOwner / GetOwnerOfCell / IsOwned, and snapshot restore reverts it.
+    run_stmt(&mut g, "TrinketRef.SetOwnershipTemp Gang");
+    run_stmt(&mut g, "SetOwnershipTemp Gang Shop");
+    assert_eq!(eval_ref(&mut g, "TrinketRef.GetOwner"), GANG);
+    assert_eq!(eval_num(&mut g, "TrinketRef.IsOwned FiendRef"), 1.0);
+    assert_eq!(eval_num(&mut g, "TrinketRef.IsOwned PlayerREF"), 0.0);
+    assert_eq!(eval_ref(&mut g, "GetOwnerOfCell Shop"), GANG);
+
+    let snap = g.snapshot();
+    let mut restored = restore(&f, &snap);
+    assert_eq!(eval_ref(&mut restored, "TrinketRef.GetOwner"), FormId::PLAYER_BASE.0);
+    assert_eq!(eval_ref(&mut restored, "GetOwnerOfCell Shop"), TOWN);
 }

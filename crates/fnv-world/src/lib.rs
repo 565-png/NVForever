@@ -3,12 +3,14 @@
 //!
 //! - [`alt_textures`]: records' alternate textures (MODS…): texture sets on named shapes
 //! - [`audio`]: music types, media sets, acoustic spaces, audio markers and sound markers
+//! - [`bos`]: clean-room `Data/BaseObjectSwapper/*.ini` placement swap rules
 //! - [`fields`]: schema-decoded access to one record's subrecords
 //! - [`image_modifier`]: image space modifiers as animated screen effects
 //! - [`imagespace`]: image spaces and the weather's adapters (the colour grade)
 //! - [`imposter`]: references drawn at any distance while the player is in a region listing them
 //! - [`index`]: which cells belong to which worldspace and which references to which cell
 //! - [`placed`]: a placed reference (REFR/ACHR/ACRE/...) and the base object it places
+//! - [`reach`]: references whose bounds reach into grid squares other than their own
 //! - [`land`]: landscape heights, normals, vertex colours and texture layers
 //! - [`grass`]: grass types and the plants generated on a landscape's textures
 //! - [`lighting`]: interior cell lighting and light sources
@@ -20,6 +22,7 @@
 
 pub mod alt_textures;
 pub mod audio;
+pub mod bos;
 pub mod effect_shader;
 pub mod fields;
 pub mod grass;
@@ -28,14 +31,17 @@ pub mod imagespace;
 pub mod imposter;
 pub mod index;
 pub mod land;
+pub mod land_surface;
 pub mod lighting;
 pub mod loadscreen;
 pub mod placed;
 pub mod radio;
+pub mod reach;
 pub mod sky;
 pub mod transform;
 pub mod xrgd;
 
+pub use bos::{BosLoadReport, BosTable};
 pub use index::{Cell, RefEntry, WorldIndex, Worldspace};
 pub use land::Land;
 pub use placed::{BaseObject, Placement};

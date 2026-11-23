@@ -53,9 +53,23 @@ own rules are not known]:
   opened inside it; when none of that name is open it closes the innermost open element
   whatever its name; with nothing open it is dropped. Both MCM spots need this pair of
   rules to come out as MCM evidently works in the original (one needs each rule);
+- [hypothesis] an attributeless non-empty start tag `<T>` that is neither a tile/template
+  container, `include`, nor an operator closes an open trait of the same name `<T>` when
+  that trait already holds non-blank content and only operators (if any) are open inside
+  it (mending a forgotten `/` on closing tags such as `<height><copy .../><height>`, with
+  a warning);
+- [hypothesis] when an enclosing container end tag (a tile or `<template>`) or end-of-file
+  implicitly closes an unclosed trait or operator element that has non-blank content
+  before one or more contiguous trailing non-operator elements (sibling traits, tiles,
+  `include` or `template`), those trailing elements are hoisted onto the enclosing parent
+  so they are not dropped as unknown operators (explicitly closed traits keep unknown
+  inner tags inside the trait and still warn);
 - what is still open at the end of a file is closed there (each included file is read
   on its own, so this stays inside the include);
 - a start tag cut short by `<` ends there, open (its own end tag follows);
+- an element opened inside 256 open ones is left out with everything in it, up to its own
+  end tag [design: `xml::MAX_DEPTH`, NVForever's own guard against running out of stack on
+  a broken or crafted file, #3156; no vanilla file comes near it];
 - an unquoted attribute value runs to a space or `>`, stray quotes dropped;
 - `<!-- -->` comments, `<?…?>` and `<!…>` are skipped; `&amp;` `&lt;` `&gt;` `&quot;`
   `&apos;` `&#N;` are decoded; any other `&name;` is kept by name;
@@ -126,6 +140,16 @@ codes [documented: GetActiveMenuMode]. Other numbers stay as before [hypothesis]
 - `&hudmain;` 1, `&hudalt;` 2 [observed: private job hud_jip file_0032;
   hud_hardcore2 hc2-hc5; hud.md §14.8];
 - every other constant reads 0 as a number [hypothesis].
+
+Scripts can also write standalone entity tokens into a trait via `SetUIString` /
+`SetUIStringAlt` with or without a trailing semicolon (e.g. `"&false"`, `"&true"`,
+`"&center"`) [hypothesis: JIP UI scripts hide vanilla tiles by writing `"&false"` to
+`.../visible`, relying on the trait parser recognising `&name` constants the same as XML
+entities; observer check]. NVForever keeps the written `Value::Str` text verbatim for
+`GetUIString`, while evaluating standalone `&name` / `&name;` ASCII identifier strings
+(excluding `&-sName;` game-string placeholders and mixed prose) identically to
+`Value::Sym` for `truthy()`, `num()`, `eq`, `justify`, and suffix-`<copy>` lookup
+[design: `fnv_ui::value`].
 
 ### 2.4 Game setting strings
 
@@ -205,6 +229,22 @@ The tree records each name it read and whether it had text (`Ui::game_strings_re
 engine logs `ui: game strings: N read, M without text` at start for the menus it keeps
 loaded (with the vanilla files, `sModffects` of `item_stats_display.xml` is the one name
 without text there).
+
+**Unprefixed game-string entities (`&sName;` without `-`)** [observed: MCM 1.5's
+`Scale.xml` writes `<string> &sAccept; </string>` and `<string> &sCancel; </string>`,
+#2270]: mod menu files sometimes omit the leading `-` on game-setting string entities.
+Previously, `fnv_ui::expr::literal` turned any lone entity without `-` straight into
+`Value::Sym`, rendering raw `&saccept;` / `&scancel;`, and left unprefixed entities raw in
+compound text. [design: `fnv_ui::expr::literal_with`, `fnv_ui::tree::Ui::put_trait`] When
+an unprefixed entity is not a known numeric or menu-class constant (`sym_number`),
+NVForever checks `Source::game_string` (load-order GMSTs first, then `BUILT_IN`, without
+case) for both lone entities and compound text; when found, it expands to that text and
+records the read in `game_strings_read` (and `built_in_label` for lone built-in labels).
+When not found, it stays a named constant `Value::Sym` (or literal `&name;` in compound
+text) without recording a missing game-string read [hypothesis: whether the original reads
+an unknown unprefixed `&sName;` as empty or literal text has not been observed; keeping
+unmatched unprefixed entities as symbols preserves unknown UI constants such as `&center;`
+and `&scale;`].
 
 The names with no record in the vanilla masters, by spelling:
 
@@ -708,6 +748,21 @@ marked]:
 
 A trait that is not there reads 0 [hypothesis].
 
+[design] Named expression sources keep their existing precedence: the first
+descendant in file order, then a menu of that name, then a bare built-in source
+such as `parent` or `me`. `Ui::find_named` indexes the first descendant of each
+case-insensitive name once per tree shape. Making, unloading, renaming or otherwise
+reshaping tiles invalidates that index; value writes reuse it. The index contains
+only the current loaded tree, so menu reloads and reused slots cannot retain old
+IDs. The fallback order and expression/write-override rules are unchanged.
+
+Owned synthetic controls call `Ui::update` with bare-source expressions on many
+rows, bound total name-lookup node visits to linear work, and report fixed-workload
+times without using wall time as a pass threshold. Separate controls retain
+named-before-built-in precedence, nested duplicate order, another-menu fallback,
+unloading, injection and menu reload. These are core implementation checks, not
+original-game captures or a measured installed-mod frame-rate result.
+
 ### 4.3 `onlyif`
 
 `onlyif` never comes first: 196 are last in their list and 99 in the middle, always
@@ -773,6 +828,56 @@ that also have operators; observer check §8 item 3].
 Vanilla, 2026-10-26: 3,529 tiles, 40,583 traits, 19,541 with operators, over the 49
 menus; every menu settles [observed: fnvtool ui menus; loading all 49 takes 0.4 s].
 
+### 6.1 Structural `childcount` in expressions
+
+[observed: installed Vanilla UI Plus menu XML, 2026-11-17] Its StartMenu
+verification reads `childcount` on a diagnostic container and expects four.
+That container includes the same two-image fragment twice. The ordinary
+list-item fragment adds traits, with no child tiles. MCM's injected fragment
+separately declares its registration trait. Successful injection therefore
+does not by itself satisfy the structural verification expression. No menu
+XML or displayed warning text is included here.
+
+[design] When an expression reads an absent `childcount` trait on a resolved
+tile, read the number of direct child tiles. Includes, injected tiles and
+instantiated templates contribute their actual children; template definitions,
+traits and grandchildren do not. Existing explicit XML or code traits take
+precedence, including zero. Keep `Tile::get` and trait-presence APIs unchanged:
+the pause-menu column uses an absent explicit `childcount` as its initialization
+sentinel. This fallback does not add a trait or implement structural
+`GetUIFloat` queries.
+
+[design] A per-tile value-generation stamp records actual child insertion and
+removal. Expression reads depend on that stamp as well as the existing tree
+shape invalidation, so an empty injected child updates its readers even when
+no ordinary trait changed. Unrelated expression values written from outside
+retain their existing lifetime policy. Count lookup takes constant time and
+does not allocate.
+
+[design] Independently authored CPU controls cover repeated includes and a
+UIO-injected registration trait through the real load/update consumer, empty
+children, nested children, template instantiation, removal, slot reuse and menu
+reload, plus explicit zero/nonzero overrides and retained neighboring values.
+These controls do not establish original-game parity or complete UIO/VUI
+compatibility.
+
+[design: CPU validation record, 2026-11-17] Normal locked release Cargo builds
+of `fnv-ui` produced the baseline and candidate library-test executables. The
+same three fixtures failed at their intended numeric assertions with the
+accepted implementation and passed with this fallback. All 116 unchanged
+baseline controls passed; all 119 candidate controls passed, with none ignored.
+Candidate package-wide strict Clippy passed. Both compile controllers retained
+a failure from their unchanged descendant-shutdown deadline despite Cargo
+exiting zero. The emitted images were subsequently verified and executed in
+fresh contained jobs, with exact source/index/mtime seals and unchanged image
+hashes. These historical results qualify this package's CPU behavior. Hosted
+whole-workspace and engine checks for each published source revision are recorded
+separately in [PR #2858](https://github.com/LootJunkieAzza/NVForever/pull/2858);
+they do not change the local controller results or transfer automatically to
+later revisions. Native parity, rendered installed-menu and complete sentinel
+acceptance remain unqualified; structural script getter queries remain outside
+this change.
+
 ## 7. How mods change menus
 
 [observed in the owner's mod folders, 2026-10-26, F:\Modlists\VNV\mods]
@@ -811,13 +916,19 @@ menus; every menu settles [observed: fnvtool ui menus; loading all 49 takes 0.4 
    ```
 
    [observed: those lists] Both `:` and `::` separate include, target and optional
-   tile name. Targets are menu names in mixed case or `@Prefabs\...` paths. `;`
+   tile name. Targets are menu names in mixed case or `@...` paths relative to `menus\`
+   (`@Prefabs\...`, `@globals.xml`, etc.) [documented: UIO Nexus mod-author guide,
+   "Adding support for your mod"; no plugin DLL or source read]. `;`
    lines and blank lines separate groups. Conditions contain `true`, `?plugin`,
    `#path`, `!`, `&&`, and also `||` (the MCM alternative in supported.txt).
    [observed: Just Assorted Mods/Menus/Prefabs/JHM/JHM.xml;
    MCM Extender/Menus/Prefabs/MCMExtender/ListRect/text.xml;
    UI Improvements/menus/prefabs/UII/CharGenBox.xml] Include names resolve below
-   `menus\prefabs`. [observed: UI Improvements/menus/prefabs/UII/PerkBrowser.xml;
+   `menus\prefabs` with `.` and `..` segments collapsed so sibling paths under `menus\`
+   resolve identically in `<include>` and UIO lists [design]. `@` targets that are empty
+   or escape `menus\` via `..` are rejected as malformed (`unknown prefab target`), and
+   untargeted `@` patches on a menu file append inside its `<menu>` root while prefab
+   fragments and `globals.xml` append to top-level nodes [design]. [observed: UI Improvements/menus/prefabs/UII/PerkBrowser.xml;
    Pip-Boy UI Tweaks/UIO/Public/PipBoyUITweaks.txt] The `#UII\PerkBrowser.xml`
    operand names an existing file there. The advrecon/primaryneedshud/filmgrain
    operands of supported.txt have no matching files in the inspected mod folders.
@@ -1021,7 +1132,10 @@ Implemented consumers and remaining exclusions:
   scrolled how) are not known [hypothesis]. Textures are decoded
   only up to `repeat::MAX_TEXELS`, read from the file's header first, by these bakes and
   by `crate::repeat`'s (the tiled pictures, the compass strip), whose oversized textures
-  keep Bevy's drawing. An offset that changes alone re-bakes the kept image, or moves the
+  keep Bevy's drawing; when a source texture exceeds `repeat::MAX_TEXELS` (such as a
+  4096 x 4096 modded UI atlas), `crate::repeat` and `compass_strip` decode only the
+  requested sub-rectangle directly from level 0 when that region fits within
+  `repeat::MAX_TEXELS` [design]. An offset that changes alone re-bakes the kept image, or moves the
   compass strip on, in place (same nodes and handle), only when it is another texel
   shift, within `texmod::BAKE_BUDGET` texels a frame (unspent budget accrues up to three
   largest images, the most one bake costs: its output and both textures decoded again, or
@@ -1285,3 +1399,32 @@ Blue Moon list showed: `*:N` counted from the last child, `_Has360Controller` ne
 written (MCM took the pointer for a controller), bracket-less sources read as names
 (Vanilla UI Plus's option titles all at y 0), and JIP CCC's sub-menu lines with no mod
 chosen.
+
+## 11. Modern Minimap's map picture (ModernMinimap.dll)
+
+[observed: menus\prefabs\stentorious\modernminimap\main.xml, its "ModernMinimap.dll
+Traits"; NVSE\CompileScript\ModernMinimap\OnRender.gek; nvse.log "ModernMinimap; version
+1"] The mod's HUD window `HUDMainMenu/ModernMinimap` leaves the map picture to its plugin.
+The file computes `_Render` (true when `_ForceUpdate`, or when `MapRender`'s offset from
+the window's centre passes `_UpdateWidth`; the mod's scripts force it by setting
+`_MapOriginX` to -999999 on load, cell change, fast travel and key presses), and reads the
+render's centre back from `_MapOriginX`/`_MapOriginY` to place the picture
+(`_PosXOffset = (_MapOriginX - _PlrX) * _WorldScale`, `_WorldScale = _MapScaleLocal /
+_Frustum`) and every icon. The picture spans `_FrustumSize` (`_Frustum` 2048 /
+`_MapScaleLocal`) game units each way, from a camera `_CameraOffset` (10,000) over the
+player. The mod's render-update handler writes `_PlrX`/`_PlrY`/`_PlrZ` and `_PlrDeg`.
+
+NVForever [design] (`nvf_play::tiles::modern_minimap`, `nvforever::minimap_render`): while
+`_Render` reads true, a camera straight down over `_PlrX`/`_PlrY` renders the picture,
+given to `MapRender` as the runtime picture `nvf:modern_minimap`, and the render's
+centre is written to `_MapOriginX`/`_MapOriginY`. The file's own tint (`systemcolor`,
+`brightness`) colours it. Engine design choices: the camera draws the world layer only
+(not the player's body or the water's own layer), without fog, clearing to black, with
+no MSAA; it draws to 20,000 units below its height over the player; when `_CameraOffset`
+does not read, it uses the file's 10,000.
+
+[hypothesis] The plugin's camera is orthographic with north up, and its picture is 1024
+texels square (`textureSize=1024`, taken to be the plugin INI's default). Neither has
+been observed in the original game. Open: the plugin's
+exact look (classic mode's shading, interiors under a ceiling 10,000 over the player)
+and the INI's other settings are not read; the picture is the lit scene from above.

@@ -80,6 +80,10 @@ pub const PLAYER_KNOCKDOWN_DOWN: f64 = 2.4;
 /// units/s at force 10 and 1,000-1,300 at force 40, campaign `knockdown_look`
 /// 2026-10-19, unconscious.md §5.5].
 pub const PUSH_SPEED: f32 = 30.0;
+/// Seconds of game time a shove not yet taken waits on an actor killed since
+/// ([`Game::take_shove`]): the engine takes it the frame it shows the death; an actor not
+/// drawn loses it [design: chosen].
+pub const DEAD_SHOVE_KEPT: f64 = 1.0;
 /// The upward speed a push gives the body, game units a second, whatever the force (no
 /// more than the push's own speed) [observed: the reference rose 42 units at force 10 and
 /// 31 at force 40, 220-240 units/s at the start under the game's gravity; same campaign].
@@ -295,7 +299,11 @@ impl Game<'_> {
             }
             return self.furniture_use(r).is_none() && self.dialogue.is_none();
         }
-        self.def_following(r, |_| false).is_some_and(|d| !d.no_knockdowns && !d.immobile)
+        self.source_following(r, |_| false).is_some_and(|(id, d)| {
+            let no_knockdowns = self.acbs_flag(id, d, crate::actor_values::acbs::NO_KNOCKDOWNS, |d| d.no_knockdowns);
+            let immobile = &d.sig == b"CREA" && self.acbs_flag(id, d, crate::actor_values::acbs::IMMOBILE, |d| d.immobile);
+            !no_knockdowns && !immobile
+        })
     }
 
     /// `source.PushActorAway target force`: `target` is knocked down ([`Cause::Pushed`])
@@ -409,8 +417,13 @@ impl Game<'_> {
         let mut up = Vec::new();
         for (r, k) in down {
             if self.is_dead(r) {
-                // Killed while down: it stays dead.
-                self.end_knockout(r);
+                // Killed while down: it stays dead. A shove the engine has not taken yet
+                // waits a moment for it: pushed and killed by the same script
+                // (`PushActorAway` then `KillActor`), the body is thrown as it dies
+                // (#2749) [design].
+                if k.shove.is_none() || now - k.at >= DEAD_SHOVE_KEPT {
+                    self.end_knockout(r);
+                }
                 continue;
             }
             if let Some(since) = k.rising {
@@ -498,6 +511,29 @@ impl Game<'_> {
         let Some(k) = self.knockout(r) else { return Err(ReviveRefusal::NotDown) };
         self.begin_getting_up(r, k);
         Ok(())
+    }
+
+    /// Revive every living teammate knocked out at zero health on cell change under the
+    /// Revive Unconscious Companions tweak (`bReviveWhenChangingCells`, without consuming a
+    /// Stimpak) [design: docs/design/tweaks.md]. Returns the revived companions' FormIDs.
+    pub fn revive_companions_on_cell_change(&mut self) -> Vec<FormId> {
+        if !self.tweaks.revive_companions || !self.tweaks.revive_on_cell_change {
+            return Vec::new();
+        }
+        let down: Vec<(FormId, KnockOut)> = self
+            .extra
+            .iter()
+            .filter_map(|(&r, e)| {
+                let k = e.knocked_out?;
+                (k.cause == Cause::Essential && k.lying() && self.is_teammate(r) && !self.is_dead(r)).then_some((r, k))
+            })
+            .collect();
+        let mut revived = Vec::with_capacity(down.len());
+        for (r, k) in down {
+            self.begin_getting_up(r, k);
+            revived.push(r);
+        }
+        revived
     }
 
     /// Seconds a knocked-out essential actor `r` lies at least: [`ESSENTIAL_DOWN`], or for

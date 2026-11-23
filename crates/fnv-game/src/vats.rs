@@ -94,6 +94,37 @@ impl Game<'_> {
     pub fn set_vats(&mut self, mode: u8, shot: Option<VatsShot>) {
         self.vats = VatsState { mode, shot: shot.filter(|_| mode == MODE_PLAYBACK), outcome: None, room: None, player_damage_mult: self.vats.player_damage_mult };
     }
+
+    /// Exit active VATS mode/targeting screen and queue a one-shot camera/mode exit
+    /// request for the engine (`EndVATScam`) [documented: GECK wiki EndVATScam; design:
+    /// clears `vats` and `ui_vats` immediately and records `end_vats_cam_requested` for
+    /// the engine to consume via `take_end_vats_cam_request`].
+    pub fn end_vats_cam(&mut self) {
+        self.vats = VatsState::default();
+        self.ui_vats = false;
+        self.other.end_vats_cam_requested = true;
+    }
+
+    /// Whether `EndVATScam` requested ending VATS mode/camera since the engine last
+    /// consumed it.
+    pub fn end_vats_cam_requested(&self) -> bool {
+        self.other.end_vats_cam_requested
+    }
+
+    /// Consume and clear a pending `EndVATScam` request for the engine.
+    pub fn take_end_vats_cam_request(&mut self) -> bool {
+        std::mem::take(&mut self.other.end_vats_cam_requested)
+    }
+}
+
+/// Existing camera-room maximum, reused by named source queries [design].
+/// Native range/measurement policy remains unverified (vats-script-clearance.md).
+pub const AREA_REACH: f32 = 1024.0;
+
+/// Named area queries implemented by the source host (also reached by the
+/// console's existing unnumbered-function compiler fallback).
+pub(crate) fn handles_area_query(name: &str) -> bool {
+    name.eq_ignore_ascii_case("GetVATSLeftAreaFree") || name.eq_ignore_ascii_case("GetVATSRightAreaFree")
 }
 
 /// The VATS area condition functions, by condition index [documented: xEdit
@@ -123,6 +154,32 @@ pub fn area_value(g: &Game, f: u16) -> f64 {
         0.0
     };
     v as f64
+}
+
+/// Named source-query mapping for ordinary lateral clearance. This is independent
+/// of the CPTH/kill-camera room above; see vats-script-clearance.md.
+pub(crate) fn script_area(g: &Game, subject: Option<FormId>, left: bool) -> f64 {
+    let Some(r) = subject else { return 0.0 };
+    let Some(base) = crate::functions::base_of(g, r) else { return 0.0 };
+    if g.template_source(base, r, |_| false).is_none() || crate::ray::lent().is_none() {
+        return 0.0;
+    }
+    let pose = g.world.peek(r).map(|s| (s.pos, s.rot))
+        .or_else(|| g.world.placed.get(r).map(|p| (p.pos, p.rot)));
+    let Some((pos, rot)) = pose else { return 0.0 };
+    if !pos.iter().chain(rot.iter()).all(|x| x.is_finite()) {
+        return 0.0;
+    }
+    let (sin, cos) = rot[2].sin_cos();
+    let sign = if left { -1.0 } else { 1.0 };
+    let from = [pos[0], pos[1], pos[2] + crate::ray::ACTOR_RAY_EYE_HEIGHT];
+    let to = [from[0] + sign * cos * AREA_REACH, from[1] - sign * sin * AREA_REACH, from[2]];
+    let distance = crate::ray::cast(from, to, crate::ray::CastKind::CameraClearance).unwrap_or(AREA_REACH);
+    if distance.is_finite() && (0.0..=AREA_REACH).contains(&distance) {
+        f64::from(distance)
+    } else {
+        0.0
+    }
 }
 
 /// "Has Concentrated Fire" [documented: GECK wiki GetNthPerkEntryFunction, code 33; Entry
@@ -188,7 +245,9 @@ impl Game<'_> {
         if self.is_ghost(r) {
             return Some("a ghost");
         }
-        let flies = self.stats_def(r).is_some_and(|d| d.flies);
+        let flies = self
+            .stats_source(r)
+            .is_some_and(|(id, d)| &d.sig == b"CREA" && self.acbs_flag(id, d, crate::actor_values::acbs::FLIES, |d| d.flies));
         if flies && crate::functions::actor_value(self, r, crate::actor_values::AGGRESSION).unwrap_or(0.0) < 1.0 {
             return Some("an unaggressive flying creature");
         }

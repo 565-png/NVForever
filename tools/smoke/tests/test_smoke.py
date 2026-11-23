@@ -498,6 +498,35 @@ class JudgeTests(unittest.TestCase):
             Expect.parse({"text": "x", "known_failing": {"linux": ""}})
 
 
+class RoySayPauseTests(unittest.TestCase):
+    def setUp(self):
+        self.scenario = load(HERE / "scenarios.toml").by_name()["roy-say-pause-resume"]
+
+    def test_say_and_pause_inputs_share_the_world_clock(self):
+        # [design, #2714: nvf-play/script.rs, test_aid.rs] SCRIPT and KEYS use
+        # world_secs; PAUSE uses elapsed_secs and can open before a late Say.
+        launch, = plan(load(HERE / "scenarios.toml"), [self.scenario])
+        env = game_env(launch)
+        self.assertEqual(env[FROM_SCRIPTS], "1")
+        self.assertNotIn("NVF_PLAY_TEST_PAUSE", env)
+        say_at = float(env["NVF_PLAY_TEST_SCRIPT"].split(":", 1)[0])
+        pauses = [item.split(":") for item in env["NVF_PLAY_TEST_KEYS"].split(",")]
+        self.assertEqual([key for _, key in pauses], ["esc", "esc"])
+        opened, resumed = [float(at) for at, _ in pauses]
+        self.assertEqual(opened - say_at, 1)
+        self.assertEqual(resumed - opened, 5)
+
+    def test_subtitle_clear_is_required_after_completion(self):
+        # [design, #2714] Authored trace of the final two transitions only; no
+        # subtitle words or voice assets from the game are needed for this check.
+        final = self.scenario.order[1][-2:]
+        ended = "script: VFSRoyREF ended line 0x0011361F"
+        cleared = "subtitle: cleared"
+        self.assertTrue(all(o.ok for o in check_order(final, [ended, cleared])))
+        self.assertFalse(all(o.ok for o in check_order(final, [ended])))
+        self.assertFalse(all(o.ok for o in check_order(final, [cleared, ended])))
+
+
 class GameEnvTests(unittest.TestCase):
     def test_play_runs_count_the_world_aids_from_the_scripts(self):
         suite = load_text(game("p", args='["--cell", "X", "--play"]', env='{ NVF_PLAY_TEST_CONSOLE = "3:tgm" }')
@@ -977,3 +1006,29 @@ class ChildProcessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SessionLockedTest(unittest.TestCase):
+    """#3277: a locked Windows session (LogonUI.exe running) is told apart."""
+
+    def run_with(self, stdout, code=0):
+        from unittest import mock
+        from smoke import runner
+        done = subprocess.CompletedProcess([], code, stdout=stdout, stderr="")
+        with mock.patch.object(runner.os, "name", "nt"), mock.patch.object(runner.subprocess, "run", return_value=done):
+            return runner.session_locked()
+
+    def test_logonui_running_is_locked(self):
+        self.assertTrue(self.run_with('"LogonUI.exe","1234","Console","1","40,000 K"\n'))
+
+    def test_no_logonui_is_unlocked(self):
+        self.assertFalse(self.run_with("INFO: No tasks are running which match the specified criteria.\n"))
+
+    def test_a_failed_list_tells_nothing(self):
+        self.assertIsNone(self.run_with("", code=1))
+
+    def test_not_windows_tells_nothing(self):
+        from unittest import mock
+        from smoke import runner
+        with mock.patch.object(runner.os, "name", "posix"):
+            self.assertIsNone(runner.session_locked())

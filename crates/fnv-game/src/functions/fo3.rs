@@ -48,6 +48,7 @@ pub fn set_merchant_container(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value
         return Err(format!("{} is not a persistent reference: SetMerchantContainer refused", g.data.name(c)));
     }
     g.extra.entry(me).or_default().merchant_container = Some(c);
+    g.extra.entry(me).or_default().merchant_container_cleared = false;
     none()
 }
 
@@ -86,17 +87,17 @@ pub fn get_pc_sleep_hours(g: &mut Game, _ctx: &Ctx, _a: &Args) -> Result<Value, 
 
 /// `SetPCYoung flag`: the player counts as young (Fallout 3's childhood in Vault 101):
 /// only the race's default hair, no face attachments [documented: catalogue summary].
-/// Kept for the engine to draw by ([`crate::game::PlayerState::young`]).
+/// Kept in [`crate::game::PlayerState::young`] and triggers a player body rebuild on change.
 pub fn set_pc_young(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
-    g.player.young = a.num_or(0, 1.0) != 0.0;
+    g.set_pc_young(a.num_or(0, 1.0) != 0.0);
     none()
 }
 
 /// `SetPCToddler flag`: the player moves with the toddler's walk animations (1) or
-/// the normal ones (0) [documented: catalogue summary]. Kept for the engine
-/// ([`crate::game::PlayerState::toddler`]).
+/// the normal ones (0) [documented: catalogue summary]. Kept in
+/// [`crate::game::PlayerState::toddler`], read by player movement and locomotion clips.
 pub fn set_pc_toddler(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
-    g.player.toddler = a.num_or(0, 1.0) != 0.0;
+    g.set_pc_toddler(a.num_or(0, 1.0) != 0.0);
     none()
 }
 
@@ -184,8 +185,8 @@ pub fn is_waiting(g: &mut Game, ctx: &Ctx, _a: &Args) -> Result<Value, String> {
 /// `value` [documented: GECK wiki SetFactionReaction], the disposition modifier between
 /// the two [documented: GECK wiki GetFactionReaction, "the disposition modifier between
 /// two factions"; xEdit FACT XNAM "Modifier"]. Kept (`FormChanges::faction_modifiers`,
-/// saved); the modifiers are not part of a disposition yet (docs/spec-notes/factions.md),
-/// so nothing reads it. The group combat reaction (SetEnemy, SetAlly) is not changed.
+/// saved); source queries and integer changes read it (`nvse_faction_modifiers`). NPC
+/// disposition aggregation remains open (factions.md §8). Combat reactions are unchanged.
 pub fn set_faction_reaction(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let (f, target) = (a.form(0)?, a.form(1)?);
     let v = a.num(2)?;
@@ -235,6 +236,10 @@ pub fn reset_interior(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, Strin
 pub fn set_zone_respawns(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let zone = a.form(0)?;
     g.world.set_zone_respawns(zone, a.num(1)? != 0.0);
+    // A new SetZoneRespawns supersedes an earlier session SetZoneFlag bit-1 override.
+    if let Some(c) = g.other.zone_changes.get_mut(&zone) {
+        c.never_resets = None;
+    }
     none()
 }
 
@@ -340,6 +345,9 @@ impl Game<'_> {
     /// The container that holds `actor`'s goods: SetMerchantContainer's, else its
     /// reference's (XMRC).
     pub fn merchant_container(&self, actor: FormId) -> Option<FormId> {
+        if self.extra.get(&actor).is_some_and(|e| e.merchant_container_cleared) {
+            return None;
+        }
         self.extra.get(&actor).and_then(|e| e.merchant_container).or_else(|| self.world.placed.get(actor).and_then(|p| p.merchant_container))
     }
 

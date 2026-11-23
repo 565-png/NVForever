@@ -40,7 +40,7 @@ Constraints that decide what fits:
 
 | Candidate | Value | Cost / risk | Decision |
 |---|---|---|---|
-| Ambient occlusion (own pass from the depth prepass) | High: grounds objects, adds depth to interiors | ~1-2 ms; darkens direct light too (post-process) | **Built** (§3.1) |
+| Ambient occlusion (own pass from the depth prepass) | High: grounds objects, adds depth to interiors | ~1-2 ms; first a post-process darkening direct light too, since #2897 stage b inside the lighting on the ambient light and unshadowed lamps | **Built** (§3.1) |
 | Bevy SSAO (GTAO-like) | High | Needs MSAA off + normal prepass in every custom prepass shader | Rejected |
 | Longer sun shadows (reach ×1.5; 4096² maps until #1367) | Medium: shadows further out | About 0.2-0.3 ms at Novac for the longer reach; the 4096² maps cost about 2 ms more and went | **Built** (§3.2) |
 | Contact shadows (Bevy, screen-space ray march) | Low-medium | Tried: speckled self-shadowing on near surfaces and per-frame noise without TAA | Rejected (§4) |
@@ -56,10 +56,13 @@ Constraints that decide what fits:
 | Shadow filtering method (Bevy `ShadowFilteringMethod`) | Low: harder or softer sun-shadow edges | Temporal is grainy without TAA | **Offered** as a choice, Bevy's default (Gaussian) kept (§3.9) |
 | Sun shafts (own screen-space pass), tied to the weather's fog | Medium: dusk and dawn, the sun behind roofs and poles | ~0.03 ms here | **Built** (§3.7) |
 | Bevy volumetric fog | Would replace the game's fog look | Tried: darkens the whole picture on the non-HDR view, box edges | Rejected (§4) |
+| Desert haze: exponential height fog in closed form, in the world shaders' fog path, on top of the weather's fog | Medium: far ridges fade in layers, basins haze over, warmer toward the sun | A few arithmetic operations per fragment where the fog runs; no pass | **Built**, off in every preset (§3.16) |
+| Aerial perspective: the weather's fog per colour channel and toward the sky's colours in the ray's direction (Hoffman and Preetham), in the world shaders' fog path | Medium: successive ridges separate, bluer at noon, warmer at dusk, brighter toward the sun | A few arithmetic operations per fragment where the fog runs; no pass; the fog uniform grows by 48 bytes | **Built**, off in every preset (§3.18) |
 | SSR on water | Low: the planar reflection is better where it reaches | Own march in the water shader from the depth prepass | **Built** for where the planar reflection does not reach (§3.8) |
 | Bevy atmosphere | Would replace the game's sky look | | Rejected |
 | Auto exposure, depth of field, motion blur | Change the look; the game's own HDR/eye-adapt values (IMGS DNAM) are not decoded | | Not now (§6) |
 | PCSS soft shadows | Medium | Needs the `experimental_pbr_pcss` feature, noisy without TAA | Not now |
+| Placed meshes blended into the landscape where they meet it (#2661) | Medium: road shoulders, rock feet and cliff bases lose their hard seam with the ground | Immutable front/back colour atlases (round 10b: about 48 MiB together at the default 512 texels per cell with their per-cell mip chains, against 144 MiB at 1024 without mips before; intermediates, the bake's single-level target while a replacement bakes and retiring handles aside); copies for unchanged cells and rasterization for entering/dirty cells; a lookup in eligible fragments; a height atlas per publication of 0.22 MiB with smoothing off and 3.4 MiB at the default 4 x 4 smoothing (#2149/#2661: it holds the drawn surface's squares), round 10a: about 0.45 MiB more of it (detail rows), 1.6 KB more index table per enabled clone, and near contact fragments read the landscape's own layer textures (up to 13 diffuse and 13 normal reads) | **Built**, off by default and not in `enhanced` (§3.14) |
 
 ## 3. What was built
 
@@ -73,6 +76,8 @@ reflections` (or `graphics: vanilla (no engine-level improvements)`), again when
 changes. Anti-aliasing (`anti-aliasing`: multisampling off/2x/4x/8x, FXAA, SMAA or TAA) and
 shadow filtering (`shadow-filter`) are choices of their own, not part of `enhanced` (§3.6,
 §3.9); the field of view, the display sync and a frame-rate limit are on the Display page (§3.10).
+"Blend meshes into ground" (`mesh-terrain-blend`, §3.14) is a switch off in both looks and
+left out of `enhanced` until the maintainer decides.
 Code: `graphics.rs` (preset, switches, applying them), `ssao.rs`/`ssao.wesl`,
 `post.rs`/`post.wesl`, `taa.rs`/`taa.wesl`, `shafts.rs`/`shafts.wesl`, `water.wesl` (`ssr`),
 `sky.rs` (`shadow_reach`), `nvf_assets::texture::set_anisotropy`, `frame_pace.rs`, the rows in
@@ -109,14 +114,25 @@ timing and the two smoke setups remain unverified until run. State tests use syn
 settings and controlled gate samples; smoke scenarios are `settings-resume-pipelines`
 and `settings-resume-unchanged` in `tools/smoke/scenarios.toml`.
 
-Pass order after the main pass (under FSR 3.1 the ambient occlusion comes before FSR, §3.1): tonemapping → ambient occlusion → temporal anti-aliasing, FXAA or
-SMAA → sun shafts → bloom and sharpening → the game's image-space blur and grade (imagespace.rs) → UI. So the game's grade and its modifiers
+The ambient occlusion runs between the depth prepass and the main pass, which reads it inside the lighting (§3.1.2; its picture placement, `NVF_PLAY_DEBUG_AO=post`, comes after tonemapping, or before FSR or DLSS under them, §3.1).
+Pass order after the main pass: tonemapping → (the ambient occlusion's picture placement) → temporal anti-aliasing, FXAA or
+SMAA → sun shafts → heat haze (§3.15) → bloom and sharpening → the game's image-space blur and grade (imagespace.rs) → UI. So the game's grade and its modifiers
 (fades, blur, double vision) work on top of the improvements exactly as on the vanilla picture,
 and nothing repeats them.
 
 ### 3.1 Ambient occlusion (`ambient-occlusion`)
 
-From the depth prepass alone (multisampled or not: sample 0 is read): the view-space position
+**Since #2897 (stage a) the estimate is ground-truth ambient occlusion** (§3.1.1), and **since
+stage b it goes into the lighting** (§3.1.2): it scales the ambient light and the lamps that cast
+no shadow, never the sun, the moon or highlights. The placement described below and in §3.1.1,
+a factor multiplied into the picture, is kept as the fallback (`NVF_PLAY_DEBUG_AO=post`, and
+what runs while the lighting hook is not in place). The older estimate described next stays in
+the code as a fallback too (`NVF_PLAY_DEBUG_AO=old`, on the picture, §6). Both share everything
+but the estimate and the denoise: the inputs, half resolution, the picture's two placements
+(after tonemapping, or before a temporal upscaler), the radius, the screen-radius cap, the far
+fade and the output.
+
+The old estimate: from the depth prepass alone (multisampled or not: sample 0 is read): the view-space position
 from the reverse-infinite depth (distance = near / depth), the normal from the neighbouring
 depths on the side with the smaller step, 12 samples on a 3-turn spiral within 64 game units
 (about 0.9 m; at most 80 pixels on the screen), turned per pixel by a 4 × 4 ordered pattern;
@@ -134,7 +150,8 @@ distance. Distances are held to 60,000 units (half floats end at 65,504; the sky
 fog takes over). The sky is left alone: the dome is opaque and in the depth prepass, but at
 175,000 units or more, far beyond the fade (corrected 2026-10-12: not depth 0 as first written).
 
-Known limits: it darkens sunlit creases too (a post-process cannot tell ambient from direct
+Known limits of the picture placement (stage b's lighting placement removes the first two,
+§3.1.2): it darkens sunlit creases too (a post-process cannot tell ambient from direct
 light); water is not in the depth prepass, so the lake bed's occlusion shows faintly through
 the water surface; the first-person arms take a little occlusion from their own folds.
 
@@ -142,6 +159,327 @@ While FSR 3.1 upscales (since 2026-11-08) the same pass runs before FSR instead,
 render size, multiplied into the HDR picture FSR then accumulates
 ([fsr-upscaling](fsr-upscaling.md), "Ambient occlusion"); `NVF_AO_BEFORE_FSR=0` keeps it
 after tonemapping.
+
+#### 3.1.1 Ground-truth estimate (#2897 stage a)
+
+An engineering choice for the enhanced look, like the rest of this page: the original draws
+no ambient occlusion, and this is never a parity item nor an explanation of a difference
+from the original's frames.
+
+**Why.** The old estimate counts buried samples instead of integrating the visible part of
+the hemisphere, so flat areas darken unevenly and depth edges get halos (#2897).
+
+**Technique** [documented: Jimenez, Wu, Pesce, Jarabo, "Practical Real-Time Strategies for
+Accurate Indirect Occlusion", SIGGRAPH 2016 course; written from the paper's maths, no code
+copied from any implementation] (`ssao.wesl` `gtao_visibility`): per half-resolution texel
+(the top-left pixel of its 2 × 2 block, as before), `SLICES` = 2 screen directions through
+the pixel, φ = (k + turn) π / 2. In each slice (the plane through the view vector V and that
+direction) the normal N (from the depth, `normal_at` as before: on each axis the
+neighbouring texel with the smaller depth step, so an edge does not bend it) is projected:
+its angle γ from V, atan2(N·t, N·V) with t the slice's tangent, and its length |n_p|. The
+depth is marched `STEPS` = 4 times on each side, from one pixel out to the screen radius
+(64 units, at most 80 pixels as before), the steps closer together near the pixel (squared
+spacing) where the contact shadows are. Each side keeps the highest horizon as its cosine
+from V, starting at the edge of the normal's hemisphere (γ ± π/2); the horizons are
+clamped to that hemisphere and the cosine-weighted visible arc between them is integrated
+in closed form, ¼(−cos(2h − γ) + cos γ + 2h sin γ) for each horizon h.
+
+- **Normalisation** [engineering choice, own maths]: the slices' sum Σ|n_p|(â₁ + â₂) is
+  divided by the same slices' integral with nothing in the way, Σ|n_p|(cos γ + γ sin γ),
+  not by the slice count. The paper's mean over slices is 1 on open ground only on average
+  over the directions (one slice of a surface tilted by α from the view gives between
+  cos α and cos α + α sin α), which two slices and a 4 × 4 pattern would show as a grain on
+  open ground; the ratio is exactly 1 there with any slice count, never divides by zero
+  (cos γ + γ sin γ ≥ 1 for |γ| < π/2) and tends to the same integral as the slices increase.
+- **Thickness** [engineering choice]: no occluder counts beyond the radius; a sample's
+  horizon is blended towards the hemisphere's edge as its distance from the pixel goes from
+  half the radius (`FALLOFF_START`, a quarter of the squared radius) to the radius, the
+  same falloff curve as the old estimate's. So a thin post far in front of a wall does not
+  hide the wall's sky. A sample off the screen or on the sky raises nothing.
+- **Bias**: a sample's cosine is lowered by 0.03 (`HORIZON_BIAS`) before it may raise a
+  horizon, so a sample on the pixel's own plane (depth rounding, the normal from
+  neighbouring depths) does not occlude it.
+- **Pattern**: the slice turn from the 4 × 4 ordered pattern per half-resolution texel (as
+  before), the steps' offset from the same cell's sixteen values in another order
+  (i → 7i + 5 mod 16), so the denoise's 4 × 4 texels hold every turn and every offset
+  once. Fixed from frame to frame: under TAA, FSR or DLSS a per-frame turn could add crawl
+  [engineering choice]. On planes the denoise is expected to average all sixteen turns away;
+  the occlusion-alone pictures showed flat walls even and white, but a grain over bushes and
+  other alpha-tested plants, whose depth has no plane [observed, 2026-11-18, main session's
+  runs, 1920 × 1080, MSAA], hence the denoise's fallback below (its effect on plants still to
+  be confirmed in pictures).
+- **Denoise** (`openness_at`): the same 4 × 4 texels around each full-size pixel, all of
+  equal spatial weight (so the sixteen turns cancel), each weighted by how far its distance
+  lies from the distance this pixel's plane has at that texel: under the reverse-infinite
+  projection a plane's depth values (near / distance) are affine in the screen position, so
+  the plane is predicted exactly from the depth gradient (on each axis the neighbouring
+  drawn texel with the smaller step, as for the normal), a slope seen at a grazing angle
+  included. Texels within 3 % of that distance plus one unit (`DENOISE_TOLERANCE`) count,
+  falling linearly to nothing; a texel across a depth edge is left out, which is what keeps
+  occlusion from leaking across edges (the halos). Where the plane-aware weights of the 16
+  texels add up to little (`PLANE_WEIGHT_FEW` = 1, depth with no plane: plants, grass,
+  leaves), the weights blend smoothly (over `PLANE_WEIGHT_BLEND` = 2 more) into the old blur's:
+  the gap to the pixel's own distance, within 5 % plus one unit (`FALLBACK_TOLERANCE`), so
+  foliage averages over most of the sixteen turns again while planes keep the sharp
+  plane-aware result; no hard switch, which would draw an edge of its own. The same 16 texel
+  reads serve both. A pixel no texel takes at all takes the texel nearest its own distance,
+  as before. The old estimate keeps its own blur (within 5 % of the pixel's distance), so
+  `NVF_PLAY_DEBUG_AO=old` draws the old picture to within rounding [observed, 2026-11-18, main
+  session's runs: against a build of main with the switch on, Doc Mitchell's house at 1920 x 1080,
+  2 % of the pixels differ by one level of 255 and 57 pixels by more, where two runs of main
+  differ in none; the Goodsprings street differs as much as two runs of main do]; its cost is to be measured (both estimates
+  sit in one pipeline behind a uniform branch).
+- **Positions under an upscaler's expanded depth** (`NVF_AO_BEFORE_FSR=0` with FSR or DLSS):
+  the centre and the horizon samples are taken at the centres of the drawn texels their
+  pixels show, as the normal is, not at display-pixel centres with a texel's depth (which lie
+  off the surface and occluded themselves); a step that lands in the pixel's own texel
+  raises no horizon. Without upscaling the two are the same.
+- **Strength** (`ssao.rs` `GTAO_STRENGTH` = 0.4, the picture placement's; the lighting's is
+  0.8, §3.1.2): factor = 1 − 0.4 (1 − visibility). It still multiplies all light, so it is kept
+  low as the old 0.55 was. Open flat ground has
+  visibility 1 and stays as bright as with the switch off (the old estimate did not
+  guarantee that); a floor point at the foot of a wall has 0.5 (the wall hides half the
+  cosine-weighted hemisphere) and becomes 0.8, about what the old estimate gave in such a
+  crease [engineering choice from that reckoning; to be checked in pictures].
+  `NVF_PLAY_DEBUG_AO_STRENGTH` (§6) replaces it for comparisons by eye: open ground is now
+  exactly 1, so a higher strength darkens creases and contact without greying open areas.
+- **Cost**: 2 slices × 4 steps a side = 16 depth reads per texel against the old 12, plus
+  per-slice trigonometry; the denoise reads 4 more depths per full-size pixel for the
+  gradient. Aimed at the old pass's cost (about 0.3 ms at half resolution at 1920 × 1080,
+  #1370); `SLICES` and `STEPS` are constants (`ssao.wesl`, mirrored in `ssao.rs` for the log)
+  to trade once measured. No extra full-size pass.
+- **What does not change**: the switch (`ambient-occlusion`, no new row; #2897 asked for it
+  "in `enhanced`": it stays in the `--graphics enhanced` preset as before; only the settings
+  page's Enhanced effects row is gone since the settings menu overhaul), the two placements, MSAA, TAA, FSR and
+  DLSS paths, the far fade 4,000–7,000 units, the 60,000-unit distance cap, the main camera
+  only (the scope lens and Pip-Boy views carry no `AmbientOcclusion`).
+- **Log**: `ambient occlusion: ground-truth estimate (GTAO), 2 slices x 4 steps a side at
+  half resolution, depth-aware denoise` each time the occlusion turns on on the main camera;
+  since stage b the line goes on with what runs (§3.1.2), on the picture `, on the picture
+  (NVF_PLAY_DEBUG_AO=post)` (`old estimate (12-sample spiral, NVF_PLAY_DEBUG_AO)` with the
+  old estimate; smoke scenarios `ambient-occlusion-gtao`, `ambient-occlusion-gtao-fsr`, both
+  with `NVF_PLAY_DEBUG_AO=post` since stage b).
+
+**Not done** (in this stage; stage b, §3.1.2, did the first):
+
+- Applying the occlusion to the ambient term inside the lighting instead of to the finished
+  picture (#2897 stage b): done in stage b (§3.1.2).
+- The paper's multi-bounce fit: it needs the surface colour, which a pass on the finished
+  (tonemapped, or HDR before the upscaler) picture does not have.
+- A bent normal for the ambient lookup, a per-frame turn of the pattern accumulated by TAA or
+  the upscalers (left fixed, see above), the paper's thickness heuristic of a slowly sinking
+  horizon (the distance falloff stands in for it; stage b's `thin` remedy lets the horizon
+  sink, §3.1.2).
+
+#### 3.1.2 In the lighting (#2897 stage b)
+
+An engineering choice for the enhanced look, like the rest of this page, and the switch's
+default placement since stage b. Code: `ssao.rs` (the producer, the extraction, the debug
+switch), `ssao_lighting.rs` / `ssao_lighting.wesl` (the uniform, the upsample, the lamps'
+factor), `ssao_lighting/hook.rs` (the text hook in `pbr_functions`), the vendored mesh view
+bindings (engine/vendor/README.md, "NVForever ambient occlusion").
+
+**Why.** On the picture the factor darkens everything a crease receives, the sun included:
+sunlit creases darkened, and the lake bed's occlusion showed through the water. Inside the
+lighting it can be kept to the light that a crease really loses.
+
+**Frame order.** `ao_lighting_pass` runs in `Core3d` after the depth prepass is complete and
+before the main pass (where Bevy's own SSAO runs): the occlusion pass as before, then a
+half-resolution `denoise` pass (`ssao.wesl` `denoise`) that writes, per texel q, the factor of
+full pixel 2q through the apply pass's own filter (`openness_at`, the old estimate and the
+remedies included) with that pixel's distance, into a second two-channel texture. The main
+pass reads it. Under FSR or DLSS the passes run at the render size, the size the main pass
+draws at (`upscaler/prep.rs`), whatever `NVF_AO_BEFORE_FSR` says. Whenever the passes cannot run
+(a pipeline still compiling, the depth's sample count changing for a frame, no uniform) the
+texture is cleared to "open", so the main pass never reads stale or undefined data. Texel q
+stands for the depth prepass's pixel 2q, the same pixel coordinates as a fragment's position
+(no viewport term).
+
+**Bindings.** bevy_pbr's mesh view bind group gains bindings 43 (a uniform) and 44 (the
+denoised texture) through a view component, `NvfAmbientOcclusionBindings`, built as the sun
+visibility's (engine/vendor/README.md). The extraction puts it on the main camera's view while
+the switch is on, the placement asked for is the lighting and the hook is in (`lights.rs`;
+`ssao_lighting.rs` `HookState`), and takes it away otherwise; the view's pipelines then get the
+shader def `NVF_AMBIENT_OCCLUSION`, and `prepare` points the binding at this frame's texture.
+Switching the row rebuilds the world's material pipelines, which the pause menu's resume wait
+covers [observed 2026-11-18, the main session's run: off and on again in play, `pipelines
+waited 0.62 s, capped false`, no white or black frame in 14 screenshots].
+
+**The hook** (`ssao_lighting/hook.rs`, applied after lights.rs's display-value patch and the
+sun visibility's hook): every statement it adds is under `@if(NVF_AMBIENT_OCCLUSION)` and the
+lines it replaces are kept word for word under the def's negation, so without the def the text
+compiled is the one before (unit tests). Bevy's own ambient call and `diffuse_occlusion` are
+left alone: the NIF and terrain shaders subtract exactly that ambient highlight with the
+un-occluded value.
+
+**The upsample** (`nvf_ambient_visibility`): the 2 × 2 half-resolution texels around the
+fragment, each weighted bilinearly and by how near its distance is to the fragment's own (from
+its world position, so the first-person arms' squeezed depth does not matter), within 5 % plus
+one unit; 1 where no texel matches, beyond the fade, for a texel never written. Under
+multisampling each sample's fragment reads with its own distance, so a plant's outline does
+not take the ground's factor nor the ground the plant's, where the picture placement multiplied
+the resolved pixel by one factor [observed 2026-11-18, the player's play test: no halos at plant
+outlines; the main session's `view-lighting` pictures at the Goodsprings bushes: smooth, no rim
+at plant outlines].
+
+**Who reads it.** By bevy_pbr's rule, the pipelines that write depth (Bevy's own SSAO rule):
+NIF objects opaque and alpha-tested, the terrain, grass, trees, skinned actors. The
+first-person shapes (the arms, the weapon, the Pip-Boy: `FIRST_PERSON_DEPTH`) take a factor of
+1 on the ambient and the lamps, so only the world is occluded [design, #3075: "exclude them
+from the calculation so only the environment would be affected"]; their glow in the lamps'
+colour with lamp shadows on was the shade light's relight (vendored bevy_pbr "no directional
+shadows", engine/vendor/README.md). Opted in: the landscape's blended texture layers (they lie on the prepass's surface;
+`nvf_assets` `NifSurfaceKey::terrain_layer`). Opted out: water and refracting NIF shapes (in no
+prepass, the texels under them are the bed's or the wall's behind). Grass and leaf cards read
+it unless their constants say otherwise (`grass.rs` `GRASS_READS_AMBIENT_OCCLUSION`, `tree.rs`
+`LEAVES_READ_AMBIENT_OCCLUSION`, both on). Blended shapes, decals and every other view (the
+reflection camera, the scope lens, the Pip-Boy) do not. A compile test composes the materials
+that read it with the def through Bevy's shader cache (`nvf-shader-tests`).
+
+**What it scales.** The display-value sum (lights.rs `DISPLAY_HELPERS`): the ambient term, and
+the light of the point and spot lights that cast no shadow at the surface (where bevy_pbr leaves
+their shadow unread: every placed lamp; the Pip-Boy light casts one). Never the directional
+lights (the sun, the moon, an interior's directional light), never a highlight. #2897 asked for
+the ambient term only; it was widened to the lamps because interiors are lit almost wholly by
+them, and on the ambient alone the occlusion all but vanished indoors: at strength 0.8 and
+exponent 1, Doc Mitchell's house changed 0.7 % of its pixels by more than 2 levels of 255
+against stage one's 9.7 %, with the lamps as well 5.1 %; the Prospector Saloon 5.9 % against
+7.4 % [observed 2026-11-18, the main session's pictures]. A lamp that casts no shadow lights a
+crease as fully as open floor, so nothing else keeps its light out. The lamps' weight is
+`ssao_lighting.rs` `LAMPS` = 1 (`NVF_PLAY_DEBUG_AO_LAMPS`, 0 for the ambient term alone).
+
+**Exponent** (`ssao_lighting.rs` `EXPONENT` = 1): the factor scales the display-value sum, which
+is shown as about itself, so the shown value falls by the factor, as the picture placement
+multiplies the shown picture by it. The first value, 1/2.2, scaled the linear light, so the
+shown value fell by only about f^0.45: the main reason the placement first looked weak. At 1
+the Goodsprings street at noon changes as many pixels as stage one (20.3 % against 20.9 % by
+more than 2 levels at strength 0.8, mean darkening 1.85 against 2.34 levels) [observed
+2026-11-18, the main session's pictures].
+
+**Strength** (`ssao.rs` `LIGHTING_STRENGTH` = 0.8): the reason for keeping the picture
+placement's low (it darkened the sun's light too) is gone. Indoors 0.4 and 0.8 looked about the
+same and neither too dark; outdoors 0.8 with the remedies below "feels about right" [observed
+2026-11-18, the player's play test at exponent 1 and lamps 1] [engineering choice: the
+player's].
+
+**Remedies on plants** (`ssao.rs` `LIGHTING_VARIANT`, `thin+soft`; `NVF_PLAY_DEBUG_AO_VARIANT`).
+The ground-truth estimate shimmers on swaying alpha-tested plants, more than the old one. The
+candidates were measured on the occlusion alone, on the picture, at the Goodsprings street at
+1920 × 1080 with 4x multisampling: 24 screenshots 0.12 s apart, the median over consecutive pairs
+of the mean absolute change per pixel in levels of 255, for two bush crops and the bare road
+[observed 2026-11-18, the main session's pictures]:
+
+| Estimate / remedy | Bush 1 | Bush 2 | Road |
+|---|---|---|---|
+| Ground-truth, plain | 1.96 | 2.87 | 0.23 |
+| Old estimate | 0.67 | 0.92 | 0.24 |
+| `thin` | 1.26 | 1.70 | |
+| `soft` | 1.43 | 1.83 | |
+| `thin+soft` | 0.87 | 1.11 | |
+| `thin+wide+soft` | 0.74 | 0.86 | |
+| `slices4` | 1.82 | 2.48 | |
+| `steps8` | 2.07 | 3.06 | |
+| `nearest` | 1.46 | 2.15 | |
+| `wide` | 1.54 | 2.07 | |
+
+At strength 0.8 with no remedy the player still saw the shimmer; with `thin+soft` neither
+shimmer nor halos [observed 2026-11-18, the player's play test]. `thin+soft` is the lighting's
+default [engineering choice: the player's; `thin+wide+soft` measured a little steadier and was
+not played]; the picture placement keeps none, and `NVF_PLAY_DEBUG_AO_VARIANT=none` gives the
+plain estimate in either. The other remedies stay in the aid for comparisons.
+
+**Debug and log.** `NVF_PLAY_DEBUG_AO=view-lighting` draws the factor each fragment's ambient
+took in place of its colour, at the very end of the material's colour (after the fog); the
+image-space grade and the light glow's eye adaptation still follow (`--no-grade`, light glow
+off, for a plain picture). The start's line says what runs: `ambient occlusion: ground-truth
+estimate (GTAO), 2 slices x 4 steps a side at half resolution, depth-aware denoise, variant
+soft+thin, strength 0.8, in the lighting: on the ambient light and on lamps without a shadow by
+1, exponent 1` (an aid's value is named after it); then `lights: ambient occlusion hook
+installed`, `ambient occlusion: on the ambient light in the lighting (main camera)` when the
+view takes the bindings and `ambient occlusion: off the lighting` when it gives them up; a
+failed hook warns once and names the picture placement that runs instead. Smoke scenarios
+`ambient-occlusion-lighting`, `-interior`, `-taa`, `-fsr` and `-switch`.
+
+**Cost** [observed 2026-11-18, GPU spans in ms, the occlusion's passes / the main opaque pass; Sun shadows on, no actors;
+4x MSAA unless FSR is named; the 2560x1440 figures are single 40 s runs on the final build, the others medians of five
+4 s periods, two rounds, on the build before the lamp factor shared the ambient's read]: Goodsprings at 2560x1440: main's old
+pass 0.24 / 0.86, the first stage 0.40 / 0.87, this placement 0.30 / 0.91 (0.25 / 0.87 with the lamp weight at 0); Doc
+Mitchell's house at 2560x1440: 0.34 / 0.46, 0.45 / 0.40, 0.41 / 0.48; Goodsprings at 1920x1080: 0.13 / 0.66, 0.23 / 0.66,
+0.18 / 0.70; Doc Mitchell's house at 1920x1080: 0.18 / 0.28, 0.29 / 0.28, 0.24 / 0.31; Goodsprings under FSR Quality to
+2560x1440: 0.10 / 0.52, 0.20 / 0.52, 0.08 / 0.51-0.54. The main pass reads four texels per shaded fragment (the lamp factor
+is formed from the ambient's read). Not measured: a slower GPU.
+
+**Multi-bounce** (2026-11-18): the ambient's factor and the lamps' (those that cast no shadow
+here) take the paper's multi-bounce fit per colour channel from the surface's diffuse colour
+(ssao_lighting.wesl `nvf_ao_multibounce`, ssao_lighting.rs `MULTIBOUNCE`) [documented: Jimenez,
+Wu, Pesce, Jarabo, "Practical Real-Time Strategies for Accurate Indirect Occlusion", SIGGRAPH
+2016 course: the cubic fit of the visibility after several bounces against the one-bounce
+visibility, per albedo]: never below the plain factor, exactly 1 on open surfaces, a light
+surface's crease lifted more than a dark one's. Its effect on the game's dark textures is small
+[observed 2026-11-18, enhanced at 1600 x 900, multi-bounce on against
+`NVF_PLAY_DEBUG_AO_MULTIBOUNCE=0`: Doc Mitchell's house at 12:00, 0.03 % of the pixels lighter
+by more than 2 levels of 255; the Goodsprings street at 12:30, 0.4 % lighter and 0.46 % darker,
+the swaying plants' and actors' level of change; the house's factor is below 0.9 on 6.2 % of
+the pixels and below 0.7 on 2 %, its edges and corners]. Kept on: it only lifts.
+
+**Shimmer** [observed 2026-11-18, the Goodsprings street at 12:30, standing still, enhanced,
+four pictures 0.05 s apart, pixels changing by more than 8 levels between consecutive pictures]:
+the factor alone (`NVF_PLAY_DEBUG_AO=view-lighting`) 1.65 % with 4x MSAA and 1.70 % with DLSS
+Quality (the camera jittering), the lit picture 1.33 % and 0.84 %; by more than 24 levels
+0.00-0.04 %. The same with and without the jitter: the change is the plants' sway, not the
+occlusion's. Not measured yet: the view moving; the Freeside alley and the gas station
+exterior pictures #2897 asks for.
+
+**Off, Performance, Quality** (2026-11-19, [design, #3075]: AO's row to match Sun shadows' and
+Lamp shadows'). The row `ambient-occlusion` is a list: Off; Quality, the estimate above
+unchanged (2 slices x 4 steps a side, half resolution, the depth-aware denoise, `thin+soft`,
+strength 0.8, multi-bounce, first-person shapes excluded: the uniform is the same value for
+value); Performance, the same pass with one slice direction a pixel (`ssao.rs`
+`PERFORMANCE_SLICES`, through the uniform's slice count, the one the aid's `slices3` uses; the
+aid's own count still wins). The `enhanced` preset is Quality; `--ambient-occlusion[=performance|
+quality]` turns it on at a level whatever the look; an INI written while the row was a switch
+(`1`/`0`, true/false, on/off, yes/no) loads as Quality or Off, and the launcher shows that value
+as the list's (`catalog::list_value`). The start's line ends with the level (`, level
+Performance`), and is said again when the level changes.
+
+Reads a half-resolution texel in the lighting placement, without multisampling (as with
+DLSS) [engineering count from `ssao.wesl`, not a measurement]:
+
+| | Quality | Performance |
+|---|---|---|
+| `occlusion`: the pixel's depth, the normal's 4 neighbours | 5 | 5 |
+| `occlusion`: the horizon march, slices x steps x 2 sides (scattered, up to 80 px away) | 16 | 8 |
+| `denoise`: the pixel's depth, the gradient's 4 neighbours | 5 | 5 |
+| `denoise`: the 4 x 4 occlusion texels (`Rg16Float`) | 16 | 16 |
+| all | 42 | 34 |
+
+The march is the costly part (its reads miss the cache, and each slice adds two `acos`, an
+`atan2` and the arc integral), so Performance takes about half the occlusion pass and none of
+the denoise, whose 4 x 4 texels the one slice's sixteen turns need to cancel (a 2 x 2 denoise
+would show the pattern; the turns are fixed per pixel, not jittered, so DLSS would not average
+them). Steps stay at 4: the contact shadows come from the near steps. Not measured yet: the
+cost and the pictures (the main session's in-game run).
+
+**The depth resolved once under multisampling** (2026-11-19; frame-rate-audit §9 "What is
+left": 0.3 of the pass's 0.6 ms at 1440p 4x was reading the multisampled depth). With a
+multisampled prepass, `ssao.rs` `resolve_depth` first writes sample 0 (the sample every pass
+read; with the aid's `nearest`, the nearest sample) into a single-sampled `Depth32Float`
+texture at the prepass's size (`ssao.wesl` `resolve_depth`, a depth-writing fullscreen pass),
+and the occlusion, denoise and picture passes read that with their single-sampled pipelines:
+one coherent read a pixel instead of 26 reads a half-resolution texel from the multisampled
+texture. The values are the same bit for bit, so the picture is too. Inside the
+`nvf_ambient_occlusion` GPU span; `NVF_AO_RESOLVE_DEPTH=0` reads the multisampled depth as
+before, for the comparison. The start says `ambient occlusion: the multisampled depth resolved
+once to one sample for the passes`. Without multisampling (DLSS, FSR, TAA) nothing changes.
+Not done: replacing Bevy's 0.23 ms copy of the multisampled depth (frame-rate-audit §9) with
+this resolve. That copy is in `bevy_core_pipeline` (`prepass/node.rs`, not vendored), and the
+copy it makes is read per sample by the water's edge test (`water.wesl`, every sample against
+the fragment) and bound as a multisampled texture in every material's view bindings (bevy_pbr
+`mesh_view_bindings`), so it cannot become a single sample without changing those readers.
+
+**Not done:** a bent normal (the ambient is a flat colour with no direction), occlusion on
+decals and blended shapes (not in the prepass), on lamps that cast a shadow and on highlights
+(no environment reflections exist yet for a specular occlusion to act on, §3 gaps).
 
 ### 3.2 Longer sun shadows (`fine-shadows`)
 
@@ -250,7 +588,7 @@ over the frames instead of by alpha to coverage.
 
 - The projection is shifted every frame by a sub-pixel amount (Halton 2,3, eight steps;
   Bevy's `TemporalJitter`), textures sampled at a mip bias of -0.5.
-- After tonemapping and the ambient occlusion, before the sun shafts, bloom, sharpening and the
+- After tonemapping and the ambient occlusion's picture placement (§3.1), before the sun shafts, bloom, sharpening and the
   game's image space (so the grade, fades and blurs are not smeared over the frames): each
   pixel's point is carried from this frame's camera to the last frame's (the depth and both
   cameras' matrices; the reprojection is worked out on the CPU in double precision, the world
@@ -274,6 +612,16 @@ over the frames instead of by alpha to coverage.
   and its depth prepass texture can disagree; the passes that bind the depth (ambient
   occlusion, sun shafts, TAA, the image-space blur) now go by the texture's own sample count
   and skip that frame (before, a validation error ended the run).
+- Switching TAA off while the game runs (another anti-aliasing choice, or a temporal upscaler
+  taking over, which turns native TAA off) [design, #2955]: the camera keeps its render-world
+  view, and Bevy's sync takes only the TAA marker off it, so the pass's own state on that view
+  (its pipeline, history pair and uniform) is dropped in the same frame and the history with
+  it, and the pass runs only on a view that carries the marker this frame (log: `taa: off for
+  a view: its pass state and history dropped`). Before, the pass went on blending the history
+  frozen at the switch into every frame (a faint still picture over the view under FSR or DLSS
+  until a load). Turned on again, the history starts over on its first pass that runs
+  (`taa: on for a view: its history starts over` is logged when the view's state is made,
+  which can be a frame or more before, while the pipeline compiles).
 - Looks [observed 2026-10-12, Goodsprings noon, standing, and walking while turning 40 degrees a
   second]: edges as smooth as MSAA 4x standing still, plants' cut-outs smoother; textures a
   little softer standing still and clearly softer while the view moves (the usual TAA trade);
@@ -335,6 +683,151 @@ with it, 7.1 without [observed 2026-11-02, RTX 4070, 1920x1080, `enhanced`]. The
 its own set of the sun's cascades (Bevy's renderer needs them for every view the sun lights);
 emptying their caster lists was tried and saved 0.12 ms of shadow-pass GPU time and nothing of
 the frame, so the reflected world keeps its shadows.
+
+### 3.8.2 Water caustics and river flow (`water-effects`)
+
+[design, #2674] Graphics > Water offers this switch on its own. The enhanced look enables
+it. From above the surface, the water shader reconstructs the position of the opaque
+object visible through refraction. Sunlight projected through the surface draws a moving
+network of bright focused lines there, attenuated by the water body's opacity. The surface
+is modelled as eight travelling sine waves (wavelengths 41 to 239 game units, crests
+moving 33 to 81 units/s). The light at a receiver is the inverse of the Jacobian
+determinant of the refraction displacement, evaluated analytically. Shallow water shows
+a fine sharp web and deeper water a broader, softer one. The bright lines add up to
+about 1.1 times the receiver's colour, and the gaps between them lose at most 0.15, so
+the bed's mean brightness barely changes. Waves narrower than a few pixels on the
+receiver fade out in both views. A submerged
+outdoor camera uses its depth prepass to project the same pattern on receivers in nearby
+loaded cells with water at the same level. First-person geometry and the sky are excluded.
+The pattern fades with water depth, the sun's elevation and the weather's sunlight.
+The submerged pass attenuates the added light by the camera's remaining visibility.
+Local shadowing is approximate. Projection through a water surface and attenuation with depth
+are described in [GPU Gems, chapter 2, section 2.2](https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-2-rendering-water-caustics).
+The wave set, the focusing model's tuning and the band limit are NVForever's.
+
+[design] From shore, the water scatters more light as the bed drops through its WATR
+above-fog range. The shallow end, deep colour and placed-water opacity cap remain
+authored by the water type. Underwater, the existing distance fog thickens as the camera
+descends. At one above-fog depth range below the surface its visibility distance is
+halved. The density increase is capped at 2.5 times the surface density. The effect
+works at night and uses the water type's own colour in both views.
+
+[design] The shallows: by the WATR ramp alone a wading depth of NVCleanWater is under a
+fifth opaque, and at Boulder Beach the near water could not be told from the dry shore.
+With the switch on, the bed seen from above takes the water's shallow hue and darkens to
+0.62 of its brightness over the first 90 units of ray in the water, and the body gathers
+along the same ramp twice as fast at its thin end (the far end is unchanged). `vanilla`
+keeps the ramp as it is.
+
+[design] Wave normals come from three height taps round each point, one texel apart
+near the camera and a pixel's footprint apart beyond, which limits shimmer as the waves
+travel (in every look). A span of two texels each side was tried first: it removed
+4-texel waves and kept 0.64 of 8-texel ones, flattening the surface, and took twelve
+taps a pixel for nine. The water mirror is given the main camera's cascades every frame
+(`shadow_rate.rs`): the renderer numbers each view's shadow-map layers from zero, so a
+held layer holds the main camera's map, and the mirror reading it with matrices of its
+own made whole patches of reflected riverbank flash at Cottonwood Cove. With the same
+matrices in both views the staggered schedule keeps holding near water. The mirror also takes the main camera's caster lists after each view's own cuts (`sky::sun_casters_over_slice`, `player_body::near_shade_casters`): with the matrices alone the two views drew different casters into the same layers. Drawing every
+cascade of both views every frame was the first fix and doubled the cascade passes near
+water for every player. Reflected shadows reach as far as the main camera's cascades;
+past that the reflection is sunlit. The submerged pass is ordered after ambient
+occlusion and before temporal anti-aliasing: each of the three swaps the view's two
+pictures, and unordered they could record on two threads, one reading a stale picture
+for a frame [hypothesis for the flicker reported under water, from the code].
+
+[design] Under a temporal upscaler (FSR, DLSS) the submerged pass runs before it instead,
+as the ambient occlusion's picture placement does (§3.1): at the render size, from the
+depth prepass as the main pass drew it, and multiplied into the HDR picture the upscaler
+reads (and, under FSR, into FSR's opaque copy, so its reactive masks compare the two as
+before). The upscaler then accumulates the pattern with the bed it lights. After the
+upscaler the pattern would be added unsmoothed every frame, from a depth drawn jittered
+at the render size and expanded to the display size by nearest texels, and the pass would
+cost the display's pixels. The band limit stays the displayed pixel's, as the textures'
+mip bias keeps their detail at the display's. The gain then brightens the HDR light before
+tonemapping, so on a bright bed it shows a little less than when it multiplied the
+tonemapped picture [engineering choice; compared by eye with the old placement under
+FSR/DLSS at Boulder Beach in daylight, #3089: looks fine]. `NVF_CAUSTICS_BEFORE_UPSCALER=0`
+keeps the pass after tonemapping under an upscaler too (§6). The log says the placement
+once a view takes it ("underwater caustics: on the HDR picture at the render size, before
+the upscaler").
+
+[design] River currents animate the noise layers on selected exterior reaches: the
+Colorado below Hoover Dam through Cottonwood Cove, and the western channel in Zion
+Canyon. No record names a flow, so the downstream directions and the speed (110 units a
+second, each noise layer at 1.0, 0.75 and 1.3 of it so the surface changes shape as it
+travels; at 40 the river moved slower than the wind moves Lake Mead's first layer, 65)
+are this project's choices.
+
+[observed, 2026-11-18: a private script of the change's author over their own
+FalloutNV.esm and HonestHearts.esm, read-only; its output is not in the repository] The
+table (`river_flow.rs`) selects cells at the worldspaces' default water heights (WRLD
+DNAM: WastelandNV -2300, NVDLC02ZionCanyon 5000). Which cells: for each exterior cell
+with the "has water" flag, the script read the LAND heights (VHGT) along the row a
+quarter of the way up the cell and listed the stretches lying more than 12 units under
+the cell's water height. On the Colorado they run between cells x 17 and 24 from row y 6
+down to -31 (north of that the water is Lake Mead's, at 2600); in Zion the western stream
+runs from cell (1, 8) to (-3, -9). The table's rectangles cover the cells those
+stretches cross.
+
+[design] A locally placed surface at the same elevation can share the cell's current. Each noise layer retains a share of its
+water type's wind, bounded so its crests travel downstream. Actor ripples keep their
+world position. The current changes surface appearance only.
+
+[observed, 2026-11-18, the first pattern (two noise octaves) and a current of 40 units a
+second; not repeated since] Fixed-camera captures show the light pattern on the Goodsprings
+Source trough floor and the Boulder Beach bed above and below water at noon. At midnight
+the submerged pass stayed off. At Cottonwood Cove the surface texture travelled south
+in all 40 successive frame pairs measured on a patch projected back onto the water plane.
+
+[observed, 2026-11-18, the first shadow fix (every cascade drawn every frame) and the
+first wave normals; not repeated with the shared cascades] Two fixed 1920×1080 play views at Cottonwood Cove were
+sampled 32 times each, 80 ms apart. In the view facing the opposite bank, the
+largest frame-to-frame brightness change in the water after spatial smoothing
+(Gaussian σ = 16 pixels) fell from 24.3 to 2.6 on a 0–255 scale. The buildings
+at the cove also showed less fine shimmer. Forcing the original build to redraw
+its shadow maps each frame stabilized the bank while retaining sun shadows.
+
+[observed, 2026-11-18, the first shadow fix, since replaced] Four 1920×1080 release runs at the opposite-bank view on an
+RTX 5070 Ti used Quality sun shadows, mirrored water and Water effects. The original
+and revised binaries ran in A/B/B/A order. Median GPU time reported for the shadow
+pass across warm four-second windows was 0.08–0.09 ms on the original and
+0.22–0.26 ms on the revision. Whole-frame times varied enough that the two pairs
+gave opposite signs for the difference.
+
+[observed, 2026-11-18, the mirror sharing the main camera's cascades] Release explorer,
+RTX 5070 Ti, 1920x1080, `--graphics enhanced --sun-shadows`, Cottonwood Cove looking
+across the river, four 32-second runs in A/B/B/A order with `--log-frame-times 5`; B set
+`NVF_PLAY_TEST_SHADOW_STAGGER=0`, which draws every cascade of both views every frame as
+the first fix did. Warm five-second windows: 5.93 to 6.28 ms a frame with the schedule
+holding (A), 6.78 to 7.05 ms without (B; two of B's first windows read 5.18 and 5.41);
+the shadow pass's GPU time 0.10 to 0.20 ms against 0.20 to 0.30 ms. At Boulder Beach
+(`--play`, 09:00, twelve frames 0.2 s apart, 1280x720) the largest frame-to-frame
+brightness change after the same smoothing was the same with the schedule holding and
+without (5 to 7 of 255 once the start's fades were over): no flash of the reflected shore.
+
+[observed, 2026-11-18, the mirror sharing the main camera's cascades and caster lists]
+Cottonwood Cove, the player in the river facing the opposite bank (`--play --pos=69300,-90750,-1700`,
+09:00, 1920x1080, `--graphics enhanced`), eleven frames between 10 s and 12.3 s of two runs,
+one with the schedule holding and one with `NVF_PLAY_TEST_SHADOW_STAGGER=0`: frame for
+frame the two runs differ by at most 4 of 255 in any pixel. A held shadow map shows the
+reflected bank what a fresh one does.
+
+[observed, 2026-11-18, the pattern of eight waves and the shallows' tint] Release explorer,
+RTX 5070 Ti, 1920x1080, `--sun-shadows --log-frame-times 5 --graphics-cycle
+"vanilla;water-effects;water-effects;vanilla"`, 86 seconds a view, the first window left
+out. Mean frame time with the switch on against off, over eight five-second windows
+each: 2.90 against 2.86 ms at the Boulder Beach shallows, 2.50 against 2.47 ms submerged
+there, 2.95 against 2.94 ms at Cottonwood Cove. The windows of either state range over
+0.2 ms, so the cost is within the run's noise, under 0.05 ms.
+
+[observed, 2026-11-18, initial water effect before the depth and pattern revision] Release explorer, RTX 5070 Ti, Vulkan, 1280x720, desktop streaming
+active. At each fixed camera `--log-frame-times 5 --graphics-cycle
+"vanilla;water-effects;water-effects;vanilla"` alternated five-second periods. After the
+first block, the median paired changes in mean frame time over four complete blocks were
+0.00 ms at the Boulder Beach shallows, +0.02 ms submerged and +0.02 ms at Cottonwood
+Cove (the four river differences ranged from -0.02 to +0.11 ms). The submerged pass
+itself measured 0.02 ms GPU. At Cottonwood the transmissive pass measured 0.03 ms off
+and 0.04 ms on.
 
 ### 3.9 Shadow filtering (`shadow-filter`; not part of `enhanced`)
 
@@ -401,7 +894,7 @@ enhanced "Bloom" (§3.3), when on, stands in for it.
 - What emits light is brighter than white only in this view: unlit shapes are drawn at
   their emissive colour × multiplier (nif.md §6 "Emissive multiplier of unlit shapes"),
   so Gomorrah's neon at multiplier 25 burns; lit shapes' emissive light already is.
-- Every pass after the tonemapper (ambient occlusion, anti-aliasing, sun shafts, Bloom and
+- Every pass after the tonemapper (the ambient occlusion's picture placement, anti-aliasing, sun shafts, Bloom and
   sharpening, the image-space grade) sees the same tonemapped values as before; the
   passes key their pipelines on the view's format.
 
@@ -636,13 +1129,2449 @@ LOD noise are prior art only; no code was taken from any of them.
   (`NVF_PLAY_TEST_PIPELINE_LOG`, pipeline_gate.rs). Picture and frame-cost evidence is
   recorded above; future visual checks should cover both landscape draw paths.
 
+### 3.14 Blend meshes into ground (`mesh-terrain-blend`; off in both looks, not part of `enhanced`)
+
+Where a placed road, rock or cliff meets the landscape, the mesh's lower edge takes the
+landscape's own colour and shading over a short height band, so a broken asphalt shoulder
+reads as ground-lit dirt instead of a hard seam (#2661). Off by default and in `vanilla`,
+left out of `enhanced` (false in both looks, so `quality.rs::enhanced_keys` leaves it out;
+a test says so) until the maintainer decides; the settings row is under Graphics > Detail
+and Distance after the terrain rows, kept in the INI like them, `--graphics-only
+mesh-terrain-blend` on the command line. Skyrim Community Shaders has a Terrain Blending
+feature; the design is our own. Every band, angle, resolution and selection rule below is
+NVForever's choice [design], not a fact about the original game or another renderer.
+
+**The look the row draws** [design: `mesh_terrain_blend.rs::setting_config`]: the `height`
+shape with an 8-unit band, 512 colour texels per cell (round 10b; 1024 before), full shading
+(`8:surface:height:512:full` in the test aid's terms). [observed: the main session's
+round-7 comparison pictures at a WastelandNV road shoulder] `height` turned the broken
+asphalt edge into ground-lit dirt and left the road top alone; the hybrid shapes either
+removed the effect or striped the road's lip. Rocks stay subtle with it; that was accepted.
+
+**Method** [design: `terrain_surface.rs`, `nvf-assets/src/nif_surface_blend.rs`,
+`nif_surface_bindings.wesl`, `nif_material.wesl`]:
+
+- *A world-space cache of the landscape around the camera.* A dedicated orthographic camera
+  on its own render layer (16, `BAKE_LAYER`) draws flat, unlit copies of the 3 by 3 cells
+  around the selected centre cell into an RGBA16F target of `3 x resolution` texels a side
+  (round 10b: a single-level bake target; the published atlas below has a mip chain).
+  Each quadrant's copies are its whole near-terrain stack in drawing order: the base
+  (a folded base with its own `TerrainMaterial` in an unlit bake variant, any other base
+  with the single-texture `SurfaceCaptureMaterial`) and every blended layer over it with
+  its texture, vertex alpha and sort bias, composited by the GPU's own blend state. Nothing
+  is lit, fogged or scorched; weather and light changes need no rebake. The selected centre
+  is held separately from the committed front publication, with 256 game units of
+  hysteresis per axis: retain coordinate `c` throughout the inclusive interval
+  `[c*4096 - 256, (c+1)*4096 + 256]`, otherwise select `floor(position/4096)`.
+  Backfill and cache assembly use this same selection, with southwest origin centre
+  minus `(1,1)`; epoch/off transitions reset it. At `y=-8192`, a northward recentre needs
+  `y > -7936`, and a southward return needs `y < -8448`. Teleports select directly.
+- *Exact heights.* Beside the colour, an RGBA8 atlas holds the f32 coefficients of both
+  triangles of every square of the drawn landscape surface (`height_planes`), packed
+  losslessly into bytes and read with `textureLoad`, never filtered; the shader picks the
+  triangle with the surface's own diagonal (`grid_triangles`) and evaluates its plane, so the
+  band follows the drawn landscape exactly. #2149/#2661: the landscape is drawn and collided
+  as a `Surface` with 1 (smoothing off), 2 or 4 squares per LAND square and side, fixed for
+  the run before the first cell (nvf_play `smooth_terrain::spec`; the Smooth terrain row
+  applies at the next start), and up to its bound off the stored LAND triangles (8 units
+  by default; the test aid allows up to 16), so the atlas
+  holds that surface's squares, `32 x sub` a cell side (nif_surface_blend.rs
+  `HeightLayout`): each cell's `SurfaceCell.heights` are the surface's own (`side()`
+  squared, terrain.rs `surface_cell`), and a cell whose heights are not the run's surface's
+  is excluded (`invalid-prepared-heights`). The atlas is 576 by 99 texels with smoothing off
+  (0.22 MiB, the layout before #2149), 1152 by 195 at 2 x 2 (0.86 MiB) and 2304 by 387 at
+  4 x 4 (3.4 MiB), each held twice while a replacement is pending (front and back) and once
+  more on the CPU (the image keeps its main-world bytes for the probes). The subdivision
+  reaches the shader as definitions (`MESH_TERRAIN_SUB`, the tile and atlas dimensions;
+  `MESH_TERRAIN_SUBDIVIDED` only above 1, so with smoothing off the lookup is the one before
+  #2149): each publication records its layout and every enabled clone carries it in its
+  key (`NifSurfaceBlendKey`), so a run specializes the blend for one layout; the ordinary
+  `NifSurface` is unchanged. The lookup finds the ground's square on the surface's grid
+  (`terrain_square`, terrain_surface.rs `ground_square`), its normal from the plane's
+  slopes over the surface's spacing; the quadrant, the region's edge fade and the
+  landscape detail stay on the LAND grid. Each cell's tile ends, after its squares' rows, in
+  a metadata row: a nine-bit mask of the resident neighbours and a four-bit mask of the
+  quadrants whose colour was captured. Every prepared cell gives its heights even where a
+  quadrant's colour cannot be captured. The bake's copies of a quadrant's draws are taken
+  at the LAND grid's resolution (terrain.rs `land_resolution`, 17 by 17 vertices whatever
+  the surface's subdivision): the bake is flat and unlit, and what it reads (vertex
+  colour, every opacity, the packed channels of a folded draw, the texture coordinate as
+  the world place over the repeat, anti-tiled or not) is linear on the LAND triangles, so
+  the picture is the same as from the drawn mesh, up to float rounding, with about a fifteenth of
+  the vertices kept in the main world at 4 x 4. Switching the blend on while the game runs
+  prepares the region's up to 9 loaded cells again on the main thread
+  (`terrain_surface.rs::backfill_cells`, `terrain.rs::capture_surface`), at the surface's
+  resolution: a one-time cost, larger at 4 x 4 than with smoothing off.
+- *4 x 4 near (known approximation).* Under the Smooth terrain row's 4 x 4 near (#2676)
+  every quadrant starts drawn with every other surface vertex (`QuadrantDraw::HALF`,
+  terrain_lod.rs `first_draw`), the one under the camera too, until terrain_lod redraws it
+  in full near the camera; a full quadrant beside a half one draws that side coarse (its
+  vertices between the neighbour's put on the neighbour's straight segments, one surface
+  square into the full quadrant). The atlas holds the full 4 x 4 surface regardless and is
+  not rebuilt when a quadrant's drawing changes, so wherever a quadrant is drawn half or
+  with a coarse side the band measures from the 4 x 4 surface, not from the triangles
+  drawn. [design] What bounds the difference: the drawn coarse squares' corners are 4 x 4
+  surface vertices and their diagonals lie on the LAND squares' diagonals, so each drawn
+  triangle lies within one stored LAND triangle, and its heights (and a coarse side's
+  moved vertices, averages of two surface heights along a LAND square's side) are averages
+  of surface heights; the surface lies within its bound (8 units by default) of the stored
+  triangles, so the drawn ground and the atlas's are at most twice that apart there. Most
+  of it lies beyond the near distance (2048 units by default); near the camera only until
+  the first redraw and along a full quadrant's coarse sides.
+- *Residency.* Before sampling, the shader needs the fragment's own cell's height and live
+  coverage and its quadrant's colour bit, and (round 10b) every own-cell texel the colour
+  read takes at each contributing mip level in a captured quadrant of that cell (below); a
+  128-unit fade at the region's edges remains. Round 10b review: the read crosses into
+  neighbouring cells, and a neighbouring texel counts only when its cell is live-covered
+  and the texel lies in a captured quadrant; one that does not (a missing diagonal cell of
+  an L-shaped region included) gets no weight instead of rejecting the read. The metadata
+  row's residency mask is still written but no longer read by the shader (live coverage
+  and the colour masks decide). A failed lookup leaves the fragment exactly as it was.
+  #2661 review: the contact weight (below) needs only the height plane, so the lookup
+  computes it right after the height check and, in the surface view, stops where it is
+  exactly 0, before the colour and detail masks, the neighbour checks and the colour
+  footprint; the diagnostic views always run the whole lookup, so their classification is
+  unchanged.
+- *Publication and continuity.* Each immutable front/back publication owns its images,
+  southwest origin and cell identities. A camera crossing retains completed, resident,
+  unchanged cells inside the new 3 by 3 region at the **old origin** until replacement
+  commits. An enabled-only nine-bit coverage mask intersects baked height and quadrant
+  validity in the initial lookup, in every tap of the colour read (round 10b review: own
+  and neighbouring cells' alike) and in each border-fade neighbour check. Departing or dirty cells lose coverage without a colour-image upload.
+  Continuity covers retained interior footprints; new cells, genuinely invalidated cells,
+  teleports without overlap and changing missing-neighbour border fades have no guarantee.
+- *Incremental assembly and receipts.* Unchanged cells are GPU rectangle copies into a
+  fresh back atlas (round 10b: at every mip level); only entering/dirty cells have flat draw
+  copies. Fully populated axial
+  and diagonal crossings copy/bake 6/3 and 4/5 cells; one changed cell copies/bakes 8/1.
+  Removal alone changes coverage; unchanged frames allocate no atlas and do no copy/bake.
+  The small height/metadata image is rebuilt for a replacement. Copies use the bake's
+  reversed Y and run in render cleanup **after** `render_system` has submitted all final
+  camera-target writes (`engine/vendor/bevy_render/src/lib.rs`), in a following queue
+  submission. Exact dirty-draw receipts reset every frame; partial frames cannot accumulate.
+  Copy-only work also needs a transfer receipt and both GPU images. *Round 10b's assembly*
+  [design: `terrain_surface.rs::assemble_atlas`, `MipPipeline`, `terrain_surface_mips.wgsl`]:
+  a render attachment has one level, so the bake camera draws into a single-level bake target
+  of the atlas's size, held by the job alone, and the published atlas (every level, no CPU
+  copy, never a render target) is written only by the assembly. In the frame every bake draw
+  drew, one submission copies the retained cells at every level from the previous
+  publication, the baked cells' level 0 from the bake target, then runs one compute pass per
+  lower level over the baked cells only: each texel of level `k` is the linear mean of the 2
+  by 2 texels of level `k - 1` under it. The resolutions are powers of two and the chain
+  stops at one texel per cell (10, 11 or 12 levels), so every level is a 3 by 3 grid of whole
+  cells, every 2 by 2 block lies inside its cell and no level ever mixes two cells. The view
+  is complete, and the receipt can go, only after that submission is queued, so the receipt
+  covers the mip passes; a frame where a draw is missing, or where the mip pipeline does not
+  exist yet, assembles nothing and the bake camera draws again. A copy-only replacement (its
+  entering cells have heights but no colour capture) has no bake target, an inactive camera
+  (no target, no passes) and no mip pass. The pipeline is created when the first bake view
+  reaches the render world and dropped when the gate closes (below). Completed views leave
+  the sorted cameras before another clear, and publication retains the extra main-frame
+  delay. Receipts name epoch, request, destination and source revision; the current cell
+  identities and source revision are revalidated before commit. No pixel readback or GPU wait.
+- *The blend.* With `d` the fragment's height above the ground triangle, `B` the band, `S`
+  the steepness fade and `F` the residency fade, the `height` shape's weight is
+  `w = S F (1 - smoothstep(0, B, max(d, 0)))`. *Steepness* (#2661 review: the user's
+  play-test pictures showed vertical streaks on some road lips): every texel the blend
+  paints is placed by world xy, a top-down projection, so on a near-vertical face one row
+  of texels stretches down the face. `S = smoothstep(cos 80°, cos 60°, u)`, with `u` the
+  absolute cosine between the mesh face's geometric normal and up: whole up to 60 degrees
+  from horizontal, 0 from 80 degrees. The geometric normal is the cross product of the
+  world position's screen derivatives, taken at the top of the fragment before any
+  discard, not the interpolated vertex normal, which smoothing tilts towards up on a lip;
+  where the derivatives are parallel (a face seen edge-on) the vertex normal stands in.
+  `S` multiplies every contact shape's weight, and the weight view shows it
+  (`nif_surface_blend.rs::face_up`, `steepness_fade`; `nif_surface_bindings.wesl`
+  `mesh_terrain_face_up`, `mesh_terrain_steepness`). Faces steeper than 80 degrees get no
+  blend, rock and cliff faces included.
+  Where `w > 0` the forward fragment, after the existing coverage tests and normal mapping
+  and before lighting, mixes the base colour towards the cached colour by `w`; full shading
+  also bends the normal towards the ground triangle's geometric normal and moves roughness
+  towards the landscape's 0.95, reflectance towards 0.2 and metallic towards 0, and fades
+  emission, clear coat and anisotropy by `1 - w`. Alpha, discard, coverage, positions, depth,
+  the prepass and the geometric normal used for shadow bias are untouched; `w <= 0` leaves
+  every input exactly as it was.
+- *The landscape's own layers near the camera (round 10a)* [design: `terrain.rs`
+  `terrain_draws`, `terrain_surface.rs` `DetailPalette`, `encode_detail`;
+  `nif_surface_blend.rs` `NifSurfaceBlend`, `DetailQuadrant`; `nif_surface_bindings.wesl`
+  `mesh_terrain_detail`]. [observed: the user's play-test at 1920x1080 near a road edge,
+  round 9b] the colour cache alone reads as a smooth, slightly hazy band: it holds 4 game
+  units per texel at 1024 (8 at round 10b's default 512), while the ground beside it is sharp gravel with normal maps.
+  So, within 4096 units of the camera, a contact fragment also reads the near landscape's
+  own layer textures at its game xy and composes them as the near draw does. *Capture*:
+  while the blend is on, each quadrant's capture also records what its near draw is made
+  of, from the very meshes and materials drawn (after `stitch_layers`, so stitched
+  neighbour layers are included): the base draw's source (the folded `TerrainMaterial` or
+  the single base material), the separately drawn overflow layers' materials in drawing
+  order, the base mesh's per-vertex linear colour, normal and tangent with the tangents'
+  handedness at its LAND vertices (`detail_vertices`), and one opacity grid per drawn
+  overlay (the folded ones, then the overflow ones). [design] #2149/#2661, a known
+  approximation: the tint and the opacities are linear on the LAND triangles, so their
+  interpolation matches the drawn mesh exactly; with smoothing, the normal and tangent are
+  the surface's at the LAND vertices interpolated linearly over the LAND triangle, while
+  the drawn mesh has the surface's normal at every finer vertex, so the detail's shading
+  follows the smoothed ground's curvature only from one LAND vertex to the next. Source material edits re-read it (`refresh_captures`); a source that is gone or
+  no longer matches the prepared layers leaves that quadrant on the colour cache. Its
+  images (normal maps included) join the cell's dependencies. *Publication*: with the
+  capability, each publication's height atlas gains rows after its heights (201 with
+  smoothing off, 576 by 300 RGBA8 instead of 576 by 99; #2149/#2661: 101 at 2 x 2 and 51 at
+  4 x 4, the same words in fewer, wider rows; the bytes keep their 32-bit words, read with
+  `textureLoad`): a 32-word entry
+  per quadrant (flags with the folded and total overlay counts, palette numbers of the
+  base's diffuse and normal map and of each overlay's, the base diffuse and normal
+  samplers, normal decoding bits, the base material's colour and texture-coordinate
+  transform, the repeat, whether the coordinate is cell-local as in a six-layer folded
+  draw, the tangents' handedness), then 11 words per vertex of the quadrant's 17 by 17
+  grid (linear colour as unorm16, normal and tangent as snorm16, up to 12 opacities as
+  unorm16). A third texel in each cell's metadata row holds the four-bit mask of the
+  quadrants whose detail it supplies. The palette (`TerrainPalette`) lists the distinct
+  layer images and sampler descriptions (`ImageSampler` equality; texture.rs gives the
+  landscape textures one description) of the admitted quadrants; every replacement repacks
+  its own palette numbers. Quadrants are admitted whole, in a deterministic order (those the
+  previous publication admitted for unchanged cells first, then by grid and quadrant); a
+  quadrant that would overflow the palette, an image not loaded or an unresolved material
+  keeps the colour cache, with its reason on the publication line (round 10a review: also
+  `sampler-mismatch` and `overflow-material`, below). *Binding*: the blend
+  type's bindless index table (binding 100) is 50..454 instead of 50..54: after the four
+  ordinary entries come 384 texture and 16 sampler entries, registered through the blend
+  material's own allocator (bindless slots are local to a material type's slab) and
+  resolved through the clone's own table row; unused entries hold the fallback image. No
+  binding is added, bindless or not, and without bindless the type's layout is exactly the
+  colour interface's (uniform 50, textures 51 and 53, sampler 52). Every clone of a
+  publication binds that publication's palette, restricted to its live coverage (round 10a
+  review, `PublishedSurface::live_palette`): when cells are masked (a departing or changed
+  cell, or one whose image was removed: a removal bumps the image's dependency revision
+  and so masks every cell reading it in the same update), the entries only masked cells'
+  quadrants read become the fallback, keeping their numbers (the immutable height atlas's
+  numbers keep naming the same entries), and a sampler still sampled takes as its
+  representative an image a covered quadrant reads with that description (second review
+  round: a quadrant samples its diffuse sampler only with a base diffuse or an overlay
+  and its normal sampler only with a base normal map, so a textureless quadrant keeps no
+  sampler alive; a sampler without a live representative binds the fallback sampler,
+  never the publication's original representative, which may be the removed image). The coverage
+  update rebuilds retained clones (Bevy drops the old prepared material before preparing
+  the new one), and new clones of the front take the same restricted palette, so neither
+  can wait for an image that is gone and the retained clones keep drawing. The masked
+  cell's replacement bake cannot wait for one either (second review round): a folded
+  base's bake copy binds no normal map (`terrain_surface.rs::bake_copy`; the unlit bake
+  returns the base colour only), and a cell whose bake copies would bind a colour image
+  removed from the image assets (and not added back) is planned without that cell,
+  excluded as `missing-colour-image` (an image not loaded yet is still waited for); it
+  bakes again once the image is added back. A detail image that returns (added back after a
+  removal) or arrives late (a replacement planned without it refused its quadrants,
+  `image-not-loaded`) bumps its dependency revision too (third review round), so the
+  resident cell's request changes and the quadrant's detail is rebuilt instead of staying
+  on the colour cache; only the first of its Added / LoadedWithDependencies notifications
+  does, so one return makes one replacement. *Composition* (`mesh_terrain_detail`): the
+  fragment's ground triangle and its barycentric weights come from the height lookup's own
+  square and diagonal (below the diagonal `(1-u) SW + (u-v) SE + v NE`, above it
+  `(1-v) SW + u NE + (v-u) NW`); the colour starts as the base diffuse x interpolated vertex
+  colour x base material colour, and each overlay in drawing order mixes in by
+  `saturate(opacity) x` its diffuse alpha (ordered opacities, not normalized weights), its
+  colour the texel x vertex colour x the base material colour for folded overlays (as
+  terrain.wesl) and x white for overflow ones (their own material's colour:
+  `layer_material` draws only a layer with a texture, white). With full shading the
+  normal starts as the base's mapped normal (or the plain interpolated one), Bevy's own
+  `calculate_tbn_mikktspace` and `apply_normal_mapping` on the interpolated, not
+  renormalized, normal and tangent, the normal maps decoded with green flipped and each
+  map's two-component flag (folded overlays with the base's, as terrain.wesl; overflow
+  ones with their own), mixed towards each overlay's mapped normal (or the plain one) by
+  the same shares and normalized once. Texture reads use explicit gradients
+  (`textureSampleGrad`): the derivatives of the fragment's game xy are taken in
+  `nif_material.wesl` at the function's top level, before the lookup's branches, then
+  mapped through `1 / repeat`, the base's texture transform and the view's mip bias; the
+  base diffuse sampler reads every diffuse and overlay normal map, the base normal sampler
+  the base normal map (terrain.wesl's rule for the folded overlays). *Samplers the detail
+  does not reproduce* (round 10a review; the palette format keeps one diffuse and one
+  normal sampler per quadrant): a textureless base binds Bevy's fallback image and so its
+  fallback sampler, which reads the folded overlays in the near draw and need not equal
+  any layer image's description (with anisotropic filtering off the configured fallback is
+  1x, while texture.rs gives landscape textures their own description); separately drawn
+  overflow layers read their diffuse and normal maps with those images' own samplers.
+  So a quadrant with folded overlays on a textureless base, or with an overflow layer whose
+  diffuse or normal image's description differs from the detail's diffuse sampler (the
+  base diffuse's, or the first overlay's without a base texture), keeps the colour cache,
+  logged as `sampler-mismatch` (`terrain_surface.rs::samplers_reproduced`). Toggling
+  anisotropic filtering between texture loads can make such descriptions differ in
+  ordinary play. The target is never taken from the mesh pixel's
+  screen-space prepass normal. *Sources and distance*: colour validity (the quadrant and
+  the whole footprint of the contributing mip levels, round 10b) and detail validity (the quadrant's detail bit, live
+  coverage, nearer than 4096 units) are checked separately, so a valid detail lookup never
+  fails for an unused colour tap, and the `status` view shows success where either source
+  serves the fragment. With `d = 1 - smoothstep(2048, 4096, distance)`: both valid, the
+  target colour is `mix(cache, layers, d)` and the target normal
+  `normalize(mix(geometric, mapped, d))`; detail alone, the layers with the weight faded by
+  `d`; colour alone, the cache and the geometric normal; neither, no blend. #2661 review:
+  where the layers' share is 1 (`d = 1` with both valid, or detail alone) the cache is not
+  read, and where valid detail is nearer than 2048 units (so `d` is exactly 1) the colour
+  footprint is not checked either: status, weight and share are the same either way. The contact
+  weight and the residency fade are unchanged. *Overflow layers and the cap* (NVForever's
+  choice, round 10a): [observed: the main session's publication lines at the user's test
+  road] cell (-17, 0) publishes quadrants `folded+1-layers, folded+2-layers, folded,
+  folded+1-layers` and cell (-17, -1) `folded, folded+1-layers, folded, folded+2-layers`:
+  road cells routinely have overlays beyond the six that fold, because `stitch_layers`
+  adds neighbour textures, so sending such quadrants back to the colour cache would leave
+  exactly the user's spot blurry. The detail therefore also composes the separately drawn
+  overflow overlays, after the folded ones and in their drawing order, up to 12 overlays
+  plus the base (12 opacities fit three vec4s; a vertex record is 11 words with the colour,
+  normal and tangent); a quadrant with more keeps the colour cache, logged as
+  `overlays-over-cap`. The detail composes every overflow layer with white at full alpha
+  through the base's texture transform; the near draw uses each layer's own material
+  colour, alpha and transform (`layer_material`: white, opaque, the default transform). A
+  quadrant whose overflow layer's material has another colour or alpha, or another
+  transform than the base's (a base transform edited alone included), keeps the colour
+  cache, logged as `overflow-material` (round 10a review,
+  `ResolvedDetail::from_materials`); the check runs at capture (turning the blend on, a
+  backfilled cell, a cell drawn while it is on) and again at every source material refresh
+  (`refresh_captures`), and both keep the capture with the reason (second review round:
+  the capture too, `terrain.rs::DetailParts::capture`), so an edit back serves layer
+  detail again. This is an approximation: the near terrain alpha-blends each
+  overflow layer's *lit* result, while the detail composes albedo and normal before
+  lighting once. [hypothesis] The difference is small because the layers share the
+  surface's lighting and differ only in their mapped normals. Every match described here
+  is of prepared triangle attributes, texture mapping, ordered surface composition and the
+  normal-map convention for the supported quadrants; it does not promise identical final
+  pixels (filtering footprints on differently oriented mesh geometry, lighting position,
+  shadows, occlusion, the near landscape's prepass normals, scorch and coverage still
+  differ) and does not remove geometric silhouettes. *Budget*: 384 images and 16 sampler
+  descriptions per publication, so one material's resources (its standard textures, the
+  two atlases, the palette) stay inside the 512-resource bindless slab; a quadrant reads at
+  most 26 images (13 diffuse, 13 normal), so at least 14 entirely distinct quadrants fit,
+  and quadrants sharing LTEX textures share entries. *Capability*: the blend material
+  bindless on the device and non-uniform indexing of sampled-texture arrays
+  (`mesh_terrain_blend.rs::detail_capability`); otherwise, or with the aid below,
+  publications carry no detail rows and no palette and the colour cache alone serves, as
+  before. Nothing of this runs while the blend is off (no capture, no rows, no palette).
+
+**Selection** [design: `world.rs::spawn_model`, `blend_census`;
+`mesh_terrain_blend.rs::reference_reasons`, `material_reasons`]: rigid exterior STAT and
+SCOL shapes. A SCOL is a static collection: "composed of Static forms", "do not react to
+Havok physics and cannot be destroyed", its Model "the NIF file used for the object", which
+the editor generates when the collection is made [documented: GECK wiki "Static
+Collection", revision 40901, and "Bethsoft Tutorial Static Collections", revision 38886,
+offline snapshot 2026-10-28]. `world.rs` draws a SCOL reference as that one model, as it
+draws a STAT, so the same reference, shape and material rules apply to both. A reference is
+left out for any of: not in an exterior cell of the drawn world, a rig or skinning,
+particles, jointed or loose bodies or a stored pose, damage-stage nodes, a DEST record, an
+imposter; a shape for external emittance, a registered morph mesh, or one drawn under a
+billboard holder that turns it to the camera (#2549; `excluded-billboard`, last in the
+reasons' order, merge of upstream main f4dbc82f8). A material is left out
+for Add, Multiply, Premultiplied or AlphaToCoverage alpha, unlit, refraction, first person,
+depth write, transmission, falloff, holes, FaceGen, the Pip-Boy screen, linear add, soft
+edges, a non-finite depth bias or an environment map, window shapes (#2462) and, since
+#2841, every lit shape with the Environment_Mapping flag and a cube
+(`excluded-environment-map`: the blend type has no environment bindings, its index
+table's 54-453 hold the landscape palette). Where both could apply, the reflection wins
+and the shape is drawn without the blend [design: the reflection is the original's
+own effect, the blend NVForever's opt-in addition, off by default in both looks;
+carrying the cube, sampler and mask into the blend type would move its palette indices];
+ordinary Blend, a finite depth bias, the lit decal flag,
+Mask and an alpha cut are admitted and keep their descriptors exactly. A material owned for
+the moment by a fade, an effect shader or a material override never blends; the owner's
+restore brings the blend back. Never by asset name.
+
+**Excluded altogether**: interiors, distant LOD and imposters, actors and creatures,
+first-person and interface meshes, movable clutter (MSTT, items, posed clutter), doors,
+activators, trees and grass, water.
+
+**Materials and switching** [design: `mesh_terrain_blend.rs`]: an eligible shape draws with
+a separate material type, `ExtendedMaterial<StandardMaterial, NifSurfaceBlend>`, a clone of
+its source shared per source handle and visible publication/configuration; the ordinary
+`NifSurface` interface is
+unchanged (its 144-byte uniform, bindings 50-53), and the blend type binds no more textures
+than the ordinary pipeline it replaces (the atlases take the holes and FaceGen slots, which a
+blend clone never has). A source edited under the same handle (blended cut-outs flipping
+Blend and Mask, scripted NIF edits) rebuilds its clone in the same frame. Ordinary-component
+change ticks are tracked even before a shape's first clone is ready, so an emissive edit
+and reinsertion evicts the pending candidate and its later acknowledgement cannot enable it.
+Texture swaps, fades, draw-distance ranges, door fades, effect shaders and shadow thinning
+follow the source. Replacement clones are prepared and acknowledged with a bound render material before
+existing shapes switch; their old enabled handles and image references stay alive meanwhile.
+Request restarts leave enabled clones alone. Coverage changes on already drawable clones
+change uniform POD only, at each clone's own publication origin; the colour image stays
+immutable. A fresh back allocation waits for the previous publication's material switches;
+a cancelled job has a three-main-frame retirement interval before another allocation.
+Transfer plans hold strong image handles and cancellation drops their main-world references;
+extracted views and material assets release theirs through Bevy's ordinary retirement.
+The row switches the blend while the game runs: on, it opens the material gate
+(below), logs its start line, checks the atlas against the device, records the census of
+the shapes already drawn and the captures of the cells already drawn around the camera
+(their landscape prepared again, the same quadrant stacks and cached materials as a cell
+drawn with the blend on), and bakes; off, every converted shape leaves the blend material,
+and the census, the captures, the atlas and the clones are dropped, with one `stop` line.
+The restoration (`stop`) runs in PostUpdate where the conversion runs, after the Update
+producers (texture swaps, fades, effect shaders, overrides) and the PostUpdate ones (the
+NIF mirror, the blended cut-outs) with their commands applied: an ordinary material a
+producer put on the shape that frame stays (a texture swap's copy, whose generation the
+swap has consumed; a fade's or an override's copy), and only a shape with none gets its
+recorded source back.
+
+**Per frame** [design: `mesh_terrain_blend.rs::apply_configured_variants`, `pass_needed`,
+`full_pass`]: the conversion is change-driven. Its full pass (every tracked shape's reason
+mask, census, clone and material swap, then the collection of unused clones and
+publications) runs only in a frame where one of its inputs changed since the last pass:
+the blend's look, the publication (`None`, or its revision and colour atlas), a last pass
+that ended with a replacement still pending (then every frame until it settles), a tracked
+shape's components (a `BlendShape` or `BlendCensus` added, replaced or removed, a despawn
+included; an ordinary material put on, written or removed on a convertible shape; on a
+census-only shape, one put on or written with another handle than the last pass recorded,
+or removed; a fade's, effect shader's or override's marker added or removed), or a source
+material the last pass read (loaded,
+removed, or edited under its handle so that its reasons or its `SourceStamp` differ),
+compared only when the material store was changed since the conversion last ran. The stamp
+is watched only for a source a shape that may blend read; a source only shapes kept out
+read (a fade's or an override's copy, whose alpha moves every frame; a census-only shape's
+material) is watched by its reasons and whether it is loaded, since such a shape becomes
+allowed only through its reasons, its source loading, a temporary marker's removal, or its
+ordinary material, `BlendShape` or `BlendCensus` added, replaced or removed, each a trigger.
+Of a census-only shape's ordinary material (no `BlendShape`: an animated STAT's driven
+shapes, kept out by their recorded `rig` reason) the pass reads only the handle, which
+source's reasons join its mask; the source's own changes are the fingerprint's, and the
+eviction of a clone whose owned source was republished under its handle reads only
+convertible shapes. So an animated look published again under the same handle (nvf-assets
+`material_anim.rs`, most frames while it moves) runs no pass. [observed] Smoke
+`mesh-terrain-blend-verify-terrain-switches` (`--slots 3`, release build), final verify
+line: at 070c331fa, before this rule, `skipped-frames=1277 passes=1289 pass-shapes=1275`;
+at 398b61cda `skipped-frames=3354 passes=20 pass-shapes=4 shapes-ordinary-census-only=3`;
+`mesh-terrain-blend-verify-crossing` went from `passes=3137 pass-shapes=1772` to
+`passes=1547 pass-pending=1530 pass-shapes=5` (its readiness delay aid keeps it pending).
+That the old shape passes were animated statics' same-handle republications is read from
+this rule being the only change between the two heads and from the per-signal counts
+398b61cda prints, not seen directly at 070c331fa. A convertible shape keeps the wider rule,
+because there a same-handle republish is the signal of an in-place edit.
+The first frame after the blend turns on always runs it. A pass's own commands can call for one more pass in the next frame, which changes
+nothing. Every frame, pass or not, follows the coverage of the recorded publications
+(`follow_coverage`: one check per publication, a walk over its clones only when its
+coverage changed or it gained a clone). A quiet frame then stores `settled` again and
+refreshes a ready line a census change deferred (60 frames, `REFRESH_FRAMES`) from the last
+pass's census.
+Before this, the full pass ran every frame: [observed] Tracy, RTX 5070 Ti, 2560x1440,
+WastelandNV (-17, 0): `apply_variants` 0.61-0.65 ms a frame before this change; with the
+blend on from the start (animated statics tracked), 0.61-0.63 ms at 443434169 and 0.023 ms
+at a7b32dac7, at Goodsprings and at WastelandNV (-17, 0). The test
+aid `NVF_PLAY_TEST_MESH_BLEND_VERIFY=1` runs the full pass in every frame the gate would
+skip and logs any change it makes (`verify diverged`, at most 16 lines), and a count line
+`verify skipped-frames=N diverged=M passes=P pass-<reason>=...` (each pass by its first
+reason), then `shapes-<signal>=...` (which shape signal fired in a pass run for a shape
+change), with each ready line, every 600 skipped frames and at the stop; at most 2
+`verify shape-trigger` lines per signal name the model, shape index and reasons of a shape
+that fired it.
+
+**Off** [design: `mesh_terrain_blend.rs::BlendGate`, `close_gate`;
+`terrain_surface.rs::SurfaceBakePlugin`; vendored bevy_pbr `MaterialGate` and bevy_render
+`ErasedRenderAssetPlugin::gated`, engine/vendor/README.md]: both material types, the
+clones' `NifBlendMaterial` and the bake's `SurfaceCaptureMaterial`, are registered behind
+one gate, closed in a run that never turns the blend on. While it is closed none of their
+own systems run (main world: change marking and the specialization check; render world:
+asset extraction and preparation, instance extraction and sweep, specialization
+extraction), their shaders are not loaded, no bind group allocator and no bindless
+fallback buffer exists for them, the bake view is not extracted, the draw functions are
+Bevy's own, round 10b's mip pipeline does not exist, and the receipt and span systems do not run (they need a bake view in the
+render world). Nothing is captured, baked, allocated or logged. What still runs that main
+does not have, every frame: `follow_setting` (the aid and the row compared with what is
+drawn); the run conditions themselves, an atomic load for each gated system or group, a
+resource check for each material type's opening and closing and for putting the draw
+functions back, and an empty-query check for the receipt and span systems (the span
+systems' once per view); and bevy_asset's tracking systems of the two asset types, whose
+stores exist, empty (an asset type cannot be registered after startup). After the blend is
+turned off, the gate stays open until no material of either type, as an asset or on an
+entity, has been left for 3 frames (their removals extracted and unloaded); then the
+render world drops both allocators and shader handles (and round 10b's mip pipeline), puts Bevy's own `DrawMaterial`
+command back in the opaque and transparent phases, and an `idle` line is logged, so the
+run is idle as above again. Pipelines compiled while it was on stay in Bevy's pipeline
+cache, as every pipeline does (Bevy never evicts them).
+
+**Cache and invalidation rules** [design: `terrain_surface.rs`, `terrain.rs`]: the 3 by 3
+region follows the camera; cell identity includes session/worldspace epoch, grid, resident
+entity incarnation, capture content revision, component change tick and the revisions of
+its captured diffuse-image dependencies. Residency is confirmed against `Streamer.loaded`.
+Terrain reconstruction replaces the capture with a new revision; reconstruction of an
+already captured resident input also makes its cardinal
+neighbours reprepare stitched layer inputs, including loaded captures outside the selected
+region, retaining their primary revision so this cannot recursively dirty the whole world.
+Failed refreshes remain pending by entity incarnation within the cache context, are excluded
+from coverage/copy/bake until refreshed, and clear on epoch/off transitions or unload.
+Component replacement/in-place capture edits and modifications/removal of dependent
+diffuse images invalidate the affected cells.
+Capture materials retain their source handles: source-material changes refresh the actual
+unlit clones and their diffuse dependencies before replanning, rather than rebaking stale
+copies. Source-material removal makes that capture height-only until reconstruction.
+This supports these engine reconstruction/material/image routes; arbitrary live
+LAND record editing, near-mesh mutation outside reconstruction and load-order editing are
+not implemented by this cache. Weather/light changes need no rebake. Worldspace/session,
+interior, off and incompatible-resolution transitions cancel jobs and clear publications
+before receipts are accepted, even without a camera. Request IDs and visible publication
+revisions are separate from that epoch. Source asset events are consumed after
+`AssetEventSystems` and before receipt acceptance; conversion uses the result next frame.
+The ready line's historical `generation` field now names the visible publication revision.
+
+Colour resolution is 512 (default since round 10b), 1024 or 2048 per cell side, checked
+against the device's texture limit (level 0's width) and refused when it does not fit; an
+explicit 1024 or 2048 from the aid keeps its meaning. One RGBA16F atlas with its mip chain
+(`terrain_surface.rs::colour_bytes`) is about 24, 96 or 384 MiB (level 0 alone 18, 72 or
+288); front plus back at the default 512 is **about 48 MiB of colour** (36 without mips),
+against 144 MiB at round 10a's default 1024 without mips. A baking replacement also holds
+its single-level bake target (18 MiB at 512) until it commits or is cancelled, so a
+crossing peaks at about 66 MiB of colour at 512 (front, back and target), and a cancelled
+replacement's images retire with it; neither atlas nor target keeps a CPU copy any more.
+HDR render intermediates and retiring/extracted handles come on top. There is one active replacement,
+fresh destinations rather than recycling referenced images, readiness admission and
+cancelled-job retirement; rapid replanning cannot enqueue an unbounded allocation list.
+Readiness admission waits for the front's materials to settle, but never longer than 1800
+frames in a row (round 10a review, `SETTLE_FRAMES`): a candidate that can never be prepared
+cannot hold every later publication back; the replacement then starts with a
+`settlement wait expired revision=... frames=...` warning, so at most one allocation per
+1800 frames comes that way.
+*Colour filtering (round 10b)* [design: `nif_surface_bindings.wesl` `terrain_colour_lod`,
+`terrain_colour_taps`, `terrain_colour_mips`, `terrain_colour_footprint`; `terrain_surface.rs`
+`lookup_level_status`, `colour_read_taps`]: the colour read's level of detail is log2 of the
+larger of the fragment's two screen-axis footprints in level-0 texels (the continuous
+game-xy derivatives `nif_material.wesl` takes at the function's top level, before every
+branch, times the texels per game unit) plus the view's mip bias, clamped to the atlas's
+levels. The read takes the level below it and the one above with the fraction as its
+share, and mixes the two. Each level is filtered per cell (no texel of any level covers
+two cells), but the 3 by 3 atlas puts neighbouring cells' texels side by side, so a level's
+read is the plain bilinear footprint at the fragment's position: near an edge its taps are
+the cell's outermost texels and the neighbour's adjacent ones, on one grid as regular
+across the edge as inside a cell (round 10b review: round 10b clamped the read into the
+fragment's own cell, and since the two cells' edge texels stand for different places,
+a few units apart at level 0 and whole regions apart at coarse levels, even a smooth
+colour jumped at the edge, by a whole cell's average at the last level). The shader loads
+the four taps (`textureLoad`) and weights them itself. A tap counts when it lies inside the
+atlas, its cell is live-covered and the texel lies in a captured quadrant of that cell (a
+texel of a level with two or more texels per cell side covers one quadrant, the one its
+position names; the last level's covers all four); one that does not gets no weight and
+the others are renormalized. Where a whole neighbouring column or row is missing that is
+exactly the read clamped to the fragment's own cell, which with the missing-region border
+fade is the fallback at the region's edges; at a corner whose diagonal cell is missing the
+other three taps remain. At the last level, one texel per cell at the cell's centre, the
+read interpolates between the centres of valid neighbouring cells rather than taking one
+whole-cell average. The weights depend on the position and the taps' validity only, never
+on which cell the fragment is in, so the fragments on both sides of an edge between two
+valid cells read the same value: the colour is continuous there at every level and level
+of detail (`colour_reads_are_continuous_across_valid_cell_edges`, a linear ramp, which a
+bilinear read across valid cells returns unchanged). The colour is valid when, at each
+contributing level, the footprint holds a tap of the fragment's own cell and every own-cell
+tap lies in a captured quadrant (the tap holding the position always has at least a
+quarter of the weight); the cell's own live coverage is part of the height check. So a
+fragment whose footprint reaches an uncaptured quadrant of its own cell, at a level it
+reads, keeps the layers or no blend, and no texel of an uncaptured quadrant or uncovered
+cell ever gets a weight: never a darkened mix. There are still no gutters; beyond 4096
+units, and where a quadrant keeps the colour cache, geometric triangle normals remain the
+target.
+Round 10a's detail adds about 0.45 MiB of height atlas per publication (0.9 MiB front and
+back; whole atlases with detail rows: 0.66 MiB with smoothing off, 1.3 MiB at 2 x 2, 3.85 MiB
+at 4 x 4), 1600 bytes of index table per enabled clone and the palette's descriptor entries;
+the layer images are the landscape's own, not copied. Scorch is excluded: capture has no
+burn-map binding or synchronization, so full shading still differs through scorch,
+separately lit overflow layers (composed before lighting, above), shadows/occlusion and
+mesh geometry/coverage. The row stays height-8.
+
+**Test aid** `NVF_PLAY_TEST_MESH_BLEND=[band:]view[:shape[:resolution[:shading[:flat,steep]]]]`
+overrides the row for comparison runs and is not stored; a malformed value is refused in
+the log and the row decides. Omitted parts take the row's look.
+
+| Part | Values | Default |
+| --- | --- | --- |
+| band | positive finite number | 8 |
+| view | `surface`; diagnostics `weight` (blue 0 to red 1, unlit), `normal` (the ground triangle's game-space normal as `0.5 + 0.5 n`, unlit), `selection` (a lit green tint on converted shapes), `status` (unlit: magenta outside the region, red no height, orange the quadrant's colour not captured, cyan a bilinear tap rejected, green success brightening with the weight) | (required) |
+| shape | `height`; aid-only `penetration` (`1 - smoothstep(-2, 0, d)`), `hybrid` (v2: the band widened with the angle between the unperturbed mesh normal and the ground, from the flat width parallel to the ground ramping to the band at 5 degrees, the band from 5 to 35 degrees, ramping to the steep width at 75 degrees; the larger of that height band and the penetration term), `hybrid-v1` (round 5's orientation-gated band) | `height` |
+| resolution | `512`, `1024`, `2048` | `512` (round 10b; `1024` before) |
+| shading | `albedo` (colour only), `full` | `full` |
+| flat,steep | hybrid's widths, `flat <= band <= steep`; only with `hybrid` | `band / 16`, `6 band` |
+
+Old short forms keep working with these defaults (`24:status` is band 24, `height`, 512,
+full). `NVF_PLAY_TEST_MESH_BLEND_DETAIL=colour` (round 10a) keeps the colour cache alone for
+comparisons (any other value is refused in the log). Log lines: `mesh terrain blend: start
+band=... variant=... resolution=... noise=0 shape=... shading=...` then ` flat=... steep=...
+weight-version=2` for `hybrid` or ` weight-version=1`, then round 10a's resolved detail mode,
+` detail=layers` or ` detail=colour detail-reason=aid|device|no-device`; `colour atlas resolution=... atlas=WxW rgba16f colour-mib=... levels=...` (round 10b: the whole mip chain's MiB, rounded, and its level count);
+`backfill tracked-shapes=... convertible-shapes=...` as it turns on; an
+`assembly epoch=... request=... copied=... baked=... retained-origin=... destination-origin=... levels=...`
+line per replacement (round 10b: the levels copied per retained cell and filtered per baked one) and one `publication ...` line per commit (resident grids with each
+quadrant's capture path and colour mask, the
+excluded slots, a probe of the uploaded heights under the camera with its CPU lookup
+status (the colour cache's classification), `probe-normal` and `probe-detail-mask`, the
+image IDs, the resolution, then round 10a's ` detail=layers|colour palette-images=N
+palette-samplers=N detail-quadrants=N colour-quadrants=[(x, y):qN:reason;...]` naming each
+quadrant that keeps the colour cache with its reason, or ` detail=colour
+detail-reason=capability` without the capability); `ready eligible-shapes=...
+resident-cells=... generation=... variant=... shape=... resolution=... shading=...`, the
+weight fields, then the census (`stat-shapes`, `excluded-shapes`,
+`pending-material-shapes`, one `excluded-<reason>` count per reason, `admitted-blend`,
+`-bias`, `-decal`, `-mask`, `-alpha-cut`, then `scol-shapes`) and round 10a's ` detail=layers
+detail-quadrants=N` (the publication supplies layer detail) or ` detail=colour`, printed at
+each publication
+and refreshed at most once per 60 frames; `census-shape ref=... base=... model=... shape=...
+status=eligible|excluded first-reason=... reasons=... base-type=STAT|SCOL`, one per distinct
+base, shape and reason mask, at most 2048 a run; `stop restored-shapes=... tracked-shapes=...
+released-cells=... kept-producer-materials=...` (`restored-shapes` counts every converted
+shape back on an ordinary material, `kept-producer-materials` those that kept one a
+producer put on that frame); `idle materials-released=true` when the gate closes. A road without a `census-shape` line need not be untracked: the lines
+stop at 2048, a shape whose material is still loading waits for its line, and a line is
+printed once per base, shape and mask with the first reference seen, so a search by
+reference can miss it; the ready line's counts cover every resident shape.
+
+**Continuity test aid** [design: `terrain_surface.rs::continuity_probe`]:
+`NVF_PLAY_TEST_MESH_BLEND_CONTINUITY=start-seconds:duration-seconds` (`--play` only, on
+the same world-aid clock as LOOK/MOVE/SHOTS, `nvf-play/src/pause.rs`) arms only after an
+initial publication and prepared shape witnesses in the starting camera cell; duration is
+bounded to 120 seconds and 20,000 counted frames. It counts every subsequent main frame,
+checks retained unchanged witnesses using their actual enabled clone's origin, height and
+coverage, and checks render preparation acknowledgements. Frame lines are
+`mesh terrain blend: continuity frame=N camera-cell=... transition=BOOL pending=BOOL
+published=BOOL retained=N missing-enabled=N missing-prepared=N failures=N copied=N baked=N`.
+The final `continuity summary frames=N crossings=N pending-frames=N retained-lookups=N
+pending-retained-lookups=N unwitnessed-pending-frames=N replacements=N published-false=N
+missing-enabled=N missing-prepared=N failures=N copied=N baked=N settled=BOOL recentres=N
+pending-reversals=N` totals the full interval. Recentres count selected-centre changes;
+pending reversals count direction reversals when work was pending in the preceding probed
+frame. Pending includes atlas work, retirement and
+material readiness; settled requires the final publication's material switches to finish. `NVF_PLAY_TEST_MESH_BLEND_READY_DELAY=N` delays each
+new material's acknowledgement by at most 120 render frames for deterministic pending work;
+it changes no appearance controls. These CPU/binding checks do not prove rendered pixels;
+`mesh-terrain-blend-crossing` also captures before/during/after/settled frames for review.
+`NVF_PLAY_TEST_MESH_BLEND_CROSSING=<y>:<z>:<delay>/<x>[,...]` (round 10a, after the round-9b
+review: the go-to aid ran on the aids' elapsed clock and its 0.1-second pairs could fall in
+one frame) lets the probe drive the crossing on its own world clock after arming: a step
+puts the player's feet at game `(x, y, z)` `delay` world seconds after the previous step
+(after arming for the first), and each later step also waits until the probe has seen the
+previous step's recentre in a later frame with work pending in the current one, so every
+reversal lands on a distinct later frame while a replacement is pending; a step still
+waiting 10 world seconds after it was due goes anyway and counts as a timeout. Round 10a
+review: a step's replacement could be prepared and settle (the 120-frame readiness delay
+is one second at 120 frames per second) before a step with a 3-second delay came due,
+which would then wait for pending work that never came, up to its timeout. So, while
+steps remain, the blend materials first seen after a step are held unacknowledged until
+the driver issues the next step (`BlendReadiness::hold`, `mesh_terrain_blend.rs::acknowledgeable`):
+the step's replacement stays pending until then, whatever the next delay. Materials seen
+before a step (the retained clones among them) are never held, and nothing is held after
+the last step or the probe's summary; without the aid nothing is held. Lines:
+`continuity crossing step=N x=... y=... frame=N world-secs=... gated=BOOL pending=BOOL
+timeouts=N`, then `continuity crossing done steps=N timeouts=N`. The staging go-to before
+arming stays with `NVF_PLAY_TEST_GOTO`. Its rapid reversals move 384 units to either side
+of the boundary, beyond both hysteresis thresholds, with delayed material readiness; the summary requires at least four crossings
+and recentres, two reversals during pending work, and final settlement. Synthetic tests
+also count live images, meshes and capture materials across repeated cancellations and
+completion using Bevy asset retirement over real app updates (not just request replacement).
+Its boundary road-contact location remains a hypothesis until the main session runs it.
+
+**Height blending and anti-tiling** [design: `nif_surface_bindings.wesl::mesh_terrain_detail`,
+`terrain_surface.rs::ResolvedDetail::from_materials`, `bake_root`, `SurfaceCaptureMaterial::from_source`,
+`terrain_capture.wesl`; merge of upstream main f4dbc82f8, 2026-11-16]: §3.12 (`terrain-height-blend`,
+#2550) and §3.13 (`terrain-anti-tiling`, #2551) change the near landscape's per-pixel
+composition: the folded draw's layer weights and where every landscape texture is read. The
+blend reproduces both, so its detail and its colour cache match the near draw with either
+switch on, off or both; nothing falls back to the colour cache because of them.
+
+- *Detail.* The switches are read from the very materials the near draw uses, as their
+  pipelines select them: a folded base's `TerrainLayersKey` (height blending, with its
+  uniform's depth, gain and source, the start-up values of `NVF_PLAY_TEST_HEIGHT_BLEND`;
+  anti-tiling and its texture repeat), a single base's and each overflow layer's
+  `NifSurfaceKey::anti_tiling` and `terrain_repeat`. They travel in the quadrant's table
+  words (`DetailFeatures`: word 0 bits 4-6, words 28-31). With either on, the base draw is
+  composed as terrain.wesl's `TERRAIN_HEIGHT_BLEND` and `TERRAIN_ANTI_TILING` paths compose
+  it, with the same shared functions: `terrain_weights.wesl` (`terrain_ordered_shares`,
+  `terrain_height`, `terrain_height_weights`) and `terrain_sampling.wesl` (`terrain_hex3`,
+  the tap rule, `terrain_normal_tap`, `terrain_world_normal`). Anti-tiled, the layers are
+  walked last to first and read only where a share can be above 0, the heights use the global
+  reference always, and every anti-tiled read shares one footprint (the place in the world
+  over the repeat, then the base's transform) and one set of taps. The height reference is
+  placed as terrain.wesl's `height_reference_at` places it (transcribed; that function is
+  not in a shared module). Overflow layers mix in afterwards as before, anti-tiled where
+  their own material is; height blending never reaches them, as it does not in the near
+  draw. A quadrant whose anti-tiled draws do not share one repeat keeps the colour cache
+  (`anti-tiling-repeat`; terrain.rs gives them all `TerrainSettings::tile`).
+- *Colour cache.* The folded bake copy is a clone of the source material with
+  `TerrainLayersKey::surface_bake` beside the two switches, so terrain.wesl bakes the same
+  height-blended or anti-tiled colour (`SURFACE_BAKE` returns after every composition path).
+  A single-texture copy of an anti-tiled base or layer reads its texture anti-tiled too
+  (`terrain_capture.wesl` with `TERRAIN_ANTI_TILING`). The bake now draws its copies at the
+  cells' true world places (`bake_root`: the root moved to the publication's origin), so the
+  world lattice the anti-tiled reads hang on is the near draw's. Mip levels come from the
+  bake's own view (8 game units a texel at 512), as they always did there, so a local height
+  reference picks its level from that view [hypothesis: a small difference from the near
+  draw at the local source only, the default being global].
+- *Switching.* The rows flip the source materials in place (`terrain.rs::sync_height_blend`,
+  `sync_anti_tiling`); their Modified events make `terrain_surface.rs::refresh_captures`
+  read the detail's switches again and remake the bake copies, and the changed cells bake
+  and publish again, so both follow the rows while the game runs.
+
+**Cost**: GPU cost of round 9 is unmeasured (checks only, no game run). The bake is timed
+as the GPU span
+`nvf_mesh_terrain_bake` (Tracy's GPU zones and the `--log-frame-times` list,
+`terrain_surface.rs::bake_span`), from before the bake view's first pass to after its
+last. Its two timestamps go into command encoders of their own, queued at the two systems'
+places in the render order, so the span pairs the same with `NVF_PLAY_TEST_PROFILE_ENCODERS=1`
+(whose automatic `enc:<system>` span opens on a render context's own encoder) as without
+it. Retained rectangle transfers are submitted after that camera span and are not included
+in it. The lookup in the meshes' fragments shows in the main opaque pass instead. While the
+blend is on, the bake's receipts reach beyond the bake: from the first bake view on,
+`install_bake_receipts` wraps Bevy's `DrawMaterial` for every Opaque3d and Transparent3d
+draw, not only the bake's, and `reset_receipts` takes finished bake cameras out of Bevy's
+`SortedCameras` in each frame a bake view is in the render world (Bevy rebuilds that list
+every frame); `uninstall_bake_receipts` puts Bevy's own `DrawMaterial` back when the gate
+closes, and frame costs measured with the blend on include both.
+
+**Limits** [hypothesis where marked]: beyond 4096 units, and in quadrants that keep it, the
+colour cache may soften contact detail, and a footprint turning invalid at a missing corner
+can make a narrow transition [hypothesis]; there geometric triangle normals, not the
+landscape's normal maps, are the shading target, so faceting can show [hypothesis]; a
+quadrant on the colour cache beside one with layer detail can show a boundary
+[hypothesis], including the quadrants refused as `sampler-mismatch` or `overflow-material`
+(round 10a review: the palette carries neither per-layer samplers nor the overflow
+layers' material colour, alpha and transform, so those quadrants are refused rather than
+approximated); the detail's distance thresholds are initial choices for play-test review,
+and its GPU cost (texture bandwidth, descriptor entries) is unmeasured; the visual
+acceptance (gravel frequency and mapped-normal response at the close road shoulder at
+1920x1080, grazing views, layer boundaries, the 2048-4096 transition, publication
+crossings) needs the main session's frames, which logs and naga do not prove; shadows, occlusion and the separately lit layer draws still differ from
+the landscape's own lighting; admitted Blend and decal shapes near the ground (glass,
+markings) take the landscape's colour; buried visible surfaces take its look; the census
+scans every tracked shape in each frame the full pass runs (only its line is limited;
+streaming cells, fades and material edits on tracked shapes run it); rigged STATs and SCOLs drawn while the blend was off are not counted until their
+cell is drawn again (they never convert); the colour-coded `excluded` view was not built.
+
+**Tests and smoke**: `nvforever` test filters `mesh_terrain_blend` (switching off during a
+texture swap, a fade and an override: `switching_off_during`), `terrain_surface` (round 10a:
+`palette_admits_whole_quadrants_in_order_and_refuses_overflow`,
+`colour_only_publications_carry_no_detail`,
+`crossing_steps_wait_for_the_seen_recentre_and_pending_work`; round 10a review:
+`delayed_steps_find_the_previous_work_still_pending_after_it_prepared`,
+`samplers_the_detail_does_not_reproduce_keep_the_colour_cache`,
+`overflow_material_edits_keep_the_colour_cache_until_reproducible_again`,
+`settlement_guard_waits_but_never_forever`; second review round:
+`a_textureless_survivor_never_restores_a_removed_sampler_representative`,
+`removed_images_never_leave_the_replacement_waiting_on_an_unpreparable_draw`; third review round:
+`a_normal_map_added_back_restores_the_detail_once`,
+`a_normal_map_loaded_late_ends_up_with_detail`; round 10b:
+`colour_mips_validate_every_contributing_level`,
+`mip_dispatch_covers_each_baked_cell_and_no_more`,
+`copy_only_replacements_draw_nothing_and_copy_every_level`; round 10b review:
+`colour_reads_are_continuous_across_valid_cell_edges`,
+`coverage_drops_unloaded_diagonal_taps_and_rejects_invalid_quadrants`), `mesh_terrain_blend` (round 10a review:
+`removed_palette_image_keeps_retained_clones_drawable_and_the_replacement_publishes`; the
+change-driven pass: `the_full_pass_runs_only_in_frames_where_an_input_changed`,
+`a_pending_replacement_keeps_the_pass_running_until_it_is_usable`,
+`a_deferred_census_report_comes_from_quiet_frames`,
+`a_coverage_change_restricts_retained_clones_and_runs_the_pass`,
+`a_kept_out_shapes_animated_copy_runs_no_pass_until_its_marker_goes`,
+`an_allowed_shapes_source_alpha_edit_runs_the_pass`,
+`the_verify_aid_runs_skipped_frames_and_reports_a_missed_change`),
+`terrain::tests` (round 10a: `detail_capture_reconstructs_the_drawn_triangles`; second
+review round: `an_initially_rejected_overflow_capture_recovers_when_the_edit_is_reverted`;
+height blending and anti-tiling: `the_mesh_blend_detail_composes_as_the_near_draw_with_and_without_the_switches`
+(a CPU mirror of the detail against the module's mirrors of terrain.wesl, every switch
+combination and both references), `the_detail_reads_the_switches_from_the_materials_drawn`,
+`the_switches_reach_the_detail_and_the_bake_copies_while_the_game_runs`),
+`mesh_blend_shader_tests` (round 10a:
+`shader_detail_transcribes_the_mesh_triangles_and_the_record_layout`; round 10b:
+`colour_mip_filter_validates_and_reads_only_its_cell`; height blending and anti-tiling:
+`shader_detail_composes_height_blending_and_anti_tiling_as_the_near_draw`, and the naga
+compositions of the blend with the shared modules, of terrain.wesl's bake with both switches
+and of the anti-tiled single-texture capture), `graphics::tests::mesh_terrain_blend`,
+`settings::tests::the_mesh_blend_row`, `texture_swap`, `nif_mirror`, `fade`,
+`draw_distance`, `door_fade`, `effect_shaders`, `shadow_thin`; `nvf-assets`
+`nif_surface_blend::tests` (round 10a: `detail_layout_fits_the_height_atlas_and_round_trips`,
+`detail_quadrant_words_name_folded_and_overflow_overlays`, with the switches' words), `nif_material::tests`;
+`nvf-play` `settings_layout`, `fade`. Smoke: the `mesh-terrain-blend-*` scenarios, round 10a's
+`mesh-terrain-blend-detail-colour` (the aid's colour fallback) among them.
+The WGSL is composed and validated by naga in the tests, not executed. Smoke:
+`mesh-terrain-blend-crossing` (retained witnesses, pending work, replacement and zero
+publication/material/lookup outages), `mesh-terrain-blend-setting` (the row on from the
+command line), `mesh-terrain-blend-live`
+(on and off from the settings page, then the gate closing), the verify aid's
+`mesh-terrain-blend-verify-crossing`, `-verify-live` and `-verify-terrain-switches` (the
+gate's skipped frames change nothing), the aid's `mesh-terrain-blend-goodsprings`,
+`-options` and `-widths`; `graphics-enhanced` checks that the enhanced look neither turns
+it on nor logs it.
+
+### 3.15 Heat haze at distance (`heat-haze`; a prototype, off in both presets)
+
+[design] **A prototype**, an addition of NVForever's own for the enhanced look: not a fact
+about the original game and never used to explain a difference from it. Off by default and
+in no preset, `--graphics enhanced` (`Graphics::preset(Preset::Enhanced)`) included (a test
+checks it); only the settings page's `enhanced` row went with the menu overhaul. The row
+"Heat haze (experimental)" (Graphics > Lighting and Effects) or `--graphics-only heat-haze`
+turns it on. Code: `heat_haze.rs`, `heat_haze.wesl`.
+
+- **What.** The shimmer over hot ground in the distance: on a hot, clear day the far ground
+  band near the horizon is moved a little, mostly up and down, by a slowly rising pattern
+  that drifts sideways with the weather's wind. Easy to overdo, so slight.
+- **Technique.** Screen-space refraction: the picture read again at a place offset by a
+  perturbation, with a mask so that what stands in front does not leak into the refracted
+  read, as T. Sousa describes it in "Generic Refraction Simulation", GPU Gems 2 (2005),
+  ch. 19 [documented: cited publication]. The perturbation is two layers of lattice value
+  noise (Ebert et al., "Texturing and Modeling: A Procedural Approach", lattice noises
+  [documented: cited publication]) written in the shader: an integer hash of each cell
+  (odd multipliers chosen at random), smoothstep-interpolated, repeating every 64 cells so
+  the CPU keeps the scroll within one period without a seam. No texture and nothing of the
+  game's data; no code taken from any source.
+- **Where in the frame.** One full-screen pass on the main camera (`PostProcess`) after the
+  temporal resolve (the game's TAA after tonemapping; FSR and DLSS in `EarlyPostProcess`),
+  after the ambient occlusion and the sun shafts, before bloom and sharpening and the game's
+  image-space blur and grade. A distortion before the resolve would move pixels the motion
+  vectors do not describe, and smear. It reads the picture and the depth prepass only, and
+  writes neither the depth nor the motion vectors. Both upscalers expand their render-size
+  depth to the display size by nearest texels and copy it back over the prepass depth
+  before this pass (`upscaler/prep.rs` `expand_depth`, run by `fsr_pass` and `dlss_pass`
+  alike), so under FSR and DLSS the mask reads a display-size depth; with multisampling it
+  reads sample 0, as the ambient occlusion does. DLSS frame generation and FSR's frame
+  generation take their frame without the HUD after `PostProcess`, before the UI
+  (`dlss/frame_gen.rs` `tag`, `frame_gen.rs` `capture_hudless`): that copy includes the
+  shimmer, while the depth and motion they are given do not move with it.
+- **What is never distorted.** The HUD, menus and the pause page are Bevy UI drawn after
+  `PostProcess`; the Pip-Boy's screen and a 3D scope's lens are other cameras drawing into
+  textures shown on first-person shapes, and the pass is only on the main camera. The
+  first-person arms, weapon and Pip-Boy are drawn with their depth squeezed into the nearest
+  share of the range (nvf_assets `first_person_depth.wesl`): read raw they lie within 1.02
+  times the near plane's distance, so the distance mask covers them; near things are nearer than the mask's
+  start. A pixel with a near direct neighbour is not moved (the anti-aliased fringe of the
+  weapon or a near post), and a displaced read is not taken when any of the four texels of
+  its bilinear footprint is nearer than 6,000 units (the pixel keeps its colour), so near
+  outlines never bleed into the far shimmer. The exception: blended shapes that are not in
+  the depth prepass (a muzzle flash, particles, glass) over the far band are moved with what
+  lies behind them, by up to the amplitude.
+- **The mask** (per pixel): distance along the view ray from the depth prepass (reverse
+  infinite depth: view depth = near / depth): none nearer than 6,000 units, full from
+  25,000 (smoothstep); the view ray's elevation: full from 6 degrees below the horizon to
+  0.5 above it, gone at 4 above (the sky just above a far ridge may shimmer a little, the
+  upper sky never) and at 15 below (a steep view down crosses little hot air); the sky dome
+  itself (beyond `SKY_DEPTH_FROM`) at half.
+- **The displacement.** Up to 1.5 pixels at 1080 lines at strength 1 and full mask, scaled
+  with the picture's height; the horizontal part 0.35 of the vertical. Two layers (36 x 100
+  and 85 x 230 cells per picture height, weighted 0.65 and 0.35), rising at 0.012 and 0.02
+  picture heights a second, drifting sideways at 0.04 picture heights a second times the
+  wind's strength along the screen's horizontal (`tree::wind_vector`, which follows
+  SetWindDirection), and moved with the world as the camera turns. Time is the game's clock
+  (`Time<Virtual>`), so a paused game holds still. One bilinear read of the colour where it
+  moves and the pixel's own colour; the pixel's depth everywhere, its four neighbours' and
+  the read's four only where the mask is above 0; no blur. When the largest displacement
+  (strength x amplitude x the debug multiplier x the picture's height) would be under 0.05
+  pixels the pass does not run.
+- **What follows the weather** (`heat_haze::sky_heat`, a pure function of the live
+  `SkyState` every frame, unit-tested; the weather records hold no temperature):
+  strength = sun x weather, held to 0..1, finite.
+  - Sun: smoothstep(0, 8 degrees) of the elevation now x smoothstep(10, 50 degrees) of the
+    elevation an hour earlier (the ground is hottest after noon): none at and below the
+    horizon.
+  - Weather (each weather's own share, blended from the one fading out to the one fading in
+    with the sky's fade, so a transition never pops; a scripted SetWeather or ForceWeather is
+    followed the next frame): none in a weather classified Rainy or Snow or with the Rainy
+    flag; a weather classified Cloudy keeps 0.2 (for mods and the Fallout 3 leftovers: no
+    New Vegas weather is); the brightness of the weather's sunlight colour at the hour (WTHR
+    "sunlight", Rec. 709 luma of its bytes as display values): none up to 0.15, full from 0.6
+    (NVWastelandClear's day sunlight 255, 227, 170 gives 0.90, NVWastelandHazy's 0.95,
+    HVDustStorm's 0, 0, 0 gives 0, so the storm is off by its own data); the weather's own
+    fog share at 25,000 units by the curve the fog shader draws (((d - near) / (far -
+    near))^power, the span held to at least 1, a power not above 0 read as 1; `--fog` in its
+    place, linear): full up to 0.6, none from 0.88; the wind (WTHR DATA wind speed / 255):
+    full up to 0.25, none from 0.45 (most weathers store 50, the dust storm 127).
+  - The records' day fog share at 25,000 units [observed: FalloutNV.esm, fnvtool esm decode,
+    2026-11-17; the curve: our arithmetic]: NVWastelandClear 0.29 (0.35 with its night
+    power), NVHooverDamWeather 0.44, NVWastelandGS 0.46, NVWastelandBorders 0.52,
+    NVWastelandClearEast and NVColoradoRiverWeather 0.58, NVSearchlightWeather2 0.73,
+    NVWastelandHazy 0.89, HVDustStorm (far 0) 1.0: every clear-ish weather keeps its full
+    share, the searchlight weather loses some, the hazy weather and the storm keep none.
+  - **The base game's overcast is not weakened.** NVBlackMountainWeather, which looks
+    overcast, is classified Pleasant like the clear weather, has the same four cloud layers
+    (three of them the transparent placeholder `sky\alpha.dds`, as every New Vegas weather
+    looked at has) and the same sunlight and ambient colours; only its fourth cloud texture
+    and its fog colour differ [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17]. So
+    neither the classification nor the layer count can tell it from clear (an earlier
+    version that counted layers cut every base weather to 0.64). Cloud cover has to come
+    from the cloud textures' own alpha: the composed cloud cover of #2904 (now on main)
+    is to go in `weather_heat`, a follow-up.
+  - None indoors. Values outside the base game's ranges (fog far 0 or a million, huge or
+    negative near, power 0, wind 255, no cloud textures, values that are not numbers) give
+    a strength within 0..1 (tests). With the strength 0 the pass does not run.
+  It only adds to the picture the weather's own fog and colours made, and the haze in that
+  fog bounds it: the hazier the weather, the less shimmer.
+- **Log.** `heat haze: on, strength <s>, at most <p> px (sun <a>, weather <b>)` (or
+  `(indoors)`; `, pass skipped` after the pixels when they are under 0.05) when it turns on,
+  and `heat haze: strength <s>, ...` when the strength moves by a tenth, reaches or leaves 0
+  or crosses the skip; never per frame. The render side logs once, when the pass first
+  draws: `heat haze: pass drawn (<w>x<h>, multisampled depth yes|no)`. GPU time: the
+  `nvf_heat_haze` span (`--log-frame-times`).
+- **Debug aids** (development tools: they do not make a run unattended):
+  `NVF_PLAY_DEBUG_HEAT_HAZE=<multiplier>` scales the amplitude (0 to 10),
+  `NVF_PLAY_DEBUG_HEAT_HAZE_VIEW=mask` draws the mask times the strength as a grey picture,
+  `NVF_PLAY_DEBUG_HEAT_HAZE_FORCE=1` holds the strength at 1 in any weather; each logs a
+  `debug switch` line when it is set.
+- **Smoke.** `heat-haze` (Goodsprings at noon under NVWastelandClear: a strength above 0,
+  the pipeline ready and the pass drawn, no shader or rendering error) and
+  `heat-haze-interior` (strength 0 indoors).
+- **Measured** [observed 2026-11-18, PR #2977: Goodsprings start view at 13:00 under
+  NVWastelandClear, 2560x1440, sun shadows on, `--no-actors`; median of five 4-second
+  periods, two rounds, on the contributor's machine]: with the row off the frame time
+  matches main's (3.09-3.10 ms against 3.11-3.13); on at full strength +0.10 ms a frame,
+  the pass 0.09 ms on the GPU. With the row off the pictures match main's to within what
+  two runs of main differ by; the mask-alone pictures show it under the clear weather and
+  none under the hazy weather, the dust storm or at night.
+- **Not done.** The sky band's height above a ridgeline (about 4 degrees at half weight)
+  and the strength are starting values judged by eye in play at half, full and double
+  strength; the other constants are choices by reasoning. No temperature or ground
+  material is read (no record holds one); the base game's overcast keeps the clear
+  weather's strength until the composed cloud cover of #2904 (now on main) is read in
+  `weather_heat`, a follow-up; the pattern lies on the screen and follows turns, not the
+  world's depth; a mirage (the sky refracted into the ground) is not attempted. Not
+  measured: a slower GPU, 1920x1080, a weather mod.
+
+### 3.16 Desert haze (`desert-haze`; off in every preset)
+
+[design, #2675] An addition of NVForever's own, an engineering choice for the enhanced look:
+not a fact about the original game, never a parity item, and never to be used to explain a
+difference from the original's frames. Issue #2675 asked for "exponential height fog in low
+ground" pooling in basins at dawn, as part of `enhanced`; the Mojave has dust and haze, not
+mist, so it was reframed (on the issue): a **thin dust haze that thickens with distance and
+toward the ground, far ridges fading in layers, warmer toward the sun**, outdoors only, as
+far as the shown weather's own fog leaves room for it. The `enhanced` row the issue named no
+longer exists (the settings menu overhaul); the haze is a row of its own, "Desert haze
+(experimental)" under Graphics > Lighting and Effects, off by default and in every preset.
+
+- **Technique.** Exponential height fog: the density falls as e^(-k y) with the height y
+  above a base height, integrated in closed form along the view ray from the camera to the
+  fragment: optical depth = density x L x (e^(-k y0) - e^(-k y1)) / (k (y1 - y0)), with the
+  limit e^(-k (y0 + y1) / 2) where the two heights are within 1e-3 / k (2.7 units); share =
+  1 - e^(-depth). y0 and y1 are the camera's and the fragment's own heights; only the length
+  L is held to the reach (below), so for a fragment at a given height the share never falls
+  with distance. The sun's forward glow is a power of the cosine between the view ray and
+  the sun. Both as Inigo Quilez describes them in "Fog"
+  (<https://iquilezles.org/articles/fog/>, the article Bevy's fog shader also cites)
+  [documented: cited article]; our own code from that description, no code from any other
+  project. Not a volume: Bevy's volumetric fog was dropped in 2026-10 (§4).
+- **Where it sits.** Per fragment, in the world shaders' fog path, no pass of its own, so it
+  covers everything the weather's fog covers (NIF materials, terrain, trees, grass, water,
+  the distant LOD, transparent things) under every anti-aliasing and upscaler. Bevy's fog
+  function gets only the distance; its caller `apply_fog` (bevy_pbr `pbr_functions.wesl`)
+  has both positions. `haze.rs` `haze_edits()`, a list of its own beside lights.rs's lighting
+  edits, puts `nvf_haze` before `apply_fog` and passes its result to the atmospheric fog
+  call as the `scattering` argument, which Bevy reads only while the fog's directional
+  light alpha is above 0 (never set here); only that call line changes. fog.rs `GAME_FOG`
+  then blends the haze and the weather's fog **once**, in display values as the fog is
+  blended outdoors: total share 1 - (1 - fog)(1 - haze), the colours weighted as the haze
+  seen through the weather's fog (the same as mixing the haze first and the fog over it), so
+  nothing is darkened twice. Interiors (the linear blend) are untouched.
+- **Carried in the fog uniform's free fields** (the view bind group does not grow): `bi.z`
+  the density at the base height (0 is off), `directional_light_exponent` the base height,
+  `directional_light_color.rgb` the colour toward the sun, its alpha 0. Bevy reads those
+  two fields only when that alpha is above 0 (its fog in-scattering, §4), so they were free.
+  The shader's constants (k, the floor, the reach, the sun's power) are written into its
+  text from `haze.rs`'s Rust constants when it is patched: one place.
+- **Off is as on main.** With the switch off the density is 0, `nvf_haze` returns the
+  argument it was given (vec3(0)) and `GAME_FOG` runs its old two lines: the same picture.
+  The edits are made at the start whatever the switch, with no log line, so the log is as
+  on main too. Both edits fail safe: if Bevy's text is not as expected the edit is not made
+  (an error line), Bevy's shader stays, and the haze stays off; either edit alone changes
+  nothing (no function signature changes).
+- **What follows the weather** (from `SkyState` every frame, through weather fades, so
+  scripted SetWeather/ForceWeather, transitions and the hour show at once and without a
+  pop; no weather names, no hour table, no per-weather result kept):
+  - *Weight* (0..1): the weather's own fog share at 50,000 units with its near, far and
+    power as the fog uniform has them; full up to a share of 0.5, falling smoothly to none at
+    0.85; times the fog's strength (a fade into or out of no fog). From the fog numbers only:
+    continuous, never rising as the fog gets nearer or denser. NVWastelandClear (0..200,000,
+    power 0.6 by day, 0.5 by night) has 0.44 and 0.5: full. NVWastelandGS (10..120,000, 0.5):
+    0.63. NVTheStripWeather (2,000..200,000, 0.35): 0.77. NVWastelandClearEast (0..100,000,
+    0.4): 0.17. Any fog that is full at 50,000 (NVWastelandHazy 1,800..30,000) and
+    HVDustStorm get none [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17]. HVDustStorm's day fog 0/0 is no range, so the renderer shows its night fog
+    510..55,000 power 1.0 all day (`Weather::fog_at`): share 0.91 at 50,000, none.
+  - *Reach*: the extinction length at the base height is 0.9 x the fog far and the length
+    counted is at most 0.5 x the fog far, so the optical depth stays under 0.56 (43 %)
+    along the base height at normal wind, and at most 2 x 1.25 times that (1.39, 75 %) with
+    the strongest wind and below the base (times the debug multiplier), whatever the far: a
+    mod's far of 1,000,000 gives a haze five times thinner, not a wall, and the distant LOD
+    keeps its shapes.
+  - *Wind*: x(1 + 0.25 (wind - 50) / 50), held to 0.75..1.25 (the base game's weathers
+    nearly all store 50; a wind of 255 gives 1.25 times). Blended across a fade.
+  - *Colour*: the fog colour the weather's fog uses now (`SkyState::color(ColorType::Fog)`), moved
+    toward the weather's sunlight colour by up to 0.4 looking into the sun, by the cosine to
+    the sun to the 8th power (Bevy's own default for its fog's directional light; the two are
+    `haze.rs` `SUN_MIX` and `SUN_POWER`, one line each); the sun
+    term grows in as the sun climbs from the horizon to 4° and is nothing at night. The
+    sun's direction is the view's first directional light (the sun; the first-person arms'
+    shade light is its child and points the same way). No colour of our own.
+  - *Base height*: the landscape under the camera (the cells' stored LAND heights, decoded
+    once and kept for the last four cells), followed over 2 s, at once after a jump of a
+    cell. Where the worldspace has no LAND under the camera the stand-in is 128 units below
+    the camera, followed over 20 s, so it does not climb onto roofs with it. Below the base
+    the density grows no further than 2 times (1,893 units down), so basins far below a
+    ridge haze over without turning white.
+- **Chosen values** (by eye, for the user to judge from pictures; constants at the top of
+  `haze.rs`): at a clear noon, the camera on foot and a fragment at its height, the haze
+  alone is 10 % at 20,000 units and 27 % at 60,000 (the starting values asked for were
+  10-15 % and 25-35 %; the weaker end chosen); 3,000 units above the base a third of the
+  optical depth.
+- **Weather and mods** [design]: values outside the base game's ranges are tested as data
+  (fog far 0 and 1,000,000, near above far, power 0 or below, NaN, wind 0 and 255): no NaN,
+  no negative values, no division by zero, the weight monotone.
+- **The sky and the horizon.** The sky dome and clouds are drawn without fog (`sky.wesl`);
+  the dome's horizon band takes the weather's horizon colour (`sky.rs` `dome_color`), the
+  fog the fog colour. The haze is continuous in distance and has no edge of its own, so it
+  adds no seam at the horizon or at the LOD boundary; far land fades further toward the fog
+  colour, so where the fog colour and the horizon colour differ, the edge between land and
+  sky that main already shows stays (stronger or weaker by how far apart they are). The sky
+  is unchanged with the switch on or off. A follow-up could move the haze's colour toward
+  the dome's horizon colour at low view angles (a sky-side change: the horizon colour is not
+  in the fog uniform).
+- **Not done**: no pooling in low ground by the hour (the issue's dawn fog), no noise or
+  drifting dust, nothing indoors, no shadowing of the haze by terrain (Bevy's fog
+  in-scattering fetches a shadow map per fragment; §4). No land from a parent worldspace:
+  NVForever draws each worldspace's own LAND only (worldspace.rs), so a city worldspace's
+  cells without LAND (the Strip, Freeside) take the slow stand-in above, which follows the
+  camera's height over 20 s instead of the ground.
+- **The water reflection** (left as it is): the reflection camera clones the main camera's
+  fog (`reflection.rs` `update_reflection`), so the planar reflection's haze is worked along
+  the mirrored ray from the camera mirrored below the water. Its length is the real
+  reflected path's, and its far part (water to fragment) lies at the real heights, but its
+  near part (camera to water) lies at heights mirrored below the water, so far below the
+  base that the density there is at the floor's 2 times. From a camera high over a lake a
+  reflected ridge gets up to about 1.4 times the haze its real path would. The main
+  view then fogs the water surface over the camera-to-water distance again, as it does the
+  weather's fog on main. A fix needs the water height in the haze (fold the heights at the
+  water), which the fog uniform has no field for; a base height worked for the reflection
+  camera alone would make the far part too thin instead.
+- **Switching**: the row, `--graphics-only desert-haze`, a `--graphics-cycle` set
+  `desert-haze`, `NVF_PLAY_TEST_SETTINGS=<t>:desert-haze`. Switching changes no pipeline
+  (only the uniform), so nothing compiles. Log lines: `haze: desert haze on: <weather>:
+  weight <w>, wind x<f>, <a> % at 20,000 units and <b> % at 60,000 on the base height,
+  reach <r>, base z <z>`; the same figures again (as `haze: <weather>: ...`) when they move
+  notably (weight by 0.1, density by a quarter, another weather), not during a time-lapse;
+  `haze: desert haze off` (`... off indoors` on going in). Debug aid
+  `NVF_PLAY_DEBUG_DESERT_HAZE=<multiplier>`: the density times that (1 as designed; 0 to
+  100), logged once when the haze first turns on; it does not turn the switch on. Smoke:
+  `desert-haze` (switched on and off at Goodsprings at noon). The fog call is patched
+  into Bevy's `apply_fog` at start for every player, row on or off; if Bevy's text no
+  longer matches, one `warn!` line says so and the row does nothing (the fog stays
+  Bevy's).
+- **Measured** [observed 2026-11-18, PR #2976: Goodsprings start view at 13:00 under
+  NVWastelandClear, 2560x1440, sun shadows on, `--no-actors`; median of five 4-second
+  periods, two rounds, on the contributor's machine]: with the row off the frame time
+  matches main's (3.09-3.10 ms against 3.11-3.13), on +0.03-0.04 ms. With the row off the
+  pictures match main's to within what two runs of main differ by (pixels more than 2
+  levels apart, HUD masked: the street at noon 0.34 % against 0.30 %, at 18:30 0.61 %
+  against 0.41 %, an interior 0.002 % against 0.002 %); with it on, NVWastelandHazy,
+  HVDustStorm and an interior stay as with it off (0.0-0.1 %). Pictures against main
+  (1920x1080): from the air over Goodsprings at 12:00 looking north-east, at 18:30 west,
+  at 06:30 east, under the overcast and the hazy weather, and the street, in the PR. The
+  cost is not measured on a slower GPU or at 1920x1080.
+### 3.17 ALC shadows (`light-shadows`; off by default, not part of `enhanced`)
+
+**Name.** ALC stands for All Lights Cast. The row was called Lamp shadows until
+2026-11-19 (renamed, [design, #3074]); the INI key `light-shadows`, the switch
+`--light-shadows`, the log lines starting `light shadows:` and the smoke scenarios'
+`light-shadows-*` names keep the old name, so saved settings and the scenarios still match.
+"Lamp shadows" below, in older notes, is the same feature.
+
+[design] An addition of NVForever's own. The original's placed lights cast no shadows, and
+no LIGH of the masters sets the Spot Shadow flag [observed:
+docs/handoff/esm-data-audit-2026-10-25.md, item 6], so lamps light the rooms behind their
+walls. The row ALC shadows (Graphics › Shadows; `--light-shadows[=performance|quality|off]`)
+offers Off, Performance or Quality, as the Sun shadows row does
+(`engine/nvforever/src/light_shadows.rs`). It is built as the sun's shadows are ([design, #3074],
+2026-11-18: "look how sun shadows are calculated and do the same", "use the same
+performance optimizations also for the lamp shadows").
+
+**With the row Off.** Nothing of the ALC shadows runs and the renderer's paths are
+upstream's [design, #3077 review: "gate what you can behind the row"]. The game's systems
+(`shadow_lights`, `classify_casters`, `watch_map_textures`, `skip_fixtures`, the caster grid,
+soft edges and contact shadows) have the run condition `light_shadows::live`: they run while
+the row is on and for 3 frames after it is switched off (or from the start with it off),
+which is enough to switch every lamp's maps off, give back the soft edges, the contact
+shadows, the casters' lists and the point lights' cube side, and hand the renderer an
+inactive hold. The vendored bevy_pbr takes an inactive `HoldLightShadowMaps` (`active`
+false) as no hold, so every patched point and spot light path is upstream's: no slots, no
+held faces, no static cache, no kept phases, no cached shadow views (the sun's cascades'
+included), the hidden lights' views as upstream, no counts or timers
+(engine/vendor/README.md). Switched on again, every shape not yet marked dynamic is looked
+at once (shapes spawned while it was off), and every light's shadow views are made again.
+What stays in every build: the shaders' slot and fade bits (0 with the row Off: upstream's
+layer, full strength) and Bevy's `experimental_pbr_pcss` feature, a compile-time switch
+whose PCSS path a light takes only with soft shadows, which only the ALC shadows give
+(docs/design/dependencies.md).
+
+**First version (dropped the same day).** It used a budget of the 2, 4 or 8 lights that
+scored highest on brightness × (range / distance)². A playtest [design, #3074]: "The shadows pop in
+only when you are very close". Among the saloon's 24 lights, a lamp across the room cast
+nothing until it beat the nearest ones. It was also costly: each shadowed point light cost
+about 1 ms of frame time, most of it on the CPU. Each of a point light's six cube faces is
+a view of its own, and each such view runs Bevy's whole Core3d schedule (culling,
+preprocessing, indirect parameters, its pass), unlike the sun's cascades, which ride inside
+the camera's. Holding the maps with the views kept alive did not fix that: Bevy still
+culls, extracts and queues every face view every frame.
+
+**How it works now.**
+
+- **Which lights: by distance, as the sun's shadows.**
+  - Every drawn placed light casts if its light reaches within the sun's shadow distance of
+    the camera (`SkyState::shadow_distance` × `shadow_reach`: the Shadow distance and
+    Longer sun shadows rows; 0% casts none). Nearest first, measured to the edge of each
+    light's range.
+  - At most 32 lights on Quality and 16 on Performance, a cap for the Strip at night.
+  - Lights are not chosen by view. A light behind the camera keeps casting, so turning
+    around draws nothing anew.
+  - A light already casting keeps its place against one up to 1.25 times nearer (`KEEP`).
+- **Held maps, view-less** (a patched bevy_pbr, engine/vendor/README.md "held light shadow
+  maps").
+  - A point light's cube, or a spot light's map, is drawn when the light starts casting,
+    then kept.
+  - Between draws the light's maps are switched off for Bevy (`shadow_maps_enabled` false:
+    no views, culling or queueing). The patched renderer still sets its shadow flag and
+    samples its cube once all six faces hold what that light drew into this texture, or
+    its spot map once its layer does.
+  - Each light keeps a slot while it casts: a point light a cube of the cube texture, a
+    spot light a layer of the sun's shadow texture past the sun's cascades. Its GPU flags
+    carry the cube or layer (bits 16..23), so other lights coming and going do not move its
+    maps. Bevy put a spot light's map at its index among the shadowed spot lights, which
+    moved whenever another one started or stopped casting.
+  - Each texture keeps room for its slots, grown in fours while a mode stays on. The spot
+    lights' room also counts the other shadowed spot lights (the flashlight, which takes a
+    free slot of its own), so switching the flashlight on or off does not make a new
+    texture.
+  - A texture made anew holds no light's maps: the cube texture when its room grows or the
+    Shadow resolution row changes, the sun's when its side, the spot room or the sun's
+    cascades change (sun shadows on or off). Its lights then draw again as if new (first,
+    fading in); those fading out are dropped. The renderer never samples a layer another
+    light, the sun's cascades or another texture drew last.
+- **Redrawn where something changed.**
+  - A face is marked when, since it was drawn, a shadow-casting shape with its bounds in
+    that face moved, appeared, or was shown or hidden. A skeleton (actors, the player's
+    body) whose joints' box moved also marks the faces it reaches. The light itself marks
+    all its faces once it is more than 8 units (about 11 cm) from where its maps were last
+    marked or drawn in full (`LIGHT_MOVE_EPS`) [engineering choice, 2026-11-18: a light
+    an animation or script sways by a few units is not drawn again each frame].
+  - Shapes and skeletons count as moved once they are 4 units (about 6 cm) from where
+    they last marked (`MOVE_EPS`). Small moves add up until they reach it.
+  - Something removed (a taken item) marks the lights around the camera in full.
+  - Every light is redrawn in full every 600 frames on Quality and 1,200 on Performance
+    anyway, each at its own time.
+- **Staggered, as the sun's cascades.**
+  - A light with marked faces is switched on to draw them on every frame on Quality (every
+    2nd on Performance) while its light reaches within 1,500 units of the camera (`NEAR`).
+    A farther one draws every 2nd frame on Quality and every 4th on Performance. Each
+    light takes its turn on frames of its own.
+  - At most 3 lights (point or spot) are switched on in a frame on Quality, 1 on
+    Performance. Lights that never drew go first, then the nearest; the rest wait.
+  - Of a light switched on, only the marked faces are drawn; the others keep their maps.
+    A light that has never drawn casts nothing until it has.
+  - Only a light the camera saw the frame before is switched on; an unseen one keeps its
+    marks. A transient light (below) instead counts as seen when its light reaches into
+    this frame's view.
+  - Spot lights (few among the placed ones) are held view-less as the point lights are
+    (2026-11-18; before, they kept their maps switched on, their views alive, while they
+    cast). Switched on only on the frames their map is drawn, they count against the same
+    budget.
+- **Fading** (`FADE_SECS`, 0.3 s of real time [engineering choice: no popping when a light
+  comes into range, leaves it or is swapped at the cap; short enough that a light coming
+  into range shows its shadow at once]).
+  - A light's shadow fades in once its maps were first drawn.
+  - A light no longer chosen is not dropped at once: it stays held (slot kept, nothing
+    drawn, nothing marked) while its shadow fades out, then is dropped. While fading out it
+    does not count against the caps (`Tuning::lights`, `Tuning::transients`). Chosen again
+    meanwhile, it fades back in from where it was and is redrawn in full on its turn.
+  - A light despawned is dropped at once. Transient lights do not fade: a muzzle flash
+    lasts about a tenth of a second and shows its shadow in full at once.
+  - The renderer gets each fade below 1 (`HoldLightShadowMaps::fade`) in bits 24..31 of
+    the light's flags (`255 - round(fade × 255)`, so 0 is full strength for every other
+    light) and takes `mix(1, shadow, fade)` in shadows.wesl's `fetch_point_shadow` and
+    `fetch_spot_shadow`.
+- **Other lights** ([design, #3074]: all light sources cast, muzzle flashes and
+  explosions first; `ShadowSource` on the light, `SourceKind`).
+  - Grass fires: the light over about one burning patch in six (grass_fire_fx.rs). Still
+    while it burns; its intensity flickers.
+  - Lights a script attached to a node (JIP AttachLight, nif_mirror.rs). They move with
+    their node.
+  - These two rank and count with the placed lights, under the same rules and cap.
+  - Muzzle flashes (shot_fx.rs, a light at the muzzle for the flash's time, about a tenth
+    of a second, moving with the gun) and explosions (shot_fx.rs, 32 units above the blast
+    point, fading over 0.6 s) are **transient**, chosen apart from the placed lights:
+    - nearest first, measured to the edge of each light's range, only while that edge lies
+      within 3,000 units (about 43 m; `TRANSIENT_REACH`) of the camera and within the sun's
+      shadow distance [engineering choice: the firefight around the player; a farther flash
+      is small on screen and gone in a tenth of a second];
+    - only while their light reaches into the camera's view this frame (the camera's
+      frustum, far plane left out, as Bevy culls lights). A new light was not seen the
+      frame before, so the placed lights' rule would hold it back a frame; a light in view
+      is one Bevy's culling finds visible, so its maps are drawn;
+    - at most 2 at once on Quality and 1 on Performance (`Tuning::transients`), not counted
+      against the placed lights' cap;
+    - with their own budget of point lights switched on a frame, 2 on Quality and 1 on
+      Performance (`Tuning::transient_draws`), besides the placed lights' 3 and 1, so a
+      firefight does not starve the lamps nor the lamps it [engineering choice].
+  - A transient light never drew, so it goes first and draws its whole cube in the frame
+    it appears, **once**: it is held for the rest of its short life, whatever moves
+    [observed 2026-11-18, Trudy's gunfight in the Prospector Saloon at 22:00: redrawn
+    when the gun's recoil carried it past `LIGHT_MOVE_EPS`, a flash was drawn 3.5 times
+    on average (4 flashes, 14 switched on); drawn once, 4 and 4].
+  - Cost [observed 2026-11-18, the same gunfight, RTX 5090, 1280 × 720, `--log-frame-times
+    3`]: 3-second means 3.12-3.29 ms on Quality against 3.04-3.21 ms off; the slowest
+    frame of a window with a flash 8.8-10.7 ms against 4.8-7.6 ms off. A flash costs one
+    frame a few ms longer, as a lamp switched on does (about 1.4 ms of processor time over
+    every thread, against 0.7 ms a frame for a light kept on; `NVF_LIGHT_SHADOW_REFRESH`).
+  - The effects' own shapes (flash, explosion and fire models, their particles) are
+    `NotShadowCaster`, so a light is not blacked out by the flames around it. The gun a
+    muzzle flash sits at is a small shape it sits against, skipped as a fixture.
+  - Not these: the flashlight casts on its own (flashlight.rs); the lights of the menu and
+    preview scenes (the character creator, the Vigor Tester, the poker table) and the
+    sky's do not.
+- **What casts.**
+  - A casting light takes the sun's layers (0, `sky::SHADOW_LAYER`, `sky::BODY_LAYER`), so
+    the player's body casts in both views. The first-person arms do not.
+  - Everything `NotShadowCaster` stays out, as for the sun.
+  - **Light fixtures cast no shadows from their own lights** (`LightFixture`, `skip_fixtures`; the sun's
+    they still cast). A playtest (2026-11-18, [design, #3074]): a hanging box lamp in the Goodsprings
+    General Store threw its housing's shadow, larger than the lamp, onto the ceiling. The
+    game hangs its lights under their lamps, not in them [observed 2026-11-18,
+    `fnvtool world refs`: the LIGH `BasementLightKeyWarm` sits 86 units under the box lamp
+    `OffRmLightHanging01`; over the masters' interiors, 3,909 of the 7,543 LIGH references
+    without a model of their own have a lamp model's reference within 160 units, half of
+    them within 89].
+    - A shape is a fixture when its model's file name holds `light`, `lamp`, `lantern`,
+      `chandelier`, `sconce`, `bulb` or `candle` (`offrmlight01`, `lightceilingvaultr02on`,
+      `shackhanginglight02`, `neoclassicalsconce`, …), or when it is a LIGH's own model.
+      Marked when the cell is drawn (world.rs `spawn_model`); every casting light skips it.
+    - A small shape (a bounding sphere up to 128 units) that a light sits in or within 16
+      units of is skipped by that light too: a bulb or shade of another name.
+    - Taken out of the shapes Bevy culled for the maps, after its culling, only on the
+      frames a light draws.
+    - Test aid `NVF_LIGHT_SHADOW_FIXTURES=1` logs, once a light, the shapes it skips and
+      the small ones near it it keeps, by reference, size and distance.
+  - A near plane of 8 units (`NEAR_Z`, as the flashlight's): what lies nearer the light
+    casts nothing from it. It was 16 to keep a light's own bulb or shade out of its map,
+    which let a wall within 16 units through; since the fixtures are skipped, 8 and 4
+    drew the same pictures as 16 in the General Store and the Prospector Saloon
+    [observed 2026-11-18, `NVF_LIGHT_SHADOW_NEAR`, three views each].
+- **Soft edges and contact shadows** (Quality only; light_shadow_detail.rs).
+  - Soft edges: the casting lights take Bevy's percentage-closer soft shadows (the
+    `experimental_pbr_pcss` feature, engine/Cargo.toml) with a light size of 24 units
+    (explosions 48). The edge widens with the distance between a shape and its shadow:
+    a hanging wire's shadow is sharp where the wire touches the ceiling and soft away
+    from it [observed 2026-11-18, General Store pictures at sizes 8, 24, 32: at 8 the edges
+    looked as hard as without]. `NVF_LIGHT_SHADOW_SOFT=<size>` (0: none) for comparing.
+  - Contact shadows: the world camera takes Bevy's `ContactShadows` (8 steps, thickness
+    4, length 24 units) and so a depth prepass, and the placed lights, grass fires and
+    attached lights within the shadow distance take `contact_shadows_enabled`: small
+    shadows where things touch, and the only ones of the lights past the cap. Only while a
+    temporal method (TAA, FSR or DLSS) is on:
+    - Without one the march's per-pixel noise speckled walls and ceilings in a regular dot
+      pattern, thinner settings worse; with TAA the picture was clean [observed
+      2026-11-18, General Store pictures].
+    - With FSR or DLSS Bevy's march threw hard-edged false shadows, a dark block over a
+      door, streaks down a wall, that changed as the camera moved [observed 2026-11-18:
+      playtest videos with DLSS; reproduced walking along the Prospector Saloon's porch
+      at 14:00 with DLSS and with FSR; gone with `NVF_LIGHT_SHADOW_CONTACT=0`, not with
+      `NVF_LIGHT_SHADOW_SOFT=0`]. The cause [documented: bevy_camera
+      `MainPassResolutionOverride`, "In shaders, use `View::main_pass_viewport`"; read in
+      bevy_pbr raymarch.wesl]: an upscaled camera draws its main passes into the top-left
+      render-size part of full-size textures, and the march mapped its rays over the whole
+      depth texture. The vendored march now reads the main pass's part only
+      (raymarch.wesl `depth_uv_scale`, engine/vendor/README.md): the same walk with DLSS
+      Quality, DLSS Performance and FSR was clean, with contact shadows on 6 lights, and
+      standing on the porch with DLSS they darken the beams', frames' and door's edges
+      [observed 2026-11-18].
+    `NVF_LIGHT_SHADOW_CONTACT=0` turns them off, `NVF_LIGHT_SHADOW_CONTACT_MARCH=<steps>,
+    <thickness>,<length>` tries other settings.
+- **The lighting.** Nothing in the lighting shaders changes. The display-value sum
+  (`lights/display_shader.rs`) already multiplies each point and spot light's diffuse term
+  by Bevy's `shadow`. The cube lookup takes the light's slot (shadow_sampling.wesl
+  `nvf_point_shadow_cube`), the spot lookup its layer (`nvf_spot_shadow_layer`), and the
+  fade scales the shadow in shadows.wesl.
+- **Maps.**
+  - A point light's cube has 512² faces with Shadow resolution 2048, and 1024² with 4096
+    (`PointLightShadowMap`): 6 or 24 MiB a light. The cube texture's room grows in fours
+    while a mode stays on.
+  - A spot light draws one layer of the sun's shadow texture, at the sun's side: each slot
+    of the spot room (in fours) costs a layer of 2048² or 4096² (16 or 64 MiB at 32 bits
+    a texel), the price of keeping the room from changing as spot lights come and go.
+  - Bias: Bevy's defaults. `NVF_LIGHT_SHADOW_BIAS=<depth>,<normal>` and
+    `NVF_LIGHT_SHADOW_NEAR=<units>` override them for a run.
+  - `NVF_PLAY_TEST_LIGHT_SHADOW_HOLD=0` draws every map every frame, for comparing.
+
+**Cost** [observed 2026-11-18: RTX 5090, 1280 × 720, the Prospector Saloon at 22:00, 24
+placed lights, release builds, `--log-frame-times 6`; windows after loading]:
+
+| Mode | Free camera standing still | `--play`, walking back and forth |
+|---|---|---|
+| Off | 2.7-2.9 ms | 3.0-3.25 ms |
+| Performance (16 lights) | 3.0-3.3 ms | 3.3-3.9 ms |
+| Quality (24 lights) | 2.75-2.9 ms | 3.3-3.7 ms |
+| Quality, nothing held (test aid) | 14-15 ms | |
+
+- Before the 4-unit rule, the actors' idle skeletons and the head parts that follow them
+  (eyes, mouth, hat) marked about 116 times a frame. Quality then switched on its full 3
+  lights every frame: 5.5 ms standing still.
+- Standing still now, about one light in 50 frames is switched on (its full redraw due).
+  The slowest frames were 8.3-8.7 ms against 3.3-6.8 ms with the lights off, so a light
+  switched on costs a few ms in its frame.
+- Walking, 0.5-0.9 lights a frame are switched on.
+
+**Cost at the menus' top settings in 4K** [observed 2026-11-18: RTX 5090, 3840 × 2160
+borderless, every graphics row at its top (ambient occlusion, TAA, sun shafts, water
+reflections, shadow resolution 4096 so 1024² cubes, temporal shadow filter, all draw
+distances 100%), upscaler and frame generation off; the Prospector Saloon at 22:00, 10 s
+standing then Trudy's shotgun gunfight (7 flashes); `--log-frame-times 3`, 3-second means
+after loading]:
+
+| ALC shadows | Standing (3 windows) | Gunfight (6 windows) | Slowest frame in the gunfight |
+|---|---|---|---|
+| Off | 3.21-3.28 ms | 3.23-3.29 ms | 4.2-7.0 ms |
+| Performance | 3.21-3.26 ms | 3.31-3.40 ms | 5.6-15.5 ms |
+| Quality (soft edges, contact shadows on 24 lights) | 3.23-3.31 ms | 3.33-3.39 ms | 5.3-19.3 ms |
+
+- 24 lamps cast, 5 flashes cast with one draw each. The mean costs about 0.1 ms; the
+  slowest frames are those of a flash or a lamp switched on.
+
+**Log.**
+- `light shadows: <n> cast (<p> point, <s> spot lights) within <reach> units, <cap> at most;
+  cubes <side>, room for <c>; spot maps room for <s>; transients (muzzle flashes,
+  explosions) within <r> units, <t> at most` is written whenever these change. Its counts
+  leave the transient lights out.
+- Every 10 s it writes `light shadows: <l> point lights switched on and <f> faces drawn a
+  frame … marked a frame by shapes <a>, skeletons <b>, removals <c>, lights <d>; shapes such
+  as <names>; transients <n> cast, <s> switched on, <t> faces drawn`. The first counts are
+  the placed lights' (with grass fires and attached lights; the lights switched on count
+  the point lights only, the faces drawn include the spot lights' maps, and the lights
+  casting leave out those fading out); the transients' are totals over the 10 s.
+
+**Performance pass (2026-11-18).** The request [design, #3074]: "The shadows update at a low rate and cause
+stuttering in object dense areas. Work on optimizations - the quality of the shadow can be
+reduced with distance." The main session's runs in Primm at 22:00 (release, 1280 × 720,
+`--play`, walking): Off 5.7-7.2 ms 2-s means; Quality windows of 10-84 ms with frames of
+99-181 ms, in exactly the seconds a scripted mass toggle disabled and re-enabled about 490
+references (751 fading back in), while the 10-s summary stayed low (0.11-0.9 lights
+switched on a frame). A `profile` build put `prepare_lights` at up to 16 ms,
+`check_point_light_mesh_visibility` 7.6, `specialize_shadows` 3.8, `queue_shadows` 3.1,
+`shadow_lights` 4.1 and `skip_fixtures` 3.4 ms in those frames [observed 2026-11-18, the
+main session]. What was built, each with a test aid that turns it off for comparing; **none
+of it is measured in game yet**:
+
+- **Hidden lights drop their views** (vendored bevy_pbr, the open bevyengine/bevy#26480,
+  fix of #26059): a hidden shadowed light's views are despawned with it. Before, a lamp
+  hidden by a turn of the camera in the frame after it drew left its six views running
+  the Core3d schedule until it was seen again. No aid (a fix); the count below shows how
+  often it happens.
+- **Measuring lines** (no aid; engine/vendor/README.md "light view counts"): every 10 s
+  beside the summary, `light shadows: renderer over <n> frames: light views a frame <a>
+  alive, <r> run, <h> despawned with their light hidden; views spawned …, views despawned …,
+  views remade …, phases new …, phases dropped …, new point textures …, new directional
+  textures …, texture views made …; ms a frame mean/max: extract_lights …, prepare_lights …,
+  uniform writer …, counts and slots …, textures …, gpu lights …, point views …, spot views
+  …, cameras …, sweep …; game systems ms a frame mean/max: shadow_lights …, skip_fixtures …,
+  soften …, contact …`. The `prepare_lights` stretches add up to its total, so the 16 ms can
+  be placed.
+- **Lamps changed only on change** (light_shadow_detail.rs `soften`, light_shadows.rs
+  `skip_fixtures`): `soften` took every lamp's light through `Mut::into_inner`, which marks
+  it changed: every lamp in the world was marked changed every frame, so Bevy made its cube
+  frusta again and extracted it again each frame. `skip_fixtures` touched the lists of
+  casting lights not drawing, with the same effect. Both now change a light only when
+  something changes (`apply_soft`), and only drawing lights are filtered. No aid.
+- **Cheaper marking per moved shape** (`shadow_lights`): a reference toggled or faded in
+  town changes thousands of shapes a frame. Nothing is marked without a lamp; past 32
+  shapes a frame the lamps are found through a grid (`LampGrid`); a lamp drawing in full
+  anyway (fresh, or every face marked) and faces already marked are not tested again; no
+  transform decomposition per shape; the chosen lights are hash sets. No aid (same marks).
+- **Cached shadow views** (vendored bevy_pbr `prepare_lights`, engine/vendor/README.md):
+  the shadow textures' array views and the per-layer views and attachments are kept while
+  the texture is the same, instead of `create_view` every frame (and six for every drawing
+  lamp every frame) [hypothesis: fewer device calls give `prepare_lights` less to wait on
+  while materials are made and dropped on other render threads]. Aid
+  `NVF_SHADOW_VIEW_CACHE=0`.
+- **Steps of detail by distance and the small-caster cut-off** (`STEPS`, `cut_off`): each
+  casting light has a step by the camera's distance to its light's edge (near within 1,500
+  units, mid, far past 3,000; 10 % hysteresis). A caster whose bounding sphere covers fewer
+  than 1, 2 or 4 texels across in the light's map at its distance (by step;
+  `CUTOFF_TEXELS`, `map_scale`: the cube's side, or the sun texture's side over the tangent
+  of a spot light's cone) is taken out of the light's lists (not queued, specialized or
+  drawn) and its moves mark nothing on that light (under the cut-off where it is and where
+  it last marked). A light stepping finer after casters were cut draws its maps again in
+  full. [engineering choice: the thresholds.] Aid `NVF_LIGHT_SHADOW_CUTOFF=0`.
+- **A grid of shadow casters** (light_shadow_casters.rs; vendored bevy_light,
+  engine/vendor/README.md "shadow caster candidates"): Bevy tested every shadow caster in
+  the world against each drawing light. Every mesh is now filed by its bounds' centre in
+  1,024-unit cells (larger than 512 units, unbounded or not culled: listed for every light),
+  kept up to date from what moved or went; each drawing lamp is tested only against the
+  meshes of the cells its sphere (grown by 512) overlaps. The flashlight and the menu
+  scenes' lights keep Bevy's search. Aid `NVF_LIGHT_SHADOW_CASTER_GRID=0`.
+- **Fade by distance** (`distance_fade`, `DISTANCE_FADE` 20 %): a light's shadow weakens over
+  the last fifth of the reach to none at it, times its time fade, instead of ending there.
+  Transients keep full strength. Aid `NVF_LIGHT_SHADOW_DISTANCE_FADE=0`.
+- **Faces out of view held** (`faces_in_view`, `FACE_VIEW_MARGIN` 64 units): of a point
+  light on its turn, only the marked faces whose pyramid (the light and its square at the
+  range) can reach the camera's frustum (side and near planes, moved out by the margin) are
+  drawn; the others stay marked and held until they come into view, and a light with such
+  faces coming into view goes before the others. Not for a light that never drew (the
+  renderer needs all six faces), transients or spot lights. Mirrored water and other
+  cameras could show a held face's stale shadow [hypothesis, not looked at]. Aid
+  `NVF_LIGHT_SHADOW_FACE_CULL=0`.
+- A third 10-s line gives what these did: `light shadows: performance pass over <n> frames:
+  lights at steps near/mid/far …; small-caster cut-off (on) casters cut … a frame, marks
+  skipped …, redraws for a finer step …; caster grid (on) … lamps served a frame, …
+  candidates each, … meshes filed (… for every light); distance fade (on) … lights fading a
+  frame; face culling (on) … marked faces held out of view a frame` (`OFF` for an aid set).
+
+Not built in this pass (designs): **far lights redrawn less** (a third stagger band past
+3,000 units, and marks from skeletons and shapes under 48 units on far lights batched into
+one redraw a second); **a cost budget** instead of a count (a switch-on costing about six
+face-frames on top of its faces, from the measured 1.4 ms switch-on against 0.7 ms a frame
+kept on; at most one never-drawn light a frame; ranked by projected size × fade, waiting
+lights aging up); **resolution tiers** (a second, half-size cube array for far lights, the
+tier in the flags beside the slot, a second binding in `mesh_view_bindings` and
+`shadow_sampling.wesl`, hysteresis on the tier, a full redraw on a change: it touches the
+vendored renderer's bindings and shaders, left for after these are measured).
+
+**Static shadow cache (2026-11-18).** The request [design, #3074]: "Since most of the lights in New Vegas are
+static, could we not bake the shadows at least partially?" Approved: a static cache with the
+dynamic casters drawn on top, and the lamps drawn in full under a loading screen. **Not
+measured in game yet.**
+
+- **Static and dynamic casters** (light_shadows.rs `ShadowDynamic`, `classify_casters`,
+  `shape_change`). Dynamic from the start: skinned shapes, every shape under an actor's or
+  creature's rig (`ActorRig`, `PlayerRig`: weapons, hats, eyes follow the skeleton) and the
+  player's body (its layers, `sky::SHADOW_LAYER`, `sky::BODY_LAYER`). Every other shape is
+  static until it moves after it marked the lamps (clutter pushed by physics, which
+  nvf-play's `moved.rs` writes into the drawn transform; a door or activator turning; what a
+  script moves): it becomes dynamic then, for good, and the caches of the faces it was and
+  is in are drawn again without it [engineering choice: one rule for every way a thing can
+  move, instead of a marker at each place that moves things]. Shown, hidden, new or gone, a
+  static shape stays static (a cell loading, Primm's scripted mass enable and disable).
+- **Bookkeeping per face.** `dirty` as before (the sampled map is out of date) and
+  `static_dirty` within it (the cache is): a static shape's change, the light's first draw,
+  a new texture, a refresh, a finer step, a removal of static shapes and a light chosen
+  again mark both; a dynamic caster's move, show or hide, or a removal of dynamic shapes
+  only, marks `dirty`. A dynamic caster marks where it was and where it is (one sphere round
+  both), so the face it left is composited too.
+- **Drawing** (`face_modes`, `keeps_caster`, `put_back`). Of a lamp's faces drawn this
+  frame, those with `static_dirty` are drawn from the static casters into the cache and
+  copied into the sampled cube; the others are composited: the cache's face copied into
+  the sampled face and the dynamic casters drawn over it with the depth loaded, not cleared
+  (vendored bevy_pbr, engine/vendor/README.md "static shadow cache"). A face drawn into the
+  cache whose caster list held dynamic casters lacks them until its composite, which goes
+  next, before other lights' turns (`pending`); a composite with no dynamic caster left is
+  the cache copied back once. Transients, spot lights (few among the placed ones, one map:
+  left on the old path, simpler) and lights that move (their cache would be drawn again each
+  time) take the plain path: every caster into the sampled map, as before. Every rule
+  before stays: slots, held maps, fades, the fixtures skipped (in both passes), the steps,
+  cut-off, grid and face culling, DLSS and contact shadows.
+- **Memory**: the cache is a second cube texture of the same slots and size (Depth32Float):
+  at 512 × 512 6 MB a lamp, 151 MB for 24 lamps' room; at 1,024 (Shadow resolution 4096)
+  25 MB a lamp. The start line says `static shadow cache on (<n> MB)`.
+- **Log**: the performance line ends `static cache (on) <s> static redraws (faces) a frame,
+  <c> dynamic recomposites a frame, <k> layer copies a frame, <p> faces put back after a
+  static redraw, <d> shapes became dynamic`; the renderer line's events add `static cache
+  draws`, `static cache composites` and `static cache misses` (a composite whose cache layer
+  held no map of its light: drawn with the dynamic casters only; expected 0).
+- **Aid** `NVF_LIGHT_SHADOW_STATIC_CACHE=0`: no cache, every face drawn with every caster,
+  as before.
+- **Pre-drawn under the loading screen** (light_shadows.rs `predrawing`, `predraw_busy`;
+  nvf-play `Loading::lamp_shadows_busy`). While a loading screen is up (a travel, a cover,
+  the start) and the renderer has its cells around the camera (the destination's lights are
+  spawned with its cells; the camera is already at the destination, as the cells it waits
+  for are those around it), every chosen lamp the camera sees draws all its marked faces at
+  once: no per-frame budget, no turns, no face culling. Before the cells are in, the lamps
+  draw as in play (each arriving cell would mark them again). The screen waits ("ALC
+  shadows" in its phases line) while lamps drew in the last frame (their composites follow)
+  or any chosen lamp still has marked faces, at most 3 s from the start of the pre-draw
+  (`PREDRAW_CAP_SECS`) [engineering choice]. The performance line
+  ends `loading-screen pre-draw (on) <n> lights`. Aid `NVF_LIGHT_SHADOW_PREDRAW=0`.
+- **Out of view too (2026-11-19).** At first a lamp the camera did not see could not draw
+  under the screen: Bevy culls a point light's casters only for lights a camera sees
+  [observed in the code: vendored bevy_light `check_point_light_mesh_visibility`], and the
+  renderer drops a hidden light. Now, once no lamp in view has maps left to draw, the chosen
+  lamps out of view are shown to that culling, the nearest `PREDRAW_UNSEEN_PER_FRAME` (8) a
+  frame (`shown_unseen`), through the patched bevy_light's `NvfShadowLightsShown`
+  (engine/vendor/README.md "shown shadow lights"): it finds their casters as for a seen light
+  and marks the light visible, so the renderer extracts it and draws its maps; it lights
+  nothing on screen (it lies in no cluster). Their faces out of view go into the static cache
+  as any. Within the same 3-s cap; 32 lamps take four frames. When the screen comes down:
+  `light shadows: <n> lights pre-drawn under the loading screen (<f> faces, <s> into the
+  static cache); <c> casting, <u> of them not drawn yet; <o> of those pre-drawn out of view`
+  (`<u>` should now be 0 but for the cap). In play they then sample their held maps when
+  seen, with nothing to draw.
+- [hypothesis] Where it should help: a lamp near an idle or walking actor redrew every
+  caster of the room on each skeleton mark; now the room is copied (a 1 MB layer copy at
+  512²) and the actor alone drawn. Where it costs: a static change now draws the cache and,
+  with an actor in the face, a composite after it (two switch-ons instead of one); the
+  copies' bandwidth; the memory.
+
+**Kept shadow phases (2026-11-19).** Switching a held light on cost about 1.4 ms of CPU once
+(measured 2026-11-18; each of its views made, its six phases made anew, every caster in them
+specialized and queued again). Bevy keeps a shadow view's phase, pipeline key and specialized
+pipelines only while the view lives, and the game's held lights have none. The patched
+bevy_pbr (engine/vendor/README.md "kept shadow phases") keeps them for every light the game
+holds a slot for, with or without views, so a light switched on again finds its bins and
+pipelines and queues only what changed since: the casters its lists gained or lost.
+A kept view that missed a change (an entity in its pipelines whose mesh, material or flags
+changed while it had no view) is dropped whole and the light drawn as new, as before; an
+entity removed is only dropped from its pipelines. A kept phase back after frames without a
+view is resynced with its light's whole visible list (the list's differences of those frames
+were never queued): entities no longer visible leave their bins, visible ones not binned are
+queued, and no entity is binned twice (queueing the differences alone did that, a renderer
+panic in Novac at 22:00 on Quality, 2026-11-19). And a light re-extracted with the same
+place, range, near plane and layers (every frame it draws: its casters' lists change) keeps
+its views instead of having them made again ("kept shadow views"). Events on the renderer
+line: `phases reused` (phases a light's new views found kept), `kept phases wiped`, `views
+kept`, `kept phases resynced`, `entities rebinned` (none expected). Aid `NVF_LIGHT_SHADOW_KEEP_PHASES=0`; `NVF_SHADOW_VIEW_CACHE=0` makes the views anew
+again too. **Not measured in game yet** [hypothesis: the switch-on's specialization and
+queueing go; the view spawn and the faces' own schedule runs stay].
+
+Also (2026-11-19): the caster grid finds the drawing lamps by their slots instead of going
+over every entity with a place each frame (`caster_candidates`); an actor's skeleton is gone
+over and marks once a frame, not once for each of its skinned shapes (`shadow_lights`).
+
+**Not built yet.**
+- The static cache for spot lights (a second set of layers past the cascades).
+- Held faces of a drawing light still have their views batched each frame (Bevy's
+  `batch_and_prepare_binned_render_phase` goes over every view with an `ExtractedView`);
+  leaving them out needs the GPU preprocessing's buffers looked at.
+
+**Smoke.** `light-shadows` (the Prospector Saloon at 22:00, `--light-shadows=quality`)
+checks that lights cast and that their maps are drawn. The picture is checked by hand.
+
+### 3.17 Authored materials (`authored-materials`; on in both looks)
+
+A texture pack's authored PBR sets under `textures\pbr\` (#2981,
+docs/spec-notes/pbr-materials.md): lit NIF shapes whose diffuse has a set take their
+occlusion, roughness, highlight strength and normal from it. On in `vanilla` and `enhanced`,
+like a diffuse replacer: without a pack nothing changes. Read once at the start (a change
+applies at the next start); `--graphics-only no-authored-materials` or the settings switch
+turns it off, and then the material path reads no file under `textures\pbr\`. Lit NIF shapes
+with texture coordinates take a set; unlit, additive, multiplied and refracting shapes,
+particles, hair, skin and FaceGen heads, landscape LOD and the Pip-Boy's and interface
+textures never do; without an `_n` (or tangents on the drawn mesh) the game's own normal map
+stays, its alpha no longer a highlight mask (docs/spec-notes/pbr-materials.md). On the
+experimental height branch (stage 4) a set's `_p` (or a height-only set) is drawn as Bevy's
+relief mapping, depth 0.03 unless the set's scalars say otherwise, on opaque, single-sided,
+non-decal shapes with tangents. By default it marches up to eight layers and refines the
+intersection with four additional steps. Each height sample reads the top mip. [design]
+
+### 3.18 Aerial perspective (`aerial-perspective`; off in every preset)
+
+[design, #2993] An addition of NVForever's own, an engineering choice for the enhanced look:
+not a fact about the original game, never a parity item, and never to be used to explain a
+difference from the original's frames. With the weather's distance fog alone every far ridge
+fades to the same flat fog colour, so the Mojave's ranges stack into one band. With this row
+far land takes on the sky's colours by distance instead: bluer and paler with distance under
+a blue noon sky, warmer under a dusk sky, brighter toward the sun, so successive ridgelines
+separate. The row is "Aerial perspective (experimental)" under Graphics > Lighting and
+Effects, after Desert haze, off by default and in every preset (the `enhanced` row the issue
+text would have used no longer exists since the settings menu overhaul). Code: `aerial.rs`,
+fog.rs `GAME_FOG`, a patch of the vendored bevy_pbr fog uniform.
+
+- **Technique.** After Hoffman and Preetham, "Rendering Outdoor Light Scattering in Real
+  Time" (GDC 2002) [documented: cited paper]: the light reaching the eye is the surface colour
+  times the extinction plus the in-scattered light times one minus the extinction, the
+  extinction differing per colour channel and the in-scattered light depending on the view
+  ray's direction (a phase function toward the sun). The sun's phase function is the
+  Henyey-Greenstein one (Henyey and Greenstein, "Diffuse radiation in the galaxy",
+  Astrophysical Journal 93, 1941) [documented: cited paper], divided by its value at the sun.
+  Our own code from those descriptions; no code from any other project. The amounts are the
+  weather's, not a physical atmosphere's [design]: Bevy's procedural atmosphere (after
+  Hillaire, EGSR 2020) stays rejected (§2); the game's sky dome and the weather's colours stay.
+- **What it changes** (constants at the top of `aerial.rs`, each an engineering choice by eye
+  [design]):
+  - *Per-channel share.* The weather's fog share f (`GAME_FOG`'s, with its strength) becomes
+    f_c = 1 - (1 - f)^(w_c) per channel: 0 at 0, 1 at 1, rising with f. The weights come from
+    the chroma of the sky colour behind far land (the drawn dome's at the horizon, below): the
+    deviation d_c = (c_c - Y) / max(Y, 0.01) (Y the Rec. 709 luminance; `DARK_FLOOR`), whose
+    luminance-weighted mean is 0 by construction, then w_c = 1 + k d_c with k = 1
+    (`CHROMA_GAIN`) or less where that would take a weight out of 0.5..2 (`WEIGHT_LOW`,
+    `WEIGHT_HIGH`). w is linear in k and 1 at k = 0, so the luminance-weighted mean stays
+    exactly 1 and the hue keeps its direction, with no clamp. Below a luminance of 0.01 the
+    chroma fades out continuously, so a fade to or from a near-black sky does not step
+    (tested). A grey or black sky gives 1, 1, 1 (the weather's own fog). The amount of fog
+    stays the weather's in that sense: the mean optical-depth multiplier is 1; a channel with
+    w below 1 fogs less than f, one above more.
+  - *In-scatter colour.* Instead of the one fog colour, the fog colour moved toward the sky
+    colour in the view ray's direction by up to 0.8 (`DOME_MIX`). The sky colour is the drawn
+    dome's at the horizon (0°, used at and below it) and at 20° up (`LOWER_SIN`), mixed by a
+    smoothstep in the ray's sine between them. Those two colours are the dome's as the
+    renderer draws them: sky.rs `dome_color` of each vertex's own weights on the rings nearest
+    below and above, averaged per ring, then mixed in linear RGB at the point where the ray at
+    that elevation crosses the mesh's edge between the two rings (each ring's mean horizontal
+    distance and height), as the rasteriser interpolates the vertex colours along that edge
+    (tested with rings of equal and unequal radius). The rings are read from the dome mesh in
+    use (its positions and `SkyDome` weights, again only for a new dome mesh): the stock
+    atmosphere.nif's weights are about 0.69 horizon + 0.35 sky-lower at 0° and 0.57 sky-lower
+    + 0.53 sky-upper at 20° [documented: docs/spec-notes/world.md "Sky meshes"]; the fallback
+    dome has its own (all sky-lower at 0°, sky.rs `fallback_dome`). Before a dome mesh has been
+    read, the bare horizon and sky-lower colours stand in. Each is taken times the dome's sky
+    level (`SkyState::sky_scale`, the factor sky.wesl draws the dome with [documented:
+    engine/nvforever/src/sky.wesl]), so a far ridge meets the sky drawn behind it. All mixes:
+    the colour stays within the weather's fog colour and the dome's colours as drawn, so it is
+    above the display range only where the drawn sky already is (#2915: no clamp added).
+  - *Sun lobe.* The finished pixel (linear light) is moved toward the same blend with the
+    weather's sun colour as the in-scatter colour, by the normalised Henyey-Greenstein lobe
+    ((1 - g)^2 / (1 + g^2 - 2 g cos))^1.5 with g = 0.6 (`HG_G`), at most 0.35 at the sun
+    (`LOBE_MOST`), fading in as the sun rises through -2..3° as the sky's disc and glare do
+    (`SkyState::light`; nothing at night), times the two pixels' luminance contrast,
+    (Y_toward - Y_plain) / max(Y_toward, 1e-4) held to 0..1. A linear mix toward a brighter
+    pixel only raises luminance, so the lobe never darkens what is shown, for any surface, fog
+    share, channel weights and haze (tested over a grid through the whole blend and decode); a
+    weather with a black sun, or one no brighter than its sky, gets none. The lobe follows the
+    real sun: below the horizon sky.rs `aim_sun` turns the directional light to the moon's
+    side while the fade still runs, so the CPU packs which side the light points to (the sign
+    of the lobe's strength, from the light's own clock) and the shader turns the light's
+    direction back toward the sun; the pixel is continuous through 0° (tested).
+  - *Weight.* All of it scales with the desert haze's weight (§3.16, `haze::weight`, reused):
+    full under a clear weather, none as the weather's own fog gets short or dense, so
+    NVWastelandHazy and HVDustStorm (weight 0: `haze::weight` of their fog distances, which
+    are [observed: FalloutNV.esm, fnvtool esm decode, 2026-11-17]; the picture runs logged
+    "weight 0.00, none" for both [observed: NVForever run, 2026-11-18]) are exactly as with
+    the row off: the uniform's vectors are zero there.
+- **Where it sits.** Per fragment in the world shaders' fog path, no pass: everything the
+  weather's fog covers, under every anti-aliasing and upscaler. `nvf_aerial` (aerial.rs,
+  written before Bevy's `apply_fog` in `pbr_functions.wesl`) wraps the desert haze's call of
+  the atmospheric fog: it composes with the haze's replacement of Bevy's call instead of
+  replacing that call again, and its edit is made after the haze's, only once those are in
+  place. It works out the in-scatter colour and the lobe's weight for the fragment's view ray
+  and hands them, with the three weights and the sun colour, to `GAME_FOG` in a copy of the
+  fog uniform (`nvf_params[0]` the colour with alpha -2, which the CPU never writes,
+  `nvf_params[1].rgb` the weights, `nvf_params[2]` the sun colour and the lobe's weight).
+  `GAME_FOG`'s first outdoor branch, taken only on that -2, blends **once**, per channel, in
+  the values the fog is blended in outdoors (the pow(1/2.2) encoding: the main view is HDR,
+  but the outdoor fog blend is in that encoding [documented: engine/nvforever/src/fog.rs], and
+  the colours are encoded on the CPU the same way; `dome_color` mixes in the sRGB curve, a
+  small difference), then applies the lobe in linear light. Interiors (the linear blend) are
+  untouched, and the CPU writes zeros indoors.
+- **With Desert haze also on**: the haze's share and colour stay as they are; the aerial terms
+  apply to the weather's fog part: each channel's total share 1 - (1 - f_c)(1 - h), the
+  colours weighted as the haze seen through the aerial fog (as in §3.16), the lobe's blend
+  with the same haze. Tested: alone or together every channel's total is within 0..1, the
+  haze never lowers a share, and the total is at least the haze's. Together, the near and
+  middle distance take the haze's warm dust and the far ranges the sky's colours behind them,
+  the haze's share over them.
+- **Carried** in three vec4s appended to Bevy's fog uniform (`DistanceFog::nvf_params`,
+  `GpuFog`, the shader's `Fog`; a patch of engine/vendor/bevy_pbr, listed in its README): one
+  uniform grows by 48 bytes, the view bind group keeps its bindings. [0] the sun colour
+  (display values, blended like the air colour, so nothing is converted per fragment) and the
+  lobe's strength, negative while the directional light points away from the sun; [1] the
+  in-scatter colour at the horizon and the red weight; [2] the one at 20° and the blue
+  weight; green follows from the mean of 1, in the shader. The haze uses up the uniform's
+  free fields, per-frame values written into shader text are not acceptable and the view
+  bind group is not to grow, hence the patch. The reflection and lens cameras clone the main
+  camera's fog, so they get the same vectors; the reflection camera's rays are the mirrored
+  ones, which see the sky above the reflected land. The 3D scope's lens camera copies the
+  main camera's fog after both writers of it after the sky (fog.rs `FogWriters`: the desert
+  haze and this; the reflection camera copies in PostUpdate), so neither shows a frame with
+  the sun's side not yet turned or the aerial fog without the haze (a scheduling test).
+- **Off.** With the switch off (or a weight of 0) the vectors are zero, `nvf_aerial` makes
+  the call as the haze left it and `GAME_FOG` runs its old lines: the picture and the log are
+  as on main. What stays for every player: the fog uniform is 48 bytes larger, and the fog
+  path has one more uniform branch in `nvf_aerial` and one in `GAME_FOG`; the edits are made
+  at the start, with no log line. Both fail safe (one `warn!` line, the shader as it was, the
+  row does nothing). With the row on, the weather's fog numbers, five of its colours, the sky
+  level and the sun's height are read each frame; the derivation (the dome's colours, the
+  weights, the encodings) is done again only when one of them or the dome mesh changes.
+- **What follows the weather** (from `SkyState` every frame, through weather fades, scripted
+  SetWeather/ForceWeather and the hour; no weather names, no hour table, no result kept past
+  a change): the weight from the fog numbers, the channel weights and in-scatter colours from
+  the fog, horizon, sky-lower and sky-upper colours as the dome draws them and the sky level,
+  the lobe from the sun colour and the sun's height. Values outside the base game's ranges
+  are tested as data (fog far 0 and 1,000,000, power 0, NaN and infinite colours, a black sky,
+  one channel 0, a black sun): no NaN, nothing negative, no division by zero.
+- **Switching**: the row, `--graphics-only aerial-perspective`, a `--graphics-cycle` set,
+  `NVF_PLAY_TEST_SETTINGS=<t>:aerial-perspective`. Only the uniform changes; nothing compiles.
+  Log lines: `aerial: aerial perspective on: <weather>: weight <w>, channel weights
+  <r>/<g>/<b>, sky share <s>, sun lobe <l>` (or `..., none (the weather's own fog leaves no
+  room)`); the same as `aerial: <weather>: ...` when the weather, the weight (by 0.1) or a
+  channel weight (by 0.1) changes, not during a time-lapse; `aerial: aerial perspective off`
+  (`... off indoors`). Debug aid `NVF_PLAY_DEBUG_AERIAL=<multiplier>`: the weight times that
+  (1 as designed, 0 to 4; the sky share and the lobe are held to 1, the weights to their
+  range), logged once; it does not turn the switch on. Smoke: `aerial-perspective`,
+  `aerial-perspective-with-haze`.
+- **Cost**: none that the runs can show: 3.23-3.28 ms a frame with the row off, 3.23-3.29 ms
+  on, main 3.25-3.28 ms (three rounds each, the median of five 4-second periods, 2560x1440,
+  Goodsprings at 13:00 under NVWastelandClear, Sun shadows on, on the contributor's machine)
+  [observed: NVForever run, 2026-11-19]. Not measured on a slower GPU or at other resolutions.
+- **Not done**: between the two reference elevations the sky colour is a smoothstep between
+  the dome's two colours, not the dome's own curve; no height dependence (the weather's fog
+  has none; the haze has its own); no shadowing of the in-scattered light; the sun's
+  direction is the view's first directional light, turned back toward the sun where it is
+  the moon's side (the first-person arms' shade light points the same way); the cloud cover
+  is not read, so the base game's overcast is not told from clear (their classification
+  flags and cloud layer counts are the same [observed: FalloutNV.esm, fnvtool esm decode,
+  2026-11-17]).
+
+### 3.19 Night sky detail (`night-sky-detail`; off in every preset)
+
+[design, #2995] An addition of NVForever's own, an engineering choice for the enhanced look:
+not a fact about the original game, never a parity item, and never to be used to explain a
+difference from the original's frames (`vanilla` stays the parity picture). The row "Night
+sky detail (experimental)" (Graphics > Lighting and Effects, after Aerial perspective) is off by
+default and in every preset, `--graphics enhanced` included (`graphics.rs` test). Issue #2995
+predates the settings menu overhaul; the old `enhanced` row no longer exists, so this is a
+row of its own. `--graphics-only night-sky-detail` and a `--graphics-cycle` set turn it on
+too. Code: `night_sky.rs` and the night part of `sky.wesl`.
+
+- **What** [design]. Three additions, built only from the climate's own stars and moon and
+  the shown weather's own colours and fog: the stars **twinkle**, more toward the horizon; a
+  **glow round the moon**, wider and stronger in hazier weather; **moonlit clouds**, the cloud
+  layers lit a little on the side of the sky facing the moon. Nothing new is read from the
+  data and nothing is shipped.
+- **Where it sits** [design]. No pass, texture or mesh of its own: the sky's own fragment
+  shader (`sky.wesl`, used by every sky part) does all three from two `vec4`s at the end of
+  the sky parts' uniform, `sky::SkyLight::moon` and `::night` (the Rust and WGSL structs in
+  the same order; the composed shader's layout is tested). Their meaning depends on the part,
+  as `params.w` already does: the star dome (the additive parts the daylight does not apply
+  to, `params.z` 0) takes the twinkle; the atmosphere dome (`params.w` 2) the glow, drawn
+  with the sun's disc and glare, so behind the clouds and under the moon disc; the cloud
+  layers (`params.w` 1) the moonlight. The moon disc takes nothing. The additions use the
+  arithmetic of the sun's glare beside them: linear RGB added to the part's colour before
+  `tony_inverse`, which is the identity under the game's clipping tonemapper (`lights.rs`;
+  the main view is HDR). The twinkle multiplies what a star adds.
+- **How the values get there** [design]. `night_sky.rs` `update_detail` runs after
+  `sky::update_night_sky` and works the detail out from the live `SkyState`, again only when
+  the climate, the weather, the weather fading out, the fade, the hour, the days passed or
+  `--fog` changed. Every frame it compares the result with each sky part's stored fields and
+  writes only those that moved by more than 1e-3 (the disc's place by 1e-3 x its distance,
+  the same angle), because each write remakes the material's uniform on the GPU (#897); zero
+  is written exactly. So a part made later (a new worldspace's sky) takes the values the
+  frame it appears. `update_sky` keeps the two fields when it replaces the rest of the
+  uniform. A system test covers a later part, a weather fade, and off then on.
+- **With the row off** the fields stay zero, `update_detail` returns at its first test, each
+  branch in the shader is skipped by a uniform test, and nothing is logged.
+- **Twinkle** (stars) [design]. Each star's added light is multiplied by
+  1 + A x air(e) x s(dir, t):
+  - s is lattice value noise in time over the dome direction (Ebert et al., "Texturing and
+    Modeling: A Procedural Approach", lattice noises [documented: cited publication]). The
+    direction times the cells per unit falls in a cell of a 3D integer lattice; each of its 8
+    corners has a wave, the mean of two sines whose phases and rates (3,600 to 14,400 whole
+    cycles an hour, 1 to 4 Hz) come from an integer hash of the corner: the corner times the
+    primes of Teschner et al., "Optimized Spatial Hashing for Collision Detection of
+    Deformable Objects" (2003), xor-ed, then MurmurHash3's 32-bit finaliser [documented: the
+    published constants]. The waves are interpolated with smoothstep weights, so there is no
+    edge between cells. s has mean 0 over time and stays within -1..1, so the factor's mean
+    is 1 (the night is as bright as without) and it stays within 1 ± A (tested through a
+    Rust mirror of the shader, `twinkle_factor`).
+  - The lattice is read along the direction from the star dome's own centre (its mesh's
+    place, `get_world_from_local`), not from the eye. The dome never turns and follows the
+    main camera, so the cells belong to the dome: a turning camera, the temporal
+    anti-aliasing's jitter and the upscalers see no change of cell, and the water
+    reflection's camera (the main camera mirrored below the water, `reflection.rs`) gives a
+    reflected star the same phase at any height above the water. A 3D lattice has no pole
+    and no seam.
+  - Cell size: about the size of a star on screen. At 1080 lines with the game's default
+    field of view (75, the horizontal angle at 4:3; vertical 59.8°, `free_cam::vertical_fov`)
+    a pixel spans 9.7e-4 rad; a star of the base game's star dome covers 2 to 4 pixels there
+    [hypothesis], so a cell of 4 pixels (3.9e-3 rad, 0.22°; about 258 cells per unit of
+    direction) gives neighbouring stars their own phases while a star's own pixels change
+    nearly together.
+  - Time: Bevy's `globals.time`, the extracted `Time`, which is the game's virtual clock
+    wrapped at an hour (`bevy_render` `globals.rs` [documented: vendored source]); the pause
+    menu holds that clock (nvf-play `pause.rs`), and with it the twinkle. Bevy writes it
+    every frame, so no material is rewritten for time. The rates are whole cycles an hour,
+    so the wrap joins without a jump; the phase is the fraction of the hour times the cycle
+    count, within 1e-3 of a cycle in f32. At 60 frames a second the fastest wave moves 0.42
+    rad a frame: smooth, never a per-frame random value.
+  - air(e) = 1 - 1/X, X the air mass by Rozenberg's formula 1 / (sin e + 0.025 e^(-11 sin e))
+    (G. V. Rozenberg, "Twilight", 1966 [documented: cited publication]): 0 at the zenith,
+    0.5 at 30°, 0.82 at 10°, 0.975 at and below the horizon; bounded and monotone (tested).
+  - A = (0.15 + 0.25 q) x the debug multiplier, held to at most 0.9 so a star never dims
+    below a tenth [engineering choice]; q is the weather's haze (below). The clear Mojave
+    night (q 0.5) twinkles ±0.27 at the horizon and ±0.14 at 30° up. A fragment whose added
+    light is under 1e-4 (most of the sky between the stars) skips the lattice.
+- **Moon glow** (dome) [design]. A Henyey-Greenstein lobe (L. G. Henyey and J. L.
+  Greenstein, "Diffuse radiation in the Galaxy", Astrophysical Journal 93, 1941 [documented:
+  cited publication]) divided by its value on the axis: (1 - g)^3 / ((1 - g)^2 + 2 g (1 -
+  cos))^1.5, the denominator written so that it stays exact on the axis in f32; 1 at the
+  centre, falling monotonically (tested).
+  - Axis: from the rendering eye to the disc's centre. `moon.xyz` is where the disc is drawn
+    from the sky's centre (`-sun_dir` from `SkyState::hour` x `SUN_DISTANCE`, as
+    `update_night_sky` places it), and the shader adds the sky part's own place (the main
+    camera's). In the main view that is the moon's direction; the water reflection's
+    mirrored eye sees the disc elsewhere (3.97° off the moon's direction with the camera
+    5,000 units above the water and the moon 10° up: our arithmetic, a test), and its glow
+    stays round the disc it sees.
+  - Width [engineering choice]: g = 0.9 in clear air to 0.75 under a full fog share, half
+    the peak at 4.6° to 12.7° from the centre (the disc is 3.6° across, `sky.rs`
+    `MOON_SIZE`).
+  - Strength at the centre [engineering choice]: 0.06 x (1 + 0.5 q) (at most 0.09, linear)
+    x the moon's strength. The moon's strength is its visibility
+    (`SkyState::night_visibility`, fading in as the sun goes from +5° to -6°) x the phase's
+    lit share (from the phase index in `MOON_PHASES` order: full 1, three quarters 0.75,
+    half 0.5, a quarter 0.25, new 0, then back up) x the debug multiplier. It is 0 while the
+    disc is hidden (its direction's height below -0.1, `sky::MOON_HIDDEN_Y`, the disc's own
+    rule), indoors, in a climate without a moon and by day (visibility 0).
+  - Colour: the hue of the weather's **Sunlight** colour now (`ColorType::Sunlight`, blended
+    across a weather fade), its largest channel set to 1. At night that colour is the light
+    the renderer lights the world with as moonlight (`sky.rs` `MOON_SHARE`, `aim_sun`), so
+    the glow takes the light that weather's moon gives [design]. A colour darker than 0.05 in
+    its largest channel keeps its hue with its brightness scaled down, so a black night
+    sunlight gives no glow. No colour constant.
+- **Moonlit clouds** (cloud layers) [design]. Added: the cloud's own colour (its weather's
+  PNAM colour at the hour, as `update_clouds` sets it, times its texture and the sky level,
+  without a lightning flash's light, which the sky already adds once) x 0.5 x a broader lobe
+  (g 0.6, half at about 23°, aimed as the glow is) x the moon's strength, scaled down so
+  that no channel adds more than 0.06 x the strength. The blend weighs it by the texture's
+  alpha; through a weather fade both sets of cloud shapes take it, each at its own alpha.
+  Every cloud layer that is drawn counts as cloud. The base game's starfield layer texture
+  (layer 0 of the night weather) is in no archive (docs/spec-notes/world.md §6), so that
+  layer is never drawn.
+- **What follows the weather** [design] (from `SkyState`, no weather names, no per-weather
+  table): the haze q, the weather's fog share at 50,000 units (the desert haze's reference
+  distance, §3.16) by the curve the fog shader draws, with the fog's near, far, power and
+  strength as the fog uniform takes them (or `--fog`), so it blends through a fade and
+  follows SetWeather / ForceWeather the next frame; the moonlight colour; the cloud colours
+  (in the cloud parts' own colour); the hour (the moon's place and visibility); the days
+  passed and the climate's phase length (the phase); the climate's moon flags. A script's
+  moon textures (SetMoonTexture) change nothing here. It adds to the weather's own colours
+  and never replaces them. A weather whose two fog ranges are both unset has no fog
+  (`Weather::fog_at`) and so no haze: the clear-air values.
+- **Weather and mods** [design]: tested as data in `night_sky.rs`: fog far 0 and 1,000,000,
+  near above far, power 0 or negative, values that are not numbers, both fog ranges unset, a
+  moonlight of 1e6 or negative, phase length 0, every phase index and beyond, the sun exactly
+  at the horizon, directions at elevation 0 and 90°, no direction, the multiplier 0 and above
+  4: no NaN, nothing negative, every field within its bound.
+- **Switching**: the row, `--graphics-only night-sky-detail`,
+  `NVF_PLAY_TEST_SETTINGS=<t>:night-sky-detail`. Only uniform values change, so no pipeline
+  is compiled. Log lines:
+  - `night sky: detail on: <weather>: haze <q>, twinkle <A>, moon <phase> lit <l>, strength
+    <s>, glow <peak> half width <deg>°` (`no moon` for a climate without one);
+  - the same figures as `night sky: <weather>: ...` when the phase's lit share changes and,
+    outside a time-lapse, when the weather changes or the haze moves by 0.1;
+  - `night sky: applied: <n> star material(s) twinkling (amplitude <A>), the dome's glow
+    <g>, <k> cloud material(s) moonlit`, once each time it turns on, read back from the
+    materials after the writes (only checked while this frame's values can give it: not by
+    day, at a new moon, without a moon or at the multiplier 0; the cloud count includes
+    hidden layers);
+  - `night sky: detail off` (`... off indoors` on going in).
+- **Debug aid** `NVF_PLAY_DEBUG_NIGHT_SKY=<multiplier>` (0 to 4, 1 as designed): all three
+  times that, read once and logged (`debug switch NVF_PLAY_DEBUG_NIGHT_SKY: ...`) when the
+  detail first turns on; it does not turn the switch on and does not make a run unattended.
+- **Tests.** `night_sky.rs`: the pure parts above, the mirrored view (`glow_axis`,
+  `star_direction`), the write tolerances, the kept derivation (system test), and that
+  `sky.wesl` holds the constants its Rust mirrors use. `engine/nvf-shader-tests/tests/sky.rs`
+  composes the production `sky.wesl` with Bevy's own imports through Bevy's shader cache and
+  validates it with Naga, with no definitions (the dome, clouds and moon) and with the
+  definitions Bevy's mesh pipeline sets for the additive stars (`PREMULTIPLY_ALPHA`,
+  `BLEND_PREMULTIPLIED_ALPHA`), and checks the uniform's layout. Smoke: `night-sky-detail`
+  (switched on in the pause menu at Goodsprings at 23:00 on day 0, a full moon, left on after
+  the game resumes; it expects the `applied` line).
+- **Seen** [observed: NVForever run, 2026-11-19, pictures at Goodsprings]: the glow follows
+  the phase (centre 0.075 at the full moon, 0.037 at the half moon, none at the new moon, as
+  logged), is wider under NVWastelandHazy, and nothing shows at noon.
+- **Cost.** Measured 2026-11-19, indicative: 3.13 ms off, 3.13 ms on at 2560x1440,
+  Goodsprings 23:00, on the contributor's machine [observed: NVForever run, 2026-11-19]. Not
+  measured on a slower GPU, at handheld resolution, or with FSR. What the code does: every
+  sky fragment pays a few uniform tests; a dome or cloud fragment with the moon up also a
+  matrix fetch, a normalisation, a `pow` and a few multiplies; a star fragment that adds
+  light runs the lattice, eight corner waves of two hash finalisations and two sines each,
+  and an `exp`. With FSR the stars, the clouds and the moon are drawn a second time into
+  FSR's opaque reference (`fsr.rs`, the reactive reference pass), so the stars' and clouds'
+  terms run twice there. The water reflection's and a 3D scope's cameras draw the sky too.
+- **Not done**:
+  - The twinkle was judged only from the log and still pictures; no clip of it was taken.
+  - No colour change in the twinkle (chromatic scintillation) and no twinkle of the moon.
+  - A mod's starfield texture on a cloud layer counts as cloud: it takes the moonlight and
+    does not twinkle (no classifier is guessed).
+  - FSR draws the stars and clouds twice (above); nothing skips the night terms in its
+    second draw.
+  - No halo ring (the 22° ice halo), no moonlight on the fog or the land beyond what the
+    weather's own night light does, nothing indoors.
+  - The constants are starting values chosen by reasoning and checked in pictures at a few
+    strengths (the debug multiplier), not tuned against anything.
+
+### 3.20 Full-detail scenery (`full-detail`; 7 x 7 in `enhanced`, off in vanilla, #2701 stages 1 and 2)
+
+Past the loaded cells (5 x 5 around the player's cell, `uGridsToLoad` 5 [observed: the
+owner's `FalloutPrefs.ini`, world.md §7]) only references flagged "visible when distant"
+have a distant form, the object LOD blocks, and everything else appears only when its cell
+loads (world.md §7). The row draws the full models of static scenery a few cells farther,
+draw-only. Every rule below is NVForever's own choice [design], not the original's
+behaviour; the code is `engine/nvforever/src/full_detail.rs`.
+
+- **Presets**: `enhanced` turns on the 7 x 7 ring, `vanilla` keeps it off (the original
+  draws no full models past the loaded cells) [maintainer decision 2026-11-21 on #3048].
+  The cost is about 0.32 ms a frame at 7 x 7 and 0.56 ms at 9 x 9 (measured for #3048).
+  The row is a choice of three, not a switch, so `quality::enhanced_keys` (the switches a
+  preset name compares) does not list it; `--graphics enhanced` and the preset set it.
+- **Sizes**: Off, 7 x 7 (the cells 3 grid steps from the loaded grid's centre) and 9 x 9
+  (3 and 4 steps): 24 and 56 cells beyond the 25 loaded ones. `--graphics-only
+  full-detail-7x7` or `full-detail-9x9`. The row switches in play: turned off or made
+  smaller, the cells out of the new reach fade out as leaving cells do, the LOD coming
+  back under them with the complementary dither; made larger, the new cells stream in.
+  No ring indoors.
+- **Draw-only**: the game loads exactly the cells it loads with the row off. Ring cells
+  are never in the streamer's loaded cells (`Game::loaded_cells`, physics, the AI's
+  process levels, water, rooms and reports are as before) and their entity is no render
+  cell, so nothing of nvf-play draws into it. Its models keep their reference's
+  `RefVisual` (the simulation hides and shows them, deletions and texture swaps reach
+  them) and carry `nvf_play::DrawOnly`: the console's and the editor's picks, the
+  crosshair, the loaded counts, the scripts' NIF functions, scripted effect shaders (with
+  their add-on models and particles) and the actors' hit volumes and blocking
+  (nvf-play hitvol.rs, both where meshes are marked and where their bounds are read) leave
+  them out. No collider.
+- **Game-side checks**: the test aid `NVF_PLAY_TEST_GAME_DIGEST=<seconds>,...` (a
+  measuring aid, it drives nothing; nvforever `game_digest.rs`) logs at each time `game
+  digest t=<s>: cells <hash> residents-high <hash> triggers <n> zone-levels <n> onload <n>
+  end`: an order-independent hash of `Game::loaded_cells` and of the residents in the high
+  process, and the triggers entered, encounter zones given their level (counted where the
+  level is set) and reference OnLoad blocks entered (counted where the script runs each
+  block) so far; `end` anchors the last number for the smoke checks, which match text. The smoke pair `full-detail-ring-off` / `full-detail-ring-9x9` takes the same digests
+  on the same route; with the ring at 9 x 9 they must match the ring-off run's.
+- **Drawn**: STAT, SCOL and MSTT references (a moveable static with its idle sequence
+  playing, nothing else of its rig, its pose never published to physics), SpeedTrees
+  (their generated geometry, else their billboard), and every other reference with a
+  model flagged visible when distant (REFR record flag 0x8000 [documented: GECK wiki
+  "Reference", GetReferenceFlag]), as plain static scenery: the model's shapes as stored,
+  no rig, light source, emitter, stored pose or collision. A moveable static's idle stands
+  still while its ring cell draws nothing (spawning, standing by fully under a loaded
+  cell). Trees: the ring draws exactly the trees the distant billboards draw, by one shared
+  rule (treelod.rs `distant_tree_ref`: a TREE with a SpeedTree, no imposter, no primitive,
+  enabled at the start, at its authored place), and the billboards crossfade with ring
+  cells' trees as with loaded cells' (treelod.rs reads `DrawnCells`). Sharing the rule
+  leaves the billboards with the ring off as they were in the game's data: no exterior
+  TREE reference there is an imposter or a primitive [observed 2026-11-19: 18,702 exterior
+  TREE references across FalloutNV.esm, the four story DLC and the five packs, in eleven
+  worldspaces (WastelandNV 18,050), 0 with the XSRF imposter bit, 0 with XPRM; 323
+  references of any type carry the imposter bit and 8,819 XPRM; a read-only count of the
+  plugins]. A mod's imposter or primitive tree would lose its billboard (an imposter is
+  drawn by region, a primitive never). A cell where a tree
+  drew nothing keeps all its billboards, so its other trees show twice (full tree and
+  card): the billboards are one mesh per cell and TREE base, so keeping one tree's card
+  alone would mean rebuilding that mesh; the doubling is the accepted fallback. A tree base the loaded cells have not built is waited
+  for 3 seconds (`TREE_WAIT_SECS`), then built on the main thread, one per frame (tree.rs
+  has no worker-thread path; one build is not bounded in time). A cell's object LOD
+  segment holds the
+  LOD of its flagged references (world.md §7), and the ring hides it as a loaded cell does,
+  so nothing flagged may be left out. The landscape at full resolution (under 4 x 4 near
+  the 2 x 2 drawing the loaded cells start with, which meets their edge without cracks),
+  counted nowhere (the terrain summary is the loaded cells').
+- **The game's state**: with the game running, references not enabled at the start
+  (not deleted) are drawn too, and the simulation hides and shows every ring copy
+  (`activate::sync_visuals`: on spawn, and on each `RefChanged`, which the game sends for a
+  script's Enable or Disable of any reference, loaded or not). In the viewer (no
+  simulation) only references enabled at the start are drawn. A reference the game moved
+  is drawn where it is (nvf-play `moved.rs` finds ring cells by `nvf_play::DrawOnlyCell`);
+  a destroyed reference's ring copy takes its destruction model (destroyed.rs): the
+  reference stays pending until the model is prepared on the worker threads (tried again at
+  each look, every half second or so), and a new model that draws nothing (missing, no
+  shape) leaves the old copy in place.
+- **Left out** [design]: imposters (drawn by region), primitives, markers, deleted
+  references, actors, light sources, sounds, placed and cell water (distant water keeps
+  covering ring cells), grass, and non-flagged activators, doors, containers, furniture,
+  terminals and items.
+- **Kept segments**: a cell keeps its LOD segment while a flagged reference in it is not
+  drawn here: an actor, placed water (types the ring never draws, kept for good and never
+  drawn by a model swap), or one whose model spawned no shape (missing, hidden, empty).
+  Those are kept per reference against the cell's own entity, from its spawn through its
+  publication to its retirement (`KeptRefs`); unflagged ones too, as retries without a
+  segment. A later model swap may draw such a reference in that cell (destroyed.rs), and
+  a draw clears its reason; a swap's result never reaches another cell, or a later cell at
+  the same square, or a retiring one. There the segment shows beside the full
+  models of the cell's other references, and since a segment holds the LOD of all the
+  cell's flagged references, those show twice (full model and LOD) for as long as the
+  cell keeps it: a doubling rather than a hole. Everywhere else nothing is doubled at rest.
+- **LOD hand-off**: lod.rs takes the drawn cells from both (`DrawnCells`): a ring cell's
+  block segment crossfades with its fade and its LOD terrain is cut out once it is fully
+  drawn, exactly as for a loaded cell. One rule decides how the LOD segment, a ring cell
+  and the loaded cell of the same square share the pixels (`hand_off`): a ring cell under
+  a loaded cell is held at rest and draws the complement of the loaded cell's fade step,
+  so the segment (at level 1) draws nothing; a cell finishing its spawn under a loaded
+  cell goes through the same rule before it is drawn; a ring cell already standing by
+  under a loaded cell that is told to leave (the row turned off) keeps that complement
+  until the loaded cell is at rest or gone, then fades out alone; a ring cell fading out
+  when a loaded cell first comes is dropped at once. A ring cell fading in when its square
+  loads therefore jumps to rest (a visible step, rare: the player must cross a cell within
+  a fade). The ring cell goes once the loaded one is fully drawn inside the loaded radius;
+  in the loaded grid's step of hysteresis it may stand by under a loaded cell (culled), to
+  take over when that one fades out. What the tests prove (`full_detail.rs`): by the ideal
+  dither masks of the three, the rule draws each pixel once at every fade step and through
+  scripted frame sequences (a stand-by switched off, a reversal, the six switches of the
+  row, a cell finishing under a fading loaded cell). Not covered by that, and real: the
+  LOD terrain stays under full terrain that is only partly drawn (it is cut out once the
+  cell is fully drawn, and sits behind by its depth bias meanwhile); LOD blocks and
+  terrain are rebuilt within the LOD's rebuild budget, so for some frames after a cell
+  starts or stops fading the old block or cut stays (the block part of a cell that starts
+  fading out is missing until its block is rebuilt, as before the ring); and kept
+  segments double flagged scenery (above).
+- **Streaming**: ring cells are read ahead on the worker threads only while the loaded
+  cells' read-ahead is idle, and spawned nearest first, only while every loaded cell is in
+  and none is being spawned. No model or landscape is prepared on the main thread for the
+  ring: a cell waits for its read-ahead, and a reference whose model is not prepared (a
+  destruction stage's or a script's model, a persistent reference in a square with no cell
+  record) is asked of the worker threads and tried again once the cell's other references
+  are in. Kept one step beyond the ring, then faded out. A door's travel
+  (`Streamer::travels`), a change of worldspace or going indoors drops the ring and its
+  readings at once, as the loaded cells go, and never waits for it.
+- **What the 1.5 ms budget bounds, and what it does not**: within a frame's budget the
+  read-ahead starts new readings and takes in finished ones only until the deadline, and
+  references are spawned one at a time until it. Not bounded by it: the one reference or
+  cell landscape under way when the deadline passes; a tree base built after its wait (one
+  a frame, of no fixed length); the fade and shadow walks over a cell's meshes when its
+  fade step or shadow rule changes; retiring and despawning cells (at most 400 children a
+  frame, as the loaded cells); a destroyed reference's ring copies drawn again. The
+  summary's milliseconds are the whole time of the ring's own systems on the main thread
+  (stream, fade, the ring's part of destroyed.rs), these included; the commands they queue
+  are applied by Bevy later and are not measured. At rest (the same centre, reach and
+  loaded cells, none fading or spawning, every ring cell in and at rest) the ring's systems
+  do nothing but compare that state; never while a loaded cell over or under a ring cell
+  fades (the state holds each fading cell's step). Ring copies still cost every frame once drawn: their
+  meshes, the animated materials of their models and the leaf-order sorting of their
+  trees; their moveable statics' idles stand still while the cell draws nothing and while
+  a retired cell despawns, and a rig without shapes is not spawned.
+- **Size cut**: in the ring's outermost cells a reference not flagged visible when distant
+  is left out when its model's bounding radius is under 0.004 of its distance from the
+  loaded grid's centre (`SIZE_CUT`; about 57 units at 4 cells). The cell keeps the list,
+  and the references are spawned (within the budget) once the cell is no longer
+  outermost. The summary counts the references cut.
+- **Shadows and sliders**: ring meshes cast no sun shadow while the cascades end inside
+  the ring's inner edge (the default 8,000 units against the 8,192 a ring cell is at least
+  from the camera's cell's edge); with longer shadows they cast. The rule uses that
+  nominal distance, not each mesh's bounds or the sun's direction. The draw-distance
+  sliders never cull ring copies (`DrawClass::Unranged`): their cells hide their LOD
+  segments, so a culled copy would leave neither model nor LOD. The Object slider works on
+  the loaded cells as before the ring, on, off and indoors alike; below 100% it can cull a
+  loaded cell's object whose LOD segment is hidden too (an existing limit, upstream before
+  the ring).
+- **Off**: with the row off nothing of the ring is drawn or logged; the only log
+  difference is the settings page's count of rows in its start-up line, as for any new
+  row. Three systems still run and return at once (the ring's stream and fade, the exit
+  report), and lod.rs builds its list of drawn cells through `DrawnCells`.
+- **Readers left as they are** [design]: occlusion planes of the loaded cells
+  (rooms.rs) may cull ring meshes behind them, which is what they are for, and its
+  diagnostics count them; damage-stage shapes of ring copies follow the game's stage
+  (destroyed.rs `staged_shapes`); activation sync, reference
+  fades, texture swaps, draw distance, shadow thinning (a test aid) and billboard facing
+  act on ring meshes as on loaded ones (visual only); the Modern minimap's camera can show
+  ring geometry at its edge (visual only); the stress sample counts ring entities in its
+  totals and names `ring meshes` apart.
+- **Logs**: `full detail: 9 x 9 ring (radius 4)` when it comes on; at the exit `full
+  detail summary: 9x9, <n> cells, <m> references drawn, <k> skipped by type, <t> ms in its
+  systems on the main thread, <s> too small for their distance` (`<t>`: above, the queued
+  commands' application not included); the stress sample adds `ring meshes <n>` while
+  the ring draws any.
+- **Not measured yet**: frame cost and streaming hitches on the traversal routes
+  (Goodsprings to Primm, Novac), ring off against 7 x 7 and 9 x 9.
+
+### 3.21 Distant objects (`distant-objects`; off in both presets, #3014 first stage)
+
+Past the loaded cells (and the full-detail ring, §3.20) only what the worldspace's object
+LOD blocks hold is drawn. The editor bakes a reference into them when it, or its base, is
+flagged "Visible When Distant" and a `<model>_lod.nif` lies beside the full model
+[documented: GECK wiki "Static", "World LOD"; world.md §7 "What goes into the object
+blocks"], for one load order: `_lod` models a LOD pack or a later plugin adds do nothing
+until the blocks are made again. This row draws the rest of the static scenery directly,
+following the load order as it is. Every rule below is NVForever's own choice [design],
+not the original's behaviour; the code is `engine/nvforever/src/distant_objects.rs`.
+
+- **Reach**: Off, 8 cells and 12 cells (`REACH_NEAR`, `REACH_FAR`): the cells from one
+  step beyond the larger of the loaded radius and the ring's out to that many grid steps
+  from the loaded grid's middle cell, leaving out the square's corners whose nearest point
+  lies past the reach's distance. `--graphics-only distant-objects-8` or
+  `distant-objects-12`. Greyed on the page while Distant terrain and objects is off, and
+  inert then (without the LOD terrain the objects would stand on nothing). Switches in
+  play: cells out of a smaller reach fade out, new ones stream in. None indoors.
+- **Which references**: exterior STAT and SCOL references that pass the ring's scenery
+  filter (not deleted, not imposters, primitives or markers, not among the model paths
+  hidden for diagnostics); with the game running, those disabled at the start are drawn
+  too and the simulation shows and hides them, as in the ring. A reference with a model
+  override (a destroyed object's stage, a swap) is not drawn here at all: when its
+  override comes, its shapes are despawned at once from every distant cell holding it
+  (drawn, being replaced or being spawned) and its triangles leave the budget; when an
+  override comes or goes, the cells holding that reference are judged again, even while
+  fading or covered (the loaded cells and the ring draw the override). Moveable statics are
+  left out of this stage (an animated rig per reference at a distance, and their effect
+  shapes without the emitters).
+- **The rule** (`choose`, conservative, free of doubling while the blocks match the load
+  order): a reference flagged visible when distant, by its own flag or its base's in any
+  plugin's version of either record (`fnv_world::placed::visible_when_distant`), is left
+  to the block while its cell's segment is not empty or not known yet (`lod::BlockContents`,
+  filled when the LOD prepares the square's block; a square with no block file holds
+  nothing). Every other reference is drawn from its LOD model when the load order has one
+  (`<model>_lod.nif`, else `<model>_lod_0.nif`, one pack's naming), else from its full
+  model when its bound radius (OBND, times its scale) is at least `SIZE_RATIO` 0.01 of its
+  distance from the middle cell's centre (328 units at 8 cells, 492 at 12), else not at
+  all. The full model is the angular rule `shadow_thin.rs` uses.
+- **Triangle budget**: the full models drawn sum to at most `FULL_TRIANGLE_BUDGET`
+  (4,000,000) triangles, a model not prepared yet counted as `UNKNOWN_TRIANGLES` (5,000,
+  about the base game's median full model with a LOD sibling). Past it the size ratio of
+  the farthest ring of cells that still draws a full model is raised by 1.5 (up to 0.08),
+  then the next nearer, until the sum fits (the fit runs on a worker); a full model that
+  would still pass the cap is left out. The sum is read from the cells alive, in three
+  parts (`Budget`): the drawn cells' models, the reservations of cells being spawned and
+  the predecessors of rebuilt cells still fading out, so a cell dropped half-spawned or
+  retired gives its share back by leaving. One rebuilt cell at a time is judged without
+  its own predecessor (whose models go once it rests); every other spawn counts
+  everything, so the total passes the cap by at most that one predecessor's share, from
+  the replacement's first full model until the predecessor has faded out. A model
+  refused for the budget is counted apart from one too small (the summary's `past the
+  triangle budget`), and its cell is judged again once room for its smallest refused
+  model comes back (looked at before spawning and again after the frame's replacements,
+  so room freed late in a frame counts at once). A worker's fit is taken only while it is for the centre and reach
+  judged now. Logged once per centre: `distant objects: full models past 4000000 triangles;
+  size ratio raised from <n> cells out (up to <r>)`.
+- **Draw-only**: as the ring's cells. A distant cell's entity is a `DistantCell` and an
+  `nvf_play::DrawOnlyCell` (moved references follow), never a loaded or render cell;
+  models keep `RefVisual` and carry `nvf_play::DrawOnly` (`world::SpawnMode::Scenery`). No
+  collider, light, emitter, script or sun shadow (`NotShadowCaster` on every mesh). The
+  draw-distance sliders leave them alone (`DrawClass::Distant`).
+- **Streaming**: each cell's list is read on the worker threads (placements, base records,
+  bounds, which LOD model exists in the archives and loose files), never on the main
+  thread, `MAX_LISTING` (8) at a time, only while the loaded cells' and the ring's
+  read-ahead are idle; lists are kept within two steps beyond the reach. References with
+  neither a flag nor a LOD model and too small to pass the rule at the nearest distance a
+  distant cell can be at are dropped there. Cells are spawned nearest first within 1 ms of
+  the main thread a frame, after the ring, only while the loaded grid and the ring are
+  complete, and only with models already prepared on the workers: a cell waits for its
+  models while the next four cells' models are asked for. What the 1 ms bounds: starting
+  lists, the scan for cells to judge again, and the cells planned and spawned stop at the
+  deadline between items; one cell's plan and one reference's spawn (every shape of its
+  model) are never split, so a frame can pass by one of them. Taking finished lists in is
+  bounded by the eight in flight; the override check is one pass over the overrides. A
+  settled frame (nothing under way, every loaded and ring cell at rest, the re-judge scan
+  through a whole lap for the current block revision, centre, reach and ratio table,
+  every wanted cell at rest and judged for now, and the same centre, radii, loaded and
+  ring cell counts, block revision and overrides) returns after comparing those, with no
+  pass over the cells; the summary's
+  milliseconds cover both of the feature's systems from their start. A
+  door's travel or a change of worldspace drops everything at once (behind the loading
+  screen); going indoors or turning the distant LOD off hides everything at once and
+  despawns it over the next frames in the loaded cells' bounded slices.
+- **Fades** (`distant_range`, tested pixel by pixel): a distant cell in a square drawn by
+  a loaded or ring cell draws the complement of that cell's fade step and is held at rest
+  under it (the ring's `hand_off`), so a reference drawn there in full and here from its
+  LOD model covers each pixel once; it goes once that cell is fully drawn inside the inner
+  radius. The cover is the loaded or ring cell's scenery level (`scenery_level`), not
+  the ring's tree level: a ring cell whose trees fell back to the billboards still draws
+  its statics. Alone a distant cell fades in and out by its own step and always dithers
+  out with distance between `reach - 1` and `reach` cell widths from the camera
+  (`edge_range`). One visibility range cannot multiply two dithers, so a fading mesh is
+  drawn at the smaller of its cell's step and the reach's fade at its own distance
+  (`band_range`); from the reach on it is culled outright (an empty far margin at the
+  reach), so nothing at or beyond the reach is drawn at any step. At rest the plain
+  distance fade takes over at the same level; in the band the two dithers keep different
+  pixels at the same count, so when a fading mesh there comes to rest its pattern
+  changes, not its coverage. Cells fade out past `reach + 1`, out of a smaller new reach,
+  or, after Off, all of them, with the last reach's fade; `distant objects: off, 0 cells
+  left` is logged once the last has gone.
+- **Re-judging**: each cell keeps a stamp of the centre and the ratio table it was judged
+  for, and its block's answer then. When the loaded grid's centre has moved two cells the
+  ratios are fitted again; a cell whose stamp is stale (a new centre or new ratios), or
+  that holds flagged references whose block now answers otherwise (unknown to empty or to
+  held), is judged again once it is at rest, alone and not being replaced, so a cell
+  that was fading or covered catches up later. One whose drawn set changes is built
+  again: crossfaded with the old one (the new cell's step against the old one's
+  complement) where the whole cell lies within `reach - 2` cells of the middle cell's
+  centre, at once nearer the edge (a complement cannot also carry the reach's fade); a
+  predecessor that no longer passes (the reach shrank, the centre moved) goes at once.
+  The scan for cells to judge again goes round a stable order from where it stopped. A
+  model drawn full stays while its radius is at least 0.8 of the threshold
+  (`HYSTERESIS`), so nothing flickers at it.
+- **Logs** (only while on): `distant objects: reach 8 cells (ratio 0.01)` when it comes
+  on; `distant objects: off, 0 cells left` after Off once the last cell is gone; at the
+  exit `distant objects summary: <cells> cells, <drawn> drawn (<lod> lod, <full> full),
+  <held> held by blocks, <unknown> block unknown, <small> too small, <b> past the
+  triangle budget, <t> ms on the main thread`. With the row off nothing is drawn or logged; its two systems and
+  the exit report return at once, and lod.rs records each block's cells as it takes the
+  block in (no log).
+- **Failure cases** [design, known]:
+  - The shipped blocks with plugins that flag more bases (a LOD plugin without its
+    regenerated blocks): those references count as held and are not drawn, as in the
+    original, which shows nothing for them either.
+  - Blocks regenerated for another load order: a reference the blocks hold but the load
+    order no longer flags is drawn twice (block and here); one flagged now but missing
+    from the blocks leaves a hole.
+  - Overhang of the conservative rule: a flagged reference whose model has no `_lod`
+    sibling is in no block yet counts as held while its segment holds anything; a whole
+    square waits on its block's preparation; squares past the LOD's block distance are
+    never known, so their flagged references are never drawn.
+  - The rule is judged per cell: a block segment holds or does not hold a cell's flagged
+    references as a whole, so a block regenerated for another load order can double some
+    of a cell's objects or hide others, cell by cell.
+  - A child worldspace that uses its parent's LOD files draws the parent's blocks: its own
+    flagged references count as held while the parent's segment for that cell holds
+    anything, though the parent's block was not made from them.
+  - During a crossfade, and where a distant cell stands under a loaded or ring cell, the
+    two layers draw complementary halves of a dither pattern, but the LOD model and the
+    full model differ in outline: where one has geometry and the other none, a pixel is
+    drawn by neither or by one only, so the hand-off is pixel-once for the pattern, not
+    for the silhouettes.
+  - Gaps: in the ring's outermost step a reference the ring's size cut leaves out is not
+    drawn here either (the distant cell under it is culled), and a reduced Object
+    distance culls loaded and ring models that this layer, standing under them, does not
+    draw: as without this row.
+- **Tests** (no game data): the rule's branches, the budget's fit and parts through a
+  cell's lifecycle (spawn, cancel, finish, rebuild, rejected rebuild, retire, clear), a
+  replacement at the cap, deferred re-judging, a late block, overrides applied and
+  cleared, pixel-once fades with the loaded and ring cells and across a rebuild, the
+  reach's fade at every temporal step. Not covered: the streaming system itself against
+  real cells, travel into a child worldspace.
+- **Not measured yet**: frame cost and streaming hitches with the row off against 8 and 12
+  cells on the Goodsprings to Primm route and at Novac, with the base game and with LOD
+  resource packs; the issue asks for them in the pull request.
+- **Follow-ups** (not in this stage): judging the flags from the plugin the block files
+  come from (so regenerated blocks neither double nor leave holes); flagged non-static
+  types (activators, doors, moveable statics); merging each cell's meshes by material;
+  a link to the Object distance slider.
+
+### 3.22 Distant lights at night (`distant-lights`; off in both presets)
+
+[design, #3013] An addition of NVForever's own, an engineering choice for the enhanced look:
+not a fact about the original game, never a parity item, and never to be used to explain a
+difference from the original's frames. Placed lights exist only with their cell (world.rs,
+lights.rs), so past the loaded 5 x 5 cells no lamp is drawn and a town at night is a dark
+shape until its cells load. With the row "Distant lights (experimental)" (Graphics >
+Detail and Distance, the last row, with the other distance rows; it needs no other row:
+it does not draw on the distant LOD) on, the placed lights of the cells beyond the loaded ones, and the
+statics that are the places' lights, show as small glows. Sprites only: no light entity, no
+shadow, no game state. Code: `distant_lights.rs`, `distant_lights.wesl`,
+`nvf_assets::model_glow`.
+
+The Mojave holds few placed lights: 357 references with a LIGH base in the whole worldspace,
+56 within 12 cells of Novac and 56 of Goodsprings, none disabled at the start [observed:
+FalloutNV.esm, `fnvtool world refs --world WastelandNV`, 2026-11-19]. The towns light
+themselves mostly with statics: glow cards, light beams, lamps with a self-lit bulb, sign
+panels (Novac's within two cells: 12 LIGH references beside light beams, recessed lighting,
+glow cards, lamps and signs) [observed: the same listing]. So the glow statics below are
+what the feature mostly shows.
+
+- **Source.** The exterior cells whose closest point lies within 12 cells of the camera
+  (`treelod.rs` `cells_within`, as the distant trees choose theirs). The cells not read yet
+  are listed on the read pool's worker thread (as world.rs reads cells ahead), from the
+  references world.rs spawns a loaded cell from, through the renderer's own filters
+  (`world::drawn_with_cell`: no imposters, which their regions draw, no editor primitives
+  such as a trigger copied from a glowing activator; `world::marker_model`: no marker
+  models)
+  (`cell_refs`: the cell's own and the worldspace's persistent ones standing in it): those
+  whose base is a LIGH, not deleted, not negative, not off by default, with a radius (DATA
+  radius plus the reference's XRDS) and a colour of the record's own (`fnv_world::lighting`;
+  the flag bits as the GECK wiki "GetLightFlag" page lists them [documented]). A light whose
+  colour comes only from its model is left out. Lights disabled at the start (their own flag
+  or the enable parent chain, `world::enabled`) are kept with that state, so a script that
+  enables one later shows it. The lists are kept per cell and dropped with the worldspace.
+  A script's SetInternalMarker change (`world::script_markers_generation` moves on) lists
+  the cells again, since the marker filter above classified them: a running scan is
+  stopped, and the glows of the cells in reach stay drawn until their new listing replaces
+  them.
+- **Glow statics.** Beside LIGH references, statics and moveable statics (STAT, MSTT),
+  activators (ACTI) and static collections (SCOL) whose model glows, judged from the model's shapes and never from its file name
+  (`nvf_assets::model_glow`), by the properties the renderer already reads
+  (`nif_spawn::shape_props`, `shape_alpha_mode`, `shape_emissive_mult`): an unlit shape
+  added to the frame (glow cards, light beams: the additive shapes of nif.md §6 "Additive
+  blend"); an unlit shape whose emitted light, after the picture rule, is over white (what
+  nif_material.wesl burns as a hot source and the neon bright pass picks up); a lit shape
+  self-lit at full emission (emissive colour × multiplier at 1 or more: a lamp's bulb, a
+  sign's glow panel) [design: the last threshold is ours]. Apart from the added unlit
+  shapes, which may be long beams, a shape wider than 512 units (bounding-sphere radius)
+  does not count, so a self-lit band across a building is the building's picture, not a
+  lamp. Helper geometry the near renderer leaves out (`Props::is_helper`) and hidden shapes
+  do not count. A model with one small glowing part among ordinary geometry (a lamp post)
+  qualifies through that part, as long as its glowing shapes together show enough light:
+  the sum of brightness (the glowing texture's mean, times the emission) x radius^2 at
+  least 25 (a bright bulb 5 units in radius; emissive trim and specks show less) [design].
+  A shape whose texture is known dark (black or fully transparent where it blends) shows
+  nothing; an unreadable texture (BC5, a file that does not parse) or none counts as fully
+  bright, the emissive hue alone. Per model, read once from the NIF alone (no meshes,
+  materials or textures for the GPU) and kept for the run: the glowing shapes' centre below
+  the root, weighted by the light they show (the reference's transform takes it to the
+  world, so a lamp post's glow sits at its bulb), their reach (feeding the size and budget
+  rules as a light's radius would, times 4) and their colour (the emissive hue times the
+  mean hue of the glowing texture: every texel of its first mip level of at most 256 x 256
+  (without one, a grid of about as many from the smallest level), compressed blocks decoded
+  with their selectors and an edge block's padding left out, DXT1's transparent selector
+  honoured,
+  weighted by brightness, and by alpha where the shape blends). A glow-mapped lit shape
+  takes the glow map's hue without the diffuse texture the real material multiplies it by. Glow statics take the
+  same present state, merge, cap, night share, fog and hand-over as lights, strength 1, no
+  shimmer. A static collection is drawn by its own combined model, as world.rs draws it
+  (the GECK wiki "Static Collection": its Model is the NIF the editor generates for the
+  collection [documented: offline snapshot 2026-10-28]), so its glowing parts are found in
+  that model, each at its place in it; a part as wide as a building is left out by the same
+  512-unit bound. An activator shows its model's stored look: whether a script switched
+  it is not known beyond the loaded cells (activators.rs follows only radio receivers' on
+  state, and only while drawn), so it glows while enabled, and a sign switched off by a
+  script without disabling it still glows [known limit]. Counted with an approximation of
+  these rules over the records and the meshes (2026-11-19, the same tools): within 12
+  cells of Novac 120 static references of 22 glowing models (of 833 static models there),
+  of Goodsprings 55 of 23 (of 826): glow cards (`fxglowsimpfill*`), light beams
+  (`fxlightbeam*`, HELIOS One's god rays), lamps (`llamp*`, `lamplightlamp`, street
+  lights), recessed lighting, the NoVac sign's glow panel, tent lights; also some utility
+  girders and fans whose small self-lit part is a fixture. Activators and collections add
+  27 references of 4 glowing models around Novac (light beams, the motel's lit window,
+  vault control panels, force-field effects) and 16 of 6 around Goodsprings (Primm's lit
+  windows, the Prospector Saloon's neon, a sign, a collection with a cave lamp, force-field
+  effects) [observed, the same approximation, which leaves out the visible-light rule].
+- **The scan.** One job at a time on the read pool: first the nearest cells not listed
+  yet, 32 at a time (their references copied on the main thread for those 32 only), then the
+  static models they ask for, 32 at a time, at most 1,024 models per camera cell (the rest
+  wait for the next scan; 895 were read within reach six cells west of Novac [observed
+  2026-11-19]). Models are asked for on the main thread only, each once, so two jobs never
+  read the same model. Every job checks a shared epoch between cells and between models;
+  switching off, another worldspace, going indoors or daylight move it on, so a running job
+  stops after the read under way. Each model's glow is handed back as soon as it is read,
+  so a stopped job's reads are kept and only its unread models go back to the front of the
+  queue; no job starts while a stopped one still runs (never two scans at once). A cell's
+  sources are its lights and the statics whose model is read and glows; they are completed
+  as the models come in (only the cells that show a model just read are resolved again,
+  from a model-to-cells index), so a town fills in over the scan.
+- **Present state.** Whether a listed light shows is the simulation's present state
+  (`SimState::present`: not deleted, enabled now), or without a simulation its state at the
+  start. Cells listed but not merged yet are checked at once, and every 2 s a pass over all
+  cells starts; both within 2,048 units a frame, a hard bound (a light checked or merged one
+  unit, starting a cell or handing a merge on one; a check stopped inside a cell resumes
+  there in the next frame, a merge that does not fit waits for the next frame, and a cell
+  with more present lights than the budget is merged on a worker and its glows swapped in
+  when done). A cell is
+  merged again when the set of its present lights changed (a key of their FormIDs, so
+  disabling one lamp and enabling another in the same cell between two checks is seen).
+- **Hand-over.** No glow for a cell inside the loaded grid (the square of `Streamer::radius`
+  steps around the grid's centre that world.rs loads), whether loaded already or still
+  pending: its own lights draw there, or will within moments. A cell outside the grid that
+  is still drawn as it fades out gives its glows 1 - its fade level (`Streamer::cell_level`,
+  fade.rs), so they come back as it goes; during that fade the cell draws both forms, its
+  dithered models and lights and the glows growing back. The full-detail ring (#2701, another branch) draws
+  more cells as loaded cells, which hand over by their level; `in_loaded_grid` is the hook.
+  The batched mesh is rebuilt when the camera's cell, a cell's share (16 steps) or a cell's
+  set of present lights changes: a few hundred cards, a few times a second at most during
+  fades.
+- **Budget.** Lights of one cell within 192 units of each other are one glow (brightest
+  first, each joining the earliest glow in reach; the strength-weighted mean position and
+  colour, the largest radius, the summed strength held to 2), found through a grid of
+  buckets 192 units wide by the glows' current positions (3 x 3 buckets per light, the
+  same result as a search over every glow, tested). Of all glows the 400 with the most light
+  for their distance (strength x brightest channel x size / (distance^2 + one cell^2)) are
+  drawn, taken by a partial selection with only those 400 sorted.
+- **Drawing.** One mesh for all glows under the world root, no frustum culling (one
+  draw). Each card faces the camera, spread in the view's plane in the vertex shader (as the
+  leaf cards, tree.wesl). Half size: the light's radius x 0.5, held to 24..320 units, and
+  never under 2 output pixels nor 1 render pixel, so a lamp 12 cells away stays a few pixels
+  wide (fitted by pictures, 2026-11-18); a card widened to that floor keeps its own area's
+  share of light per pixel, held to 0.85. Under an upscaler the floor is in output pixels, so
+  the glows keep their size on screen whatever the render scale (the view uniform has both
+  sizes). Unlit and additive (Bevy's `AlphaMode::Add`, the transparent pass: depth-tested
+  against the world, no depth written, no prepass, no shadows), faded out over the reach's
+  last 2 cells. Three kinds of card, all in the one mesh and material (the kind and a
+  shaft's ends and widths are vertex attributes, laid out at the top of
+  `distant_lights.wesl`):
+  - *Round* (a static's round glow): a soft spot, e^(-4 r^2) (1 - r^2).
+  - *Core and halo* (a placed light): a small bright core and a wider, fainter halo in the
+    same card, (1 - h) e^(-14 r^2) + h e^(-3 r^2) (1 - r^2), the halo's share h = 0.35
+    (`HALO_SHARE`), sized from the light's radius as before.
+  - *Shaft* (a long glowing part: a light beam, a neon tube): `model_glow` gives each
+    glowing part its shape, the principal axis of its vertices (in the model's space), its
+    length along it and its width across at each end; a part under 1.5 times as long as
+    wide stays round, and so does a part whose own triangles cover less than a quarter of
+    its length x mean width (the widths measure all its vertices, so two rows of slivers
+    would make a wide shaft over nothing drawn; `MIN_SHAFT_COVER`), and a model keeps its 4 brightest long parts as shafts, the rest in
+    its round glow. The bright end is told by the vertex colours (alpha x luminance, the end
+    thirds' means 1.25 times apart), else by the cone (the narrow end, the other 1.5 times
+    wider, is the source), else the shaft is symmetric. The card spans the segment between
+    the ends, widened across by each end's half width (so a cone tapers toward its source)
+    and facing the camera around the axis (an axial billboard), each width held to the pixel
+    floors; soft across (e^(-4 x^2) (1 - x^2)) and along it fading from the source to nothing
+    at the far end, smoothstep(0, 0.08, v) (1 - v)^2 (a short soft start, `SOURCE_RAMP`), or
+    bright in its middle when symmetric; a directed shaft also gets a small round core at
+    its source (the lamp, strength 0.6, `SOURCE_CORE`). Its light per pixel is set so its
+    integrated light (the profile's integral over its card) is `SHAFT_BRIGHTNESS` (1.5, the
+    first pictures read too dim at 1 against the real beam models) times its round glow's,
+    held to 4 times (`MAX_SHAFT_GAIN`), so a hair-thin shaft does not become a white bar.
+    The shader maps each fragment across as its offset from the axis over the half width
+    at that point along (both linear over each of the card's two triangles, `shaft_x`), so
+    the profile is centred on the axis at every cross-section and the triangles draw the
+    integral computed (interpolating the -1..1 corner coordinate itself, a tapered beam drew
+    about 30 % less: 20,231 against 28,907 for the test beam). The profile is one function
+    across times one along, so its integrals are computed once per kind (`shaft_moments`)
+    and a shaft's costs a few multiplies when the mesh is built.
+    Whether a shaft shows as one is decided once for its whole card from both ends (never
+    half shaft, half dot): both ends between the near and far planes, neither seen end-on,
+    and its length on screen at least two floors in output and in render pixels; otherwise
+    it is drawn as its round card. Shafts are never merged with other glows. On the
+    beam models of the Mojave the vertex colours carry the gradient (their alpha is near 0
+    at the far end; `fxlightbeambrt03`, `fxlightbeamw01dim`, HELIOS One's `fxhelios_godray1`
+    are brighter at their narrow source end), so the vertex test decides; a beam with even
+    vertex colours and no taper (`fxlightbeamw02` by a rough survey) is symmetric
+    [observed: fnvtool nif decode, 2026-11-19, a rough per-axis survey].
+- **Colour, fog and the HDR path.** As the NIF materials' additive shapes are drawn
+  (nif.md §6 "Additive blend", "Fog on added light"; nvf_assets `add_display`,
+  `fogged_addition`): the glow's colour is the record's colour bytes / 255 (display
+  values) times its fade (held to 2), the merged strength and 1.0 at the core (0.8 before
+  the glows were added in display values; a few-pixel glow's centre then sat near 0.5); it
+  is made linear (raised to 2.2), taken through the view's fog (`apply_fog`, with the game's curve
+  of fog.rs and the desert haze of §3.16) and, in a view without HDR (Light glow off),
+  Bevy's tonemapping, less black through the same, so fog dims the glow and adds no fog
+  colour of its own; then added to the opaque frame behind it in display values (the view
+  transmission texture, which the anchor in nif_material.rs keeps in every view), the sum
+  held to 2. So a glow of the record's colour over a black night shows that colour, and
+  the path is the same with Light glow on (the HDR view, its tonemapper holding display
+  values to 1 per channel, lights.rs `GAME_CLIP`, and its bloom giving bright cores a halo)
+  and off. Eye adaptation (eye_adapt.rs) only brightens dark views, so a lifted night view
+  brightens the glows with it; a merged glow (strength 2) or a lift can clip the core's
+  brightest channel.
+- **Daylight.** The view's exposure never darkens for daylight (eye_adapt.rs brightens
+  only), so an additive glow would show as a dot on a sunlit hillside. The glows are scaled
+  by the sun's elevation instead: full at -4 degrees and below, gone at 6 degrees and above,
+  smooth between. While the share is 0 the mesh is hidden and nothing is listed, checked or
+  built. A fitted choice of ours [design], not the original's (which draws no light beyond
+  its loaded cells). Glow statics take the same share, though many of their shapes glow by
+  day in the original too: by day, at a distance, a glow card is not a light one looks for
+  [design].
+- **Flicker and pulse.** Lights with the flicker flags (flicker, flicker slow) and the pulse
+  flags (pulse, pulse slow) get a slow shimmer of up to 15 % (a sine with a phase from the
+  reference), slower than the near light's own motion (lights.rs `LightMotion`), which from
+  afar would read as noise.
+- **Doubling with other layers.** A glow source in a cell inside the loaded grid draws
+  nothing (its own model or light draws). The full-detail ring and distant objects on other
+  branches would draw the real model of a glow static at a distance; then the sprite and the
+  model show together (a beam's real cone with its shaft over it). `in_loaded_grid` stays the
+  named hook, to be wired when those branches are in.
+- **Accepted limits.** A shaft is a flat sprite facing the camera around its axis: seen
+  end-on it is a dot (it falls back to its round card). The glows are depthless additive sprites: they write no depth and no
+  motion, so under temporal anti-aliasing, FSR or DLSS they are resolved like other
+  additive shapes (smeared a little while the view moves; a card of a few pixels may
+  shimmer). The fog on them is the fog at the card's own pixels, and outdoors the fog blends
+  in display values, so the subtraction of fogged black is exact only where the fog is
+  linear; a glow fades a little faster with distance than the plain fog share. No light
+  colour from the model (lights whose LIGH colour is black), no emittance from a region
+  (XEMI), no glows indoors or in other worldspaces than the camera's, no occlusion beyond
+  the depth test (a glow behind the LOD's hills is hidden by them; one behind a building not
+  loaded is not, as the building is not drawn). Not a script's light colour or fade edits
+  (lights.rs session lights). An enabled activator that a script switched dark still glows,
+  and one whose stored model is dark misses its switched-on glow. A collection's model is
+  read as stored: alternate textures and damage-stage visibility are not applied. Up to
+  four shafts per model bypass merging and each takes one of the 400 slots. A model not
+  read within a scan's cap of 1,024 waits until the camera changes cell.
+- **Known misses of the classification** (a visual rule from the shapes' properties, not a
+  list): lights that exist only as part of a large building's own texture (lit windows, a
+  casino's facade; the 512-unit bound), dim bulbs (a lit shape under emission 1), large
+  lit signs that neither add to the frame nor burn, shapes hidden in the file and shown by
+  an animation (hidden shapes do not count), a collection's part merged into a shape wider
+  than 512 units in its combined model, and an activator's switched-off look. **False-positive
+  risks**: fully self-lit decorative panels and additive effects that are not lights (the
+  counted Novac area has utility girders and fans whose small self-lit part may be a
+  fixture or trim, and force-field effect activators);
+  the visible-light bound and the helper exclusion take out the smallest. The counts show
+  that the rule finds candidates, not its false-positive rate.
+- **Switching**: the row, `--graphics-only distant-lights`, a `--graphics-cycle` set
+  `distant-lights`, `NVF_PLAY_TEST_SETTINGS=<t>:distant-lights`. The first switch-on
+  compiles the glows' pipeline; switching off drops the glows and stops the scan. With the
+  test aid `NVF_PLAY_TEST_PIPELINE_LOG=1` the pipeline log names it once compiled:
+  `distant lights pipeline <n> ready` (pipeline_gate.rs, from a fragment definition the
+  material adds, `NVF_DISTANT_LIGHTS`). Smoke: `distant-lights`, `distant-lights-switch`.
+  Log lines, only with the row on: `distant lights: on (reach 12 cells, cap 400)` when it
+  turns on, `distant lights: off` when it is turned off again, and at the exit `distant
+  lights summary: <cells> cells listed (<refs> references), <lights> lights, <g> glow
+  statics, <a> glow activators, <c> glow collections (<m> glowing models of <k> read), <d>
+  disabled at the start, <drawn> drawn at most, skipped: <x> deleted, <y> no colour, <z>
+  negative/off, <e> no radius`, the reasons
+  counted over the light references read. The start line names no counts (nothing is
+  listed yet). With the row off nothing runs past the switch's check and the log is as on
+  main. The graphics
+  line names it (`..., distant lights`) only when it is on.
+- **Cost**: not measured yet (to be measured on the Goodsprings to Primm route at night,
+  #3013): one draw of at most 400 cards, each fragment reading the frame behind once; the
+  record listing on a worker, 32 cells a job, and each static model in reach read once for
+  its glow (about 830 to 900 around a town, a NIF decode and at most a 256 x 256 mip of a
+  texture each, 32 a job, one job at a time); at most 2,048 units of present-state work a
+  frame.
+
 ## 4. Tried and dropped
 
 - **Bevy `ContactShadows`** on the sun (16 steps, 40 units, thickness 12): the right effect on
   sunlit bushes, but a band of dark speckles on near surfaces seen at a grazing angle (the
   near roof at Goodsprings) and per-frame noise, which Bevy expects TAA to clean up.
 - **Fog in-scattering towards the sun**: invisible in NVWastelandClear (fog to 200,000) and
-  a shadow-map fetch per fragment.
+  a shadow-map fetch per fragment. (The desert haze, §3.16, warms toward the sun without it.)
 - **Bevy bloom with an HDR main view** and **Bevy CAS**: see §2.
 - **Bevy volumetric fog** (`VolumetricFog` on the camera, `VolumetricLight` on the sun, a
   30,000 x 6,000 x 30,000-unit `FogVolume` following the camera, density 0.0005, 64 steps) at
@@ -711,7 +3640,7 @@ second, so:
 
 ### 5.3 Sun shadows (2026-10-12, playtest list 4 item 6)
 
-The owner: "shadow rendering seriously affects performance; maybe limits on draw distance or
+The request [design, #3074]: "shadow rendering seriously affects performance; maybe limits on draw distance or
 quality". Bevy times no shadow pass (they do not appear in the GPU list of `--log-frame-times`),
 so the cost was measured as frame time with the cycle's shadow keys (§6) and the casters each
 cascade drew (the log's "shadow casters per cascade" line). Machine: GeForce RTX 4070, 1280 × 800,
@@ -738,7 +3667,7 @@ casters, as it did. Changed [engineering choices]:
   between it and the sun, so walls and roofs still shade the arms; their shadows on the arms
   are finer than before.
 - **The sun's shadows default to 8,000 units in 3 cascades** (`sky::DEFAULT_SHADOW_DISTANCE`,
-  `DEFAULT_SHADOW_CASCADES`; `--shadow-distance` still sets the reach): 12.5-12.9 ms against
+  and then `DEFAULT_SHADOW_CASCADES`, since #2843 `CascadeLayout`; `--shadow-distance` still sets the reach): 12.5-12.9 ms against
   the old 19.0-20.8, about 7 ms (a third of the frame) saved; shadows off is 7.3-7.5. The first
   cascade, a twelfth of the reach, is now 667 units instead of 1,333, so shadows near the player
   are finer. Visible change: nothing farther than 8,000 units (about 114 m) casts a sun shadow;
@@ -746,6 +3675,16 @@ casters, as it did. Changed [engineering choices]:
   (`C:\fnv-private\references\shadows_sun\shadow_limits_before_after.png`); at dusk the long
   shadows of distant rocks and buildings end nearer. The original casts no sun shadows from
   the world at all (world.md §6), so this is no further from its look.
+  **Proposed in #2843** [engineering choice: the contributor's proposal, for the
+  maintainer to decide]: Quality draws 4 cascades again, still to 8,000 units and
+  staggered (never more than two drawn in a frame), with far bounds at 0.0875, 0.25 and
+  0.625 of the distance (700, 2,000, 5,000) with 2048² maps, or 0.1875, 0.4375 and 0.875
+  with the middle two capped at 0.3 and 0.6 of the last bound (1,500, 3,500, 7,000 with
+  Longer shadows, 1,500, 2,400, 4,800 without, the latter not measured) and a blend band
+  of 0.4 with 4096² maps (the Shadow resolution row); Performance draws 3,
+  ending at 0.1875 and 0.5625 of it (1,500, 4,500), the third every fourth frame.
+  `--graphics-cycle cascades=<n>` keeps the layout above. The measurements and the
+  reasons: frame-rate-audit.md §12.
 - Finer shadows (§3.2) keep their 4096² maps and reach 1.5 × the distance, now 12,000
   (the 4096² maps went in #1367; the longer reach stays).
 
@@ -949,14 +3888,48 @@ log then gives the sun's shadow reach and cascades with each frame time, the sun
 elevation, and the casters each cascade of each light drew; with sun shadows on also what
 `--shadow-thin` thinned and the sun's last cascade broken down by angular size (§5.5).
 
+Debug switch `NVF_PLAY_DEBUG_AO` (read once at the start; for before/after pictures and cost
+runs of the ambient occlusion, §3.1.1, §3.1.2): unset, empty, `0`, `off` or `false` put the
+ground-truth estimate in the lighting (the default), `view-lighting` does that and draws the
+factor each fragment took; on the picture, `post` runs the ground-truth estimate, `old` the old
+estimate and its blur, `view` the ground-truth estimate's factor alone as a grey picture,
+`view-old` the old one's. Anything else is unknown (a warning; the default runs).
+`NVF_PLAY_DEBUG_AO_STRENGTH=<number>` (read once at the start) replaces the ground-truth
+estimate's strength (0.8 in the lighting, `LIGHTING_STRENGTH`; 0.4 on the picture,
+`GTAO_STRENGTH`), held to 0..1; the old estimate keeps its 0.55; the log line then names it
+`strength <number> (NVF_PLAY_DEBUG_AO_STRENGTH)`. `NVF_PLAY_DEBUG_AO_VARIANT=<names>` picks the
+remedies for the plants' shimmer (unset: `thin+soft` in the lighting, none on the picture;
+`none` the plain estimate), `NVF_PLAY_DEBUG_AO_LAMPS=<0..1>` the lamps' weight in the lighting
+(default 1, 0 the ambient term alone), `NVF_PLAY_DEBUG_AO_EXPONENT=<0.1..2>` its exponent
+(default 1). Before a temporal upscaler
+the grey replaces the HDR picture and still passes through the upscaler and tonemapping;
+`NVF_AO_BEFORE_FSR=0` shows it after tonemapping instead. Its pass's GPU time is the
+`nvf_ambient_occlusion` span of `--log-frame-times`.
+
+`NVF_CAUSTICS_BEFORE_UPSCALER=0` (read once at the start) draws the submerged caustics
+after tonemapping at the display size under a temporal upscaler, as builds before it moved
+did (§3.8.2), for before/after pictures; without an upscaler it changes nothing. The pass's
+GPU time is the `nvf_underwater_caustics` span in either placement.
+
 ## 7. Next candidates
 
 - Bloom and eye adaptation driven by the image spaces' own HDR values (IMGS DNAM's 14 HDR
   floats and 3 bloom floats), once their meanings are documented from xEdit: that would move
   bloom from an engine choice towards parity.
-- Bevy SSAO or GTAO once the custom prepasses write normals; motion vectors from the custom
-  prepasses (last frame's wind and skinning) would let the TAA follow what moves by itself.
+- Bevy SSAO once the custom prepasses write normals (an own GTAO from the depth was built
+  instead, §3.1.1; its stage b, the occlusion on the ambient light only, is open); motion
+  vectors from the custom prepasses (last frame's wind and skinning) would let the TAA
+  follow what moves by itself.
 - Sun shafts through interior windows are the game's own light-ray meshes already; none from
   the moon.
 - A shadow distance and map size setting with more steps than on/off (the cycle keys of §6
   measure them).
+- Cloud shadows (#2670) and terrain shadows (#2671) on the sun: the shared plumbing, one
+  visibility factor on the sun's direct light, is in [sun-visibility.md](sun-visibility.md).
+  Cloud shadows is the settings row Cloud shadows (experimental) (`cloud-shadows`,
+  Graphics › Shadows),
+  off by default and in both presets until its strength is calibrated
+  ([sun-visibility.md §7-§8](sun-visibility.md#7-the-switch-stage-c2)). Terrain shadows is
+  the row Terrain shadows (experimental) (`terrain-shadows`, Graphics › Shadows, after Cloud
+  shadows), off by default and in both presets until its softness and bias are tuned
+  ([terrain-shadows.md](terrain-shadows.md)).

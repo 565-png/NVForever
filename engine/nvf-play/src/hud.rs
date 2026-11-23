@@ -111,6 +111,10 @@ const LINE_Y: f32 = 66.0;
 const LEFT_UPRIGHT: f32 = 17.0;
 const RIGHT_UPRIGHT: f32 = 369.0;
 const DIVIDER: f32 = 207.0;
+/// How far in from the view's right edge the right bracket's end upright stands, its outer
+/// side (the upright about 2 units wide): the line other pieces keep inside on the right
+/// (`crate::quick_loot`) [design, #2933: step 10].
+pub(crate) const RIGHT_EDGE_IN: f32 = MARGIN_X + AP_PANEL.x - RIGHT_UPRIGHT - 2.0;
 /// The small corner marks on the long line: where a full bar ends on the left piece and
 /// starts on the right one.
 const LEFT_MARK: f32 = 320.0;
@@ -139,7 +143,7 @@ const ENEMY_MIDDLE: f32 = ENEMY_BRACKET_AT.x + (ENEMY_MARKS.0 + ENEMY_MARKS.1) /
 /// picture to the end of the last one's, leaving out the empty room after the last letter
 /// that `Line::width` counts (and the room before the first) [design: #1826].
 fn centred_x(font: &Font, line: &fnv_font::Line, middle: f32) -> f32 {
-    let drawn = line.glyphs.iter().map(|p| (p, font.glyph(p.code))).filter(|(_, g)| g.drawn());
+    let drawn = line.glyphs.iter().map(|p| (p, font.bitmap_glyph(p))).filter(|(_, g)| g.drawn());
     let (left, right) = drawn.fold((f32::INFINITY, f32::NEG_INFINITY), |(l, r), (p, g)| (l.min(p.x + g.before), r.max(p.x + g.before + g.width)));
     if left > right {
         // Nothing drawn (stand-in font, spaces): its set width.
@@ -253,6 +257,8 @@ pub struct HudView {
     /// The HUD is on the screen: the player is in the world, and no script holds the
     /// player's movement (§5).
     pub shown: bool,
+    /// [design, #2659] The enemy piece can stay visible during classic playback.
+    pub enemy_shown: bool,
     /// Health and action points, 0 to 1 of their full values.
     pub health: f32,
     pub action_points: f32,
@@ -271,7 +277,7 @@ pub struct HudView {
 
 impl Default for HudView {
     fn default() -> Self {
-        HudView { shown: false, health: 1.0, action_points: 1.0, heading: 0.0, weapon: HudWeapon::default(), sneak: None, detected_by: None, armor: None, kill_cam: false }
+        HudView { shown: false, enemy_shown: false, health: 1.0, action_points: 1.0, heading: 0.0, weapon: HudWeapon::default(), sneak: None, detected_by: None, armor: None, kill_cam: false }
     }
 }
 
@@ -558,6 +564,10 @@ fn gather(
         info!("hud: {}", if killcam { format!("hidden: {why}") } else { "back after the kill camera".to_string() });
     }
     let mut now = HudView { shown: *state.get() == PlayState::Playing && !held && !creating && !posed && !wheel_open && !killcam, kill_cam: killcam, ..view.clone() };
+    // [design, #2659] Only the classic enemy piece survives playback, including its
+    // attack camera. All other HUD visibility rules keep using `shown`.
+    now.enemy_shown = *state.get() == PlayState::Playing && !held && !creating && !posed && !wheel_open
+        && (!killcam || vats.as_ref().is_some_and(|v| v.style() == crate::vats_classic::VatsStyle::Classic && v.active()));
     if let Some(p) = &player {
         // Where the camera looks, not where the character faces (third person).
         now.heading = control.as_deref().map_or(p.heading, |c| c.view_heading(p.heading)).to_degrees();
@@ -566,11 +576,17 @@ fn gather(
     now.armor = combat.as_ref().filter(|_| tweaks.as_ref().is_some_and(|t| t.armor_condition)).and_then(|c| c.hud_armor(&mut sim));
     if let Some(c) = &combat {
         now.weapon = c.hud_weapon(&sim);
+        if let Some(v) = &vats {
+            now.weapon.ammo = v.displayed_ammo(now.weapon.ammo);
+        }
         // The player's tweak hides the ammo counter [design: docs/design/tweaks.md].
         if tweaks.as_ref().is_some_and(|t| t.hide_ammo_label) {
             now.weapon.ammo = None;
             now.weapon.abbrev = None;
         }
+    }
+    if now.weapon.ammo != view.weapon.ammo {
+        info!("hud: ammo count {}", ammo_text(now.weapon.ammo));
     }
     // The player's tweak leaves the sneak label off [design: docs/design/tweaks.md].
     // The player's tweaks: the label off, or shown standing too [design: docs/design/tweaks.md].
@@ -751,6 +767,7 @@ fn place_name(
     mut face_: Local<Option<Face>>,
     (mut shown, mut region): (Local<(Option<String>, Option<String>)>, Local<(Option<fnv_sim::FormId>, Option<String>)>),
     text: Query<Entity, With<PlaceNameText>>,
+    mut font_revision: Local<u32>,
 ) {
     let _hud = crate::interface::hud_units();
     let Ok(e) = text.single() else { return };
@@ -759,7 +776,8 @@ fn place_name(
         let (st, loc, player) = (markers.as_deref()?, location.as_deref().filter(|l| l.interior.is_none())?, player.as_deref()?);
         let heading = control.as_deref().map_or(player.heading, |c| c.view_heading(player.heading)).to_degrees();
         let range = crate::compass::place_range();
-        let list = st.named_markers_of(loc.world);
+        let game = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
+        let list = st.named_markers_of(loc.world, game);
         let list = list.iter().filter(|m| sim.present(m.0)).map(|m| ([m.1[0], m.1[1]], m.2, m.3));
         place_ahead(list, [player.feet[0], player.feet[1]], heading, range, t.marker_name_angle, t.marker_name_hide_unfound, t.marker_name_units)
     })();
@@ -775,7 +793,9 @@ fn place_name(
         region.1.clone()
     })();
     let now = (region_words, words);
-    if *shown == now {
+    let revision = crate::cjk_font::revision();
+    let font_changed = std::mem::replace(&mut *font_revision, revision) != revision;
+    if *shown == now && !font_changed {
         return;
     }
     if now.0 != shown.0 {
@@ -994,7 +1014,7 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
         set_line(p, &art.font, &font.lines(text, None).remove(0), x, base, color);
     };
     let screen = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
-    commands.spawn((HudRoot, screen, Visibility::Hidden, Pickable::IGNORE)).with_children(|root| {
+    commands.spawn((HudRoot, screen.clone(), Visibility::Hidden, Pickable::IGNORE)).with_children(|root| {
         // Health and compass, bottom left.
         let piece = Node { position_type: PositionType::Absolute, left: u(MARGIN_X), bottom: u(MARGIN_Y), width: u(HP_PANEL.x), height: u(HP_PANEL.y), ..default() };
         root.spawn((HpPiece, piece, DrawnByTiles)).with_children(|p| {
@@ -1074,6 +1094,12 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
             });
             p.spawn((AmmoText, at(0.0, 0.0, AP_PANEL.x, AP_PANEL.y)));
         });
+        // The sneak word, top middle.
+        let piece = Node { position_type: PositionType::Absolute, left: Val::Percent(50.0), margin: UiRect::left(u(-SNEAK.x / 2.0)), top: u(0.0), width: u(SNEAK.x), height: u(SNEAK.y + SNEAK_BASE), ..default() };
+        root.spawn((SneakText, piece, DrawnByTiles));
+    });
+    // [design, #2659] Independent of the corner root hidden during playback.
+    commands.spawn((screen, Pickable::IGNORE)).with_children(|root| {
         // The enemy's health, bottom middle: its long line level with the corner pieces'
         // (§8).
         let red = crime_colour();
@@ -1102,9 +1128,6 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
             p.spawn((EnemyName, at(0.0, 0.0, ENEMY.x, ENEMY.y)));
             p.spawn((EnemyStats, at(0.0, 0.0, ENEMY.x, ENEMY.y)));
         });
-        // The sneak word, top middle.
-        let piece = Node { position_type: PositionType::Absolute, left: Val::Percent(50.0), margin: UiRect::left(u(-SNEAK.x / 2.0)), top: u(0.0), width: u(SNEAK.x), height: u(SNEAK.y + SNEAK_BASE), ..default() };
-        root.spawn((SneakText, piece, DrawnByTiles));
     });
 }
 
@@ -1127,8 +1150,7 @@ pub fn sight_alpha(at: f32) -> f32 {
     ENEMY_SIGHT_ALPHA + (1.0 - ENEMY_SIGHT_ALPHA) * wave
 }
 
-/// The enemy piece's top from the view's top while the classic VATS style chooses
-/// targets, interface units [design].
+/// [design] Dead Eye's enemy piece top, in interface units; classic uses the bottom.
 const ENEMY_VATS_TOP: f32 = 40.0;
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -1146,6 +1168,7 @@ fn draw(
     mut bar: Query<(&mut Node, &mut BackgroundColor), (With<ConditionBar>, Without<Strip>, Without<EnemyPiece>)>,
     mut strip: Query<(&mut Strip, &mut Node), (Without<ConditionBar>, Without<EnemyPiece>)>,
     (tweaks, time, vats): (Option<Res<crate::tweaks::TweakSettings>>, Res<Time<Real>>, Option<Res<crate::vats_mode::VatsMode>>),
+    mut classic_bar: Local<Option<bool>>,
 ) {
     // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
     let _hud = crate::interface::hud_units();
@@ -1162,24 +1185,29 @@ fn draw(
     for mut v in &mut root {
         v.set_if_neq(show(view.shown));
     }
-    if !view.shown {
-        return;
-    }
     for mut v in &mut condition {
         v.set_if_neq(show(view.weapon.condition.is_some()));
     }
-    // While VATS is on, in either style, the enemy's piece stands at the top of the view,
-    // over the target [design: the fork owner 2026-11-10, "keep the NPC healthbar above",
-    // "on top in both versions"; the original keeps it at the bottom in VATS, observed on
-    // the owner's screenshots].
-    let at_top = vats.is_some_and(|v| v.active());
+    // [design, #2659] Classic uses the normal bottom anchor, including playback;
+    // Dead Eye retains its existing top placement.
+    let at_top = vats.as_ref().is_some_and(|v| v.style() == crate::vats_classic::VatsStyle::DeadEye && v.active());
     let (top, bottom) = if at_top { (u(ENEMY_VATS_TOP), Val::Auto) } else { (Val::Auto, u(MARGIN_Y + enemy_top())) };
     for (mut v, mut node) in &mut enemy {
-        v.set_if_neq(show(target.0.is_some()));
+        v.set_if_neq(show(view.enemy_shown && target.0.is_some()));
         if node.top != top || node.bottom != bottom {
             node.top = top;
             node.bottom = bottom;
         }
+    }
+    let classic = vats.as_ref().filter(|v| v.style() == crate::vats_classic::VatsStyle::Classic && v.active()).map(|v| v.playing_back());
+    if classic != *classic_bar {
+        if let Some(playback) = classic {
+            info!("hud: classic VATS enemy bar bottom centre ({})", if playback { "playback" } else { "target screen" });
+        }
+        *classic_bar = classic;
+    }
+    if !view.shown {
+        return;
     }
     let cnd = view.weapon.condition.unwrap_or(0.0);
     let width = u(condition_width(cnd));
@@ -1220,7 +1248,7 @@ fn pips(
     mut tick: Local<Option<Option<Handle<Image>>>>,
     tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
-    if !view.shown {
+    if !view.shown && !view.enemy_shown {
         return;
     }
     let Ok(window) = windows.single() else { return };
@@ -1268,13 +1296,7 @@ fn pips(
             Bar::Enemy => None,
         };
         if let Some(red) = red {
-            let colour = if red { crime_colour() } else { amber(METER_BRIGHTNESS) };
-            if let Some(i) = image.as_mut().filter(|i| i.color != colour) {
-                i.color = colour;
-            }
-            if let Some(b) = fill.as_mut().filter(|b| b.0 != colour) {
-                b.0 = colour;
-            }
+            set_tick_colour(image.as_deref_mut(), fill.as_deref_mut(), if red { crime_colour() } else { amber(METER_BRIGHTNESS) });
         }
         let on = match pip.bar {
             Bar::Health => pip.index < lit(view.health, PIPS),
@@ -1323,6 +1345,27 @@ fn set_tick_alpha(image: Option<impl DerefMut<Target = ImageNode>>, fill: Option
     }
 }
 
+/// A health or action points tick's colour (amber, or red under the low-bar tweak): on
+/// its picture when it has one, else on its fill (the stand-in block), as
+/// [`set_tick_alpha`]. Painting a pictured tick's transparent background too made a solid
+/// block that hid `hud_tick_mark.dds`'s fade towards the top [observed: owner's
+/// screenshot 2026-11-18, #2951; from #1892 on].
+fn set_tick_colour(image: Option<&mut ImageNode>, fill: Option<&mut BackgroundColor>, colour: Color) {
+    match (image, fill) {
+        (Some(image), _) => {
+            if image.color != colour {
+                image.color = colour;
+            }
+        }
+        (None, Some(fill)) => {
+            if fill.0 != colour {
+                fill.0 = colour;
+            }
+        }
+        (None, None) => {}
+    }
+}
+
 /// The texts that change: the ammo counter, the enemy's name, the sneak word.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn texts(
@@ -1342,7 +1385,7 @@ fn texts(
 ) {
     // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
     let _hud = crate::interface::hud_units();
-    if !view.shown || ammo.is_empty() {
+    if (!view.shown && !view.enemy_shown) || ammo.is_empty() {
         return;
     }
     let face_ = face_.get_or_insert_with(|| face(FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
@@ -1460,6 +1503,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_enemy_bar_stays_at_the_bottom_when_playback_hides_the_corners() {
+        use crate::hud_target::TargetHealth;
+        let _hud = crate::interface::hud_units();
+        let mut app = App::new();
+        app.init_resource::<Assets<Image>>()
+            .init_resource::<Time<Real>>()
+            .insert_resource(HudView { shown: true, enemy_shown: true, ..default() })
+            .insert_resource(HudTarget(Some(TargetHealth { form_id: 1, name: "Practice robot".into(), health: 1.0, hostile: true, anatomy: None, anatomy_dr: None, after: None })))
+            .add_systems(Update, draw);
+        app.update();
+        app.update();
+        app.world_mut().resource_mut::<HudView>().shown = false;
+        app.update();
+        let world = app.world_mut();
+        let mut enemies = world.query_filtered::<(&Node, &Visibility, &ChildOf), With<EnemyPiece>>();
+        let (node, visible, parent) = enemies.single(world).unwrap();
+        assert_eq!(*visible, Visibility::Inherited);
+        assert_eq!(node.top, Val::Auto);
+        assert_eq!(node.bottom, u(MARGIN_Y + enemy_top()));
+        assert!(world.get::<HudRoot>(parent.parent()).is_none());
+        let mut roots = world.query_filtered::<&Visibility, With<HudRoot>>();
+        assert_eq!(*roots.single(world).unwrap(), Visibility::Hidden);
+    }
+
+    #[test]
     fn the_armor_row_shows_reddens_and_flashes_by_its_thresholds() {
         // Always shown with no visibility threshold; only below it with one.
         assert_eq!(armor_look(0.9, 0.0, 0.0, 0.0, true), (true, false));
@@ -1552,6 +1620,23 @@ mod tests {
             let mut block = BackgroundColor(Color::WHITE);
             set_tick_alpha(None::<&mut ImageNode>, Some(&mut block), alpha);
             assert_eq!(block.0.alpha(), alpha);
+        }
+    }
+
+    /// The health and action points ticks' colour, amber or the low-bar red, goes on the
+    /// picture and leaves a pictured tick's background clear, so the picture's fade shows
+    /// (#2951); a stand-in block takes it on its fill.
+    #[test]
+    fn a_meter_tick_keeps_its_background_clear_so_its_picture_fades() {
+        for colour in [amber(METER_BRIGHTNESS), crime_colour()] {
+            let mut image = ImageNode::default();
+            let mut fill = BackgroundColor(Color::NONE);
+            set_tick_colour(Some(&mut image), Some(&mut fill), colour);
+            assert_eq!(image.color, colour);
+            assert_eq!(fill.0, Color::NONE);
+            let mut block = BackgroundColor(Color::WHITE);
+            set_tick_colour(None, Some(&mut block), colour);
+            assert_eq!(block.0, colour);
         }
     }
 

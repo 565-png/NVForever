@@ -55,6 +55,18 @@ A statement is one script function call, spelled as script source spells it:
   `<statement> >> ran`, then the compiler's warnings; a compile error is the reply instead.
   A local variable has no meaning there: name the owner (`set SunnyRef.var to …`).
 
+- `eval <expression>` explicitly prints the compiler's result rather than `ran`
+  [design: explicit `eval` syntax and `<expression> >> <value>` reply format].
+  It uses the selected receiver and handles numbers, forms, strings and a preview
+  of up to 16 array entries (nested arrays by ID) [design: 16-entry preview cap
+  and non-recursive array labeling]. A temporary array is formatted before the VM
+  sweeps it; empty or multi-line input is rejected [design]. Regular console
+  commands still use existing dispatch.
+  [documented: [Improved Console's public description](https://www.nexusmods.com/newvegas/mods/70801?tab=description)]
+  Expression results are one part of that provider's behavior; persistent console
+  locals and transparent result printing for all command spellings are not
+  implemented.
+
 Console commands of its own:
 
 | Command | What it does |
@@ -135,11 +147,11 @@ The stub audit (`fnvtool script stubs`, `tools/smoke/expected/script-stubs.toml`
 only functions the masters' scripts call. A function typed at the console that no script
 calls is outside it, so `killall` did nothing unnoticed (#1046). The vanilla functions of
 the catalogue that nothing handles (not in `functions::registry`, the console registries,
-or the engine's own words `console::ENGINE_WORDS`: `coc`, `cow`, `coe`, `help`,
+the named ordinary lateral-clearance source handlers, or the engine's own words `console::ENGINE_WORDS`: `coc`, `cow`, `coe`, `help`,
 `AdvLevel`, `bat`) and that no
 master script calls are counted by `console::unhandled_unused`. The test
 `registered_names_are_catalogue_console_commands` pins the two numbers: **33** in the
-wiki's "Console Functions" category, **96** others. Implementing one lowers a number
+wiki's "Console Functions" category, **90** others. Implementing one lowers a number
 there; a catalogue update that adds one raises it. Sorted (2026-10-31):
 
 **Console functions players use**: all built (`cow`, `coe`, `saq`, `rdf`, `rat`, `zap`,
@@ -160,9 +172,17 @@ menu words `delete`, `depth`, `front`, `iso`, `reload`, `stack`,
 `use`, `usz`, `visible` [hypothesis for each: from its catalogue summary; revisit one
 when a player or a capture campaign asks for it].
 
-**The other 96** are script functions no master calls, many listed by the wiki as
+**The other 90** are script functions no master calls, many listed by the wiki as
 unused in New Vegas (`ModPCSkill`, `GetFactionReaction`, …) or as conditions with an opcode
-(`GetGold`, `SameFaction`, `IsSnowing`, …). Thirteen that Fallout 3's scripts call came
+(`GetGold`, `SameFaction`, …). `GetCurrentWeatherPercent`, `IsSnowing`,
+`IsPleasant` and `IsCloudy` now read the reported weather sample and are no longer
+in this unhandled list. `ModPCAttribute` and `RemoveReputationExact` now run through
+the existing source compiler fallback; `AdvancePCLevel` was already excluded as an
+engine word. The expected source census is 33/90. All four console controls,
+including that census, passed in hosted checkout `098f6d07` (parents `72b385a5`,
+`c7aa2c76`; [run](https://github.com/LootJunkieAzza/NVForever/actions/runs/44168232041)).
+Earlier partial results remain recorded in PR #2772. Native
+encoding remains unmeasured: [player source commands](../spec-notes/player-source-commands.md). Thirteen that Fallout 3's scripts call came
 off the list on 2026-11-03 (`functions::fo3`, Tale of Two Wastelands), and fourteen more
 the same day (MatchFaceGeometry, Wait, StopWaiting, IsWaiting and the rest of the TTW
 audit's §1). They matter for mods: a mod that calls one

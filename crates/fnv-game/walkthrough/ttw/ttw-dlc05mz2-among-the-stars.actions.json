@@ -5,10 +5,11 @@
   "given": [
     {"kind": "quest", "quest": "MQ01", "running": true, "completed": false, "stage": 10, "done": [10]},
     {"kind": "quest", "quest": "DLC05MZ1", "running": false, "completed": true, "stage": 200, "done": [10, 20, 30, 35, 40, 50, 200], "vars": {"DLC05Abducted": -1}},
-    {"kind": "place", "ref": "player", "cell": "DLC05EngineCore", "pos": [-1151.7, -12414.3, 248.4]}
+    {"kind": "place", "ref": "player", "cell": "DLC05EngineCore", "pos": [-1151.7, -12414.3, 248.4]},
+    {"kind": "place", "ref": "DLC05SallyREF", "cell": "DLC05EngineCore", "pos": [-1140, -12428, 250]}
   ],
   "actions": [
-    {"op": "note", "text": "Given: the player out of Vault 101 (MQ01 10) and Not of This World done (DLC05MZ1 200: its chain, which ends with Sally by the cryo lab), aboard the mothership in the engine core by the cryo tubes, where that chain ends. DLC05MZ1's last stage starts DLC05MZ2 [observed]; done here directly so this chain runs alone."},
+    {"op": "note", "text": "Given: the player out of Vault 101 (MQ01 10) and Not of This World done (DLC05MZ1 200: its chain, which ends with Sally by the cryo lab), aboard the mothership in the engine core by the cryo tubes, where that chain ends. Sally is placed beside the player there too, where the headless MoveTo puts her [observed: pilot rerun log, (-1140, -12428, 250) in DLC05EngineCore]; without her the MoveTo below waited 60 s for an AI walk that never came. DLC05MZ1's last stage starts DLC05MZ2 [observed]; done here directly so this chain runs alone."},
     {"op": "start_quest", "quest": "DLC05MZ2"},
     {"op": "get_quest", "quest": "DLC05MZ2", "fields": ["running", "stage"], "label": "DLC05MZ2 running"},
     {"op": "note", "text": "The cryo tubes' stasis controls (DLC05StasisControlsScript [observed]): Paulson and Elliott Tercorien thawed (MZ2Unfrozen 1)."},

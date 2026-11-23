@@ -3,18 +3,15 @@
 //! docs/design/layer3.md).
 //!
 //! The sky is the game's own sky meshes around the camera [observed: `meshes\sky\`]:
-//! - `atmosphere.nif`, a dome coloured by the weather's sky-upper, horizon and sky-lower
-//!   colours: sky-upper weighted by the vertex colours' blue channel, horizon by a fitted
-//!   function of elevation, mixed as display (sRGB) values (`dome_color`) [hypothesis,
-//!   fitted to screenshots of the original game, docs/spec-notes/world.md §6 "Sky
-//!   colours"; reading the green channel as the horizon weight gave the horizon colour far
-//!   too much of the sky].
+//! - `atmosphere.nif`, a dome coloured by the weather's horizon, sky-lower and sky-upper
+//!   colours, weighted by its vertex colours' red, green and blue, mixed as display (sRGB)
+//!   values (`dome_color`) [observed 2026-11-16 against the original's dome at five
+//!   elevations, docs/spec-notes/world.md §6 "Dome weights"].
 //! - `clouds.nif`, four cloud shapes whose vertex alpha fades them towards the horizon.
 //!   The weather's cloud layers 0-3 (WTHR DNAM, CNAM, ANAM, BNAM textures and PNAM
 //!   colours) go on the four shapes in file order [hypothesis: layer 0 is the top dome,
 //!   which the night weather fills with a starfield; layer 3 the low dome, which the
-//!   clear day weather fills with `NVCloudlight.dds`]. By day they take on part of the
-//!   sunlight's hue (`SkyState::cloud_tint`) [hypothesis, fitted].
+//!   clear day weather fills with `NVCloudlight.dds`].
 //! - The sun: the climate's sun texture and glare texture spread over angular squares
 //!   around the sun, coloured by the weather's "sun" colour and drawn into the dome (the
 //!   disc, behind the clouds) and the clouds (the glare) by sky.wesl [hypothesis, fitted].
@@ -30,8 +27,8 @@
 //!
 //! Every sky part uses `SkyMaterial` (sky.wesl): its colour is a display value, mapped
 //! through the inverse of the camera's tonemapper so the image-space grade sees the
-//! weather's colours as the game's grade does; by day the sky is dimmed and warmed
-//! (`SkyLight`) [hypothesis, fitted].
+//! weather's colours as the game's grade does, scaled by the image space's "LUM Ramp No
+//! Tex" (`SkyLight`, `SkyState::sky_scale`) [hypothesis, fitted to two worldspaces].
 //!
 //! Without those meshes the sky falls back to a sphere. The sun lights the world as a
 //! directional light (colour "sunlight"), optionally with cascaded shadow maps. Ambient
@@ -75,7 +72,7 @@ const SKY_INNER: f32 = 0.5 * DOME_RADIUS;
 pub const SKY_DEPTH_FROM: f32 = 0.9 * SKY_INNER;
 /// Distance of the sun and moon discs and the sun's size [hypothesis: about 4 degrees
 /// across].
-const SUN_DISTANCE: f32 = 0.8 * SKY_INNER;
+pub(crate) const SUN_DISTANCE: f32 = 0.8 * SKY_INNER;
 const SUN_SIZE: f32 = 0.07 * SUN_DISTANCE;
 /// Angular size (full width, degrees) over which the sun texture is spread around the
 /// sun and the factor on its colour, and the same for the glare texture [hypothesis,
@@ -91,6 +88,9 @@ const MOON_SIZE: f32 = 2.4 * SUN_SIZE;
 /// Sun elevations (degrees) over which the stars and the moon fade in [hypothesis].
 const STARS_FADE: (f32, f32) = (0.0, -12.0);
 const MOON_FADE: (f32, f32) = (5.0, -6.0);
+/// The moon disc is hidden while its direction's height (Bevy y) is below this
+/// (`update_night_sky`; night_sky.rs follows the same rule).
+pub(crate) const MOON_HIDDEN_Y: f32 = -0.1;
 /// How far south of the east-west line the sun's path runs, in radians (9°) [hypothesis,
 /// fitted to the original game's sun positions; fnv_world::sky::sun_direction].
 const SUN_SOUTH: f32 = 9.0 * PI / 180.0;
@@ -106,6 +106,20 @@ const GAME_HOURS_PER_SECOND: f32 = 30.0 / 3600.0;
 /// sky (centred on the camera) first; blended world meshes write no depth and would
 /// otherwise be painted over. Within the sky, lower biases are drawn first.
 const SKY_SORT_BIAS: f32 = -1.0e6;
+/// The cloud shapes' size against the atmosphere dome's. The dome is opaque and writes
+/// depth, and the blended sky parts carry [`SKY_SORT_BIAS`], which Bevy also applies as the
+/// pipeline's depth bias: with reversed depth that moves a part about 14 % farther off
+/// (10^6 steps of a 2^-23 mantissa, a factor 0.88 on its depth) [hypothesis from the
+/// figures below]. `clouds.nif`'s low shape (100 to 320 units from the centre) and its
+/// horizon shapes (411 to 445) are well inside the dome (250 to 490) and passed; its first
+/// shape, `CloudDome`, is 0 to 6 % *outside* the dome (461 to 446 units at 10 degrees up,
+/// 300 to 284 at 50, 250 to 250 at the top) [observed: `fnvtool nif decode`] and was never
+/// drawn, at 0.97 and 0.9 of its size either. So the urban weathers' clouds (NVUrbanClear,
+/// NVTheStripWeather: cloud layer 0, `NV_WastelandUpperSky2.dds`) were missing, while the
+/// same texture on layer 3 (NVWastelandHazy) showed [observed 2026-11-16/17 against the
+/// original in Freeside]. At 0.75 every cloud shape is under 0.8 of the dome's distance.
+/// The sky is centred on the camera, so the size changes nothing else.
+const CLOUD_INSET: f32 = 0.75;
 
 /// Whether a transparent item's sort key (view distance plus depth bias, as Bevy sorts
 /// them) is one of the sky's blended or additive parts ([`SKY_SORT_BIAS`]: the cloud
@@ -117,7 +131,7 @@ pub(crate) fn sorts_with_sky(sort_key: f32) -> bool {
     sort_key > SKY_SORT_BIAS * 1.5 && sort_key <= nvf_assets::nif_material::SORT_FIRST_BIAS * 1.5
 }
 /// How far the sun's shadows reach when they are switched on in a run started without
-/// them (game units): the default of `--shadow-distance`. With [`DEFAULT_SHADOW_CASCADES`]
+/// them (game units): the default of `--shadow-distance`. With the default cascades
 /// [engineering choice, 2026-10-12, owner's playtest "shadow rendering seriously affects
 /// performance"]: every cascade is a pass over its casters, and at Goodsprings by day the
 /// earlier 16,000 in 4 cascades took the frame from about 7.6 ms without sun shadows to
@@ -125,8 +139,50 @@ pub(crate) fn sorts_with_sky(sort_key: f32) -> bool {
 /// The original casts no sun shadows from the world, so shadows ending nearer are no
 /// further from its look.
 pub const DEFAULT_SHADOW_DISTANCE: f32 = 8_000.0;
-/// The sun's shadow cascades by default (see [`DEFAULT_SHADOW_DISTANCE`]).
-pub const DEFAULT_SHADOW_CASCADES: usize = 3;
+/// How the sun's shadow cascades are laid out ([`shadow_cascade_layout`]): the Sun shadows
+/// mode picks Quality or Performance (shadow_rate.rs `set_performance`); the test aid
+/// `--graphics-cycle cascades=<n>` asks for a count spaced as before #2843.
+///
+/// The default, Quality's (see [`DEFAULT_SHADOW_DISTANCE`]): 4 cascades, laid out by [`shadow_cascade_layout`] [engineering choice: the contributor's proposal in
+/// #2843, for the maintainer to decide; 3 from 2026-10-12 until then]. The 4 cascades of
+/// before 2026-10-12 reached 16,000 units, and every cascade was drawn every frame (8,000 in
+/// 4 then took 15.0-16.8 ms against 13.7-15.2 for 3: graphics-enhanced.md §5.3); now the
+/// reach stays 8,000, the casters are culled to each cascade's slice
+/// ([`sun_casters_over_slice`]) and the cascades are staggered (shadow_rate.rs
+/// `STAGGERED_SCHEDULE`: two drawn in a frame while they are staggered, all four in the
+/// frame after a change of bounds, map size or texture; 2 of 4 on average against
+/// 1.75 of 3). [observed 2026-11-16: Goodsprings' start view at 09:00 standing still,
+/// 2560 × 1440, RTX 5070 Ti, ambient occlusion, longer shadows (reach 12,000), light glow,
+/// 16x anisotropic filtering, sun shafts, `--no-actors`; sun shadows off 2.81-2.85 ms a
+/// frame] with 2048² maps, 3 cascades with far bounds 667, 2,828, 12,000 (texels 0.77,
+/// 3.2, 13.8 units) 3.15-3.16 ms; 4 with 700, 2,000, 5,000, 12,000 (texels 0.80, 2.3, 5.7,
+/// 13.8) 3.22 ms. With 4096² maps 4 with 1,500, 3,500, 7,000, 12,000 and a blend band of
+/// 0.4 (texels 0.86, 2.0, 4.0, 6.9) 3.43-3.48 ms (docs/design/frame-rate-audit.md §12).
+/// Without Longer shadows the 4096² layout is 1,500, 2,400, 4,800, 8,000, derived by
+/// [`SHADOW_CAPS_QUALITY_WIDE`]'s rule; its cost was not measured.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CascadeLayout {
+    /// Quality's 4 cascades (the default), their bounds following the shadow maps' size.
+    #[default]
+    Quality,
+    /// Performance's 3 cascades (shadow_rate.rs, the Sun shadows row's middle choice).
+    Performance,
+    /// This many cascades in Bevy's geometric spacing from a first bound of a twelfth of
+    /// the distance, as every count had it before #2843 (`--graphics-cycle cascades=<n>`,
+    /// so that measurements of then still compare; 1 is the moon's single cascade).
+    Spaced(usize),
+}
+
+impl CascadeLayout {
+    /// The number of cascades.
+    pub const fn count(self) -> usize {
+        match self {
+            CascadeLayout::Quality => SHADOW_SHARES_QUALITY.len() + 1,
+            CascadeLayout::Performance => SHADOW_SHARES_PERFORMANCE.len() + 1,
+            CascadeLayout::Spaced(n) => if n == 0 { 1 } else { n },
+        }
+    }
+}
 
 /// Shares of the weather's and the interior's light colours (display values) in the
 /// display-value lighting sum (lights.rs `DISPLAY_HELPERS`; world.md §8 "Light on
@@ -167,13 +223,10 @@ pub struct SkyDisplay {
     pub glare_texture: Option<Handle<Image>>,
 }
 
-/// Daylight on the sky (sky.wesl). By day the original game's sky and clouds are darker
-/// and warmer than the weather colours through the image-space grade would give, while at
-/// dusk and at night they match [observed: screenshots of the original game,
-/// docs/spec-notes/world.md §6 "Sky colours"]. Modelled as: linear colour × `scale` plus
-/// a share of the sunlight colour, both growing as the sun rises [hypothesis, fitted to
-/// those screenshots; the mechanism in the game is not known (eye adaptation and bloom
-/// are candidates)].
+/// What the sky's parts take besides their own colour (sky.wesl): the sky level, linear
+/// colour × `scale` ([`SkyState::sky_scale`]: the image space's "LUM Ramp No Tex")
+/// [hypothesis, fitted to two worldspaces, docs/spec-notes/world.md §6 "Sky level"], and
+/// the sun. `glow` adds nothing to the colour now (its fourth figure is still read).
 ///
 /// The sun is drawn into the same colours, before the tonemapper inverse: the sun texture
 /// and the glare texture spread over angular squares centred on the sun (SUN_SIZE_DEG,
@@ -196,6 +249,15 @@ pub struct SkyLight {
     pub sun: Vec4,
     /// rgb: sun colour × glare strength (linear); w: tan of half the glare's size.
     pub glare: Vec4,
+    /// Night sky detail (night_sky.rs; zero with its switch off, and on every part it does not
+    /// touch): xyz where the moon disc is drawn from the sky's centre (the main camera, which
+    /// every sky part follows: the direction × [`SUN_DISTANCE`]), w the Henyey-Greenstein g of
+    /// the moon's lobe (the dome's glow, the clouds' moonlight).
+    pub moon: Vec4,
+    /// Night sky detail, by part: on the stars x the twinkle's amplitude and y its lattice
+    /// cells per unit of direction; on the dome and clouds rgb the moon term's gain and w its
+    /// cap (0: none).
+    pub night: Vec4,
 }
 
 impl MaterialExtension for SkyDisplay {
@@ -224,6 +286,22 @@ impl Plugin for SkyPlugin {
     }
 }
 
+/// Live session weather visual overrides synced from `fnv_game::Game` by
+/// [`sync_weather_visuals`]: `SetWeatherRGBColor` (`NAM0` and `PNAM`),
+/// `SetWeatherImageSpaceMod` (`0IAD..5IAD`), and `SetWeatherTransitionTimeOverride`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WeatherVisualOverrides {
+    /// `SetWeatherRGBColor` (`NAM0` colour types `0..=9`, excluding type 2) by weather FormID.
+    pub colors: HashMap<u32, [[Option<[u8; 3]>; 6]; fnv_world::sky::COLOR_TYPES]>,
+    /// `SetWeatherRGBColor` type-2 (`PNAM` lower cloud layers `0..=3`) by weather FormID.
+    pub cloud_colors: HashMap<u32, [[Option<[u8; 3]>; 6]; 4]>,
+    /// `SetWeatherImageSpaceMod` (`0IAD..5IAD`) resolved adapters by weather FormID.
+    /// Outer `Some` overrides the authored slot; inner `None` explicitly clears it.
+    pub adapters: HashMap<u32, [Option<Option<Adapter>>; 6]>,
+    /// `SetWeatherTransitionTimeOverride` transition length in real seconds (`None`: weather's own).
+    pub transition_seconds: Option<f32>,
+}
+
 #[derive(Resource)]
 #[cfg_attr(test, derive(Default))]
 pub struct SkyState {
@@ -244,8 +322,8 @@ pub struct SkyState {
     /// The cascades reach this many times `shadow_distance` (1; more with the finer
     /// shadows of `graphics.rs`), the first cascade as near as without.
     pub shadow_reach: f32,
-    /// Number of the sun's shadow cascades.
-    pub shadow_cascades: usize,
+    /// How the sun's shadow cascades are laid out (their number and far bounds).
+    pub shadow_layout: CascadeLayout,
     /// The picture is graded by the image space (`--no-grade` and the settings page turn
     /// it off).
     pub grade: bool,
@@ -267,6 +345,15 @@ pub struct SkyState {
     choices: Vec<Choice>,
     /// The worldspace's base image space (WRLD INAM); without one there is no grade.
     pub image_space: Option<Cinematic>,
+    /// The FormID of the worldspace's base image space (WRLD INAM or parent's), so live
+    /// `SetImageSpaceTrait` edits can re-evaluate [`Self::image_space`].
+    pub world_image_space_id: Option<u32>,
+    /// Session `SetWeatherTraitNumeric` fog overrides (`15..=20`: day near/far, night
+    /// near/far, day/night power) keyed by weather FormID, synced by [`sync_weather_fog`].
+    pub weather_fog_overrides: HashMap<u32, [Option<f32>; 6]>,
+    /// Session `SetWeatherRGBColor`, `SetWeatherImageSpaceMod`, and
+    /// `SetWeatherTransitionTimeOverride` overrides synced by [`sync_weather_visuals`].
+    pub weather_visual_overrides: WeatherVisualOverrides,
     /// Each weather's image space adapters per time of day, by weather form ID.
     adapters: HashMap<u32, [Option<Adapter>; 6]>,
     changed: bool,
@@ -468,7 +555,12 @@ impl SkyState {
             (load(&clim.weathers), regions)
         };
         let w = weather(world.lo, world.schema, wid).ok_or("weather unreadable")?;
-        let image_space = worldspace_image_space(world);
+        let world_image_space_id = worldspace_image_space_id(world);
+        let image_space = world_image_space_id.and_then(|id| {
+            let c = image_space(world.lo, world.schema, id);
+            info!("image space {id:#010x}: {c:?}");
+            c
+        });
         let adapters = choices
             .iter()
             .chain(regions.iter().flat_map(|r| &r.choices))
@@ -489,7 +581,7 @@ impl SkyState {
             shadows: false,
             shadow_distance: DEFAULT_SHADOW_DISTANCE,
             shadow_reach: 1.0,
-            shadow_cascades: DEFAULT_SHADOW_CASCADES,
+            shadow_layout: CascadeLayout::Quality,
             grade: true,
             time_scale: 0.0,
             clock_running: false,
@@ -499,6 +591,9 @@ impl SkyState {
             fade: 1.0,
             choices,
             image_space,
+            world_image_space_id,
+            weather_fog_overrides: HashMap::new(),
+            weather_visual_overrides: WeatherVisualOverrides::default(),
             adapters,
             changed: true,
             script: None,
@@ -521,6 +616,32 @@ impl SkyState {
             moon_textures: Default::default(),
             lightning_request: false,
         })
+    }
+
+    /// [documented: GECK wiki ForceWeather / SetWeather / ReleaseWeatherOverride]
+    /// An override lasts until released. [hypothesis, #1997; observer check 209 in
+    /// docs/handoff/observer-checks.md] This also holds across worldspace doors.
+    /// [design: worldspace.rs::carry_sky] Keep override visuals and their adapters,
+    /// including an unfinished fade, without importing the old climate's roll lists.
+    pub(crate) fn carry_weather_from(&mut self, from: &SkyState) {
+        if from.script.is_none() && !from.pinned {
+            return;
+        }
+        self.pinned = from.pinned;
+        self.resume = from.resume;
+        self.script = from.script.map(|sw| ScriptWeather { roll: self.rolls, ..sw });
+        self.weather = from.weather.clone();
+        self.prev = from.prev.clone();
+        self.fade = from.fade;
+        for w in std::iter::once(&self.weather).chain(self.prev.iter()) {
+            if let Some(a) = from.adapters.get(&w.form_id) {
+                self.adapters.insert(w.form_id, *a);
+            }
+        }
+        self.changed = true;
+        if self.script.is_some_and(|sw| sw.hold) {
+            info!("weather: {} ({:08X}) held after sky replacement", self.weather.edid.as_deref().unwrap_or("?"), self.weather.form_id);
+        }
     }
 
     /// Preserve the sampled cell and region across a climate-only rebuild [design,
@@ -862,7 +983,11 @@ impl SkyState {
     /// Advance a weather fade by `hours` of game time.
     fn advance_fade(&mut self, hours: f32) {
         if self.prev.is_some() {
-            let length = self.weather.transition_seconds() * GAME_HOURS_PER_SECOND;
+            let secs = self
+                .weather_visual_overrides
+                .transition_seconds
+                .unwrap_or_else(|| self.weather.transition_seconds());
+            let length = secs * GAME_HOURS_PER_SECOND;
             self.fade = if length > 0.0 { (self.fade + hours / length).min(1.0) } else { 1.0 };
             if self.fade >= 1.0 {
                 self.prev = None;
@@ -878,12 +1003,14 @@ impl SkyState {
         [SkyUpper, Fog, Unused, Ambient, Sunlight, Sun, Stars, SkyLower, Horizon, EffectLighting].map(|t| self.color_bytes(t))
     }
 
-    /// A weather colour at the current hour, blended across a weather fade.
+    /// A weather colour at the current hour, blended across a weather fade, with any
+    /// live session `SetWeatherRGBColor` overrides applied.
     pub fn color(&self, ty: ColorType) -> [f32; 3] {
-        let cur = self.weather.color(&self.climate, ty, self.hour);
+        let of = |w: &Weather| w.color_with(&self.climate, ty, self.hour, self.weather_visual_overrides.colors.get(&w.form_id));
+        let cur = of(&self.weather);
         match &self.prev {
             Some(p) => {
-                let old = p.color(&self.climate, ty, self.hour);
+                let old = of(p);
                 std::array::from_fn(|i| old[i] + (cur[i] - old[i]) * self.fade)
             }
             None => cur,
@@ -891,16 +1018,38 @@ impl SkyState {
     }
 
     /// A colour type now as stored (0..255 per channel, blended on the bytes;
-    /// `fnv_world::sky::Weather::color_bytes`), blended across a weather fade.
+    /// `fnv_world::sky::Weather::color_bytes`), blended across a weather fade, with any
+    /// live session `SetWeatherRGBColor` overrides applied.
     pub fn color_bytes(&self, ty: ColorType) -> [f32; 3] {
-        let cur = self.weather.color_bytes(&self.climate, ty, self.hour);
+        let of = |w: &Weather| w.color_bytes_with(&self.climate, ty, self.hour, self.weather_visual_overrides.colors.get(&w.form_id));
+        let cur = of(&self.weather);
         match &self.prev {
             Some(p) => {
-                let old = p.color_bytes(&self.climate, ty, self.hour);
+                let old = of(p);
                 std::array::from_fn(|i| old[i] + (cur[i] - old[i]) * self.fade)
             }
             None => cur,
         }
+    }
+
+    /// Cloud layer `layer`'s colour for `w` at the current hour, with any live session
+    /// `SetWeatherRGBColor` type-2 (`PNAM`) overrides applied.
+    pub fn cloud_color_for(&self, w: &Weather, layer: usize) -> [f32; 3] {
+        w.cloud_color_with(&self.climate, layer, self.hour, self.weather_visual_overrides.cloud_colors.get(&w.form_id))
+    }
+
+    /// Effective per-time-of-day image-space adapters for weather `weather_id`: authored
+    /// `0IAD..5IAD` overlaid with any live session `SetWeatherImageSpaceMod` overrides.
+    fn adapters_for(&self, weather_id: u32) -> [Option<Adapter>; 6] {
+        let mut out = self.adapters.get(&weather_id).copied().unwrap_or([None; 6]);
+        if let Some(ov) = self.weather_visual_overrides.adapters.get(&weather_id) {
+            for (dst, val) in out.iter_mut().zip(ov) {
+                if let Some(adapter) = val {
+                    *dst = *adapter;
+                }
+            }
+        }
+        out
     }
 
     /// The image-space grade now: the base image space with the weather's adapters for
@@ -913,8 +1062,10 @@ impl SkyState {
             return self.interior_grade.unwrap_or_default();
         }
         let Some(base) = self.image_space else { return Cinematic::default() };
-        let none = [None; 6];
-        let at = |w: &Weather| cinematic_at(&base, self.adapters.get(&w.form_id).unwrap_or(&none), &self.climate, self.hour);
+        let at = |w: &Weather| {
+            let adapters = self.adapters_for(w.form_id);
+            cinematic_at(&base, &adapters, &self.climate, self.hour)
+        };
         let cur = at(&self.weather);
         match &self.prev {
             Some(p) => at(p).lerp(&cur, self.fade),
@@ -929,8 +1080,10 @@ impl SkyState {
     /// when the grade is switched off: it is light, not a colour grade.
     pub fn sun_scale(&self) -> f32 {
         let Some(base) = self.image_space else { return 1.0 };
-        let none = [None; 6];
-        let at = |w: &Weather| cinematic_at(&base, self.adapters.get(&w.form_id).unwrap_or(&none), &self.climate, self.hour).hdr.v[fnv_world::imagespace::HDR_SUNLIGHT_DIMMER];
+        let at = |w: &Weather| {
+            let adapters = self.adapters_for(w.form_id);
+            cinematic_at(&base, &adapters, &self.climate, self.hour).hdr.v[fnv_world::imagespace::HDR_SUNLIGHT_DIMMER]
+        };
         let cur = at(&self.weather);
         let dimmer = match &self.prev {
             Some(p) => at(p) + (cur - at(p)) * self.fade,
@@ -941,11 +1094,13 @@ impl SkyState {
 
     /// Fog near, far and strength (0..1), blended across a weather fade; `None` when
     /// neither weather has fog. Fading to or from a weather without fog fades the
-    /// strength and keeps the other weather's distances.
+    /// strength and keeps the other weather's distances. Applies any live session
+    /// `SetWeatherTraitNumeric` (`15..=20`) overrides stored in [`Self::weather_fog_overrides`].
     pub fn fog(&self) -> Option<(f32, f32, f32)> {
-        let cur = self.weather.fog_at(&self.climate, self.hour);
+        let fog_of = |w: &Weather| w.fog_at_with(&self.climate, self.hour, self.weather_fog_overrides.get(&w.form_id).copied());
+        let cur = fog_of(&self.weather);
         let prev = match &self.prev {
-            Some(p) => p.fog_at(&self.climate, self.hour),
+            Some(p) => fog_of(p),
             None => return cur.map(|(n, f)| (n, f, 1.0)),
         };
         let t = self.fade;
@@ -963,13 +1118,15 @@ impl SkyState {
         if self.fog_override.is_some() {
             return 1.0;
         }
-        let cur = self.weather.fog_power_at(&self.climate, self.hour);
+        let fog_of = |w: &Weather| w.fog_at_with(&self.climate, self.hour, self.weather_fog_overrides.get(&w.form_id).copied());
+        let power_of = |w: &Weather| w.fog_power_at_with(&self.climate, self.hour, self.weather_fog_overrides.get(&w.form_id).copied());
+        let cur = power_of(&self.weather);
         match &self.prev {
-            Some(p) if p.fog_at(&self.climate, self.hour).is_some() && self.weather.fog_at(&self.climate, self.hour).is_some() => {
-                let prev = p.fog_power_at(&self.climate, self.hour);
+            Some(p) if fog_of(p).is_some() && fog_of(&self.weather).is_some() => {
+                let prev = power_of(p);
                 prev + (cur - prev) * self.fade
             }
-            Some(p) if self.weather.fog_at(&self.climate, self.hour).is_none() => p.fog_power_at(&self.climate, self.hour),
+            Some(p) if fog_of(&self.weather).is_none() => power_of(p),
             _ => cur,
         }
     }
@@ -1012,9 +1169,6 @@ impl SkyState {
 
     /// How daylight changes the sky's display colours now (see [`SkyLight`]).
     pub fn light(&self) -> SkyLight {
-        let day = self.daylight();
-        let sun = self.color(ColorType::Sunlight);
-        let s = Vec3::from_array(sun);
         // The disc and glare fade out as the sun sets [hypothesis: the game shows no glare
         // once the sun is down].
         let fade = if self.interior.is_some() { 0.0 } else { smoothstep(-2.0, 3.0, self.sun_elevation()) };
@@ -1025,46 +1179,31 @@ impl SkyState {
         let glare = self.weather.glare_scale();
         let glare = self.prev.as_ref().map_or(glare, |p| p.glare_scale() + (glare - p.glare_scale()) * self.fade);
         SkyLight {
-            params: Vec4::new(1.0 - SKY_DIM * day, 0.0, 1.0, 0.0),
+            params: Vec4::new(self.sky_scale(), 0.0, 1.0, 0.0),
             // w: 1 when the main view shows display values clipped (lights.rs
             // `display_clip`), so the sky leaves out its inverse of Tony McMapface.
-            glow: (s * SKY_GLOW * day).extend(if crate::lights::display_clip() { 1.0 } else { 0.0 }),
+            glow: Vec3::ZERO.extend(if crate::lights::display_clip() { 1.0 } else { 0.0 }),
             sun_dir: dir.extend(0.0),
             sun: (sun_col * SUN_STRENGTH).extend(half_tan(SUN_SIZE_DEG)),
             glare: (sun_col * GLARE_STRENGTH * glare).extend(half_tan(GLARE_SIZE_DEG)),
+            // Written by night_sky.rs alone (update_sky keeps them).
+            moon: Vec4::ZERO,
+            night: Vec4::ZERO,
         }
     }
 
-    /// Daylight strength (0..1): grows as the sun rises to `DAYLIGHT_DEG`.
-    pub fn daylight(&self) -> f32 {
+    /// What the sky's display colours are scaled by: the image space's "LUM Ramp No Tex"
+    /// with the weather's adapter on it (1 indoors and where it is not over 0) [hypothesis,
+    /// fitted 2026-11-16 to the original's sky in two worldspaces, world.md §6 "Sky
+    /// level": the sky is 0.88 of the weather's colours by day in the Mojave
+    /// (NVDefaultExterior 1.1 × NVWastelandIS 0.8) and 1.55 in the Capital Wasteland
+    /// (WastelandDayISFXDC sets it); the emissive mult, 1.5 and 1.4 there, does not fit].
+    pub fn sky_scale(&self) -> f32 {
         if self.interior.is_some() {
-            return 0.0;
+            return 1.0;
         }
-        smoothstep(0.0, DAYLIGHT_DEG, self.sun_elevation())
-    }
-
-    /// A cloud colour lit by the sun: by day the game's clouds are warmer than their
-    /// weather colour, by about the sunlight colour's hue [hypothesis fitted to the noon
-    /// reference frames, world.md §6 "Sky colours"].
-    pub fn cloud_tint(&self, c: [f32; 3]) -> [f32; 3] {
-        self.sun_hue(c, CLOUD_SUN)
-    }
-
-    /// The fog colour as distant land fades into it: by day the game's haze is warm where
-    /// the weather's fog colour is a light blue (NVWastelandClear day (150, 168, 190)), so
-    /// the fog takes on the sunlight colour's hue in full daylight [hypothesis, fitted to
-    /// the exterior reference frames, world.md §6 "Fog colour by day"].
-    pub fn fog_color(&self) -> [f32; 3] {
-        self.sun_hue(self.color(ColorType::Fog), FOG_SUN)
-    }
-
-    /// `c` moved towards the sunlight colour's hue (each channel × sunlight / its largest
-    /// channel) by `share` × daylight.
-    fn sun_hue(&self, c: [f32; 3], share: f32) -> [f32; 3] {
-        let s = self.color(ColorType::Sunlight);
-        let m = s.iter().copied().fold(1e-3f32, f32::max);
-        let k = (self.daylight() * share).min(1.0);
-        std::array::from_fn(|i| c[i] * (1.0 + (s[i] / m - 1.0) * k))
+        let v = self.cinematic().hdr.v[fnv_world::imagespace::HDR_LUM_RAMP_NO_TEX];
+        if v > 0.0 && v.is_finite() { v } else { 1.0 }
     }
 
     /// Direction towards the sun, in Bevy's axes (also below the horizon).
@@ -1088,16 +1227,10 @@ impl SkyState {
         sun_direction(&self.climate, self.hour, SUN_SOUTH)[2].clamp(-1.0, 1.0).asin().to_degrees()
     }
 
-    /// Twilight (0..1): 1 while the sun is above the horizon, falling to 0 as it sinks to
-    /// `TWILIGHT_END_DEG` (the end of astronomical twilight) [hypothesis fitted 2026-10-23:
-    /// the share of the horizon colour's wide floor that fits the original's sky is about
-    /// 1.1 with the sun at +11° (19:06), 0.6 at −9° (20:30) and 0 at −54° (23:00); world.md
-    /// §6 "Sky colours"]. 1 indoors (no sky).
-    pub fn twilight(&self) -> f32 {
-        if self.interior.is_some() {
-            return 1.0;
-        }
-        smoothstep(TWILIGHT_END_DEG, 0.0, self.sun_elevation())
+    /// Sun elevation in degrees at another `hour` of the same climate (any value; the
+    /// heat haze's afternoon lag, `heat_haze.rs`).
+    pub fn sun_elevation_at(&self, hour: f32) -> f32 {
+        sun_direction(&self.climate, hour, SUN_SOUTH)[2].clamp(-1.0, 1.0).asin().to_degrees()
     }
 
     /// Star and moon visibility (0..1) at this hour.
@@ -1165,18 +1298,82 @@ pub fn weather_region(world: Res<WorldData>, cam: Query<&Transform, With<FlyCam>
     sky.place_outdoors(world.weather_regions, world.world, g.x, g.y);
 }
 
-/// The worldspace's image space (WRLD INAM), or its parent's.
-fn worldspace_image_space(world: &WorldData) -> Option<Cinematic> {
+/// The FormID of the worldspace's image space (WRLD INAM), or its parent's.
+pub(crate) fn worldspace_image_space_id(world: &WorldData) -> Option<u32> {
     let inam = |id: u32| {
         let (pi, r) = fnv_world::fields::winner(world.lo, id)?;
         let f = fnv_world::fields::Fields::new(r, pi, world.schema).ok()?;
         fnv_world::fields::global(world.lo, pi, fnv_world::fields::formid_of(&f.get(b"INAM")?)?)
     };
-    let ws = &world.index.worldspaces[&world.world];
-    let id = inam(world.world).or_else(|| ws.parent.and_then(inam))?;
-    let c = image_space(world.lo, world.schema, id);
-    info!("image space {id:#010x}: {c:?}");
-    c
+    let ws = world.index.worldspaces.get(&world.world)?;
+    inam(world.world).or_else(|| ws.parent.and_then(inam))
+}
+
+/// Sync live session `SetWeatherTraitNumeric` fog overrides (`15..=20`) from `Game::traits`
+/// into [`SkyState::weather_fog_overrides`]. Keyed on `(game_instance_id, weather_fog_revision)`
+/// so unchanged frames do zero work and game-instance switches or runtime drops clear stale
+/// session overrides cleanly. Explicit console/CLI `sky.fog_override` precedence stays
+/// intact in [`apply_cell_fog`] and [`SkyState::fog_power`].
+pub fn sync_weather_fog(
+    script: Option<Res<nvf_play::script::ScriptState>>,
+    mut sky: ResMut<SkyState>,
+    mut seen: Local<Option<Option<(u64, u64)>>>,
+) {
+    let game = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
+    let token = game.map(|g| g.weather_fog_sync_token());
+    if *seen == Some(token) {
+        return;
+    }
+    *seen = Some(token);
+    let next = game.map(|g| g.weather_fog_overrides()).unwrap_or_default();
+    if sky.weather_fog_overrides != next {
+        sky.weather_fog_overrides = next;
+        sky.refresh();
+    }
+}
+
+/// Sync live session `SetWeatherRGBColor`, `SetWeatherImageSpaceMod`, and
+/// `SetWeatherTransitionTimeOverride` overrides from `Game` into
+/// [`SkyState::weather_visual_overrides`]. Keyed on `(game_instance_id,
+/// weather_visual_revision)` so unchanged frames do zero work and game-instance switches
+/// or runtime drops clear stale session overrides cleanly.
+pub fn sync_weather_visuals(
+    world: Res<WorldData>,
+    script: Option<Res<nvf_play::script::ScriptState>>,
+    mut sky: ResMut<SkyState>,
+    mut seen: Local<Option<Option<(u64, u64)>>>,
+) {
+    let game = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
+    let token = game.map(|g| g.weather_visual_sync_token());
+    if *seen == Some(token) {
+        return;
+    }
+    *seen = Some(token);
+    let next = match game {
+        Some(g) => {
+            let adapters = g
+                .weather_adapter_overrides()
+                .into_iter()
+                .map(|(wid, slots)| {
+                    let resolved = slots.map(|slot| {
+                        slot.map(|id| (id != 0).then(|| adapter(world.lo, world.schema, id)).flatten())
+                    });
+                    (wid, resolved)
+                })
+                .collect();
+            WeatherVisualOverrides {
+                colors: g.weather_color_overrides(),
+                cloud_colors: g.weather_cloud_color_overrides(),
+                adapters,
+                transition_seconds: g.weather_transition_override().map(|s| s as f32).filter(|s| s.is_finite()),
+            }
+        }
+        None => WeatherVisualOverrides::default(),
+    };
+    if sky.weather_visual_overrides != next {
+        sky.weather_visual_overrides = next;
+        sky.refresh();
+    }
 }
 
 /// A global variable's Editor ID.
@@ -1208,10 +1405,27 @@ fn find_weather(world: &WorldData, name: &str) -> Option<u32> {
     })
 }
 
-/// The atmosphere dome, with each vertex's elevation (degrees) and sky-upper weight kept
-/// from creation: the colours are recomputed from these.
+/// The atmosphere dome, with each vertex's weights of the horizon, sky-lower and sky-upper
+/// colours (the mesh's vertex colour: red, green, blue) kept from creation: the colours
+/// are recomputed from these ([`dome_color`]).
 #[derive(Component)]
-pub struct SkyDome(Vec<[f32; 2]>);
+pub struct SkyDome(Vec<[f32; 3]>);
+
+impl SkyDome {
+    /// The weights per vertex, in the mesh's vertex order (aerial.rs reads the dome's own
+    /// weights by elevation).
+    pub fn weights(&self) -> &[[f32; 3]] {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+impl SkyDome {
+    /// A dome without vertex weights (night_sky.rs's system test).
+    pub(crate) fn for_test() -> Self {
+        SkyDome(Vec::new())
+    }
+}
 
 /// One of the four cloud layers (WTHR layer index) in one of two sets: the set showing
 /// the current weather and the one fading out the previous weather.
@@ -1221,6 +1435,19 @@ pub struct CloudLayer {
     set: usize,
     /// Form ID of the weather whose texture this layer shows.
     shows: Option<u32>,
+}
+
+impl CloudLayer {
+    /// Layer 0 of set 0, showing nothing yet (night_sky.rs's system test).
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        CloudLayer { layer: 0, set: 0, shows: None }
+    }
+
+    /// The WTHR cloud layer (0-3) this dome shape draws (cloud_shadows.rs).
+    pub(crate) fn layer(&self) -> usize {
+        self.layer
+    }
 }
 
 #[derive(Component)]
@@ -1323,9 +1550,10 @@ fn sky_mesh(s: &SkyShape, colors: Vec<[f32; 4]>) -> Mesh {
     m
 }
 
-/// Fallback dome: a sphere (game space, z up) with weights from height [hypothesis,
-/// the earlier interim gradient]: horizon to sky-upper over the lower half of the upper
-/// hemisphere, horizon to sky-lower just below the horizon.
+/// Fallback dome: a sphere (game space, z up) with weights from height, in the sky
+/// mesh's channels (red horizon, green sky-lower, blue sky-upper): sky-lower to sky-upper
+/// over the lower half of the upper hemisphere, sky-lower to the horizon colour just below
+/// the horizon.
 fn fallback_dome() -> SkyShape {
     let mut sphere = Sphere::new(NIF_SKY_RADIUS).mesh().uv(48, 24);
     let pos: Vec<[f32; 3]> = match sphere.attribute(Mesh::ATTRIBUTE_POSITION) {
@@ -1340,6 +1568,7 @@ fn fallback_dome() -> SkyShape {
                 let t = (y / 0.5).clamp(0.0, 1.0).sqrt();
                 [0.0, 1.0 - t, t, 1.0]
             } else {
+                // Sky-lower turns to the horizon colour over the first fifth below the horizon.
                 let t = (-y / 0.2).clamp(0.0, 1.0);
                 [t, 1.0 - t, 0.0, 1.0]
             }
@@ -1368,18 +1597,17 @@ pub fn setup_sky(
     mut textures: ResMut<TextureCache>,
     data: Res<GameData>,
     sky: Res<SkyState>,
+    map: Option<Res<bevy::light::DirectionalLightShadowMap>>,
 ) {
     let sun_tex = sky.climate.sun_texture.as_deref().and_then(|t| textures.get(t, true, &data, &mut images, None));
     let glare_tex = sky.climate.sun_glare_texture.as_deref().and_then(|t| textures.get(t, true, &data, &mut images, None));
     let atmosphere = sky_shapes(&data, "meshes\\sky\\atmosphere.nif").into_iter().next().unwrap_or_else(fallback_dome);
     let weights = atmosphere.colors.clone();
-    // Per vertex: elevation (degrees) and the sky-upper weight (blue).
-    let dome: Vec<[f32; 2]> = atmosphere
-        .positions
-        .iter()
-        .zip(&weights)
-        .map(|(p, w)| [p[2].atan2(p[0].hypot(p[1])).to_degrees(), w[2]])
-        .collect();
+    // Per vertex: the weights of the horizon, sky-lower and sky-upper colours (red,
+    // green, blue).
+    let dome: Vec<[f32; 3]> = weights.iter().map(|w| [w[0], w[1], w[2]]).collect();
+    // The same weights by height, for the reflection cube's sky (reflection_sky.rs).
+    commands.insert_resource(crate::reflection_sky::DomeProfile::from_vertices(&atmosphere.positions, &atmosphere.colors));
     commands.spawn((
         Name::new("Sky"),
         SkyDome(dome),
@@ -1412,7 +1640,8 @@ pub fn setup_sky(
                     m.extension.glare_texture = glare_tex.clone();
                     m
                 })),
-                sky_transform(Vec3::ZERO),
+                // Inside the atmosphere dome, which writes depth ([`CLOUD_INSET`]).
+                sky_transform(Vec3::ZERO).with_scale(Vec3::splat(DOME_RADIUS / NIF_SKY_RADIUS * CLOUD_INSET)),
                 Visibility::Hidden,
                 NotShadowCaster,
                 NotShadowReceiver,
@@ -1488,7 +1717,7 @@ pub fn setup_sky(
         RenderLayers::from_layers(&[0, SHADOW_LAYER, BODY_LAYER]),
     ));
     if sky.shadows {
-        sun.insert(shadow_cascades(sky.shadow_distance, sky.shadow_reach, sky.shadow_cascades));
+        sun.insert(shadow_cascades(sky.shadow_distance, sky.shadow_reach, sky.shadow_layout, map_side(map.as_deref())));
     }
 }
 
@@ -1521,7 +1750,9 @@ pub fn reach_toward_light(cascade: &mut bevy::light::cascade::Cascade, extra: f3
 }
 
 /// Stretch the sun's shadow cascades [`SUN_REACH_BACK`] toward the sun (PostUpdate, after
-/// Bevy builds them each frame and before their frusta and shadow views are made).
+/// Bevy builds them each frame and before their frusta and shadow views are made; after
+/// they are anchored and before the held ones are given back: shadow_anchor.rs
+/// `cascade_edits` says why).
 pub fn reach_toward_sun(mut suns: Query<&mut bevy::light::Cascades, With<Sun>>) {
     for mut cascades in &mut suns {
         for view in cascades.cascades.values_mut() {
@@ -1602,17 +1833,170 @@ fn overlaps(outline: &[Vec2], centre: Vec2, reach: Vec2) -> bool {
     })
 }
 
-/// The sun's shadow cascades, in game units: the first covers the area right around the
-/// camera (a twelfth of `distance`), the last ends at `distance` × `reach`.
-pub(crate) fn shadow_cascades(distance: f32, reach: f32, count: usize) -> CascadeShadowConfig {
-    CascadeShadowConfigBuilder {
-        num_cascades: count.max(1),
-        minimum_distance: 5.0,
-        first_cascade_far_bound: (distance / 12.0).max(200.0),
-        maximum_distance: distance * reach.max(1.0),
-        overlap_proportion: 0.2,
+/// Whether the sun casts shadows with its shadows switched `on` and a shadow distance of
+/// `distance`: a distance of 0 (the Shadow distance row's 0%, the menu overhaul) casts none.
+/// The one test for both [`set_shadows`] and graphics.rs `SunShadowKey::wanted`.
+pub(crate) fn casts_sun_shadows(on: bool, distance: f32) -> bool {
+    on && distance > 0.0
+}
+
+/// The sun's shadow cascades, in game units ([`shadow_cascade_layout`]), for shadow maps
+/// `map` texels on a side.
+pub(crate) fn shadow_cascades(distance: f32, reach: f32, layout: CascadeLayout, map: usize) -> CascadeShadowConfig {
+    let (bounds, overlap_proportion) = shadow_cascade_layout(distance, reach, layout, map);
+    CascadeShadowConfig { bounds, overlap_proportion, minimum_distance: SHADOW_MINIMUM_DISTANCE }
+}
+
+/// The side of the sun's shadow maps (texels): the resource's, or Bevy's default without
+/// it (2048, graphics.rs `SHADOW_MAP` too).
+pub(crate) fn map_side(map: Option<&bevy::light::DirectionalLightShadowMap>) -> usize {
+    map.map_or_else(|| bevy::light::DirectionalLightShadowMap::default().size, |m| m.size)
+}
+
+/// Where the sun's cascades start (game units from the camera) and how far each overlaps
+/// the one before it (a share of its far bound), as Bevy's builder was given them here
+/// before; Quality with the larger maps blends over [`WIDE_SHADOW_OVERLAP`].
+const SHADOW_MINIMUM_DISTANCE: f32 = 5.0;
+const SHADOW_OVERLAP: f32 = 0.2;
+/// The first cascade's far bound is no nearer than this (game units) at short shadow
+/// distances, unless half the last bound is nearer still ([`shadow_cascade_layout`]).
+const FIRST_CASCADE_FLOOR: f32 = 200.0;
+/// The least step between two neighbouring far bounds, as a share of the room between the
+/// first bound and the last ([`shadow_cascade_layout`]) [engineering choice: small enough
+/// to leave every layout's shares alone at the usual distances; with at most 4
+/// cascades the steps take at most 15 % of the room].
+const MIN_CASCADE_STEP: f32 = 0.05;
+/// The far bounds of all cascades but the last, as shares of the shadow distance
+/// [engineering choice: the contributor's proposal in #2843, for the maintainer to decide.
+/// The shadows were sharp only in a small radius around the player and coarse beyond,
+/// worst on Performance, where everything past the first bound's 667 units lay on the last
+/// cascade]. [observed 2026-11-16, the view and settings of [`CascadeLayout`]]
+///
+/// Performance's 3 cascades: at 8,000 units 1,500 and 4,500. With 2048² maps 3.09-3.11 ms
+/// a frame against 3.05-3.10 for the 2 cascades of before (667, 12,000), and a telegraph
+/// pole's crossarm past 667 units cast a clean shadow instead of a shapeless blob.
+const SHADOW_SHARES_PERFORMANCE: [f32; 2] = [0.1875, 0.5625];
+/// Quality's 4 cascades with maps smaller than [`WIDE_SHADOW_MAP`] (2048²): at 8,000 units
+/// 700, 2,000, 5,000, 3.22 ms against 3.15-3.16 for the 3 of before. A farther first bound
+/// costs sharpness at the player's feet with these maps (a wire's shadow crisp at 0.77
+/// units a texel, soft at 1.15, blurred at 1.72), so their first bound stays near.
+const SHADOW_SHARES_QUALITY: [f32; 3] = [0.0875, 0.25, 0.625];
+/// Quality's 4 cascades with maps of [`WIDE_SHADOW_MAP`] or more (4096²): 0.1875, 0.4375
+/// and 0.875 of the distance, the second and third capped at [`SHADOW_CAPS_QUALITY_WIDE`]
+/// of the last bound, blended over [`WIDE_SHADOW_OVERLAP`]. With Longer shadows (reach
+/// 1.5) at 8,000 units: 1,500, 3,500, 7,000, 12,000, the layout measured and pictured on
+/// 2026-11-16: 3.43-3.48 ms against 3.38 for the 3 of before with these maps; the near
+/// shadow stays crisp (0.86 units a texel) with the seams farther out.
+const SHADOW_SHARES_QUALITY_WIDE: [f32; 3] = [0.1875, 0.4375, 0.875];
+/// The caps of Quality's in-between bounds with the larger maps, as shares of the last
+/// bound (none on the first) [engineering choice, #2843 review, for the maintainer to
+/// decide: without Longer shadows (reach 1) the uncapped bounds end at 1,500, 3,500, 7,000
+/// of 8,000, and with the 0.4 blend band the fourth cascade (4,200-8,000) would add almost
+/// nothing beside the third (2,100-7,000) for a fourth draw]. At reach 1.5 they leave the
+/// measured layout as it is (3,500 under 3,600, 7,000 under 7,200); at reach 1 they give
+/// 1,500, 2,400, 4,800, 8,000, derived by this rule; its cost was not measured.
+const SHADOW_CAPS_QUALITY_WIDE: [f32; 3] = [f32::INFINITY, 0.3, 0.6];
+/// The shadow map side from which Quality takes [`SHADOW_SHARES_QUALITY_WIDE`].
+const WIDE_SHADOW_MAP: usize = 4096;
+/// The overlap (blend band) of Quality's cascades with the larger maps: seams farther out
+/// are wider apart in texel size, and a wider band hides them [engineering choice, #2843].
+const WIDE_SHADOW_OVERLAP: f32 = 0.4;
+
+/// The far bounds of the sun's shadow cascades (game units from the camera, nearest
+/// first) and their overlap, for `layout` and shadow maps `map` texels on a side. The last
+/// bound is `distance` × `reach` (`reach` 1, or more with the longer shadows of
+/// `graphics.rs`), so the Shadow distance slider and `--shadow-distance` move them all; the
+/// others are not stretched by `reach`.
+///
+/// - Performance: the shares of `distance` in [`SHADOW_SHARES_PERFORMANCE`], whatever the
+///   map size; overlap [`SHADOW_OVERLAP`].
+/// - Quality: [`SHADOW_SHARES_QUALITY`] and [`SHADOW_OVERLAP`] with maps under
+///   [`WIDE_SHADOW_MAP`]; from it [`SHADOW_SHARES_QUALITY_WIDE`], each in-between bound
+///   capped at its [`SHADOW_CAPS_QUALITY_WIDE`] share of the last, and
+///   [`WIDE_SHADOW_OVERLAP`].
+/// - Spaced(n) (`--graphics-cycle cascades=<n>`): Bevy's geometric spacing from a first
+///   bound of a twelfth of `distance`, as every count had it before #2843, so that
+///   measurements of then still compare; overlap [`SHADOW_OVERLAP`].
+/// - One cascade (the moon's, Spaced(1)): `distance` × `reach`.
+///
+/// At short distances (the Shadow distance row's least step above 0 % is a fifth of
+/// `--shadow-distance`, and `--shadow-distance` itself may be short; at 0 the sun casts
+/// none, [`casts_sun_shadows`], though the layout is still well formed there) the first bound stays at [`FIRST_CASCADE_FLOOR`] but under half the
+/// last, and the last at four times the minimum distance at least. The floor on the first
+/// bound (or a cap) can then push a share to or past its neighbour, so each in-between
+/// bound `i` of `n` is its (capped) share held between `first + i × step` and
+/// `last − (n − 1 − i) × step`, a step being [`MIN_CASCADE_STEP`] of the room between the
+/// first bound and the last. Both limits rise by a step from one bound to the next and the
+/// capped shares rise strictly (with a distance above 0; at 0 they are all 0 and the lower
+/// limits decide), so the bounds always rise strictly, the first and the last included.
+/// The limits only act when a share comes within a step of them: at 8,000 units, with or
+/// without Longer shadows, every layout keeps its shares exactly (Quality with 4096² maps
+/// at reach 1, for one, has its second bound 2,400 against a lower limit of 1,825 and its
+/// third 4,800 against 2,150) [engineering choice].
+pub(crate) fn shadow_cascade_layout(distance: f32, reach: f32, layout: CascadeLayout, map: usize) -> (Vec<f32>, f32) {
+    let count = layout.count();
+    let last = (distance * reach.max(1.0)).max(4.0 * SHADOW_MINIMUM_DISTANCE);
+    let (shares, caps, overlap): (&[f32], &[f32], f32) = match layout {
+        CascadeLayout::Performance => (&SHADOW_SHARES_PERFORMANCE[..], &[][..], SHADOW_OVERLAP),
+        CascadeLayout::Quality if map >= WIDE_SHADOW_MAP => (&SHADOW_SHARES_QUALITY_WIDE[..], &SHADOW_CAPS_QUALITY_WIDE[..], WIDE_SHADOW_OVERLAP),
+        CascadeLayout::Quality => (&SHADOW_SHARES_QUALITY[..], &[][..], SHADOW_OVERLAP),
+        CascadeLayout::Spaced(_) => (&[][..], &[][..], SHADOW_OVERLAP),
+    };
+    if count == 1 {
+        return (vec![last], overlap);
     }
-    .build()
+    let first_share = shares.first().copied().unwrap_or(1.0 / 12.0);
+    let first = (distance * first_share).max(FIRST_CASCADE_FLOOR).min(last / 2.0);
+    if shares.is_empty() {
+        let bounds = CascadeShadowConfigBuilder {
+            num_cascades: count,
+            minimum_distance: SHADOW_MINIMUM_DISTANCE,
+            first_cascade_far_bound: first,
+            maximum_distance: last,
+            overlap_proportion: overlap,
+        }
+        .build()
+        .bounds;
+        return (bounds, overlap);
+    }
+    let step = MIN_CASCADE_STEP * (last - first);
+    let bounds = std::iter::once(first)
+        .chain(shares.iter().enumerate().skip(1).map(|(i, share)| {
+            let cap = caps.get(i).map_or(f32::INFINITY, |c| c * last);
+            let (low, high) = (first + i as f32 * step, last - (count - 1 - i) as f32 * step);
+            (distance * share).min(cap).min(high).max(low)
+        }))
+        .chain(std::iter::once(last))
+        .collect();
+    (bounds, overlap)
+}
+
+/// Log the sun's cascades whenever their far bounds or the shadow maps' size change (the
+/// first frame with cascades, the day's and the moon's, a change of mode, distance or
+/// Shadow resolution): `sun shadows: cascades far bounds [..] texels [..] units`, with each
+/// cascade's texel size as Bevy built it for the main camera. Runs after Bevy builds the
+/// cascades and before the hold can give back a cascade of an earlier frame
+/// (shadow_anchor.rs `cascade_edits`); a few floats compared a frame.
+pub fn log_sun_cascades(
+    suns: Query<(&DirectionalLight, &CascadeShadowConfig, &bevy::light::Cascades), With<Sun>>,
+    cams: Query<Entity, With<FlyCam>>,
+    map: Option<Res<bevy::light::DirectionalLightShadowMap>>,
+    mut said: Local<(Vec<f32>, usize)>,
+) {
+    let Some(cam) = cams.iter().next() else { return };
+    let side = map_side(map.as_deref());
+    for (light, config, cascades) in &suns {
+        if !light.shadow_maps_enabled || (config.bounds == said.0 && side == said.1) {
+            continue;
+        }
+        // Wait for the cascades Bevy builds from this config.
+        let Some(list) = cascades.cascades.get(&cam).filter(|l| l.len() == config.bounds.len()) else { continue };
+        let bounds: Vec<String> = config.bounds.iter().map(|b| format!("{b:.0}")).collect();
+        let texels: Vec<String> = list.iter().map(|c| format!("{:.3}", c.texel_size)).collect();
+        info!("sun shadows: cascades far bounds [{}] texels [{}] units", bounds.join(", "), texels.join(", "));
+        said.0.clone_from(&config.bounds);
+        said.1 = side;
+    }
 }
 
 /// Height of the sun's direction above the horizon (the sine of its elevation; below 0
@@ -1626,11 +2010,17 @@ pub fn sun_height_and_fade(sky: &SkyState) -> (f32, f32) {
 /// Switch the sun's shadows on or off now (the settings page); they reach
 /// [`SkyState::shadow_distance`].
 pub fn set_shadows(world: &mut World, on: bool) {
+    if let Some(mut work) = world.get_resource_mut::<crate::quality_probe::Work>() {
+        work.shadow_updates += 1;
+    }
     let distance = {
         let mut sky = world.resource_mut::<SkyState>();
         sky.shadows = on;
-        (sky.shadow_distance, sky.shadow_reach, sky.shadow_cascades)
+        (sky.shadow_distance, sky.shadow_reach, sky.shadow_layout)
     };
+    let map = map_side(world.get_resource::<bevy::light::DirectionalLightShadowMap>());
+    // A shadow distance of 0% (the menu overhaul) casts none.
+    let on = casts_sun_shadows(on, distance.0);
     let mut suns = world.query_filtered::<(Entity, &mut DirectionalLight), With<Sun>>();
     let lit: Vec<Entity> = suns
         .iter_mut(world)
@@ -1641,7 +2031,7 @@ pub fn set_shadows(world: &mut World, on: bool) {
         .collect();
     if on {
         for e in lit {
-            world.entity_mut(e).insert(shadow_cascades(distance.0, distance.1, distance.2));
+            world.entity_mut(e).insert(shadow_cascades(distance.0, distance.1, distance.2, map));
         }
     }
 }
@@ -1662,7 +2052,8 @@ pub fn update_clouds(
     mut logged: Local<Option<u32>>,
 ) {
     let Ok(cam_t) = cam.single() else { return };
-    let secs = time.elapsed_secs_f64();
+    // Elapsed seconds, or the frozen phase of NVF_PLAY_DEBUG_CLOUD_PHASE (cloud_shadows.rs).
+    let secs = crate::cloud_shadows::cloud_seconds(&time);
     // Set 0 shows the current weather while no fade runs; during a fade the set whose
     // texture already shows the new weather keeps it.
     for (mut cl, m, mut t, mut vis) in &mut clouds {
@@ -1679,7 +2070,7 @@ pub fn update_clouds(
             continue;
         };
         let new_texture = cl.shows != Some(w.form_id);
-        let c = sky.cloud_tint(w.cloud_color(&sky.climate, cl.layer, sky.hour));
+        let c = sky.cloud_color_for(w, cl.layer);
         let color = LinearRgba::new(c[0], c[1], c[2], alpha);
         // Each set scrolls at its own weather's ONAM speeds, so a fade blends the two
         // weathers' layers each moving at its own rate (fnv_world::sky::Weather::cloud_scroll).
@@ -1765,7 +2156,7 @@ pub fn update_night_sky(
     }
     for (mut t, m, mut disc) in &mut moon {
         let moon_dir = -sun_dir;
-        if indoors || moon_vis <= 0.0 || moon_dir.y < -0.1 {
+        if indoors || moon_vis <= 0.0 || moon_dir.y < MOON_HIDDEN_Y {
             t.scale = Vec3::ZERO;
             continue;
         }
@@ -1788,64 +2179,26 @@ pub fn update_night_sky(
 }
 
 /// The dome mesh last coloured and the sky colours it was coloured with.
-type DomeShown = (AssetId<Mesh>, [f32; 10]);
+type DomeShown = (AssetId<Mesh>, [f32; 9]);
 
 /// Whether the dome mesh `mesh` needs colouring for the sky colours `now`: a new dome (a
 /// worldspace change spawns one whose vertex colours are still the atmosphere's weights,
 /// drawn as a green-to-red sky, #1395) or colours that moved noticeably since `shown`.
-fn dome_needs_colour(shown: Option<DomeShown>, mesh: AssetId<Mesh>, now: [f32; 10]) -> bool {
+fn dome_needs_colour(shown: Option<DomeShown>, mesh: AssetId<Mesh>, now: [f32; 9]) -> bool {
     shown.is_none_or(|(was_mesh, was)| was_mesh != mesh || was.iter().zip(now).any(|(a, b)| (a - b).abs() > 1e-3))
 }
 
-/// Colour of an atmosphere vertex at `elevation` (degrees) with sky-upper weight `up_w`
-/// (the vertex colour's blue), linear RGB. Mixed as display (sRGB) values: sky-upper ×
-/// `up_w` plus horizon × `horizon_weight(elevation, twilight)`; below the horizon the
-/// colour turns to sky-lower by 10° down [hypothesis fitted to screenshots of the original
-/// game, docs/spec-notes/world.md §6 "Sky colours": the vertex colours' green channel, read
-/// as the horizon weight, peaks 10-15° up and gives the horizon colour far too much sky].
-pub(crate) fn dome_color(elevation: f32, up_w: f32, twilight: f32, lower: [f32; 3], horizon: [f32; 3], upper: [f32; 3]) -> [f32; 3] {
+/// Colour of an atmosphere vertex whose colour is `w`, linear RGB: horizon × red plus
+/// sky-lower × green plus sky-upper × blue, mixed as display (sRGB) values [observed
+/// 2026-11-16, base game, FalloutNV.esm's WastelandClear at 09:09 (upper (40, 46, 255),
+/// lower (123, 156, 242), horizon (162, 194, 204)), looking away from the sun: with the
+/// grade taken out the original's red and green at 46°, 31° and 25° up are (52, 59),
+/// (74, 93) and (84, 105); green as sky-lower gives (53, 65), (76, 93) and (81, 101),
+/// green as the horizon colour (91, 108) at 31°. world.md §6 "Dome weights"].
+pub(crate) fn dome_color(w: [f32; 3], lower: [f32; 3], horizon: [f32; 3], upper: [f32; 3]) -> [f32; 3] {
     use crate::lodgen::{linear_to_srgb as d, srgb_to_linear as l};
-    let a = horizon_weight(elevation, twilight);
-    let below = smoothstep(0.0, -10.0, elevation);
-    std::array::from_fn(|i| {
-        let above = up_w * d(upper[i]) + a * d(horizon[i]);
-        l(above + (d(lower[i]) - above) * below)
-    })
+    std::array::from_fn(|i| l(w[0] * d(horizon[i]) + w[1] * d(lower[i]) + w[2] * d(upper[i])))
 }
-
-/// Weight of the horizon colour at `elevation` (degrees): 1 at the horizon, about 0.5 at
-/// 15°, 0.3 at 25° at dusk [hypothesis fitted to the dusk reference frame, where the sky
-/// colours are graded without further change; world.md §6]. The wide part (the floor,
-/// `HORIZON_FLOOR`) is scaled by `twilight` (`SkyState::twilight`, 1 while the sun is up,
-/// 0 in full night): the original's night sky keeps under a third of it above 25°
-/// [hypothesis fitted 2026-10-23 to clear Mojave frames at 19:06, 20:30 and 23:00, world.md
-/// §6 "Sky colours"].
-pub(crate) fn horizon_weight(elevation: f32, twilight: f32) -> f32 {
-    let e = elevation.max(0.0);
-    let (near, far) = (HORIZON_NEAR_DEG, HORIZON_FAR_DEG);
-    let fl = HORIZON_FLOOR;
-    (1.0 - fl) * (-(e / near).powi(2)).exp() + fl * twilight.clamp(0.0, 1.0) * (-(e / far).powi(2)).exp()
-}
-
-const HORIZON_NEAR_DEG: f32 = 14.0;
-const HORIZON_FAR_DEG: f32 = 60.0;
-const HORIZON_FLOOR: f32 = 0.28;
-/// Sun elevation (degrees) at which the horizon colour's floor is gone (see `twilight`).
-const TWILIGHT_END_DEG: f32 = -18.0;
-
-/// Fitted daylight factors (see `SkyLight`).
-const SKY_DIM: f32 = 0.6;
-const SKY_GLOW: f32 = 0.05;
-/// Share of the sunlight hue in the clouds' colour in full daylight (see `cloud_tint`).
-const CLOUD_SUN: f32 = 0.5;
-/// Share of the sunlight hue in the fog's colour in full daylight (see `fog_color`)
-/// [hypothesis, fitted 2026-10-21]: 1.0 took the mean colour error of the
-/// spring_mountains_east reference frame from 0.077 to 0.013 and of hoover_ridge_lake from
-/// 0.048 to 0.011, but lowered black_mountain_north's SSIM from 0.602 to 0.5996, under the
-/// 0.6 threshold; 0.5 leaves 0.046 and 0.030 and keeps it at 0.60 (world.md §6).
-const FOG_SUN: f32 = 0.5;
-/// Sun elevation (degrees) at which daylight reaches full strength.
-const DAYLIGHT_DEG: f32 = 40.0;
 
 fn to_color(c: [f32; 3]) -> Color {
     Color::LinearRgba(LinearRgba::rgb(c[0], c[1], c[2]))
@@ -1900,6 +2253,39 @@ pub fn tell_sky_colors(sky: Res<SkyState>, mut script: Option<ResMut<nvf_play::s
     rt.game.other.jg9.sky_colors = sky.interior.is_none().then(|| sky.all_color_bytes());
 }
 
+/// Whether an interior cell's fog range is active.
+///
+/// Cells whose effective fog range has `fog_far <= fog_near.max(0.0)` (most commonly
+/// `0..0` with black fog colour in interiors without a lighting template) have no active
+/// distance fog, matching how exterior weathers treat unset fog ranges
+/// (`fnv_world::sky::Weather::fog_at`).
+pub(crate) fn interior_fog_active(l: fnv_world::lighting::CellLighting) -> bool {
+    l.fog_near.is_finite() && l.fog_far.is_finite() && l.fog_far > l.fog_near.max(0.0)
+}
+
+/// Compose the current cell/weather fog for the main camera. Underwater fog uses
+/// the same composition on exit, without waiting for the next weather refresh.
+pub(crate) fn apply_cell_fog(sky: &SkyState, fog: &mut DistanceFog, emissive_mod: f32, no_interior_fog: bool) {
+    if let Some(l) = sky.interior {
+        let color = to_color(l.fog_color.map(fnv_world::sky::srgb_to_linear));
+        if interior_fog_active(l) {
+            fog.color = color;
+            let far = if no_interior_fog { NO_FOG_FAR } else { l.fog_far };
+            fog.falloff = crate::fog::falloff(l.fog_near.max(0.0), far, l.fog_power, false, 1.0);
+        } else {
+            // Unset interior fog range (e.g. 0..0): disable fog via alpha 0, matching
+            // exterior weathers (`Weather::fog_at`), instead of clamping far to near + 1.
+            fog.color = color.with_alpha(0.0);
+            fog.falloff = crate::fog::falloff(0.0, NO_FOG_FAR, l.fog_power, false, 1.0);
+        }
+    } else {
+        let range = sky.fog_override.map(|(n, f)| (n, f, 1.0)).or_else(|| sky.fog());
+        let (near, far, strength) = range.unwrap_or((0.0, 0.0, 0.0));
+        fog.color = to_color(sky.color(ColorType::Fog)).with_alpha(strength);
+        fog.falloff = crate::fog::falloff(near.max(0.0), far, sky.fog_power(), true, sky.emissive_scale() * emissive_mod);
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn update_sky(
     mut sky: ResMut<SkyState>,
@@ -1913,6 +2299,7 @@ pub fn update_sky(
     mut materials: ResMut<Assets<SkyMaterial>>,
     mut flashed: Local<bool>,
     mut dome_shown: Local<Option<DomeShown>>,
+    mut last_interior_fog: Local<Option<(f32, f32, f32)>>,
     screen: Option<Res<crate::imagespace::ScreenModifiers>>,
     tweaks: Option<Res<nvf_play::tweaks::TweakSettings>>,
 ) {
@@ -1954,13 +2341,19 @@ pub fn update_sky(
             light.color = crate::lights::display_color(shown(l.directional));
             light.illuminance = PI * unit * l.directional_fade.clamp(0.0, 1.0) * INTERIOR_DIRECTIONAL_SHARE;
         }
-        fog.color = c(l.fog_color);
-        // The player's tweak pushes interior fog out of sight [design: docs/design/tweaks.md].
-        let far = if tweaks.as_ref().is_some_and(|t| t.no_interior_fog) { NO_FOG_FAR } else { l.fog_far };
-        fog.falloff = crate::fog::falloff(l.fog_near.max(0.0), far, l.fog_power, false, 1.0);
-        info!("interior lighting: fog {:.0}..{:.0} power {:.2}", l.fog_near, l.fog_far, l.fog_power);
+        apply_cell_fog(&sky, &mut fog, emissive_mod, tweaks.as_ref().is_some_and(|t| t.no_interior_fog));
+        let fog_key = (l.fog_near, l.fog_far, l.fog_power);
+        if *last_interior_fog != Some(fog_key) {
+            *last_interior_fog = Some(fog_key);
+            if interior_fog_active(l) {
+                info!("interior lighting: fog {:.0}..{:.0} power {:.2}", l.fog_near, l.fog_far, l.fog_power);
+            } else {
+                info!("interior lighting: fog none (stored {:.0}..{:.0} power {:.2})", l.fog_near, l.fog_far, l.fog_power);
+            }
+        }
         return;
     }
+    *last_interior_fog = None;
     let c = &sky.climate;
 
     // Follow the camera every frame; clouds drift with their ONAM speeds. The dome is
@@ -1996,7 +2389,8 @@ pub fn update_sky(
     for id in ids {
         let Some(m) = materials.get(id) else { continue };
         let old = m.extension.light;
-        let new = SkyLight { params: light.params.with_y(old.params.y).with_z(old.params.z).with_w(old.params.w), ..light };
+        // The night sky detail's fields are night_sky.rs's own: kept as they are.
+        let new = SkyLight { params: light.params.with_y(old.params.y).with_z(old.params.z).with_w(old.params.w), moon: old.moon, night: old.night, ..light };
         let same = |a: Vec4, b: Vec4| a.abs_diff_eq(b, 1e-3);
         if same(old.params, new.params) && same(old.glow, new.glow) && same(old.sun_dir, new.sun_dir) && same(old.sun, new.sun) && same(old.glare, new.glare) {
             continue;
@@ -2008,10 +2402,9 @@ pub fn update_sky(
     let upper = sky.color(ColorType::SkyUpper);
     let lower = sky.color(ColorType::SkyLower);
     let horizon = sky.color(ColorType::Horizon);
-    let twilight = sky.twilight();
     // The dome is coloured again only when its colours moved noticeably (as the sky
     // materials above): a changed mesh is sent to the GPU again, every frame before (#897).
-    let shown = [upper[0], upper[1], upper[2], lower[0], lower[1], lower[2], horizon[0], horizon[1], horizon[2], twilight];
+    let shown = [upper[0], upper[1], upper[2], lower[0], lower[1], lower[2], horizon[0], horizon[1], horizon[2]];
     if let Some((m, weights, _)) = dome.single().ok().filter(|(m, _, _)| dome_needs_colour(*dome_shown, m.0.id(), shown)) {
         if dome_shown.is_none_or(|(was, _)| was != m.0.id()) {
             info!("sky: a new dome coloured from {}'s sky colours", sky.weather.edid.as_deref().unwrap_or("the weather"));
@@ -2022,7 +2415,7 @@ pub fn update_sky(
                 .0
                 .iter()
                 .map(|wt| {
-                    let c = dome_color(wt[0], wt[1], twilight, lower, horizon, upper);
+                    let c = dome_color(*wt, lower, horizon, upper);
                     [c[0], c[1], c[2], 1.0]
                 })
                 .collect();
@@ -2042,9 +2435,8 @@ pub fn update_sky(
     // No fog: the fog colour's alpha scales the whole effect, so zero turns it off.
     let range = sky.fog_override.map(|(n, f)| (n, f, 1.0)).or_else(|| sky.fog());
     let (near, far, strength) = range.unwrap_or((0.0, 0.0, 0.0));
-    fog.color = to_color(sky.fog_color()).with_alpha(strength);
     let power = sky.fog_power();
-    fog.falloff = crate::fog::falloff(near.max(0.0), far, power, true, sky.emissive_scale() * emissive_mod);
+    apply_cell_fog(&sky, &mut fog, emissive_mod, false);
     // A lightning flash changes the light each frame it lasts: not worth a line each.
     let flashing = std::mem::replace(&mut *flashed, flash != Vec3::ZERO);
     if sky.time_scale <= 0.0 && flash == Vec3::ZERO && !flashing {
@@ -2117,8 +2509,21 @@ fn official_plugin(name: Option<&str>) -> bool {
 }
 
 #[cfg(test)]
+#[path = "sky_weather_percent_tests.rs"]
+mod weather_percent_tests;
+
+#[cfg(test)]
 #[path = "sky_lighting_session_tests.rs"]
 mod session_lighting_tests;
+
+#[cfg(test)]
+#[path = "cartographer_live_tests.rs"]
+mod cartographer_live_tests;
+
+#[cfg(test)]
+pub(crate) fn authored_session_sky() -> SkyState {
+    session_lighting_tests::sky()
+}
 
 #[cfg(test)]
 mod tests {
@@ -2168,7 +2573,7 @@ mod tests {
             shadows: false,
             shadow_distance: DEFAULT_SHADOW_DISTANCE,
             shadow_reach: 1.0,
-            shadow_cascades: DEFAULT_SHADOW_CASCADES,
+            shadow_layout: CascadeLayout::Quality,
             grade: true,
             time_scale: 0.0,
             clock_running: false,
@@ -2178,6 +2583,9 @@ mod tests {
             fade: 1.0,
             choices: vec![choice(SAVED), choice(2)],
             image_space: None,
+            world_image_space_id: None,
+            weather_fog_overrides: HashMap::new(),
+            weather_visual_overrides: WeatherVisualOverrides::default(),
             adapters: HashMap::new(),
             changed: true,
             script: None,
@@ -2236,7 +2644,7 @@ mod tests {
             shadows: false,
             shadow_distance: DEFAULT_SHADOW_DISTANCE,
             shadow_reach: 1.0,
-            shadow_cascades: DEFAULT_SHADOW_CASCADES,
+            shadow_layout: CascadeLayout::Quality,
             grade: true,
             time_scale: 0.0,
             clock_running: false,
@@ -2246,6 +2654,9 @@ mod tests {
             fade: 1.0,
             choices: vec![Choice { weather: weather(LISTED), chance: 100, global: None }, Choice { weather: weather(GATED), chance: 100, global: Some(gate) }],
             image_space: None,
+            world_image_space_id: None,
+            weather_fog_overrides: HashMap::new(),
+            weather_visual_overrides: WeatherVisualOverrides::default(),
             adapters: HashMap::new(),
             changed: true,
             script: None,
@@ -2560,6 +2971,122 @@ mod tests {
     }
 
     #[test]
+    fn held_weather_survives_sky_replacement_and_releases_to_the_new_climate() {
+        let mut from = sky_started_on_held();
+        from.place(Some(None), false);
+        from.rolls = 41;
+        from.script_weather(Weather { form_id: HELD, ..Default::default() }, [None; 6], true, true);
+        let mut to = sky_started_on_held();
+        to.climate.form_id = 100;
+        to.resume = None;
+        to.weather = to.choices[0].weather.clone();
+
+        to.carry_weather_from(&from);
+        assert_eq!((to.weather.form_id, to.climate.form_id), (HELD, 100));
+        assert_eq!(to.script.unwrap().roll, to.rolls);
+        assert!(to.script.unwrap().hold);
+        assert!(!to.pinned);
+        to.place(Some(None), false);
+        assert_eq!((to.weather.form_id, to.pick), (HELD, LISTED));
+        to.release_script_weather();
+        assert_eq!(to.weather.form_id, HELD);
+        to.set_live_global(GATE, 1.0);
+        assert_eq!(to.weather.form_id, GATED);
+        assert!(to.script.is_none());
+    }
+
+    #[test]
+    fn held_weather_carries_its_fade_and_both_weathers_adapters() {
+        let mut from = sky_started_on_held();
+        from.place(Some(None), false);
+        let old_adapters = [Some(Adapter { tint: Some(([0.1, 0.2, 0.3], 0.4)), ..Default::default() }); 6];
+        let held_adapters = [Some(Adapter { tint: Some(([0.5, 0.6, 0.7], 0.8)), ..Default::default() }); 6];
+        from.adapters.insert(LISTED, old_adapters);
+        from.script_weather(Weather { form_id: HELD, ..Default::default() }, held_adapters, false, true);
+        from.fade = 0.375;
+        let mut to = sky_started_on_held();
+        to.adapters.clear();
+
+        to.carry_weather_from(&from);
+        to.place(Some(None), false);
+        assert_eq!((to.weather.form_id, to.prev.as_ref().unwrap().form_id, to.fade), (HELD, LISTED, 0.375));
+        assert_eq!(to.adapters.get(&HELD), Some(&held_adapters));
+        assert_eq!(to.adapters.get(&LISTED), Some(&old_adapters));
+        to.script_weather(Weather { form_id: GATED, ..Default::default() }, [None; 6], true, false);
+        assert_eq!(to.weather.form_id, GATED);
+        assert!(!to.script.unwrap().hold);
+        assert!(to.prev.is_none());
+    }
+
+    #[test]
+    fn natural_weather_does_not_gain_an_override_on_sky_replacement() {
+        let mut from = sky_started_on_held();
+        from.place(Some(None), false);
+        let mut to = sky_started_on_held();
+        to.weather = to.choices[1].weather.clone();
+        to.resume = None;
+        to.carry_weather_from(&from);
+        assert_eq!(to.weather.form_id, GATED);
+        assert!(to.script.is_none());
+        assert!(!to.pinned);
+        assert!(to.resume.is_none());
+        to.place(Some(None), false);
+        assert_eq!(to.weather.form_id, LISTED);
+
+        // [design: worldspace.rs::script_sky] A climate rebuild's own start weather
+        // remains resumable when there is no override to carry.
+        let mut climate = sky_started_on_held();
+        climate.weather = climate.choices[0].weather.clone();
+        climate.resume = Some(LISTED);
+        climate.carry_weather_from(&from);
+        assert_eq!(climate.resume, Some(LISTED));
+        climate.place(Some(None), false);
+        assert_eq!((climate.weather.form_id, climate.rolls), (LISTED, 0));
+    }
+
+    #[test]
+    fn a_command_line_pin_and_resume_survive_sky_replacement() {
+        let mut from = sky_started_on_held();
+        from.pinned = true;
+        let mut to = sky_started_on_held();
+        to.weather = to.choices[0].weather.clone();
+        to.resume = None;
+        to.carry_weather_from(&from);
+        assert!(to.pinned);
+        assert_eq!(to.resume, Some(HELD));
+        assert!(to.script.is_none());
+        to.place(Some(None), false);
+        assert_eq!(to.weather.form_id, HELD);
+    }
+
+    #[test]
+    fn a_held_weather_saved_after_sky_replacement_loads_held() {
+        let mut from = sky_started_on_held();
+        from.script_weather(from.weather.clone(), [None; 6], true, true);
+        let mut to = sky_started_on_held();
+        to.resume = None;
+        to.weather = to.choices[0].weather.clone();
+        to.carry_weather_from(&from);
+        to.place(Some(None), false);
+
+        let mut world = World::new();
+        world.insert_resource(to);
+        let saved = (SAVE_HOOK.save)(&world).unwrap();
+        assert_eq!(saved["held"], true);
+        assert_eq!(saved["weather"], format!("W{HELD}"));
+        let saved: serde_json::Value = serde_json::from_slice(&serde_json::to_vec(&saved).unwrap()).unwrap();
+        let mut loaded = sky_started_on_held();
+        loaded.restore_saved(&saved);
+        loaded.place(Some(None), false);
+        loaded.set_live_global(GATE, 1.0);
+        assert_eq!(loaded.weather.form_id, HELD);
+        assert!(loaded.script.unwrap().hold);
+        loaded.release_script_weather();
+        loaded.set_live_global(GATE, 0.0);
+        assert_eq!(loaded.weather.form_id, LISTED);
+    }
+
+    #[test]
     fn a_saved_hold_outlasts_the_first_look_and_what_follows() {
         let mut sky = sky_started_on_held();
         sky.restore_saved(&saved_held());
@@ -2612,7 +3139,7 @@ mod tests {
     fn a_new_dome_is_coloured_even_when_the_sky_colours_stay() {
         // #1395: on a worldspace change the colours were recorded against the old dome in
         // the frame before the new one spawned; the new one kept its raw weights.
-        let colours = [0.2, 0.4, 0.5, 0.5, 0.6, 0.6, 0.6, 0.7, 0.7, 1.0];
+        let colours = [0.2, 0.4, 0.5, 0.5, 0.6, 0.6, 0.6, 0.7, 0.7];
         let (old, new) = (AssetId::<Mesh>::from(bevy::asset::uuid::Uuid::from_u128(1)), AssetId::<Mesh>::from(bevy::asset::uuid::Uuid::from_u128(2)));
         assert!(dome_needs_colour(None, old, colours));
         assert!(!dome_needs_colour(Some((old, colours)), old, colours));
@@ -2668,43 +3195,205 @@ mod tests {
         assert_eq!(before, cascade.clip_from_world);
     }
 
+    /// The far bounds and overlap of each layout at the default 8,000 units, without and
+    /// with the longer shadows' reach: only the last bound takes the reach.
     #[test]
-    fn horizon_weight_falls_with_elevation() {
-        assert!((horizon_weight(0.0, 1.0) - 1.0).abs() < 1e-6);
-        assert!((horizon_weight(-5.0, 1.0) - 1.0).abs() < 1e-6);
-        // The dusk fit (world.md §6 "Sky colours"): about 0.86 at 7°, 0.55 at 15°, 0.3 at 25°.
-        assert!((horizon_weight(6.8, 1.0) - 0.86).abs() < 0.03);
-        assert!((horizon_weight(14.7, 1.0) - 0.55).abs() < 0.05);
-        assert!((horizon_weight(26.6, 1.0) - 0.28).abs() < 0.04);
-        let mut last = 2.0;
-        for e in 0..=90 {
-            let w = horizon_weight(e as f32, 1.0);
-            assert!(w <= last && w >= 0.0);
-            last = w;
+    fn cascade_layouts_at_the_default_distance() {
+        use CascadeLayout::{Performance, Quality, Spaced};
+        let near = |(got, overlap): (Vec<f32>, f32), want: &[f32], want_overlap: f32| {
+            assert_eq!(got.len(), want.len(), "{got:?} against {want:?}");
+            assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 0.5), "{got:?} against {want:?}");
+            assert_eq!(overlap, want_overlap, "{got:?}");
+        };
+        for map in [2048, 4096] {
+            // Performance, whatever the maps: 1,500, 4,500, then the distance times the reach.
+            near(shadow_cascade_layout(8000.0, 1.0, Performance, map), &[1500.0, 4500.0, 8000.0], 0.2);
+            near(shadow_cascade_layout(8000.0, 1.5, Performance, map), &[1500.0, 4500.0, 12000.0], 0.2);
+            // 3 spaced as before (`--graphics-cycle cascades=3`): geometric from a twelfth
+            // of the distance (667, 2,828, 12,000 with the reach, as measured on 2026-11-16).
+            near(shadow_cascade_layout(8000.0, 1.0, Spaced(3), map), &[666.7, 2309.4, 8000.0], 0.2);
+            near(shadow_cascade_layout(8000.0, 1.5, Spaced(3), map), &[666.7, 2828.4, 12000.0], 0.2);
+            // The moon's single cascade.
+            near(shadow_cascade_layout(3000.0, 1.0, Spaced(1), map), &[3000.0], 0.2);
+            near(shadow_cascade_layout(8000.0, 1.5, Spaced(1), map), &[12000.0], 0.2);
         }
+        // Quality with 2048² maps: 700, 2,000, 5,000, overlap 0.2.
+        near(shadow_cascade_layout(8000.0, 1.0, Quality, 2048), &[700.0, 2000.0, 5000.0, 8000.0], 0.2);
+        near(shadow_cascade_layout(8000.0, 1.5, Quality, 2048), &[700.0, 2000.0, 5000.0, 12000.0], 0.2);
+        // Quality with 4096² maps, overlap 0.4: with Longer shadows 1,500, 3,500, 7,000 (the
+        // layout measured); without, the middle two capped at 0.3 and 0.6 of the last.
+        near(shadow_cascade_layout(8000.0, 1.5, Quality, 4096), &[1500.0, 3500.0, 7000.0, 12000.0], 0.4);
+        near(shadow_cascade_layout(8000.0, 1.0, Quality, 4096), &[1500.0, 2400.0, 4800.0, 8000.0], 0.4);
+        near(shadow_cascade_layout(16000.0, 1.0, Quality, 4096), &[3000.0, 4800.0, 9600.0, 16000.0], 0.4);
+        // The shares follow the distance (the Shadow distance slider).
+        near(shadow_cascade_layout(16000.0, 1.0, Quality, 2048), &[1400.0, 4000.0, 10000.0, 16000.0], 0.2);
+        near(shadow_cascade_layout(16000.0, 1.0, Performance, 2048), &[3000.0, 9000.0, 16000.0], 0.2);
+        // The counts.
+        assert_eq!((Quality.count(), Performance.count(), Spaced(3).count(), Spaced(0).count()), (4, 3, 3, 1));
+        // The config carries them with the layout's overlap and the minimum distance of before.
+        let config = shadow_cascades(8000.0, 1.0, Quality, 4096);
+        assert_eq!((config.bounds.clone(), config.overlap_proportion), shadow_cascade_layout(8000.0, 1.0, Quality, 4096));
+        assert_eq!(config.minimum_distance, 5.0);
+        // Without the map resource: Bevy's default side, the smaller maps' layout.
+        assert_eq!(map_side(None), 2048);
     }
 
+    /// Over the Shadow distance row's whole range and below (from 0 to twice the default
+    /// distance, every 25 units, and the row's steps), the bounds rise strictly and the
+    /// first stays past the minimum distance, for every layout, reach and map size. At 0 the
+    /// sun casts none (`casts_sun_shadows`), but the layout stays well formed.
     #[test]
-    fn night_sky_loses_the_horizon_floor() {
-        // Near the horizon the weight is the same day and night; high up only the floor
-        // differs, and in full night it is gone.
-        assert!((horizon_weight(5.0, 1.0) - horizon_weight(5.0, 0.0)).abs() < 0.3);
-        assert!(horizon_weight(30.0, 0.0) < 0.02);
-        assert!(horizon_weight(30.0, 1.0) > 0.2);
-        assert!(horizon_weight(30.0, 0.5) > horizon_weight(30.0, 0.0) && horizon_weight(30.0, 0.5) < horizon_weight(30.0, 1.0));
+    fn cascade_bounds_rise_at_short_distances() {
+        use CascadeLayout::{Performance, Quality, Spaced};
+        let layouts = [Quality, Performance, Spaced(1), Spaced(2), Spaced(3), Spaced(4), Spaced(5)];
+        let sweep = (0..=640).map(|k| k as f32 * 25.0);
+        let steps = crate::settings::SHADOW_DISTANCES.map(|v| DEFAULT_SHADOW_DISTANCE * v);
+        for distance in sweep.chain(steps).chain([DEFAULT_SHADOW_DISTANCE * crate::draw_distance::MIN, 10.0, 3.0, 0.5]) {
+            for reach in [1.0, 1.5] {
+                for layout in layouts {
+                    for map in [2048, 4096] {
+                        let (b, _) = shadow_cascade_layout(distance, reach, layout, map);
+                        assert_eq!(b.len(), layout.count());
+                        assert!(b[0] > SHADOW_MINIMUM_DISTANCE, "{distance} x {reach}, {layout:?} {map}: {b:?}");
+                        assert!(b.windows(2).all(|w| w[1] > w[0]), "{distance} x {reach}, {layout:?} {map}: {b:?}");
+                    }
+                }
+            }
+        }
+        // The Shadow distance row's least step above 0 % (a fifth of 8,000): 1,600, a step
+        // of the room 70 (65 from a first bound of 300); every share and cap stays as it is.
+        assert_eq!(crate::settings::SHADOW_DISTANCES[1], 0.2);
+        near_eq(&shadow_cascade_layout(1600.0, 1.0, Quality, 2048).0, &[200.0, 400.0, 1000.0, 1600.0]);
+        near_eq(&shadow_cascade_layout(1600.0, 1.0, Quality, 4096).0, &[300.0, 480.0, 960.0, 1600.0]);
+        near_eq(&shadow_cascade_layout(1600.0, 1.0, Performance, 2048).0, &[300.0, 900.0, 1600.0]);
+        // At a tenth of the default distance (the slider's low end before the overhaul; a
+        // short `--shadow-distance` at 20 %) the first bound is held at 200 and the room to
+        // the last is 600 (a step 30): Quality's second share (200) is lifted one step above
+        // the first; the 4096 caps (240, 480) and the other shares stay as they are.
+        near_eq(&shadow_cascade_layout(800.0, 1.0, Quality, 2048).0, &[200.0, 230.0, 500.0, 800.0]);
+        near_eq(&shadow_cascade_layout(800.0, 1.0, Quality, 4096).0, &[200.0, 240.0, 480.0, 800.0]);
+        near_eq(&shadow_cascade_layout(800.0, 1.0, Performance, 2048).0, &[200.0, 450.0, 800.0]);
+        // With no distance at all (the row's 0 %, which casts none: `casts_sun_shadows`):
+        // the last at 20, the first at half of it, the rest a step apart above it.
+        near_eq(&shadow_cascade_layout(0.0, 1.0, Quality, 2048).0, &[10.0, 10.5, 11.0, 20.0]);
+        fn near_eq(got: &[f32], want: &[f32]) {
+            assert!(got.len() == want.len() && got.iter().zip(want).all(|(g, w)| (g - w).abs() < 0.5), "{got:?} against {want:?}");
+        }
+        assert!(!casts_sun_shadows(true, 0.0) && !casts_sun_shadows(false, 1600.0) && casts_sun_shadows(true, 1600.0));
     }
 
     #[test]
     fn dome_mixes_display_values() {
         let (lower, horizon, upper) = ([0.1, 0.2, 0.3], [0.7, 0.8, 0.9], [0.03, 0.06, 0.25]);
-        // Well below the horizon: sky-lower.
-        let c = dome_color(-20.0, 0.0, 1.0, lower, horizon, upper);
-        assert!(c.iter().zip(lower).all(|(a, b)| (a - b).abs() < 1e-4));
-        // At the horizon with no upper weight: the horizon colour.
-        let c = dome_color(0.0, 0.0, 1.0, lower, horizon, upper);
-        assert!(c.iter().zip(horizon).all(|(a, b)| (a - b).abs() < 1e-4));
+        // Each channel of the vertex colour gives one colour: red the horizon's, green
+        // sky-lower, blue sky-upper.
+        for (w, want) in [([1.0, 0.0, 0.0], horizon), ([0.0, 1.0, 0.0], lower), ([0.0, 0.0, 1.0], upper)] {
+            let c = dome_color(w, lower, horizon, upper);
+            assert!(c.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-4), "{w:?}");
+        }
         // Half of a colour as display values is darker than half in linear light.
-        let half = dome_color(90.0, 0.5, 1.0, lower, horizon, upper)[2];
-        assert!(half < 0.5 * upper[2] + 0.5 * horizon_weight(90.0, 1.0) * horizon[2]);
+        assert!(dome_color([0.0, 0.0, 0.5], lower, horizon, upper)[2] < 0.5 * upper[2]);
+    }
+
+    fn assert_fog_falloff(actual: &FogFalloff, expected: &FogFalloff) {
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    }
+
+    #[test]
+    fn interior_zero_fog_range_disables_fog_instead_of_clamping_to_one_unit() {
+        // Synthetic reproduction of #3038: an interior cell with no lighting template and
+        // stored fog range 0..0 with black fog colour must not saturate the room at >=1 unit.
+        let cell = fnv_world::lighting::CellLighting {
+            ambient: [55, 50, 45],
+            fog_color: [0, 0, 0],
+            fog_near: 0.0,
+            fog_far: 0.0,
+            fog_power: 1.0,
+            ..Default::default()
+        };
+        assert!(!interior_fog_active(cell));
+        let mut sky = SkyState::default();
+        sky.set_interior(Some(cell));
+        for no_interior_fog in [false, true] {
+            // Start from an opaque underwater-like fog to also cover exiting water into a 0..0 cell.
+            let mut fog = DistanceFog {
+                color: Color::srgba(0.2, 0.4, 0.3, 1.0),
+                falloff: crate::fog::falloff(0.0, 700.0, 1.0, false, 1.0),
+                ..default()
+            };
+            apply_cell_fog(&sky, &mut fog, 1.0, no_interior_fog);
+            assert_eq!(fog.color.alpha(), 0.0, "unset 0..0 interior fog must disable fog via alpha 0");
+            assert_fog_falloff(&fog.falloff, &crate::fog::falloff(0.0, NO_FOG_FAR, 1.0, false, 1.0));
+            for dist in [1.0_f32, 10.0, 500.0] {
+                let effective_share = crate::fog::share(0.0, NO_FOG_FAR, 1.0, dist) * fog.color.alpha();
+                assert_eq!(effective_share, 0.0, "effective fog share at {dist} units");
+            }
+        }
+    }
+
+    #[test]
+    fn interior_degenerate_and_inverted_fog_ranges_disable_fog() {
+        for (near, far) in [(500.0, 500.0), (500.0, 100.0), (-50.0, 0.0), (0.0, -10.0), (f32::NAN, 100.0), (0.0, f32::NAN)] {
+            let cell = fnv_world::lighting::CellLighting {
+                fog_color: [10, 20, 30],
+                fog_near: near,
+                fog_far: far,
+                fog_power: 1.0,
+                ..Default::default()
+            };
+            assert!(!interior_fog_active(cell), "range {near}..{far} should be inactive");
+            let mut sky = SkyState::default();
+            sky.set_interior(Some(cell));
+            let mut fog = DistanceFog::default();
+            apply_cell_fog(&sky, &mut fog, 1.0, false);
+            assert_eq!(fog.color.alpha(), 0.0, "range {near}..{far}");
+            assert_fog_falloff(&fog.falloff, &crate::fog::falloff(0.0, NO_FOG_FAR, 1.0, false, 1.0));
+        }
+    }
+
+    #[test]
+    fn interior_active_fog_range_preserves_opaque_fog_and_no_interior_fog_tweak() {
+        // Template-inherited interior range (e.g. 64..6500): remains opaque and active.
+        let active = fnv_world::lighting::CellLighting {
+            fog_color: [134, 134, 128],
+            fog_near: 64.0,
+            fog_far: 6500.0,
+            fog_power: 1.0,
+            ..Default::default()
+        };
+        assert!(interior_fog_active(active));
+        let mut sky = SkyState::default();
+        sky.set_interior(Some(active));
+        let mut fog = DistanceFog::default();
+        apply_cell_fog(&sky, &mut fog, 1.0, false);
+        assert_eq!(fog.color.alpha(), 1.0);
+        assert_fog_falloff(&fog.falloff, &crate::fog::falloff(64.0, 6500.0, 1.0, false, 1.0));
+
+        // Negative near with positive far stays active with near clamped to 0.
+        let neg_near = fnv_world::lighting::CellLighting {
+            fog_color: [80, 90, 100],
+            fog_near: -100.0,
+            fog_far: 2000.0,
+            fog_power: 1.2,
+            ..Default::default()
+        };
+        assert!(interior_fog_active(neg_near));
+        sky.set_interior(Some(neg_near));
+        apply_cell_fog(&sky, &mut fog, 1.0, false);
+        assert_eq!(fog.color.alpha(), 1.0);
+        assert_fog_falloff(&fog.falloff, &crate::fog::falloff(0.0, 2000.0, 1.2, false, 1.0));
+
+        // No Interior Fog tweak on an active interior range keeps opaque colour with NO_FOG_FAR.
+        let tweaked = fnv_world::lighting::CellLighting {
+            fog_color: [120, 40, 20],
+            fog_near: 27.0,
+            fog_far: 1900.0,
+            fog_power: 1.7,
+            ..Default::default()
+        };
+        sky.set_interior(Some(tweaked));
+        apply_cell_fog(&sky, &mut fog, 1.0, true);
+        assert_eq!(fog.color.alpha(), 1.0);
+        assert_fog_falloff(&fog.falloff, &crate::fog::falloff(27.0, NO_FOG_FAR, 1.7, false, 1.0));
     }
 }

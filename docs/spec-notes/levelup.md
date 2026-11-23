@@ -169,7 +169,14 @@ pieces with the character-creation menus (chargen.md).
   Stonewall (8) [observed: the levels are the records' DATA, `fnvtool esm decode`].
   Bug Stomper and Set Lasers for Fun (level 0, no condition: challenge rewards) are not
   listed. A faint row can be chosen to read it; taking it is refused [design: no sound
-  or message was seen].
+  or message was seen]. Session-only `SetPerkLevel`, `SetPerkFlag` (0 trait, 1 playable,
+  2 hidden), and `LNSetIsPlayable` on `PERK` forms update `Game::perk_def`
+  (`Lu3State::perk_edits`, carried across same-run loads via `Game::take_session` /
+  `put_session`, not saved in `GameSnapshot`) [documented: GECK wiki `SetPerkLevel` /
+  `SetPerkFlag` / `LNSetIsPlayable`; observed: `gaps2` / `gaps7` flag order, level
+  readback, and `0` return; hypothesis: session-only lifetime and live consumers], and
+  `PerkSheet::of_player`, `TraitSheet::of_player`, `chargen::requirement_line`, ITR perk
+  eligibility/conditions, `GetAllPerks`, and `revision::keeps_perk` read `Game::perk_def`.
 - **A row**: the perk's name, and the rank it would reach in brackets when the player
   has one already ("Swift Learner (2)"). A taken perk has the small square at its left.
 - **The text**: "Req: …", "Ranks: n" (all the perk's ranks: Swift Learner 3, Intense
@@ -253,3 +260,12 @@ Rules: `crate::perks` (`ADJUST_GAINED_SKILL_POINTS`, `rank_abilities`,
 - **Skill books**: Comprehension's code 11 changes a book's points when one is read
   ([skill-books](skill-books.md) §3).
 - **Not built**: Hacking Science Bonus; the teammates' perks (`AddPerk perk 1`).
+
+## Source advancement commands (#2271)
+
+The source handlers in `functions/player_source.rs` run `AdvancePCLevel` and
+`AdvLevel` through the same `advance` operation as experience and the console. See
+[player source commands](player-source-commands.md) for the documented contract,
+portable controls, receiver policy and unmeasured native encoding. Portable controls
+passed for c4 in hosted composite `23388a32d`; revision-specific results are recorded
+in PR #2772. Original-game parity remains unverified.

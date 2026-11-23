@@ -47,8 +47,10 @@ WEIGHTS = {
     "softlock": 50,
     "no_way_out": 30,
     "unreachable": 20,
+    "target_unreachable": 20,
     "never_came": 20,
     "chain_abandoned": 20,
+    "player_died": 20,
     "pilot_held": 20,
     "could_not_target": 10,
     "line_not_said": 8,
@@ -57,6 +59,7 @@ WEIGHTS = {
     "wait_timed_out": 6,
     "step_timed_out": 5,
     "fight_not_won": 3,
+    "detour": 1,
     "run_ended": 10,
     "ai_kill_not_done": 8,
     "stuck": 2,
@@ -181,7 +184,17 @@ def run_one(chain: Path, args: argparse.Namespace, slot: int) -> dict:
         cmd += ["--size", args.size]
     if getattr(args, "window_at", ""):
         cmd += [f"--window-at={args.window_at}"]
-    cmd += ["--load", args.start] if start.exists() else ["--new-game"]
+    # A chain that names its own start ("save": the intro and new-game chains) begins there:
+    # that save if the home has it, else a new game. The intro run from the after-intro
+    # save found its quests long past and was abandoned (sweep 2, 2026-11-22).
+    own = json.loads(chain.read_text(encoding="utf-8")).get("save")
+    if own:
+        mine = Path(args.home) / "saves" / f"{own}.nvfsave"
+        if mine.exists():
+            shutil.copy2(mine, saves / mine.name)
+        cmd += ["--load", own] if mine.exists() else ["--new-game"]
+    else:
+        cmd += ["--load", args.start] if start.exists() else ["--new-game"]
     if order:
         cmd += ["--plugins", *order]
     cmd += ["--pilot", str(chain), "--pilot-campaign", "--pilot-given", "--pilot-out", str(report), "--pilot-minutes", str(args.minutes)]
@@ -238,7 +251,7 @@ def summarise(results: list[dict]) -> list[dict]:
             "headless": rep.get("headless", {}),
             "seconds": r.get("seconds"),
             "error": r.get("error"),
-            "first": [f"{f['kind']} (step {f.get('step')}): {f.get('text', '')[:200]}" for f in findings if f["kind"] in ("no_way_out", "unreachable", "never_came", "chain_abandoned", "pilot_held")][:3],
+            "first": [f"{f['kind']} (step {f.get('step')}): {f.get('text', '')[:200]}" for f in findings if f["kind"] in ("no_way_out", "unreachable", "target_unreachable", "never_came", "chain_abandoned", "player_died", "pilot_held")][:3],
         })
     rows.sort(key=lambda x: (-x["weight"], x["chain"]))
     return rows

@@ -90,8 +90,11 @@ fists (the default draws it holstered).
   fires widens it, `npc_combat::shot_stance`, #2125), plus 4° that
   settles away over 3 s of firing at the same target (the first shots of a burst miss
   more).
-- **Melee**: a blow every 1.2 s divided by the weapon's attack speed, while the gap
-  between the two bodies is within 24 units.
+- **Melee** [design: `npc_combat`]: a base timer of 1.2 s divided by the weapon's
+  attack speed, brought forward to the playing clip's `a:` key when sooner. A creature's
+  waits for the key even when later, or for the clip's end when keyless (#2535; creatures
+  only, the maintainer's decision of 2026-11-18 on #2971; combat-rules.md §10). The
+  target must be within melee reach.
 
 ## 5. Where it stands
 
@@ -124,7 +127,7 @@ their reach and field of view.
 | StopCombat | the actor leaves its combat state; StartCombat's hostility is undone | [documented] |
 | IsInCombat, GetCombatTarget, GetIsAlerted, GetCurrentAIProcedure / Package | as alert.md §6: a fight reads GetIsAlerted 0 (SetAlert's alone); GetCombatTarget keeps the target it fought while it is out of sight, through Lost; Lost reads procedure COMBAT 13 and package COMBAT 5 (#2121) | |
 | StopCombatAlarmOnActor | every actor fighting or hunting the calling actor stops (StopCombat) | [documented: GECK wiki StopCombatAlarmOnActor] |
-| GetFriendHit | the friendly hits of the target on the actor that still count (§10.1) | [documented: GECK wiki GetFriendHit, Friendly Fire] |
+| GetFriendHit | the friendly hits of the target on the actor that still count (§10.1); parameterless CTDA conditions (index 288, empty CTDA params in `FalloutNV.esm`) read `Game::condition_target` (or `0` when absent), while script calls still require an explicit actor argument | [documented: GECK wiki GetFriendHit, Friendly Fire]; parameterless CTDA target binding: [hypothesis] |
 | GetAttacked | 1 once anyone attacked the actor, cleared when it leaves combat | [documented: GECK wiki GetAttacked] |
 | SetIgnoreFriendlyHits | its friends' and allies' hits never turn it (§10.1) | [hypothesis: the name] |
 
@@ -296,6 +299,27 @@ alarm at the attacker's position (`Cause::Ally`), so it becomes Alert and fights
 detects the attacker: `provocation: … helps … against …`. `Game::call_allies` runs after
 each round of measurements.
 
+**The player as the one helped** (#2794) [hypothesis: whether Assistance counts the player
+as an ally to help is not documented; the maintainer expects it, issue thread]: the player
+has no entry among the fighters, so `call_allies` adds one: its foes are every actor in a
+combat state with the player on its target list (not a teammate), at their positions, and
+its watchers whoever detects the player (band Detected). A watcher helps when its
+Assistance covers its reaction to the player (Ally with Helps Allies, Friend with Helps
+Friends and Allies), with every check above (never against its own ally or friend, cowards
+stay out). A watcher that is after the player itself (a crime of the player's against it,
+a grudge, a StartCombat on the player, or the player on its target list) does not help,
+whatever its faction reaction [design, #2794]. The player's teammates are left to their own
+rule (followers.md §3). The
+scripted-fight rule below does not keep the player's allies out: it is about the allies of
+the actor a script set on the player, and the player is the one attacked there. The case:
+on the House route the Legate's camp Securitrons (VHDSecuritronFaction, PlayerFaction
+Ally; Helps Allies) are each set on one of General Oliver's guards when the player picks
+the fight, and Oliver on the player with `StartCombat player` [documented:
+issue #2794, cited records] (a fight his own guards stay out of when the player has not hit him); by this rule,
+once its guard is down, a Securitron goes on to Oliver and the fifth guard [design; observer
+check 217 asks the original]. Smoke:
+`house-camp-securitron-assist`.
+
 Goodsprings' settlers share GoodspringsFaction and have Assistance 2 [observed:
 `fnvtool actor values`], so shooting one brings the others that see it; Violet's dogs
 share FiendsFactionNV with her (Assistance 2), so they now join her fights.
@@ -452,7 +476,9 @@ NPCs should not be able to move at full speed whilst aiming" (the player's half 
   the next refused within fCombatYieldRetryTime, a yield past fCombatYieldTime refused),
   `a_neutral_fighting_someone_else_ignores_a_stray_hit_from_a_fighting_player` (the
   owner's exception), `an_ally_that_sees_a_fight_helps` (Assistance, never against its
-  own ally).
+  own ally), `a_faction_ally_of_the_player_takes_up_the_players_fight` (#2794: the player
+  as the one helped; Helps Nobody, a coward, an attacker that is the helper's ally and a
+  teammate stay out of this rule, and so does a helper the player committed a crime against).
 - Smoke scenario `provoked-yield` [observed 2026-10-12]: in the general store the player
   shoots Chet (`provocation: GSChetRef 0x00104C79 (neutral) is attacked by the player
   and fights back`, his Assault line "What was that for?"), he fights back with his .357,
@@ -1393,8 +1419,12 @@ animation combos". The player's swings already follow the attack clips' `a:` tex
   of both rigs carries `a:L`, every `AttackLeft` clip `a:R`; power clips none]. The key's
   time is when the clip may be cut for the next swing.
 - **When an NPC goes on** [design]: a blow's clip with an `a:` key brings the fighter's
-  next melee decision (§10.4: block, attack by the style's attack chance, or hold) forward
-  to that key. Attacking between the key and the clip's end goes on the combo: the clip
+  next melee decision (§10.4: block, attack by the style's attack chance, or hold)
+  forward to that key when it comes before the base timer. A creature's decision waits
+  for the key even when later, and without a key for the clip's end as well as the base
+  timer (#2535; combat-rules.md §10: radscorpions observed); people keep the base timer
+  until their pace is measured in the original (the maintainer's decision of 2026-11-18
+  on #2971). Attacking between the key and the clip's end goes on the combo: the clip
   of the group named (right → left → right…; fists alternate hands), cut in at once, as
   the player's swing is. The combo ends on a hold, a block, a recoil (its blow was
   blocked), or the target out of reach until the clip ends; the next blow starts again
@@ -1882,8 +1912,18 @@ bloatfly and protectron folders also keep stance clips there.
 - An arm whose limb condition (the WEAP Embedded Weapon Actor Value) is 0 is left out
   [hypothesis: "the condition value affected when the weapon is targeted", GECK wiki
   Weapons]: crippling Mister Handy's left arm leaves it its saw.
-- Body weapons do not wear or break, do not reload (no magazine) and do not slow their
-  creature as two-handed weapons in hand do [design].
+- Body weapons do not wear or break and do not slow their creature as two-handed weapons
+  in hand do [design].
+- **Shot timing and reloading** (#2739; docs/spec-notes/combat-rules.md §4.1): a
+  semi-automatic body gun, like any NPC's, is timed by its attack clip in its rig as the
+  player's (the `a:` key, else the clip's end, ÷ the attack multipliers;
+  `fnv_combat::attack::npc_clip_timing`), 1 ÷ Attack Shots/Sec until the clip is known.
+  A body gun has a magazine and reloads by the people's rule once its creature's rig is
+  known to have the weapon's reload clip (only the Securitron, protectron and spinebreaker
+  folders have reload clips); without one it fires on without a magazine
+  (`fnv_combat::body_weapon::has_magazine`) [design, #2739; observer check 221]. Before, a
+  sentry bot's missile launcher fired every 0.63 s; now every 0.967 s (`2hlattackleft.kf`
+  `a:R`), still without reloads (its folder has no reload clip).
 
 **Not built**: VATS targeting of a body weapon; the original's own switching rule (a
 capture of a Mister Gutsy at several distances would settle it); the protectron's and
@@ -2067,6 +2107,22 @@ Combat is not a parity target; the rules are **[design]** unless tagged. Rules:
   nearer than 276, and the Incinerator again for one beyond 640 [observed: FalloutNV.esm,
   `fnvtool combat weapon`]. The weapon's own projectile is read: an ammunition that
   brings its own would change the reach (none of these two does).
+- **Too close for its blast** (#2745, owner 2026-11-15: Boomers in the Nellis barracks
+  "just stand there with grenade launchers and let you kill them"). Indoors a launcher's
+  step back (§16) can run into a wall, and with nothing of its own class that fires that
+  near the fighter held its fire for good. Now a fighter whose explosive weapon does not
+  fire because its target is inside the blast, and that carries nothing of its own class
+  that does, steps back as before; still too close after 2 s
+  (`fnv_game::rearm::CORNERED_SECONDS`; the target stayed close though it stepped back,
+  or the room left it no way back), it holds the best weapon of **any** class it carries
+  that fires there (a sidearm, a knife), and with none puts the explosive weapon away and
+  fights with its **fists**. While it fights with them neither empty-hand rule (re-arming's
+  best carried, `Game::arm_by_style`) puts the launcher back and it fetches nothing;
+  with its target clear of the blast again (64 units inside the limit, at most every 3 s)
+  or the fight over (`Game::calm_rearm`), it holds the explosive weapon again. A combat
+  style with Ignore Damaging Self fires through its own blast (§17.6), so it keeps its
+  weapon. Log: `rearm: puts away <weapon> for its fists: its target <n> units away is
+  inside its blast` [design].
 - **The fetch.** It runs there (the ammunition first when it is nearer), and holds its
   fire meanwhile (as a fleeing actor, `npc_combat`). At each item it stops and plays the
   pick-up idle, `LoosePickUpGroundObject` (`PickUpGroundObject_0.3.kf`), a child of
@@ -2088,7 +2144,8 @@ Combat is not a parity target; the rules are **[design]** unless tagged. Rules:
 class); `crates/fnv-ai/tests/carry.rs` (an unarmed fighter fetches a gun and a copy of its
 rounds; a gunman takes a weak gun over a strong knife, and the knife only with no rounds
 anywhere; a gun with no rounds is left; the weapon held is kept over other carried ones
-until lost); smoke `combat-npc-rearm`. Observed 2026-10-25: Violet, stripped of her items,
+until lost; a cornered incinerator user takes up its knife, and with nothing else its
+fists until the target is clear or the fight ends, #2745); smoke `combat-npc-rearm`. Observed 2026-10-25: Violet, stripped of her items,
 ran 1,638 units, copied a 5.56mm round from a placed `LootAmmoBox556mm` (nearer than the
 box laid for her), picked up the service rifle and fired with it; in `battle-ncr-fiends`
 seven fetches, none given up, and Cook-Cook kept his Incinerator.

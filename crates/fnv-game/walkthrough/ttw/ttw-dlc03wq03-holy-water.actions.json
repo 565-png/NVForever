@@ -43,6 +43,8 @@
     {"op": "wait_talk"},
     {"op": "end_talk"},
     {"op": "get_quest", "quest": "DLC03WQ03", "fields": ["stage", "objective.100.displayed"], "label": "milestone: DLC03WQ03 60, the monastery"},
+    {"op": "note", "text": "The monastery's door (0x0D003A22, locked at level 100) wants DLC03WQ03MonasteryKey (BrokenSteel.esm, 0x0D0071E6 here), which only Gerard's lines INFO 0x0D0071D4, 0x0D0071D6 and 0x0D0071D8 give ('player.additem 0x0D0071E6 1', in BrokenSteel.esm and TaleOfTwoWastelands.esm) [observed: decompiled]; the 1A/2A answers above say 0x0D007E1B and 0x0D007E1E, which set stage 60 and give no key [observed: pilot rerun log]. Which topic holds those lines is not checked. Stand-in: the player is given the key."},
+    {"op": "add_item", "to": "player", "item": "DLC03WQ03MonasteryKey", "count": 1},
     {"op": "note", "text": "Travel stand-in: to the Apostles' monastery; walking into its trigger [observed] (DLC03WQ03MonasteryScript) sets stage 100 (Gerard alive)."},
     {"op": "move_player", "to": "DLC03WQ03MonasteryMapMarker"},
     {"op": "trigger_enter", "trigger": "scripted:DLC03WQ03MonasteryScript"},

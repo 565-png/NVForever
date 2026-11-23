@@ -115,6 +115,44 @@ struct Machine {
 }
 
 impl VigorMenu {
+    /// [design, #2403 / file refs] Page, review row and attribute allocation;
+    /// excludes animation playback, textures and aid clocks in `OpenMenu`.
+    pub fn progress(&self) -> Option<&Vigor> {
+        self.open.as_ref().map(|o| &o.vigor)
+    }
+
+    /// [design, #2403] Synthetic logical transitions using the machine's own actions.
+    #[cfg(feature = "report-test-support")]
+    #[doc(hidden)]
+    pub fn report_progress_fixture(step: usize) -> Self {
+        let mut vigor = Vigor::new(SpecialSheet::new([5; 7]));
+        if step >= 1 {
+            vigor.act(Action::Next);
+        }
+        if step >= 2 {
+            vigor.act(Action::Raise(None));
+        }
+        if step >= 3 {
+            vigor.page = Page::Review;
+            vigor.act(Action::Select(1));
+        }
+        Self {
+            open: Some(OpenMenu {
+                vigor,
+                roots: [Entity::PLACEHOLDER; 2],
+                nodes: HashMap::new(),
+                flip: None,
+                materials: HashMap::new(),
+                shown: HashMap::new(),
+                keyed_row: step >= 4,
+                fov_before: None,
+                aid_from: Some(step as f32),
+            }),
+            clips: None,
+            ready: None,
+            warmed: false,
+        }
+    }
     pub fn is_open(&self) -> bool {
         self.open.is_some()
     }
@@ -504,6 +542,10 @@ fn draw(
                 let Some(mut mat) = ctx.materials.get(&m.0).cloned() else { continue };
                 let name = names.get(e).map(|n| n.as_str()).unwrap_or("");
                 mat.base.unlit |= model::is_glow(name);
+                if mat.base.unlit {
+                    // An unlit copy takes no authored set (#2981).
+                    nvf_assets::authored::make_legacy(&mut mat);
+                }
                 let [r, g, b] = model::shade(name, r == o.roots[1]);
                 let c = mat.base.base_color.to_srgba();
                 mat.base.base_color = Color::srgba(c.red * r, c.green * g, c.blue * b, c.alpha);
@@ -567,6 +609,8 @@ fn draw(
         let img = ctx.textures.get(&tex, true, &ctx.data, &mut ctx.images, ctx.formats.as_deref());
         if let (Some(img), Some(mut m)) = (img, ctx.materials.get_mut(h)) {
             m.base.base_color_texture = Some(img);
+            // The new picture's authored set, or the legacy look (#2981).
+            nvf_assets::authored::retexture(&mut m, &tex, &mut ctx.textures, &ctx.data, &mut ctx.images, ctx.formats.as_deref());
         }
         o.shown.insert(e, tex);
     }
