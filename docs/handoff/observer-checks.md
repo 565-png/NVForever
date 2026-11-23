@@ -3599,6 +3599,21 @@ already talking takes over at once, same topic or another; nothing is queued or 
      stands sizes it. Not in the list: the original's way is the theft (or a speech or
      barter line not in our list).
 
+## Added 2026-11-23 (two navmeshes of one cell with no link, #3473)
+
+279. **Do actors walk up the stairs to the Sunset Sarsaparilla HQ's prize room?** (P2:
+     #3473, the quest pilot cannot reach Allen Marks' terminal in Legend of the Star;
+     navmesh.md §1.2.) The stairs and the two rooms are a navmesh of their own with no
+     link to the rest of the cell [observed: records]. In the original, with VMS09a at
+     stage 10 or later (the door unlocked) and a follower (Boone, or ED-E), walk from the
+     lobby up the stairs into the prize room and wait there 30 s: does the follower come
+     up after the player, wait at the foot of the stairs, or appear in the room some other
+     way (a jump to the player)? Then wait outside the room and `prid` the follower,
+     `MoveTo` it into the prize room, and see whether it walks back down to the player.
+     If it climbs, the original joins such navmeshes by a rule the records do not hold
+     (say how near the two edges are: 17 to 31 units across, a step of 31 or more); if
+     it does not, the rooms are the player's alone in the original too.
+
 ## Added 2026-11-23 (Harland's greeting as the player leaves, #3464)
 
 280. **Does Harland greet a player who leaves his room in the REPCONN basement?** (P2:

@@ -1232,6 +1232,8 @@ impl Ai {
     /// Prospector Saloon after VMS16's MoveTo to the gas station, owner playtest].
     pub fn relocate(&mut self, game: &mut Game, actor: FormId) {
         let Some(place) = goal::place_of_ref(game, actor) else { return };
+        // From the new place a package set aside as out of reach may be reachable (#3472).
+        game.unblock_packages_of(actor);
         let heading = game.world.peek(actor).map_or(0.0, |s| s.rot[2]);
         self.script_moved.insert(actor, game.time);
         self.set_using(game, actor, None);
