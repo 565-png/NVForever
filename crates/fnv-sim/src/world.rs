@@ -227,6 +227,12 @@ pub struct RefState {
     /// on a load (`World::made_at_from_saved_place`, #3042).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub made_at: Option<(Option<FormId>, [f32; 3])>,
+    /// A reference created at run time ([`World::place`]): the Euler angles (radians)
+    /// it was created with, answered by `GetStartingAngle` [observed: Fallout: New Vegas
+    /// 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, `b3_jip4_02_session_time_and_start_angle`:
+    /// dynamic `PlaceAtMe` ref returned `270.00`, matching its creation heading].
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub made_rot: Option<[f32; 3]>,
     /// A shot's temporary reference for scripts (`fnv_game::nvse_proj`): the engine draws
     /// the shot's flying model along its flight, so this reference is neither drawn nor
     /// given collision as a dropped item (#2186).
@@ -872,6 +878,7 @@ impl<'a> World<'a> {
             equip_locks: BTreeMap::new(),
             dropped_by: None,
             made_at: None,
+            made_rot: None,
             shot: false,
             outfitted: false,
         })
@@ -1576,6 +1583,7 @@ impl<'a> World<'a> {
                     equip_locks: BTreeMap::new(),
                     dropped_by: None,
                     made_at: None,
+                    made_rot: None,
                     shot: false,
                 },
             );
@@ -2311,6 +2319,7 @@ impl<'a> World<'a> {
                 equip_locks: BTreeMap::new(),
                 dropped_by: None,
                 made_at: Some((cell, pos)),
+                made_rot: Some(rot),
                 shot: false,
             },
         );

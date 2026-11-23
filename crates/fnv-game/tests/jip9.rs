@@ -219,9 +219,13 @@ fn radio_volumes_fonts_colours_and_the_health_bar() {
     q(&mut g, "SetGameVolume 4 30\nSetGameVolume 1 150");
     // Past 100 nothing changes [observed: jip9 volume.set].
     assert_eq!((n(&mut g, "GetGameVolume 4"), n(&mut g, "GetGameVolume 1")), (30.0, 50.0));
+    // Negative level resets channel to its default [observed: b3_jip9_02_game_volume_neg_and_default];
+    // omitted level also resets to default [observed: jip9 volume.set].
+    q(&mut g, "SetGameVolume 0 30\nSetGameVolume 0 -10");
+    assert_eq!(n(&mut g, "GetGameVolume 0"), 100.0, "negative level resets master to default");
     q(&mut g, "SetGameVolume 4");
     assert_eq!(n(&mut g, "GetGameVolume 4"), 60.0, "back to the default");
-    assert_eq!(g.other.jip9.volume_sets, [(4, 30.0), (4, 60.0)]);
+    assert_eq!(g.other.jip9.volume_sets, [(4, 30.0), (0, 30.0), (0, 100.0), (4, 60.0)]);
     // Fonts: only types 1-8 and 10-89, and a file that is there.
     assert_eq!(n(&mut g, "SetFontFile 9 \"textures\\fonts\\x.fnt\""), 0.0);
     assert_eq!(n(&mut g, "SetFontFile 2 \"textures\\fonts\\no such file.fnt\""), 0.0);

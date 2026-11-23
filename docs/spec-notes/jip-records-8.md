@@ -54,7 +54,7 @@ The actor records keep INAM, TPLT and SPLO for these (`ACTOR_SUBS`, data.rs).
 | Function | NVForever |
 |---|---|
 | Get/SetWeaponDetectionSoundLevel `weapon [level]` | VNAM, 0 loud, 1 normal, 2 silent [documented] |
-| SetWeaponItemMod `weapon slot [mod]` | WMI1-3; left out, none [documented: the examples]; a weapon mod (IMOD) only [hypothesis] |
+| SetWeaponItemMod `weapon slot [mod]` | WMI1-3; left out, null, or a non-IMOD form clears the slot to 0 [documented: the examples; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, `jip_20_weapon_item_mod_non_imod` (#3678 / PR #3679): passing Stimpak to slot 1 cleared `0x0010C858` to `00000000`; no DLL or source consulted] |
 | SetWeaponItemModEffect, SetWeaponItemModValue `weapon slot value` | DNAM effect_mod1-3 and value_a_mod1-3; an effect 1-16, 0 (none) ignored [documented: the table, 0-14, and the JohnnyGuitar note; observed: 0 leaves the effect, 15 is stored; hypothesis: 16, the enum's last] |
 | SetWeaponOnHitSetting `weapon 0-3` | DNAM on_hit [documented] |
 | SetWeaponSemiAutoFireDelay `weapon setMax delay` | DNAM's min or max delay, not below 0 [hypothesis] |

@@ -164,11 +164,14 @@ fn record_setters_read_back() {
     assert_eq!(n(&mut g, "GetAnimObjectIdle TestAnimObject"), f64::from(IDLE_A));
     q(&mut g, "SetAnimObjectIdle TestAnimObject TestRock\nSetAnimObjectIdle TestAnimObject TestIdleB");
     assert_eq!(n(&mut g, "GetAnimObjectIdle TestAnimObject"), f64::from(IDLE_B));
-    // The loading screen type's text colour [documented: the page's 255 180 53].
+    // The loading screen type's text colour [documented: the page's 255 180 53];
+    // raw unclamped finite floats stored verbatim [observed: jip_09_lsct_text_rgb_clamp].
     assert_eq!(n(&mut g, "let aR := GetLoadScreenTypeTextRGB TestLoadType\nSetFunctionValue aR[\"r\"] * 1000000 + aR[\"g\"] * 1000 + aR[\"b\"]"), 255_180_053.0);
     q(&mut g, "SetLoadScreenTypeTextRGB TestLoadType 59.3 181 300");
-    assert_eq!(n(&mut g, "let aR := GetLoadScreenTypeTextRGB TestLoadType\nSetFunctionValue aR[\"b\"]"), 255.0);
+    assert_eq!(n(&mut g, "let aR := GetLoadScreenTypeTextRGB TestLoadType\nSetFunctionValue aR[\"b\"]"), 300.0);
     assert!((n(&mut g, "let aR := GetLoadScreenTypeTextRGB TestLoadType\nSetFunctionValue aR[\"r\"]") - 59.3).abs() < 1e-4);
+    q(&mut g, "SetLoadScreenTypeTextRGB TestLoadType -10 100 50");
+    assert_eq!(n(&mut g, "let aR := GetLoadScreenTypeTextRGB TestLoadType\nSetFunctionValue aR[\"r\"]"), -10.0);
     q(&mut g, "SetLoadScreenTexture TestLoadScreen \"interface\\loading\\b.dds\"");
     // Race, template and template flag on the base.
     q(&mut g, "SetRace TestNpcA TestRaceB");

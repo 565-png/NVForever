@@ -229,7 +229,8 @@ fn explosion_trait_form_and_flag_overrides_readback_and_validation() {
     assert_eq!(after.enchantment, Some(FormId(ENCH_B)));
     assert_eq!(after.image_space_modifier, Some(FormId(IMAD_B)));
 
-    // Wrong-type target forms and non-EXPL forms are ignored without mutating either form.
+    // Wrong-type target forms on typed EXPL slots clear those slots to 0/None
+    // [observed: jip_24_expl_trait_form_type_check], while non-EXPL forms remain untouched.
     q(
         &mut g,
         r#"
@@ -242,17 +243,19 @@ fn explosion_trait_form_and_flag_overrides_readback_and_validation() {
         SetExplosionFlag OwnedGuardWeap 2 1
         "#,
     );
-    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().light, Some(FormId(LIGH_B)));
-    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().sound_1, Some(FormId(SOUN_B)));
-    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().impact_dataset, Some(FormId(IPDS_B)));
-    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().enchantment, Some(FormId(ENCH_B)));
-    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().image_space_modifier, Some(FormId(IMAD_B)));
+    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().light, None, "wrong-type clears slot 0");
+    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().sound_1, None, "wrong-type clears slot 1");
+    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().impact_dataset, None, "wrong-type clears slot 3");
+    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().enchantment, None, "wrong-type clears slot 5");
+    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().image_space_modifier, None, "wrong-type clears slot 6");
     assert_eq!(n(&mut g, "GetObjectEffect OwnedGuardWeap"), f64::from(ENCH_A), "unrelated WEAP EITM untouched");
 
-    // Clearing form traits with 0 or omitted third argument resets them to None/0.
+    // Re-populate slots 0/5 then clear with explicit 0 / omitted third argument.
     q(
         &mut g,
         r#"
+        SetExplosionTraitForm OwnedBlastExpl 0 BlastLightB
+        SetExplosionTraitForm OwnedBlastExpl 5 BlastEnchB
         SetExplosionTraitForm OwnedBlastExpl 0 0
         SetExplosionTraitForm OwnedBlastExpl 4
         SetExplosionTraitForm OwnedBlastExpl 5 0

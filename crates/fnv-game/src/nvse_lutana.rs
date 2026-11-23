@@ -659,14 +659,14 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             }
             zero
         }
-        // `ref.PlayerHasKey`: a door's or container's key carried, a terminal's password
-        // note among the player's notes or carried [documented: PlayerHasKey]; a load
-        // door with no lock of its own reads the other side's [hypothesis: as GetLockLevel].
+        // `ref.PlayerHasKey`: a door's or container's lock key carried [documented:
+        // PlayerHasKey]; a load door with no lock of its own reads the other side's
+        // [hypothesis: as GetLockLevel]. Terminals' password notes are NOT treated as keys
+        // [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30,
+        // `b3_lut_06_player_has_key_terminal_note`: even after AddNote on terminal
+        // 0x13253C's password note 0x133107, PlayerHasKey returned 0].
         "playerhaskey" => {
             let Some(r) = subject else { return Some(Ok(zero)) };
-            if is_terminal(g, r) {
-                return Some(Ok(yes(crate::terminal::has_password(g, base(g, r)))));
-            }
             let key = g.world.lock_of(r).and_then(|l| l.key);
             yes(key.is_some_and(|k| g.world.item_count(FormId::PLAYER_REF, k).is_ok_and(|n| n > 0)))
         }

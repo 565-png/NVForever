@@ -1432,8 +1432,12 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         }
         // The explosion's form traits, 0 light … 6 image-space modifier as GetExplosion-
         // TraitForm reads them; no form clears it [observed: gaps7]. Only EXPL forms (and
-        // their TempCloneForm clones) are accepted; typed slots reject wrong-type forms
-        // while keeping null/omitted clears [hypothesis].
+        // their TempCloneForm clones) are accepted [design]; on typed slots, a wrong-type
+        // form clears the slot to 0, while slot 4 (INAM) accepts any form such as ALCH
+        // [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30,
+        // `jip_24_expl_trait_form_type_check`: slot 0 clears 00014BFF -> 00000000 on
+        // Stimpak; slot 4 accepts Stimpak 00015169; hypothesis: same clear rule on slots
+        // 1, 2, 3, 5, 6].
         "setexplosiontraitform" => {
             let Some(f) = form(args, 0).filter(|&f| g.data.sig(g.unclone(f)) == Some(*b"EXPL")) else {
                 return Some(Ok(zero));
@@ -1448,12 +1452,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 6 => ("MNAM/", Some(b"IMAD")),
                 _ => return Some(Ok(zero)),
             };
-            let target = form(args, 2);
-            if let (Some(e), Some(sig)) = (target, want) {
-                if g.data.sig(g.unclone(e)) != Some(*sig) {
-                    return Some(Ok(zero));
-                }
-            }
+            let target = form(args, 2).filter(|&e| want.is_none_or(|sig| g.data.sig(g.unclone(e)) == Some(*sig)));
             g.field_overrides.insert((f, key.into()), XVal::Ref(target.map_or(0, |e| e.0)));
             zero
         }

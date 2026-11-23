@@ -178,12 +178,14 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 .collect();
             XVal::Array(g.ext.new_array(ArrayKind::StringMap, entries))
         }
-        // The colours are floats of 0 to 255 [documented: the schema's LSCT; the page's
-        // example sets 59.3]; a value that is no number sets nothing.
+        // Raw finite floats stored verbatim (no 0..255 clamping) [documented: the schema's
+        // LSCT; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30,
+        // `jip_09_lsct_text_rgb_clamp`: StandardLoadingTip (0x166D58) stores 300.0 and
+        // -10.0 verbatim]; non-finite values set nothing [hypothesis].
         "setloadscreentypetextrgb" => {
             if let Some(t) = form(args, 0).filter(|&t| of_sig(g, t, &[b"LSCT"])) {
                 for (k, p) in ["font_1_red", "font_1_green", "font_1_blue"].iter().enumerate() {
-                    if let Some(v) = crate::nvse::field_number(num(args, k + 1, f64::NAN), 0.0, 255.0) {
+                    if let Some(v) = crate::nvse::field_number(num(args, k + 1, f64::NAN), crate::nvse::F32.0, crate::nvse::F32.1) {
                         g.field_overrides.insert((t, format!("DATA/{p}")), XVal::Num(v));
                     }
                 }
@@ -340,26 +342,16 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
             if a != FormId::PLAYER_REF {
                 let held = &mut g.extra.entry(a).or_default().perks;
-                if rank == 0 {
-                    held.remove(&p);
-                } else {
-                    held.insert(p, rank);
-                }
+                held.insert(p, rank);
                 g.sync_perk_abilities_of(a);
             } else if num(args, 2, 0.0) != 0.0 {
-                if rank == 0 {
-                    g.player.teammate_perks.remove(&p);
-                } else {
-                    g.player.teammate_perks.insert(p);
-                }
+                g.player.teammate_perks.insert(p);
             } else {
                 let before = g.player.perks.get(&p).copied().unwrap_or(0);
                 if rank > before {
                     while g.player.perks.get(&p).copied().unwrap_or(0) < rank {
                         crate::perks::gain_rank(g, p);
                     }
-                } else if rank == 0 {
-                    g.player.perks.remove(&p);
                 } else if rank < before {
                     g.player.perks.insert(p, rank);
                 }

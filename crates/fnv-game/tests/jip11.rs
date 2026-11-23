@@ -160,8 +160,10 @@ fn actor_traits_and_detection() {
     // Not measured: -100; not in combat: no array.
     assert_eq!(n(&mut g, "MarkRef.GetDetectionValue player"), -100.0);
     assert_eq!(ids(&mut g, "MarkRef.GetCombatAllies"), "none");
+    assert_eq!(n(&mut g, "ar_Size (MarkRef.GetCombatAllies)"), -1.0, "empty GetCombatAllies returns ar_Null (-1)");
     assert_eq!(ids(&mut g, "MarkRef.GetCombatTargets"), "none");
     assert_eq!(ids(&mut g, "MarkRef.GetDetectedActors"), "none");
+    assert_eq!(n(&mut g, "ar_Size (MarkRef.GetDetectedActors)"), -1.0, "empty GetDetectedActors returns ar_Null (-1)");
     // Forced, as a modifier, and given back [documented].
     q(&mut g, "player.ForceActorDetectionValue -100");
     assert_eq!(g.forced_detection(FormId::PLAYER_REF, 30.0), -100.0);
