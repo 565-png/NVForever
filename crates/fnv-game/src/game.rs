@@ -1728,6 +1728,7 @@ pub struct Game<'a> {
     /// Forms added to form lists at run time.
     pub form_lists: BTreeMap<FormId, Vec<FormId>>,
     pub loaded_cells: BTreeSet<FormId>,
+    pub(crate) placed_effect_actors: Option<crate::abilities::PlacedEffectActors<'a>>,
     /// Scripted references a script moved (they may have left their authored cell).
     pub moved: BTreeSet<FormId>,
     /// References other than the player that a script put somewhere (MoveTo or a door) since the
@@ -2710,6 +2711,7 @@ impl<'a> Game<'a> {
             coop: Vec::new(),
             form_lists: BTreeMap::new(),
             loaded_cells: BTreeSet::new(),
+            placed_effect_actors: None,
             moved: BTreeSet::new(),
             teleported: BTreeSet::new(),
             rotations: BTreeMap::new(),
