@@ -69,7 +69,7 @@ use nvf_play::phys::PhysState;
 use nvf_play::player::{Player, BodySet};
 use nvf_play::combat::{is_dead, ActorHit};
 use nvf_play::script::ScriptState;
-use nvf_play::sfx::{PlaySound, Sfx, SoundSource};
+use nvf_play::sfx::{KeyedSound, PlaySound, Sfx, SoundSource};
 use fnv_actor::anim_sounds::{creature_key_type, creature_sound, creature_sound_type_name, creature_sounds, pick_creature_sound, CreatureSound};
 use nvf_play::sim::SimState;
 use nvf_play::{Location, PlayWorld};
@@ -784,8 +784,8 @@ fn door_sounds(
 }
 
 /// The sound keys of animation groups scripts play on objects (object_anims.rs), where
-/// the object is.
-fn object_sounds(mut s: ResMut<AnimSounds>, sfx: Option<Res<Sfx>>, mut keys: MessageReader<crate::object_anims::ObjectSound>, mut out: MessageWriter<PlaySound>) {
+/// the object is; sfx logs what becomes of each (`sfx: sound key …`).
+fn object_sounds(mut s: ResMut<AnimSounds>, sfx: Option<Res<Sfx>>, mut keys: MessageReader<crate::object_anims::ObjectSound>, mut out: MessageWriter<KeyedSound>) {
     let Some(sfx) = sfx else {
         keys.clear();
         return;
@@ -797,7 +797,7 @@ fn object_sounds(mut s: ResMut<AnimSounds>, sfx: Option<Res<Sfx>>, mut keys: Mes
         if let Some(sound) = s.sound(&k.key) {
             s.counts.object_sounds += 1;
             debug!("anim sounds: object key {} at {:?}", k.key, k.at);
-            out.write(PlaySound { sound, at: Some(k.at) });
+            out.write(KeyedSound { sound, at: k.at });
         }
     }
 }

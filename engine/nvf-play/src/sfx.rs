@@ -36,7 +36,10 @@
 //!   at its maximum distance, silent beyond ([`distance_gain`]). The three middle points
 //!   stand evenly between the two distances and the volume goes straight from point to
 //!   point ([`curve_gain`]) [hypothesis]; a percentage is a share of the amplitude
-//!   [hypothesis]. A record without a curve plays the default 100, 50, 20, 5, 0.
+//!   [hypothesis]. A record without a curve plays the default 100, 50, 20, 5, 0. A sound
+//!   with the 2D flag is played "with no 3D positioning or inner/outer radii" [documented:
+//!   GECK wiki Sound]: as loud wherever it is asked for, unless it also has the 2D Radius
+//!   flag, which keeps the radii ([`no_radii`], [`placed_gain`], #3444).
 //! - **Panning** [design; how the game places sounds is not known]: a sound with a place
 //!   is heard more on the side of the listener it is on ([`pan_gains`]): the ear facing
 //!   it hears it whole, the other ear loses up to [`PAN_DEPTH`] of it, by how far to the
@@ -141,6 +144,15 @@ pub struct ScaledSound {
     pub sound: FormId,
     pub at: Option<[f32; 3]>,
     pub gain: f32,
+}
+
+/// Play a SOUN once as [`PlaySound`] does, for a sound key of an object's animation group
+/// (nvforever `object_anims.rs`), and log what became of it: `sfx: sound key …` with its
+/// file, place and gain, or why it is not heard (#3444).
+#[derive(Message, Clone, Copy, Debug)]
+pub struct KeyedSound {
+    pub sound: FormId,
+    pub at: [f32; 3],
 }
 
 /// Start (`on`) or stop a SOUN that goes round until it is stopped, at the listener.
@@ -706,6 +718,26 @@ pub fn distance_gain(s: &Sound, distance: f32) -> f32 {
     curve_gain(&curve, (distance - min) / (max - min))
 }
 
+/// Whether a sound has no inner and outer radius, so is as loud at any distance: the 2D
+/// flag "forces playback in 2D with no 3D positioning or inner/outer radii settings in the
+/// game world" [documented: GECK wiki Sound]. One that also has 2D Radius ("with ...
+/// inner/outer radii settings", same page) keeps its radii [hypothesis: the radius flag
+/// wins; most records with both are placed loops with radii, LonesomeRoad.esm's winds and
+/// rocket, which would else be heard from anywhere].
+pub fn no_radii(s: &Sound) -> bool {
+    s.has("2D") && !s.has("2D Radius")
+}
+
+/// The gain of a sound asked for at a place `distance` units from the listener: whole for
+/// one without radii ([`no_radii`]), else [`distance_gain`]. The placed loops
+/// (`crate::ambient`) still fall with distance whatever their flags (audio.md §15.2).
+pub fn placed_gain(s: &Sound, distance: f32) -> f32 {
+    if no_radii(s) && distance.is_finite() {
+        return 1.0;
+    }
+    distance_gain(s, distance)
+}
+
 /// A five-point curve at `t` (0 at the inner radius, 1 at the outer): the points stand
 /// evenly over the span, straight lines between them [hypothesis: the GECK's five
 /// sliders say nothing of where the middle three stand].
@@ -824,6 +856,11 @@ impl Sfx {
         self.forms.sounds.iter().find(|(_, s)| s.edid.as_deref().is_some_and(|e| e.eq_ignore_ascii_case(edid))).map(|(f, _)| *f)
     }
 
+    /// A SOUN's editor ID, for the log.
+    fn name_of(&self, sound: FormId) -> String {
+        self.forms.sounds.get(&sound).and_then(|s| s.edid.clone()).unwrap_or_else(|| sound.to_string())
+    }
+
     pub fn new(forms: FxForms) -> Sfx {
         Sfx {
             forms,
@@ -914,6 +951,8 @@ enum Wanted {
     Once(Option<[f32; 3]>),
     /// [`ScaledSound`]: once, its loudness times the gain.
     Scaled(Option<[f32; 3]>, f32),
+    /// [`KeyedSound`]: once, at a place, logged.
+    Keyed([f32; 3]),
     /// A sound a script played: its id (for [`ScriptSounds::heard`]), its place, and
     /// whether it goes round until StopSound (the Loop flag).
     Script { id: u32, at: Option<[f32; 3]>, looping: bool },
@@ -942,7 +981,14 @@ pub const MAX_ONE_SHOT_WAIT: Duration = Duration::from_millis(150);
 
 /// Whether a request is a one-shot that [`MAX_ONE_SHOT_WAIT`] holds to.
 fn wait_limited(wanted: Wanted) -> bool {
-    matches!(wanted, Wanted::Once(_) | Wanted::Scaled(..))
+    matches!(wanted, Wanted::Once(_) | Wanted::Scaled(..) | Wanted::Keyed(_))
+}
+
+/// Log a [`KeyedSound`] dropped because its file or its voice slot came too late.
+fn log_key_too_late(sfx: &Sfx, sound: FormId, wanted: Wanted, asked: Instant) {
+    if let Wanted::Keyed(_) = wanted {
+        info!("sfx: sound key {} dropped: ready {:.0} ms after it was asked for", sfx.name_of(sound), asked.elapsed().as_secs_f32() * 1000.0);
+    }
 }
 
 /// Drop the waiting requests `drop` picks; how many were dropped.
@@ -1378,6 +1424,9 @@ fn request(out: &mut Out, sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, heard: &mut Ve
     }
     let Some(r) = resolve(sfx, vfs, sound) else {
         // No file to play: over at once.
+        if let Wanted::Keyed(_) = wanted {
+            info!("sfx: sound key {} not heard: no file to play", sfx.name_of(sound));
+        }
         if let Wanted::Script { id, .. } = wanted {
             heard.push((id, Some(0.0)));
         }
@@ -1426,6 +1475,9 @@ fn begin(out: &mut Out, sfx: &mut Sfx, heard: &mut Vec<(u32, Option<f32>)>, r: &
     let Some(handle) = handle else {
         sfx.failed += 1;
         sfx.waits.broken += waited.is_some() as u32;
+        if let Wanted::Keyed(_) = wanted {
+            info!("sfx: sound key {} not heard: {} cannot be played", r.name, r.path);
+        }
         // A script's sound whose file cannot be played is over at once (0 seconds), also
         // one with the Loop flag, so IsSoundPlaying reads 0 for it [engineering choice;
         // hypothesis: what the original answers for a broken looping sound is not known,
@@ -1452,7 +1504,7 @@ fn begin(out: &mut Out, sfx: &mut Sfx, heard: &mut Vec<(u32, Option<f32>)>, r: &
             fade_in(out, sfx, wanted, begun);
             begun
         }
-        Wanted::Script { looping: false, .. } | Wanted::Once(_) | Wanted::Scaled(..) => {
+        Wanted::Script { looping: false, .. } | Wanted::Once(_) | Wanted::Scaled(..) | Wanted::Keyed(_) => {
             let (seconds, begun) = one_shot_ready(out, sfx, r, handle, sound, wanted, asked, asked_frame, None);
             one_shot_decided(out, sfx, heard, sound, wanted, seconds, begun);
             begun
@@ -1562,7 +1614,7 @@ fn reconcile(sfx: &mut Sfx, playing: &Voices) {
 #[allow(clippy::too_many_arguments)]
 fn play(
     mut commands: Commands,
-    (mut requests, mut scaled): (MessageReader<PlaySound>, MessageReader<ScaledSound>),
+    (mut requests, mut scaled, mut keyed): (MessageReader<PlaySound>, MessageReader<ScaledSound>, MessageReader<KeyedSound>),
     mut loops: MessageReader<LoopSound>,
     looping: Query<(Entity, &Looping)>,
     scripted: Query<(Entity, &ScriptPlayed)>,
@@ -1577,6 +1629,7 @@ fn play(
     let (Some(mut sfx), Some(data)) = (sfx, data) else {
         requests.clear();
         scaled.clear();
+        keyed.clear();
         loops.clear();
         return;
     };
@@ -1658,6 +1711,9 @@ fn play(
     for r in scaled.read() {
         request(&mut out, sfx, vfs, &mut ss.heard, r.sound, Wanted::Scaled(r.at, r.gain.max(0.0)));
     }
+    for r in keyed.read() {
+        request(&mut out, sfx, vfs, &mut ss.heard, r.sound, Wanted::Keyed(r.at));
+    }
     for (id, sound, at) in std::mem::take(&mut ss.plays) {
         if stopped_before(&stops, sound, id) {
             sfx.waits.cancelled += 1;
@@ -1693,6 +1749,7 @@ fn start_decided(out: &mut Out, sfx: &mut Sfx, vfs: &Arc<fnv_vfs::Vfs>, heard: &
         let waited = frame - w.frame;
         if wait_limited(w.wanted) && w.asked.elapsed() > sfx.one_shot_wait {
             sfx.waits.too_late += 1;
+            log_key_too_late(sfx, w.sound, w.wanted, w.asked);
             if let Wanted::Script { id, .. } = w.wanted {
                 heard.push((id, Some(0.0)));
             }
@@ -1952,6 +2009,7 @@ fn start_replacements(out: &mut Out, sfx: &mut Sfx, heard: &mut Vec<(u32, Option
         if wait_limited(p.wanted) && p.asked.elapsed() > sfx.one_shot_wait {
             sfx.release(p.sound, p.slot, true);
             sfx.replacements_expired += 1;
+            log_key_too_late(sfx, p.sound, p.wanted, p.asked);
             continue;
         }
         let (seconds, begun) = one_shot_ready(out, sfx, &p.r, p.handle, p.sound, p.wanted, p.asked, p.frame, Some((p.slot, p.speed)));
@@ -1987,13 +2045,14 @@ fn one_shot_ready(out: &mut Out, sfx: &mut Sfx, r: &Resolved, handle: Handle<Pcm
         Wanted::Once(at) | Wanted::Script { at, .. } => (at, 1.0),
         // The player's Weapon Volume tweak's shots (`ScaledSound`).
         Wanted::Scaled(at, gain) => (at, gain),
+        Wanted::Keyed(at) => (Some(at), 1.0),
         Wanted::Loop => (None, 1.0),
     };
     let (s, name, path) = (&r.s, &r.name, &r.path);
     let (settings, eye) = (out.settings, out.player.map(Player::eye));
     let placed = at.zip(out.player).map(|(at, p)| SoundAt::new(at, Some(p)));
     let distance = at.zip(eye).map(|(at, e)| ((at[0] - e[0]).powi(2) + (at[1] - e[1]).powi(2) + (at[2] - e[2]).powi(2)).sqrt());
-    let gain = static_gain(s) * distance.map_or(1.0, |d| distance_gain(s, d)) * settings.volume.max(0.0) * scale;
+    let gain = static_gain(s) * distance.map_or(1.0, |d| placed_gain(s, d)) * settings.volume.max(0.0) * scale;
     // The pitch: a replacement's was chosen when it was asked for; only what hangs on the
     // listener (gain, pan, place) is worked out again.
     let speed = match kept {
@@ -2008,8 +2067,17 @@ fn one_shot_ready(out: &mut Out, sfx: &mut Sfx, r: &Resolved, handle: Handle<Pcm
     };
     let seconds = out.assets.get(&handle).map_or(0.0, |p| p.seconds() as f32) / speed;
     debug!("sfx: {name} {path} gain {gain:.3}{} speed {speed:.2}", distance.map_or(String::new(), |d| format!(" at {d:.0} units")));
+    // What became of a sound key ([`KeyedSound`]): its file, gain and place.
+    let log_key = |became: &str| {
+        if let Wanted::Keyed(at) = wanted {
+            let flat = if s.has("2D") { ", 2D" } else { "" };
+            let away = distance.map_or(String::new(), |d| format!(", {d:.0} units away"));
+            info!("sfx: sound key {name} {became}: {path}, {seconds:.1} s, gain {gain:.3}{flat}, asked at ({:.0}, {:.0}, {:.0}){away}", at[0], at[1], at[2]);
+        }
+    };
     // Under water a sound so flagged is not heard; a 2D one is not panned (audio.md §15.2).
     if sfx.submerged && s.has("Mute When Submerged") {
+        log_key("not heard (muted under water)");
         sfx.muted_submerged += 1;
         sfx.silent += 1;
         if let Some(slot) = slot {
@@ -2021,7 +2089,7 @@ fn one_shot_ready(out: &mut Out, sfx: &mut Sfx, r: &Resolved, handle: Handle<Pcm
     // and the distance leave, the effects volume not in it.
     // At most a battle's worth waits, should nothing take them.
     if let (true, Some(d), true) = (settings.play, distance, sfx.cover_notes.len() < 512) {
-        sfx.cover_notes.push((static_gain(s) * distance_gain(s, d), d, seconds));
+        sfx.cover_notes.push((static_gain(s) * placed_gain(s, d), d, seconds));
     }
     let placed = match placed {
         Some(_) if s.has("2D") => {
@@ -2031,6 +2099,7 @@ fn one_shot_ready(out: &mut Out, sfx: &mut Sfx, r: &Resolved, handle: Handle<Pcm
         p => p,
     };
     if !settings.play || gain < 0.001 {
+        log_key(if settings.play { "not heard (too quiet)" } else { "not heard (sounds off)" });
         sfx.silent += 1;
         if let Some(slot) = slot {
             sfx.release(sound, slot, true);
@@ -2054,6 +2123,7 @@ fn one_shot_ready(out: &mut Out, sfx: &mut Sfx, r: &Resolved, handle: Handle<Pcm
             let list = sfx.same.get_mut(&sound).expect("counted above");
             let Some(i) = slot_to_take(list) else {
                 // Every slot of the SOUN has a replacement waiting already.
+                log_key("not heard (voice limit)");
                 sfx.voice_limited += 1;
                 sfx.per_sound.entry(sound).or_default()[2] += 1;
                 return (seconds, Begun::Refused);
@@ -2078,6 +2148,7 @@ fn one_shot_ready(out: &mut Out, sfx: &mut Sfx, r: &Resolved, handle: Handle<Pcm
                 return (seconds, Begun::Waiting);
             }
         } else if !voice_free(sfx.voices, same) {
+            log_key("not heard (voice limit)");
             sfx.voice_limited += 1;
             sfx.per_sound.entry(sound).or_default()[2] += 1;
             return (seconds, Begun::Refused);
@@ -2092,13 +2163,14 @@ fn one_shot_ready(out: &mut Out, sfx: &mut Sfx, r: &Resolved, handle: Handle<Pcm
         sfx.per_sound.entry(sound).or_default()[1] += 1;
     }
     sfx.played += 1;
+    log_key("starts");
     let playback = PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain)).with_speed(speed);
     let category = SoundCategory::of_effect(s.edid.as_deref());
     let reverb = crate::reverb::for_sound(sfx.room_reverb, settings, s);
     if reverb.is_none() && sfx.room_reverb.is_some() && settings.reverb && crate::reverb::send_of(s.reverb_attenuation_percent) <= 0.0 {
         sfx.reverb_kept_out += 1;
     }
-    if distance.is_some() && s.attenuation_curve.is_some_and(|c| c != DEFAULT_ATTENUATION_CURVE) {
+    if distance.is_some() && !no_radii(s) && s.attenuation_curve.is_some_and(|c| c != DEFAULT_ATTENUATION_CURVE) {
         sfx.own_curve += 1;
     }
     if let Some(p) = reverb {
@@ -2215,6 +2287,7 @@ impl Plugin for SfxPlugin {
             .add_audio_source::<PcmSound>()
             .add_message::<PlaySound>()
             .add_message::<ScaledSound>()
+            .add_message::<KeyedSound>()
             .add_message::<LoopSound>()
             .init_resource::<ScriptSounds>()
             .add_message::<SoundSource>()
@@ -2406,6 +2479,49 @@ mod tests {
         // No span: the inner level, then min ÷ distance.
         let point = Sound { min_distance: 200.0, max_distance: 0.0, ..Sound::default() };
         assert!((distance_gain(&point, 400.0) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_2d_sound_has_no_radii() {
+        // A 2D record with no radii, and one with them: whole from afar (#3444).
+        let bare = Sound { attenuation_curve: Some(DEFAULT_ATTENUATION_CURVE), ..record("TestLaunch", None, &["2D"]) };
+        assert_eq!(placed_gain(&bare, 2900.0), 1.0);
+        let radii = Sound { min_distance: 200.0, max_distance: 1000.0, ..bare.clone() };
+        assert_eq!(placed_gain(&radii, 2900.0), 1.0);
+        // 2D Radius, alone or with 2D, keeps the radii; so does a sound with neither flag.
+        for flags in [&["2D", "2D Radius"][..], &["2D Radius"], &[]] {
+            let s = Sound { min_distance: 200.0, max_distance: 1000.0, ..record("TestRadius", None, flags) };
+            assert_eq!(placed_gain(&s, 2900.0), 0.0, "{flags:?}");
+            assert!((placed_gain(&s, 600.0) - 0.2).abs() < 1e-6, "{flags:?}");
+        }
+        // A broken place is not heard.
+        assert_eq!(placed_gain(&bare, f32::NAN), 0.0);
+    }
+
+    /// A sound key of an object far from the listener: its 2D SOUN without radii starts,
+    /// the same record without the flag is too quiet (what #3444's launch was).
+    #[test]
+    fn a_2d_sound_key_far_away_starts() {
+        const FAR_2D: FormId = FormId(0x21);
+        const FAR_3D: FormId = FormId(0x22);
+        let decided = |sound: FormId| {
+            let (mut app, _files) = sound_app();
+            app.insert_resource(Player { heading: 0.0, pitch: 0.0, eye_height: 100.0, feet: [0.0; 3], body_eye: None, body_view: None, placed: None });
+            {
+                let mut sfx = app.world_mut().resource_mut::<Sfx>();
+                sfx.forms.sounds.insert(FAR_2D, record("TestFar2D", Some("fx\\beep.wav"), &["2D"]));
+                sfx.forms.sounds.insert(FAR_3D, record("TestFar3D", Some("fx\\beep.wav"), &[]));
+            }
+            app.world_mut().write_message(KeyedSound { sound, at: [0.0, 2900.0, -500.0] });
+            run_until(&mut app, |w| {
+                let s = w.resource::<Sfx>();
+                s.played + s.silent > 0
+            });
+            let s = app.world().resource::<Sfx>();
+            (s.played, s.silent)
+        };
+        assert_eq!(decided(FAR_2D), (1, 0));
+        assert_eq!(decided(FAR_3D), (0, 1));
     }
 
     /// A RIFF/WAVE file of `fmt ` fields as given (no arithmetic on them, so any value
@@ -2605,6 +2721,7 @@ mod tests {
             .init_resource::<Assets<PcmSound>>()
             .add_message::<PlaySound>()
             .add_message::<ScaledSound>()
+            .add_message::<KeyedSound>()
             .add_message::<LoopSound>()
             .add_systems(Update, (prepare, play).chain());
         (app, dir)

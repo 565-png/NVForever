@@ -616,6 +616,12 @@ fn knocks(mut ws: ResMut<WorldSounds>, sfx: Option<Res<Sfx>>, phys: Option<Res<P
     ws.tracked.retain(|id, _| seen.contains(id));
 }
 
+/// Whether a place is at or beyond a sound's reach from the listener's eye; a sound with
+/// no reach of its own reaches anywhere.
+fn beyond_reach(reach: f32, eye: [f32; 3], at: [f32; 3]) -> bool {
+    reach > 0.0 && (0..3).map(|i| (at[i] - eye[i]).powi(2)).sum::<f32>() >= reach * reach
+}
+
 /// Pick-ups, drops, containers, activators and the sounds scripts ask for.
 #[allow(clippy::too_many_arguments)]
 fn objects(
@@ -802,6 +808,13 @@ fn objects(
         let Some(&sound) = sim.base_of(door).and_then(|b| ws.forms.door_open.get(&b)) else { continue };
         ws.stats.actor_doors += 1;
         info!("world sounds: an actor passed load door {door:08X}, sound {}", sound_name(sfx, Some(sound)));
+        // A 2D one is as loud anywhere (`sfx::no_radii`); another actor's door is still heard
+        // only within the record's reach [design, #3444: the Strip's and the caves' load doors
+        // are 2D records of a 1,100-unit reach, and actors pass them all over the Strip].
+        let far = sfx.and_then(|x| x.forms.sounds.get(&sound)).zip(player.as_deref()).is_some_and(|(s, p)| crate::sfx::no_radii(s) && beyond_reach(s.max_distance, p.eye(), at));
+        if far {
+            continue;
+        }
         out.write(PlaySound { sound, at: Some(at) });
     }
     for &Activated { reference } in activated.read() {
@@ -1459,6 +1472,15 @@ mod tests {
         for c in [2, 4, 8, 18] {
             assert_eq!(phy_sound(c, true), None);
         }
+    }
+
+    #[test]
+    fn an_actors_2d_door_is_heard_within_its_reach() {
+        assert!(!beyond_reach(1100.0, [0.0; 3], [600.0, 600.0, 600.0]));
+        assert!(beyond_reach(1100.0, [0.0; 3], [700.0, 700.0, 700.0]));
+        assert!(beyond_reach(1100.0, [0.0; 3], [1100.0, 0.0, 0.0]));
+        // No reach of its own (a 2D record with no distances).
+        assert!(!beyond_reach(0.0, [0.0; 3], [9000.0, 0.0, 0.0]));
     }
 
     #[test]

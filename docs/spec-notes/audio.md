@@ -1191,8 +1191,8 @@ Submerged 2,846, Start at Random Position 110. 2,423 keep the attenuation curve
   lapping]. The type is the cell's `XCWT`, else the worldspace's, as for radiation
   (`radiation.rs`); a placed water volume's is its PWAT's.
 - **SOUN 2D** (`nvf_play::sfx`, `nvf_play::ambient`): a sound with the 2D flag played at
-  a place is not panned; its loudness still falls with distance [hypothesis: 2D means
-  "not positioned", and 2D Radius (102 sounds) is the flag for a distance rule].
+  a place is not panned. Nor does its loudness fall with distance, unless it also has 2D
+  Radius: §15.6 (until #3444 it did).
 - **Start at Random Position**: a loop with the flag starts at a random point of its
   file instead of its start [documented: the flag's name].
 - **Mute When Submerged**: while the listener (the player's eye) is under the surface
@@ -1317,6 +1317,48 @@ From the ESM audit (docs/handoff/esm-full-audit-2026-10-24.md, gaps 7, 15, 17). 
     nothing heard [hypothesis: it may name the pre-processing done to the files, or
     another use; nothing shows it]. Whether the original filters a helmet wearer's voice
     is not captured (observer-checks).
+
+### 15.6 2D sounds have no radii (#3444, 2026-11-23)
+
+- **The flags** [documented: GECK wiki Sound]: 2D "forces playback in 2D with no 3D
+  positioning or inner/outer radii settings in the game world"; 2D radius "forces playback
+  in 2D but with 3D positioning and inner/outer radii settings in the game world. Use with
+  stereo files only."
+- **The records** [observed, `SNDD`]: of FalloutNV.esm's 440 sounds with 2D, 232 store 0
+  for the maximum distance and 1 has 2D Radius as well; of Lonesome Road's 30 with 2D, 11
+  store 0 and 10 have 2D Radius as well, all 10 with distances. A record with no distances
+  heard by distance is silent beyond a few units.
+- **The missile launch** at Lonesome Road's second silo [observed, LonesomeRoad.esm and
+  its archives]: the launch quest's script (SCPT xx00868E) plays Forward (13.33 s) on
+  `NVDLC04MissileLaunchREF` (xx007CEE, `nvdlc04_silo-launch.nif`) and 13 s later Backward
+  (53.30 s, in which the node `Rocket_Root` climbs and flies 13,300 units off). Forward's
+  sound key at 0.1 s names `NVDLC04QSTMissileLaunchPt1` (2D and 2D Radius, 1,275 to
+  25,500 units, a flat curve, 9.25 dB off; 18.7 s, quiet for its first 10), Backward's at
+  0.067 s `NVDLC04QSTMissileLaunchPt2` (2D, both distances 0, nothing off; 21.3 s, loud
+  from its start). Both files are stereo 16-bit PCM at 24 kHz. The script that starts the
+  quest moves the player to `NVDLC04MissileLaunchViewMarkerREF`, 2,900 units from the
+  reference: there Pt2's gain by distance was 0.0003, under the 0.001 a sound needs to be
+  started, the silent flight of the report. The other sounds of the launch are
+  `PlaySound`s, at the listener: `musNVDLC04WarheardExplode` (xx00D0BA, a musical sting)
+  with Forward, `NVDLC04QSTMissileLaunchPt3` with the explosion 33 s later. No sound is
+  moved with the flying node: Pt2 is 2D, so it has no place [documented, above].
+- **As built** (`sfx::no_radii`, `sfx::placed_gain`): a one-shot at a place (object keys,
+  PlaySound3D, doors, explosions, random markers in reach) with 2D and without 2D Radius is
+  as loud at any distance [documented, above]. With both flags the radii hold [hypothesis:
+  the radius flag wins; most such records are placed loops with radii]; 2D Radius alone is
+  as before (panned, by its radii).
+- **Kept** [design]: a placed loop (a sound marker, an object's own sound) still sounds
+  within its maximum distance and falls toward it whatever its flags: heard from anywhere,
+  one marker would sound over its whole worldspace. A Play At Random marker is still only
+  rolled within its maximum distance. Another actor passing a load door whose sound is 2D
+  (`DRSVegasDoorOpen`, `DRSCave`) is heard only within the record's maximum distance.
+- **Log**: each sound key an object's group passes says what became of it: `sfx: sound key
+  <EDID> starts: <file>, <s> s, gain <g>[, 2D], asked at (x, y, z), <n> units away`, or
+  `not heard (too quiet | muted under water | voice limit | sounds off): …`, `not heard: no
+  file to play`, `not heard: <file> cannot be played`, `dropped: ready <n> ms after it was
+  asked for` (§7's 150 ms).
+- What the original does with 2D alone, 2D Radius and both: observer check 287. Smoke
+  scenario `missile-launch-sounds`.
 
 ## 16. Creature sound audit (owner's playtest list 7 item 46, 2026-10-23)
 

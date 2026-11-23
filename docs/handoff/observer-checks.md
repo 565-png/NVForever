@@ -3996,3 +3996,16 @@ capture setup, so every part of a check that needs an interior is still open.
        neither plant's reading changed. Whether a bullet struck the plant itself was not
        confirmed: the crosshair read no reference at 150 units. These positions are
        meaningful because the same reading followed the grabbed nettles above.
+
+## Added 2026-11-23 (2D sounds and distance, #3444)
+
+287. **Does a sound with the 2D flag fall with distance, and does 2D Radius bring the
+     radii back?** (P3: #3444; audio.md §15.6.) Ours: 2D alone is as loud from anywhere
+     [documented: GECK wiki Sound], 2D with 2D Radius goes by its radii [hypothesis]. In
+     the original, from a reference's script or the console (`prid` a persistent reference,
+     then `PlaySound3D`), once next to it and once about 3,000 units away:
+     `DRSVegasDoorOpen` (2D, 175 to 1,100 units), `DRSCave` (2D, 100 to 1,100 units) and
+     `NVDLC04QSTMissileLaunchPt1` (2D and 2D Radius; also once beyond its 25,500 units).
+     Say which are heard far off and whether as loud. Also at Lonesome Road's silo launch:
+     whether the lift-off (about 14 s after the launch begins) is heard in full, and
+     whether its sound moves or fades as the missile flies away.
