@@ -740,7 +740,28 @@ All of it is in `GameSnapshot`.
   Refusal; always with Always Darken [documented: Category:Dialogue flags].
 - **GOODBYE.** When the topic list holds no Goodbye line, the actor's line of the
   GOODBYE topic is offered last, if it has one [documented: Quest and Dialogue Tutorial;
-  Conversation Tab].
+  Conversation Tab]. **Its line ends the conversation when it is over, with or without
+  the Goodbye flag, unless it leads on: the actor can say a line of one of its own links
+  now, a follow-up, a choice, or a player topic whose line names GOODBYE in its Link
+  From (§3.5)** (`Game::ends_conversation`, issue #3477). The topic list is no link of
+  the line. Only links the actor can say something for count [design]: a Link From names
+  the topic, so it is a link of every actor's GOODBYE, and one actor's reply in a plugin
+  would otherwise bring the topic list back after everyone else's [documented: Quest and Dialogue Tutorial:
+  without a topic flagged Goodbye "the dialog will end with one of those GOODBYEs";
+  Conversation Tab: NPCs use the topic when the player exits the dialogue menu;
+  hypothesis: that this holds for its lines without the flag, observer check 283]. Such
+  an entry counts as a Goodbye (`Choice::goodbye`): Tab picks it. The data [observed:
+  `fnvtool dialogue lines --topic GOODBYE`, 2026-11-23, FalloutNV.esm with its add-ons
+  and Fallout 3's six masters]: 2 of FalloutNV.esm's 274 lines have no flag (Keith's
+  0x0014E019, Jerry the Punk's 0x0014C483), 31 of Fallout3.esm's 861 (17 of quest
+  DialogueParadiseFalls, Pronto's 0x000384CF among them) and 1 of PointLookout.esm's 36;
+  no New Vegas add-on has one. All 34 are Conversation lines with no choices, follow-ups,
+  result scripts or Add Topics, and no line names GOODBYE in its Link From: they lead
+  nowhere, so ending cuts nothing off, and the exception is for plugins. Two of them are between NPCs (Mr. Brotch and
+  Freddie), whose exchange ends for want of links (§5.1). With the flag, 5 lines of
+  Fallout3.esm have choices as well (4 of them between NPCs); the flag ends the player's
+  conversation there, as before. With `GameConfig::goodbye_at_once` an unflagged line is
+  still held until it is over [design: the switch is about the flag].
 - **Known topics.** `AddTopic` and lines' Add Topics lists fill one list, newest first
   (above), kept for the whole game; every actor that can say a line of a known topic offers it [owner
   statement 2026-10-10: every actor has the line while its quest is active and the

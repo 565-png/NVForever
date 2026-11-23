@@ -117,8 +117,9 @@ pub struct Choice {
     /// The text is the line's prompt (else the topic's name).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub prompt: bool,
-    /// The line has the Goodbye flag: it ends the conversation when it has been said
-    /// (`Game::finish_line`).
+    /// The line ends the conversation when it has been said (`Game::finish_line`): it has
+    /// the Goodbye flag, or is the GOODBYE topic's and leads nowhere
+    /// (`Game::ends_conversation`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goodbye: bool,
     /// The entry is shaded as already chosen: the actor said this line before and the
@@ -240,6 +241,14 @@ pub enum Says {
 pub(crate) struct Link {
     pub topic: FormId,
     pub from: Option<FormId>,
+}
+
+impl Link {
+    /// Whether the line `d` of the linked topic answers the player through this link: by
+    /// Link From only a player line (type Topic) whose Link From names the topic just said.
+    fn takes_for_player(&self, d: &InfoDef) -> bool {
+        self.from.is_none_or(|x| d.info_type == crate::data::topic_type::TOPIC && d.link_from.contains(&x))
+    }
 }
 
 /// The condition functions that let a line be said by a voice type without "Allow
@@ -881,7 +890,8 @@ impl<'a> Game<'a> {
     ///    line ends, and stay known after the conversation];
     /// 3. a Goodbye line ends the conversation [documented: Category:Dialogue] (with
     ///    `GameConfig::goodbye_at_once` one the player chose has ended it already, as it
-    ///    started, and ends as a farewell: `Game::choose`, `Game::end_line`);
+    ///    started, and ends as a farewell: `Game::choose`, `Game::end_line`), and so does a
+    ///    line of the GOODBYE topic that leads nowhere (`Game::ends_conversation`);
     /// 4. otherwise, if the line has follow-up lines (TCFU), the first one the actor can
     ///    say is said next, with no choice by the player [owner statement 2026-10-10:
     ///    follow-ups have no player response, as in Doc Mitchell's farewell; not yet
@@ -919,18 +929,14 @@ impl<'a> Game<'a> {
         if let Some(c) = self.dialogue.as_mut() {
             c.ending = false;
         }
-        if def.goodbye {
+        if self.ends_conversation(actor, topic, def) {
             self.end_dialogue_as(ended::GOODBYE);
             return;
         }
-        let listener = Some(FormId::PLAYER_REF);
-        for &f in &def.follow_ups {
-            let Some(fd) = dv.info(&f) else { continue };
-            if !(fd.goodbye && !def.choices.is_empty()) && self.can_say(actor, listener, f) {
-                self.drop_held_greet();
-                self.speak(actor, fd.topic.unwrap_or(FormId(0)), f);
-                return;
-            }
+        if let Some(f) = self.next_follow_up(actor, def) {
+            self.drop_held_greet();
+            self.speak(actor, dv.info(&f).and_then(|d| d.topic).unwrap_or(FormId(0)), f);
+            return;
         }
         let choices = self.build_choices(actor, topic, def);
         if choices.is_empty() {
@@ -944,6 +950,53 @@ impl<'a> Game<'a> {
             c.topic_list = def.choices.is_empty();
         }
         self.dialogue_transition();
+    }
+
+    /// The follow-up of `def` the actor says next in the player's conversation: the first
+    /// it can say now, passing over Goodbye lines when `def` has choices
+    /// ([`Game::finish_line`], #964).
+    fn next_follow_up(&mut self, actor: FormId, def: &InfoDef) -> Option<FormId> {
+        let dv = self.dialogue_view();
+        let listener = Some(FormId::PLAYER_REF);
+        def.follow_ups.iter().copied().find(|&f| dv.info(&f).is_some_and(|fd| !fd.goodbye || def.choices.is_empty()) && self.can_say(actor, listener, f))
+    }
+
+    /// Whether `def`, said by `actor` as a line of `topic`, ends the player's conversation
+    /// when it is over: a line with the Goodbye flag [documented: Category:Dialogue], or
+    /// one of the GOODBYE topic, flagged or not, that leads nowhere [documented: Quest and
+    /// Dialogue Tutorial: without a topic flagged Goodbye "the dialog will end with one of
+    /// those GOODBYEs"; Conversation Tab: NPCs use the topic when the player exits the
+    /// dialogue menu; hypothesis: that its unflagged lines end it too, issue #3477,
+    /// observer check 283]. FalloutNV.esm has 2 such lines without the flag (Keith's
+    /// 0x0014E019, Jerry's 0x0014C483), Fallout 3's masters 32 (Pronto's 0x000384CF), and
+    /// none of the 34 has choices, follow-ups or a result script, nor does any line name
+    /// GOODBYE in its Link From [observed: `fnvtool dialogue lines --topic GOODBYE` and
+    /// `--all`].
+    ///
+    /// A line leads on when the actor can say now a line of one of its own links: a
+    /// follow-up ([`Game::next_follow_up`]), a choice, or a topic linked by Link From
+    /// ([`Game::player_links`], as [`Game::build_choices`] takes them; also one the topic
+    /// list has anyway). The topic list itself does not count. Only what can be said
+    /// counts [design]: a Link From names the topic, so it is a link of every actor's
+    /// GOODBYE, and one actor's reply in a plugin would otherwise bring back the topic
+    /// list after everyone else's.
+    ///
+    /// A choice's [`Choice::goodbye`] asks it when the list is built, the conversation
+    /// when the line is over. Conditions are evaluated only for an unflagged GOODBYE line
+    /// with links, and no Random line is drawn. A link whose condition is random
+    /// (GetRandomPercent) may be rolled differently here and when it is offered: a line
+    /// taken to lead on by a follow-up or a Link From then brings the ordinary topic list,
+    /// as before.
+    fn ends_conversation(&mut self, actor: FormId, topic: FormId, def: &InfoDef) -> bool {
+        if def.goodbye || self.data.goodbye != Some(topic) {
+            return def.goodbye;
+        }
+        let (data, dv, listener) = (self.data, self.dialogue_view(), Some(FormId::PLAYER_REF));
+        self.next_follow_up(actor, def).is_none()
+            && !self.player_links(topic, def).iter().any(|l| {
+                let lines = data.lines_tried(l.topic);
+                lines.iter().any(|i| dv.info(i).is_some_and(|d| l.takes_for_player(d)) && self.can_say(actor, listener, *i))
+            })
     }
 
     /// StartConversation with the player from `speaker` farther than [`WALK_UP_REACH`]
@@ -1086,12 +1139,7 @@ impl<'a> Game<'a> {
         let data = self.data;
         let dv = self.dialogue_view();
         let priority = |t: &FormId| dv.topic(t).map_or(50.0, |d| d.priority);
-        let mut links = self.links_after(topic, def);
-        // The speech challenge's failure topic is what the actor says when a challenge
-        // fails [documented: GECK wiki Topics Tab, SpeechChallengeFailure], not a choice
-        // for the player: its lines' Link From names the challenge it answers, and offered
-        // through it the list showed its Editor ID (Megaton's Lucas Simms in TTW, #3024).
-        links.retain(|l| l.from.is_none() || !dv.topic(&l.topic).and_then(|d| d.edid.as_deref()).is_some_and(|e| e.eq_ignore_ascii_case(SPEECH_CHALLENGE_FAILURE)));
+        let mut links = self.player_links(topic, def);
         if !def.choices.is_empty() {
             links.sort_by(|a, b| priority(&b.topic).total_cmp(&priority(&a.topic)));
             let out = self.offer(actor, &links);
@@ -1123,6 +1171,26 @@ impl<'a> Game<'a> {
         self.itr_menu(actor, out)
     }
 
+    /// The links of a line ([`Game::links_after`]) that can be offered to the player: its
+    /// choices, and of the topics linked by Link From those of type Topic, as Link From
+    /// reaches player dialogue only from the Topics tab (conversations between actors and
+    /// the radio share [`GameData::linked_from`]).
+    fn player_links(&self, topic: FormId, def: &InfoDef) -> Vec<Link> {
+        let dv = self.dialogue_view();
+        let mut links = self.links_after(topic, def);
+        // The speech challenge's failure topic is what the actor says when a challenge
+        // fails [documented: GECK wiki Topics Tab, SpeechChallengeFailure], not a choice
+        // for the player: its lines' Link From names the challenge it answers, and offered
+        // through it the list showed its Editor ID (Megaton's Lucas Simms in TTW, #3024).
+        links.retain(|l| {
+            l.from.is_none()
+                || dv.topic(&l.topic).is_some_and(|d| {
+                    d.topic_type == crate::data::topic_type::TOPIC && !d.edid.as_deref().is_some_and(|e| e.eq_ignore_ascii_case(SPEECH_CHALLENGE_FAILURE))
+                })
+        });
+        links
+    }
+
     /// The entries for the topics of `links` the actor has a line for ([`Game::link_line`]),
     /// in that order.
     fn offer(&mut self, actor: FormId, links: &[Link]) -> Vec<Choice> {
@@ -1136,13 +1204,8 @@ impl<'a> Game<'a> {
             if out.iter().any(|c| c.topic == topic) {
                 continue;
             }
-            // Link From reaches player dialogue only from the Topics tab: a player line
-            // (type Topic) of a topic of type Topic, as before conversations between actors
-            // and the radio shared [`GameData::linked_from`].
-            if link.from.is_some() && dv.topic(&topic).is_none_or(|d| d.topic_type != crate::data::topic_type::TOPIC) {
-                continue;
-            }
-            let player_line = |d: &InfoDef| link.from.is_none() || d.info_type == crate::data::topic_type::TOPIC;
+            // A topic linked by Link From answers with a player line (type Topic).
+            let player_line = |d: &InfoDef| link.takes_for_player(d);
             let found = match link.from {
                 None => self.select_choice_line(actor, listener, topic, player_line),
                 Some(_) => self.link_line_where(actor, listener, link, player_line, Says::Actor),
@@ -1173,7 +1236,7 @@ impl<'a> Game<'a> {
                 chars: if dumb { dv.topic(&topic).expect("topic").dumb_response.as_deref().unwrap_or("").chars().count() } else { dv.choice_text(topic, info).chars().count() },
                 dumb,
                 prompt: def.prompt.is_some(),
-                goodbye: def.goodbye,
+                goodbye: self.ends_conversation(actor, topic, def),
                 darkened: def.has(info_flag::ALWAYS_DARKEN) || (said && !def.has(info_flag::INFO_REFUSAL)),
                 challenge,
             });
@@ -1243,7 +1306,8 @@ impl<'a> Game<'a> {
     /// line with the Goodbye flag is said in the conversation like any other, the player
     /// held, and ends it when it is over ([`Game::finish_line`]) [owner statement
     /// 2026-11-11, issue #2157]. With `GameConfig::goodbye_at_once` it closes the
-    /// conversation at once and goes on in the world ([`Game::say_farewell`]).
+    /// conversation at once and goes on in the world ([`Game::say_farewell`]); a line of
+    /// the GOODBYE topic without the flag is held until it is over with the switch too.
     pub fn choose(&mut self, index: usize) -> Result<FormId, String> {
         let c = self.dialogue.as_ref().ok_or("no conversation is running")?;
         if c.line.is_some() {

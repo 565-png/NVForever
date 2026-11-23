@@ -10367,6 +10367,19 @@ expect = [
 ]
 
 [[scenario]]
+name = "goodbye-topic-unflagged"
+kind = "tool"
+source = "issue #3477: the GOODBYE topic's line ends the conversation when it is over without the Goodbye flag too, unless it leads on (fnv-game dialogue.rs ends_conversation; docs/spec-notes/dialogue.md §5). Keith (Aerotech Suite 200) says 0x0014E019, one of FalloutNV.esm's two unflagged GOODBYE lines; before, his topic list came back"
+areas = ["dialogue"]
+paths = ["crates/fnv-game/src/dialogue.rs"]
+commands = [["dialogue", "talk", "--schema", "schemas/fnv", "--actions", "tools/smoke/actions/keith-goodbye.actions.json", "{data}", "FalloutNV.esm"]]
+expect = [
+  { json = "events.?kind=choice_made.info", equals = "0x0014E019" },
+  { json = "events.?kind=choices_offered.actor", count = 1, label = "his topic list does not come back" },
+  { json = "events.?kind=dialogue_ended.reason", equals = "goodbye" },
+]
+
+[[scenario]]
 name = "hv-intercom-push"
 kind = "tool"
 source = "issue #2454: a talking activator no SetTalkingActivatorActor has reached speaks for the one actor its scripts name (fnv-game talking_activators.rs scripted_talking_actor [hypothesis]): sent out of the Hidden Valley bunker by McNamara (INFO 0016329B: controls off) on a route that never used the intercom, the inner door's script (SCPT 000E3665) has HVIntercomREF start a conversation and Ramos says 000E3664, whose end script gives the controls back; before, the intercom spoke for itself, had no line (no_line) and the controls stayed off"
