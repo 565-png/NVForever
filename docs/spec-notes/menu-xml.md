@@ -938,9 +938,32 @@ this change.
 
    [observed: MCMExtender.txt and supported.txt; directory listing of the installed
    mods' uio/public files] `darnui` is used both positive and negated; no
-   `uio\public\darnui.txt` was found. [hypothesis] Its meaning remains unknown;
-   NVForever treats the atom as false and logs it even in a short-circuited branch
-   (`!darnui` therefore evaluates true). No filename-based alias is assumed.
+   `uio\public\darnui.txt` was found. [observed: `PipBoyUITweaks.txt`, `ItemCards.txt`,
+   `MCMExtender.txt`, and `supported.txt` in public UIO mod manifests] Public lists
+   also use `darn` alongside `darnui` for DarNified UI and `vui+` for Vanilla UI Plus
+   (for example `vui+`, `vui+ || darn`, `vui+ && #..\ySI\ySI.xml`, and
+   `!vui+ && !darn && #..\ySI\ySI.xml`). [hypothesis] UIO's Nexus Mods 57174 mod-author
+   guide does not publish the built-in condition detection rules, and UIO's DLL and
+   source code were not consulted; NVForever evaluates `vui+` as true when
+   `Vanilla UI Plus.esp` is active or `menus\prefabs\vui+\settings.xml` or
+   `menus\prefabs\vui+\hudcenteredtext.xml` exists, and evaluates `darn`/`darnui` as
+   true when `DarNifiedUINV.esp` is active or `menus\prefabs\duinvsettings.xml` or
+   `menus\prefabs\darn\text_box.xml` exists (excluding standalone font packs such as
+   `menus\prefabs\DarN_Fonts\*`). Literal `false` evaluates false without warning
+   [design]. Any other unrecognized bare word remains `Condition::Unknown`: NVForever
+   treats the atom as false and logs it even in a short-circuited branch. No
+   filename-based alias is assumed.
+
+   [observed: `AimCollisionIndicator.txt`, `Colorful Icons Support - ySI.txt`, and
+   `ySIAssortedFixes.txt` in public UIO mod manifests] Some public lists ship 3-line
+   entries pairing an include/target line and a condition line (such as `#JDC\JDC.xml`,
+   `#JLM\JLM.xml`, or `!#VUI+\hudcenteredtext.xml`) with a trailing `true` line.
+   [hypothesis] UIO's public Nexus Mods 57174 guide documents only the 2-line format
+   and UIO's DLL and source code were not consulted; NVForever consumes at most one
+   optional trailing `true` line after a valid 2-line entry while retaining line 2's
+   condition. Extra trailing lines beyond a single `true`, standalone `true` lines not
+   following a valid entry, and unobserved 3rd-line tokens (such as `false`) still
+   emit `malformed include/target` warnings [design].
 
    [design] `fnv_ui::uio::{Lists, Condition, Report}` parses forgivingly, records
    malformed lines with list/line locations, and evaluates against a `Source` plus
