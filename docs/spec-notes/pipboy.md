@@ -65,6 +65,25 @@ Authored core and CPU pose regressions exercise this mapping; their execution
 and an installed-profile replay are recorded separately. No model visibility
 override or suppressed readiness warning is part of this change.
 
+[design: #2862, `player_body.rs`, `pipboy_arm.rs`, `anim_blend.rs`] When the
+built-in Pip-Boy arm clip is active (`pip.on_arm() && pip.warming.is_none()`,
+outside the Esc pause menu) while the virtual world clock is held
+(`--menu-pause original`), first-person seam smoothing also advances by the
+menu frame time (`PlayClock::frame_secs`) without ticking ordinary world/weapon
+clips or skipped script-sequence fades. Otherwise a frame without a new script
+tick (including `--no-scripts`, render frames between script ticks, and
+lowering transitions) leaves `Animator::last_dt == 0`, causing `Seams::smooth`
+to copy the pre-menu arms-down pose over the raised Pip-Boy when the player's
+hands were empty or holstered. Hidden warm-up poses evaluate unsmoothed
+(`Animator::pose_unsmoothed`) so they neither freeze on `last_dt == 0` nor
+overwrite live seam history, and retain `WarmUnculled`/`NoFrustumCulling` across
+consecutive warm frames until warming finishes or aborts (preventing a
+same-frame deferred-remove race between `restore_warm_pose` and `draw_warm_pose`
+that culled the rig behind the camera on alternating warm frames and triggered
+the zero-submission readiness cap). `requeue_raise` also refreshes retained
+mesh bins once on entering `Phase::Up`, and `show_rigs` keeps the first-person
+root's ECS `Visibility` synchronized with `Rig::shown`.
+
 - **The clip** [observed]: `pipboy.kf` is one sequence `Pipboy`, 0.7333 s, clamped, with
   text keys `start` 0, `Blend: 8` 0.033, `Hit` 0.333, `end` 0.733. It drives
   `Camera1st` (a small move, no turn) and both arms from the spine out. Measured on the
