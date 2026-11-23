@@ -1324,7 +1324,8 @@ From the ESM audit (docs/handoff/esm-full-audit-2026-10-24.md, gaps 7, 15, 17). 
   positioning or inner/outer radii settings in the game world"; 2D radius "forces playback
   in 2D but with 3D positioning and inner/outer radii settings in the game world. Use with
   stereo files only."
-- **The records** [observed, `SNDD`]: of FalloutNV.esm's 440 sounds with 2D, 232 store 0
+- **The records** [observed 2026-11-23: a one-off script over the plugins' SOUN records,
+  `SNDD` flag bits 6 and 11 and the maximum distance]: of FalloutNV.esm's 440 sounds with 2D, 232 store 0
   for the maximum distance and 1 has 2D Radius as well; of Lonesome Road's 30 with 2D, 11
   store 0 and 10 have 2D Radius as well, all 10 with distances. A record with no distances
   heard by distance is silent beyond a few units.
@@ -1355,14 +1356,16 @@ From the ESM audit (docs/handoff/esm-full-audit-2026-10-24.md, gaps 7, 15, 17). 
   creature's clips (sound keys, footfalls, armour footfalls, rustles, creature sound
   types), its jumps and landings, a creature's hit and death, a load door it passes
   (`DRSVegasDoorOpen`, the Freeside gates'), an effect hitting it and the sound a placed
-  line plays instead of a voice (107 responses name a 2D one, 105 of them songs [observed:
-  INFO records]) go by the record's distances whatever its flags, gain and reach both,
+  line plays instead of a voice (107 responses name a 2D one, 106 of them files under
+  `songs\` [observed 2026-11-23: the same script over the INFO `TRDT` sounds of FalloutNV.esm
+  and five add-ons, load-order winners]) go by the record's distances whatever its flags, gain and reach both,
   as before #3444; the player's own keys and placed objects' keys do not. The generic
   `chair_leftexit.kf` (IDLE `ChairLeftStand`) keys `NPCDocMStandUp` (2D, 265 to 1,600
   units): whole, every actor rising from a seat within 3,000 units (`ACTOR_RANGE`) would be
   heard. The falling
   gain is kept, not a whole one cut at the reach: it changes nothing from before, and has
-  no edge to step over. 12 sounds are such clip keys [observed, all NIF and KF files]: nine
+  no edge to step over. 12 sounds are such clip keys [observed 2026-11-23: `fnv-nif`'s `kf_sound_keys` example over the game's mesh archives, its
+  keys matched to the 2D SOUN records]: nine
   of Doc Mitchell's and the opening's clips, all with distances, and Mr House's
   `NPCMrHouseWakeUp`, `NPCMrHouseElectro` and `NPCMrHouseDeath`, with none. Those three stay
   as before: 1 ÷ distance, all but silent (0.01 at 100 units); his terminals' scripts also
