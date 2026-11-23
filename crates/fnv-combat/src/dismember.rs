@@ -106,6 +106,35 @@ pub fn chances(part: &BodyPart, b: &Blow, s: &Settings) -> (f32, f32) {
     if !severable && !explodable {
         return (0.0, 0.0);
     }
+    // A part flagged Explodable + Absolute (BPND flag bit 6, "Absolute" under Explodable
+    // in the GECK; xEdit "To Hit Chance - Absolute") uses its Explosion Chance % directly
+    // without the Bloody Mess torso gate or weapon On Hit restrictions [hypothesis: GECK
+    // Body Part dialog layout and FalloutNV.esm BPTDs — NVraven02, EyebotBodypartdata,
+    // TurretCeilingBodyPartData, NVTumbleweed, NVCRHouseBodyPartData, NVBigHorner, etc.
+    // all set Explodable + Absolute + 100 %; docs/spec-notes/dismemberment.md §2.2, §4.2].
+    if explodable && part.explodable_absolute() {
+        let explode = (part.explodable_chance_percent as f32).clamp(0.0, 100.0);
+        if !severable || explode >= 100.0 {
+            return (explode, 0.0);
+        }
+        // Any remaining roll share on a severable part stays eligible to sever by the
+        // normal On Hit rule [design: no vanilla/DLC Explodable+Absolute part is below 100 %].
+        let sever_rate = if b.bloody_mess {
+            match b.on_hit {
+                OnHit::DismemberOnly => s.mess_part_chance,
+                OnHit::Normal => s.mess_part_chance * s.sever_share / 100.0,
+                OnHit::ExplodeOnly | OnHit::Neither => 0.0,
+            }
+        } else {
+            match b.on_hit {
+                OnHit::DismemberOnly => s.dismember_chance,
+                OnHit::Normal => s.dismember_chance * s.sever_share / 100.0,
+                OnHit::ExplodeOnly | OnHit::Neither => 0.0,
+            }
+        };
+        let sever = ((100.0 - explode) * sever_rate.clamp(0.0, 100.0) / 100.0).clamp(0.0, 100.0 - explode);
+        return (explode, sever);
+    }
     let mut gone = if b.bloody_mess {
         if severable {
             s.mess_part_chance
@@ -269,5 +298,56 @@ mod tests {
         assert_eq!(parts_gone(&data, 0, Fate::Explode), vec![(0, Fate::Explode), (2, Fate::Sever)]);
         assert_eq!(scripted(&data, 1), Some((0, Fate::Explode)));
         assert_eq!(scripted(&data, 5), None);
+    }
+
+    /// #3435: `NVraven02` (and `EyebotBodypartdata`, `TurretCeilingBodyPartData`,
+    /// `NVTumbleweed`) flags its non-severable torso `Explodable` + `Absolute` (`To Hit
+    /// Chance - Absolute`) at 100 %. It explodes on any killing hit without Bloody Mess,
+    /// including `No Dismember/Explode` weapons such as the varmint rifle.
+    #[test]
+    fn explodable_absolute_parts_use_their_chance_without_bloody_mess_or_on_hit_gate() {
+        let s = Settings::default();
+        let crow_torso = part("Torso", &["Explodable", "To Hit Chance - Absolute"], 5, 100, "Perception Condition");
+        assert!(crow_torso.explodable() && crow_torso.explodable_absolute() && !crow_torso.severable());
+        for on_hit in [OnHit::Normal, OnHit::ExplodeOnly, OnHit::DismemberOnly, OnHit::Neither] {
+            for crippled in [false, true] {
+                let b = Blow { on_hit, crippled, overkill: 12.0, max_health: 6.0, bloody_mess: false, corpse: false };
+                assert_eq!(chances(&crow_torso, &b, &s), (100.0, 0.0), "{on_hit:?} crippled={crippled}");
+                assert_eq!(decide(&crow_torso, &b, &s, 0.0), Some(Fate::Explode));
+                assert_eq!(decide(&crow_torso, &b, &s, 0.999), Some(Fate::Explode));
+            }
+        }
+        // Severable + Explodable + Absolute at 100 % (e.g. Securitron head, Ant antenna)
+        // also explodes at 100 % across weapon On Hit settings.
+        let abs_head = part("Head 1", &["Severable", "Explodable", "To Hit Chance - Absolute"], 25, 100, "Perception Condition");
+        assert_eq!(chances(&abs_head, &blow(OnHit::Neither, 10.0), &s), (100.0, 0.0));
+        assert_eq!(chances(&abs_head, &blow(OnHit::DismemberOnly, 10.0), &s), (100.0, 0.0));
+    }
+
+    /// Controls for `Explodable + Absolute`:
+    /// - `Absolute` without `Explodable` never explodes;
+    /// - `Explodable` without `Absolute` on a non-severable torso stays gated on Bloody Mess;
+    /// - partial `Absolute` explosion chance (< 100 %) uses that chance directly and leaves
+    ///   the remaining roll share on a severable part eligible to sever as usual.
+    #[test]
+    fn explodable_absolute_respects_explodable_flag_and_partial_chances() {
+        let s = Settings::default();
+        // Absolute without Explodable: does not explode.
+        let not_explodable = part("Torso", &["To Hit Chance - Absolute"], 100, 100, "Endurance Condition");
+        assert_eq!(chances(&not_explodable, &blow(OnHit::Normal, 50.0), &s), (0.0, 0.0));
+        let sever_only_abs = part("Head 1", &["Severable", "To Hit Chance - Absolute"], 20, 100, "Perception Condition");
+        assert_eq!(chances(&sever_only_abs, &blow(OnHit::Normal, 50.0), &s), (0.0, 75.0));
+        // Ordinary non-severable torso without Absolute: still 0 % without Bloody Mess.
+        assert_eq!(chances(&torso(), &blow(OnHit::Normal, 50.0), &s), (0.0, 0.0));
+        // Partial Absolute chance on non-severable part: direct explosion chance, no sever.
+        let partial_torso = part("Torso", &["Explodable", "To Hit Chance - Absolute"], 50, 40, "Endurance Condition");
+        assert_eq!(chances(&partial_torso, &blow(OnHit::Neither, 10.0), &s), (40.0, 0.0));
+        // Partial Absolute chance on severable part: 40 % explode, remaining 60 % keeps normal sever rate.
+        let partial_head = part("Head 1", &["Severable", "Explodable", "To Hit Chance - Absolute"], 20, 40, "Perception Condition");
+        let (e, sv) = chances(&partial_head, &blow(OnHit::Normal, 10.0), &s);
+        assert!((e - 40.0).abs() < 1e-4 && (sv - 13.5).abs() < 1e-4 && e + sv <= 100.0, "({e}, {sv})");
+        assert_eq!(chances(&partial_head, &blow(OnHit::DismemberOnly, 10.0), &s), (40.0, 45.0));
+        assert_eq!(chances(&partial_head, &blow(OnHit::ExplodeOnly, 10.0), &s), (40.0, 0.0));
+        assert_eq!(chances(&partial_head, &blow(OnHit::Neither, 10.0), &s), (40.0, 0.0));
     }
 }

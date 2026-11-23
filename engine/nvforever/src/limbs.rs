@@ -565,4 +565,31 @@ mod tests {
         let chains = part_chains(&names, &parents, &bind, &[Some("Bip01 L Foot")]);
         assert_eq!(chains, vec![(0, vec![6])]);
     }
+
+    /// A crow's single-part BPTD (`NVraven02`, `Bip01 RigPelvis` under `Bip01 NonAccum`)
+    /// produces a body-part chain for part 0 rather than falling back to the whole-actor
+    /// capsule (#3435) [observed: `creatures\nvraven\skeleton.nif` node hierarchy].
+    #[test]
+    fn a_single_part_raven_pelvis_builds_a_part_zero_chain() {
+        let nodes: [(&str, Option<usize>, [f32; 3]); 11] = [
+            ("Scene Root", None, [0.0, 0.0, 0.0]),
+            ("Bip01", Some(0), [0.0, 0.0, 0.0]),
+            ("Bip01 NonAccum", Some(1), [0.0, 0.0, 0.0]),
+            ("Bip01 RigPelvis", Some(2), [-0.1, 0.0, 7.6]),
+            ("Bip01 RigSpine", Some(3), [0.1, 0.0, 7.6]),
+            ("Bip01 RigTorso", Some(4), [2.6, 0.0, 9.2]),
+            ("Bip01 RigNeck", Some(5), [3.5, 0.0, 11.5]),
+            ("Bip01 RigHead01", Some(6), [5.8, 0.0, 14.0]),
+            ("Bip01 RigJaw", Some(7), [6.8, 0.0, 14.6]),
+            ("Bip01 RigTail01", Some(3), [-0.8, 0.0, 7.2]),
+            ("Bip01 RigTail02", Some(9), [-4.5, 0.0, 5.5]),
+        ];
+        let names: Vec<Option<String>> = nodes.iter().map(|n| Some(n.0.to_string())).collect();
+        let parents: Vec<Option<usize>> = nodes.iter().map(|n| n.1).collect();
+        let bind: Vec<Vec3> = nodes.iter().map(|n| Vec3::from(n.2)).collect();
+        let chains = part_chains(&names, &parents, &bind, &[Some("Bip01 RigPelvis")]);
+        assert!(!chains.is_empty() && chains.iter().all(|(part, chain)| *part == 0 && !chain.is_empty()), "{chains:?}");
+        assert_eq!(chains[0].1.first().copied(), Some(3), "starts at Bip01 RigPelvis");
+        assert_eq!(chains[0].1.last().copied(), Some(8), "reaches Bip01 RigJaw");
+    }
 }

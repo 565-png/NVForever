@@ -52,6 +52,19 @@ Per part [documented: GECK wiki Body Part; xEdit layout in `schemas/fnv/combat.j
   The blood spout starts there.
 - Flag bit 6, "To Hit Chance - Absolute" in xEdit, is "Absolute" under Explodable in the GECK
   dialog [documented: GECK wiki Body Part]. No part of `DefaultBodyPartData` sets it [observed].
+  In FalloutNV.esm [observed: all 49 BPTD records decoded with `fnvtool esm decode`], 12 parts set
+  both Explodable and Absolute, all with `explodable_explosion_chance_percent = 100`:
+  - non-severable torso: `NVraven02` (`0x167346`, `NVCrRaven`/`VCrTier0Raven`, `LimbExplosion` +
+    `GoreBits01 × 3` + `BloodSpoutRedDataSet`), `EyebotBodypartdata` (`0x2F870`, Armor),
+    `TurretCeilingBodyPartData` (`0xA6452`, Hull), `NVTumbleweed` (`0x163CF3`, Branches);
+  - non-severable head: `NVCRHouseBodyPartData` (`0x13808B`), `NVBigHorner` (`0x108021`);
+  - severable + explodable head/brain: `AntBodyPartData` (`0x14C03`), `QueenAntBodyPartData`
+    (`0x2F86F`), `MirelurkBodyPartData` (`0x354E3`), `NVMantis` (`0x1040B0`),
+    `NVSecuritronBodyPartData` (`0x10699E`), `RexBodyPartData` (`0x17626D`).
+  The official add-ons likewise set Explodable + Absolute + 100 % on Dead Money's Ghost People
+  limbs (`NVDLC01GhostBodyPartData`) and Old World Blues' robo-scorpion brain/chassis and cyberdog
+  head (`NVDLC03BrainBotbodypartdata`, `NVDLC03CyberDogBodyPartData`) [observed: `DeadMoney.esm`,
+  `OldWorldBlues.esm`].
 - When a part is dismembered, every severable or explodable part sharing its actor value goes
   too (Head 1 and Brain share Perception Condition). A part not flagged Explodable never
   explodes, even when a part sharing its actor value does [documented: GECK wiki KillActor
@@ -349,16 +362,25 @@ mines' No Dismember/Explode are open until observer check 136 (a frag mine and a
 beside a settled corpse in the original) says what the original does. Then
 one roll decides, with these odds [observed, §4.1, unless tagged]:
 
-1. **A severable part** (head, arm, leg): 75 % on a kill, 100 % with the attacker's Bloody
+1. **Explodable + Absolute parts** (BPND flag bit 6, §2.2; e.g. `NVraven02`, `EyebotBodypartdata`,
+   `TurretCeilingBodyPartData`, `NVTumbleweed`, `NVCRHouseBodyPartData`, `NVBigHorner`, #3435):
+   use `explodable_chance_percent` (clamped to 0–100 %) directly as the explosion chance,
+   bypassing the Bloody Mess torso gate and weapon On Hit restrictions [hypothesis: GECK Body
+   Part dialog "Absolute" under Explodable and the masters' BPTD values — every `Explodable` +
+   `Absolute` part in FalloutNV.esm and the official add-ons sets 100 %]. When a part is also
+   Severable and its Absolute explosion chance is below 100 %, the remaining `(100 − explode) %`
+   share stays eligible to sever by the normal weapon On Hit rule [design]. A part without
+   Explodable never explodes even if bit 6 is set.
+2. **A severable part** (head, arm, leg): 75 % on a kill, 100 % with the attacker's Bloody
    Mess. Overkill and crippling do not change it.
-2. **The torso** (explodable only): never without Bloody Mess; with it 80 % if the hit crippled
-   the torso (its condition at or below 0 after the hit), 20 % if not.
-3. **No Dismember/Explode** weapons: nothing without Bloody Mess; with it half the odds above.
-4. **Which way**: Explode Only explodes; Dismember Only severs [hypothesis for the rate: the
+3. **The torso** (explodable only, without Absolute): never without Bloody Mess; with it 80 %
+   if the hit crippled the torso (its condition at or below 0 after the hit), 20 % if not.
+4. **No Dismember/Explode** weapons: nothing without Bloody Mess; with it half the odds above.
+5. **Which way**: Explode Only explodes; Dismember Only severs [hypothesis for the rate: the
    laser's kills were disintegrations]; Normal severs 30 % of the parts it takes and explodes
    the rest; Bloody Mess explodes what the weapon could not take otherwise (No
    Dismember/Explode, the torso).
-5. The part and every severable or explodable part sharing its actor value are gone (§2.2).
+6. The part and every severable or explodable part sharing its actor value are gone (§2.2).
    Only the Explodable ones among them explode; the others are severed.
 
 The masters' settings of §3 are not read: iCombatExplodePartChance 75 equals the measured
