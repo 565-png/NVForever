@@ -3551,6 +3551,17 @@ pub const LEAD_STUCK_SECONDS: f64 = 1.5;
 /// How much nearer the point counts as progress on that walk, in units [our choice].
 const LEAD_GAIN: f32 = 8.0;
 
+/// Whether two references are in the same space now, as the world has their cells: one
+/// worldspace (any of its exterior cells), or one interior cell. Unknown cells count as the
+/// same.
+fn same_space(game: &Game, a: FormId, b: FormId) -> bool {
+    let cell = |r: FormId| game.world.peek(r).and_then(|s| s.cell).or_else(|| game.world.placed.get(r).and_then(|p| p.cell));
+    match (cell(a), cell(b)) {
+        (Some(x), Some(y)) => x == y || game.world.placed.world_of(x).is_some_and(|w| game.world.placed.world_of(y) == Some(w)),
+        _ => true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -3585,16 +3596,5 @@ mod tests {
             assert!(v >= last && v - last <= 0.34, "{gap}: {last} to {v}");
             last = v;
         }
-    }
-}
-
-/// Whether two references are in the same space now, as the world has their cells: one
-/// worldspace (any of its exterior cells), or one interior cell. Unknown cells count as the
-/// same.
-fn same_space(game: &Game, a: FormId, b: FormId) -> bool {
-    let cell = |r: FormId| game.world.peek(r).and_then(|s| s.cell).or_else(|| game.world.placed.get(r).and_then(|p| p.cell));
-    match (cell(a), cell(b)) {
-        (Some(x), Some(y)) => x == y || game.world.placed.world_of(x).is_some_and(|w| game.world.placed.world_of(y) == Some(w)),
-        _ => true,
     }
 }

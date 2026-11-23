@@ -1328,7 +1328,12 @@ fn walk(p: &mut Pilot, w: &mut Walk, h: &mut Hands) -> Walked {
                         && where_is(g, sp.speaker).is_some_and(|(c, at)| c == here_cell && hdist(at, feet) < SCENE_RANGE)
                 }).map(|sp| sp.speaker)
             })
-            .flatten();
+            .flatten()
+            // Not the one the walk goes to: a player does not stand and watch the man it
+            // is fighting. Joe Cobb's scene with Trudy held the Goodsprings fight's walk to
+            // him while the saloon shot at the player (pilot-goodsprings-fight, the merge's
+            // smoke run 2026-11-23 [observed]).
+            .filter(|who| Some(*who) != w.target);
         if let Some(who) = scene {
             if w.scene_held == 0.0 {
                 let name = h.game(|g| g.data.name(who)).unwrap_or_default();
