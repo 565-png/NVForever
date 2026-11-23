@@ -3616,7 +3616,7 @@ already talking takes over at once, same topic or another; nothing is queued or 
 
 ## Added 2026-11-22 (ammo the equipped weapon cannot fire, #3442)
 
-265. **Does the Pip-Boy's Ammo tab dim the ammo the equipped weapon cannot fire?** (P3:
+288. **Does the Pip-Boy's Ammo tab dim the ammo the equipped weapon cannot fire?** (P3:
      #3442, a player expected it; with check 193, the mark on the loaded ammo.) Ours
      [design]: every row at full strength; the loaded ammo's row carries the equipped
      square. In the original, carry four kinds of ammo (12 gauge, 20 gauge, 9mm, .357)
