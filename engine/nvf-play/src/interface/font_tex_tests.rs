@@ -48,8 +48,8 @@ fn synthetic_rgba_dds(width: u32, height: u32, rgba: [u8; 4]) -> Vec<u8> {
     let mut bytes = tests::authored_rgba_dds(width, height);
     // authored_rgba_dds uses R=0xff0000, G=0x00ff00, B=0x0000ff, A=0xff000000 -> BGRA in LE.
     let bgra = [rgba[2], rgba[1], rgba[0], rgba[3]];
-    for px in bytes[128..].chunks_exact_mut(4) {
-        px.copy_from_slice(&bgra);
+    for px in bytes[128..].as_chunks_mut::<4>().0 {
+        *px = bgra;
     }
     bytes
 }
