@@ -982,6 +982,21 @@ impl PhysWorld {
         Some(arr3(self.w.bodies.get(b)?.center_of_mass() / self.k))
     }
 
+    /// The middle of a reference's colliders' bounding box, game units: where a shot at
+    /// it meets its shape, which can lie well off the reference's own origin (a thin
+    /// wall ~97 units off the camera target's origin, Classic Inspiration's photo
+    /// targets [observed]). `None` without colliders.
+    pub fn ref_collision_middle(&self, form_id: u32) -> Option<[f32; 3]> {
+        let k = self.k;
+        let colliders = self.refs.get(&form_id)?.iter().filter_map(|&b| self.w.bodies.get(b)).flat_map(|b| b.colliders().iter().copied());
+        let (lo, hi) = colliders.filter_map(|c| self.w.colliders.get(c).map(|c| c.compute_aabb())).fold((None::<[f32; 3]>, None::<[f32; 3]>), |(lo, hi), a| {
+            let (m, x) = ([a.mins.x, a.mins.y, a.mins.z], [a.maxs.x, a.maxs.y, a.maxs.z]);
+            (Some(lo.map_or(m, |l| [l[0].min(m[0]), l[1].min(m[1]), l[2].min(m[2])])), Some(hi.map_or(x, |h| [h[0].max(x[0]), h[1].max(x[1]), h[2].max(x[2])])))
+        });
+        let (lo, hi) = (lo?, hi?);
+        Some([(lo[0] + hi[0]) / 2.0 / k, (lo[1] + hi[1]) / 2.0 / k, (lo[2] + hi[2]) / 2.0 / k])
+    }
+
     /// The Havok material code of a reference's first collider that has one (a convex
     /// collider's, or a triangle mesh's first triangle's); `None` without one.
     pub fn ref_material(&self, form_id: u32) -> Option<u32> {
