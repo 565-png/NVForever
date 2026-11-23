@@ -142,10 +142,10 @@ pub trait EffectCtx {
     /// The icon file and the seconds of a message that is not a box, as [`Note`] has
     /// them.
     fn message_look(&self, message: FormId) -> (Option<String>, Option<f32>);
-    /// A skill's name and icon file (its AVIF record's FULL and ICON), for the line of a
-    /// skill book read.
-    fn skill_look(&self, code: u16) -> (String, Option<String>) {
-        (fnv_game::functions::AV_NAMES.get(code as usize).copied().unwrap_or("?").to_string(), None)
+    /// A skill's display name (its AVIF record's FULL, else the canonical actor-value
+    /// name), for the line of a skill book read.
+    fn skill_name(&self, code: u16) -> String {
+        fnv_game::functions::AV_NAMES.get(code as usize).copied().unwrap_or("?").to_string()
     }
     /// References whose enable parent chain leads to `r` (their presence follows it).
     fn enable_children(&self, r: FormId) -> Vec<FormId>;
@@ -418,14 +418,16 @@ pub fn effects(events: &[Event], skip: &BTreeSet<usize>, ctx: &dyn EffectCtx) ->
                     None => added.push((*item, *count)),
                 }
             }
-            // A skill book read: "<Skill> increased to <value>" with the skill's icon
-            // [hypothesis: wording and icon NVForever's, the original's line is not in
-            // the plugins; docs/spec-notes/skill-books.md §5].
+            // A skill book read: "<Skill> increased to <value>" with the default corner
+            // icon (`icon: None` -> `glow_message_vaultboy_neutral.dds`) rather than the
+            // 256x256 Pip-Boy `AVIF` skill illustration [hypothesis: wording and icon
+            // NVForever's, no MESG or GMST in the masters names a book read;
+            // docs/spec-notes/skill-books.md §5].
             // The player's tweak: no line for a book that gave nothing [design: docs/design/tweaks.md].
             EventKind::BookRead { actor, points, .. } if *actor == player && *points == 0.0 && ctx.tweaks().is_some_and(|t| t.no_book_message_without_gain) => {}
             EventKind::BookRead { actor, value, skill, .. } if *actor == player => {
-                let (name, icon) = ctx.skill_look(*skill);
-                out.push(ScriptEffect::Notify(Note { text: format!("{name} increased to {}", value.round()), icon, seconds: None }));
+                let name = ctx.skill_name(*skill);
+                out.push(ScriptEffect::Notify(Note { text: format!("{name} increased to {}", value.round()), icon: None, seconds: None }));
             }
             EventKind::ItemRemoved { from, item, count, silent: false } if *from == player => {
                 let n = ctx.name(*item);
@@ -1146,6 +1148,26 @@ mod tests {
         let pick = Activation { outcome: Outcome::PickedUp { item: CAPS, count: 5, owner: None }, unlocked_with: None, script: None };
         let picked = [ev(EventKind::Activated { reference: FormId(0x55), by: FormId::PLAYER_REF, outcome: Some(serde_json::to_value(&pick).unwrap()) }), caps(5, false)];
         assert_eq!(sounds(&picked), vec![]);
+    }
+
+    /// #3433: skill-book and iconless `NoteShown` (e.g. critical-hit) corner notifications
+    /// use `icon: None` (default Vault Boy corner icon), while explicit `MESG` icons are
+    /// preserved.
+    #[test]
+    fn book_read_and_iconless_notes_use_default_corner_icon() {
+        let e = run(vec![
+            EventKind::BookRead { actor: FormId::PLAYER_REF, book: FormId(0x1234), skill: 41, points: 3.0, value: 53.0, perks: vec![] },
+            EventKind::NoteShown { text: "Critical hit on Giant Soldier Ant".into(), icon: None, seconds: 2.0 },
+            EventKind::MessageShown { message: FormId(0xAA), text: Some("With icon.".into()), buttons: vec![], hidden: vec![] },
+        ]);
+        assert_eq!(
+            e,
+            vec![
+                ScriptEffect::Notify(Note { text: "Guns increased to 53".into(), icon: None, seconds: None }),
+                ScriptEffect::Notify(Note { text: "Critical hit on Giant Soldier Ant".into(), icon: None, seconds: Some(2.0) }),
+                ScriptEffect::Notify(Note { text: "With icon.".into(), icon: Some("icons\\pain.dds".into()), seconds: Some(10.0) }),
+            ]
+        );
     }
 
     #[test]
