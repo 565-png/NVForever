@@ -484,6 +484,14 @@ pub struct Detection {
     pub clear: bool,
 }
 
+impl Detection {
+    /// Not detected: the value held at the top of the Hidden band, sight as measured.
+    fn hide(&mut self, settings: &Settings) {
+        self.value = self.value.min(settings.noticed_min);
+        self.band = Band::Hidden;
+    }
+}
+
 /// Seconds of game time an actor the player woke stays up ([`Game::wake`]) [our choice].
 pub const WAKE_SECONDS: f64 = 30.0;
 
@@ -748,11 +756,20 @@ impl Game<'_> {
             d.band = if d.value > 0.0 { Band::Detected } else if d.value > settings.noticed_min { Band::Noticed } else { Band::Hidden };
         }
         if self.extra.get(&detector).is_some_and(|e| e.unconscious) || self.ghost_hidden_from(detector, target) {
-            d.value = d.value.min(settings.noticed_min);
-            d.band = Band::Hidden;
+            d.hide(settings);
         }
         let before = self.detection.record(detector, target, d, self.time);
         (d, before)
+    }
+
+    /// `actor` was set unconscious: what it last detected reads Hidden at once, as its
+    /// measurements do from then on ([`Game::detect`]). Awake again, its next measurement
+    /// decides.
+    pub fn forget_detected_by(&mut self, actor: FormId) {
+        let settings = Settings::read(self);
+        for (_, (d, _)) in self.detection.pairs.iter_mut().filter(|((by, _), _)| *by == actor) {
+            d.hide(&settings);
+        }
     }
 }
 

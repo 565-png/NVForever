@@ -75,11 +75,15 @@ Robot Compliance "Deactivate" (0x0100C88F, the same entry as Robotics Expert's).
   [design]. The conditions are run on the key press only and the crosshair is as without
   the perk (nothing over a hostile actor, #2536; the name over the other) [hypothesis: what
   the original's crosshair and list show is check 282].
+- Known limit: a list opened on an actor that was talkable keeps its default action (Talk)
+  though the actor turns hostile while the list is open; picking it activates the actor as
+  when the list opened.
 - **The X-13 robot test** (OldWorldBlues.esm, SCPT 0x01006DA6) watches `GetDetected Player`
   on its three robots until all three read GetUnconscious 1 or one detects the player, the
   ones already shut down included [observed: the script's source]. An unconscious actor
-  (SetUnconscious) therefore detects no one, its pair held in the Hidden band
-  (`Game::detect`) [documented: GECK wiki SetUnconscious, unconscious actors "will not use
+  (SetUnconscious) therefore detects no one, its pairs held in the Hidden band from the
+  call on (`Game::forget_detected_by`, `Game::detect`) and measured as usual once it is
+  awake [documented: GECK wiki SetUnconscious, unconscious actors "will not use
   AI behavior"; hypothesis: detecting is part of it, check 282].
 
 ## 3. The acts

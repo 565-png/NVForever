@@ -1528,6 +1528,34 @@ fn an_unconscious_actor_detects_no_one() {
     assert_eq!(g.detect(&s, own, player, &seen).0.band, Band::Detected);
 }
 
+/// SetUnconscious 1 and GetDetected in one tick, with no measurement between: what the
+/// actor last detected reads Hidden at once; what others detect does not change; awake
+/// again (SetUnconscious 0), the next measurement decides.
+#[test]
+fn set_unconscious_hides_what_the_actor_last_detected() {
+    const GET_DETECTED: u16 = 0x102D;
+    const SET_UNCONSCIOUS: u16 = 0x10F1;
+    let f = fixture();
+    let mut g = game(&f);
+    let (own, player) = (FormId(OWN_REF), FormId::PLAYER_REF);
+    let s = fnv_game::detection::Settings::default();
+    let seen = fnv_game::detection::Situation { distance: 100.0, line_of_sight: true, in_view: true, light: 100.0, ..Default::default() };
+    g.detect(&s, own, player, &seen);
+    let other = g.detect(&s, player, own, &seen).0;
+    let detected = |g: &mut Game| call(g, GET_DETECTED, OWN_REF, &[form(player.0)]);
+    let set = |g: &mut Game, on: f64| call(g, SET_UNCONSCIOUS, OWN_REF, &[ArgValue::Value(Value::Num(on))]);
+    assert_eq!(detected(&mut g), 1.0);
+    set(&mut g, 1.0);
+    assert_eq!(detected(&mut g), 0.0);
+    let pair = *g.detection.get(own, player).unwrap();
+    assert!(pair.band == Band::Hidden && pair.value <= s.noticed_min && pair.seen && pair.clear, "{pair:?}");
+    assert_eq!(g.detection.get(player, own), Some(&other), "only its own detections");
+    set(&mut g, 0.0);
+    assert_eq!(detected(&mut g), 0.0, "until it is measured again");
+    g.detect(&s, own, player, &seen);
+    assert_eq!(detected(&mut g), 1.0);
+}
+
 #[test]
 fn a_mine_spares_its_owners_side() {
     let f = fixture();
