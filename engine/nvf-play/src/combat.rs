@@ -1668,7 +1668,7 @@ impl Combat {
             }
             let p = self.forms.projectiles.get(&proj);
             let range = p.map_or(0.0, |p| if p.range > 0.0 { p.range } else { crate::vats_mode::REACH });
-            let lob = p.map_or(f32::INFINITY, |p| throw_reach(p.speed, p.gravity * gravity));
+            let lob = p.map_or(f32::INFINITY, |p| throw_reach(p.speed, p.fall() * gravity));
             return Ok(VatsWeapon { id, edid, cost, style: AttackStyle::Thrown, rounds_per_shot: 1, rounds: carried, reach: range.min(lob), melee_reach: 0.0, classic_reach: None });
         }
         if AttackKind::of(w) != AttackKind::Gun {
@@ -3953,7 +3953,7 @@ pub(crate) fn fire(
                     // VATS mode's throw: from the eye on the low arc that lands on the mark
                     // (vats-mode.md §16.3), at 45° when it is out of reach; at the speed the
                     // throw will leave with.
-                    let (speed, g) = projectile.map_or((0.0, 0.0), |p| (p.speed * throw_mult, p.gravity * gravity));
+                    let (speed, g) = projectile.map_or((0.0, 0.0), |p| (p.speed * throw_mult, p.fall() * gravity));
                     let aim = fnv_combat::vats::lob_dir(eye, point, speed, g).unwrap_or_else(|| fnv_combat::vats::lob_far(eye, point));
                     shot::Leaving { origin: eye, aim, aim_point: point, aim_distance: vec::len(vec::sub(point, eye)), seen: Seen::ON_PATH, covered: false }
                 } else {

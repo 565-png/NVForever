@@ -4150,6 +4150,30 @@ capture setup, so every part of a check that needs an interior is still open.
      flagged entry is the game of Caravan. Jerry the Punk (reference 001413BF) has the
      other line, 0014C483; in Fallout 3, Pronto (Paradise Falls) has 000384CF.
 
+## Added 2026-11-23 (a thrown Lobber with gravity 0, #3441)
+
+289. **Does a thrown Nuka-grenade arc like a frag grenade?** (P2; #3441, combat-rules.md
+     "A Lobber whose gravity is 0".) Its PROJ (`NVDLC05GrenadeNukaProjectile`, GRA) is a
+     Lobber with gravity 0.0; the frag grenade's (`GrenadeFragProjectile` 000043F9) has
+     1.0. Ours [hypothesis]: a Lobber of 0 falls under the full gravity, so both arcs
+     match at the same speed. On flat open ground (the Goodsprings playground), aim level
+     and throw one of each: does the Nuka-grenade drop and land at about the frag's
+     distance, or fly straight on? Throw a plasma mine (`MinePlasmaProjectile`, also 0)
+     and a frag mine (1.0) the same way and say whether they land at the same distance.
+
+## Added 2026-11-23 (the meal on the table eating idles, #3610)
+
+290. **Where is the plate of a table eating idle?** (P3; #3610, idles.md §10 "Objects
+     hung from the accumulation root".) Ours [hypothesis]: `aogenericmeal.nif` hangs from
+     `Bip01` in its bind pose, so the plate sits about 70 units in front of the seated
+     actor and 71 above the floor. In Primm's NCR tent (cell PrimmTentsHayes), when Lt.
+     Hayes (PrimmHayesREF) sits at the table and plays `SitTableChairEatB` (or
+     `PrimmHayesREF.PlayIdle SitTableChairEatB` once he is seated), say whether a plate
+     of food appears on the table in front of him, and roughly where it sits relative to
+     his chest and to the table top. A student's `aostudenttestpaper.nif` hangs the same
+     way, if one is easier to find.
+
+
 ## Added 2026-11-23 (how long the quest lines stay, #3436)
 
 286. **How long do "Quest added", "Quest completed" and "Location discovered" stay on
