@@ -396,7 +396,7 @@ between them in the original [observed: owner playtest, #2739].
     the attack held 30 loops, aimed level; one run, o26_gl frag0): its figures are under
     "A thrown grenade rolls" and "Throw speed" below.
   - **A Lobber whose gravity is 0 falls under the full gravity** (#3441) [hypothesis;
-    observer check 284]. The load order's Lobbers with gravity 0 [observed: PROJ DATA
+    observer check 289]. The load order's Lobbers with gravity 0 [observed: PROJ DATA
     of the ten masters, 2026-11-23] are:
     - `NVDLC05GrenadeNukaProjectile`, `NVDLC05MFCGrenadeProjectile` and
       `NVDLC05MFCMineClusterProjectile2` (GunRunnersArsenal.esm);

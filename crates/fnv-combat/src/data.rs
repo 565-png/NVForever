@@ -468,7 +468,7 @@ impl ProjectileStats {
     /// the bottlecap, plasma and pulse mines are the load order's Lobbers with 0, every
     /// other has 1 or more (1.5 for the timed 25mm grenade); a player saw the thrown
     /// Nuka-grenade fly dead straight with the field as a multiplier, and nothing says
-    /// the original throws it unlike the frag grenade; observer check 284]. Every other
+    /// the original throws it unlike the frag grenade; observer check 289]. Every other
     /// type keeps the field: a missile of 0 flies straight.
     pub fn fall(&self) -> f32 {
         if self.gravity == 0.0 && self.kind.as_deref() == Some("Lobber") {

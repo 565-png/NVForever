@@ -4152,7 +4152,7 @@ capture setup, so every part of a check that needs an interior is still open.
 
 ## Added 2026-11-23 (a thrown Lobber with gravity 0, #3441)
 
-284. **Does a thrown Nuka-grenade arc like a frag grenade?** (P2; #3441, combat-rules.md
+289. **Does a thrown Nuka-grenade arc like a frag grenade?** (P2; #3441, combat-rules.md
      "A Lobber whose gravity is 0".) Its PROJ (`NVDLC05GrenadeNukaProjectile`, GRA) is a
      Lobber with gravity 0.0; the frag grenade's (`GrenadeFragProjectile` 000043F9) has
      1.0. Ours [hypothesis]: a Lobber of 0 falls under the full gravity, so both arcs
