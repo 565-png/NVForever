@@ -1172,4 +1172,25 @@ fn weapon_armor_and_aid_record_predicates_match_and_disqualify_cleanly() {
         query(&mut bad, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiHelmet)"),
         Err("an unsupported ySI predicate could change the highest-priority tag".into())
     );
+
+    // Non-existent shorthand key names (`weaponAutomatic` / `weaponScope`) stay Match::Unknown
+    // rather than aliasing `weaponIsAutomatic` / `weaponHasScope`.
+    for unknown_key in ["weaponAutomatic", "weaponScope"] {
+        files.write(
+            "ySI.json",
+            &config(
+                serde_json::json!([
+                    {"priority": 10, "weaponSkill": 41, "tag": "GunsBase"},
+                    {"priority": 30, unknown_key: 1, "tag": "UnknownShorthand"}
+                ]),
+                serde_json::json!([{"priority": 10, "tag": "GunsBase", "filename": "Owned/auto-gun.dds"}]),
+            ),
+        );
+        let mut g_unknown = game(&f);
+        assert_eq!(
+            query(&mut g_unknown, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiGun)"),
+            Err("an unsupported ySI predicate could change the highest-priority tag".into()),
+            "{unknown_key} must stay Match::Unknown"
+        );
+    }
 }

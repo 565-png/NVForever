@@ -46,22 +46,52 @@ remain [hypothesis] until an interactive-desktop multi-rule capture runs.
   classification timing after a flag edit is unobserved.
 - Record-backed `WEAP`, `ALCH`, and `ARMO` predicates are evaluated against existing
   `Game` record/override views (`schemas/fnv/objects.json`, `nvse.rs`, `nvse_jip7.rs`,
-  `nvse_jip8.rs`) [hypothesis]:
-  - `WEAP` (`Match::No` for non-weapons): `weaponSkill` (`DNAM/skill`, scalar or int
-    array), `weaponType` (`DNAM/animation_type`, scalar or int array), `weaponIsAutomatic`
-    (`DNAM/flags1` bit 1), `weaponHasScope` (`DNAM/flags1` bit 2), and `weaponIgnoresDTDR`
-    (`DNAM/flags1` bit 0).
-  - `ALCH` (`Match::No` for non-ingestibles): `aidIsFood` (`ENIT` flag `0x02`),
-    `aidIsMedicine` (`ENIT` flag `0x04`), and `aidIsAddictive` (`ENIT` withdrawal form
-    present).
-  - `ARMO` (`Match::No` for non-armor): `armorClass` (`1` Light, `2` Medium, `3` Heavy
-    via `Game::armor_class`, scalar or int array), `armorPower` (power-armor state via
-    `IsPowerArmor`), and the 11 `BMDT/biped_flags` slot booleans (`armorHead` bit 0,
-    `armorHair` bit 1, `armorUpperBody` bit 2, `armorPipBoy` bit 6, `armorBackpack` bit 7,
-    `armorHeadband` bit 9, `armorHat` bit 10, `armorEyeglasses` bit 11, `armorMask` bit 14,
-    `armorChoker` bit 15, `armorMouthObject` bit 16).
-  - For boolean record flags above, `1` matches true and `0` or `-1` matches false; any
-    other JSON value remains `Match::Unknown`.
+  `nvse_jip8.rs`). Every supported key name below appears verbatim in the public
+  **Sorting Icons 1.4b** (`ySI - Sorting Ycons`, Nexus mod 74358) `menus/ySI/ySI.json`
+  configuration file; no ySI/yUI DLL or source code was consulted. Any key not found in
+  a cited public source (including shorthand typos such as `weaponAutomatic` or
+  `weaponScope`) remains `Match::Unknown`:
+  - `WEAP` (`Match::No` for non-weapons [hypothesis]):
+    - `weaponSkill` [documented: Sorting Icons 1.4b `menus/ySI/ySI.json`;
+      `schemas/fnv/objects.json` `WEAP.DNAM.skill`, actor-value skill IDs `34`/`35`/`38`/`41`/`45`;
+      array support via `number_set`: hypothesis].
+    - `weaponType` [documented: Sorting Icons 1.4b `menus/ySI/ySI.json`, scalar and
+      integer arrays such as `[3, 4]`, `[5, 6, 7]`, `[8, 9]`, `[11, 12]`;
+      `schemas/fnv/objects.json` `WEAP.DNAM.animation_type`].
+    - `weaponIsAutomatic` [documented: Sorting Icons 1.4b `menus/ySI/ySI.json` (used
+      with `1`); `schemas/fnv/objects.json` `WEAP.DNAM.flags1` bit 1 `"Is Automatic"`].
+    - `weaponHasScope` [documented: Sorting Icons 1.4b `menus/ySI/ySI.json` (used with
+      `1`); `schemas/fnv/objects.json` `WEAP.DNAM.flags1` bit 2 `"Has Scope"`].
+    - `weaponIgnoresDTDR` [documented: Sorting Icons 1.4b `menus/ySI/ySI.json` (used
+      with `1`); `schemas/fnv/objects.json` `WEAP.DNAM.flags1` bit 0 `"Ignores Normal
+      Weapon Resistance"`].
+  - `ALCH` (`Match::No` for non-ingestibles [hypothesis]):
+    - `aidIsFood` [documented: Sorting Icons 1.4b `menus/ySI/ySI.json` (used with `1`);
+      `schemas/fnv/objects.json` `ALCH.ENIT.flags` bit 1 (`0x02`) `"Food Item"`].
+    - `aidIsMedicine` [documented: Sorting Icons 1.4b `menus/ySI/ySI.json` (used with
+      `1`); `schemas/fnv/objects.json` `ALCH.ENIT.flags` bit 2 (`0x04`) `"Medicine"`].
+    - `aidIsAddictive` [documented: Sorting Icons 1.4b `menus/ySI/ySI.json` (used with
+      `1`); `schemas/fnv/objects.json` `ALCH.ENIT.withdrawal_effect`; hypothesis:
+      evaluated as non-null withdrawal form].
+  - `ARMO` (`Match::No` for non-armor [hypothesis]):
+    - `armorClass` [documented: Sorting Icons 1.4b `menus/ySI/ySI.json` (used with `1`,
+      `2`, `3`); GECK wiki `GetArmorClass` (`1` Light, `2` Medium, `3` Heavy) via
+      `Game::armor_class`; array support via `number_set`: hypothesis].
+    - `armorPower` [documented: Sorting Icons 1.4b `menus/ySI/ySI.json` (used with `1`);
+      `schemas/fnv/objects.json` `ARMO.BMDT.general_flags` bit 5 `"Power Armor"` / GECK
+      wiki `IsPowerArmor`].
+    - The 11 `BMDT/biped_flags` slot booleans, each individually [documented: Sorting
+      Icons 1.4b `menus/ySI/ySI.json`; `schemas/fnv/objects.json` `ARMO.BMDT.biped_flags`]:
+      `armorHead` (bit 0 `"Head"`), `armorHair` (bit 1 `"Hair"`), `armorUpperBody`
+      (bit 2 `"Upper Body"`), `armorPipBoy` (bit 6 `"PipBoy"`), `armorBackpack`
+      (bit 7 `"Backpack"`), `armorHeadband` (bit 9 `"Headband"`), `armorHat`
+      (bit 10 `"Hat"`), `armorEyeglasses` (bit 11 `"Eye Glasses"`), `armorMask`
+      (bit 14 `"Mask"`), `armorChoker` (bit 15 `"Choker"`), and `armorMouthObject`
+      (bit 16 `"Mouth Object"`).
+  - Boolean value encoding: `1` matches true and `-1` matches false [documented: Sorting
+    Icons 1.4b `menus/ySI/ySI.json` uses `1` and `-1` on armor-slot rules]; accepting `0`
+    as false and `-1` on weapon/aid/power flags is [hypothesis]. Any other JSON value
+    remains `Match::Unknown`.
 - [engine design choice] Other predicates, including `formlist: 2`, threshold/ammo/misc
   predicates (`armorDT`, `weaponClipRounds`, `weaponNumProjectiles`, `weaponAttackAnim`,
   `weaponHandgrip`, `weaponSoundLevel`, `aidRestoresAV`, `aidDamagesAV`, `aidIsWater`,
