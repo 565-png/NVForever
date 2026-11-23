@@ -749,11 +749,15 @@ impl Game<'_> {
 
     /// Tell the scripts whether an actor has its weapon out (IsWeaponOut). The animating
     /// side tells it every frame for the actors it draws; for the others the rule decides
-    /// ([`Game::wants_weapon_out`]).
+    /// ([`Game::wants_weapon_out`]). Transitioning from holstered (`false`) to drawn
+    /// (`true`) dispatches `ShowOff:OnWeaponUnholster`.
     pub fn set_weapon_out(&mut self, actor: FormId, out: bool) {
         self.senses.weapon_told.insert(actor, self.time);
         if self.extra.get(&actor).is_some_and(|e| e.weapon_out) != out {
             self.extra.entry(actor).or_default().weapon_out = out;
+            if out {
+                self.showoff_on_weapon_unholster(actor);
+            }
         }
     }
 

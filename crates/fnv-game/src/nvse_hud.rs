@@ -88,9 +88,13 @@ impl Game<'_> {
         let (due, wait): (BTreeMap<_, _>, BTreeMap<_, _>) = std::mem::take(&mut self.hud.weapon_due).into_iter().partition(|(_, (_, f, _))| *f <= frame);
         self.hud.weapon_due = wait;
         for (a, (out, _, ask)) in due {
+            let was = self.extra.get(&a).is_some_and(|e| e.weapon_out);
             self.extra.entry(a).or_default().weapon_out = out;
             if ask {
                 self.hud.weapon_asks.push((a, out));
+            }
+            if !was && out {
+                self.showoff_on_weapon_unholster(a);
             }
         }
     }
