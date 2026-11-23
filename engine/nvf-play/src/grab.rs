@@ -412,12 +412,23 @@ fn grab(
     if let Some((c, by)) = start {
         let id = c.on.form_id();
         let name = name_of(&sim, script.as_deref(), id);
-        // The player's tweak: grabbing someone else's thing is stealing it [design: docs/design/tweaks.md].
+        // The player's tweak: grabbing someone else's thing is stealing it (when its stack value meets fMinValue) [design: docs/design/tweaks.md].
         if let (GripOn::Ref(_), Some(rt)) = (c.on, script.as_deref_mut().and_then(|s| s.rt.as_mut())) {
             if rt.game.tweaks.grabbing_is_theft && crate::activate::owned_by_other(Some(&rt.game), &sim, id, &crate::activate::outcome::Action::Take { count: 1 }) {
                 if let Some(base) = sim.base_of(id) {
-                    let seen = crate::script::with_world(rt, &mut sim, |rt| rt.game.player_stole(Some(FormId(id)), None, base, 1));
-                    info!("grab: {name} is someone else's: stolen (tweak){}", if seen { ", seen" } else { "" });
+                    let count = sim
+                        .world
+                        .peek(FormId(id))
+                        .map(|s| s.count)
+                        .or_else(|| sim.refs.get(FormId(id)).and_then(|r| r.count))
+                        .unwrap_or(1)
+                        .max(1) as u32;
+                    let stolen = crate::script::with_world(rt, &mut sim, |rt| {
+                        rt.game.grab_triggers_theft(base, count).then(|| rt.game.player_stole(Some(FormId(id)), None, base, count as i32))
+                    });
+                    if let Some(seen) = stolen {
+                        info!("grab: {name} is someone else's: stolen (tweak){}", if seen { ", seen" } else { "" });
+                    }
                 }
             }
         }

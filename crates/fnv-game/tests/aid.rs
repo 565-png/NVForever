@@ -1059,3 +1059,81 @@ fn the_preview_names_script_effects_shown_by_name() {
     assert!(m.shows_name());
     assert!(!g.data.magic_effects[&FormId(SCRIPT_FX)].shows_name());
 }
+
+/// `[Sleep Healing] bMiscStatRequiresSleepDuration`: with a minimum sleep duration set,
+/// Times Slept increments only when the sleep meets that duration unless the option is off.
+#[test]
+fn sleep_misc_stat_requires_duration_gates_times_slept() {
+    use fnv_game::misc_stats::TIMES_SLEPT;
+    let f = fixture();
+
+    // Default (sleep_heal_min_hours = 0): any sleep counts.
+    let mut g = game(&f);
+    assert_eq!(g.tweaks.sleep_heal_min_hours, 0);
+    assert!(g.tweaks.sleep_misc_stat_requires_duration);
+    g.begin_rest(true, 1);
+    assert_eq!(g.misc_stat(TIMES_SLEPT), 1.0);
+
+    // Min duration 6h, bMiscStatRequiresSleepDuration = true: 3h does not count, 6h does.
+    let mut g = game(&f);
+    g.tweaks.sleep_heal_min_hours = 6;
+    g.tweaks.sleep_misc_stat_requires_duration = true;
+    g.begin_rest(true, 3);
+    assert_eq!(g.misc_stat(TIMES_SLEPT), 0.0, "short sleep skipped");
+    g.rest.end();
+    g.begin_rest(true, 6);
+    assert_eq!(g.misc_stat(TIMES_SLEPT), 1.0, "full duration sleep counts");
+
+    // Min duration 6h, bMiscStatRequiresSleepDuration = false: 3h still counts.
+    let mut g = game(&f);
+    g.tweaks.sleep_heal_min_hours = 6;
+    g.tweaks.sleep_misc_stat_requires_duration = false;
+    g.begin_rest(true, 3);
+    assert_eq!(g.misc_stat(TIMES_SLEPT), 1.0);
+}
+
+/// `[Grabbing Items Is Crime] fMinValue`: grabbing an owned item counts as stealing only
+/// when the grabbed stack's base value (unit value × count) meets `fMinValue`.
+#[test]
+fn grab_triggers_theft_respects_min_value_and_stack_count() {
+    const VAL0: u32 = 0x901;
+    const VAL5: u32 = 0x902;
+    const VAL15: u32 = 0x903;
+    let misc = |id: u32, edid: &str, value: i32| {
+        record(b"MISC", 0, id, &[sub(b"EDID", z(edid)), sub(b"DATA", [value.to_le_bytes(), 1.0f32.to_le_bytes()].concat())])
+    };
+    let bytes = [
+        tes4(),
+        top(b"MISC", &[misc(VAL0, "Worthless", 0), misc(VAL5, "Cheap", 5), misc(VAL15, "Costly", 15)].concat()),
+        top(b"NPC_", &record(b"NPC_", 0, 0x7, &[sub(b"EDID", z("Player"))])),
+        top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &record(b"CELL", 0, CELL, &[sub(b"EDID", z("Room"))])))),
+    ]
+    .concat();
+    let plugins = vec![Plugin::parse(&bytes, "GrabVal.esm".into()).unwrap()];
+    let lo = LoadOrder::new(&plugins).unwrap();
+    let schema = Schema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap();
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/script/functions.json");
+    let j: Json = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+    let table = FunctionTable::load(&p).unwrap();
+    let forms = FormStore::build(&lo, &schema);
+    let refs = RefTable::build(&lo, &schema);
+    let data = GameData::build(&lo, &schema, table, &j, &refs);
+    let world = World::new(&forms, &refs, SimConfig::default());
+    let mut g = Game::new(&data, world, GameConfig::default());
+
+    // Tweak off: never triggers.
+    assert!(!g.grab_triggers_theft(FormId(VAL15), 1));
+
+    // fMinValue = 0.0: even worthless items trigger.
+    g.tweaks.grabbing_is_theft = true;
+    g.tweaks.grabbing_is_theft_min_value = 0.0;
+    assert!(g.grab_triggers_theft(FormId(VAL0), 1));
+    assert!(g.grab_triggers_theft(FormId(VAL5), 1));
+
+    // fMinValue = 10.0: single 5-cap item skipped; stack of 2x5 = 10 triggers; single 15 triggers.
+    g.tweaks.grabbing_is_theft_min_value = 10.0;
+    assert!(!g.grab_triggers_theft(FormId(VAL0), 1));
+    assert!(!g.grab_triggers_theft(FormId(VAL5), 1));
+    assert!(g.grab_triggers_theft(FormId(VAL5), 2));
+    assert!(g.grab_triggers_theft(FormId(VAL15), 1));
+}
