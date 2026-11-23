@@ -75,7 +75,7 @@ impl Value {
 /// for `short`), 2147483647.5 → 2147483647, 3000000000.5 and −3000000000.5 →
 /// −2147483648; `L5.quest.var_storage`, docs/spec-notes/scripts.md §4.1].
 pub fn to_int_storage(x: f64) -> i32 {
-    if x.is_nan() || x >= 2_147_483_648.0 || x < -2_147_483_648.0 {
+    if !(-2_147_483_648.0..2_147_483_648.0).contains(&x) {
         i32::MIN
     } else {
         x.trunc() as i32
@@ -2952,9 +2952,11 @@ impl Vm<'_, '_> {
                     _ => x.sqrt(),
                 })
             }
-            "atan2" => {
+            // [documented: Fatan2 notes it is faster than dATan2; hypothesis: exact degree
+            // atan2(y, x) in [-180, 180], with (0, 0) -> 0.0].
+            "atan2" | "datan2" => {
                 let (y, x) = (val(self, 0)?.num()?, val(self, 1)?.num()?);
-                XVal::Num(y.atan2(x).to_degrees())
+                XVal::Num(if y == 0.0 && x == 0.0 { 0.0 } else { y.atan2(x).to_degrees() })
             }
             "pow" => {
                 let (a, b) = (val(self, 0)?.num()?, val(self, 1)?.num()?);
@@ -3499,6 +3501,8 @@ fn assign_op(op: XAssign) -> XOp {
         XAssign::Pow => XOp::Pow,
         XAssign::BitOr => XOp::BitOr,
         XAssign::BitAnd => XOp::BitAnd,
+        XAssign::Shl => XOp::Shl,
+        XAssign::Shr => XOp::Shr,
         XAssign::Mod | XAssign::Set => XOp::Mod,
     }
 }

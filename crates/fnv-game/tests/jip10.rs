@@ -61,7 +61,7 @@ fn plugin_bytes() -> Vec<u8> {
     let perks = [perk(PERK, "TestPerk", 0), perk(HIDDEN_PERK, "TestHiddenPerk", 1)].concat();
     let scripts = [
         source_script(QSCRIPT, "TestQuestScript", "float fOwn\nstring_var sText\nbegin GameMode\nend\n"),
-        source_script(ASCRIPT, "TestActiScript", "short iHits\nstring_var sText\nbegin OnHit\nset iHits to iHits + 1\nend\nbegin OnLoad\nset iHits to iHits + 10\nend\nbegin OnTriggerEnter\nMarkRef.SetRefExtraData 2 -903.5\nMarkRef.SetRefExtraData 6 TestStatic\nMarkRef.SetRefExtraData 19 \"Girly\"\nMarkRef.SetRefExtraData 18 7\nend\nbegin OnTriggerLeave\nMarkRef.SetRefExtraData\nend\n"),
+        source_script(ASCRIPT, "TestActiScript", "short iHits\nstring_var sText\nbegin OnHit\nset iHits to iHits + 1\nend\nbegin OnLoad\nset iHits to iHits + 10\nend\nbegin OnTriggerEnter\nMarkRef.SetRefExtraData 2 -903.5\nMarkRef.SetRefExtraData 6 TestStatic\nMarkRef.SetRefExtraData 19 \"Girly\"\nMarkRef.SetRefExtraData 18 7\nend\nbegin OnTriggerLeave\nMarkRef.SetRefExtraData\nend\nbegin OnDrop\nMarkRef.AuxVarSetFlt \"priv\" 7\nMarkRef.AuxVarSetFlt \"*tpriv\" 9\nMarkRef.AuxVarSetFlt \"_pub\" 11\nMarkRef.RefMapArraySetFloat \"rm\" 3\nMarkRef.RefMapArraySetFloat \"*trm\" 4\nMarkRef.RefMapArraySetFloat \"_pubrm\" 5\nMarkRef.SetRefExtraData 2 42\nend\nbegin OnUnequip\nClearModNVSEVars\nend\n"),
     ]
     .concat();
     let stat = record(b"STAT", 0, STAT, &[sub(b"EDID", z("TestStatic"))]);
@@ -347,4 +347,61 @@ fn text_files() {
     assert_eq!(s(&mut g, "SetFunctionValue (ReadStringFromFile \"nvf_jip10_test.txt\")"), "one\ntwo\nthree\n\nfour 5", "an append starts a line [observed]");
     assert_eq!(s(&mut g, "SetFunctionValue (ReadStringFromFile \"nvf_jip10_test.txt\" 2 2)"), "two\nthree", "no break after the last line [observed]");
     assert_eq!(s(&mut g, "SetFunctionValue (ReadStringFromFile \"nvf_jip10_no_such_file.txt\")"), "");
+}
+
+#[test]
+fn clear_mod_nvse_vars_clears_target_mod_only() {
+    let f = fixture();
+    let mut g = game(&f);
+
+    // Populate Jip10.esm's private saved & temporary aux vars, refmaps, public vars,
+    // and SetRefExtraData from a script belonging to Jip10.esm (mod index 0).
+    assert_eq!(n(&mut g, "ActiRef.FakeScriptEvent \"OnDrop\""), 1.0);
+    // Seed a second mod's private entries directly so we verify isolation across mods.
+    g.ext.jip.aux.entry(MARK).or_default().insert("priv\u{1}othermod.esp".into(), vec![XVal::Num(77.0)]);
+    g.ext.jip_temp.aux.entry(MARK).or_default().insert("*tpriv\u{1}othermod.esp".into(), vec![XVal::Num(88.0)]);
+    g.ext.jip.refmaps.entry("rm\u{1}othermod.esp".into()).or_default().push((MARK, XVal::Num(99.0)));
+    g.ext.jip_temp.refmaps.entry("*trm\u{1}othermod.esp".into()).or_default().push((MARK, XVal::Num(100.0)));
+    g.other.jip10.extra.entry(FormId(MARK)).or_default().entry(1).or_default().insert(2, XVal::Num(55.0));
+
+    // Runtime call with no plugin and no explicit mod name leaves all state untouched.
+    q(&mut g, "ClearModNVSEVars");
+    assert!(g.ext.jip.aux.get(&MARK).is_some_and(|m| m.contains_key("priv\u{1}jip10.esm")));
+    assert!(g.ext.jip_temp.aux.get(&MARK).is_some_and(|m| m.contains_key("*tpriv\u{1}jip10.esm")));
+    assert_eq!(n(&mut g, "MarkRef.GetRefExtraData 2 0"), 42.0);
+
+    // 0-arg ClearModNVSEVars called from Jip10.esm clears Jip10.esm's private aux vars,
+    // private refmaps (saved + temporary), and extra data, leaving public and OtherMod.esp intact.
+    assert_eq!(n(&mut g, "ActiRef.FakeScriptEvent \"OnUnequip\""), 1.0);
+    assert!(g.ext.jip.aux.get(&MARK).is_some_and(|m| !m.contains_key("priv\u{1}jip10.esm")));
+    assert!(g.ext.jip_temp.aux.get(&MARK).is_some_and(|m| !m.contains_key("*tpriv\u{1}jip10.esm")));
+    assert!(!g.ext.jip.refmaps.contains_key("rm\u{1}jip10.esm"));
+    assert!(!g.ext.jip_temp.refmaps.contains_key("*trm\u{1}jip10.esm"));
+    assert_eq!(n(&mut g, "MarkRef.RefHasExtraData 0"), 0.0);
+    // Public and OtherMod.esp data survive untouched.
+    assert_eq!(n(&mut g, "MarkRef.AuxVarGetFlt \"_pub\""), 11.0);
+    assert!(g.ext.jip.refmaps.contains_key("_pubrm"));
+    assert!(g.ext.jip_temp.refmaps.contains_key("*trm\u{1}othermod.esp"));
+    assert!(g.ext.jip.aux.get(&MARK).is_some_and(|m| m.contains_key("priv\u{1}othermod.esp")));
+    assert!(g.ext.jip_temp.aux.get(&MARK).is_some_and(|m| m.contains_key("*tpriv\u{1}othermod.esp")));
+    assert!(g.ext.jip.refmaps.contains_key("rm\u{1}othermod.esp"));
+    assert_eq!(n(&mut g, "MarkRef.GetRefExtraData 2 1"), 55.0);
+
+    // Explicit modName argument clears that named mod (case-insensitively) and preserves public data.
+    assert_eq!(n(&mut g, "ActiRef.FakeScriptEvent \"OnDrop\""), 1.0);
+    q(&mut g, "ClearModNVSEVars \"Jip10.esm\"\nClearModNVSEVars \"OtherMod.esp\"");
+    assert!(g.ext.jip.aux.get(&MARK).is_some_and(|m| !m.contains_key("priv\u{1}jip10.esm") && !m.contains_key("priv\u{1}othermod.esp")));
+    assert!(g.ext.jip_temp.aux.is_empty());
+    assert!(!g.ext.jip.refmaps.contains_key("rm\u{1}jip10.esm"));
+    assert!(!g.ext.jip.refmaps.contains_key("rm\u{1}othermod.esp"));
+    assert!(g.ext.jip_temp.refmaps.is_empty());
+    assert_eq!(n(&mut g, "MarkRef.RefHasExtraData 0"), 0.0);
+    assert_eq!(n(&mut g, "MarkRef.AuxVarGetFlt \"_pub\""), 11.0);
+    assert!(g.ext.jip.refmaps.contains_key("_pubrm"));
+
+    // End-to-end compound bitwise-OR assignment with nested GetINIFloat_Cached/Clamp/Floor/shift.
+    assert_eq!(
+        q(&mut g, "int iINITemp\niINITemp = 1\niINITemp |= (Floor (Clamp (GetINIFloat_Cached \"Main:bVisible\" \"Widget.ini\" 1) 0 1)) << 1\nSetFunctionValue iINITemp"),
+        XVal::Num(3.0),
+    );
 }

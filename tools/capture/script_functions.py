@@ -651,6 +651,17 @@ PAGELESS += [
     _x("GetVATSRightAreaFree", "GECK1", "float", ref="reference", cat="VATS Functions"),
 ]
 
+# Legacy JIP LN and NVSE functions with no active wiki page (ClearModNVSEVars superseded by
+# ClearJIPSavedData; dATan2 cross-referenced by Fatan2).
+PAGELESS += [
+    {"name": "ClearModNVSEVars", "page": None, "origin": "JIP", "returns": {"type": "int", "name": None},
+     "params": [{"name": "modName", "type": "string", "kind": "string", "optional": True}],
+     "categories": ["Functions (JIP)", "Miscellaneous Functions (JIP)"]},
+    {"name": "dATan2", "page": None, "origin": "NVSE", "returns": {"type": "float", "name": None},
+     "params": [{"name": "y", "type": "float", "kind": "float"}, {"name": "x", "type": "float", "kind": "float"}],
+     "categories": ["Functions (NVSE)", "Math Functions"]},
+]
+
 # Pages whose template `name` is another function's (copied from a sibling page): the
 # page title is the function's name [documented: each page's title and its example,
 # e.g. "GetConditionFormOneFloat HitReactionIdles 0 1"; the template says

@@ -434,6 +434,45 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             g.ext.jip.refmaps.retain(|k, _| keep(maps, k));
             zero
         }
+        // Legacy JIP LN command superseded by ClearJIPSavedData (no active wiki page)
+        // [hypothesis]: clears the target mod's private auxiliary variables and RefMaps
+        // (both saved and session-temporary) plus its SetRefExtraData entries. The target
+        // is the optional `modName` string argument, defaulting to the calling script's
+        // plugin; public variables, other mods' data, and calls with neither a plugin nor
+        // an explicit mod name leave state untouched.
+        "clearmodnvsevars" => {
+            let explicit = text(args, 0).filter(|s| !s.is_empty());
+            let target = explicit.clone().unwrap_or_else(|| g.other.plugin.clone());
+            if !target.is_empty() {
+                let owned = |k: &str| k.split_once('\u{1}').is_some_and(|(_, p)| p.eq_ignore_ascii_case(&target));
+                for store in [&mut g.ext.jip, &mut g.ext.jip_temp] {
+                    for vars in store.aux.values_mut() {
+                        vars.retain(|k, _| !owned(k));
+                    }
+                    store.aux.retain(|_, v| !v.is_empty());
+                    store.refmaps.retain(|k, _| !owned(k));
+                }
+            }
+            let owner = match explicit {
+                Some(ref name) => g
+                    .data
+                    .load_order
+                    .iter()
+                    .position(|l| l.eq_ignore_ascii_case(name))
+                    .and_then(|i| u8::try_from(i).ok()),
+                None => {
+                    let m = calling_mod(g);
+                    (m != NO_MOD).then_some(m)
+                }
+            };
+            if let Some(owner) = owner {
+                for m in g.other.jip10.extra.values_mut() {
+                    m.remove(&owner);
+                }
+                g.other.jip10.extra.retain(|_, m| !m.is_empty());
+            }
+            zero
+        }
         // ---- scripts and their event blocks switched off: `scriptOrList disable`,
         // `script`; `formOrList "events" disable`, `form "event"` [documented].
         "setscriptdisabled" => {

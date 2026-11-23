@@ -75,13 +75,15 @@ pub enum Kw {
 }
 
 /// The assignments the Let macro takes without `let` [documented: Let Macro: `=`, `+=`,
-/// `-=`, `*=`; observed: `/=`, JustAssortedMods.esp 4.6 ships `fAP /= GetNumericGameSetting
-/// …` (JBTOnFireWeaponUDF) with compiled bytes, so the original's compiler takes it; `:=`,
-/// thirteen units of the owner's Blue Moon list (TLD_Travelers.esm `doOnce := 1`,
-/// DryWellsReloaded.esm `Quest.iObjectivePoint := 1`, DefenderRifle.esp `rContainer :=
-/// GetContainer`, …) ship compiled bytes where the line is the same Let as with `let`
-/// (#2275)].
-const MACRO_OPS: [&str; 6] = ["=", ":=", "+=", "-=", "*=", "/="];
+/// `-=`, `*=`; NVSE Expressions: `:=`, `/=`, `%=`, `^=`, `|=`, `&=`; observed: `/=`,
+/// JustAssortedMods.esp 4.6 ships `fAP /= GetNumericGameSetting …` (JBTOnFireWeaponUDF)
+/// with compiled bytes, so the original's compiler takes it; `:=`, thirteen units of the
+/// owner's Blue Moon list (TLD_Travelers.esm `doOnce := 1`, DryWellsReloaded.esm
+/// `Quest.iObjectivePoint := 1`, DefenderRifle.esp `rContainer := GetContainer`, …) ship
+/// compiled bytes where the line is the same Let as with `let` (#2275); `%=`, `^=`, `|=`,
+/// `&=`, `<<=`, `>>=` in bare Let-macro form: hypothesis matching `let` compound
+/// assignments].
+const MACRO_OPS: [&str; 12] = ["=", ":=", "+=", "-=", "*=", "/=", "%=", "^=", "|=", "&=", "<<=", ">>="];
 
 /// A line of the extender's grammar, by its first words.
 fn extender(l: &Line) -> Option<Kw> {
@@ -224,7 +226,7 @@ pub fn statement(l: &Line) -> Result<Statement, ParseError> {
                     // compiled bytes adding Rand's value to the one variable, #2275; read
                     // as a plain declaration it declared `rand` and the bounds as floats].
                     match x.get(2) {
-                        Some(eq) if eq.kind == XKind::Op && (MACRO_OPS.contains(&eq.text.as_str()) || ["^=", "|=", "&=", "%="].contains(&eq.text.as_str())) => {
+                        Some(eq) if eq.kind == XKind::Op && MACRO_OPS.contains(&eq.text.as_str()) => {
                             Kw::Decl { ty, names: vec![x[1].text.clone()], init: Some(x[1..].to_vec()) }
                         }
                         _ => Kw::Decl { ty, names: rest.iter().filter(|t| t.kind == Kind::Word).map(|t| t.text.clone()).collect(), init: None },
