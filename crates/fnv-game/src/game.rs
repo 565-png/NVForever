@@ -6669,34 +6669,46 @@ impl<'a> Game<'a> {
         if c.params.iter().any(|p| matches!(p, ArgValue::Value(Value::Ref(0)))) {
             return 0.0;
         }
-        // Only these three CTDA aliases use the already built named extender handlers.
-        // This is not a fallback for arbitrary unknown opcodes. Keep the established
-        // null-form condition rule above, and form remapping in cond::ParamTypes.
-        let native = match c.function {
-            cond::IS_PLAYER_SWIMMING => Some("isplayerswimming"),
-            cond::GET_PERK_RANK => Some("getperkrank"),
-            cond::GET_PC_USING_IRON_SIGHTS => Some("getpcusingironsights"),
-            _ => None,
-        };
-        if let Some(name) = native {
-            use fnv_script::vm::XVal;
-            let args = if c.function == cond::GET_PERK_RANK {
-                match c.params.first() {
-                    Some(ArgValue::Value(Value::Ref(r))) => vec![XVal::Ref(*r)],
-                    Some(ArgValue::Value(Value::Num(n))) => vec![XVal::Num(*n)],
-                    _ => Vec::new(),
-                }
-            } else { Vec::new() };
-            return match crate::nvse::call(self, &RunCtx { self_ref: on, ..RunCtx::default() }, name, on, &args) {
-                Some(Ok(XVal::Num(value))) => value,
-                Some(Err(error)) => {
-                    self.emit(EventKind::CallFailed { opcode: format!("0x{:04X}", ctx.opcode), name: name.into(), unit: ctx.unit.to_string(), error });
-                    0.0
-                }
-                _ => 0.0,
-            };
+        // An extender function in a condition (a mod's CTDA): the registry has no entry for
+        // its opcode, the original's opcode table names it, and the named extender
+        // dispatcher answers it, with the parameters `cond::ParamTypes` read (#3616,
+        // docs/spec-notes/extender-condition-aliases.md). The null-form rule above holds
+        // for it too; a name no handler knows goes on to the unhandled path below.
+        if functions::lookup(ctx.opcode).is_none() {
+            if let Some(v) = self.extender_condition(&ctx, on, &c.params) {
+                return v;
+            }
         }
         self.call_function(&ctx, &c.params).num()
+    }
+
+    /// [`Game::condition_value`]'s bridge to the named extender handlers: `None` when no
+    /// name the opcode table gives `ctx.opcode` has a handler.
+    fn extender_condition(&mut self, ctx: &Ctx, on: Option<FormId>, params: &[ArgValue]) -> Option<f64> {
+        use fnv_script::vm::XVal;
+        let args: Vec<XVal> = params
+            .iter()
+            .map(|p| match p {
+                ArgValue::Value(Value::Ref(r)) => XVal::Ref(*r),
+                ArgValue::Value(Value::Num(n)) => XVal::Num(*n),
+                ArgValue::Enum(e) => XVal::Num(*e as f64),
+                _ => XVal::Num(0.0),
+            })
+            .collect();
+        let run = RunCtx { self_ref: on, ..RunCtx::default() };
+        for name in crate::nvse_debug::opcode_names(ctx.opcode as u32) {
+            let lower = name.to_ascii_lowercase();
+            match crate::nvse::call(self, &run, &lower, on, &args) {
+                Some(Ok(XVal::Num(value))) => return Some(value),
+                Some(Ok(_)) => return Some(0.0),
+                Some(Err(error)) => {
+                    self.emit(EventKind::CallFailed { opcode: format!("0x{:04X}", ctx.opcode), name, unit: ctx.unit.to_string(), error });
+                    return Some(0.0);
+                }
+                None => {}
+            }
+        }
+        None
     }
 
     /// Dispatch a function by opcode (scripts and conditions share it).
