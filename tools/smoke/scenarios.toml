@@ -29402,7 +29402,7 @@ forbid = ["NVIDIA Reflex", "DLSS: slInit:", "DLSS: route:", "Validation Error", 
 name = "frame-generation"
 source = "#1778, docs/design/frame-generation.md: --frame-generation with FSR Quality while walking outdoors: generated frames presented between the real ones, the HUD kept, latency reduction turned on with it, no validation errors; the performance overlay (--fps, its readings logged by NVF_FPS_LOG) reads the frames shown and the rendered ones apart"
 areas = ["graphics"]
-paths = ["engine/nvforever/src/frame_gen.rs", "engine/nvforever/src/fg_presenter.rs", "engine/nvforever/src/fsr.rs", "engine/nvforever/src/frame_pace.rs", "engine/nvforever/src/anti_lag.rs", "engine/nvforever/src/nv_low_latency.rs", "engine/nvforever/src/perf_overlay/*", "engine/vendor/wgpu-ffx/**", "engine/vendor/bevy_render/src/view/window/**", "engine/vendor/wgpu-hal/src/vulkan/swapchain/**", "engine/nvforever/src/upscaler*", "engine/nvforever/src/upscaler/**", "engine/nvforever/src/dlss/**", "crates/nvf-dlss-files/**"]
+paths = ["engine/nvforever/src/frame_gen.rs", "engine/nvforever/src/fg_ui_layer.rs", "engine/nvforever/src/fg_presenter.rs", "engine/nvforever/src/fsr.rs", "engine/nvforever/src/frame_pace.rs", "engine/nvforever/src/anti_lag.rs", "engine/nvforever/src/nv_low_latency.rs", "engine/nvforever/src/perf_overlay/*", "engine/vendor/wgpu-ffx/**", "engine/vendor/bevy_render/src/view/window/**", "engine/vendor/wgpu-hal/src/vulkan/swapchain/**", "engine/nvforever/src/upscaler*", "engine/nvforever/src/upscaler/**", "engine/nvforever/src/dlss/**", "crates/nvf-dlss-files/**"]
 env = { WGPU_BACKEND = "vulkan", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "4:0:1,9:0.5:-1", NVF_FPS_LOG = "2" }
 args = ["--cell", "Goodsprings", "--play", "--size", "1280x720", "--fsr", "quality", "--frame-generation", "--graphics", "enhanced", "--no-voice", "--no-lodgen", "--fps"]
 run_seconds = 26
@@ -29410,6 +29410,7 @@ expect = [
   "FSR 3.1.4: Quality, 853x480 -> 1280x720, frame generation on",
   "frame generation: 853x480 -> 1280x720, a generated frame between each two real frames",
   "frame generation active: 1280x720, generated frame presented first, the real frame second",
+  { text = "frame generation: the HUD is the UI drawn alone over each generated frame (premultiplied), not interpolated", label = "the UI layer goes over the generated frame (fg_ui_layer.rs)" },
   { text = "frame generation: presenting on a thread of its own", label = "the presenter thread takes the window's images (h9x000/NVForever#1)" },
   { re = 'frame generation: \d+ real frames and (\d+) generated in ', range = [200, 1000000], label = "generated frames presented over ten seconds" },
   { text = "frame generation: … presents took … on the presenter thread", label = "presented from the presenter thread, not the render thread" },
@@ -29421,7 +29422,24 @@ forbid = [
   { text = "Caught rendering error", label = "a rendering error" },
   { text = "frame generation: on but not running", label = "frame generation switched on but held off" },
   { text = "the real frame is dropped", label = "a real frame without its second window image" },
+  { text = "such frames take the HUD from the frame without it", label = "the UI layer could not be drawn" },
 ]
+
+[[scenario]]
+name = "frame-generation-hud-compare"
+source = "docs/design/frame-generation.md \"The HUD and menus\": NVF_FG_UI_LAYER=0 keeps AMD's HUD-less mode (the HUD taken where the frame differs from its copy without it), for side-by-side checks against the UI layer"
+manual = "Against frame-generation: walk with the HUD up; with this switch the HP bar's and compass's faint parts smear or double in motion, with the UI layer they stay sharp. Screenshots take the real frame only; NVF_FRAME_GEN_CAPTURE_DIR writes the generated ones."
+areas = ["graphics"]
+paths = ["engine/nvforever/src/frame_gen.rs", "engine/nvforever/src/fg_ui_layer.rs"]
+env = { WGPU_BACKEND = "vulkan", NVF_FG_UI_LAYER = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_MOVE = "4:0:1,9:0.5:-1" }
+args = ["--cell", "Goodsprings", "--play", "--size", "1280x720", "--fsr", "quality", "--frame-generation", "--no-voice", "--no-lodgen"]
+run_seconds = 20
+expect = [
+  "frame generation active: 1280x720, generated frame presented first, the real frame second",
+  { text = "frame generation: the HUD is taken from where the frame differs from its copy without it (AMD's HUD-less mode, NVF_FG_UI_LAYER=0)", label = "the switch keeps AMD's HUD-less mode" },
+  { re = 'frame generation: \d+ real frames and (\d+) generated in ', range = [100, 1000000], label = "generated frames presented" },
+]
+forbid = [{ text = "Validation Error", label = "a Vulkan validation error" }, { text = "Caught rendering error", label = "a rendering error" }, { text = "the UI drawn alone over each generated frame", label = "the UI layer used despite the switch" }]
 
 [[scenario]]
 name = "frame-generation-switch"
@@ -30169,18 +30187,18 @@ forbid = [
 
 [[scenario]]
 name = "dlssg-ui"
-source = "#2317, docs/design/dlss-frame-generation.md \"Per frame\" item 3: the UI alpha (R16Float, 1 where the frame differs from its HUD-less copy) tagged with the HUD-less copy and user interface recomposition on, while turning with the HUD up"
+source = "#2317, docs/design/dlss-frame-generation.md \"Per frame\" item 3: the UI drawn alone (fg_ui_layer.rs, premultiplied) tagged as the UI colour and alpha with the HUD-less copy and user interface recomposition on, while turning with the HUD up"
 note = "needs NVF_DLSS_DIR with the frame generation files; front = true as dlssg-on."
-manual = "Watch the HUD while the view turns (13 to 14 s into play): it should stay sharp, without the smear generated frames gave it before the UI buffer. Screenshots cannot show it: they take the real frame, never a generated one."
+manual = "Watch the HUD while the view turns (13 to 14 s into play): it should stay sharp, the HP bar's and compass's faint parts too, without the smear generated frames gave it before the UI buffer. Screenshots cannot show it: they take the real frame, never a generated one."
 areas = ["graphics"]
-paths = ["engine/nvforever/src/dlss/**", "crates/nvf-dlss-files/**"]
+paths = ["engine/nvforever/src/dlss/**", "crates/nvf-dlss-files/**", "engine/nvforever/src/fg_ui_layer.rs"]
 requires = ["NVF_DLSS_DIR"]
 front = true
 env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "dlssg-ui-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_LOOK = "13:220:-6.4,13.2:235:-6.4,13.4:250:-6.4,13.6:265:-6.4" }
 args = ["--cell", "Goodsprings", "--pos=-69814,774,8451", "--heading", "205.5", "--pitch=-6.4", "--play", "--hour", "12", "--size", "1280x720", "--upscaler", "dlss", "--upscaler-quality", "quality", "--frame-generation", "dlss", "--log-frame-times", "10", "--no-voice", "--no-lodgen"]
 run_seconds = 22
 expect = [
-  { re = 'DLSS-G: UI buffer: 1280x720 R16Float UI alpha \(1 where the frame differs from its HUD-less copy, 0 elsewhere\), tagged eValidUntilPresent with the HUD-less copy; user interface recomposition on', label = "the UI alpha tagged" },
+  { re = 'DLSS-G: UI buffer: 1280x720 Rgba8Unorm UI colour and alpha \(the UI drawn alone over transparent black, premultiplied, sRGB-encoded as the back buffer with the HUD-less copy\), tagged eValidUntilPresent with the HUD-less copy; user interface recomposition on', label = "the UI layer tagged as the UI colour and alpha, encoded as the back buffer" },
   { re = 'DLSS-G: options: mode On, .*user interface recomposition on: eOk', label = "recomposition asked for" },
   { re = 'DLSS: evaluates: ([1-9]\d*) ok, 0 failed', label = "evaluates ok" },
 ]
@@ -30192,6 +30210,21 @@ forbid = [
   { re = 'present and acquire errors since last: [1-9]', label = "a VkResult error from DLSS-G's error callback" },
   { text = "DLSS-G: status ", label = "a DLSS-G status other than eOk" },
 ]
+
+[[scenario]]
+name = "dlssg-ui-alpha"
+source = "#2317, docs/design/dlss-frame-generation.md \"Per frame\" item 3: NVF_FG_UI_LAYER=0 keeps the UI alpha (R16Float, 1 where the frame differs from its HUD-less copy) tagged with the HUD-less copy and user interface recomposition on, for side-by-side checks against dlssg-ui"
+note = "needs NVF_DLSS_DIR with the frame generation files; front = true as dlssg-on."
+manual = "Against dlssg-ui: watch the HUD while the view turns (13 to 14 s into play); the scene behind see-through HUD parts stands still in generated frames here. Screenshots cannot show it: they take the real frame, never a generated one."
+areas = ["graphics"]
+paths = ["engine/nvforever/src/dlss/**", "crates/nvf-dlss-files/**", "engine/nvforever/src/fg_ui_layer.rs"]
+requires = ["NVF_DLSS_DIR"]
+front = true
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "dlssg-ui-alpha-home", NVF_FG_UI_LAYER = "0", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_LOOK = "13:220:-6.4,13.2:235:-6.4,13.4:250:-6.4,13.6:265:-6.4" }
+args = ["--cell", "Goodsprings", "--pos=-69814,774,8451", "--heading", "205.5", "--pitch=-6.4", "--play", "--hour", "12", "--size", "1280x720", "--upscaler", "dlss", "--upscaler-quality", "quality", "--frame-generation", "dlss", "--log-frame-times", "10", "--no-voice", "--no-lodgen"]
+run_seconds = 22
+expect = [{ re = 'DLSS-G: UI buffer: 1280x720 R16Float UI alpha \(1 where the frame differs from its HUD-less copy, 0 elsewhere\), tagged eValidUntilPresent with the HUD-less copy; user interface recomposition on', label = "the UI alpha tagged" }, { re = 'DLSS-G: options: mode On, .*user interface recomposition on: eOk', label = "recomposition asked for" }, { re = 'DLSS: evaluates: ([1-9]\d*) ok, 0 failed', label = "evaluates ok" }]
+forbid = [{ re = '\]\[streamline\]\[error\]', label = "an error from Streamline with the UI alpha" }, { text = "Validation Error", label = "a Vulkan validation error" }, { re = 'DLSS-G: UI buffer \(frame \d+\): ', label = "the UI alpha refused or not drawn" }, { text = "DLSS-G: status ", label = "a DLSS-G status other than eOk" }]
 
 [[scenario]]
 name = "pipboy-first-open"

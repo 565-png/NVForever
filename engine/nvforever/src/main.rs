@@ -196,6 +196,7 @@ mod ssao_lighting;
 mod taa;
 mod fg_presenter;
 mod ffx_api;
+mod fg_ui_layer;
 mod frame_gen;
 mod fsr;
 mod upscaler;
