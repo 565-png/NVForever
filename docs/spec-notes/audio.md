@@ -1489,3 +1489,35 @@ run-long `MixBus`):
   mix's overloads stay counted), `post` after it (M should be 0 and Q at most 0.98), K
   the frames it played below unity. It works on the 48 kHz bus; what the device's own
   conversion does after it is not measured here.
+
+## 19. BulletSnap.ini pass-by snap audio
+
+Clean-room native support for the `BulletSnap.ini` configuration schema (`fnv_combat::bullet_snap`, `nvf_play::bullet_snap`, wired from `nvf_play::combat::fly` and `nvforever::own_sounds`). The third-party plugin's DLL/source code was not consulted; only the public INI file schema and loose sound folder hierarchy were inspected.
+
+- **Vanilla unchanged when absent** [design]: when `Data\NVSE\Plugins\BulletSnapConfig\BulletSnap.ini` is absent from the VFS (or when no BulletSnap audio folders exist under `Data\Sound\fx\`), `BulletSnap` remains inactive: no folders are scanned, no synthetic SOUN records are registered, no snap audio is emitted, and vanilla `PROJ` `Supersonic` whizzes (`own_sounds.rs`, §15.5) behave identically to unmodded vanilla.
+- **INI location, sections, keys and defaults** [documented: public `Data\NVSE\Plugins\BulletSnapConfig\BulletSnap.ini`]:
+  - Path: `NVSE\Plugins\BulletSnapConfig\BulletSnap.ini` (case-insensitive VFS lookup).
+  - `[General]`:
+    - `ImpactedPlayerSnap = 0`: whether to play a snap when a projectile hits the player.
+    - `DistancedBasedSnap = 1`: whether to classify pass-by snaps into the four `[DistanceBased]` bands.
+    - `Subsonic = 1`: whether projectiles slower than `SubsonicThresholdSpeed` play subsonic pass-by audio.
+    - `SubsonicThresholdSpeed = 21000`: projectile speed threshold (game units/s) dividing subsonic from supersonic snaps.
+    - `SnapAngle = 75`: threshold angle in degrees between the projectile's flight direction and the vector from the projectile to the player camera (90° is perpendicular / closest approach); angles strictly greater than `SnapAngle` trigger the snap.
+  - `[DistanceBased]` (active when `DistancedBasedSnap = 1`):
+    - `VeryClose = 768`, `Close = 1536`, `Distance = 4092`, `Far = 8192` (maximum distance in game units for each band).
+  - `[DamageBased]`:
+    - `middledmg = 32`, `highdmg = 46` (damage thresholds selecting medium/high-caliber and very-high-caliber supersonic audio tiers).
+- **Parsing and clamping** [design]: parsed directly from raw bytes (`&[u8]`) with optional UTF-8 BOM stripping, `;`/`#` comment stripping, ASCII case-insensitive section/key matching, and finite monotonic clamping (`SnapAngle` in `0..=180`, non-negative speed/damage thresholds, `VeryClose <= Close <= Distance <= Far`, `middledmg <= highdmg`), so non-ASCII or legacy Windows-1252 bytes in comments or unknown keys never panic.
+- **Pass-by detection and eligibility** [hypothesis/design]:
+  - Non-player-owned ballistic projectiles (`Motion::Missile`, excluding mines, remote-detonated charges, beams, flames, lobbers, and non-supersonic explosive rockets) are tracked across swept movement segments (including hitscan `Ghost` flights).
+  - A projectile must approach the listener (`dot(dir, eye - from) > 0`, angle `< 90°`) before crossing `angle > SnapAngle`; it snaps at most once per pass-by at the closest point on that segment to the player's eye (`closest_on_segment`).
+  - When a projectile hits the player, `ImpactedPlayerSnap = 0` suppresses snapping for that projectile; `ImpactedPlayerSnap = 1` triggers one snap at the impact point.
+  - When active, `BulletSnap` suppresses the duplicate vanilla `PROJ` `Supersonic` whiz (`FXBulletWhiz`) in `own_sounds::projectiles` while leaving non-supersonic looping projectile sounds unchanged [design].
+- **Sound folder selection and playback** [hypothesis/design]:
+  - Loose `.wav`/`.ogg` folders under `Data\Sound\fx\`:
+    - Subsonic (`speed < SubsonicThresholdSpeed` with `Subsonic = 1`): `SubSonic\Close` (`VeryClose`/`Close`), `SubSonic\Mid` (`Distance`/`Far`).
+    - Supersonic General (`damage < middledmg`): `GeneralCloseMid\Close` (`VeryClose`/`Close`), `GeneralCloseMid\Mid` (`Distance`), `GeneralFar` (`Far`).
+    - Supersonic High-Caliber (`middledmg <= damage < highdmg`): `HCCloseMid\Close` (`VeryClose`/`Close`), `HCCloseMid\Mid` (`Distance`), falling back to `GeneralFar` (`Far`).
+    - Supersonic Very-High-Caliber (`damage >= highdmg`): `VeryHighCaliber\Close` (`VeryClose`/`Close`), `VeryHighCaliber\Mid` (`Distance`), `VeryHighCaliber\Far` (`Far`).
+  - Each non-empty folder is registered once on `Sfx` under a reserved synthetic FormID (`0xFFF1_0000..=0xFFF1_0009`) with reach `max(Far, 8192) * 1.25` and attenuation curve `[100, 80, 60, 40, 15]`, played via `ScaledSound` with per-band gain (`VeryClose` 1.0, `Close` 0.85, `Distance` 0.65, `Far` 0.45; `1.0` with `Close` folder within `8192` units when `DistancedBasedSnap = 0`) so snaps get 3D panning, reverb, volume sliders, and voice limits through the existing `Sfx` pipeline.
+
