@@ -13,8 +13,11 @@ brighter than paper white, up to the screen's peak, and never cut.
   [observed 2026-11-21: an NVIDIA laptop offers it only in its discrete GPU mode; in hybrid
   mode the surface offers 8-bit sRGB only]. Without it the game logs
   `hdr: this surface offers no Rgba16Float; staying SDR` and draws the SDR picture.
-- The setting takes effect at the next start (the surface format is chosen when the window's
-  surface is made). Every calibration row works live.
+- No restart: turning HDR on or off reconfigures the window's surface on the next frame
+  (vendored bevy_render `view/window/mod.rs`, `nvf_hdr_changed`) and swaps the tonemapping
+  clip (`lights.rs` `patch_clip`). A corner message says what the screen now shows: `HDR on:
+  scRGB, peak N nits, paper white M nits`, `HDR off: SDR output`, or HDR asked for on a
+  screen that offers none.
 
 ## Signal path
 
@@ -61,17 +64,33 @@ linear segment below 0.04045]. Values above 1 are left as they are.
 
 ## Settings (Display page)
 
-| Row | Range | Default | What it sets |
+One row, **HDR output**: Off, On, Calibrate... [design: PR #3348 review, "a lot of
+settings"]. Calibrate... keeps no state of its own: it opens the calibration below. The INI
+keeps the row as `On;peak=1000;paper=200` (`peak=0`: the screen's own).
+
+| Value | Range | Default | Set by |
 | --- | --- | --- | --- |
-| HDR output | on, off | off | the swapchain, next start |
-| HDR paper white | 80 to 400 nits | 200 | the picture's white |
-| HDR peak brightness | Auto, 400 to 2000 nits | Auto | the brightest value written |
-| HDR HUD brightness | 80 to 400 nits | 200 | the HUD's and menus' white |
-| HDR gamma 2.2 | on, off | on | the decode of the 0..1 range |
-| HDR highlight colour | 0 to 100 % | 100 % | the hue restore |
-| HDR highlight expansion | 0 to 100 % | 50 % | step 4.1 |
-| HDR light source brightness | x1 to x16 | x6 | the source gain, step 4.2 |
-| HDR brightness heatmap | on, off | off | the picture replaced by the heatmap |
+| Peak brightness | Auto, 400 to 4000 nits | Auto | calibration step 1 |
+| Brightness (paper white, the HUD with it) | 80 to 400 nits | 200 | calibration step 2 |
+| Gamma 2.2 | on | on | fixed |
+| Highlight colour | 100 % | 100 % | fixed |
+| Highlight expansion | 50 % | 50 % | fixed |
+| Light source brightness | x6 | x6 | fixed |
+
+## Calibration
+
+Two full-screen pictures over the settings page (`hdr_calibrate.rs`), as most games calibrate
+HDR. Left and Right move the value, Enter goes on, Backspace back, Esc puts both values back.
+
+1. **Peak brightness**: a white field at the peak being set, the game's title on it at
+   10,000 nits. Raised until the title just disappears, the field is as bright as the screen
+   goes.
+2. **Brightness**: a black field, the title in dark grey (3 % of paper white). Raised until
+   the title can just be seen. It sets paper white and the HUD's white together.
+
+The pictures are interface nodes in scRGB; the window blit scales them by the HUD's white,
+so a value v shows at v x paper white. Without an HDR surface a corner message says so and
+nothing opens.
 
 Every default and range is a design choice [design]. Paper white 200 nits is near ITU-R
 BT.2408's reference white (203 nits) [documented: ITU-R BT.2408].
@@ -83,11 +102,11 @@ it has run. It follows the screen the window is on: winit names a monitor by the
 device name DXGI reports (`\\.\DISPLAY1`) [hypothesis: both come from `GetMonitorInfo`'s
 `szDevice`]. Without a match, the brightest HDR output's figure; without any, 600 nits
 [design]. Environment overrides for a run: `NVF_HDR_PAPER_WHITE`, `NVF_HDR_PEAK`,
-`NVF_HDR_HEATMAP=1`.
+`NVF_HDR_HEATMAP=1` (the heatmap has no row now).
 
 ## Heatmap
 
-**HDR brightness heatmap** shows each pixel's output: grey (its SDR luminance) up to paper
+The heatmap (`NVF_HDR_HEATMAP=1`) shows each pixel's output: grey (its SDR luminance) up to paper
 white, then by the share of the room to the peak cyan (to 25 %), green (50 %), yellow (75 %),
 orange, and red from 98 %. It is meant for calibration and for checking that nothing is
 cut: a red area is at the peak, not past it.
@@ -96,6 +115,17 @@ cut: a red area is at the peak, not past it.
 no pixel was above paper white. The game's light is authored in display values, so in a
 plain daylight view only the sun, fire, emitters and stacked effects pass white. With the
 expansion at 50 % the brightest clouds rose 25 to 50 % into the room.
+
+## Frame generation and the HUD
+
+- DLSS-G reads a HUD-less copy of each frame (`frame_gen.rs` `capture_hudless`) and marks as
+  UI every pixel that differs from the finished frame. The HDR expansion ran in no fixed order
+  with that copy; taken first, the copy differed everywhere, the UI alpha was 1 on every
+  pixel and no frame was generated over the picture (PR #3348 review). `hdr_expand` now runs
+  before the copy.
+- The window blit's HUD scale is a uniform (`BlitPipeline::nvf_hdr_scale`), written when it
+  changes: moving the brightness rebuilds no pipeline (it was a shader constant, one
+  pipeline per step).
 
 ## Not done
 

@@ -111,14 +111,9 @@ fn prepare_view_upscaling_pipelines(
             samples: 1,
             source_space: ResolvedCompositingSpace::space(resolved_space),
             // NVForever HDR output: only the blit to a window with an HDR surface.
-            hdr_paper_white: match camera {
-                Some(c) if target_format == TextureFormat::Rgba16Float
-                    && matches!(c.target, Some(bevy_camera::NormalizedRenderTarget::Window(_))) =>
-                {
-                    nvf_hdr_paper_white()
-                }
-                _ => 0,
-            },
+            hdr: nvf_hdr_paper_white() > 0
+                && target_format == TextureFormat::Rgba16Float
+                && camera.is_some_and(|c| matches!(c.target, Some(bevy_camera::NormalizedRenderTarget::Window(_)))),
             hdr_gamma22: NVF_HDR_GAMMA22.load(core::sync::atomic::Ordering::Relaxed),
         };
 

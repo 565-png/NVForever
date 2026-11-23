@@ -97,7 +97,7 @@ impl Plugin for LightsPlugin {
         let tonemapping: Handle<Shader> = app.world().resource::<AssetServer>().load(TONEMAPPING_SHARED);
         app.insert_resource(LightingShader { handle, patched: false })
             .insert_resource(FunctionsShader { handle: functions, patched: false })
-            .insert_resource(TonemapShader { handle: tonemapping, patched: false })
+            .insert_resource(TonemapShader { handle: tonemapping, patched: false, hdr: false })
             .add_systems(PreUpdate, patch_clip)
             .add_systems(Update, (patch_attenuation, patch_display_sum, sync_script_lights, animate_lights, bind_model_lights, animate_model_lights).chain().after(nvf_play::PlaySet::Scripts));
     }
@@ -107,12 +107,29 @@ impl Plugin for LightsPlugin {
 struct TonemapShader {
     handle: Handle<Shader>,
     patched: bool,
+    /// The output the clip was installed for (HDR or SDR): a live switch swaps it.
+    hdr: bool,
 }
 
 /// Once Bevy's tonemapping functions have loaded, swap Tony McMapface's curve for the
 /// clip; the sky system is told to set its colours again.
 fn patch_clip(mut state: ResMut<TonemapShader>, mut shaders: ResMut<Assets<Shader>>, sky: Option<ResMut<crate::sky::SkyState>>) {
     if state.patched {
+        // HDR output switched live (hdr.rs): the clip for the other output in its place.
+        let hdr = bevy::render::view::window::NVF_HDR_SURFACE_ACTIVE.load(std::sync::atomic::Ordering::Relaxed);
+        if hdr == state.hdr || !CLIP_INSTALLED.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let Some(shader) = shaders.get(&state.handle) else { return };
+        let bevy::shader::Source::Wesl(source) = &shader.source else { return };
+        let (from, to) = if hdr { (GAME_CLIP, GAME_HDR) } else { (GAME_HDR, GAME_CLIP) };
+        let source = unix_lines(source);
+        if source.contains(from) {
+            let patched = crate::fog::with_source(shader, source.replace(from, to));
+            let _ = shaders.insert(&state.handle, patched);
+            info!("lights: the tonemapping clip switched to {}", if hdr { "HDR" } else { "SDR" });
+        }
+        state.hdr = hdr;
         return;
     }
     let Some(shader) = shaders.get(&state.handle) else { return };
@@ -136,6 +153,7 @@ fn patch_clip(mut state: ResMut<TonemapShader>, mut shaders: ResMut<Assets<Shade
         return;
     }
     let hdr = bevy::render::view::window::NVF_HDR_SURFACE_ACTIVE.load(std::sync::atomic::Ordering::Relaxed);
+    state.hdr = hdr;
     let patched = crate::fog::with_source(shader, source.replace(BEVY_TONY, if hdr { GAME_HDR } else { GAME_CLIP }));
     let _ = shaders.insert(&state.handle, patched);
     CLIP_INSTALLED.store(true, std::sync::atomic::Ordering::Relaxed);

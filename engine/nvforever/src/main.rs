@@ -82,6 +82,7 @@ mod eye_adapt;
 mod fog;
 mod haze;
 mod hdr;
+mod hdr_calibrate;
 mod aerial;
 mod fly;
 mod foot_ik;

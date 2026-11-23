@@ -36,7 +36,9 @@ static STARTED: AtomicBool = AtomicBool::new(false);
 static PEAK_NITS: AtomicU32 = AtomicU32::new(0);
 /// The HDR screen's peak as Windows reports it, read at start; 0 when none reported.
 static AUTO_PEAK: AtomicU32 = AtomicU32::new(0);
-/// The peak used when neither the slider nor Windows gives one.
+/// The HDR row's choice that opens the calibration.
+const CALIBRATE: &str = "Calibrate...";
+/// The peak used when neither the calibration nor Windows gives one.
 const FALLBACK_PEAK: u32 = 600;
 /// How far bright light keeps the SDR picture's hue, x1000 (the row's slider).
 static HUE_MILLI: AtomicU32 = AtomicU32::new(1000);
@@ -58,34 +60,53 @@ pub fn on() -> bool {
 
 fn set_wanted(on: bool) {
     WANTED.store(on, Relaxed);
-    if !STARTED.load(Relaxed) {
-        bevy::render::view::window::NVF_HDR_SURFACE.store(on, Relaxed);
+    // Live: the window's surface is reconfigured on the next frame (vendored bevy_render
+    // `view/window/mod.rs`), and `announce` says what it became.
+    bevy::render::view::window::NVF_HDR_SURFACE.store(on, Relaxed);
+}
+
+/// The corner message that says what the screen shows, each time it changes after the start:
+/// HDR with its peak and paper white, SDR, or HDR asked for on a screen that offers none.
+fn announce(mut last: Local<Option<(bool, bool)>>, messages: Option<ResMut<nvf_play::corner_messages::CornerMessages>>) {
+    let now = (on(), bevy::render::view::window::NVF_HDR_SURFACE_ACTIVE.load(Relaxed));
+    if !bevy::render::view::window::NVF_HDR_SURFACE_DECIDED.load(Relaxed) || *last == Some(now) {
+        return;
+    }
+    let first = last.is_none();
+    *last = Some(now);
+    let text = match now {
+        (_, true) => format!("HDR on: scRGB, peak {} nits, paper white {} nits", peak_nits(), paper_nits()),
+        (true, false) => "HDR asked for, but this screen offers no HDR (Windows HDR off?)".to_string(),
+        (false, false) => "HDR off: SDR output".to_string(),
+    };
+    info!("hdr: {text}");
+    if let Some(mut m) = messages {
+        // At the start only when HDR was asked for; every change after it.
+        if !first || now.0 {
+            m.push(nvf_play::script_events::Note { text, icon: None, seconds: Some(4.0) });
+        }
     }
 }
 
-fn paper_nits() -> u32 {
+/// The calibration's ranges, nits: brightness (paper white) and peak [design].
+pub(crate) const PAPER_MIN: u32 = 80;
+pub(crate) const PAPER_MAX: u32 = 400;
+pub(crate) const PEAK_MIN: u32 = 400;
+pub(crate) const PEAK_MAX: u32 = 4000;
+
+/// Paper white in nits: how bright the picture's white and, with it, the HUD look.
+pub(crate) fn paper_nits() -> u32 {
     bevy::core_pipeline::upscaling::NVF_HDR_PAPER_WHITE_NITS.load(Relaxed)
 }
-fn hud_nits() -> u32 {
-    bevy::core_pipeline::upscaling::NVF_HDR_HUD_NITS.load(Relaxed)
-}
-fn hud_part() -> f32 {
-    (hud_nits().clamp(80, 400) - 80) as f32 / 320.0
-}
-fn set_hud_part(v: f32) {
-    bevy::core_pipeline::upscaling::NVF_HDR_HUD_NITS.store(80 + ((v.clamp(0.0, 1.0) * 32.0).round() as u32) * 10, Relaxed);
-}
-
-/// Paper white slider: 80 to 400 nits in steps of 10.
-fn paper_part() -> f32 {
-    (paper_nits().clamp(80, 400) - 80) as f32 / 320.0
-}
-fn set_paper_part(v: f32) {
-    let nits = 80 + ((v.clamp(0.0, 1.0) * 32.0).round() as u32) * 10;
+/// Brightness (paper white), the HUD's white with it: one value, as most games' HDR
+/// calibration has [design: PR #3348 review, fewer rows].
+pub(crate) fn set_paper_nits(nits: u32) {
+    let nits = nits.clamp(PAPER_MIN, PAPER_MAX);
     bevy::core_pipeline::upscaling::NVF_HDR_PAPER_WHITE_NITS.store(nits, Relaxed);
+    bevy::core_pipeline::upscaling::NVF_HDR_HUD_NITS.store(nits, Relaxed);
 }
-/// The peak in nits now: the slider's, else the screen's, else [`FALLBACK_PEAK`].
-fn peak_nits() -> u32 {
+/// The peak in nits now: the calibration's, else the screen's, else [`FALLBACK_PEAK`].
+pub(crate) fn peak_nits() -> u32 {
     match PEAK_NITS.load(Relaxed) {
         0 => match AUTO_PEAK.load(Relaxed) {
             0 => FALLBACK_PEAK,
@@ -94,26 +115,38 @@ fn peak_nits() -> u32 {
         n => n,
     }
 }
-/// Peak slider: Auto at the left end, then 400 to 2000 nits in steps of 50.
-fn peak_part() -> f32 {
-    match PEAK_NITS.load(Relaxed) {
-        0 => 0.0,
-        n => ((n.clamp(400, 2000) - 400) / 50 + 1) as f32 / 33.0,
-    }
+/// The calibration's peak as set: 0 for the screen's own.
+pub(crate) fn peak_setting() -> u32 {
+    PEAK_NITS.load(Relaxed)
 }
-fn set_peak_part(v: f32) {
-    let k = (v.clamp(0.0, 1.0) * 33.0).round() as u32;
-    PEAK_NITS.store(if k == 0 { 0 } else { 400 + (k - 1) * 50 }, Relaxed);
+/// The calibration's peak in nits; 0 takes the screen's own again.
+pub(crate) fn set_peak_nits(nits: u32) {
+    PEAK_NITS.store(if nits == 0 { 0 } else { nits.clamp(PEAK_MIN, PEAK_MAX) }, Relaxed);
 }
-fn peak_shown(v: f32) -> String {
-    let k = (v * 33.0).round() as u32;
-    if k > 0 {
-        return nits_shown(400 + (k - 1) * 50);
+
+/// The HDR row as the INI keeps it: `On` or `Off`, then the calibration (`peak=` 0 for the
+/// screen's own, `paper=`), as `On;peak=1000;paper=200`.
+fn hdr_saved() -> String {
+    format!("{};peak={};paper={}", if WANTED.load(Relaxed) { "On" } else { "Off" }, PEAK_NITS.load(Relaxed), paper_nits())
+}
+/// The HDR row from its INI text ([`hdr_saved`]; a bare `1`, `true` or `on` as the old switch
+/// kept it); false when the first part is no on or off.
+fn hdr_load(text: &str) -> bool {
+    let mut parts = text.split(';').map(str::trim);
+    let on = match parts.next().map(str::to_ascii_lowercase).as_deref() {
+        Some("on" | "1" | "true") => true,
+        Some("off" | "0" | "false") => false,
+        _ => return false,
+    };
+    set_wanted(on);
+    for part in parts {
+        match part.split_once('=').map(|(k, v)| (k.trim(), v.trim().parse::<u32>())) {
+            Some(("peak", Ok(n))) => set_peak_nits(n),
+            Some(("paper", Ok(n))) => set_paper_nits(n),
+            _ => {}
+        }
     }
-    match AUTO_PEAK.load(Relaxed) {
-        0 => format!("Auto ({FALLBACK_PEAK} nits)"),
-        n => format!("Auto ({n} nits)"),
-    }
+    true
 }
 
 /// The brightest HDR screen's peak and black level in nits as Windows reports them (from
@@ -181,9 +214,6 @@ fn follow_monitor(windows: Query<&bevy::window::OnMonitor, With<bevy::window::Pr
     }
     *last = Some(name);
 }
-fn nits_shown(nits: u32) -> String {
-    format!("{nits} nits")
-}
 
 /// Logs the output once the window's surface is made (or 300 frames on, without one).
 fn mark_started(mut frames: Local<u32>) {
@@ -204,7 +234,7 @@ pub struct HdrPlugin;
 
 impl Plugin for HdrPlugin {
     fn build(&self, app: &mut App) {
-        use nvf_play::settings::{add_setting, Setting, Slider};
+        use nvf_play::settings::{add_choice_list, set_choice_action, ChoiceList, Setting};
         if let Ok(v) = std::env::var("NVF_HDR_PAPER_WHITE") {
             if let Ok(n) = v.trim().parse::<u32>() {
                 bevy::core_pipeline::upscaling::NVF_HDR_PAPER_WHITE_NITS.store(n.clamp(80, 1000), Relaxed);
@@ -225,102 +255,55 @@ impl Plugin for HdrPlugin {
                 _ => info!("hdr: no HDR screen reports its peak; Auto uses {FALLBACK_PEAK} nits"),
             }
         }
-        add_setting(app, Setting {
-            key: "hdr-output",
-            group: "Display",
-            label: "HDR output",
-            note: "On: the game is drawn for an HDR screen (Windows HDR on; on a laptop, its discrete graphics mode). Takes effect at the next start.",
-            switches: "",
-            get: |_| WANTED.load(Relaxed),
-            set: |_, on| set_wanted(on),
-            slider: None,
-        });
-        add_setting(app, Setting {
-            key: "hdr-paper-white",
-            group: "Display",
-            label: "HDR paper white",
-            note: "How bright white paper and the HUD look in HDR. Match it to Windows' SDR content brightness.",
-            switches: "",
-            get: |_| false,
-            set: |_, _| {},
-            slider: Some(Slider { get: |_| paper_part(), set: |_, v| set_paper_part(v), min: 0.0, step: 1.0 / 32.0, shown: Some(|v| nits_shown(80 + ((v * 32.0).round() as u32) * 10)) }),
-        });
-        add_setting(app, Setting {
-            key: "hdr-peak",
-            group: "Display",
-            label: "HDR peak brightness",
-            note: "The brightest the screen shows (sun, fire, neon, lightning). Auto takes what Windows reports for the screen (run the Windows HDR Calibration app for an exact figure). Else raise it until the sun's disc stops getting brighter.",
-            switches: "",
-            get: |_| false,
-            set: |_, _| {},
-            slider: Some(Slider { get: |_| peak_part(), set: |_, v| set_peak_part(v), min: 0.0, step: 1.0 / 33.0, shown: Some(peak_shown) }),
-        });
-        add_setting(app, Setting {
-            key: "hdr-hud-brightness",
-            group: "Display",
-            label: "HDR HUD brightness",
-            note: "How bright the HUD and menus look in HDR, apart from the game picture.",
-            switches: "",
-            get: |_| false,
-            set: |_, _| {},
-            slider: Some(Slider { get: |_| hud_part(), set: |_, v| set_hud_part(v), min: 0.0, step: 1.0 / 32.0, shown: Some(|v| nits_shown(80 + ((v * 32.0).round() as u32) * 10)) }),
-        });
-        add_setting(app, Setting {
-            key: "hdr-gamma-22",
-            group: "Display",
-            label: "HDR gamma 2.2",
-            note: "On: dark scenes look as on an SDR monitor (gamma 2.2), as the game was made for. Off: the sRGB curve, with lighter shadows.",
-            switches: "",
-            get: |_| bevy::core_pipeline::upscaling::NVF_HDR_GAMMA22.load(Relaxed),
-            set: |_, on| bevy::core_pipeline::upscaling::NVF_HDR_GAMMA22.store(on, Relaxed),
-            slider: None,
-        });
-        add_setting(app, Setting {
-            key: "hdr-highlight-hue",
-            group: "Display",
-            label: "HDR highlight colour",
-            note: "100 %: light brighter than paper white keeps the colour the SDR picture gives it. 0 %: the light's own colour, which can drift (orange fire towards red).",
-            switches: "",
-            get: |_| false,
-            set: |_, _| {},
-            slider: Some(Slider { get: |_| HUE_MILLI.load(Relaxed) as f32 / 1000.0, set: |_, v| HUE_MILLI.store((v.clamp(0.0, 1.0) * 1000.0).round() as u32, Relaxed), min: 0.0, step: 0.05, shown: None }),
-        });
-        add_setting(app, Setting {
-            key: "hdr-highlight-expansion",
-            group: "Display",
-            label: "HDR highlight expansion",
-            note: "Spreads the brightest part of the picture (sky, sunlit sand, white walls) into the HDR range. Shadows and mid tones stay. 0 %: the picture exactly as in SDR, only light sources brighter.",
-            switches: "",
-            get: |_| false,
-            set: |_, _| {},
-            slider: Some(Slider { get: |_| EXPAND_MILLI.load(Relaxed) as f32 / 1000.0, set: |_, v| EXPAND_MILLI.store((v.clamp(0.0, 1.0) * 1000.0).round() as u32, Relaxed), min: 0.0, step: 0.05, shown: None }),
-        });
-        add_setting(app, Setting {
-            key: "hdr-source-brightness",
-            group: "Display",
-            label: "HDR light source brightness",
-            note: "How bright light that SDR cuts off at white gets: the sun, fire, explosions, neon, lamps.",
-            switches: "",
-            get: |_| false,
-            set: |_, _| {},
-            slider: Some(Slider { get: |_| (SOURCE_GAIN_TENTHS.load(Relaxed).clamp(10, 160) - 10) as f32 / 150.0, set: |_, v| SOURCE_GAIN_TENTHS.store(10 + ((v.clamp(0.0, 1.0) * 30.0).round() as u32) * 5, Relaxed), min: 0.0, step: 1.0 / 30.0, shown: Some(|v| format!("x{:.1}", (10 + ((v * 30.0).round() as u32) * 5) as f32 / 10.0)) }),
-        });
-        add_setting(app, Setting {
-            key: "hdr-heatmap",
-            group: "Display",
-            label: "HDR brightness heatmap",
-            note: "Shows how bright each pixel is: grey up to paper white, then cyan, green, yellow and orange, and red at the peak. For calibration.",
-            switches: "",
-            get: |_| HEATMAP.load(Relaxed),
-            set: |_, on| HEATMAP.store(on, Relaxed),
-            slider: None,
-        });
-        app.add_systems(Update, (mark_started, follow_monitor));
+        // One row [design: PR #3348 review, "a lot of settings"]: Off, On, and Calibrate...,
+        // which opens the two calibration pictures (hdr_calibrate.rs) and keeps nothing itself.
+        // Gamma 2.2, highlight colour, expansion and light source gain keep their defaults;
+        // the heatmap is `NVF_HDR_HEATMAP=1`.
+        add_choice_list(
+            app,
+            Setting {
+                key: "hdr-output",
+                group: "Display",
+                label: "HDR output",
+                note: "On: the game is drawn for an HDR screen (Windows HDR on). Takes effect at once. Calibrate... sets the screen's peak and the brightness.",
+                switches: "",
+                get: |_| false,
+                set: |_, _| {},
+                slider: None,
+            },
+            ChoiceList {
+                names: |_| ["Off", "On", CALIBRATE].map(String::from).to_vec(),
+                chosen: |_| if WANTED.load(Relaxed) { "On" } else { "Off" }.to_string(),
+                pick: |w, name| match name {
+                    "On" | "Off" => {
+                        set_wanted(name == "On");
+                        true
+                    }
+                    CALIBRATE => {
+                        w.insert_resource(crate::hdr_calibrate::Asked);
+                        true
+                    }
+                    _ => false,
+                },
+                save: |_| hdr_saved(),
+                load: |_, text| hdr_load(text),
+                ask_keep: false,
+            },
+        );
+        set_choice_action(app, "hdr-output", |name| name == CALIBRATE);
+        if std::env::var("NVF_HDR").is_ok_and(|v| v.trim() == "1") {
+            bevy::render::view::window::NVF_HDR_SURFACE.store(true, Relaxed);
+        }
+        app.add_systems(Update, (mark_started, follow_monitor, announce));
+        crate::hdr_calibrate::add(app);
         bevy::asset::embedded_asset!(app, "hdr_expand.wesl");
         let Some(render) = app.get_sub_app_mut(RenderApp) else { return };
         render
             .add_systems(RenderStartup, init_pipeline)
-            .add_systems(Core3d, hdr_expand.after(Core3dSystems::PostProcess).before(bevy::ui_render::render_pass::ui_pass));
+            // Before frame generation's HUD-less copy too: a copy taken before the expansion
+            // differed from the frame everywhere, so DLSS-G's UI alpha came out 1 on every pixel
+            // and no frame was generated over the picture (PR #3348 review).
+            .add_systems(Core3d, hdr_expand.after(Core3dSystems::PostProcess).before(crate::frame_gen::capture_hudless).before(bevy::ui_render::render_pass::ui_pass));
     }
 }
 
@@ -498,25 +481,37 @@ mod tests {
     }
 
     #[test]
-    fn peak_slider_auto_then_steps_of_50() {
-        set_peak_part(0.0);
-        assert_eq!(PEAK_NITS.load(Relaxed), 0);
-        assert_eq!(peak_part(), 0.0);
+    fn peak_auto_then_the_calibration() {
+        set_peak_nits(0);
         AUTO_PEAK.store(0, Relaxed);
         assert_eq!(peak_nits(), FALLBACK_PEAK);
         AUTO_PEAK.store(616, Relaxed);
         assert_eq!(peak_nits(), 616);
-        assert_eq!(peak_shown(0.0), "Auto (616 nits)");
-        set_peak_part(1.0 / 33.0);
-        assert_eq!(PEAK_NITS.load(Relaxed), 400);
-        set_peak_part(1.0);
-        assert_eq!(PEAK_NITS.load(Relaxed), 2000);
-        assert_eq!(peak_nits(), 2000);
-        for k in 0..=33 {
-            set_peak_part(k as f32 / 33.0);
-            let n = PEAK_NITS.load(Relaxed);
-            set_peak_part(peak_part());
-            assert_eq!(PEAK_NITS.load(Relaxed), n, "step {k}");
-        }
+        set_peak_nits(100);
+        assert_eq!(peak_nits(), PEAK_MIN);
+        set_peak_nits(9000);
+        assert_eq!(peak_nits(), PEAK_MAX);
+        set_peak_nits(0);
+    }
+
+    #[test]
+    fn brightness_moves_paper_white_and_the_hud_together() {
+        set_paper_nits(250);
+        assert_eq!((paper_nits(), bevy::core_pipeline::upscaling::NVF_HDR_HUD_NITS.load(Relaxed)), (250, 250));
+        set_paper_nits(9000);
+        assert_eq!(paper_nits(), PAPER_MAX);
+    }
+
+    #[test]
+    fn the_row_keeps_on_and_the_calibration() {
+        assert!(hdr_load("On;peak=1200;paper=240"));
+        assert_eq!((WANTED.load(Relaxed), PEAK_NITS.load(Relaxed), paper_nits()), (true, 1200, 240));
+        assert_eq!(hdr_saved(), "On;peak=1200;paper=240");
+        assert!(hdr_load("0"), "the old switch's text");
+        assert!(!WANTED.load(Relaxed));
+        assert!(!hdr_load("bright"));
+        set_peak_nits(0);
+        set_paper_nits(200);
+        bevy::render::view::window::NVF_HDR_SURFACE.store(false, Relaxed);
     }
 }

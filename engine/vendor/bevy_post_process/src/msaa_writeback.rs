@@ -137,7 +137,7 @@ fn prepare_msaa_writeback_pipelines(
 
         if msaa.samples() > 1 && should_writeback {
             let key = BlitPipelineKey {
-                hdr_paper_white: 0,
+                hdr: false,
                 hdr_gamma22: false,
                 target_format: view_target.main_texture_format(),
                 samples: msaa.samples(),

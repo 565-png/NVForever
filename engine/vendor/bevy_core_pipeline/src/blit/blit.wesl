@@ -4,6 +4,8 @@ import package::fullscreen_vertex_shader::FullscreenVertexOutput;
 
 @group(0) @binding(0) var in_texture: texture_2d<f32>;
 @group(0) @binding(1) var in_sampler: sampler;
+// NVForever HDR output: x the HUD's white in nits over scRGB's 80 (blit/mod.rs).
+@group(0) @binding(2) var<uniform> nvf_hdr_scale: vec4<f32>;
 
 @fragment
 fn fs_main(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
@@ -23,6 +25,6 @@ fn fs_main(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     }
     // NVForever HDR output: scRGB's 1.0 is 80 nits; display-referred 1.0 goes to the HUD's white.
     @if(NVF_HDR_PAPER_WHITE)
-    color = vec4(color.rgb * (f32(constants::NVF_HDR_PAPER_WHITE) / 80.0), color.a);
+    color = vec4(color.rgb * nvf_hdr_scale.x, color.a);
     return color;
 }

@@ -73,11 +73,14 @@ block. `std` is linked for the clock (wgpu-hal turns the crate's `std` feature o
 
 HDR output (docs/design/hdr-output.md). Changes, marked `NVForever HDR output`:
 
-- `src/blit/mod.rs`: `BlitPipelineKey` gains `hdr_paper_white` (nits; 0 off) and
-  `hdr_gamma22`; the first adds the shader def `NVF_HDR_PAPER_WHITE` (a number), the
-  second `NVF_HDR_GAMMA22`.
+- `src/blit/mod.rs`: `BlitPipelineKey` gains `hdr` (a blit to an HDR window) and
+  `hdr_gamma22`, adding the shader defs `NVF_HDR_PAPER_WHITE` and `NVF_HDR_GAMMA22`. The
+  layout gains a third binding, the uniform `BlitPipeline::nvf_hdr_scale` (x: the HUD's
+  white in nits / 80), written by `nvf_write_hdr_scale` when it changes, so moving the
+  brightness rebuilds no pipeline (it was a shader constant, one pipeline per step; PR
+  #3348 review).
 - `src/blit/blit.wesl`: under those defs the 0..1 range is decoded with gamma 2.2 and the
-  colour is scaled by `NVF_HDR_PAPER_WHITE / 80` (scRGB's 1.0 is 80 nits).
+  colour is scaled by `nvf_hdr_scale.x` (scRGB's 1.0 is 80 nits).
 - `src/upscaling/mod.rs`: the statics `NVF_HDR_PAPER_WHITE_NITS`, `NVF_HDR_HUD_NITS` and
   `NVF_HDR_GAMMA22` (set by nvforever's settings), and the upscaling pipeline's key takes
   them for a window camera whose target is `Rgba16Float` while the window's surface is
@@ -108,7 +111,7 @@ average and bytes 0.067 EV apart, a curve `y = x` (no change) came out as a sawt
 between 0 and about −0.15 EV, so a daylight picture was darkened by up to 10 %, by an
 amount that jumped as the view's average crossed an entry.
 
-HDR output: `src/msaa_writeback.rs` fills `BlitPipelineKey`'s two new fields (`0`,
+HDR output: `src/msaa_writeback.rs` fills `BlitPipelineKey`'s two new fields (`false`,
 `false`), as the vendored bevy_core_pipeline's key needs them.
 
 ## bevy_pbr 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
@@ -922,7 +925,9 @@ HDR output (docs/design/hdr-output.md), marked `NVForever HDR output` in
 (the window's surface is fp16 scRGB) and `NVF_HDR_SURFACE_DECIDED` (a surface has been
 made). When the surface is made with HDR asked for (`NVF_HDR_SURFACE` or `NVF_HDR=1`) and
 it offers `Rgba16Float`, that format is chosen; `SurfaceColorSpace::Auto` makes it scRGB.
-Upstream prefers an sRGB format.
+Upstream prefers an sRGB format. `SurfaceData` keeps the SDR format and whether fp16 is
+offered; `nvf_hdr_changed` compares the asked-for output with the configured format each
+frame, and a change reconfigures the surface at once (no restart).
 
 ## bevy_shader 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
