@@ -1,10 +1,14 @@
 //! Clean-room support for `ManOnFireNVSE.ini` actor fire-spread mechanics
 //! (`docs/spec-notes/ext-small.md` §4).
 //!
-//! Configuration is read lazily from `Data\Config\ManOnFireNVSE.ini`, falling back to
-//! `Data\NVSE\Plugins\ManOnFireNVSE.ini` [documented: ManOnFireNVSE public INI schema;
-//! plugin DLL/source not consulted]. When neither file is present (unmodded vanilla), no
-//! fire-spread logic runs and combat behaviour is unchanged.
+//! Configuration is read lazily from `Data\Config\ManOnFireNVSE.ini` [documented:
+//! Man On Fire NVSE v1.0.1 (`https://www.nexusmods.com/newvegas/mods/94962`), shipped
+//! `Config\ManOnFireNVSE.ini` installed to `Data\Config\ManOnFireNVSE.ini`], falling
+//! back to `Data\NVSE\Plugins\ManOnFireNVSE.ini` [design: NVForever fallback lookup
+//! path; not in the shipped v1.0.1 release]. Only the public Nexus Mods page and the
+//! shipped INI file and comments were consulted; the plugin's DLL and source code were
+//! never consulted. When neither file is present (unmodded vanilla), no fire-spread
+//! logic runs and combat behaviour is unchanged [design].
 
 use std::collections::BTreeMap;
 
@@ -14,19 +18,25 @@ use crate::combat_lines::FIRE_RESISTANCE;
 use crate::data::MagicEffectDef;
 use crate::game::{ActiveEffect, Game};
 
-/// Primary Data-relative INI path.
+/// Primary Data-relative INI path [documented: Man On Fire NVSE v1.0.1
+/// (`https://www.nexusmods.com/newvegas/mods/94962`), archive install path
+/// `Data\Config\ManOnFireNVSE.ini`].
 pub const PRIMARY_INI_PATH: &str = "Config\\ManOnFireNVSE.ini";
-/// Fallback Data-relative INI path when the primary path is absent.
+/// Fallback Data-relative INI path when the primary path is absent [design: NVForever
+/// fallback lookup path, not in the shipped v1.0.1 release].
 pub const FALLBACK_INI_PATH: &str = "NVSE\\Plugins\\ManOnFireNVSE.ini";
 
-/// Default seconds of full-proximity exposure before ignition
-/// [documented: `ManOnFireNVSE.ini` `[Settings]` `fIgnitionThreshold`].
+/// Default seconds of full-proximity exposure before ignition [documented: Man On Fire
+/// NVSE v1.0.1 (`https://www.nexusmods.com/newvegas/mods/94962`), shipped
+/// `Data\Config\ManOnFireNVSE.ini` `[Settings]` `fIgnitionThreshold = 1.0`].
 pub const DEFAULT_IGNITION_THRESHOLD: f64 = 1.0;
-/// Default exposure decay per second when away from fire
-/// [documented: `ManOnFireNVSE.ini` `[Settings]` `fDecayRate`].
+/// Default exposure decay per second when away from fire [documented: Man On Fire NVSE
+/// v1.0.1 (`https://www.nexusmods.com/newvegas/mods/94962`), shipped
+/// `Data\Config\ManOnFireNVSE.ini` `[Settings]` `fDecayRate = 0.3`].
 pub const DEFAULT_DECAY_RATE: f64 = 0.3;
-/// Default maximum spread radius in game units
-/// [documented: `ManOnFireNVSE.ini` `[Settings]` `fMaxRange`].
+/// Default maximum spread radius in game units [documented: Man On Fire NVSE v1.0.1
+/// (`https://www.nexusmods.com/newvegas/mods/94962`), shipped
+/// `Data\Config\ManOnFireNVSE.ini` `[Settings]` `fMaxRange = 100.0`].
 pub const DEFAULT_MAX_RANGE: f64 = 100.0;
 
 /// Upper bound on concurrently tracked actor exposure entries so retained state stays
@@ -53,6 +63,10 @@ pub struct ManOnFireConfig {
 }
 
 impl Default for ManOnFireConfig {
+    /// Defaults matching Man On Fire NVSE v1.0.1
+    /// (`https://www.nexusmods.com/newvegas/mods/94962`), shipped
+    /// `Data\Config\ManOnFireNVSE.ini` (`bUseFireResist = 1`, `bPlayerImmune = 0`,
+    /// `bCompanionsImmune = 0`) [documented].
     fn default() -> Self {
         Self {
             ignition_threshold: DEFAULT_IGNITION_THRESHOLD,

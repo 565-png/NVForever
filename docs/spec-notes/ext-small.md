@@ -144,29 +144,36 @@ comparisons, native profile semantics and full Stewie compatibility remain open.
 
 Built in `crates/fnv-game/src/man_on_fire.rs`, ticked from `Game::tick` during unpaused,
 non-frozen game mode (`!in_menu && !time_frozen`). Clean-room implementation from the
-public INI schema only; the plugin's DLL and source code were not consulted.
+public Nexus Mods page and shipped INI file comments only: **Man On Fire NVSE v1.0.1**
+(`https://www.nexusmods.com/newvegas/mods/94962`, shipped `Config\ManOnFireNVSE.ini`
+installed to `Data\Config\ManOnFireNVSE.ini`). The plugin's DLL and source code were
+never consulted.
 
 ### Configuration lookup and schema
 
-- **Paths:** `Data\Config\ManOnFireNVSE.ini` primary, falling back to
-  `Data\NVSE\Plugins\ManOnFireNVSE.ini` [documented: ManOnFireNVSE public INI layout;
-  fallback path: design]. When neither file is present, no fire-spread logic runs and
-  unmodded vanilla combat is unchanged [design].
+- **Paths:** `Data\Config\ManOnFireNVSE.ini` primary [documented: Man On Fire NVSE
+  v1.0.1 (`https://www.nexusmods.com/newvegas/mods/94962`), archive install path
+  `Data\Config\ManOnFireNVSE.ini`], falling back to
+  `Data\NVSE\Plugins\ManOnFireNVSE.ini` [design: NVForever fallback lookup path, not
+  stated in the shipped v1.0.1 release]. When neither file is present, no fire-spread
+  logic runs and unmodded vanilla combat is unchanged [design].
 - **Parser:** BOM-safe (UTF-8 `\u{feff}` and Latin-1-decoded UTF-8 BOM), case-insensitive
   `[Settings]` section and key names, `;` and `#` comments stripped, invalid or
   non-finite numeric values keep defaults, negative numeric values clamp to `0.0`, and
   `fMaxRange <= 0` disables spread [design].
-- **`[Settings]` keys and defaults** [documented: `ManOnFireNVSE.ini` public `[Settings]`
-  schema; DLL/source not consulted]:
+- **`[Settings]` keys and defaults** [documented: Man On Fire NVSE v1.0.1
+  (`https://www.nexusmods.com/newvegas/mods/94962`), shipped
+  `Data\Config\ManOnFireNVSE.ini` and its inline `;` comments; only the public mod page
+  and shipped INI were consulted, never the DLL or source]:
 
-| Key | Default | Role |
+| Key | Default (v1.0.1 INI) | Role (from v1.0.1 shipped INI comments) |
 |---|---|---|
-| `fIgnitionThreshold` | `1.0` | Seconds of full-proximity exposure before an actor catches fire |
-| `fDecayRate` | `0.3` | Exposure decay per second when away from fire |
-| `fMaxRange` | `100.0` | Maximum 3D distance in game units for fire spread |
-| `bUseFireResist` | `1` | Factor the target's Fire Resistance actor value (code 52, [documented: GECK wiki Actor Value list]) into spread |
-| `bPlayerImmune` | `0` | Player is immune to fire spread |
-| `bCompanionsImmune` | `0` | Companions (`Game::is_teammate`) are immune to fire spread |
+| `fIgnitionThreshold` | `1.0` | Seconds of exposure to fire before catching fire ("Higher = slower spread") [documented: v1.0.1 INI] |
+| `fDecayRate` | `0.3` | Exposure decay per second when moving away from fire [documented: v1.0.1 INI] |
+| `fMaxRange` | `100.0` | Maximum 3D distance in game units for fire spread ("Closer = faster accumulation") [documented: v1.0.1 INI] |
+| `bUseFireResist` | `1` | Factor in Fire Resistance actor value (code 52, [documented: GECK wiki Actor Value list]) [documented: v1.0.1 INI] |
+| `bPlayerImmune` | `0` | Player immune to fire spread [documented: v1.0.1 INI] |
+| `bCompanionsImmune` | `0` | Companions (`Game::is_teammate` [design]) immune to fire spread [documented: v1.0.1 INI] |
 
 ### Spread, decay, and ignition rules
 
