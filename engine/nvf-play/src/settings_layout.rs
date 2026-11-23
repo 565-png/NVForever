@@ -780,7 +780,14 @@ mod tests {
         let next = |k: &str| list[l.ordered_settings().skip_while(|&i| list[i].key != k).nth(1).unwrap()].key;
         assert_eq!(next("tweak-take-all-confirm"), "tweak-take-all-confirm-min");
         assert_eq!(next("tweak-revive-companions"), "tweak-revive-down-seconds");
+        assert_eq!(next("tweak-revive-down-seconds"), "tweak-revive-on-cell-change");
         assert_eq!(next("tweak-hack-mark-guesses-as-duds"), "tweak-hack-keep-matching-chars");
+        assert_eq!(next("tweak-sleep-heal-min-hours"), "tweak-sleep-misc-stat-requires-duration");
+        assert_eq!(next("tweak-grabbing-is-theft"), "tweak-grabbing-is-theft-min-value");
+        assert_eq!(next("tweak-no-self-explosion-damage"), "tweak-no-self-explosion-non-hostiles");
+        assert_eq!(needs("tweak-revive-on-cell-change")[0].parent, "tweak-revive-companions");
+        assert_eq!(needs("tweak-no-self-explosion-non-hostiles")[0].parent, "tweak-no-self-explosion-damage");
+        assert_eq!(needs("tweak-grabbing-is-theft-min-value")[0].parent, "tweak-grabbing-is-theft");
         // The engine's own tabs are as they were.
         assert_eq!(keys(&list, &l, "Audio"), keys(&registry(&KNOWN), &resolve_layout(&registry(&KNOWN)), "Audio"));
     }
