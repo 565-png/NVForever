@@ -1,38 +1,54 @@
 //! Clean-room INI configuration support for `Data\NVSE\Plugins\MoonlightNVSE.ini` and
 //! `Data\NVSE\Plugins\CloudUpgrade.ini` (docs/spec-notes/ext-small.md §4).
 //!
-//! Neither plugin's DLL nor source code was consulted; keys and behaviour come solely
-//! from public Nexus Mods descriptions and shipped default INI schemas, with unverified
-//! defaults tagged `[hypothesis]` and NVForever's clamps, VFS discovery and cloud
-//! modulation model tagged `[design]`. When the corresponding INI file is absent from
-//! the VFS (or disabled), vanilla sky lighting and cloud animation are unchanged.
+//! Neither plugin's DLL nor source code was ever consulted or disassembled. Section/key
+//! names and default values come strictly from:
+//! - MoonlightNVSE v2.00 (`https://www.nexusmods.com/newvegas/mods/77683`), shipped
+//!   `Data\nvse\plugins\MoonlightNVSE.ini`;
+//! - Cloud Upgrade NVSE v1.0 (`https://www.nexusmods.com/newvegas/mods/79612`), shipped
+//!   `Data\NVSE\Plugins\CloudUpgrade.ini`.
+//!
+//! CloudUpgrade's cloud speed modulation formula and layer-scroll mapping are NVForever's
+//! own `[design]`, not the Cloud Upgrade NVSE plugin's implementation. When either INI
+//! file is absent from the VFS (or disabled), vanilla sky lighting and cloud animation
+//! are unchanged `[design]`.
 
 use fnv_world::sky::{Weather, CLOUD_SCROLL_PER_UNIT, MOON_PHASES};
 
 /// VFS-relative path for MoonlightNVSE's configuration INI (resolved case-insensitively
-/// through `fnv_vfs::Vfs`).
+/// through `fnv_vfs::Vfs`) [documented: MoonlightNVSE v2.00
+/// (`https://www.nexusmods.com/newvegas/mods/77683`), shipped
+/// `Data\nvse\plugins\MoonlightNVSE.ini`].
 pub const MOONLIGHT_INI_PATH: &str = "NVSE\\Plugins\\MoonlightNVSE.ini";
 
 /// VFS-relative path for Cloud Upgrade NVSE's configuration INI (resolved
-/// case-insensitively through `fnv_vfs::Vfs`).
+/// case-insensitively through `fnv_vfs::Vfs`) [documented: Cloud Upgrade NVSE v1.0
+/// (`https://www.nexusmods.com/newvegas/mods/79612`), shipped
+/// `Data\NVSE\Plugins\CloudUpgrade.ini`].
 pub const CLOUD_UPGRADE_INI_PATH: &str = "NVSE\\Plugins\\CloudUpgrade.ini";
 
 /// Default per-phase nighttime directional moonlight multipliers (`fMoonMult0` = new moon
-/// through `fMoonMult4` = full moon) [hypothesis: shipped `MoonlightNVSE.ini` values].
-pub const DEFAULT_MOON_MULTS: [f32; 5] = [0.33, 0.5, 0.7, 0.9, 1.0];
+/// through `fMoonMult4` = full moon) [documented: MoonlightNVSE v2.00
+/// (`https://www.nexusmods.com/newvegas/mods/77683`), shipped
+/// `Data\nvse\plugins\MoonlightNVSE.ini`: `0`, `0.33`, `0.5`, `0.9`, `1`].
+pub const DEFAULT_MOON_MULTS: [f32; 5] = [0.0, 0.33, 0.5, 0.9, 1.0];
 
 /// Upper bound on any parsed moonlight phase multiplier [design: keeps HDR directional
 /// illuminance bounded while permitting bright community presets].
 pub const MOON_MULT_MAX: f32 = 10.0;
 
-/// Default `[Global]` values for `CloudUpgrade.ini` [hypothesis: shipped
-/// `CloudUpgrade.ini` values].
+/// Default `[Global]` values for `CloudUpgrade.ini` [documented: Cloud Upgrade NVSE v1.0
+/// (`https://www.nexusmods.com/newvegas/mods/79612`), shipped
+/// `Data\NVSE\Plugins\CloudUpgrade.ini`: `Speed = 100.0`, `MaxSpeed = 5.0`,
+/// `Volatility = 5.0`].
 pub const DEFAULT_CLOUD_SPEED: f32 = 100.0;
 pub const DEFAULT_CLOUD_MAX_SPEED: f32 = 5.0;
 pub const DEFAULT_CLOUD_VOLATILITY: f32 = 5.0;
 
-/// Default `[Layer 1]`..`[Layer 4]` values for `CloudUpgrade.ini` [hypothesis: shipped
-/// `CloudUpgrade.ini` values].
+/// Default `[Layer 1]`..`[Layer 4]` values for `CloudUpgrade.ini` [documented: Cloud
+/// Upgrade NVSE v1.0 (`https://www.nexusmods.com/newvegas/mods/79612`), shipped
+/// `Data\NVSE\Plugins\CloudUpgrade.ini`: `SubSpeed = [0.2, 1.0, 0.7, 0.3]`,
+/// `SubVolatility = [0.2, 0.3, 0.4, 0.5]`].
 pub const DEFAULT_LAYER_SUB_SPEEDS: [f32; 4] = [0.2, 1.0, 0.7, 0.3];
 pub const DEFAULT_LAYER_SUB_VOLATILITIES: [f32; 4] = [0.2, 0.3, 0.4, 0.5];
 
@@ -61,13 +77,15 @@ const LAYER_PERIOD_SECS: [f64; 4] = [180.0, 145.0, 115.0, 90.0];
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MoonlightConfig {
     /// `[Main] bMoonPhaseBrightness`: enables moon-phase directional moonlight scaling
-    /// [documented: public MoonlightNVSE description; hypothesis: defaults enabled when
-    /// the INI is present].
+    /// [documented: MoonlightNVSE v2.00 (`https://www.nexusmods.com/newvegas/mods/77683`),
+    /// public Nexus page and shipped `Data\nvse\plugins\MoonlightNVSE.ini`
+    /// (`bMoonPhaseBrightness=1`)].
     pub phase_brightness: bool,
     /// `[Main] fMoonMult0`..`fMoonMult4`: nighttime directional light multiplier for each
     /// of the five lunar illumination levels (0 = new moon, 1 = crescent, 2 = half,
-    /// 3 = gibbous, 4 = full moon), clamped to `0.0..=MOON_MULT_MAX` [documented: public
-    /// MoonlightNVSE description; design: clamp bounds].
+    /// 3 = gibbous, 4 = full moon), clamped to `0.0..=MOON_MULT_MAX` [documented:
+    /// MoonlightNVSE v2.00 (`https://www.nexusmods.com/newvegas/mods/77683`), public Nexus
+    /// page and shipped `Data\nvse\plugins\MoonlightNVSE.ini`; design: clamp bounds].
     pub phase_mults: [f32; 5],
 }
 
@@ -238,7 +256,9 @@ impl CloudUpgradeConfig {
     }
 
     /// Mean scroll rate (texture repeats/s) and smooth volatility amplitude (`0.0..0.5`)
-    /// for `layer` (`0..4`) of `weather` [design].
+    /// for `layer` (`0..4`) of `weather` [design: NVForever's own cloud speed modulation
+    /// formula and layer-scroll mapping, not the Cloud Upgrade NVSE plugin's
+    /// implementation].
     fn effective_rate(&self, weather: &Weather, layer: usize) -> (f64, f64) {
         if layer >= 4 {
             return (0.0, 0.0);
@@ -467,7 +487,7 @@ mod tests {
 
         let ml = sky.moonlight.expect("MoonlightNVSE.ini loaded");
         assert!(ml.phase_brightness);
-        assert_eq!(ml.phase_mults, [0.20, 0.5, 0.7, 0.9, 1.25]);
+        assert_eq!(ml.phase_mults, [0.20, 0.33, 0.5, 0.9, 1.25]);
 
         let cu = sky.cloud_upgrade.expect("CloudUpgrade.ini loaded");
         assert_eq!(cu.speed, 200.0);
