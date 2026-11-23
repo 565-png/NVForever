@@ -1723,11 +1723,16 @@ Code: `engine/nvforever/src/underwater.rs` (`fog_bytes`, `DEEP_AT`).
     `SetCellImageSpace` on the cell the player is already in does not switch the active
     grade until the cell next loads.
   - Live `SetImageSpaceTrait` refresh on the already-loaded active `IMGS` (interior bound
-    `IMGS` or exterior `WRLD INAM`) is keyed on `(game_instance_id, image_space_revision)`
-    from `Game::image_space_sync_token()` — doing zero work on unchanged frames while
-    refreshing `SkyState::interior_grade` and `SkyState::image_space` in place without
-    re-reading pending `SetCellImageSpace` assignments [hypothesis: not yet independently
-    verified by an original-game capture].
+    `IMGS` or exterior `WRLD INAM`) and live `SetWorldspaceImagespace` (`WRLD INAM/`,
+    following `WNAM` + `PNAM` Use Image Space Data inheritance) are keyed on
+    `(game_instance_id, image_space_revision)` from `Game::image_space_sync_token()` —
+    doing zero work on unchanged frames while refreshing `SkyState::interior_grade` and
+    `SkyState::image_space` in place without re-reading pending `SetCellImageSpace`
+    assignments [hypothesis: not yet independently verified by an original-game capture].
+    Outdoors, explicit `SetCellImageSpace` assignments on the current exterior cell bind
+    on cell load ahead of `SetWorldspaceImagespace` / `WRLD INAM` while leaving unmodded
+    exterior cells unchanged, and `worldspace::script_sky` preserves active worldspace /
+    exterior image-space overrides across same-worldspace climate rebuilds [design].
 - **Exterior weather fog (`SetWeatherTraitNumeric` traits `15..=20`)** [documented: GECK
   wiki `GetWeatherTraitNumeric` / `SetWeatherTraitNumeric` traits `15..=20` (day/night
   near, far, power); hypothesis: live in-place refresh on active weather]:
@@ -1738,6 +1743,24 @@ Code: `engine/nvforever/src/underwater.rs` (`fog_bytes`, `DEEP_AT`).
     `Weather::fog_power_at_with` in place (zero per-frame allocations) across both the
     current and fading-out weather. Explicit console/CLI `SkyState::fog_override` retains
     precedence.
+- **Exterior weather colours, image-space adapters, and transition time
+  (`SetWeatherRGBColor`, `SetWeatherImageSpaceMod`, `SetWeatherTransitionTimeOverride`)**
+  [documented: GECK wiki `GetWeatherRGBColor` / `SetWeatherRGBColor` (`NAM0` colour types
+  `0..=9` and `PNAM` cloud layers `0..=3` across times `0..=5`), `GetWeatherImageSpaceMod`
+  / `SetWeatherImageSpaceMod` (`0IAD..5IAD`), and `SetWeatherTransitionTimeOverride`;
+  hypothesis: live in-place refresh on active weather]:
+  - `nvforever::sky::sync_weather_visuals` syncs session colour, cloud-colour, weather
+    `IMAD` adapter, and transition-time overrides from `Game` into
+    `SkyState::weather_visual_overrides` keyed on `(game_instance_id,
+    weather_visual_revision)` (`Game::weather_visual_sync_token()`), doing zero work on
+    unchanged frames and clearing cleanly on `Game` restore or runtime drop [design].
+  - `SkyState::color`, `SkyState::color_bytes`, `SkyState::cloud_color_for`,
+    `SkyState::cinematic`, `SkyState::sun_scale`, and `SkyState::advance_fade` apply
+    these overrides in place (zero per-frame allocations) across both current and
+    fading-out weathers, reaching `DistanceFog`, `GlobalAmbientLight`, `DirectionalLight`,
+    `ClearColor`, `SkyDome`, `CloudLayer`, `GetCurrentSkyColor`, and `ImageSpaceGrade`.
+    An explicit `SetWeatherImageSpaceMod weather time 0` clears that time slot's adapter
+    rather than falling back to the authored ESM record [design].
 - **Game settings (`SetNumericGameSetting`, `SetStringSetting`)**:
   - Vanilla numeric (`f*`, `i*`) and string (`s*`) GMST edits write directly to
     `fnv_sim::World::setting_changes` and are visible live to `World::setting_f32`,

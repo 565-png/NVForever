@@ -1562,7 +1562,11 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "setworldspaceimagespace" => {
             if let (Some(w), Some(i)) = (form(args, 0), form(args, 1)) {
                 if g.data.sig(g.unclone(w)) == Some(*b"WRLD") && g.data.sig(g.unclone(i)) == Some(*b"IMGS") {
-                    g.field_overrides.insert((w, "INAM/".into()), XVal::Ref(i.0));
+                    let next = XVal::Ref(i.0);
+                    let prev = g.field_overrides.insert((w, "INAM/".into()), next.clone());
+                    if prev != Some(next) {
+                        g.traits.note_image_space_change();
+                    }
                 }
             }
             zero
