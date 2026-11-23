@@ -54,8 +54,11 @@ slice 2 plays; CopyAnimationsToForm copies the entries too.
 
 GetAnimationAttributes, Get/SetGlobalAnimTime, the blend functions, SetAnimWeight,
 SetAnimAdditive, the text-key functions, CopyAnimationsToForm and the rest are built on
-the game side (`nvse_knvse.rs`, docs/spec-notes/ext-knvse.md). The engine's per-actor
-player does not read their state yet.
+the game side (`nvse_knvse.rs`, docs/spec-notes/ext-knvse.md). Player playback now
+consumes per-view script-sequence weights (`SetAnimWeight`), additive poses
+(`SetAnimAdditive`), blend transition durations/priorities/views (`CrossFadeAnims`,
+`BlendToAnim`, `BlendToAnimFromPose`), and clip metadata publication
+(`Game::set_sequence_info` from `anim_state.rs` and `script_sequences.rs`) [design].
 
 ## 5. The player, conditions and folders (2026-11-13)
 
@@ -98,6 +101,9 @@ player does not read their state yet.
   PlayAnimationPath's sequence starts on the drawn actor's idle slot, bound to its
   skeleton, once or looping as on the player; DeactivateAnim stops it; an actor out of
   view starts it again when drawn (smoke `knvse-npc-sequences`).
+- **Player body clip reporting** (`nvforever` anim_state.rs, player_body.rs): the active
+  rig's main body clip is reported in `AnimState::clip` and its header published via
+  `Game::set_sequence_info` for both player and NPCs [design].
 - **NPCs' conditional paths** (anim_paths.rs): an actor with a conditional
   SetActorAnimationPath gets `Game::anim_overrides_now` each frame, the world put back,
   so the replacement comes and goes with its condition; the others keep
