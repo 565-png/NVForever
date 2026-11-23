@@ -4161,3 +4161,15 @@ capture setup, so every part of a check that needs an interior is still open.
      distance, or fly straight on? Throw a plasma mine (`MinePlasmaProjectile`, also 0)
      and a frag mine (1.0) the same way and say whether they land at the same distance.
 
+## Added 2026-11-23 (the meal on the table eating idles, #3610)
+
+290. **Where is the plate of a table eating idle?** (P3; #3610, idles.md §10 "Objects
+     hung from the accumulation root".) Ours [hypothesis]: `aogenericmeal.nif` hangs from
+     `Bip01` in its bind pose, so the plate sits about 70 units in front of the seated
+     actor and 71 above the floor. In Primm's NCR tent (cell PrimmTentsHayes), when Lt.
+     Hayes (PrimmHayesREF) sits at the table and plays `SitTableChairEatB` (or
+     `PrimmHayesREF.PlayIdle SitTableChairEatB` once he is seated), say whether a plate
+     of food appears on the table in front of him, and roughly where it sits relative to
+     his chest and to the table top. A student's `aostudenttestpaper.nif` hangs the same
+     way, if one is easier to find.
+
