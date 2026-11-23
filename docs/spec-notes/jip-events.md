@@ -93,13 +93,17 @@ default 3]` [documented: SetGameMainLoopCallback].
 - Observed: a lambda registered with delay 1 and flag 1 ran, with GetSelf the player
   [observed: loop.ran, loop.this]. How many times per frame was not measured: a capture
   query does not run on every game frame.
-- Zero/null callable registration (`XVal::Ref(0)` or `XVal::Num(0.0)`): NVForever
-  refuses to enqueue a form-zero main-loop callback and emits one `ScriptError` plus
-  structured warning via `handler_failed_with_registrar` (carrying registrar provenance)
-  at registration time rather than dispatching form zero every frame (#2603) [design;
+- Zero/null callable registration (`XVal::Ref(0)` or any `XVal::Num(n)` that converts
+  to form 0 via `n as u32` — `0.0`, negative numbers, fractions below `1.0`, and `NaN`):
+  NVForever refuses to enqueue a form-zero main-loop callback and emits one `ScriptError`
+  plus structured warning via `handler_failed_with_registrar` (carrying registrar provenance
+  captured by `Exec::event_call` for `EventCall::MainLoop { add: true, .. }`) at
+  registration time rather than dispatching form zero every frame (#2603) [design;
   native handling of null `SetGameMainLoopCallback` callable tokens is unobserved].
   Active main-loop registrations also retain registrar provenance (including across
-  `take_session`/`put_session` handoff) for runtime dispatch errors.
+  `take_session`/`put_session` handoff) for runtime dispatch errors; direct
+  `Game::event_call` registrations without an executing script unit report
+  `registrar_kind = "unavailable"`.
 
 ## 4. Evidence still to get
 

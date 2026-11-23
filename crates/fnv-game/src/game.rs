@@ -7480,7 +7480,11 @@ impl Host for Exec<'_, '_> {
 
     fn event_call(&mut self, c: fnv_script::vm::EventCall) -> Result<fnv_script::vm::XVal, String> {
         let sender = self.unit.unit.plugin.clone();
-        let registrar = if matches!(&c, fnv_script::vm::EventCall::JipSet { add: true, .. }) {
+        let registrar = if matches!(
+            &c,
+            fnv_script::vm::EventCall::JipSet { add: true, .. }
+                | fnv_script::vm::EventCall::MainLoop { add: true, .. }
+        ) {
             let plugin = self.calling_plugin();
             let compiled = self.game.compiled_slots.iter().find_map(|(&id, &index)| std::ptr::eq(self.game.compiled_files[index], self.unit).then_some(id));
             let origin = compiled.and_then(|id| self.game.compiled_origins.get(id));
