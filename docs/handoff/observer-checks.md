@@ -4007,4 +4007,8 @@ capture setup, so every part of a check that needs an interior is still open.
      `DRSVegasDoorOpen` (2D, 175 to 1,100 units) and `NVDLC04QSTMissileLaunchPt1` (2D and 2D Radius; also once beyond its 25,500 units).
      Say which are heard far off and whether as loud. Also at Lonesome Road's silo launch:
      whether the lift-off (about 14 s after the launch begins) is heard in full, and
-     whether its sound moves or fades as the missile flies away.
+     whether its sound moves or fades as the missile flies away. Last, ours keeps other
+     actors' sounds to the record's distances [design]: in a saloon, from across the room
+     and from farther off (the player at one end of a casino), say whether an actor getting
+     off a chair to its left is heard (`NPCDocMStandUp`, 2D, 265 to 1,600 units), and
+     whether as loud as next to it.

@@ -69,7 +69,7 @@ use nvf_play::phys::PhysState;
 use nvf_play::player::{Player, BodySet};
 use nvf_play::combat::{is_dead, ActorHit};
 use nvf_play::script::ScriptState;
-use nvf_play::sfx::{KeyedSound, PlaySound, Sfx, SoundSource};
+use nvf_play::sfx::{ActorSound, KeyedSound, PlaySound, Sfx, SoundSource};
 use fnv_actor::anim_sounds::{creature_key_type, creature_sound, creature_sound_type_name, creature_sounds, pick_creature_sound, CreatureSound};
 use nvf_play::sim::SimState;
 use nvf_play::{Location, PlayWorld};
@@ -320,10 +320,24 @@ fn foley_of(lo: &fnv_esm::LoadOrder, schema: &fnv_esm::Schema, worn: &[FormId]) 
 /// the New West's TNWFootstepUDF) look every frame for it starting].
 const TOLD_SECONDS: f64 = 0.5;
 
+/// A clip's `Sound:` key: the player's own, or another actor's (`actor`: by the record's
+/// distances whatever its flags, [`ActorSound`]).
+fn play_key(out: &mut MessageWriter<PlaySound>, actor: Option<&mut MessageWriter<ActorSound>>, sound: FormId, at: Option<[f32; 3]>) {
+    match (actor, at) {
+        (Some(actor), Some(at)) => {
+            actor.write(ActorSound { sound, at });
+        }
+        _ => {
+            out.write(PlaySound { sound, at });
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn sound_heard(
     s: &mut AnimSounds,
     out: &mut MessageWriter<PlaySound>,
+    actor: Option<&mut MessageWriter<ActorSound>>,
     phys: &mut Option<ResMut<PhysState>>,
     d: &PlayWorld,
     world: u32,
@@ -344,7 +358,7 @@ fn sound_heard(
                 s.counts.other_keys += 1;
             }
             if let Some(sound) = s.sound(edid) {
-                out.write(PlaySound { sound, at });
+                play_key(out, actor, sound, at);
             }
         }
         KeySound::Foot(side) => {
@@ -449,7 +463,7 @@ fn player_keys(
                 continue;
             }
         }
-        sound_heard(s, &mut out, &mut phys, &d, location.world, Heard { who, clip, key }, None, player.feet, exclude.clone(), &foley, swimming, FormId::PLAYER_REF);
+        sound_heard(s, &mut out, None, &mut phys, &d, location.world, Heard { who, clip, key }, None, player.feet, exclude.clone(), &foley, swimming, FormId::PLAYER_REF);
     }
 }
 
@@ -495,7 +509,7 @@ fn actor_keys(
     actor_world: Option<Res<crate::actors::ActorWorld>>,
     actors: Query<ActorKeysItem>,
     script: Option<Res<ScriptState>>,
-    mut out: MessageWriter<PlaySound>,
+    (mut out, mut by_actors): (MessageWriter<PlaySound>, MessageWriter<ActorSound>),
     mut loops: MessageWriter<SoundSource>,
     mut seen: Local<Vec<(Playing, f32)>>,
 ) {
@@ -538,7 +552,7 @@ fn actor_keys(
             for k in keys_of(&s.last, &mut seen, (who, Arc::as_ptr(clip) as usize, 0), clip, now, false) {
                 // A creature with sounds hears its `Enum:` keys as its sound types.
                 if let (Some(list), Some(kind)) = (&creature, creature_key_type(k)) {
-                    creature_heard(s, &mut out, who, kind, list, feet.to_array());
+                    creature_heard(s, &mut by_actors, who, kind, list, feet.to_array());
                     continue;
                 }
                 if let Some(k) = parse(k) {
@@ -577,7 +591,7 @@ fn actor_keys(
             }
             let at = feet.to_array();
             let source = FormId(reference.unwrap_or(0));
-            sound_heard(s, &mut out, &mut phys, &d, location.world, Heard { who, clip, key }, Some(at), at, exclude.clone(), &foley, swimming, source);
+            sound_heard(s, &mut out, Some(&mut by_actors), &mut phys, &d, location.world, Heard { who, clip, key }, Some(at), at, exclude.clone(), &foley, swimming, source);
         }
     }
     s.last.retain(|(w, _, _), _| matches!(w, Who::Player(_)));
@@ -614,7 +628,7 @@ fn creature_list(s: &mut AnimSounds, d: &PlayWorld, w: Option<&crate::actors::Ac
 }
 
 /// A creature's key of sound type `kind`: one of its sounds of that type, at its chance.
-fn creature_heard(s: &mut AnimSounds, out: &mut MessageWriter<PlaySound>, who: Who, kind: u32, list: &[CreatureSound], at: [f32; 3]) {
+fn creature_heard(s: &mut AnimSounds, out: &mut MessageWriter<ActorSound>, who: Who, kind: u32, list: &[CreatureSound], at: [f32; 3]) {
     // Hits sound when the hit lands (`creature_hits`).
     if kind == creature_sound::HIT || !s.step_due(who, kind) {
         return;
@@ -627,7 +641,7 @@ fn creature_heard(s: &mut AnimSounds, out: &mut MessageWriter<PlaySound>, who: W
     let Some(sound) = pick_creature_sound(list, kind, pick, roll) else { return };
     *s.counts.creature.entry(creature_sound_type_name(kind)).or_default() += 1;
     debug!("anim sounds: {who:?} creature {}", creature_sound_type_name(kind));
-    out.write(PlaySound { sound: FormId(sound), at: Some(at) });
+    out.write(ActorSound { sound: FormId(sound), at });
 }
 
 /// Creatures hit or killed: their Hit or Death sound.
@@ -889,6 +903,23 @@ mod tests {
             free_visibility: Vec::new(),
             lights: Vec::new(),
         }
+    }
+
+    /// Another actor's key goes by its record's distances ([`ActorSound`]), the player's
+    /// own at the listener does not (#3444).
+    #[test]
+    fn an_actors_key_is_an_actors_sound() {
+        let mut app = App::new();
+        app.add_message::<PlaySound>().add_message::<ActorSound>();
+        app.add_systems(Update, |mut out: MessageWriter<PlaySound>, mut actors: MessageWriter<ActorSound>| {
+            play_key(&mut out, Some(&mut actors), FormId(1), Some([1.0, 2.0, 3.0]));
+            play_key(&mut out, None, FormId(2), None);
+        });
+        app.update();
+        let actors: Vec<_> = app.world_mut().resource_mut::<Messages<ActorSound>>().drain().map(|a| (a.sound, a.at)).collect();
+        assert_eq!(actors, vec![(FormId(1), [1.0, 2.0, 3.0])]);
+        let own: Vec<_> = app.world_mut().resource_mut::<Messages<PlaySound>>().drain().map(|p| (p.sound, p.at)).collect();
+        assert_eq!(own, vec![(FormId(2), None)]);
     }
 
     #[test]

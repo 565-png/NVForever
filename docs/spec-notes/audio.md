@@ -1343,16 +1343,28 @@ From the ESM audit (docs/handoff/esm-full-audit-2026-10-24.md, gaps 7, 15, 17). 
   with Forward, `NVDLC04QSTMissileLaunchPt3` with the explosion 33 s later. No sound is
   moved with the flying node: Pt2 is 2D, so it has no place [documented, above].
 - **As built** (`sfx::no_radii`, `sfx::placed_gain`): a one-shot at a place (object keys,
-  PlaySound3D, doors, explosions, random markers in reach) with 2D and without 2D Radius is
-  as loud at any distance [documented, above]. With both flags the radii hold [hypothesis:
+  PlaySound3D, doors, explosions, random markers in reach; not other actors', below) with
+  2D and without 2D Radius is as loud at any distance [documented, above]. With both flags the radii hold [hypothesis:
   the radius flag wins; most such records are placed loops with radii]; 2D Radius alone is
   as before (panned, by its radii).
 - **Kept** [design]: a placed loop (a sound marker, an object's own sound) still sounds
   within its maximum distance and falls toward it whatever its flags: heard from anywhere,
   one marker would sound over its whole worldspace. A Play At Random marker is still only
-  rolled within its maximum distance. Another actor passing a load door whose sound is 2D
-  (`DRSVegasDoorOpen`, the Freeside gates') is heard only within the record's maximum
-  distance.
+  rolled within its maximum distance.
+- **Other actors** [design] (`sfx::ActorSound`): the sound keys of another actor's or a
+  creature's clips, a load door it passes (`DRSVegasDoorOpen`, the Freeside gates') and an
+  effect hitting it go by the record's distances whatever its flags, gain and reach both,
+  as before #3444; the player's own keys and placed objects' keys do not. The generic
+  `chair_leftexit.kf` (IDLE `ChairLeftStand`) keys `NPCDocMStandUp` (2D, 265 to 1,600
+  units): whole, every actor rising from a seat within 3,000 units (`ACTOR_RANGE`) would be
+  heard. The falling
+  gain is kept, not a whole one cut at the reach: it changes nothing from before, and has
+  no edge to step over. 12 sounds are such clip keys [observed, all NIF and KF files]: nine
+  of Doc Mitchell's and the opening's clips, all with distances, and Mr House's
+  `NPCMrHouseWakeUp`, `NPCMrHouseElectro` and `NPCMrHouseDeath`, with none. Those three stay
+  as before: 1 ÷ distance, all but silent (0.01 at 100 units); his terminals' scripts also
+  play them with `PlaySound`, at the listener. An effect's `FXPoisonStinger`, with none
+  too, is as silent on another actor as it was.
 - **Log**: each sound key an object's group passes says what became of it: `sfx: sound key
   <EDID> starts: <file>, <s> s, gain <g>[, 2D], asked at (x, y, z), <n> units away`, or
   `not heard (too quiet | muted under water | voice limit | sounds off): …`, `not heard: no

@@ -52,7 +52,7 @@ use crate::menu::model::Mode;
 use crate::menu::ActiveMenu;
 use crate::phys::PhysState;
 use crate::player::Player;
-use crate::sfx::{PlaySound, Sfx, SoundSource};
+use crate::sfx::{ActorSound, PlaySound, Sfx, SoundSource};
 use crate::sim::SimState;
 use crate::{PlaySet, PlayState, PlayWorld, RefChanged};
 use bevy::prelude::*;
@@ -616,12 +616,6 @@ fn knocks(mut ws: ResMut<WorldSounds>, sfx: Option<Res<Sfx>>, phys: Option<Res<P
     ws.tracked.retain(|id, _| seen.contains(id));
 }
 
-/// Whether a place is at or beyond a sound's reach from the listener's eye; a sound with
-/// no reach of its own reaches anywhere.
-fn beyond_reach(reach: f32, eye: [f32; 3], at: [f32; 3]) -> bool {
-    reach > 0.0 && (0..3).map(|i| (at[i] - eye[i]).powi(2)).sum::<f32>() >= reach * reach
-}
-
 /// Pick-ups, drops, containers, activators and the sounds scripts ask for.
 #[allow(clippy::too_many_arguments)]
 fn objects(
@@ -638,7 +632,7 @@ fn objects(
     sfx: Option<Res<Sfx>>,
     panel: Option<Res<crate::message_menu::MessagePanel>>,
     mut ui: MessageReader<crate::ui_sounds::UiSound>,
-    mut out: MessageWriter<PlaySound>,
+    (mut out, mut by_actors): (MessageWriter<PlaySound>, MessageWriter<ActorSound>),
     mut script_sounds: ResMut<crate::sfx::ScriptSounds>,
 ) {
     let ws = &mut *ws;
@@ -808,14 +802,7 @@ fn objects(
         let Some(&sound) = sim.base_of(door).and_then(|b| ws.forms.door_open.get(&b)) else { continue };
         ws.stats.actor_doors += 1;
         info!("world sounds: an actor passed load door {door:08X}, sound {}", sound_name(sfx, Some(sound)));
-        // A 2D one is as loud anywhere (`sfx::no_radii`); another actor's door is still heard
-        // only within the record's reach [design, #3444: the Freeside gates' sound is a 2D
-        // record of a 1,100-unit reach, and actors pass them wherever the player is].
-        let far = sfx.and_then(|x| x.forms.sounds.get(&sound)).zip(player.as_deref()).is_some_and(|(s, p)| crate::sfx::no_radii(s) && beyond_reach(s.max_distance, p.eye(), at));
-        if far {
-            continue;
-        }
-        out.write(PlaySound { sound, at: Some(at) });
+        by_actors.write(ActorSound { sound, at });
     }
     for &Activated { reference } in activated.read() {
         // A load door: its open sound as the player goes through [hypothesis].
@@ -1475,15 +1462,6 @@ mod tests {
     }
 
     #[test]
-    fn an_actors_2d_door_is_heard_within_its_reach() {
-        assert!(!beyond_reach(1100.0, [0.0; 3], [600.0, 600.0, 600.0]));
-        assert!(beyond_reach(1100.0, [0.0; 3], [700.0, 700.0, 700.0]));
-        assert!(beyond_reach(1100.0, [0.0; 3], [1100.0, 0.0, 0.0]));
-        // No reach of its own (a 2D record with no distances).
-        assert!(!beyond_reach(0.0, [0.0; 3], [9000.0, 0.0, 0.0]));
-    }
-
-    #[test]
     fn own_sounds_one_kind_per_record() {
         let sigs: HashSet<&[u8; 4]> = OWN_SOUNDS.iter().map(|k| k.0).collect();
         assert_eq!(sigs.len(), OWN_SOUNDS.len());
@@ -1529,6 +1507,7 @@ mod tests {
             .add_message::<ImpactPicked>()
             .add_message::<crate::ui_sounds::UiSound>()
             .add_message::<PlaySound>()
+            .add_message::<ActorSound>()
             .add_systems(Update, objects);
         (app, a, b)
     }
@@ -2207,6 +2186,7 @@ mod tests {
             .add_message::<ImpactPicked>()
             .add_message::<crate::ui_sounds::UiSound>()
             .add_message::<PlaySound>()
+            .add_message::<ActorSound>()
             .add_systems(Update, (script_weapon_sounds, objects).chain());
 
         // Before override: world pickup & drop play static authored YNAM / ZNAM.

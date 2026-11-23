@@ -39,7 +39,8 @@
 //!   [hypothesis]. A record without a curve plays the default 100, 50, 20, 5, 0. A sound
 //!   with the 2D flag is played "with no 3D positioning or inner/outer radii" [documented:
 //!   GECK wiki Sound]: as loud wherever it is asked for, unless it also has the 2D Radius
-//!   flag, which keeps the radii ([`no_radii`], [`placed_gain`], #3444).
+//!   flag, which keeps the radii ([`no_radii`], [`placed_gain`], #3444). What another actor
+//!   sounds ([`ActorSound`]) goes by the record's distances whatever its flags [design].
 //! - **Panning** [design; how the game places sounds is not known]: a sound with a place
 //!   is heard more on the side of the listener it is on ([`pan_gains`]): the ear facing
 //!   it hears it whole, the other ear loses up to [`PAN_DEPTH`] of it, by how far to the
@@ -151,6 +152,16 @@ pub struct ScaledSound {
 /// file, place and gain, or why it is not heard (#3444).
 #[derive(Message, Clone, Copy, Debug)]
 pub struct KeyedSound {
+    pub sound: FormId,
+    pub at: [f32; 3],
+}
+
+/// Play a SOUN once as [`PlaySound`] does, for something another actor does (its clips'
+/// sound keys, a load door it passes, an effect hitting it): by the record's distances
+/// whatever its flags, so a 2D one is not heard from anywhere ([`no_radii`]) [design, #3444:
+/// the generic chair's clip keys a 2D SOUN, so every actor rising near or far would be heard].
+#[derive(Message, Clone, Copy, Debug)]
+pub struct ActorSound {
     pub sound: FormId,
     pub at: [f32; 3],
 }
@@ -953,6 +964,8 @@ enum Wanted {
     Scaled(Option<[f32; 3]>, f32),
     /// [`KeyedSound`]: once, at a place, logged.
     Keyed([f32; 3]),
+    /// [`ActorSound`]: once, at a place, by the record's distances.
+    Actor([f32; 3]),
     /// A sound a script played: its id (for [`ScriptSounds::heard`]), its place, and
     /// whether it goes round until StopSound (the Loop flag).
     Script { id: u32, at: Option<[f32; 3]>, looping: bool },
@@ -981,7 +994,7 @@ pub const MAX_ONE_SHOT_WAIT: Duration = Duration::from_millis(150);
 
 /// Whether a request is a one-shot that [`MAX_ONE_SHOT_WAIT`] holds to.
 fn wait_limited(wanted: Wanted) -> bool {
-    matches!(wanted, Wanted::Once(_) | Wanted::Scaled(..) | Wanted::Keyed(_))
+    matches!(wanted, Wanted::Once(_) | Wanted::Scaled(..) | Wanted::Keyed(_) | Wanted::Actor(_))
 }
 
 /// Log a [`KeyedSound`] dropped because its file or its voice slot came too late.
@@ -1504,7 +1517,7 @@ fn begin(out: &mut Out, sfx: &mut Sfx, heard: &mut Vec<(u32, Option<f32>)>, r: &
             fade_in(out, sfx, wanted, begun);
             begun
         }
-        Wanted::Script { looping: false, .. } | Wanted::Once(_) | Wanted::Scaled(..) | Wanted::Keyed(_) => {
+        Wanted::Script { looping: false, .. } | Wanted::Once(_) | Wanted::Scaled(..) | Wanted::Keyed(_) | Wanted::Actor(_) => {
             let (seconds, begun) = one_shot_ready(out, sfx, r, handle, sound, wanted, asked, asked_frame, None);
             one_shot_decided(out, sfx, heard, sound, wanted, seconds, begun);
             begun
@@ -1614,7 +1627,7 @@ fn reconcile(sfx: &mut Sfx, playing: &Voices) {
 #[allow(clippy::too_many_arguments)]
 fn play(
     mut commands: Commands,
-    (mut requests, mut scaled, mut keyed): (MessageReader<PlaySound>, MessageReader<ScaledSound>, MessageReader<KeyedSound>),
+    (mut requests, mut scaled, mut keyed, mut actors): (MessageReader<PlaySound>, MessageReader<ScaledSound>, MessageReader<KeyedSound>, MessageReader<ActorSound>),
     mut loops: MessageReader<LoopSound>,
     looping: Query<(Entity, &Looping)>,
     scripted: Query<(Entity, &ScriptPlayed)>,
@@ -1630,6 +1643,7 @@ fn play(
         requests.clear();
         scaled.clear();
         keyed.clear();
+        actors.clear();
         loops.clear();
         return;
     };
@@ -1713,6 +1727,9 @@ fn play(
     }
     for r in keyed.read() {
         request(&mut out, sfx, vfs, &mut ss.heard, r.sound, Wanted::Keyed(r.at));
+    }
+    for r in actors.read() {
+        request(&mut out, sfx, vfs, &mut ss.heard, r.sound, Wanted::Actor(r.at));
     }
     for (id, sound, at) in std::mem::take(&mut ss.plays) {
         if stopped_before(&stops, sound, id) {
@@ -2045,14 +2062,16 @@ fn one_shot_ready(out: &mut Out, sfx: &mut Sfx, r: &Resolved, handle: Handle<Pcm
         Wanted::Once(at) | Wanted::Script { at, .. } => (at, 1.0),
         // The player's Weapon Volume tweak's shots (`ScaledSound`).
         Wanted::Scaled(at, gain) => (at, gain),
-        Wanted::Keyed(at) => (Some(at), 1.0),
+        Wanted::Keyed(at) | Wanted::Actor(at) => (Some(at), 1.0),
         Wanted::Loop => (None, 1.0),
     };
     let (s, name, path) = (&r.s, &r.name, &r.path);
     let (settings, eye) = (out.settings, out.player.map(Player::eye));
     let placed = at.zip(out.player).map(|(at, p)| SoundAt::new(at, Some(p)));
     let distance = at.zip(eye).map(|(at, e)| ((at[0] - e[0]).powi(2) + (at[1] - e[1]).powi(2) + (at[2] - e[2]).powi(2)).sqrt());
-    let gain = static_gain(s) * distance.map_or(1.0, |d| placed_gain(s, d)) * settings.volume.max(0.0) * scale;
+    // Another actor's sound goes by its distances also when it is 2D ([`ActorSound`]).
+    let at_distance = |d: f32| if matches!(wanted, Wanted::Actor(_)) { distance_gain(s, d) } else { placed_gain(s, d) };
+    let gain = static_gain(s) * distance.map_or(1.0, at_distance) * settings.volume.max(0.0) * scale;
     // The pitch: a replacement's was chosen when it was asked for; only what hangs on the
     // listener (gain, pan, place) is worked out again.
     let speed = match kept {
@@ -2089,7 +2108,7 @@ fn one_shot_ready(out: &mut Out, sfx: &mut Sfx, r: &Resolved, handle: Handle<Pcm
     // and the distance leave, the effects volume not in it.
     // At most a battle's worth waits, should nothing take them.
     if let (true, Some(d), true) = (settings.play, distance, sfx.cover_notes.len() < 512) {
-        sfx.cover_notes.push((static_gain(s) * placed_gain(s, d), d, seconds));
+        sfx.cover_notes.push((static_gain(s) * at_distance(d), d, seconds));
     }
     let placed = match placed {
         Some(_) if s.has("2D") => {
@@ -2288,6 +2307,7 @@ impl Plugin for SfxPlugin {
             .add_message::<PlaySound>()
             .add_message::<ScaledSound>()
             .add_message::<KeyedSound>()
+            .add_message::<ActorSound>()
             .add_message::<LoopSound>()
             .init_resource::<ScriptSounds>()
             .add_message::<SoundSource>()
@@ -2524,6 +2544,47 @@ mod tests {
         assert_eq!(decided(FAR_3D), (0, 1));
     }
 
+    /// An actor rising from a chair whose clip keys a 2D SOUN (#3444): heard near, fading
+    /// with its distances, not from afar; a placed object's key of the same SOUN is heard
+    /// from there. With no distances in the record the actor's is silent, as it was.
+    #[test]
+    fn an_actors_2d_sound_goes_by_its_distances() {
+        const CHAIR: FormId = FormId(0x21);
+        const BARE: FormId = FormId(0x22);
+        let far = [0.0, 2900.0, 100.0];
+        let decided = |ask: &dyn Fn(&mut World)| {
+            let (mut app, _files) = sound_app();
+            app.insert_resource(Player { heading: 0.0, pitch: 0.0, eye_height: 100.0, feet: [0.0; 3], body_eye: None, body_view: None, placed: None });
+            {
+                let mut sfx = app.world_mut().resource_mut::<Sfx>();
+                sfx.forms.sounds.insert(CHAIR, Sound { min_distance: 200.0, max_distance: 1000.0, ..record("TestChair", Some("fx\\beep.wav"), &["2D"]) });
+                sfx.forms.sounds.insert(BARE, record("TestBare", Some("fx\\beep.wav"), &["2D"]));
+            }
+            ask(app.world_mut());
+            run_until(&mut app, |w| {
+                let s = w.resource::<Sfx>();
+                s.played + s.silent > 0
+            });
+            let volume = app.world_mut().query::<&PlaybackSettings>().iter(app.world()).next().map(|p| p.volume.to_linear());
+            (app.world().resource::<Sfx>().played, volume)
+        };
+        let actor = |sound: FormId, at: [f32; 3]| {
+            decided(&move |w: &mut World| {
+                w.write_message(ActorSound { sound, at });
+            })
+        };
+        assert_eq!(actor(CHAIR, far), (0, None), "an actor far away");
+        assert_eq!(actor(CHAIR, [0.0, 100.0, 100.0]), (1, Some(1.0)), "an actor near");
+        let (played, volume) = actor(CHAIR, [0.0, 600.0, 100.0]);
+        assert_eq!(played, 1);
+        assert!((volume.unwrap() - 0.2).abs() < 1e-4, "falling within its reach: {volume:?}");
+        assert_eq!(actor(BARE, far), (0, None), "no distances");
+        let object = decided(&|w: &mut World| {
+            w.write_message(KeyedSound { sound: CHAIR, at: far });
+        });
+        assert_eq!(object, (1, Some(1.0)), "an object's key far away");
+    }
+
     /// A RIFF/WAVE file of `fmt ` fields as given (no arithmetic on them, so any value
     /// goes in) and `data` declaring `data_len` bytes with `data` after it.
     fn raw_wav(tag: u16, channels: u16, rate: u32, bits: u16, data_len: u32, data: &[u8]) -> Vec<u8> {
@@ -2722,6 +2783,7 @@ mod tests {
             .add_message::<PlaySound>()
             .add_message::<ScaledSound>()
             .add_message::<KeyedSound>()
+            .add_message::<ActorSound>()
             .add_message::<LoopSound>()
             .add_systems(Update, (prepare, play).chain());
         (app, dir)
