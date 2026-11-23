@@ -572,6 +572,10 @@ impl Game<'_> {
         self.sync_pc_target();
     }
 
+    fn sanitize_trigger(value: f32) -> f32 {
+        if value.is_finite() { value.clamp(0.0, 1.0) } else { 0.0 }
+    }
+
     fn trigger_mask(&self) -> u8 {
         let p = &self.jip2.told.pad;
         let left = p.held_triggers[0] || p.triggers[0] >= TRIGGER_PRESS_THRESHOLD;
@@ -579,12 +583,21 @@ impl Game<'_> {
         u8::from(left) | (u8::from(right) << 1)
     }
 
+    /// Publish sanitized controller trigger values (`0.0..=1.0`, left then right) for
+    /// `GetLeftTrigger` / `GetRightTrigger` and the frame's `Game::jip_keys` trigger edge
+    /// dispatch (`Game::tick` / `Game::page_tick`) without running script callbacks
+    /// immediately [design: engine input systems run before `PlaySet::Scripts` and outside
+    /// `with_world` / pause / menu-page guards].
+    pub fn publish_pad_triggers(&mut self, left: f32, right: f32) {
+        self.jip2.told.pad.triggers = [Self::sanitize_trigger(left), Self::sanitize_trigger(right)];
+    }
+
     /// Publish controller trigger values (`0.0..=1.0`, left then right) and immediately
     /// dispatch any `SetOnTriggerDownEventHandler` / `SetOnTriggerUpEventHandler` edge
     /// transitions (`0` left, `1` right) [documented: SetOnTriggerDownEventHandler,
     /// SetOnTriggerUpEventHandler].
     pub fn set_pad_triggers(&mut self, left: f32, right: f32) {
-        self.jip2.told.pad.triggers = [left.clamp(0.0, 1.0), right.clamp(0.0, 1.0)];
+        self.publish_pad_triggers(left, right);
         let now = self.trigger_mask();
         self.trigger_edges(now);
     }
