@@ -929,7 +929,9 @@ pub struct MovePreview {
 }
 
 /// How `iModCardMode` modifies the player's deck at game start when `iModCardCount > 0`
-/// [documented: BetterCaravan.ini public schema, `0 = add`, `1 = remove`, `2 = replace`].
+/// [documented: Better Caravan v1.9 (`https://www.nexusmods.com/newvegas/mods/81002`),
+/// shipped `Data\NVSE\Plugins\BetterCaravan.ini` comments: `0 = add`, `1 = remove`,
+/// `2 = replace`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ModCardMode {
     #[default]
@@ -948,11 +950,17 @@ impl ModCardMode {
     }
 }
 
-/// Clean-room configuration parsed from `Data\NVSE\Plugins\BetterCaravan.ini` (with
-/// `Data\Config\BetterCaravan.ini` fallback) [documented: BetterCaravan.ini public
-/// schema, section `[Better Caravan]`; plugin DLL/source not consulted].
+/// Clean-room configuration parsed from `Data\NVSE\Plugins\BetterCaravan.ini`
+/// [documented: Better Caravan v1.9 (`https://www.nexusmods.com/newvegas/mods/81002`),
+/// shipped `Data\NVSE\Plugins\BetterCaravan.ini`, section `[Better Caravan]` and its 16
+/// commented keys; plugin DLL and source code were never consulted], with an NVForever
+/// fallback lookup at `Data\Config\BetterCaravan.ini` [design: NVForever fallback path,
+/// not stated in Better Caravan v1.9].
 ///
-/// When the INI file is absent, every option defaults to off (`false` / `0` / `None`) so
+/// Note that `bAiFixes` and `bImprovedAI` drive NVForever's own clean-room scoring
+/// heuristics in [`choose_with_config`], not Better Caravan's AI implementation [design].
+///
+/// When neither INI file exists, every option defaults to off (`false` / `0` / `None`) so
 /// unmodded vanilla Caravan rules, visuals, bindings, and AI remain unchanged [design].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BetterCaravanConfig {
@@ -974,7 +982,11 @@ pub struct BetterCaravanConfig {
     pub key_right: Option<String>,
 }
 
-/// VFS lookup paths for `BetterCaravan.ini` in priority order [design].
+/// VFS lookup paths for `BetterCaravan.ini` in priority order:
+/// `NVSE\Plugins\BetterCaravan.ini` [documented: Better Caravan v1.9
+/// (`https://www.nexusmods.com/newvegas/mods/81002`), archive install path] followed by
+/// `Config\BetterCaravan.ini` [design: NVForever fallback lookup path, not in Better
+/// Caravan v1.9's shipped layout].
 pub const BETTER_CARAVAN_INI_PATHS: [&str; 2] = [
     "NVSE\\Plugins\\BetterCaravan.ini",
     "Config\\BetterCaravan.ini",
@@ -1225,7 +1237,8 @@ pub fn choose(g: &Game, side: usize, skill: f32, rng: &mut ChaCha8Rng) -> Option
 }
 
 /// Choose a move honoring [`BetterCaravanConfig::ai_fixes`] and
-/// [`BetterCaravanConfig::improved_ai`] [design; caravan.md §9].
+/// [`BetterCaravanConfig::improved_ai`] [design: NVForever's own scoring heuristics, not
+/// Better Caravan's AI implementation; caravan.md §9].
 ///
 /// When both flags are off, delegates directly to [`choose`] so vanilla AI decisions and
 /// RNG draws remain bit-for-bit unchanged.

@@ -80,7 +80,9 @@ const CARVED: Color = Color::srgba(0.86, 0.83, 0.76, 0.55);
 /// A caravan over 26 shows its value in red [observed].
 const OVER: Color = Color::srgb(0.9, 0.15, 0.1);
 /// A winning caravan (21–26, ahead of the opponent) highlighted in white when
-/// BetterCaravan's `bHighlightWinningCaravans` is enabled [documented: BetterCaravan.ini].
+/// BetterCaravan's `bHighlightWinningCaravans` is enabled [documented: Better Caravan
+/// v1.9 (`https://www.nexusmods.com/newvegas/mods/81002`), shipped
+/// `Data\NVSE\Plugins\BetterCaravan.ini` comment "; highlight winning caravans in white"].
 const WINNING: Color = Color::WHITE;
 /// A previewed caravan value that changes under the hovered move when BetterCaravan's
 /// `bPreviewMoveResult` is enabled [design].
