@@ -256,12 +256,16 @@ pub fn inspect_fos(fos: &Fos, cosave_present: bool) -> FosInspectReport {
     let (player_has_place, player_has_special, player_tag_skill_count, player_av_parsed, player_inventory_items) =
         match fos.player() {
             Ok(p) => {
+                decoded_counts.insert("player_base_av_overrides".into(), p.base_av_overrides.len());
                 decoded_counts.insert("player_skill_points".into(), p.skill_points.len());
                 decoded_counts.insert("player_perks".into(), p.perks.len());
                 decoded_counts.insert("player_teammate_perks".into(), p.teammate_perks.len());
                 decoded_counts.insert("player_teammates".into(), p.teammates.len());
                 decoded_counts.insert("player_factions".into(), p.factions.len());
                 decoded_counts.insert("player_spells".into(), p.spells.len());
+                if let Some(rounds) = p.active_weapon_magazine {
+                    decoded_counts.insert("player_active_weapon_magazine".into(), rounds as usize);
+                }
                 (
                     p.place.is_some(),
                     p.special.is_some(),
@@ -390,7 +394,7 @@ pub fn convert_fos(
         Err(_) => inc_skip("global_table", "type 3 (globals) malformed"),
     }
 
-    // 2. Global table 1 type 0: misc statistics (43 entries in code order; [hypothesis]).
+    // 2. Global table 1 type 0: misc statistics (43 entries in code order; [observed]).
     match fos.misc_stats() {
         Ok(stats) => {
             for (code, val) in stats.into_iter().enumerate() {
@@ -398,7 +402,6 @@ pub fn convert_fos(
                     if let Ok(code) = u16::try_from(code) {
                         g.player.misc_stats.insert(code, f64::from(val));
                         inc_ok("misc_stats");
-                        inc_hyp("misc_stats (global type 0) [hypothesis]");
                     }
                 }
             }
@@ -406,7 +409,7 @@ pub fn convert_fos(
         Err(_) => inc_skip("global_table", "type 0 (misc stats) malformed"),
     }
 
-    // 2b. Global table 1 type 2 prefix: per-base-form death counts ([hypothesis]).
+    // 2b. Global table 1 type 2 prefix: per-base-form death counts ([observed]; 105B tail unmapped).
     match fos.dead_counts_with_tail() {
         Ok((counts, trailing)) => {
             for (raw_form, count) in counts {
@@ -417,7 +420,6 @@ pub fn convert_fos(
                     Ok(id) if matches!(data.sig(id).as_ref(), Some(b"NPC_") | Some(b"CREA")) => {
                         g.player.dead_count.insert(id, u32::from(count));
                         inc_ok("dead_counts");
-                        inc_hyp("dead_counts (global type 2 prefix) [hypothesis]");
                     }
                     Ok(_) => inc_skip("dead_count", "not an NPC_ or CREA record"),
                     Err(why) => inc_skip("dead_count", why),
@@ -430,7 +432,7 @@ pub fn convert_fos(
         Err(_) => inc_skip("global_table", "type 2 (dead counts) malformed"),
     }
 
-    // 3. Global table 1 type 8: sky/weather ([hypothesis]).
+    // 3. Global table 1 type 8: sky/weather ([observed]).
     let mut header_weather: Option<String> = None;
     let mut engine = EngineSnapshot::new();
     match fos.weather() {
@@ -445,7 +447,6 @@ pub fn convert_fos(
                         }
                         header_weather = edid;
                         inc_ok("weather");
-                        inc_hyp("weather (global type 8) [hypothesis]");
                     }
                     Ok(_) => inc_skip("weather", "not a WTHR record"),
                     Err(why) => inc_skip("weather", why),
@@ -456,20 +457,25 @@ pub fn convert_fos(
         Err(_) => inc_skip("global_table", "type 8 (weather) malformed"),
     }
 
-    // 3b. Global table 1 type 10: Pip-Boy radio playback state ([hypothesis]).
+    // 3b. Global table 1 type 10: Pip-Boy radio playback state ([observed] for active-station list 2;
+    // [hypothesis] for header fallback).
     let mut radio_decoded = false;
     match fos.radio_state() {
         Ok(Some(radio)) => {
             radio_decoded = true;
             g.radio.pipboy.on = radio.on;
             inc_ok("radio_state");
-            inc_hyp("radio_state (global type 10) [hypothesis]");
+            if !radio.from_active_list {
+                inc_hyp("radio_state (global type 10 header fallback) [hypothesis]");
+            }
             if let Some(raw_st) = radio.station {
                 match map_id(raw_st) {
                     Ok(sid) if refs.get(sid).is_some() => {
                         g.radio.pipboy.station = Some(sid);
                         inc_ok("radio_station");
-                        inc_hyp("radio_station (global type 10) [hypothesis]");
+                        if !radio.from_active_list {
+                            inc_hyp("radio_station (global type 10 header fallback) [hypothesis]");
+                        }
                     }
                     Ok(_) => inc_skip("radio_station", "not a placed reference of load order"),
                     Err(why) => inc_skip("radio_station", why),
@@ -541,22 +547,18 @@ pub fn convert_fos(
             }
         }
         let qs = g.quest(qid);
-        let mut wrote_hyp_quest = false;
         if let Some(r) = q.running() {
             qs.running = r;
-            wrote_hyp_quest = true;
         }
         if let Some(c) = q.completed() {
             qs.completed = c;
             if !c {
                 qs.failed = false;
             }
-            wrote_hyp_quest = true;
         }
         if let Some(delay) = q.delay {
             if delay.is_finite() && delay >= 0.0 {
                 qs.delay = Some(f64::from(delay));
-                wrote_hyp_quest = true;
             } else if !delay.is_finite() {
                 inc_skip("quest_delay", "non-finite value");
             }
@@ -572,15 +574,11 @@ pub fn convert_fos(
             let entry = qs.objectives.entry(index as i32).or_default();
             entry.displayed = state & 1 != 0;
             entry.completed = state & 2 != 0;
-            wrote_hyp_quest = true;
-        }
-        if wrote_hyp_quest {
-            inc_hyp("quest_flags_delay_objectives (QUST) [hypothesis]");
         }
         inc_ok("quests");
     }
 
-    // 5. Active quest (global table 1 type 1; [hypothesis]).
+    // 5. Active quest (global table 1 type 1; [observed]).
     let loc_global = fos.player_location_global();
     if let Some(raw_q) = loc_global.as_ref().and_then(|l| l.active_quest) {
         match map_id(raw_q) {
@@ -588,7 +586,6 @@ pub fn convert_fos(
                 g.ui.active_quest = Some(qid);
                 engine.active_quest = Some(qid.0);
                 inc_ok("active_quest");
-                inc_hyp("active_quest (global type 1) [hypothesis]");
             }
             Ok(_) => inc_skip("active_quest", "no QUST record"),
             Err(why) => inc_skip("active_quest", why),
@@ -610,7 +607,9 @@ pub fn convert_fos(
             if let Some(female) = p.female {
                 g.player.female = Some(female);
                 inc_ok("player_sex");
-                inc_hyp("player_sex (NPC_ bit 1) [hypothesis]");
+                if !p.female_from_bit24 {
+                    inc_hyp("player_sex (NPC_ bit 1 ACBS) [hypothesis]");
+                }
             }
             for raw_sp in &p.spells {
                 match raw_sp.ok_or("not in save form ID array").and_then(&map_id) {
@@ -620,7 +619,6 @@ pub fn convert_fos(
                             list.push(sid);
                         }
                         inc_ok("player_spells");
-                        inc_hyp("player_spells (NPC_ bit 4) [hypothesis]");
                     }
                     Ok(_) => inc_skip("player_spell", "not a SPEL record"),
                     Err(why) => inc_skip("player_spell", why),
@@ -632,7 +630,6 @@ pub fn convert_fos(
                     g.extra.entry(FormId::PLAYER_REF).or_default().actor_values.insert(code, f64::from(val));
                     let _ = g.world.set_actor_value(FormId::PLAYER_REF, SPECIAL[i], f32::from(val));
                     inc_ok("player_special");
-                    inc_hyp("player_special (NPC_ bit 2) [hypothesis]");
                 }
             }
             if let Some(ref app) = p.appearance {
@@ -668,7 +665,6 @@ pub fn convert_fos(
                         fgts: app.fgts.clone(),
                     });
                     inc_ok("player_appearance");
-                    inc_hyp("player_appearance (NPC_ bit 11) [hypothesis]");
                 }
             }
             if !p.tag_skills.is_empty() {
@@ -679,7 +675,6 @@ pub fn convert_fos(
                             g.player.tag_slots.insert(s, code);
                         }
                         inc_ok("player_tag_skills");
-                        inc_hyp("player_tag_skills (CLAS bit 1) [hypothesis]");
                     }
                 }
             }
@@ -699,7 +694,6 @@ pub fn convert_fos(
                         AV_XP if val >= 0.0 => {
                             g.player.xp = f64::from(val);
                             inc_ok("player_xp");
-                            inc_hyp("player_xp (AV2 code 24) [hypothesis]");
                         }
                         AV_KARMA => {
                             g.extra
@@ -708,7 +702,23 @@ pub fn convert_fos(
                                 .actor_values
                                 .insert(AV_KARMA, f64::from(val));
                             inc_ok("player_karma");
-                            inc_hyp("player_karma (AV2 code 23) [hypothesis]");
+                        }
+                        c if av_grows(c) => {
+                            // Vanilla ModAV writes radiation (54) and hardcore needs (73..=75)
+                            // into AV2 (`av_base`) [observed: vanilla 1.4.0.525 A/B save pairs].
+                            if val > 0.0 {
+                                *g.extra
+                                    .entry(FormId::PLAYER_REF)
+                                    .or_default()
+                                    .actor_values
+                                    .entry(c)
+                                    .or_insert(0.0) += f64::from(val);
+                                if c == RAD_LEVEL {
+                                    inc_ok("player_rads");
+                                } else {
+                                    inc_ok("player_hardcore_needs");
+                                }
+                            }
                         }
                         c if c < 77 => {
                             g.extra
@@ -725,7 +735,6 @@ pub fn convert_fos(
                                 sync_carry_needed = true;
                             }
                             inc_ok("player_av_permanent");
-                            inc_hyp("player_av_permanent (AV2 permanent modifiers) [hypothesis]");
                         }
                         _ => {}
                     }
@@ -733,7 +742,8 @@ pub fn convert_fos(
                 if sync_carry_needed {
                     crate::functions::actor::sync_carry(&mut g, FormId::PLAYER_REF, CARRY_WEIGHT);
                 }
-                // AV3: current damage deltas (negative for AP/limbs/etc.) and growing rads/needs (positive).
+                // AV3: current damage deltas (negative for AP/limbs/etc.) [observed] and any
+                // positive growing rads/needs fallback [hypothesis].
                 for &(code, val) in &p.av_damage {
                     if !val.is_finite() {
                         inc_skip("player_av_damage", "non-finite value");
@@ -742,11 +752,12 @@ pub fn convert_fos(
                     let code_u16 = code as u16;
                     if av_grows(code_u16) {
                         if val > 0.0 {
-                            g.extra
+                            *g.extra
                                 .entry(FormId::PLAYER_REF)
                                 .or_default()
                                 .actor_values
-                                .insert(code_u16, f64::from(val));
+                                .entry(code_u16)
+                                .or_insert(0.0) += f64::from(val);
                             if code_u16 == RAD_LEVEL {
                                 inc_ok("player_rads");
                                 inc_hyp("player_rads (AV3 code 54) [hypothesis]");
@@ -763,14 +774,12 @@ pub fn convert_fos(
                             .insert(code_u16, f64::from(-val));
                         if LIMB_CONDITIONS.contains(&code_u16) {
                             inc_ok("player_limb_damage");
-                            inc_hyp("player_limb_damage (AV3 codes 25-31) [hypothesis]");
                         } else {
                             inc_ok("player_av_damage");
-                            inc_hyp("player_av_damage (AV3 damage deltas) [hypothesis]");
                         }
                     }
                 }
-                // AV entry 231: player Health damage delta (negative when injured).
+                // AV entry 231: player Health damage delta (negative when injured) [observed].
                 if let Some(hd) = p.health_damage {
                     if !hd.is_finite() {
                         inc_skip("player_health_damage", "non-finite value");
@@ -781,7 +790,6 @@ pub fn convert_fos(
                             .av_damage
                             .insert(HEALTH, f64::from(-hd));
                         inc_ok("player_health_damage");
-                        inc_hyp("player_health_damage (AV entry 231) [hypothesis]");
                     }
                 }
             } else if fos.changed.iter().any(|c| c.form == PLAYER_REF && c.kind == TYPE_ACHR) {
@@ -794,7 +802,6 @@ pub fn convert_fos(
                     if let Ok(st) = g.world.get(FormId::PLAYER_REF) {
                         st.scale = Some(sc);
                         inc_ok("player_scale");
-                        inc_hyp("player_scale (post-AV float) [hypothesis]");
                     }
                 }
             }
@@ -804,7 +811,6 @@ pub fn convert_fos(
                     Ok(fid) if data.sig(fid).as_ref() == Some(b"FACT") => {
                         g.extra.entry(FormId::PLAYER_REF).or_default().factions.insert(fid, rank);
                         inc_ok("player_factions");
-                        inc_hyp("player_factions (actor extra 0x5E) [hypothesis]");
                     }
                     Ok(_) => inc_skip("player_faction", "not a FACT record"),
                     Err(why) => inc_skip("player_faction", why),
@@ -816,23 +822,48 @@ pub fn convert_fos(
                     Ok(tid) if refs.get(tid).is_some() => {
                         g.extra.entry(tid).or_default().teammate = true;
                         inc_ok("player_teammates");
-                        inc_hyp("player_teammates (actor extra 0x1D) [hypothesis]");
                     }
                     Ok(_) => inc_skip("player_teammate", "not a placed reference of load order"),
                     Err(why) => inc_skip("player_teammate", why),
                 }
             }
 
-            for &(code, pts) in &p.skill_points {
-                if !pts.is_finite() {
-                    inc_skip("player_skill_points", "non-finite value");
+            let mut bit22_carry_sync = false;
+            for &(code, val) in &p.base_av_overrides {
+                if !val.is_finite() {
+                    inc_skip("player_base_av_override", "non-finite value");
                     continue;
                 }
-                if pts >= 0.0 {
-                    g.player.skill_points.insert(u16::from(code), f64::from(pts));
-                    inc_ok("player_skill_points");
-                    inc_hyp("player_skill_points (ACHR bit 22) [hypothesis]");
+                let code_u16 = u16::from(code);
+                if (32..=45).contains(&code) {
+                    if val >= 0.0 {
+                        g.player.skill_points.insert(code_u16, f64::from(val));
+                        inc_ok("player_skill_points");
+                    }
+                } else if code_u16 < 77 {
+                    g.extra
+                        .entry(FormId::PLAYER_REF)
+                        .or_default()
+                        .actor_values
+                        .insert(code_u16, f64::from(val));
+                    if SPECIALS.contains(&code_u16) {
+                        let i = (code_u16 - AV_STRENGTH) as usize;
+                        let perm = g
+                            .extra
+                            .get(&FormId::PLAYER_REF)
+                            .and_then(|e| e.av_permanent.get(&code_u16))
+                            .copied()
+                            .unwrap_or(0.0) as f32;
+                        let _ = g.world.set_actor_value(FormId::PLAYER_REF, SPECIAL[i], val + perm);
+                        bit22_carry_sync = true;
+                    } else if code_u16 == CARRY_WEIGHT {
+                        bit22_carry_sync = true;
+                    }
+                    inc_ok("player_base_av_overrides");
                 }
+            }
+            if bit22_carry_sync {
+                crate::functions::actor::sync_carry(&mut g, FormId::PLAYER_REF, CARRY_WEIGHT);
             }
 
             for &(raw_perk, rank) in &p.perks {
@@ -843,7 +874,6 @@ pub fn convert_fos(
                     Ok(pid) if data.perks.contains_key(&pid) || data.sig(pid).as_ref() == Some(b"PERK") => {
                         g.player.perks.insert(pid, rank);
                         inc_ok("player_perks");
-                        inc_hyp("player_perks (ACHR tail) [hypothesis]");
                     }
                     Ok(_) => inc_skip("player_perk", "not a PERK record"),
                     Err(why) => inc_skip("player_perk", why),
@@ -858,7 +888,6 @@ pub fn convert_fos(
                     Ok(pid) if data.perks.contains_key(&pid) || data.sig(pid).as_ref() == Some(b"PERK") => {
                         g.player.teammate_perks.insert(pid);
                         inc_ok("player_teammate_perks");
-                        inc_hyp("player_teammate_perks (ACHR tail) [hypothesis]");
                     }
                     Ok(_) => inc_skip("player_teammate_perk", "not a PERK record"),
                     Err(why) => inc_skip("player_teammate_perk", why),
@@ -872,6 +901,7 @@ pub fn convert_fos(
                         &mut engine,
                         forms,
                         items,
+                        p.active_weapon_magazine,
                         &map_id,
                         &mut inc_ok,
                         &mut inc_hyp,
@@ -948,11 +978,9 @@ pub fn convert_fos(
                 if flags & FORM_DEAD != 0 {
                     g.extra.entry(rid).or_default().dead = true;
                     inc_ok("actor_dead");
-                    inc_hyp("actor_dead (ACHR/ACRE form flag 0x10000) [hypothesis]");
                 }
             }
             inc_ok("references");
-            inc_hyp("reference_form_flags (REFR/ACHR/ACRE bit 0) [hypothesis]");
         }
         if let Some((raw_at, pos, rot)) = r.place {
             if !finite_transform(pos, rot) {
@@ -1009,11 +1037,10 @@ pub fn convert_fos(
         if applied || (is_cont && cont.items.iter().all(|it| it.count == 0)) {
             handled_containers.insert(cont.form);
             inc_ok("containers");
-            inc_hyp("container_inventories (REFR bits 5/27) [hypothesis]");
         }
     }
 
-    // 7b2. Non-player actor state (flags/dead, scale, script vars 0x0D, factions 0x5E, inventory/worn gear; [hypothesis]).
+    // 7b2. Non-player actor state (flags/dead, scale, script vars 0x0D, factions 0x5E, inventory/worn gear).
     let mut handled_actors: BTreeSet<u32> = BTreeSet::new();
     for ac in fos.actor_changes() {
         let rid = match map_id(ac.form) {
@@ -1029,7 +1056,6 @@ pub fn convert_fos(
                 if let Ok(st) = g.world.get(rid) {
                     st.scale = Some(sc);
                     inc_ok("actor_scales");
-                    inc_hyp("actor_scales (ACHR/ACRE bit 4) [hypothesis]");
                     applied_any = true;
                 }
             }
@@ -1039,7 +1065,6 @@ pub fn convert_fos(
                 Ok(fid) if data.sig(fid).as_ref() == Some(b"FACT") => {
                     g.extra.entry(rid).or_default().factions.insert(fid, rank);
                     inc_ok("actor_factions");
-                    inc_hyp("actor_factions (actor extra 0x5E) [hypothesis]");
                     applied_any = true;
                 }
                 Ok(_) => inc_skip("actor_faction", "not a FACT record"),
@@ -1076,7 +1101,6 @@ pub fn convert_fos(
                 &mut inc_skip,
             ) {
                 inc_ok("actor_inventories");
-                inc_hyp("actor_inventories (ACHR/ACRE bits 5/27) [hypothesis]");
                 applied_any = true;
             }
         }
@@ -1085,8 +1109,8 @@ pub fn convert_fos(
         }
     }
 
-    // 7b3. Placed REFR extras: locks (0x2A), door open state (bit 23/28), owners (0x21),
-    // script variables (0x0D), and locked-container inventories (bit 12 + bits 5/27) ([hypothesis]).
+    // 7b3. Placed REFR extras: locks (0x2A), door open state (bit 23/28), owners (0x21, bit 6/31),
+    // script variables (0x0D), and container inventories combined with extra lists.
     let mut handled_ref_extras: BTreeSet<u32> = BTreeSet::new();
     for re in fos.ref_extras() {
         let rid = match map_id(re.form) {
@@ -1103,7 +1127,6 @@ pub fn convert_fos(
                 if let Ok(st) = g.world.get(rid) {
                     st.scale = Some(sc);
                     inc_ok("ref_scales");
-                    inc_hyp("ref_scales (REFR bit 4) [hypothesis]");
                     applied_any = true;
                 }
             }
@@ -1127,7 +1150,6 @@ pub fn convert_fos(
                 if let Ok(st) = g.world.get(rid) {
                     st.lock = Some(LockState { level: lk.level, key: mapped_key, locked: lk.is_locked() });
                     inc_ok("locks");
-                    inc_hyp("locks (REFR extra 0x2A) [hypothesis]");
                     applied_any = true;
                 }
             }
@@ -1137,7 +1159,6 @@ pub fn convert_fos(
                 if let Ok(st) = g.world.get(rid) {
                     st.open = open;
                     inc_ok("doors_open_state");
-                    inc_hyp("doors_open_state (REFR bit 23/28) [hypothesis]");
                     applied_any = true;
                 }
             }
@@ -1148,7 +1169,6 @@ pub fn convert_fos(
                     if let Ok(st) = g.world.get(rid) {
                         st.extra.owner = Some(oid);
                         inc_ok("ref_owners");
-                        inc_hyp("ref_owners (REFR extra 0x21) [hypothesis]");
                         applied_any = true;
                     }
                 }
@@ -1189,7 +1209,6 @@ pub fn convert_fos(
                 if inv_ok || (base_sig.as_ref() == Some(b"CONT") && items.iter().all(|it| it.count == 0)) {
                     handled_containers.insert(re.form);
                     inc_ok("containers");
-                    inc_hyp("container_inventories (REFR bits 5/27) [hypothesis]");
                     applied_any = true;
                 }
             }
@@ -1199,7 +1218,7 @@ pub fn convert_fos(
         }
     }
 
-    // 7c. Map marker REFR discovery/visibility flags (bit 31 extra 0x2C; [hypothesis]).
+    // 7c. Map marker REFR discovery/visibility flags (bit 31 extra 0x2C; [observed]).
     let mut handled_map_markers: BTreeSet<u32> = BTreeSet::new();
     for mres in fos.map_markers() {
         let Ok(mm) = mres else {
@@ -1226,14 +1245,13 @@ pub fn convert_fos(
             g.player.found_markers.insert(rid);
         }
         inc_ok("map_markers");
-        inc_hyp("map_markers (REFR extra 0x2C) [hypothesis]");
     }
     if !g.player.found_markers.is_empty() {
         let found_ids: Vec<u32> = g.player.found_markers.iter().map(|id| id.0).collect();
         engine.extra.insert("map_markers_found".into(), serde_json::json!(found_ids));
     }
 
-    // 7d. Created 0xFF REFR records (32-byte header -> World::place; [hypothesis]).
+    // 7d. Created 0xFF REFR records (32-byte header -> World::place; [observed]).
     let mut handled_created_refs: BTreeSet<u32> = BTreeSet::new();
     for cr_res in fos.created_refs() {
         let Ok(cr) = cr_res else {
@@ -1269,13 +1287,12 @@ pub fn convert_fos(
         if g.world.place(base_id, Some(cell), pos, rot, 1).is_ok() {
             handled_created_refs.insert(cr.form);
             inc_ok("created_refs");
-            inc_hyp("created_refs (0xFF REFR 32B header) [hypothesis]");
         } else {
             inc_skip("created_ref", "base form not placeable in load order");
         }
     }
 
-    // 8. Faction relations (FACT flag 2).
+    // 8. Faction relations (FACT flag 2; [observed]).
     let mut factions_changed = false;
     for fres in fos.faction_relations() {
         let Ok(f) = fres else {
@@ -1291,12 +1308,12 @@ pub fn convert_fos(
         };
         for (other, _modifier, reaction) in f.relations {
             match other.ok_or("not in save form ID array").and_then(&map_id) {
-                Ok(oid) => {
+                Ok(oid) if reaction <= 3 => {
                     g.forms.faction_reactions.entry(fid).or_default().insert(oid, i64::from(reaction));
                     factions_changed = true;
                     inc_ok("faction_relations");
-                    inc_hyp("faction_relations (FACT bit 2) [hypothesis]");
                 }
+                Ok(_) => inc_skip("faction_relation", "reaction outside 0..=3"),
                 Err(why) => inc_skip("faction_relation", why),
             }
         }
@@ -1305,7 +1322,7 @@ pub fn convert_fos(
         crate::functions::actor::forget_relations(&g);
     }
 
-    // 9. Form lists (FLST flag 31; [hypothesis]).
+    // 9. Form lists (FLST flag 31; [observed]).
     for flres in fos.form_lists() {
         let Ok(fl) = flres else {
             inc_skip("form_list", "record not understood");
@@ -1332,11 +1349,10 @@ pub fn convert_fos(
         if !members.is_empty() {
             g.form_lists.insert(fl_id, members);
             inc_ok("form_lists");
-            inc_hyp("form_lists (FLST bit 31, u32 count) [hypothesis]");
         }
     }
 
-    // 10. Leveled item lists (LVLI flag 31; [hypothesis]).
+    // 10. Leveled item lists (LVLI flag 31; [observed]).
     for lvres in fos.leveled_lists() {
         let Ok(lv) = lvres else {
             inc_skip("leveled_list", "record not understood");
@@ -1378,11 +1394,10 @@ pub fn convert_fos(
         }
         if added_any {
             inc_ok("leveled_lists");
-            inc_hyp("leveled_lists (LVLI bit 31) [hypothesis]");
         }
     }
 
-    // 11. Reputations (REPU flag 1: fame, infamy; [hypothesis]).
+    // 11. Reputations (REPU flag 1: fame, infamy; [observed]).
     for rres in fos.reputations() {
         let Ok(rep) = rres else {
             inc_skip("reputation", "record not understood");
@@ -1403,13 +1418,12 @@ pub fn convert_fos(
             // PlayerState::reputation stores [infamy, fame] (axis 0 = infamy, axis 1 = fame).
             g.player.reputation.insert(rid, [f64::from(rep.infamy.max(0.0)), f64::from(rep.fame.max(0.0))]);
             inc_ok("reputations");
-            inc_hyp("reputations (REPU bit 1, fame/infamy) [hypothesis]");
         } else {
             inc_skip("reputation", "non-finite value");
         }
     }
 
-    // 12. Challenges (CHAL flag 1: progress, flags; [hypothesis]).
+    // 12. Challenges (CHAL flag 1: progress, flags; [observed]).
     for cres in fos.challenges() {
         let Ok(ch) = cres else {
             inc_skip("challenge", "record not understood");
@@ -1433,11 +1447,25 @@ pub fn convert_fos(
             st.completed = true;
         }
         inc_ok("challenges");
-        inc_hyp("challenges (CHAL bit 1, progress/flags) [hypothesis]");
     }
 
-    // 13. Notes (NOTE flag 31; [hypothesis]).
-    for raw_note in fos.notes() {
+    // 13. Notes: union of observed ACHR 0x14 tail notes list and [hypothesis] TYPE_NOTE bit 31.
+    let mut seen_notes: BTreeSet<u32> = BTreeSet::new();
+    for raw_note in fos.player_tail_notes() {
+        seen_notes.insert(raw_note);
+        match map_id(raw_note) {
+            Ok(id) if data.notes.contains_key(&id) || data.sig(id).as_ref() == Some(b"NOTE") => {
+                g.player.notes.insert(id);
+                inc_ok("notes");
+            }
+            Ok(_) => inc_skip("note", "no NOTE record"),
+            Err(why) => inc_skip("note", why),
+        }
+    }
+    for raw_note in fos.note_records() {
+        if !seen_notes.insert(raw_note) {
+            continue;
+        }
         match map_id(raw_note) {
             Ok(id) if data.notes.contains_key(&id) || data.sig(id).as_ref() == Some(b"NOTE") => {
                 g.player.notes.insert(id);
@@ -1449,20 +1477,19 @@ pub fn convert_fos(
         }
     }
 
-    // 14. Dialogue said-once (INFO flag 31 -> actorless FormId(0) entry, checked by Game::said_once; [hypothesis]).
+    // 14. Dialogue said-once (INFO flag 31 -> actorless FormId(0) entry, checked by Game::said_once; [observed]).
     for raw_info in fos.said_infos() {
         match map_id(raw_info) {
             Ok(id) if data.infos.contains_key(&id) || data.sig(id).as_ref() == Some(b"INFO") => {
                 g.said.insert((FormId(0), id));
                 inc_ok("said_infos");
-                inc_hyp("said_infos (INFO bit 31) [hypothesis]");
             }
             Ok(_) => inc_skip("said_info", "no INFO record"),
             Err(why) => inc_skip("said_info", why),
         }
     }
 
-    // 14b. Encounter zones (ECZN bit 31: locked zone level; [hypothesis]).
+    // 14b. Encounter zones (ECZN bit 31: locked zone level; [observed]).
     for ezres in fos.encounter_zones() {
         let Ok(ez) = ezres else {
             inc_skip("encounter_zone", "record not understood");
@@ -1482,13 +1509,12 @@ pub fn convert_fos(
         if let Some(level) = u16::try_from(ez.level).ok().filter(|&l| l >= 1) {
             g.world.set_zone_level(zid, level);
             inc_ok("encounter_zones");
-            inc_hyp("encounter_zones (ECZN bit 31) [hypothesis]");
         } else {
             inc_skip("encounter_zone", "zone level out of range");
         }
     }
 
-    // 14c. Cells (CELL bits 3/30/31: visited cells, detach timestamps, cell owners; [hypothesis]).
+    // 14c. Cells (CELL bits 3/30/31: visited cells, detach timestamps, cell owners; [observed]).
     let mut handled_cells: BTreeSet<u32> = BTreeSet::new();
     for cres in fos.cells() {
         let Ok(cell) = cres else {
@@ -1510,14 +1536,12 @@ pub fn convert_fos(
         if cell.detach_hours.is_some() || cell.has_fog {
             g.forms.visited_cells.insert(cid);
             inc_ok("visited_cells");
-            inc_hyp("visited_cells (CELL bits 30/31) [hypothesis]");
             applied_any = true;
         }
         if let Some(hours) = cell.detach_hours {
             let days = (hours as f32) / 24.0;
             g.world.set_cell_detached_at(cid, days);
             inc_ok("detached_cells");
-            inc_hyp("detached_cells (CELL bit 30) [hypothesis]");
             applied_any = true;
         }
         if let Some(raw_owner) = cell.owner {
@@ -1525,7 +1549,6 @@ pub fn convert_fos(
                 Ok(oid) if matches!(data.sig(oid).as_ref(), Some(b"NPC_" | b"FACT")) => {
                     g.forms.cell_owners.insert(cid, oid);
                     inc_ok("cell_owners");
-                    inc_hyp("cell_owners (CELL bit 3) [hypothesis]");
                     applied_any = true;
                 }
                 Ok(_) => inc_skip("cell_owner", "not an NPC_ or FACT record"),
@@ -1553,7 +1576,10 @@ pub fn convert_fos(
             TYPE_INFO | TYPE_NOTE => cf.flags & (1 << 31) != 0 && cf.data.is_empty(),
             TYPE_REPU | TYPE_CHAL => cf.flags & (1 << 1) != 0,
             TYPE_CELL => handled_cells.contains(&cf.form),
-            TYPE_NPC => cf.form == PLAYER_BASE && (cf.flags & ((1 << 1) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 11)) != 0),
+            TYPE_NPC => {
+                cf.form == PLAYER_BASE
+                    && (cf.flags & ((1 << 1) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 11) | (1 << 24)) != 0)
+            }
             TYPE_CLAS => cf.form == fnv_save::fos::PLAYER_CLASS && (cf.flags & (1 << 1) != 0),
             TYPE_REFR => {
                 (cf.flags & 0b111 != 0)
@@ -1604,7 +1630,6 @@ pub fn convert_fos(
         match encode_rgb_png(&fos.screenshot_rgb, fos.header.screenshot_width, fos.header.screenshot_height) {
             Some(png) => {
                 inc_ok("thumbnail_encoded");
-                inc_hyp("thumbnail_rgb_order (header screenshot) [hypothesis]");
                 png
             }
             None => {
@@ -1656,7 +1681,7 @@ fn apply_container_inventory(
     items: &[FosItem],
     map_id: &impl Fn(u32) -> Result<FormId, &'static str>,
     inc_ok: &mut impl FnMut(&str),
-    inc_hyp: &mut impl FnMut(&str),
+    _inc_hyp: &mut impl FnMut(&str),
     inc_skip: &mut impl FnMut(&str, &str),
 ) -> bool {
     let mut applied_any_item = false;
@@ -1700,18 +1725,6 @@ fn apply_container_inventory(
                         if g.world.add_item_extra(holder, id, stack_n, extra).is_ok() {
                             remaining -= stack_n;
                             added_any = true;
-                            if entry.count.is_some_and(|n| n > 0) {
-                                inc_hyp("player_item_stack_counts (extra 0x24) [hypothesis]");
-                            }
-                            if cond.is_some() {
-                                inc_hyp("player_item_conditions (extra 0x25) [hypothesis]");
-                            }
-                            if owner.is_some() {
-                                inc_hyp("player_item_owners (extra 0x21) [hypothesis]");
-                            }
-                            if entry.weapon_mods != 0 {
-                                inc_hyp("player_item_weapon_mods (extra 0x8D) [hypothesis]");
-                            }
                         } else {
                             failed = true;
                             break;
@@ -1753,6 +1766,7 @@ fn apply_player_inventory(
     engine: &mut EngineSnapshot,
     forms: &FormStore,
     items: &[FosItem],
+    active_weapon_magazine: Option<u32>,
     map_id: &impl Fn(u32) -> Result<FormId, &'static str>,
     inc_ok: &mut impl FnMut(&str),
     inc_hyp: &mut impl FnMut(&str),
@@ -1818,18 +1832,6 @@ fn apply_player_inventory(
                         if g.world.add_item_extra(FormId::PLAYER_REF, id, stack_n, extra).is_ok() {
                             remaining -= stack_n;
                             added_any = true;
-                            if entry.count.is_some_and(|n| n > 0) {
-                                inc_hyp("player_item_stack_counts (extra 0x24) [hypothesis]");
-                            }
-                            if cond.is_some() {
-                                inc_hyp("player_item_conditions (extra 0x25) [hypothesis]");
-                            }
-                            if owner.is_some() {
-                                inc_hyp("player_item_owners (extra 0x21) [hypothesis]");
-                            }
-                            if entry.weapon_mods != 0 {
-                                inc_hyp("player_item_weapon_mods (extra 0x8D) [hypothesis]");
-                            }
                         } else {
                             failed = true;
                             break;
@@ -1879,7 +1881,9 @@ fn apply_player_inventory(
                         || g.world.equip(FormId::PLAYER_REF, id).is_ok();
                     if equipped {
                         inc_ok("player_equipped");
-                        inc_hyp("player_equipped (extra 0x16) [hypothesis]");
+                        if entry.worn_secondary {
+                            inc_hyp("player_equipped_secondary (extra 0x17) [hypothesis]");
+                        }
                         if let Some((raw_ammo, rounds)) = entry.ammo {
                             if forms.item(id).is_some_and(|item| item.kind == ItemKind::Weapon) {
                                 let ammo_id = match raw_ammo {
@@ -1902,6 +1906,16 @@ fn apply_player_inventory(
                                 engine.magazine_ammo = ammo_id.map(|a| a.0);
                                 inc_ok("player_weapon_magazine");
                                 inc_hyp("player_weapon_magazine (extra 0x6E) [hypothesis]");
+                            }
+                        } else if engine.magazine.is_none() {
+                            if let Some(rounds) = active_weapon_magazine {
+                                if forms.item(id).is_some_and(|item| {
+                                    item.kind == ItemKind::Weapon
+                                        && item.weapon_traits.is_some_and(|w| w.ammo.is_some())
+                                }) {
+                                    engine.magazine = Some((id.0, rounds));
+                                    inc_ok("player_weapon_magazine");
+                                }
                             }
                         }
                     } else {
@@ -2074,18 +2088,6 @@ fn apply_actor_inventory(
                         if g.world.add_item_extra(holder, id, stack_n, extra).is_ok() {
                             remaining -= stack_n;
                             added_any = true;
-                            if entry.count.is_some_and(|n| n > 0) {
-                                inc_hyp("actor_item_stack_counts (extra 0x24) [hypothesis]");
-                            }
-                            if cond.is_some() {
-                                inc_hyp("actor_item_conditions (extra 0x25) [hypothesis]");
-                            }
-                            if owner.is_some() {
-                                inc_hyp("actor_item_owners (extra 0x21) [hypothesis]");
-                            }
-                            if entry.weapon_mods != 0 {
-                                inc_hyp("actor_item_weapon_mods (extra 0x8D) [hypothesis]");
-                            }
                         } else {
                             failed = true;
                             break;
@@ -2138,7 +2140,9 @@ fn apply_actor_inventory(
                         equipped_any = true;
                         applied_any = true;
                         inc_ok("actor_equipped");
-                        inc_hyp("actor_equipped (extra 0x16/0x17) [hypothesis]");
+                        if entry.worn_secondary {
+                            inc_hyp("actor_equipped_secondary (extra 0x17) [hypothesis]");
+                        }
                     } else {
                         inc_skip("actor_equipped", "cannot equip item");
                     }

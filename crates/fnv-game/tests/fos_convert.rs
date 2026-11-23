@@ -846,25 +846,26 @@ fn fos_converts_to_valid_nvfsave_and_restores_all_sections() {
     assert_eq!(converted.report.converted.get("said_infos"), Some(&1));
     assert_eq!(converted.report.converted.get("weather"), Some(&1));
     assert_eq!(converted.report.converted.get("thumbnail_encoded"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("player_xp (AV2 code 24) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("player_karma (AV2 code 23) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("reputations (REPU bit 1, fame/infamy) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("active_quest (global type 1) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("form_lists (FLST bit 31, u32 count) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("leveled_lists (LVLI bit 31) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("challenges (CHAL bit 1, progress/flags) [hypothesis]"), Some(&1));
     assert_eq!(converted.report.hypothesis_fields.get("notes (NOTE bit 31) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("said_infos (INFO bit 31) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("player_item_conditions (extra 0x25) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("player_equipped (extra 0x16) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("reference_form_flags (REFR/ACHR/ACRE bit 0) [hypothesis]"), Some(&2));
-    assert_eq!(converted.report.hypothesis_fields.get("faction_relations (FACT bit 2) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("player_special (NPC_ bit 2) [hypothesis]"), Some(&7));
-    assert_eq!(converted.report.hypothesis_fields.get("player_tag_skills (CLAS bit 1) [hypothesis]"), Some(&3));
-    assert_eq!(converted.report.hypothesis_fields.get("misc_stats (global type 0) [hypothesis]"), Some(&2));
-    assert_eq!(converted.report.hypothesis_fields.get("weather (global type 8) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("quest_flags_delay_objectives (QUST) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("thumbnail_rgb_order (header screenshot) [hypothesis]"), Some(&1));
+    // Confirmed [observed] fields are no longer counted in hypothesis_fields.
+    assert!(!converted.report.hypothesis_fields.contains_key("active_quest (global type 1) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("player_special (NPC_ bit 2) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("quest_flags_objectives (QUST bits 1/29) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("player_xp (AV2 code 24) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("player_karma (AV2 code 23) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("reputations (REPU bit 1, fame/infamy) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("form_lists (FLST bit 31, u32 count) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("leveled_lists (LVLI bit 31) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("challenges (CHAL bit 1, progress/flags) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("said_infos (INFO bit 31) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("player_item_conditions (extra 0x25) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("player_equipped (extra 0x16) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("reference_form_flags (REFR/ACHR/ACRE bit 0) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("faction_relations (FACT bit 2) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("player_tag_skills (CLAS bit 1) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("misc_stats (global type 0) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("weather (global type 8) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("thumbnail_rgb_order (header screenshot) [hypothesis]"));
     assert!(converted.report.warnings.iter().any(|w| w.contains("[hypothesis]")));
     assert!(converted.report.skipped.contains_key("global: form of a plugin not loaded"));
     assert!(converted.report.skipped.contains_key("global: created form (0xFF)"));
@@ -1134,13 +1135,13 @@ fn midgame_player_extras_weapon_magazine_and_dead_counts_convert_and_restore() {
     assert_eq!(converted.report.converted.get("player_items"), Some(&1));
     assert_eq!(converted.report.converted.get("player_equipped"), Some(&1));
     assert_eq!(converted.report.converted.get("player_weapon_magazine"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("dead_counts (global type 2 prefix) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("player_item_weapon_mods (extra 0x8D) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("player_item_owners (extra 0x21) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("player_item_stack_counts (extra 0x24) [hypothesis]"), Some(&1));
     assert_eq!(converted.report.hypothesis_fields.get("player_weapon_magazine (extra 0x6E) [hypothesis]"), Some(&1));
-    assert_eq!(converted.report.hypothesis_fields.get("player_item_conditions (extra 0x25) [hypothesis]"), Some(&2));
-    assert_eq!(converted.report.hypothesis_fields.get("player_equipped (extra 0x16) [hypothesis]"), Some(&1));
+    assert!(!converted.report.hypothesis_fields.contains_key("player_item_owners (extra 0x21) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("dead_counts (global type 2 prefix) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("player_item_weapon_mods (extra 0x8D) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("player_item_stack_counts (extra 0x24) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("player_item_conditions (extra 0x25) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("player_equipped (extra 0x16) [hypothesis]"));
     assert_eq!(converted.report.skipped.get("player_hotkey: not persisted in NVFSAVE v1"), Some(&1));
     assert_eq!(converted.report.skipped.get("global_table: type 2 trailing bytes unmapped"), Some(&1));
 
@@ -1310,18 +1311,7 @@ fn container_stashes_map_markers_and_created_refs_convert_and_restore() {
     assert_eq!(converted.report.converted.get("container_items"), Some(&3));
     assert_eq!(converted.report.converted.get("map_markers"), Some(&2));
     assert_eq!(converted.report.converted.get("created_refs"), Some(&1));
-    assert_eq!(
-        converted.report.hypothesis_fields.get("container_inventories (REFR bits 5/27) [hypothesis]"),
-        Some(&2)
-    );
-    assert_eq!(
-        converted.report.hypothesis_fields.get("map_markers (REFR extra 0x2C) [hypothesis]"),
-        Some(&2)
-    );
-    assert_eq!(
-        converted.report.hypothesis_fields.get("created_refs (0xFF REFR 32B header) [hypothesis]"),
-        Some(&1)
-    );
+    assert!(converted.report.hypothesis_fields.is_empty());
     // Converted created REFR is NOT double-counted as unsupported; created ACRE and non-marker bit-31 REFR are.
     assert!(!converted.report.skipped.contains_key("changed_form: created REFR (0xFF) unsupported"));
     assert_eq!(converted.report.skipped.get("changed_form: created ACRE (0xFF) unsupported"), Some(&1));
@@ -1657,17 +1647,33 @@ fn v2_player_skills_limbs_perks_companions_world_and_radio_round_trip() {
     let table_at = b.len();
     b.extend([0u8; 32 + 78]);
 
-    // Global table 1: type 10 (Pip-Boy radio ON tuned to RADIO_REF)
+    // Global table 1: type 10 (Pip-Boy radio ON tuned to RADIO_REF via observed 2nd active-station list)
     let g1 = b.len();
     let mut t10 = Build { b: Vec::new() };
-    t10.u32(1)
+    t10.u32(0)
         .bar()
-        .u8(1)
+        .u8(0)
         .bar()
-        .s_field("data\\sound\\songs\\sample.mp3", true)
+        .s_field("", true)
+        .vs(0)
+        .bar()
         .vs(1)
         .bar()
         .r(23)
+        .bar()
+        .u32(9740)
+        .bar()
+        .u32(1)
+        .bar()
+        .u8(0x64)
+        .bar()
+        .u8(0x64)
+        .bar()
+        .u32(0x33)
+        .bar()
+        .u8(0)
+        .bar()
+        .u8(0)
         .bar();
     b.extend(10u32.to_le_bytes());
     b.extend((t10.b.len() as u32).to_le_bytes());
@@ -1831,10 +1837,11 @@ fn v2_player_skills_limbs_perks_companions_world_and_radio_round_trip() {
     ez.u32(5).u32(5).u32(5).u32(18).bar();
     push_record(&mut b, 22, 1 << 31, TYPE_ECZN, &ez.b);
 
-    // 8. CELL ROOM_ID (r(1)): bits 3 + 30 + 31 (detach 72h = 3.0 days, owner FACT_A, fog -> visited)
+    // 8. CELL ROOM_ID (r(1)): bits 3 + 30 + 31 (detach 72h = 3.0 days, fog -> visited, owner FACT_A AFTER fog)
     let mut cl = Build { b: Vec::new() };
-    cl.u32(72).bar().r(10).bar();
+    cl.u32(72).bar();
     cl.b.extend([0xFFu8; 4]);
+    cl.r(10).bar();
     push_record(&mut b, 1, (1 << 3) | (1 << 30) | (1 << 31), TYPE_CELL, &cl.b);
 
     let g2 = b.len();
@@ -2128,6 +2135,299 @@ fn v2_non_finite_floats_in_new_fields_are_sanitized_cleanly() {
     let restored_world = World::restore(&f.forms, &f.refs, &body.game.sim).unwrap();
     let restored = Game::restore(&f.data, restored_world, GameConfig::default(), &body.game).unwrap();
     assert!(restored.player.look.is_none());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn v2_observed_decoder_fixes_round_trip_cleanly() {
+    let f = fixture();
+    let fids = [
+        ROOM_ID,       // 1
+        PLAYER_REF,    // 2
+        PLAYER_BASE,   // 3
+        ITEM_ID,       // 4
+        FACT_A,        // 5
+        PERK_ID,       // 6
+        CONT_REF,      // 7
+        RADIO_REF,     // 8
+        NOTE_ID,       // 9
+        WEAP_ID,       // 10
+        HAIR_ID,       // 11
+        EYES_ID,       // 12
+        HDPT_ID,       // 13
+    ];
+
+    let mut h = Build { b: Vec::new() };
+    h.u32(0x30).bar();
+    h.b.extend([0u8; 64]);
+    h.bar()
+        .u32(0)
+        .bar()
+        .u32(0)
+        .bar()
+        .u32(42)
+        .bar()
+        .s_field("ObservedV2", true)
+        .s_field("Drifter", true)
+        .u32(5)
+        .bar()
+        .s_field("OwnTestRoom", true)
+        .s_field("001.00.00", false);
+
+    let mut b = b"FO3SAVEGAME".to_vec();
+    b.extend((h.b.len() as u32).to_le_bytes());
+    b.extend(&h.b);
+    let mut pl = Build { b: Vec::new() };
+    pl.u8(1).bar().s_field("FalloutNV.esm", true);
+    b.push(27);
+    b.extend((pl.b.len() as u32).to_le_bytes());
+    b.extend(&pl.b);
+    let table_at = b.len();
+    b.extend([0u8; 32 + 78]);
+
+    // BUG #3: Global[10] vanilla 1.4.0.525 layout (header 0, active station in 2nd vsval list)
+    let g1 = b.len();
+    let mut t10 = Build { b: Vec::new() };
+    t10.u32(0)
+        .bar()
+        .u8(0)
+        .bar()
+        .s_field("", true)
+        .vs(0)
+        .bar()
+        .vs(1)
+        .bar()
+        .r(8)
+        .bar()
+        .u32(29077)
+        .bar()
+        .u32(1)
+        .bar()
+        .u8(0x64)
+        .bar()
+        .u8(0x64)
+        .bar()
+        .u32(0x33)
+        .bar()
+        .u8(0)
+        .bar()
+        .u8(0)
+        .bar();
+    b.extend(10u32.to_le_bytes());
+    b.extend((t10.b.len() as u32).to_le_bytes());
+    b.extend(&t10.b);
+
+    let cf = b.len();
+
+    // BUG #8 + Round 3 bit-11 appearance: NPC_ 0x7 with bit 11 FaceGen + bit 24 SexChange (`01 7c`)
+    let mut npc7 = Build { b: Vec::new() };
+    npc7.u8(1).bar();
+    for i in 0..50 {
+        npc7.f32(if i == 0 { 0.25 } else { 0.0 }).bar();
+    }
+    for _ in 0..30 {
+        npc7.f32(0.0).bar();
+    }
+    for _ in 0..50 {
+        npc7.f32(0.0).bar();
+    }
+    npc7.r(11).bar().r(12).bar().f32(0.04).bar().u32(0x002E_4654).bar();
+    npc7.vs(1).bar().r(13).bar();
+    npc7.u8(0x01).bar(); // bit 24 SexChange
+    push_record(&mut b, 3, (1 << 11) | (1 << 24), TYPE_NPC, &npc7.b);
+
+    // BUG #1 + #2 + #7 + #12 + #13: Player ACHR WITHOUT bit 4 (no scale float!), AV2 rads (54) &
+    // hardcore needs (73..=75), inventory item with 0x16 + 0x3E (no-unequip) & NO 0x6E, High-Process
+    // tok[70]=9 & tok[76]=11 active magazine rounds, bit 22 with non-skill SetAV Luck=9 (11) +
+    // skill Melee=20 (38), tail notes, and perks.
+    let mut p = Build { b: Vec::new() };
+    p.r(1).f32(1.0).f32(2.0).f32(3.0).f32(0.0).f32(0.0).f32(0.0).bar();
+    for i in 0..232 {
+        let v = match i {
+            131 => 125.0, // AV2 RadiationRads (77 + 54)
+            150 => 150.0, // AV2 Dehydration (77 + 73)
+            151 => 175.0, // AV2 Hunger (77 + 74)
+            152 => 200.0, // AV2 SleepDeprivation (77 + 75)
+            _ => 0.0,
+        };
+        p.f32(v).bar();
+    }
+    p.u8(0).bar(); // NO scale float because bit 4 is 0!
+    p.vs(1).bar().u8(0x5E).bar().vs(1).bar().r(5).bar().u8(2).bar();
+    p.vs(2).bar();
+    p.r(4).bar().i32(4).bar().vs(0).bar();
+    // Equipped WEAP_ID with 0x25 + 0x16 + 0x3E (no-unequip, BUG #12) and NO 0x6E
+    p.r(10).bar().i32(1).bar().vs(1).bar().vs(3).bar();
+    p.u8(0x25).bar().f32(150.0).bar().u8(0x16).bar().u8(0x3E).bar();
+    // High-Process block tok[0..=76] with tok[70] = 9 (equipped) and tok[76] = 11 (active rounds, BUG #13)
+    const PROC_WIDTHS: [usize; 77] = [
+        1, 1, 1, 1, 1, 1, 1, 1, 4, 4, 1, 1, 3, 3, 4, 4, 4, 3, 1, 4, 3, 4, 4, 4, 1, 2, 4, 4, 3, 3,
+        3, 3, 3, 1, 4, 1, 1, 1, 4, 4, 4, 1, 12, 4, 1, 1, 1, 2, 12, 1, 1, 1, 1, 4, 1, 4, 4, 1, 1, 1,
+        2, 4, 1, 4, 4, 1, 1, 4, 4, 4, 4, 1, 3, 3, 3, 3, 4,
+    ];
+    for (idx, &w) in PROC_WIDTHS.iter().enumerate() {
+        if idx == 70 {
+            p.u32(9).bar();
+        } else if idx == 76 {
+            p.u32(11).bar();
+        } else {
+            p.b.extend(std::iter::repeat_n(0u8, w));
+            p.bar();
+        }
+    }
+    p.r(0).bar().r(0).bar().r(0).bar();
+    p.vs(2).bar().u8(11).bar().f32(9.0).bar().u8(38).bar().f32(20.0).bar();
+    p.b.extend_from_slice(b"\xFF\xFF\x7C\xFF\xFF\x7C\x00\x7C\x01\x01\x00\x00\x7C");
+    p.b.extend_from_slice(b"\xAD\xDE\xAD\xDE\x7C");
+    p.u8(0).bar();
+    for _ in 0..4 {
+        p.u32(0).bar();
+    }
+    p.u8(0).bar().u32(200).bar();
+    for _ in 0..11 {
+        p.r(0).bar();
+    }
+    // BUG #9: player tail notes list with NOTE_ID (0 TYPE_NOTE changed forms!)
+    p.vs(0).bar();
+    p.vs(1).bar().r(9).bar();
+    p.vs(0).bar();
+    // Known actors: 1 entry
+    p.vs(1).bar().r(8).bar().u8(0).bar().u8(0).bar();
+    // Perks: 1 entry (PERK_ID, rank 1)
+    p.vs(1).bar().r(6).bar().u8(1).bar();
+    for _ in 0..4 {
+        p.u8(0).bar();
+    }
+    for _ in 0..5 {
+        p.u32(0).bar();
+    }
+    for _ in 0..3 {
+        p.u32(0).bar();
+    }
+    p.u8(0).bar().u8(1).bar().u8(1).bar();
+    for _ in 0..8 {
+        p.u32(0).bar();
+    }
+    for _ in 0..4 {
+        p.u8(0).bar();
+    }
+    push_record(
+        &mut b,
+        2,
+        (1 << 1) | (1 << 5) | (1 << 22) | (1 << 28) | (1 << 31),
+        TYPE_ACHR,
+        &p.b,
+    );
+
+    // BUG #4: Container REFR with bit 6 (`0x40`, SetOwnership 0x21) + bit 4 scale + bits 27+28
+    let mut cont = Build { b: Vec::new() };
+    cont.f32(1.5).bar();
+    cont.vs(1).bar().u8(0x21).bar().r(5).bar();
+    cont.vs(1).bar().r(4).bar().i32(2).bar().vs(0).bar();
+    cont.u8(0x2C).bar().s_field("Close", true).u8(0).bar();
+    push_record(
+        &mut b,
+        7,
+        (1 << 4) | (1 << 6) | (1 << 27) | (1 << 28),
+        TYPE_REFR,
+        &cont.b,
+    );
+
+    // BUG #5: CELL ROOM_ID with flags 0x8000000a (bits 1+3+31): 20 | + 76B fog + trailing owner FACT_A |
+    let mut cl = Build { b: Vec::new() };
+    cl.u8(0x20).bar();
+    cl.b.extend([0x08, BAR, 0x00, BAR, 0xFF, BAR]);
+    cl.b.extend([0x00u8; 70]);
+    cl.r(5).bar();
+    assert_eq!(cl.b.len(), 82);
+    push_record(&mut b, 1, (1 << 1) | (1 << 3) | (1 << 31), TYPE_CELL, &cl.b);
+
+    let g2 = b.len();
+    b.extend(1000u32.to_le_bytes());
+    b.extend(0u32.to_le_bytes());
+    let fid = b.len();
+    b.extend((fids.len() as u32).to_le_bytes());
+    for fid_val in fids {
+        b.extend(fid_val.to_le_bytes());
+    }
+    b.extend(0u32.to_le_bytes());
+    let tail = b.len();
+    b.extend([5, 0, 0, 0, 0, 0, 0, 0, BAR]);
+    let table = [fid, tail, g1, cf, g2, 1, 1, 4].map(|v| v as u32);
+    for (i, v) in table.iter().enumerate() {
+        b[table_at + 4 * i..table_at + 4 * i + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
+    let fos = Fos::parse(&b).unwrap();
+    let opts = ConvertOptions {
+        kind: SaveKind::Manual,
+        plugins: vec![PluginEntry { name: "FalloutNV.esm".into(), size: 1234 }],
+        include_thumbnail: false,
+        cosave_present: false,
+    };
+    let converted = convert_fos(&fos, &f.data, &f.forms, &f.refs, &opts).unwrap();
+    // Every field in this save is [observed], so hypothesis_fields and unmapped skips are empty!
+    assert!(
+        converted.report.hypothesis_fields.is_empty(),
+        "unexpected hypothesis_fields: {:?}",
+        converted.report.hypothesis_fields
+    );
+    assert!(
+        converted.report.skipped.is_empty(),
+        "unexpected skipped: {:?}",
+        converted.report.skipped
+    );
+
+    let dir = std::env::temp_dir().join(format!("nvf-fos-convert-v2-obs-{}", std::process::id()));
+    let out = dir.join("v2_observed_fixes.nvfsave");
+    let body_bytes = serde_json::to_vec(&converted.body).unwrap();
+    fnv_save::write(&out, &converted.header, &converted.shot, &body_bytes, false).unwrap();
+
+    let (_h, _shot, body): (SaveHeader, Vec<u8>, SaveBody<GameSnapshot>) = fnv_save::read_body(&out).unwrap();
+    body.game.check().unwrap();
+    let restored_world = World::restore(&f.forms, &f.refs, &body.game.sim).unwrap();
+    let mut restored = Game::restore(&f.data, restored_world, GameConfig::default(), &body.game).unwrap();
+
+    // BUG #8: SexChange bit 24
+    assert_eq!(restored.player.female, Some(true));
+    // BUG #1: bit-4-absent player kept inventory, factions, perks
+    assert_eq!(restored.world.peek(FormId::PLAYER_REF).unwrap().scale, None);
+    assert_eq!(restored.world.item_count(FormId::PLAYER_REF, FormId(ITEM_ID)).unwrap(), 4);
+    let pe = restored.extra.get(&FormId::PLAYER_REF).unwrap();
+    assert_eq!(pe.factions.get(&FormId(FACT_A)), Some(&2));
+    assert_eq!(restored.player.perks.get(&FormId(PERK_ID)), Some(&1));
+    // BUG #2: bit 22 non-skill Luck=9 AND skill Melee=20
+    assert_eq!(pe.actor_values.get(&11), Some(&9.0));
+    assert_eq!(restored.player.skill_points.get(&38), Some(&20.0));
+    // BUG #7: AV2 rads & hardcore needs in actor_values (NOT av_permanent)
+    assert_eq!(pe.actor_values.get(&54), Some(&125.0));
+    assert_eq!(pe.actor_values.get(&73), Some(&150.0));
+    assert_eq!(pe.actor_values.get(&74), Some(&175.0));
+    assert_eq!(pe.actor_values.get(&75), Some(&200.0));
+    assert!(!pe.av_permanent.contains_key(&54));
+    assert!(!pe.av_permanent.contains_key(&73));
+    // BUG #3: Global[10] active Pip-Boy radio
+    assert!(restored.radio.pipboy.on);
+    assert_eq!(restored.radio.pipboy.station, Some(FormId(RADIO_REF)));
+    // BUG #4: bit-6 owned container (owner + scale + inventory)
+    let cst = restored.world.peek(FormId(CONT_REF)).unwrap();
+    assert_eq!(cst.scale, Some(1.5));
+    assert_eq!(cst.extra.owner, Some(FormId(FACT_A)));
+    assert_eq!(restored.world.item_count(FormId(CONT_REF), FormId(ITEM_ID)).unwrap(), 5);
+    // BUG #5: CELL bit 3 owner AFTER bit-31 fog
+    assert!(restored.forms.visited_cells.contains(&FormId(ROOM_ID)));
+    assert_eq!(restored.forms.cell_owners.get(&FormId(ROOM_ID)), Some(&FormId(FACT_A)));
+    // BUG #9: Player tail notes list decoded with zero TYPE_NOTE records (and zero hypothesis_fields!)
+    assert!(restored.player.notes.contains(&FormId(NOTE_ID)));
+    // Round 3: NPC_ bit 11 appearance, BUG #12 0x3E no-unequip, and BUG #13 tok[76] active magazine (all [observed]!)
+    let look = restored.player.look.as_ref().expect("FaceGen look restored with zero hypothesis_fields");
+    assert_eq!(look.hair, Some(FormId(HAIR_ID)));
+    assert_eq!(look.eyes, Some(FormId(EYES_ID)));
+    assert_eq!(look.hair_color, Some([0x54, 0x46, 0x2E]));
+    assert_eq!(look.head_parts, [FormId(HDPT_ID)]);
+    assert_eq!(body.engine.magazine, Some((WEAP_ID, 11)));
+    assert_eq!(body.engine.magazine_ammo, None);
 
     let _ = std::fs::remove_dir_all(&dir);
 }

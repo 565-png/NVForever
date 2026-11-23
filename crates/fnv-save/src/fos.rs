@@ -241,9 +241,10 @@ pub enum VarValue {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FosQuest {
     pub form: u32,
-    /// The flags byte (change flag 1): bit 0 running, bit 1 completed [hypothesis].
+    /// The flags byte (change flag 1): bit 0 running, bit 1 completed
+    /// [observed: vanilla 1.4.0.525 A/B save pairs].
     pub flags: Option<u8>,
-    /// SetQuestDelay's value (change flag 2) [hypothesis].
+    /// SetQuestDelay's value (change flag 2) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub delay: Option<f32>,
     /// (stage index, done) for each stage the save lists (change flag 31).
     pub stages: Vec<(u8, bool)>,
@@ -267,21 +268,26 @@ impl FosQuest {
 /// individual instance (count, worn state, condition, owner, weapon mods, hotkey, ammo).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct FosItemEntry {
-    /// Sub-stack count from extra data type 0x24 (`i16`), when present [hypothesis: stack count].
+    /// Sub-stack count from extra data type 0x24 (`i16`), when present [observed: vanilla 1.4.0.525 A/B save pairs].
     pub count: Option<i16>,
-    /// Extra data type 0x16 (worn marker, 0 payload bytes) [hypothesis: worn].
+    /// Extra data type 0x16 (worn marker, 0 payload bytes) [observed: vanilla 1.4.0.525 A/B save pairs]
+    /// or 0x17 (defensive secondary-worn pass-through [design; not emitted by vanilla 1.4.0.525]).
     pub worn: bool,
-    /// Item health from extra data type 0x25 (`f32` HP), when present [hypothesis: condition].
+    /// True when worn state came from defensive pass-through extra data type 0x17 rather than 0x16
+    /// [design; not emitted by vanilla 1.4.0.525].
+    pub worn_secondary: bool,
+    /// Item health from extra data type 0x25 (`f32` HP), when present [observed: vanilla 1.4.0.525 A/B save pairs].
     pub condition: Option<f32>,
     /// Owner reference from extra data type 0x21 (`ref3`), when present (`Some(None)` = zero or
-    /// unresolved reference) [hypothesis: owner].
+    /// unresolved reference) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub owner: Option<Option<u32>>,
-    /// Weapon mod bitmask from extra data type 0x8D (`u8 & 0x07`) [hypothesis: weapon mods].
+    /// Weapon mod bitmask from extra data type 0x8D (`u8 & 0x07`) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub weapon_mods: u8,
-    /// Quick-slot hotkey byte from extra data type 0x4A (`u8`), when present [hypothesis: hotkey].
+    /// Quick-slot hotkey byte from extra data type 0x4A (`u8`), when present [observed: vanilla 1.4.0.525 A/B save pairs].
     pub hotkey: Option<u8>,
     /// Loaded ammo `(ammo_form_id, rounds)` from extra data type 0x6E (`ref3 | u32 |`), when
-    /// present [hypothesis: weapon magazine ammo and round count].
+    /// present [observed framing on NPC-dropped weapon REFRs in vanilla 1.4.0.525; player
+    /// inventory weapons emit zero 0x6E and track active rounds in ACHR 0x14 tok[76]].
     pub ammo: Option<(Option<u32>, u32)>,
 }
 
@@ -294,25 +300,25 @@ pub struct FosItem {
     /// The change against the base form's inventory [hypothesis: the Pip-Boy, which the
     /// player's base carries, is listed worn with 0].
     pub count: i32,
-    /// Any extra data list carries the worn marker (type 0x16) [hypothesis: worn].
+    /// Any extra data list carries the worn marker (type 0x16) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub worn: bool,
-    /// Item health from extra data type 0x25 (f32 HP), when present [hypothesis: condition].
+    /// Item health from extra data type 0x25 (f32 HP), when present [observed: vanilla 1.4.0.525 A/B save pairs].
     pub condition: Option<f32>,
-    /// Owner reference from extra data type 0x21, when present [hypothesis: owner].
+    /// Owner reference from extra data type 0x21, when present [observed: vanilla 1.4.0.525 A/B save pairs].
     pub owner: Option<Option<u32>>,
-    /// Weapon mod bitmask from extra data type 0x8D (`u8 & 0x07`) [hypothesis: weapon mods].
+    /// Weapon mod bitmask from extra data type 0x8D (`u8 & 0x07`) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub weapon_mods: u8,
-    /// Quick-slot hotkey byte from extra data type 0x4A, when present [hypothesis: hotkey].
+    /// Quick-slot hotkey byte from extra data type 0x4A, when present [observed: vanilla 1.4.0.525 A/B save pairs].
     pub hotkey: Option<u8>,
     /// Loaded ammo `(ammo_form_id, rounds)` from extra data type 0x6E, when present
-    /// [hypothesis: weapon magazine ammo and round count].
+    /// [observed framing on NPC-dropped weapon REFRs; zero 0x6E on vanilla player inventory].
     pub ammo: Option<(Option<u32>, u32)>,
     /// Per-extra-data-list sub-stack entries decoded for this item, in save order.
     pub entries: Vec<FosItemEntry>,
 }
 
 /// FaceGen appearance morphs and head parts from `NPC_ 0x7` change flag 11
-/// (save-files.md §6.2, §6.4) [hypothesis].
+/// (save-files.md §6.2, §6.4) [observed: vanilla 1.4.0.525 A/B save pairs].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct FosPlayerAppearance {
     pub fggs: Vec<f32>,
@@ -332,61 +338,83 @@ pub struct FosPlayer {
     pub place: Option<Place>,
     /// Strength … Luck from the player's base form (NPC_ 0x7, change flag 2).
     pub special: Option<[u8; 7]>,
-    /// Player sex from `NPC_ 0x7` change flag 1 (ACBS bit 0 = female) [hypothesis].
+    /// Player sex from `NPC_ 0x7` change flag 24 (`u8 female |`, `Player.SexChange`) [observed:
+    /// vanilla 1.4.0.525 A/B save pairs] or change flag 1 (ACBS bit 0 = female) [hypothesis].
     pub female: Option<bool>,
-    /// Spells/abilities listed on `NPC_ 0x7` change flag 4 (first ref list) [hypothesis].
+    /// True when [`FosPlayer::female`] was set from observed `NPC_ 0x7` change flag 24.
+    pub female_from_bit24: bool,
+    /// Spells/abilities listed on `NPC_ 0x7` change flag 4 (first ref list) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub spells: Vec<Option<u32>>,
     /// FaceGen morphs, hair, eyes, hair colour, and head parts from `NPC_ 0x7` change
-    /// flag 11 [hypothesis].
+    /// flag 11 [observed: vanilla 1.4.0.525 A/B save pairs].
     pub appearance: Option<FosPlayerAppearance>,
-    /// Tag skills, as actor value codes (PlayerClass, change flag 1).
+    /// Tag skills, as actor value codes (PlayerClass, change flag 1) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub tag_skills: Vec<u32>,
     /// Whether the 232-entry actor-value block matched the observed bar-separated layout.
     pub av_parsed: bool,
     /// The first array of actor-value modifiers by code (§6.4), non-zero entries
-    /// [observed: nvfairport's equal the worn Vault 21 Jumpsuit's enchantment; hypothesis:
-    /// active effects' modifiers].
+    /// [observed: nvfairport's equal the worn Vault 21 Jumpsuit's enchantment; vanilla 1.4.0.525
+    /// A/B save pairs confirm Buffout/Rad-X and SleepDeprivation active-effect modifiers].
     pub av_modifiers: Vec<(u32, f32)>,
     /// The second array of actor-value entries by code (§6.4), non-zero entries
-    /// [hypothesis: play-modified permanent/base values such as Karma (23), Experience
-    /// (24), permanent skill/stat modifiers].
+    /// [observed: vanilla 1.4.0.525 A/B save pairs: permanent `ModAV` modifiers, Karma (23),
+    /// Experience (24), and `ModAV`-applied radiation (54) / hardcore needs (73–75)].
     pub av_base: Vec<(u32, f32)>,
     /// The third array of actor-value entries by code (§6.4), non-zero entries
-    /// [hypothesis: current damage deltas (negative for AP/limbs/etc.) and growing needs
-    /// or radiation (positive for RadiationRads 54, Dehydration 73, Hunger 74, Sleep 75)].
+    /// [observed: vanilla 1.4.0.525 A/B save pairs: current damage deltas (negative for AP 12
+    /// and limb conditions 25–31); positive AV3 growing meters remain [hypothesis]].
     pub av_damage: Vec<(u32, f32)>,
     /// The 232nd float immediately after the 3×77 actor-value arrays (§6.4), when non-zero
-    /// [hypothesis: player Health damage delta, negative when injured].
+    /// [observed: vanilla 1.4.0.525 A/B save pairs: player Health damage delta, negative when injured].
     pub health_damage: Option<f32>,
-    /// Post-AV finite float (`0x00 | f32 |`, §6.4) [hypothesis: actor scale].
+    /// Post-AV finite float (`0x00 | f32 |`, gated on `ACHR 0x14` change flag bit 4, §6.4)
+    /// [observed: vanilla 1.4.0.525 A/B save pairs: player scale].
     pub scale: Option<f32>,
     /// Player faction rank overrides from actor extra data `0x5E` (`-1` = removed)
-    /// [hypothesis].
+    /// [observed: vanilla 1.4.0.525 A/B save pairs].
     pub factions: Vec<(Option<u32>, i8)>,
-    /// Active teammate/companion references from actor extra data `0x1D` [hypothesis].
+    /// Active teammate/companion references from actor extra data `0x1D`
+    /// [observed: vanilla 1.4.0.525 A/B save pairs].
     pub teammates: Vec<Option<u32>>,
     /// The inventory changes, `None` when the record's layout was not understood.
     pub inventory: Option<Vec<FosItem>>,
-    /// Level-up skill points spent per skill AV code (32..=45) from the post-inventory
-    /// bit-22 skill-advance list [hypothesis].
+    /// Active equipped weapon magazine round count from `ACHR 0x14` process-block `tok[76]`
+    /// (`u32 |`) when `tok[70] != u32::MAX` (weapon equipped) [observed: vanilla 1.4.0.525 A/B
+    /// save pairs].
+    pub active_weapon_magazine: Option<u32>,
+    /// All base-AV overrides (`av_code < 77`, `SetAV`) from the post-inventory bit-22 list
+    /// [observed: vanilla 1.4.0.525 A/B save pairs].
+    pub base_av_overrides: Vec<(u8, f32)>,
+    /// Skill entries (`32..=45`, `pts >= 0.0`) from the post-inventory bit-22 list
+    /// [observed: framing in vanilla 1.4.0.525 A/B save pairs].
     pub skill_points: Vec<(u8, f32)>,
-    /// Player perks `(perk_form_id, rank)` from the post-inventory perk list [hypothesis].
+    /// Acquired note form IDs from the player `ACHR 0x14` tail notes list
+    /// [observed: vanilla 1.4.0.525 A/B save pairs].
+    pub notes: Vec<u32>,
+    /// Player perks `(perk_form_id, rank)` from the post-inventory perk list
+    /// [observed: vanilla 1.4.0.525 A/B save pairs].
     pub perks: Vec<(Option<u32>, u8)>,
     /// Teammate perks `(perk_form_id, rank)` from the post-inventory teammate-perk list
-    /// [hypothesis].
+    /// [observed: vanilla 1.4.0.525 A/B save pairs].
     pub teammate_perks: Vec<(Option<u32>, u8)>,
 }
 
-/// Global table 1 type 10: Pip-Boy radio playback state (§5.1, §6.3) [hypothesis].
+/// Global table 1 type 10: Pip-Boy radio playback state (§5.1, §6.3) [observed: vanilla 1.4.0.525
+/// A/B save pairs for the second `vsval`-counted active-station list (`ref3 | u32 playback_ms | ...`);
+/// first-list fallback remains [hypothesis]].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FosRadioState {
     pub on: bool,
     pub song: String,
     pub station: Option<u32>,
+    /// Playback position in milliseconds from the active Pip-Boy station list, when active.
+    pub playback_ms: Option<u32>,
+    /// True when decoded from the observed second `vsval`-counted active-station list.
+    pub from_active_list: bool,
 }
 
 /// An encounter zone's saved level and reset stamps (`ECZN`, kind 32, bit 31; §6.3)
-/// [hypothesis].
+/// [observed: vanilla 1.4.0.525 A/B save pairs].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FosEncounterZone {
     pub form: u32,
@@ -837,8 +865,13 @@ impl Fos {
         Ok(Some(FosWeather { current, second }))
     }
 
-    /// Global table 1 type 10: Pip-Boy radio playback state (`u32 | u8 on | string song |
-    /// vsval n | [first ref3 |]`; §5.1, §6.3) [hypothesis].
+    /// Global table 1 type 10: Pip-Boy radio playback state (§5.1, §6.3).
+    ///
+    /// After the opening `u32 | u8 | string | vsval n1 | n1 * (ref3 |)` header, the immediately
+    /// following `vsval`-counted list holds the active Pip-Boy radio station entry
+    /// (`ref3 station | u32 playback_ms | u32 | u8 | u8 | u32 | u8 | u8 |`) [observed: vanilla
+    /// 1.4.0.525 A/B save pairs]. When the second list is absent or empty, falls back to the
+    /// opening `u8 on` byte and first list [hypothesis].
     pub fn radio_state(&self) -> Result<Option<FosRadioState>, FosError> {
         let Some(d) = self.global(10) else { return Ok(None) };
         if d.len() < 8 {
@@ -853,20 +886,69 @@ impl Fos {
             return err(format!("unexpected radio state flag {on_byte}"));
         }
         let song = c.string_field(true)?;
-        let count = c.vsval()?;
+        let n1 = c.vsval()?;
         c.bar()?;
-        let station = if count > 0 {
+        let mut list1_station = None;
+        for i in 0..n1 {
             let r = self.reference(c.ref3()?).ok().flatten();
             c.bar()?;
-            r
-        } else {
-            None
-        };
-        Ok(Some(FosRadioState { on: on_byte != 0, song, station }))
+            if i == 0 {
+                list1_station = r;
+            }
+        }
+        if !c.at_end() {
+            let n2 = c.vsval()?;
+            c.bar()?;
+            if n2 > 0 {
+                let station = self.reference(c.ref3()?).ok().flatten();
+                c.bar()?;
+                let playback_ms = c.u32()?;
+                c.bar()?;
+                // Verify the remaining fields of the 27-byte active-station entry when present.
+                if !c.at_end() {
+                    c.u32()?;
+                    c.bar()?;
+                    c.u8()?;
+                    c.bar()?;
+                    c.u8()?;
+                    c.bar()?;
+                    c.u32()?;
+                    c.bar()?;
+                    c.u8()?;
+                    c.bar()?;
+                    c.u8()?;
+                    c.bar()?;
+                }
+                return Ok(Some(FosRadioState {
+                    on: true,
+                    song,
+                    station,
+                    playback_ms: Some(playback_ms),
+                    from_active_list: true,
+                }));
+            }
+            if on_byte == 0 {
+                return Ok(Some(FosRadioState {
+                    on: false,
+                    song,
+                    station: None,
+                    playback_ms: None,
+                    from_active_list: true,
+                }));
+            }
+        }
+        Ok(Some(FosRadioState {
+            on: on_byte != 0,
+            song,
+            station: list1_station,
+            playback_ms: None,
+            from_active_list: false,
+        }))
     }
 
     /// Encounter zones changed in play (`ECZN`, kind 32, bit 31: four `u32` LE followed
-    /// by `|`, where the fourth is the locked zone level; §6.3) [hypothesis].
+    /// by `|`, where the fourth is the locked zone level; §6.3)
+    /// [observed: vanilla 1.4.0.525 A/B save pairs].
     pub fn encounter_zones(&self) -> Vec<Result<FosEncounterZone, FosError>> {
         self.records(TYPE_ECZN)
             .filter(|f| f.has(31))
@@ -887,8 +969,9 @@ impl Fos {
     }
 
     /// Cells changed in play (`CELL`, kind 7: optional bit 29 4-byte exterior header,
-    /// bit 30 `u32 |` detach hours, bit 1 `u8 |` flags, bit 3 `ref3 |` owner, bit 31
-    /// local-map fog; §6.2) [hypothesis].
+    /// bit 30 `u32 |` detach hours, bit 1 `u8 |` flags, bit 31 local-map fog, and bit 3
+    /// `ref3 |` owner serialized AFTER bit-31 fog; §6.2) [observed: vanilla 1.4.0.525 A/B
+    /// save pairs for bits 1, 3, 30, 31; bit 29 remains [hypothesis]].
     pub fn cells(&self) -> Vec<Result<FosCell, FosError>> {
         const KNOWN_BITS: u32 = (1 << 1) | (1 << 3) | (1 << 29) | (1 << 30) | (1 << 31);
         self.records(TYPE_CELL)
@@ -912,14 +995,25 @@ impl Fos {
                 } else {
                     None
                 };
+                let has_fog = f.has(31);
                 let owner = if f.has(3) {
-                    let o = self.reference(c.ref3()?).ok().flatten();
-                    c.bar()?;
-                    Some(o)
+                    if has_fog {
+                        // Bit 3 (cell owner `ref3 |`) is serialized AFTER the bit-31 fog block.
+                        if f.data.len() < c.p + 4 {
+                            return err("cell bit 3 owner truncated after fog");
+                        }
+                        let mut oc = Cur::new(&f.data, f.data.len() - 4);
+                        let o = self.reference(oc.ref3()?).ok().flatten();
+                        oc.bar()?;
+                        Some(o)
+                    } else {
+                        let o = self.reference(c.ref3()?).ok().flatten();
+                        c.bar()?;
+                        Some(o)
+                    }
                 } else {
                     None
                 };
-                let has_fog = f.has(31);
                 if !has_fog && !c.at_end() {
                     return err(format!("{} bytes left after cell", f.data.len() - c.p));
                 }
@@ -937,12 +1031,34 @@ impl Fos {
             .collect()
     }
 
-    /// Notes owned by the player (NOTE, change flag 31, empty data; §6.3).
-    pub fn notes(&self) -> Vec<u32> {
+    /// Empty-payload `TYPE_NOTE` changed forms (change flag 31, empty data; §6.3)
+    /// [hypothesis: opened/read notes].
+    pub fn note_records(&self) -> Vec<u32> {
         self.records(TYPE_NOTE)
             .filter(|f| f.has(31) && f.data.is_empty() && f.form != 0)
             .map(|f| f.form)
             .collect()
+    }
+
+    /// Notes acquired by the player stored in the `ACHR 0x14` tail notes list (§6.4)
+    /// [observed: vanilla 1.4.0.525 A/B save pairs].
+    pub fn player_tail_notes(&self) -> Vec<u32> {
+        let Some(r) = self.record(PLAYER_REF, TYPE_ACHR) else {
+            return Vec::new();
+        };
+        self.parse_player_notes(&r.data)
+    }
+
+    /// All notes owned by the player: deduplicated union of the observed `ACHR 0x14` tail
+    /// notes list (§6.4) and any `TYPE_NOTE` change-flag-31 records (§6.3).
+    pub fn notes(&self) -> Vec<u32> {
+        let mut out = self.player_tail_notes();
+        for id in self.note_records() {
+            if !out.contains(&id) {
+                out.push(id);
+            }
+        }
+        out
     }
 
     /// Form lists changed by script (FLST, change flag 31: `u32 count |`, then `count * (ref |)`)
@@ -1330,14 +1446,16 @@ impl Fos {
         Ok(FosScriptVars { script, vars })
     }
 
-    /// Decoded extra-data, lock (`0x2A`), owner (`0x21`), script variables (`0x0D`), door
-    /// open animation (bit 23/28), and locked-container inventory (bit 12 + bits 5/27) for
-    /// non-created `REFR` records (§6.2) [hypothesis]. Records that carry none of these
-    /// actionable fields (or unmapped moved prefixes) are omitted rather than guessed.
+    /// Decoded extra-data, lock (`0x2A`), owner (`0x21`, bit 6/31), script variables (`0x0D`),
+    /// door open animation (bit 23/28), and container inventory combined with extra-data lists
+    /// (bits 6/10/12/29/31 + bits 5/27) for non-created `REFR` records (§6.2) [observed: vanilla
+    /// 1.4.0.525 A/B save pairs for bit 4 scale, bit 6 `0x21` owner, bit 10 `0x1C` original/holder
+    /// ref, bit 12 `0x2A` lock, `0x22`/`0x23`/`0x25`/`0x30`/`0x39`/`0x6E` extras, bits 5/27
+    /// container inventories, and bit 28 Open/Close; auxiliary extras remain [hypothesis]].
     pub fn ref_extras(&self) -> Vec<FosRefExtras> {
-        const INTERESTING: u32 = (1 << 12) | (1 << 23) | (1 << 28) | (1 << 31);
+        const INTERESTING: u32 = (1 << 6) | (1 << 10) | (1 << 12) | (1 << 23) | (1 << 28) | (1 << 31);
         const INV_BITS: u32 = (1 << 5) | (1 << 27);
-        const EXTRA_LIST_BITS: u32 = (1 << 12) | (1 << 29) | (1 << 31);
+        const EXTRA_LIST_BITS: u32 = (1 << 6) | (1 << 10) | (1 << 12) | (1 << 29) | (1 << 31);
         self.records(TYPE_REFR)
             .filter(|f| (f.form >> 24) != 0xFF && (f.flags & INTERESTING) != 0 && (f.flags & 0b110) == 0)
             .filter_map(|f| self.parse_ref_extras(f, INV_BITS, EXTRA_LIST_BITS).ok().flatten())
@@ -1392,7 +1510,7 @@ impl Fos {
                             c.bar()?;
                         }
                     }
-                    0x1C | 0x22 | 0x46 | 0x74 => {
+                    0x1C | 0x22 | 0x39 | 0x46 | 0x74 => {
                         c.ref3()?;
                         c.bar()?;
                     }
@@ -1404,7 +1522,7 @@ impl Fos {
                         c.i32()?;
                         c.bar()?;
                     }
-                    0x28 | 0x30 => {
+                    0x25 | 0x26 | 0x28 | 0x30 => {
                         c.f32()?;
                         c.bar()?;
                     }
@@ -1440,6 +1558,12 @@ impl Fos {
                         c.bar()?;
                     }
                     0x56 | 0x60 => {
+                        c.u32()?;
+                        c.bar()?;
+                    }
+                    0x6E => {
+                        c.ref3()?;
+                        c.bar()?;
                         c.u32()?;
                         c.bar()?;
                     }
@@ -1730,15 +1854,25 @@ impl Fos {
             p.av_base = base;
             p.av_damage = dmg;
             p.health_damage = health_damage;
-            if let Ok((items, scale, factions, teammates, post_inv)) = self.player_inventory_and_extras(av_cur) {
+            if let Ok((items, scale, factions, teammates, post_inv)) =
+                self.player_inventory_and_extras(av_cur, r.flags)
+            {
                 p.inventory = Some(items);
-                p.scale = Some(scale);
+                p.scale = scale;
                 p.factions = factions;
                 p.teammates = teammates;
                 let tail = &r.data[post_inv..];
+                p.active_weapon_magazine = Self::parse_player_active_magazine(tail);
                 if r.has(22) {
-                    p.skill_points = Self::parse_player_skill_points(tail);
+                    p.base_av_overrides = Self::parse_player_base_av_overrides(tail);
+                    p.skill_points = p
+                        .base_av_overrides
+                        .iter()
+                        .copied()
+                        .filter(|&(code, pts)| (32..=45).contains(&code) && pts >= 0.0)
+                        .collect();
                 }
+                p.notes = self.parse_player_notes(tail);
                 p.perks = self.parse_player_perks(tail);
                 p.teammate_perks = self.parse_player_teammate_perks(tail);
             }
@@ -1748,8 +1882,10 @@ impl Fos {
 
     /// Walk `NPC_ 0x7` (player base form) in change-flag order: bit 1 (24-byte base stats
     /// block), bit 4 (two spell/ability ref lists), bit 2 (7-byte SPECIAL), bit 3 (20-byte
-    /// AI data), bit 9 (28-byte skills), bit 5 (name), bit 11 (FaceGen morphs + head parts)
-    /// (§6.2, §6.4) [hypothesis].
+    /// AI data), bit 9 (28-byte skills), bit 5 (name), bit 11 (FaceGen morphs + head parts),
+    /// bit 24 (`u8 female |`, `Player.SexChange`) (§6.2, §6.4) [observed: vanilla 1.4.0.525
+    /// A/B save pairs for bits 1, 2, 4, 5, 11, 24 and multi-flag order `1 -> 4 -> 2 -> 5 -> 24`;
+    /// bits 3 and 9 remain [hypothesis]].
     fn parse_player_base(&self, npc: &ChangedForm, p: &mut FosPlayer) -> Result<(), FosError> {
         let mut c = Cur::new(&npc.data, 0);
         if npc.has(1) {
@@ -1757,6 +1893,7 @@ impl Fos {
             c.bar()?;
             let acbs_flags = u32::from_le_bytes(acbs[0..4].try_into().unwrap());
             p.female = Some(acbs_flags & 1 != 0);
+            p.female_from_bit24 = false;
         }
         if npc.has(4) {
             let n1 = c.vsval()? as usize;
@@ -1794,6 +1931,12 @@ impl Fos {
             if let Ok(app) = self.parse_player_appearance(&mut c) {
                 p.appearance = Some(app);
             }
+        }
+        if npc.has(24) {
+            let sex = c.u8()?;
+            c.bar()?;
+            p.female = Some(sex != 0);
+            p.female_from_bit24 = true;
         }
         Ok(())
     }
@@ -1852,20 +1995,51 @@ impl Fos {
         None
     }
 
-    /// Extract the bit-22 spent skill-points list (`vsval n | n * (u8 skill_code | f32 pts |)`)
+    /// Decode the player's active equipped weapon magazine round count from `ACHR 0x14`
+    /// post-inventory High-Process block `tok[76]` (`u32 |`), gated on `tok[70] != u32::MAX`
+    /// (equipped weapon state) (§6.4) [observed: vanilla 1.4.0.525 A/B save pairs].
+    /// Every preceding field width and `|` separator is verified; any mismatch returns `None`.
+    fn parse_player_active_magazine(tail: &[u8]) -> Option<u32> {
+        const PROCESS_PREFIX_WIDTHS: [usize; 77] = [
+            1, 1, 1, 1, 1, 1, 1, 1, 4, 4, 1, 1, 3, 3, 4, 4, 4, 3, 1, 4, 3, 4, 4, 4, 1, 2, 4, 4, 3,
+            3, 3, 3, 3, 1, 4, 1, 1, 1, 4, 4, 4, 1, 12, 4, 1, 1, 1, 2, 12, 1, 1, 1, 1, 4, 1, 4, 4,
+            1, 1, 1, 2, 4, 1, 4, 4, 1, 1, 4, 4, 4, 4, 1, 3, 3, 3, 3, 4,
+        ];
+        let mut c = Cur::new(tail, 0);
+        let mut tok70 = u32::MAX;
+        let mut tok76 = 0u32;
+        for (idx, &w) in PROCESS_PREFIX_WIDTHS.iter().enumerate() {
+            let bytes = c.take(w).ok()?;
+            c.bar().ok()?;
+            if idx == 70 {
+                tok70 = u32::from_le_bytes(bytes.try_into().ok()?);
+            } else if idx == 76 {
+                tok76 = u32::from_le_bytes(bytes.try_into().ok()?);
+            }
+        }
+        (tok70 != u32::MAX).then_some(tok76)
+    }
+
+    /// Extract the bit-22 base-AV override list (`vsval n | n * (u8 av_code | f32 val |)`)
     /// immediately preceding the `FF FF | FF FF | 00 | 01 01 00 00 |` boundary in the player
-    /// record's post-inventory tail (§6.4) [hypothesis].
-    fn parse_player_skill_points(tail: &[u8]) -> Vec<(u8, f32)> {
+    /// record's post-inventory tail (§6.4) [observed: vanilla 1.4.0.525 A/B save pairs].
+    /// Accepts all valid AV codes `< 77` (not only skills `32..=45`) so non-skill `SetAV`
+    /// overrides (e.g. `Player.SetAV Luck 9`) do not discard the block.
+    fn parse_player_base_av_overrides(tail: &[u8]) -> Vec<(u8, f32)> {
         const ANCHOR: &[u8] = b"\xFF\xFF\x7C\xFF\xFF\x7C\x00\x7C\x01\x01\x00\x00\x7C";
         let Some(anc) = tail.windows(ANCHOR.len()).position(|w| w == ANCHOR) else {
             return Vec::new();
         };
-        for k in 1..=14usize {
-            let Some(st) = anc.checked_sub(k * 7) else { break };
-            if Self::match_vsval_header(tail, st, k).is_none() {
+        for k in (1..=AV_COUNT).rev() {
+            let Some(st) = anc.checked_sub(k * 7) else { continue };
+            let Some(hdr_start) = Self::match_vsval_header(tail, st, k) else {
+                continue;
+            };
+            if hdr_start > 0 && tail[hdr_start - 1] != BAR {
                 continue;
             }
             let mut out = Vec::with_capacity(k);
+            let mut seen = [false; AV_COUNT];
             let mut ok = true;
             for j in 0..k {
                 let off = st + j * 7;
@@ -1874,15 +2048,154 @@ impl Fos {
                     break;
                 }
                 let code = tail[off];
-                let pts = f32::from_le_bytes(tail[off + 2..off + 6].try_into().unwrap());
-                if !(32..=45).contains(&code) || !pts.is_finite() || !(0.0..=100.0).contains(&pts) {
+                let val = f32::from_le_bytes(tail[off + 2..off + 6].try_into().unwrap());
+                if usize::from(code) >= AV_COUNT || seen[usize::from(code)] || !val.is_finite() {
                     ok = false;
                     break;
                 }
-                out.push((code, pts));
+                seen[usize::from(code)] = true;
+                out.push((code, val));
             }
             if ok {
                 return out;
+            }
+        }
+        Vec::new()
+    }
+
+    /// Extract acquired note form IDs (`vsval n | n * (ref3 |)`) from the player `ACHR 0x14`
+    /// tail right after the 11 bar-delimited `ref3 |` slots and immediately preceding the
+    /// known-actors / perks / 5-zero-`u32` section (§6.4) [observed: vanilla 1.4.0.525 A/B
+    /// save pairs]. Fails closed if any structural separator or count does not match.
+    fn parse_player_notes(&self, buf: &[u8]) -> Vec<u32> {
+        const DEAD_MARK: &[u8] = b"\xAD\xDE\xAD\xDE\x7C";
+        let Some(dead) = buf.windows(DEAD_MARK.len()).rposition(|w| w == DEAD_MARK) else {
+            return Vec::new();
+        };
+        let start = dead + DEAD_MARK.len();
+        if buf.len() < start + 28 + 44 + 35 {
+            return Vec::new();
+        }
+        // Scan for the 11-slot `ref3 |` array preceded by `4*(u32 |) + u8 | + u32 |`
+        // (27 bytes + leading `|`) and followed by `vsval(0) |`, `vsval(n_notes) | n_notes*(ref3 |)`,
+        // `vsval(0) |`, known-actors `vsval(nm) | nm*(ref3 | u8 | u8 |)`, perks `vsval(kp) |
+        // kp*(ref3 | u8 |)`, and the post-perk 4*(u8 |) (or 13-byte list) + 5*(u32 |) boundary.
+        for i in (start + 28)..buf.len().saturating_sub(44) {
+            if buf[i - 1] != BAR
+                || buf[i - 6] != BAR
+                || buf[i - 8] != BAR
+                || buf[i - 13] != BAR
+                || buf[i - 18] != BAR
+                || buf[i - 23] != BAR
+                || buf[i - 28] != BAR
+            {
+                continue;
+            }
+            if !(0..11).all(|j| buf[i + j * 4 + 3] == BAR) {
+                continue;
+            }
+            let mut c = Cur::new(buf, i + 44);
+            if c.vsval().ok() != Some(0) || c.bar().is_err() {
+                continue;
+            }
+            let Ok(n_notes) = c.vsval() else { continue };
+            if n_notes > 512 || c.bar().is_err() {
+                continue;
+            }
+            let mut notes = Vec::with_capacity(n_notes as usize);
+            let mut ok = true;
+            for _ in 0..n_notes {
+                let Ok(r3) = c.ref3() else {
+                    ok = false;
+                    break;
+                };
+                if c.bar().is_err() {
+                    ok = false;
+                    break;
+                }
+                match self.reference(r3) {
+                    Ok(Some(fid)) => {
+                        if !notes.contains(&fid) {
+                            notes.push(fid);
+                        }
+                    }
+                    _ => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if !ok {
+                continue;
+            }
+            if c.vsval().ok() != Some(0) || c.bar().is_err() {
+                continue;
+            }
+            let Ok(nm) = c.vsval() else { continue };
+            if nm > 1024 || c.bar().is_err() {
+                continue;
+            }
+            for _ in 0..nm {
+                if c.ref3().is_err()
+                    || c.bar().is_err()
+                    || c.u8().is_err()
+                    || c.bar().is_err()
+                    || c.u8().is_err()
+                    || c.bar().is_err()
+                {
+                    ok = false;
+                    break;
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let Ok(kp) = c.vsval() else { continue };
+            if kp > 512 || c.bar().is_err() {
+                continue;
+            }
+            for _ in 0..kp {
+                if c.ref3().is_err() || c.bar().is_err() || c.u8().is_err() || c.bar().is_err() {
+                    ok = false;
+                    break;
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let mut tail_ok = false;
+            {
+                let mut t1 = c.clone();
+                if (0..4).all(|_| t1.u8().is_ok() && t1.bar().is_ok())
+                    && (0..5).all(|_| t1.u32().is_ok() && t1.bar().is_ok())
+                {
+                    tail_ok = true;
+                }
+            }
+            if !tail_ok {
+                let mut t2 = c.clone();
+                if t2.u8().is_ok() && t2.bar().is_ok() {
+                    if let Ok(mm) = t2.vsval() {
+                        if mm <= 64
+                            && t2.bar().is_ok()
+                            && (0..mm).all(|_| {
+                                t2.u32().is_ok()
+                                    && t2.bar().is_ok()
+                                    && t2.u32().is_ok()
+                                    && t2.bar().is_ok()
+                                    && t2.u16().is_ok()
+                                    && t2.bar().is_ok()
+                            })
+                            && (0..2).all(|_| t2.u8().is_ok() && t2.bar().is_ok())
+                            && (0..5).all(|_| t2.u32().is_ok() && t2.bar().is_ok())
+                        {
+                            tail_ok = true;
+                        }
+                    }
+                }
+            }
+            if tail_ok {
+                return notes;
             }
         }
         Vec::new()
@@ -2023,22 +2336,33 @@ impl Fos {
         Vec::new()
     }
 
-    /// The player's inventory list plus post-AV scale, `0x5E` faction ranks, `0x1D`
-    /// teammates, and post-inventory byte offset (save-files.md §6.4). Every separator
+    /// The player's inventory list plus bit-4-gated post-AV scale, `0x5E` faction ranks,
+    /// `0x1D` teammates, and post-inventory byte offset (save-files.md §6.4). Every separator
     /// and extra-data type byte is verified; an unknown actor or item extra-data type
     /// fails soft so no inventory is guessed out of misaligned bytes.
     #[allow(clippy::type_complexity)]
     fn player_inventory_and_extras(
         &self,
         mut c: Cur<'_>,
-    ) -> Result<(Vec<FosItem>, f32, Vec<(Option<u32>, i8)>, Vec<Option<u32>>, usize), FosError> {
+        flags: u32,
+    ) -> Result<(Vec<FosItem>, Option<f32>, Vec<(Option<u32>, i8)>, Vec<Option<u32>>, usize), FosError> {
+        const EXTRA_BITS: u32 = (1 << 11) | (1 << 17) | (1 << 18) | (1 << 29) | (1 << 31);
+        const INV_BITS: u32 = (1 << 5) | (1 << 27);
         c.expect_u8(0)?;
         c.bar()?;
-        let scale = c.f32()?;
-        if !scale.is_finite() {
-            return err("non-finite float after actor values");
+        let scale = if (flags & (1 << 4)) != 0 {
+            let s = c.f32()?;
+            if !s.is_finite() {
+                return err("non-finite float after actor values");
+            }
+            c.bar()?;
+            Some(s)
+        } else {
+            None
+        };
+        if (flags & (EXTRA_BITS | INV_BITS)) == 0 {
+            return Ok((Vec::new(), scale, Vec::new(), Vec::new(), c.p));
         }
-        c.bar()?;
         let actor_extras = c.vsval()?;
         c.bar()?;
         let mut factions = Vec::new();
@@ -2099,7 +2423,11 @@ impl Fos {
                 t => return err(format!("actor extra data type {t:#04x} of unknown size")),
             }
         }
-        let items = self.parse_item_list(&mut c)?;
+        let items = if (flags & INV_BITS) != 0 {
+            self.parse_item_list(&mut c)?
+        } else {
+            Vec::new()
+        };
         Ok((items, scale, factions, teammates, c.p))
     }
 
@@ -2134,48 +2462,57 @@ impl Fos {
                             c.bar()?;
                             let _ = self.parse_script_extra(c)?;
                         }
-                        // Worn item marker (0 payload bytes) / secondary worn marker (0x17)
-                        0x16 | 0x17 => {
+                        // Worn item marker (0 payload bytes) [observed] / defensive secondary worn
+                        // pass-through (0x17) [design; not emitted by vanilla 1.4.0.525]
+                        0x16 => {
                             c.bar()?;
                             entry.worn = true;
                         }
-                        // Original reference (ref3 |) / ownership global (0x22: ref3 |)
+                        0x17 => {
+                            c.bar()?;
+                            entry.worn = true;
+                            entry.worn_secondary = true;
+                        }
+                        // Original reference (0x1C: ref3 |) / ownership global (0x22: ref3 |)
+                        // [observed: vanilla 1.4.0.525 + clean-room test-plugin A/B save pairs]
                         0x1C | 0x22 => {
                             c.bar()?;
                             c.ref3()?;
                             c.bar()?;
                         }
-                        // Owner (ref3 |)
+                        // Owner (ref3 |) [observed: vanilla 1.4.0.525 A/B save pairs]
                         0x21 => {
                             c.bar()?;
                             entry.owner = Some(self.reference(c.ref3()?).ok().flatten());
                             c.bar()?;
                         }
-                        // Owner rank (i32 |)
+                        // Owner rank (i32 |) [observed: vanilla 1.4.0.525 A/B save pairs]
                         0x23 => {
                             c.bar()?;
                             c.i32()?;
                             c.bar()?;
                         }
-                        // Stack count (i16 |)
+                        // Stack count (i16 |) [observed: vanilla 1.4.0.525 A/B save pairs]
                         0x24 => {
                             c.bar()?;
                             entry.count = Some(c.i16()?);
                             c.bar()?;
                         }
-                        // Condition HP (f32 HP |)
+                        // Condition HP (f32 HP |) [observed: vanilla 1.4.0.525 A/B save pairs]
                         0x25 => {
                             c.bar()?;
                             entry.condition = Some(c.f32()?);
                             c.bar()?;
                         }
-                        // Time left (0x26), charge (0x28), or item scale (0x30): (f32 |) [hypothesis]
+                        // Item scale (0x30: f32 |) [observed: vanilla 1.4.0.525 + test-plugin A/B]
+                        // and defensive pass-throughs 0x26 (time left) / 0x28 (charge)
+                        // [design; not emitted by vanilla 1.4.0.525]
                         0x26 | 0x28 | 0x30 => {
                             c.bar()?;
                             c.f32()?;
                             c.bar()?;
                         }
-                        // Container-extra 0x2F (u32 | u8 |) [hypothesis]
+                        // Container-extra 0x2F (u32 | u8 |) [observed: vanilla 1.4.0.525 A/B save pairs]
                         0x2F => {
                             c.bar()?;
                             c.u32()?;
@@ -2183,13 +2520,18 @@ impl Fos {
                             c.u8()?;
                             c.bar()?;
                         }
-                        // Hotkey (u8 |)
+                        // No-unequip item flag (0 payload bytes; EquipItem <item> 1)
+                        // [observed: vanilla 1.4.0.525 A/B save pairs]
+                        0x3E => {
+                            c.bar()?;
+                        }
+                        // Hotkey (u8 |) [observed: vanilla 1.4.0.525 A/B save pairs]
                         0x4A => {
                             c.bar()?;
                             entry.hotkey = Some(c.u8()?);
                             c.bar()?;
                         }
-                        // Magazine ammo (ref3 | u32 |)
+                        // Magazine ammo (ref3 | u32 |) [observed framing on NPC-dropped WEAP REFRs]
                         0x6E => {
                             c.bar()?;
                             let ammo_form = self.reference(c.ref3()?).ok().flatten();
@@ -2532,6 +2874,7 @@ mod tests {
                 FosItemEntry {
                     count: None,
                     worn: true,
+                    worn_secondary: false,
                     condition: Some(75.5),
                     owner: None,
                     weapon_mods: 5,
@@ -2541,6 +2884,7 @@ mod tests {
                 FosItemEntry {
                     count: Some(2),
                     worn: false,
+                    worn_secondary: false,
                     condition: None,
                     owner: Some(Some(0x4242)),
                     weapon_mods: 0,
@@ -3049,13 +3393,13 @@ mod tests {
         assert_eq!(ez.b.len(), 17);
         f.changed.push(ChangedForm { form: 0x0003_0004, flags: 1 << 31, kind: TYPE_ECZN, data: ez.b });
 
-        // CELL bits 1+3+29+30+31
+        // CELL bits 1+3+29+30+31: bit 3 owner is serialized AFTER bit-31 fog!
         let mut cl = Build { b: Vec::new() };
         cl.b.extend([0u8; 4]); // bit 29 grid
         cl.u32(72).bar();      // bit 30 detach hours
         cl.u8(0x03).bar();     // bit 1 flags
-        cl.r(8).bar();         // bit 3 owner
         cl.b.extend([0xFFu8; 8]); // bit 31 fog
+        cl.r(8).bar();         // bit 3 owner AFTER fog
         f.changed.push(ChangedForm {
             form: 0x0003_0005,
             flags: (1 << 1) | (1 << 3) | (1 << 29) | (1 << 30) | (1 << 31),
@@ -3167,5 +3511,353 @@ mod tests {
         );
         assert_eq!(refs[0].owner, Some(Some(0x4242)));
         assert_eq!(refs[0].script_vars.as_ref().unwrap().vars, [(1, VarValue::Num(9.0))]);
+    }
+
+    #[test]
+    fn regression_observed_v2_decoder_fixes_bugs_1_to_5_and_8() {
+        let mut f = Fos::parse(&save()).unwrap();
+        f.form_ids.extend([0x5500u32]); // 1-based index 9 = PERK
+
+        // BUG #1: Player ACHR WITHOUT bit 4 (0x90000022) has NO scale f32 between process_level and actor extras!
+        let mut p_no_bit4 = Build { b: Vec::new() };
+        p_no_bit4.r(3).f32(1.0).f32(2.0).f32(3.0).f32(0.0).f32(0.0).f32(0.5).bar();
+        for _ in 0..AV_ENTRIES {
+            p_no_bit4.f32(0.0).bar();
+        }
+        p_no_bit4.u8(0).bar(); // process_level = 0, NO scale float!
+        p_no_bit4.vs(1).bar().u8(0x5E).bar().vs(1).bar().r(1).bar().u8(2).bar(); // 0x5E faction
+        p_no_bit4.vs(1).bar().r(4).bar().u32(3).bar().vs(0).bar(); // inventory: 1 item
+        // BUG #2: Bit 22 with BOTH non-skill SetAV (Luck = 11 -> 9.0) and skill (Melee = 38 -> 25.0)
+        // preceded by 3 zero ref3 | fields as observed in vanilla 1.4.0.525.
+        p_no_bit4.r(0).bar().r(0).bar().r(0).bar();
+        p_no_bit4.vs(2).bar().u8(11).bar().f32(9.0).bar().u8(38).bar().f32(25.0).bar();
+        p_no_bit4.b.extend_from_slice(b"\xFF\xFF\x7C\xFF\xFF\x7C\x00\x7C\x01\x01\x00\x00\x7C");
+        p_no_bit4.b.extend_from_slice(b"\xAD\xDE\xAD\xDE\x7C");
+        p_no_bit4.u8(0).bar().u8(0).bar().u8(0).bar();
+        p_no_bit4.vs(1).bar().r(9).bar().u8(1).bar();
+        for _ in 0..4 {
+            p_no_bit4.u8(0).bar();
+        }
+        for _ in 0..5 {
+            p_no_bit4.u32(0).bar();
+        }
+        for _ in 0..3 {
+            p_no_bit4.u32(0).bar();
+        }
+        p_no_bit4.u8(0).bar().u8(1).bar().u8(1).bar();
+        for _ in 0..8 {
+            p_no_bit4.u32(0).bar();
+        }
+        for _ in 0..4 {
+            p_no_bit4.u8(0).bar();
+        }
+        let pl_cf = f.changed.iter_mut().find(|c| c.form == PLAYER_REF).unwrap();
+        pl_cf.flags = (1 << 1) | (1 << 5) | (1 << 22) | (1 << 28) | (1 << 31); // bit 4 ABSENT!
+        pl_cf.data = p_no_bit4.b;
+
+        // BUG #8: NPC_ 0x7 with bit 24 (0x0100_0000) `01 7c` written by Player.SexChange
+        let npc_cf = f.changed.iter_mut().find(|c| c.form == PLAYER_BASE).unwrap();
+        npc_cf.flags = 1 << 24;
+        npc_cf.data = vec![0x01, BAR];
+
+        let pl = f.player().unwrap();
+        assert_eq!(pl.scale, None);
+        assert_eq!(pl.factions, [(Some(0x1234), 2)]);
+        assert_eq!(pl.inventory.as_ref().map(Vec::len), Some(1));
+        assert_eq!(pl.base_av_overrides, [(11, 9.0), (38, 25.0)]);
+        assert_eq!(pl.skill_points, [(38, 25.0)]);
+        assert_eq!(pl.perks, [(Some(0x5500), 1)]);
+        assert_eq!(pl.female, Some(true));
+        assert!(pl.female_from_bit24);
+
+        // BUG #1 (bit-4-present contrast): adding bit 4 + scale 1.25 decodes scale cleanly
+        let mut p_bit4 = Build { b: Vec::new() };
+        p_bit4.r(3).f32(1.0).f32(2.0).f32(3.0).f32(0.0).f32(0.0).f32(0.5).bar();
+        for _ in 0..AV_ENTRIES {
+            p_bit4.f32(0.0).bar();
+        }
+        p_bit4.u8(0).bar().f32(1.25).bar();
+        p_bit4.vs(1).bar().u8(0x5E).bar().vs(1).bar().r(1).bar().u8(2).bar();
+        p_bit4.vs(1).bar().r(4).bar().u32(3).bar().vs(0).bar();
+        let pl_cf = f.changed.iter_mut().find(|c| c.form == PLAYER_REF).unwrap();
+        pl_cf.flags = (1 << 1) | (1 << 4) | (1 << 5) | (1 << 28) | (1 << 31);
+        pl_cf.data = p_bit4.b;
+        let pl_s = f.player().unwrap();
+        assert_eq!(pl_s.scale, Some(1.25));
+        assert_eq!(pl_s.inventory.as_ref().map(Vec::len), Some(1));
+
+        // BUG #1 (no-extras / no-inv save 0x10000002): process block starts immediately with 0xFF |
+        let mut p_bare = Build { b: Vec::new() };
+        p_bare.r(3).f32(0.0).f32(0.0).f32(0.0).f32(0.0).f32(0.0).f32(0.0).bar();
+        for _ in 0..AV_ENTRIES {
+            p_bare.f32(0.0).bar();
+        }
+        p_bare.u8(0).bar().u8(0xFF).bar().u8(0).bar();
+        let pl_cf = f.changed.iter_mut().find(|c| c.form == PLAYER_REF).unwrap();
+        pl_cf.flags = (1 << 1) | (1 << 28);
+        pl_cf.data = p_bare.b;
+        let pl_bare = f.player().unwrap();
+        assert_eq!(pl_bare.scale, None);
+        assert_eq!(pl_bare.inventory, Some(Vec::new()));
+
+        // BUG #3: Global[10] vanilla 1.4.0.525 layout (OFF: 2nd list = 0; ON: 2nd list = 1 with ref3 + playback_ms)
+        let mut r_off = Build { b: Vec::new() };
+        r_off.u32(0).bar().u8(0).bar().s("").vs(0).bar().vs(0).bar().r(0).bar().r(0).bar().vs(1).bar().r(8).bar();
+        f.globals_data.retain(|(t, _)| *t != 10);
+        f.globals_data.push((10, r_off.b));
+        let st_off = f.radio_state().unwrap().unwrap();
+        assert!(!st_off.on);
+        assert_eq!(st_off.station, None);
+        assert_eq!(st_off.playback_ms, None);
+        assert!(st_off.from_active_list);
+
+        let mut r_on = Build { b: Vec::new() };
+        r_on.u32(0).bar().u8(0).bar().s("").vs(0).bar(); // header stays zero!
+        r_on.vs(1).bar().r(8).bar().u32(9740).bar().u32(1).bar().u8(0x64).bar().u8(0x64).bar().u32(0x33).bar().u8(0).bar().u8(0).bar();
+        r_on.r(0).bar().r(0).bar().vs(1).bar().r(8).bar();
+        f.globals_data.retain(|(t, _)| *t != 10);
+        f.globals_data.push((10, r_on.b));
+        let st_on = f.radio_state().unwrap().unwrap();
+        assert!(st_on.on);
+        assert_eq!(st_on.station, Some(0x4242));
+        assert_eq!(st_on.playback_ms, Some(9740));
+        assert!(st_on.from_active_list);
+
+        // BUG #4: REFR with bit 6 (0x40, SetOwnership 0x21) + bit 4 scale + bits 27+28 inventory
+        let mut owned_cont = Build { b: Vec::new() };
+        owned_cont.f32(1.5).bar();
+        owned_cont.vs(1).bar().u8(0x21).bar().r(8).bar();
+        owned_cont.vs(1).bar().r(4).bar().u32(1).bar().vs(0).bar();
+        owned_cont.u8(0x2C).bar().s("Close").bar().u8(0).bar();
+        f.changed.push(ChangedForm {
+            form: 0x0005_0001,
+            flags: (1 << 4) | (1 << 6) | (1 << 27) | (1 << 28), // 0x18000050!
+            kind: TYPE_REFR,
+            data: owned_cont.b,
+        });
+        let extras = f.ref_extras();
+        let oc = extras.iter().find(|r| r.form == 0x0005_0001).expect("bit-6 owned container parsed");
+        assert_eq!(oc.scale, Some(1.5));
+        assert_eq!(oc.owner, Some(Some(0x4242)));
+        assert_eq!(oc.inventory.as_ref().map(|v| v[0].count), Some(1));
+
+        // BUG #5: CELL flags=0x8000000a (bits 1+3+31) with 20 7c + 76B fog + trailing ref3 |,
+        // AND CELL flags=0x0000000a (bits 1+3 without fog)
+        let mut cell_fog = Build { b: Vec::new() };
+        cell_fog.u8(0x20).bar();
+        cell_fog.b.extend([0x08, BAR, 0x00, BAR, 0xFF, BAR]);
+        cell_fog.b.extend([0x00u8; 70]);
+        cell_fog.r(8).bar();
+        assert_eq!(cell_fog.b.len(), 82);
+        f.changed.push(ChangedForm {
+            form: 0x0005_0002,
+            flags: (1 << 1) | (1 << 3) | (1 << 31),
+            kind: TYPE_CELL,
+            data: cell_fog.b,
+        });
+        let mut cell_nofog = Build { b: Vec::new() };
+        cell_nofog.u8(0x20).bar().r(8).bar();
+        f.changed.push(ChangedForm {
+            form: 0x0005_0003,
+            flags: (1 << 1) | (1 << 3),
+            kind: TYPE_CELL,
+            data: cell_nofog.b,
+        });
+        let cells: Vec<_> = f.cells().into_iter().map(Result::unwrap).collect();
+        let cf1 = cells.iter().find(|c| c.form == 0x0005_0002).unwrap();
+        assert_eq!(cf1.cell_flags, Some(0x20));
+        assert_eq!(cf1.owner, Some(Some(0x4242)));
+        assert!(cf1.has_fog);
+        let cf2 = cells.iter().find(|c| c.form == 0x0005_0003).unwrap();
+        assert_eq!(cf2.cell_flags, Some(0x20));
+        assert_eq!(cf2.owner, Some(Some(0x4242)));
+        assert!(!cf2.has_fog);
+    }
+
+    #[test]
+    fn regression_bug9_player_tail_notes_and_type_note_union() {
+        let mut f = Fos::parse(&save()).unwrap();
+        // fids 1..=8 already exist; add 9=NOTE_A (0x0017_5AB0), 10=NOTE_B (0x000E_88A0),
+        // 11=NOTE_C (0x0017_7875), 12=PERK (0x5500)
+        f.form_ids.extend([0x0017_5AB0u32, 0x000E_88A0, 0x0017_7875, 0x5500]);
+
+        let mut p = Build { b: Vec::new() };
+        p.r(3).f32(1.0).f32(2.0).f32(3.0).f32(0.0).f32(0.0).f32(0.0).bar();
+        for _ in 0..AV_ENTRIES {
+            p.f32(0.0).bar();
+        }
+        p.u8(0).bar(); // bit 4 absent: no scale float
+        p.vs(0).bar(); // 0 actor extras
+        p.vs(0).bar(); // 0 inventory items
+        // Tail: DEAD_MARK + prefix + 4*(u32|) + u8| + u32| + 11*(ref3|) (with non-zero slot 4!)
+        p.b.extend_from_slice(b"\xAD\xDE\xAD\xDE\x7C");
+        p.u8(0).bar();
+        for _ in 0..4 {
+            p.u32(0).bar();
+        }
+        p.u8(1).bar().u32(200).bar();
+        for slot in 0..11 {
+            p.r(if slot == 4 { 8 } else { 0 }).bar();
+        }
+        // vsval(0)| + notes list [NOTE_A, NOTE_B] + vsval(0)|
+        p.vs(0).bar();
+        p.vs(2).bar().r(9).bar().r(10).bar();
+        p.vs(0).bar();
+        // Known actors: 1 entry (r(8), 0, 0)
+        p.vs(1).bar().r(8).bar().u8(0).bar().u8(0).bar();
+        // Player perks: 1 entry (r(12), rank 1)
+        p.vs(1).bar().r(12).bar().u8(1).bar();
+        // 4*(u8|) + 5*(u32|)
+        for _ in 0..4 {
+            p.u8(0).bar();
+        }
+        for _ in 0..5 {
+            p.u32(0).bar();
+        }
+        // End trailer
+        for _ in 0..3 {
+            p.u32(0).bar();
+        }
+        p.u8(0).bar().u8(1).bar().u8(1).bar();
+        for _ in 0..8 {
+            p.u32(0).bar();
+        }
+        for _ in 0..4 {
+            p.u8(0).bar();
+        }
+
+        let pl_cf = f.changed.iter_mut().find(|c| c.form == PLAYER_REF).unwrap();
+        pl_cf.flags = (1 << 1) | (1 << 5) | (1 << 28) | (1 << 31);
+        pl_cf.data = p.b;
+
+        // 0 TYPE_NOTE records: player_tail_notes & notes both return [NOTE_A, NOTE_B]
+        assert!(f.note_records().is_empty());
+        assert_eq!(f.player_tail_notes(), [0x0017_5AB0, 0x000E_88A0]);
+        assert_eq!(f.notes(), [0x0017_5AB0, 0x000E_88A0]);
+        let pl = f.player().unwrap();
+        assert_eq!(pl.notes, [0x0017_5AB0, 0x000E_88A0]);
+        assert_eq!(pl.perks, [(Some(0x5500), 1)]);
+
+        // Adding TYPE_NOTE bit 31 for duplicate NOTE_A and distinct NOTE_C deduplicates cleanly
+        f.changed.push(ChangedForm {
+            form: 0x0017_5AB0,
+            flags: 1 << 31,
+            kind: TYPE_NOTE,
+            data: Vec::new(),
+        });
+        f.changed.push(ChangedForm {
+            form: 0x0017_7875,
+            flags: 1 << 31,
+            kind: TYPE_NOTE,
+            data: Vec::new(),
+        });
+        assert_eq!(f.note_records(), [0x0017_5AB0, 0x0017_7875]);
+        assert_eq!(f.notes(), [0x0017_5AB0, 0x000E_88A0, 0x0017_7875]);
+    }
+
+    #[test]
+    fn regression_round3_bugs_11_12_13_bit10_0x3e_0x39_and_tok76() {
+        let mut f = Fos::parse(&save()).unwrap();
+        // BUG #11: REFR with bit 10 (0x400) carrying 0x1C + 0x21 owner AND container with bit 10 + bits 5/27.
+        let mut picked = Build { b: Vec::new() };
+        picked.u32(0x0000_042A).bar(); // bit 0 form_flags
+        picked.vs(2).bar().u8(0x1C).bar().r(5).bar().u8(0x21).bar().r(8).bar();
+        f.changed.push(ChangedForm {
+            form: 0x0006_0001,
+            flags: (1 << 0) | (1 << 10),
+            kind: TYPE_REFR,
+            data: picked.b,
+        });
+        let mut bit10_cont = Build { b: Vec::new() };
+        bit10_cont.vs(1).bar().u8(0x1C).bar().r(5).bar();
+        bit10_cont.vs(1).bar().r(4).bar().u32(2).bar().vs(0).bar();
+        f.changed.push(ChangedForm {
+            form: 0x0006_0002,
+            flags: (1 << 5) | (1 << 10) | (1 << 27),
+            kind: TYPE_REFR,
+            data: bit10_cont.b,
+        });
+        // BUG #13 (REFR side): dropped weapon carrying 0x25 + 0x6E + 0x39 + 0x21 owner parses cleanly.
+        let mut drop_weap = Build { b: Vec::new() };
+        drop_weap.vs(4).bar();
+        drop_weap.u8(0x25).bar().f32(149.85).bar();
+        drop_weap.u8(0x6E).bar().r(2).bar().u32(4).bar();
+        drop_weap.u8(0x39).bar().r(8).bar();
+        drop_weap.u8(0x21).bar().r(1).bar();
+        f.changed.push(ChangedForm {
+            form: 0x0006_0003,
+            flags: 1 << 31,
+            kind: TYPE_REFR,
+            data: drop_weap.b,
+        });
+
+        // BUG #12 (actor side): non-player ACHR inventory item with 0x25 + 0x16 + 0x3E (EquipItem <item> 1)
+        // must parse cleanly instead of dropping the entire inventory.
+        let mut boone = Build { b: Vec::new() };
+        boone.u8(0).bar();
+        boone.vs(1).bar().r(4).bar().u32(1).bar().vs(1).bar().vs(3).bar();
+        boone.u8(0x25).bar().f32(150.0).bar();
+        boone.u8(0x16).bar();
+        boone.u8(0x3E).bar();
+        f.changed.push(ChangedForm {
+            form: 0x0006_0004,
+            flags: (1 << 5) | (1 << 27),
+            kind: TYPE_ACHR,
+            data: boone.b,
+        });
+
+        let refs = f.ref_extras();
+        let r1 = refs.iter().find(|r| r.form == 0x0006_0001).expect("bit-10 REFR with 0x1C + 0x21 parsed");
+        assert_eq!(r1.owner, Some(Some(0x4242)));
+        let r2 = refs.iter().find(|r| r.form == 0x0006_0002).expect("bit-10 container with 0x1C + inv parsed");
+        assert_eq!(r2.inventory.as_ref().map(|v| v[0].count), Some(2));
+        let r3 = refs.iter().find(|r| r.form == 0x0006_0003).expect("REFR with 0x25 + 0x6E + 0x39 parsed");
+        assert_eq!(r3.owner, Some(Some(0x1234)));
+
+        let actors = f.actor_changes();
+        let ac = actors.iter().find(|a| a.form == 0x0006_0004).expect("actor with 0x3E parsed");
+        let ainv = ac.inventory.as_ref().expect("actor inventory kept with 0x3E");
+        assert_eq!(ainv.len(), 1);
+        assert!(ainv[0].worn);
+        assert_eq!(ainv[0].condition, Some(150.0));
+
+        // BUG #12 (player side) + BUG #13 (ACHR 0x14 process-block tok[76] active magazine rounds):
+        let build_player_with_proc = |tok70: u32, tok76: u32| -> Vec<u8> {
+            const WIDTHS: [usize; 77] = [
+                1, 1, 1, 1, 1, 1, 1, 1, 4, 4, 1, 1, 3, 3, 4, 4, 4, 3, 1, 4, 3, 4, 4, 4, 1, 2, 4, 4,
+                3, 3, 3, 3, 3, 1, 4, 1, 1, 1, 4, 4, 4, 1, 12, 4, 1, 1, 1, 2, 12, 1, 1, 1, 1, 4, 1,
+                4, 4, 1, 1, 1, 2, 4, 1, 4, 4, 1, 1, 4, 4, 4, 4, 1, 3, 3, 3, 3, 4,
+            ];
+            let mut p = Build { b: Vec::new() };
+            p.r(3).f32(1.0).f32(2.0).f32(3.0).f32(0.0).f32(0.0).f32(0.0).bar();
+            for _ in 0..AV_ENTRIES {
+                p.f32(0.0).bar();
+            }
+            p.u8(0).bar(); // bit 4 absent
+            p.vs(0).bar(); // 0 actor extras
+            // Player inventory: 1 worn weapon carrying 0x25 + 0x16 + 0x3E (no 0x6E!)
+            p.vs(1).bar().r(4).bar().u32(1).bar().vs(1).bar().vs(3).bar();
+            p.u8(0x25).bar().f32(149.0).bar().u8(0x16).bar().u8(0x3E).bar();
+            // High-Process block tok[0..=76]
+            for (idx, &w) in WIDTHS.iter().enumerate() {
+                if idx == 70 {
+                    p.u32(tok70).bar();
+                } else if idx == 76 {
+                    p.u32(tok76).bar();
+                } else {
+                    p.b.extend(std::iter::repeat_n(0u8, w));
+                    p.bar();
+                }
+            }
+            p.b
+        };
+
+        let pl_equipped = with_player(build_player_with_proc(9, 11), (1 << 1) | (1 << 5) | (1 << 28) | (1 << 31));
+        assert_eq!(pl_equipped.inventory.as_ref().map(Vec::len), Some(1));
+        assert!(pl_equipped.inventory.as_ref().unwrap()[0].worn);
+        assert_eq!(pl_equipped.active_weapon_magazine, Some(11));
+
+        let pl_unequipped = with_player(build_player_with_proc(u32::MAX, 1), (1 << 1) | (1 << 5) | (1 << 28) | (1 << 31));
+        assert_eq!(pl_unequipped.active_weapon_magazine, None);
     }
 }
