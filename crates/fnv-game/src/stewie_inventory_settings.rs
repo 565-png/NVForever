@@ -43,6 +43,8 @@ impl Game<'_> {
         } else if section.eq_ignore_ascii_case("Tweaks") && key.eq_ignore_ascii_case("bRestoreLockedDoorSound") {
             // NVForever already plays DRSLocked when activating a refused lock (docs/design/tweaks.md).
             true
+        } else if section.eq_ignore_ascii_case("Tweaks") && key.eq_ignore_ascii_case("bArmorConditionLabel") {
+            self.tweaks.armor_condition
         } else {
             return None;
         };
