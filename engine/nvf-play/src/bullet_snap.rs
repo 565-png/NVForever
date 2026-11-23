@@ -18,16 +18,18 @@ use crate::PlaySet;
 
 /// Reserved synthetic `SOUN` FormID range (`[BULLET_SNAP_SOUND_BASE,
 /// BULLET_SNAP_SOUND_END)`) for BulletSnap's 10 sound folders [design: placed in
-/// `0xFE7E_0000..0xFE7F_0000`, strictly below `CAMERA_OVERLAY_BASE` (`0xFE7F_0000`),
+/// `0xFE7E_0000..0xFE7F_0000`, recorded in `docs/spec-notes/callable-identity.md` and
+/// bounded in `fnv_game::game` strictly above `TEMP_REF_BASE..BULLET_SNAP_SOUND_BASE`
+/// (`0xFE40_0000..0xFE7E_0000`), below `CAMERA_OVERLAY_BASE` (`0xFE7F_0000`),
 /// `LAMBDA_BASE` / `MADE_PACKAGE_BASE` (`0xFE80_0000`), and `FormId::FIRST_DYNAMIC`
 /// (`0xFF00_0000`), and disjoint from normal plugin indices `0x00..=0xFD`, `CLONE_BASE`
-/// (`0xFE00_0000..0xFE20_0000`), `COMPILED_BASE` (`0xFE20_0000..0xFE40_0000`), and low
-/// `TEMP_REF_BASE` (`0xFE40_0000..`) indices. Registration never overwrites an existing
-/// loaded `SOUN` record: any loaded record at the same ID wins and BulletSnap skips to
-/// the first free slot in `[BULLET_SNAP_SOUND_BASE + 10, BULLET_SNAP_SOUND_END)`].
-pub const BULLET_SNAP_SOUND_BASE: u32 = 0xFE7E_0000;
+/// (`0xFE00_0000..0xFE20_0000`), and `COMPILED_BASE` (`0xFE20_0000..0xFE40_0000`).
+/// Registration never overwrites an existing loaded `SOUN` record: any loaded record at
+/// the same ID wins and BulletSnap skips to the first free slot in
+/// `[BULLET_SNAP_SOUND_BASE + 10, BULLET_SNAP_SOUND_END)`].
+pub const BULLET_SNAP_SOUND_BASE: u32 = fnv_game::game::BULLET_SNAP_SOUND_BASE;
 /// Exclusive upper bound of BulletSnap's reserved synthetic `SOUN` FormID range [design].
-pub const BULLET_SNAP_SOUND_END: u32 = 0xFE7F_0000;
+pub const BULLET_SNAP_SOUND_END: u32 = fnv_game::game::CAMERA_OVERLAY_BASE;
 
 /// Attenuation curve for BulletSnap synthetic sounds [design: keeps distant snaps
 /// audible out to the configured `Far` threshold while still attenuating with distance].

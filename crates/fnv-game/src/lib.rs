@@ -70,6 +70,10 @@ mod combat_style_session_tests;
 mod common;
 #[cfg(test)]
 mod faction_modifier_tests;
+#[cfg(test)]
+mod extender_ctda_tests;
+#[cfg(test)]
+mod base_functions_tests;
 pub mod companion_wheel;
 pub mod coop;
 pub mod cond;
@@ -86,6 +90,7 @@ pub mod sweep;
 pub mod death_items;
 pub mod debugger;
 pub mod detection;
+pub mod fast_travel;
 pub mod followers;
 pub mod dialogue;
 pub mod dialogue_edits;
@@ -93,6 +98,7 @@ pub mod difficulty;
 pub mod experience;
 pub mod ext_probes;
 pub mod ext_save;
+pub mod fos_convert;
 pub mod functions;
 pub mod hacking;
 pub mod holotapes;
@@ -247,6 +253,7 @@ pub mod ui_hud;
 pub mod ui_more;
 pub mod ui_projection;
 pub mod ui_search_bar;
+pub mod ui_text_input;
 pub mod ui_ysi;
 pub mod ui_input;
 pub mod unconscious;
