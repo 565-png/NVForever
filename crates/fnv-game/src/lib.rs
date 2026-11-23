@@ -86,6 +86,7 @@ pub mod sweep;
 pub mod death_items;
 pub mod debugger;
 pub mod detection;
+pub mod fast_travel;
 pub mod followers;
 pub mod dialogue;
 pub mod dialogue_edits;
