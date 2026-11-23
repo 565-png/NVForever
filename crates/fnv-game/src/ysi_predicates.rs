@@ -1,23 +1,24 @@
-//! Orthogonal record- and text-backed ySI tag predicates (`docs/spec-notes/ysi-filename.md`).
+//! Orthogonal record- and recipe-backed ySI tag predicates (`docs/spec-notes/ysi-filename.md`).
 //!
-//! Covers predicates outside the core `mod`/`form`/`formlist`/`formType`/`questItem` set
-//! and outside the `WEAP`/`ALCH`/`ARMO` core subset:
+//! Covers documented predicates outside the core `mod`/`form`/`formlist`/`formType`/`questItem`
+//! set and outside the core `WEAP`/`ALCH`/`ARMO` subset in `ysi_filename.rs`. Every supported
+//! key name below appears verbatim in the public **Sorting Icons 1.4b** (`ySI - Sorting Ycons`,
+//! Nexus mod 74358) `menus/ySI/ySI.json` configuration file; no ySI/yUI DLL or source code was
+//! consulted:
 //! - Extra `WEAP` traits (`weaponClipRounds`, `weaponNumProjectiles`, `weaponAttackAnim`,
 //!   `weaponHandgrip`, `weaponSoundLevel`, `ammoMod` + `ammoForm`)
 //! - `ALCH` effect/classification traits (`aidRestoresAV`, `aidDamagesAV`, `aidIsWater`,
 //!   `aidIsPoisonous`)
-//! - `BOOK` (`bookSkill`, `isSkillBook`), `NOTE` (`noteType`), `AMMO` (`ammoIgnoresDTDR`)
 //! - Recipe membership (`miscComponent`, `miscProduct`)
-//! - Name / EditorID text matching (`prefix`, `suffix`, `edid`, `edidPrefix`)
 //!
-//! All mappings are `[hypothesis]` and read existing `Game` / `GameData` / `FormStore` views;
-//! mismatched record types disqualify as `Match::No` while malformed or unsupported values
-//! remain `Match::Unknown`.
+//! Keys absent from Sorting Icons 1.4b `menus/ySI/ySI.json` (including `bookSkill`,
+//! `isSkillBook`, `noteType`, `ammoIgnoresDTDR`, `prefix`, `suffix`, `edid`, `edidPrefix`,
+//! which were also observed to be unrecognized/ignored by `yUI 1.4d`) remain `Match::Unknown`.
 
 use crate::aid::{self, value_change};
 use crate::data::MagicEffectDef;
 use crate::game::Game;
-use crate::ysi_filename::{any, number_set, parse_local_form, Match};
+use crate::ysi_filename::{any, bool_pred, number_set, parse_local_form, Match};
 use fnv_script::vm::XVal;
 use fnv_sim::FormId;
 use serde_json::{Map, Value as Json};
@@ -32,28 +33,36 @@ pub(crate) fn eval(
     value: &Json,
 ) -> Match {
     match name {
-        // Companion selector evaluated together with `ammoForm`.
+        // [documented: Sorting Icons 1.4b menus/ySI/ySI.json (`"ammoMod": "FalloutNV.esm"`, companion to `ammoForm`)]
         "ammoMod" => Match::Yes,
+        // [documented: Sorting Icons 1.4b menus/ySI/ySI.json; schemas/fnv/objects.json WEAP.NAM0]
         "ammoForm" => weapon_ammo_match(g, item, fields, value),
-        "weaponClipRounds" => weapon_int_field(g, item, "DATA", "clip_size", value),
-        "weaponNumProjectiles" => weapon_int_field(g, item, "DNAM", "projectile_count", value),
+        // [documented: Sorting Icons 1.4b menus/ySI/ySI.json (values 3, 7); schemas/fnv/objects.json WEAP.DATA.clip_size;
+        //  observed: FNV 1.4.0.525 + xNVSE 6.4.9 + yUI 140 (v1.4d, bSortingIcons=1): >= N threshold]
+        "weaponClipRounds" => weapon_threshold_ge(g, item, "DATA", "clip_size", value),
+        // [documented: Sorting Icons 1.4b menus/ySI/ySI.json (value 4); schemas/fnv/objects.json WEAP.DNAM.projectile_count;
+        //  observed: FNV 1.4.0.525 + xNVSE 6.4.9 + yUI 140 (v1.4d, bSortingIcons=1): >= N threshold]
+        "weaponNumProjectiles" => weapon_threshold_ge(g, item, "DNAM", "projectile_count", value),
+        // [documented: Sorting Icons 1.4b menus/ySI/ySI.json (values 10, 11); schemas/fnv/objects.json WEAP.DNAM.attack_animation]
         "weaponAttackAnim" => weapon_int_field(g, item, "DNAM", "attack_animation", value),
+        // [documented: Sorting Icons 1.4b menus/ySI/ySI.json (value 3); schemas/fnv/objects.json WEAP.DNAM.grip_animation]
         "weaponHandgrip" => weapon_int_field(g, item, "DNAM", "grip_animation", value),
+        // [documented: Sorting Icons 1.4b menus/ySI/ySI.json (value 2); schemas/fnv/objects.json WEAP.VNAM]
         "weaponSoundLevel" => weapon_int_field(g, item, "VNAM", "", value),
+        // [documented: Sorting Icons 1.4b menus/ySI/ySI.json (values 54, 20, 16); schemas/fnv/objects.json ALCH/MGEF]
         "aidRestoresAV" => aid_effect_av(g, item, value, true),
+        // [documented: Sorting Icons 1.4b menus/ySI/ySI.json (value 54); schemas/fnv/objects.json ALCH/MGEF]
         "aidDamagesAV" => aid_effect_av(g, item, value, false),
+        // [documented: Sorting Icons 1.4b menus/ySI/ySI.json (value 1);
+        //  observed: FNV 1.4.0.525 + xNVSE 6.4.9 + yUI 140 (v1.4d, bSortingIcons=1): matches WaterPurified, rejects SalisburySteak/NukaCola]
         "aidIsWater" => aid_is_water(g, item, value),
+        // [documented: Sorting Icons 1.4b menus/ySI/ySI.json (value 1);
+        //  observed: FNV 1.4.0.525 + xNVSE 6.4.9 + yUI 140 (v1.4d, bSortingIcons=1): matches BleakVenom]
         "aidIsPoisonous" => aid_is_poisonous(g, item, value),
-        "bookSkill" => book_skill(g, item, value),
-        "isSkillBook" => is_skill_book(g, item, value),
-        "noteType" => note_type(g, item, value),
-        "ammoIgnoresDTDR" => ammo_ignores_dtdr(g, item, value),
+        // [documented: Sorting Icons 1.4b menus/ySI/ySI.json (value 1); schemas/fnv/gameplay.json RCPE.RCIL]
         "miscComponent" => recipe_membership(g, item, value, true),
+        // [documented: Sorting Icons 1.4b menus/ySI/ySI.json (value 1); schemas/fnv/gameplay.json RCPE.RCOD]
         "miscProduct" => recipe_membership(g, item, value, false),
-        "prefix" => name_match(g, item, value, TextMatch::Prefix),
-        "suffix" => name_match(g, item, value, TextMatch::Suffix),
-        "edid" => edid_match(g, item, value, TextMatch::Exact),
-        "edidPrefix" => edid_match(g, item, value, TextMatch::Prefix),
         _ => Match::Unknown,
     }
 }
@@ -63,12 +72,22 @@ pub(crate) fn has_dangling_companions(fields: &Map<String, Json>) -> bool {
     fields.contains_key("ammoMod") && !fields.contains_key("ammoForm")
 }
 
-/// Match a `0`/`1` or `-1`/`1` boolean ySI predicate (`1` = true, `0`/`-1` = false;
-/// other values remain `Match::Unknown`) [hypothesis].
-fn bool_flag(value: &Json, actual: bool) -> Match {
+/// Evaluate a scalar `>= N` threshold predicate [observed: yUI 1.4d on `weaponClipRounds`
+/// and `weaponNumProjectiles`]. Non-integer values stay `Match::Unknown`.
+fn threshold_ge(value: &Json, actual: i64) -> Match {
     match value.as_i64() {
-        Some(1) => if actual { Match::Yes } else { Match::No },
-        Some(0 | -1) => if !actual { Match::Yes } else { Match::No },
+        Some(min) if actual >= min => Match::Yes,
+        Some(_) => Match::No,
+        None => Match::Unknown,
+    }
+}
+
+fn weapon_threshold_ge(g: &Game<'_>, item: FormId, sub: &str, path: &str, value: &Json) -> Match {
+    if g.data.sig(item) != Some(*b"WEAP") {
+        return Match::No;
+    }
+    match crate::nvse::record_value(g, item, sub, path) {
+        Some(XVal::Num(n)) if n.is_finite() => threshold_ge(value, n.trunc() as i64),
         _ => Match::Unknown,
     }
 }
@@ -174,81 +193,14 @@ fn aid_is_water(g: &Game<'_>, item: FormId, value: &Json) -> Match {
                 c.code == aid::DEHYDRATION && !m.has(MagicEffectDef::DETRIMENTAL) && c.amount > 0.0
             })
         });
-    bool_flag(value, restores_dehydration)
+    bool_pred(value, restores_dehydration, false)
 }
 
 fn aid_is_poisonous(g: &Game<'_>, item: FormId, value: &Json) -> Match {
     if g.data.sig(item) != Some(*b"ALCH") {
         return Match::No;
     }
-    bool_flag(value, g.is_poison(item))
-}
-
-fn book_skill_code(g: &Game<'_>, item: FormId) -> Option<i64> {
-    let base = g.unclone(item);
-    if let Some(XVal::Num(n)) = g
-        .field_overrides
-        .get(&(item, "DATA/skill_code".into()))
-        .or_else(|| g.field_overrides.get(&(base, "DATA/skill_code".into())))
-    {
-        return n.is_finite().then_some(n.trunc() as i64);
-    }
-    match crate::nvse::record_value(g, item, "DATA", "skill") {
-        Some(XVal::Num(n)) if n.is_finite() => {
-            let i = n.trunc() as i64;
-            Some(if i < 0 { -1 } else { i + 32 })
-        }
-        _ => None,
-    }
-}
-
-fn book_skill(g: &Game<'_>, item: FormId, value: &Json) -> Match {
-    if g.data.sig(item) != Some(*b"BOOK") {
-        return Match::No;
-    }
-    match book_skill_code(g, item) {
-        Some(code) => number_set(value, code),
-        None => Match::Unknown,
-    }
-}
-
-fn is_skill_book(g: &Game<'_>, item: FormId, value: &Json) -> Match {
-    if g.data.sig(item) != Some(*b"BOOK") {
-        return Match::No;
-    }
-    let teaches = match book_skill_code(g, item) {
-        Some(code) => code >= 0,
-        None => g.world.forms.item(item).is_some_and(|i| i.teaches.is_some()),
-    };
-    bool_flag(value, teaches)
-}
-
-fn note_type(g: &Game<'_>, item: FormId, value: &Json) -> Match {
-    if g.data.sig(item) != Some(*b"NOTE") {
-        return Match::No;
-    }
-    let base = g.unclone(item);
-    let kind = g.data.notes.get(&base).map(|n| i64::from(n.kind)).or_else(|| {
-        match crate::nvse::record_value(g, item, "DATA", "") {
-            Some(XVal::Num(n)) if n.is_finite() => Some(n.trunc() as i64),
-            _ => None,
-        }
-    });
-    match kind {
-        Some(k) => number_set(value, k),
-        None => Match::Unknown,
-    }
-}
-
-fn ammo_ignores_dtdr(g: &Game<'_>, item: FormId, value: &Json) -> Match {
-    if g.data.sig(item) != Some(*b"AMMO") {
-        return Match::No;
-    }
-    let flags = match crate::nvse::record_value(g, item, "DATA", "flags") {
-        Some(XVal::Num(n)) if n.is_finite() => n.trunc() as i64 as u64,
-        _ => return Match::Unknown,
-    };
-    bool_flag(value, flags & 1 != 0)
+    bool_pred(value, g.is_poison(item), false)
 }
 
 fn recipe_membership(g: &Game<'_>, item: FormId, value: &Json, ingredient: bool) -> Match {
@@ -267,62 +219,7 @@ fn recipe_membership(g: &Game<'_>, item: FormId, value: &Json, ingredient: bool)
         let list = if ingredient { &r.ingredients } else { &r.outputs };
         list.iter().any(|&(f, _)| g.unclone(f) == target)
     });
-    bool_flag(value, has)
-}
-
-#[derive(Clone, Copy)]
-enum TextMatch {
-    Exact,
-    Prefix,
-    Suffix,
-}
-
-fn text_match(value: &Json, actual: &str, mode: TextMatch) -> Match {
-    let actual_lower = actual.to_ascii_lowercase();
-    let one = |v: &Json| {
-        let Some(needle) = v.as_str() else {
-            return Match::Unknown;
-        };
-        let needle_lower = needle.to_ascii_lowercase();
-        let hit = match mode {
-            TextMatch::Exact => actual_lower == needle_lower,
-            TextMatch::Prefix => actual_lower.starts_with(&needle_lower),
-            TextMatch::Suffix => actual_lower.ends_with(&needle_lower),
-        };
-        if hit {
-            Match::Yes
-        } else {
-            Match::No
-        }
-    };
-    match value {
-        Json::Array(values) => any(values.iter().map(one)),
-        _ => one(value),
-    }
-}
-
-fn name_match(g: &Game<'_>, item: FormId, value: &Json, mode: TextMatch) -> Match {
-    let base = g.unclone(item);
-    let display = g
-        .world
-        .forms
-        .get(base)
-        .and_then(|b| b.name.as_deref())
-        .or_else(|| g.data.record_field(base, "FULL", "").and_then(Json::as_str))
-        .unwrap_or("");
-    text_match(value, display, mode)
-}
-
-fn edid_match(g: &Game<'_>, item: FormId, value: &Json, mode: TextMatch) -> Match {
-    let base = g.unclone(item);
-    let edid = g
-        .world
-        .forms
-        .get(base)
-        .and_then(|b| b.edid.as_deref())
-        .or_else(|| g.data.edid_of.get(&base).map(String::as_str))
-        .unwrap_or("");
-    text_match(value, edid, mode)
+    bool_pred(value, has, false)
 }
 
 #[cfg(test)]
@@ -330,30 +227,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bool_flag_and_text_match_cover_valid_and_malformed_inputs() {
-        assert_eq!(bool_flag(&Json::from(1), true), Match::Yes);
-        assert_eq!(bool_flag(&Json::from(1), false), Match::No);
-        assert_eq!(bool_flag(&Json::from(0), false), Match::Yes);
-        assert_eq!(bool_flag(&Json::from(-1), false), Match::Yes);
-        assert_eq!(bool_flag(&Json::from(-1), true), Match::No);
-        assert_eq!(bool_flag(&Json::from(2), false), Match::Unknown);
-        assert_eq!(bool_flag(&Json::from("1"), true), Match::Unknown);
-
-        assert_eq!(text_match(&Json::from("Nuka-"), "Nuka-Cola Quantum", TextMatch::Prefix), Match::Yes);
-        assert_eq!(text_match(&Json::from("Sunset"), "Nuka-Cola Quantum", TextMatch::Prefix), Match::No);
-        assert_eq!(text_match(&Json::from("quantum"), "Nuka-Cola Quantum", TextMatch::Suffix), Match::Yes);
-        assert_eq!(
-            text_match(&serde_json::json!(["Foo", "nuka-"]), "Nuka-Cola", TextMatch::Prefix),
-            Match::Yes
-        );
-        assert_eq!(
-            text_match(&serde_json::json!(["Foo", 42]), "Nuka-Cola", TextMatch::Prefix),
-            Match::Unknown
-        );
-        assert_eq!(
-            text_match(&Json::from("Weap10mm"), "weap10mm", TextMatch::Exact),
-            Match::Yes
-        );
+    fn threshold_ge_covers_bounds_and_rejects_non_scalars() {
+        assert_eq!(threshold_ge(&Json::from(7), 12), Match::Yes);
+        assert_eq!(threshold_ge(&Json::from(7), 7), Match::Yes);
+        assert_eq!(threshold_ge(&Json::from(7), 6), Match::No);
+        assert_eq!(threshold_ge(&serde_json::json!([7, 12]), 12), Match::Unknown);
+        assert_eq!(threshold_ge(&Json::from("7"), 12), Match::Unknown);
     }
 
     #[test]

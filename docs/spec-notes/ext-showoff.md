@@ -180,7 +180,7 @@ ShowOff function left. GetHitLocationLingering on the unhurt player crashed the 
 | GetProjectileRefIsStuck | a shot that hit something and stays (`ProjState`) [hypothesis: the isStuck flag] |
 | SpawnTracingProjectile | 0 [not built: the engine has no request to fire a bare projectile; follow-up] |
 | SetForceDrawHitscanProjectiles `[forceDraw]`, SetProjectileTracerChanceOverride `[chance]` | whether before / the override before; the engine draws hitscan shots, never or always rolls tracers by them (`nvf_play::combat::shot_switches`) [documented] |
-| GetPCHasScriptedFastTravelOverride, GetPCCanFastTravel | EnableFastTravel 0's bar [hypothesis: that is the override]; the Pip-Boy's checks but the marker's: the bar, the cell's or world's flag, in the air, in combat, hostiles within fHostileActor…Distance, over-encumbered without Long Haul [documented: "the same check"; hypothesis: combat as the player's combat state] |
+| GetPCHasScriptedFastTravelOverride, GetPCCanFastTravel | EnableFastTravel 0's bar [hypothesis: that is the override]; the Pip-Boy's checks but the marker's: the bar, an interior or the world's flag (fast-travel.md §2; lifted by the player's Fast Travel From Anywhere, the map's other travel tweaks not built here), in the air, in combat, hostiles within fHostileActor…Distance, over-encumbered without Long Haul [documented: "the same check"; hypothesis: combat as the player's combat state] |
 | IsActorInvisibleToPlayer, HighlightAdditionalReferenceAlt `[check] [flash]` | Invisibility or Chameleon above 0 and no Improved Detection [documented]; the highlight list is kept, the engine's VATS highlight does not draw it yet [not built: follow-up] |
 | GetNumCombatActorsFromActor `[maxDistance] [flags]` | the caller's combat targets (2) and allies (1), 0 meaning 3; 4 no invisible ones, 8 only detected ones [documented]; an ally fights one of the caller's targets and would not attack the caller [hypothesis] |
 | ForceHitStaggerReaction (ForceHitReaction), ForceRecoilAnim | stagger: 1 when the actor has a hit location (and, when asked, no Ignore Crippled Limbs) [documented; observed: 0 on the unhurt player]; recoil: 1 for a living actor [observed 2026-11-08: recoil.player 1; the save's weapon not recorded; hypothesis: whatever it holds]; the engine does not play the animations [not built, as ForceWeaponJamAnim §4] |
@@ -220,7 +220,7 @@ their titles have a space where the name has an underscore).
 | Quaternion_GetMatrix (Quat_GetMat) `[w x y z]`, Matrix3x3_GetQuaternion (Mat_GetQuat) | the layout [w, x, y, z] [documented]. Quat_GetMat does not normalise and gives the transpose of the usual right-handed matrix, in single precision: diagonal 2(w²+a²)−1, (2 0 0 0) gives 7 7 7 [observed 2026-11-08: quat.unnormal]; (0.7071 0 0 0.7071) gives m[0][0] −5.96046e-08, m[0][1] 1, m[1][0] −1, m[2][2] 1 [observed: quat.z90; the x and y terms transposed alike, hypothesis]. Mat_GetQuat reads the usual right-handed form, by the largest of trace and diagonal with w not negative [observed: quat.back, quat.back.270 equal], so the two are not inverses |
 | Results' shape | a one-row result of a one-dimensional input stays one-dimensional; a 1-D row transposed is a column of one-element lists [hypothesis; probe schur.flat.size, transpose.flat.size] |
 | SayTo_GetTopic, SayTo_GetTopicInfo | the topic and response of the actor's running SayTo line (`Game::speech`), none without one [documented] |
-| Get/SetItemHotkeyIconPath `item [onlyOverride]`, `item path` | the override, else GetTexturePath's icon; onlyOverride 1 the override or ""; "" resets [documented]. Kept game-side only: the engine's hotkey pictures (`weapon_wheel::draw`, `pipboy::hotkey_panel`) do not read it yet [follow-up] |
+| Get/SetItemHotkeyIconPath `item [onlyOverride]`, `item path` | the override, else GetTexturePath's icon; onlyOverride 1 the override or ""; "" resets [documented: GetItemHotkeyIconPath, SetItemHotkeyIconPath]. Wired into the engine's hotkey pictures (`Game::item_hotkey_icon_path`, `nvf_play::hotkeys::icon_override`, `weapon_wheel::draw`, `pipboy::hotkey_panel`) for both assigned slots (excluding Ammo Swap slot 2) and the Pip-Boy hotkey panel's pointed-at centre icon; override paths are normalised to lowercase backslashes relative to `textures\` (stripping any leading separator or `data\textures\` / `textures\` prefix, ignoring whitespace-only values) before `interface::Pictures` lookup [design]. Unmodded vanilla icon resolution is unchanged when no override is set |
 | Get/SetPlayerCanPickpocketEquippedItems (Get/SetPCCanStealEqItems) | off by default; on, the pickpocket menu lists the victim's equipped items, never a child's (`Game::pickpocket_worn`, `nvf_play::menu::model::Steal::worn`) [documented] |
 | ClearCinematicTextQueue (ClearQuestMessageQueue) | the quest lines waiting are dropped, as KillQuestUpdates [documented: "Clears the quest message queue"; hypothesis: the line on screen finishes] |
 | ToggleQuestMessages `[bOn]` | 0 hides every quest line (`UiRequests::quest_messages_off`, read by `nvf_play::script`), 1 shows them; 1 when that changed; -1 or nothing reads 1 while they are on [documented; hypothesis: what the read means, the page's wording leaves it open] |
@@ -234,14 +234,13 @@ their titles have a space where the name has an underscore).
 | SetEnableParent (SetParentRef) `[newParent]` | the reference's enable parent for the session, none removing it; GetParentRef and the enable state follow (`World::set_enable_parent`) [documented]; not saved [hypothesis] |
 | HasINISetting_Cached (HasINISettingC), ReloadIniCache, SaveCachedIniFile (SaveCachedIni) `[iniPath]` | the cache of `Data\Config` INI files (`mod_files.rs`): whether a key is cached; read again (0 for a missing file); written back into the file in NVForever's layer, keys in place, new ones added to their section in lower case [documented; hypothesis: the format kept] |
 | The INI path of every `[iniPath]` function | under `Data\Config`; `..` parts are worked out, so `..\MCM\Translations\X.ini` is `Data\MCM\Translations\X.ini` [observed: MCM Extender's gr_MCMExtender.txt reads its menus' translations so, and its INIs sit there]; a path that would leave Data is not read (charter; the rule in full: local-ini-sibling-paths.md) |
-| ReadFromJSON `path [pointer] [mode] [useCache]`, WriteToJSON `value path [pointer] [mode] [useCache] [saveFile] [compact]` | files under the game's folder through NVForever's layer (`GameRoot`, never the game folder); objects are string maps, arrays lists, forms "@Plugin.esm:FormID" [documented]; every parser mode reads standard JSON, a pointer into a missing part makes the objects on the way [hypothesis]. ReadFromJSON on a missing file gives no value, the call fails [observed 2026-11-08: readjson.missing, TestExpr 0]; a file that is not JSON likewise, a pointer to nothing 0 [hypothesis]; WriteToJSON's failures 0 [hypothesis] |
+| ReadFromJSON `path [pointer] [mode] [useCache]`, WriteToJSON `value path [pointer] [mode] [useCache] [saveFile] [compact]` | files under the game's folder through NVForever's layer (`GameRoot`, never the game folder), decoded as UTF-8 with any UTF-8 BOM stripped and `Data\...` paths also resolving through NVForever's layer/VFS [design]; objects are string maps, arrays lists, forms "@Plugin.esm:FormID" [documented]; every parser mode reads standard JSON, a pointer into a missing part makes the objects on the way [hypothesis]. `useCache` gates reading/writing `ModFiles::showoff_json` (uncached saved writes drop any stale cached entry) and escaping paths are refused even when `saveFile` is 0 [design]. ReadFromJSON on a missing file gives no value, the call fails [observed 2026-11-08: readjson.missing, TestExpr 0]; a file that is not JSON likewise, a pointer to nothing 0 [hypothesis]; WriteToJSON's failures 0 [hypothesis] |
 | CreateFolder (CreateDirectory) `path`, DumpFormList (FListDump) `list [file] [append]` | the folder made in NVForever's layer; the list's forms to the console or appended to a file there [documented], the lines in NVForever's own words |
 | GetActorFadeState | −1 for an actor not fading [observed 2026-11-08: fadestate.doc, Doc Mitchell in his house]; NVForever has no actor fade state to report, so always −1 [hypothesis: the other states unknown] |
 | GetCalculatedActorSpread | live actor weapon spread from the Gun Spread Formula, stance, crippled arms, `SetNoGunWobble`, and spread perks (`Game::calculated_actor_spread`) [documented: Gun Spread Formula; hypothesis: `docs/spec-notes/nvse-stubs-persistent-fall-spread-unique.md`] |
 | IsFormLoading | 0 [decision: the page is marked Incomplete with no summary, arguments or result; nothing to build from] |
 
-Follow-ups: the engine's hotkey pictures should read SetItemHotkeyIconPath's override;
-the three Incomplete pages need their text.
+Follow-ups: the three Incomplete pages need their text.
 
 Left for batch 5 (37), with what each needs: the level-up menu's pages and points
 (Get/SetLevelUpMenuCurrentPage, GetLevelUpMenuPoints, SetLevelUpMenuCanExitEarly,
@@ -256,3 +255,68 @@ GetVATSMaxEngageDistance, GetVATSTargetable, ToANSIChar, GetHitLocationLingering
 PlayerHasNightVisionActive, PlayerIsDrinkingPlacedWater, GetIsActivationPromptShown,
 IsPlayerLookingAround, GetSpellUsageNumEx, PlaceAtReticleAlt, RefillPlayerAmmo,
 RemoveAllItemsShowOff.
+
+## 9. `ShowOff:OnPOVChange` and preactivation events
+
+- **`ShowOff:OnPOVChange`** [documented: GECK wiki,
+  [ShowOff:OnPOVChange](https://geckwiki.com/index.php?title=ShowOff%3AOnPOVChange)]:
+  fires when the player's camera perspective switches between first-person and
+  third-person, passing one integer argument (`1` = first-person, `0` = third-person).
+  NVForever dispatches it from `Game::set_first_person` (fed every frame by
+  `nvf_play::control::tell_scripts`) only when `senses.first_person` actually changes,
+  with `IsPC1stPerson` already reflecting the new perspective and no calling reference
+  [hypothesis: calling reference and getter visibility during callback unobserved].
+  Save restore syncs `senses.first_person` directly to the restored camera POV without
+  emitting a spurious transition [design]. Free when no handler is registered.
+- **`ShowOff:OnPreScriptedActivate`**, **`ShowOff:OnPreActivateInventoryItem`**, and
+  **`ShowOff:OnPreActivateInventoryItemAlt`**: see
+  [preactivation-events.md](preactivation-events.md). No extender DLL or source code
+  was consulted.
+
+## 10. `ShowOff:OnCompleteObjective`, `ShowOff:OnDisplayObjective` and `ShowOff:OnWeaponUnholster`
+
+- **`ShowOff:OnDisplayObjective`** [documented: GECK wiki,
+  [Category:Event Handlers (ShowOff NVSE)](https://geckwiki.com/index.php?title=Category:Event_Handlers_%28ShowOff_NVSE%29),
+  `ShowOff:OnDisplayObjective`]: fires when a quest objective is displayed, passing
+  `(quest, objective_index)` as two arguments (`"first"` / `1::` filters the quest form;
+  `"second"` / `2::` filters the integer objective index). NVForever dispatches it from
+  `Game::set_objective_whatever` only on `displayed` transitioning `false -> true` (so
+  hiding an objective with `0`, repeating display on an already-displayed objective,
+  referencing an undefined objective index, or calling `SetObjectiveDisplayed` on an
+  already completed/failed quest does not fire), with `on = None` and
+  `GetObjectiveDisplayed` already reading `1` inside the callback [hypothesis:
+  transition-only dispatch, no calling reference, and post-update getter visibility
+  unobserved in original-game captures].
+- **`ShowOff:OnCompleteObjective`** [documented: GECK wiki,
+  [Category:Event Handlers (ShowOff NVSE)](https://geckwiki.com/index.php?title=Category:Event_Handlers_%28ShowOff_NVSE%29),
+  `ShowOff:OnCompleteObjective`]: fires when a quest objective is completed, passing
+  `(quest, objective_index)` as two arguments (`"first"` / `1::` filters the quest form;
+  `"second"` / `2::` filters the integer objective index). NVForever dispatches it from
+  `Game::set_objective_whatever` (covering both `SetObjectiveCompleted` and
+  `CompleteAllObjectives`) only on `completed` transitioning `false -> true` (so
+  un-completing with `0`, clearing `completed` when re-displaying a hidden objective,
+  repeating completion on an already-completed objective, referencing an undefined
+  objective index, or calling `SetObjectiveCompleted` on an already completed/failed
+  quest does not fire), with `on = None` and `GetObjectiveCompleted` already reading `1`
+  inside the callback [hypothesis: transition-only dispatch, `CompleteAllObjectives`
+  firing per newly completed objective in ascending index order, hidden-objective
+  completion firing, no calling reference, and post-update getter visibility unobserved].
+- **`ShowOff:OnWeaponUnholster`** [documented: GECK wiki,
+  [ShowOff:OnWeaponUnholster](https://geckwiki.com/index.php?title=ShowOff%3AOnWeaponUnholster)]:
+  added in ShowOff NVSE 1.80; fires when an actor unholsters a weapon, with the actor as
+  the calling reference (`GetSelf` / `GetSelfAlt` / `0::`) and the weapon form as the
+  single argument (`"first"` / `1::`). NVForever dispatches it from `Game::set_weapon_out`
+  (driven by `nvf_play::combat::weapon_state` for the player and `nvforever::idles` for
+  drawn NPCs/creatures) and `Game::hud_tick` (scripted `SetWeaponOut 1` after
+  `WEAPON_FRAMES`) only on `weapon_out` transitioning `false -> true`, with `IsWeaponOut`
+  already reading `1` inside the callback. The weapon argument resolves from the actor's
+  equipped weapon (`equipped_weapon`), else the animating side's `held_weapon`, else
+  `Fists` (`0x000001F4`) when defined as a `WEAP` record in game data, else null form `0`
+  [hypothesis: firing at weapon-out completion rather than draw-start, unarmed/creature
+  weapon argument fallback, and `IsWeaponOut` visibility inside the callback unobserved].
+  Save restore writes `extra` directly without firing a spurious unholster event
+  [design].
+- [design] All three events short-circuit on `Game::handled(...)` before allocating
+  argument vectors or resolving weapon forms, leaving unmodded vanilla gameplay
+  unchanged with zero allocations. No ShowOff NVSE DLL, PDB, or C++ source code was
+  consulted.
