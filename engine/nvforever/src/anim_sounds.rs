@@ -907,7 +907,10 @@ mod tests {
         }
     }
 
-    fn played_by(app: &mut App) -> (Vec<(FormId, [f32; 3])>, Vec<(FormId, Option<[f32; 3]>)>) {
+    /// What went out: actors' sounds, then the others.
+    type Played = (Vec<(FormId, [f32; 3])>, Vec<(FormId, Option<[f32; 3]>)>);
+
+    fn played_by(app: &mut App) -> Played {
         let actors = app.world_mut().resource_mut::<Messages<ActorSound>>().drain().map(|a| (a.sound, a.at)).collect();
         let own = app.world_mut().resource_mut::<Messages<PlaySound>>().drain().map(|p| (p.sound, p.at)).collect();
         (actors, own)
