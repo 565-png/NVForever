@@ -1351,7 +1351,8 @@ From the ESM audit (docs/handoff/esm-full-audit-2026-10-24.md, gaps 7, 15, 17). 
   within its maximum distance and falls toward it whatever its flags: heard from anywhere,
   one marker would sound over its whole worldspace. A Play At Random marker is still only
   rolled within its maximum distance. Another actor passing a load door whose sound is 2D
-  (`DRSVegasDoorOpen`, `DRSCave`) is heard only within the record's maximum distance.
+  (`DRSVegasDoorOpen`, the Freeside gates') is heard only within the record's maximum
+  distance.
 - **Log**: each sound key an object's group passes says what became of it: `sfx: sound key
   <EDID> starts: <file>, <s> s, gain <g>[, 2D], asked at (x, y, z), <n> units away`, or
   `not heard (too quiet | muted under water | voice limit | sounds off): …`, `not heard: no

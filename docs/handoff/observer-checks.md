@@ -4004,8 +4004,7 @@ capture setup, so every part of a check that needs an interior is still open.
      [documented: GECK wiki Sound], 2D with 2D Radius goes by its radii [hypothesis]. In
      the original, from a reference's script or the console (`prid` a persistent reference,
      then `PlaySound3D`), once next to it and once about 3,000 units away:
-     `DRSVegasDoorOpen` (2D, 175 to 1,100 units), `DRSCave` (2D, 100 to 1,100 units) and
-     `NVDLC04QSTMissileLaunchPt1` (2D and 2D Radius; also once beyond its 25,500 units).
+     `DRSVegasDoorOpen` (2D, 175 to 1,100 units) and `NVDLC04QSTMissileLaunchPt1` (2D and 2D Radius; also once beyond its 25,500 units).
      Say which are heard far off and whether as loud. Also at Lonesome Road's silo launch:
      whether the lift-off (about 14 s after the launch begins) is heard in full, and
      whether its sound moves or fades as the missile flies away.

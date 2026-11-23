@@ -809,8 +809,8 @@ fn objects(
         ws.stats.actor_doors += 1;
         info!("world sounds: an actor passed load door {door:08X}, sound {}", sound_name(sfx, Some(sound)));
         // A 2D one is as loud anywhere (`sfx::no_radii`); another actor's door is still heard
-        // only within the record's reach [design, #3444: the Strip's and the caves' load doors
-        // are 2D records of a 1,100-unit reach, and actors pass them all over the Strip].
+        // only within the record's reach [design, #3444: the Freeside gates' sound is a 2D
+        // record of a 1,100-unit reach, and actors pass them wherever the player is].
         let far = sfx.and_then(|x| x.forms.sounds.get(&sound)).zip(player.as_deref()).is_some_and(|(s, p)| crate::sfx::no_radii(s) && beyond_reach(s.max_distance, p.eye(), at));
         if far {
             continue;
