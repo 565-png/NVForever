@@ -6666,6 +6666,16 @@ impl<'a> Game<'a> {
         if c.function == crate::idles::IS_LAST_IDLE_PLAYED {
             return crate::idles::is_last_idle_played(self, on, &c.params);
         }
+        // IsGreetingPlayer and GetUsedItemLevel have condition indices only (`cond`, #3614).
+        if c.function == cond::IS_GREETING_PLAYER {
+            return if on.is_some_and(|a| self.is_greeting_player(a)) { 1.0 } else { 0.0 };
+        }
+        // What "the used item's level" counts is not documented; 0 keeps the only
+        // conditions on it (the ground pick-up idles, `== 0`) passing, as they did before
+        // the index was named [hypothesis: a level of 0 is the ground, the idles' case].
+        if c.function == cond::GET_USED_ITEM_LEVEL {
+            return 0.0;
+        }
         // The VATS area functions have condition indices only, too (`crate::vats`).
         if crate::vats::is_area_function(c.function) {
             return crate::vats::area_value(self, c.function);
