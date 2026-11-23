@@ -284,6 +284,44 @@ Speech check's line counts Speech Successes when the player meets the level and 
 Failures otherwise; other skills and perks count nothing [hypothesis; misc-stats.md §3,
 observer-checks.md item 70].
 
+**Fallout 3 style percentage speech challenges (`SPEECH_CHALLENGE` flag + DNAM 1–5, #3406):**
+A line carrying `info_flag::SPEECH_CHALLENGE` (0x0080) and a DNAM difficulty code 1–5
+(`Very Easy` … `Very Hard`), with or without `KNAM`, is rolled against the player's
+Speech skill, Charisma, Karma, weapon state, and the speaker's disposition and
+responsibility [documented: GECK wiki Speech Formula (Fallout 3) and Complete List of
+GameSettings; observed: `iSpeechChallengeDifficultyVeryEasy` 10, `Easy` 40, `Average`
+55, `Hard` 70, `VeryHard` 80, `fSpeechChallengeDispositionBase` 30.0,
+`fSpeechChallengeDispositionMultiplier` 1.0, `fSpeechChallengeMultiplier` 2.0,
+`fSpeechAutoSuccessThreshold` 0.9, `fDispTargetCharMult` 10.0 in FalloutNV.esm;
+`fSpeechChallengeSpeechBase` 50.0, `fDispTargetCharOffset` 5.0, `fDispTargetCharBase`
+0.0, `fDispActorRespMult` 1.0, `fDispActorRespBase` −50.0, `fDispTargetKarmaMult` 0.002,
+`fDispTargetWeaponBase` −10.0 from GECK wiki]:
+
+- `Pass Chance = Disposition Value × Speech Value × Difficulty Value`, clamped to `0.0..=1.0`,
+  with each factor floored at `0.0` before multiplication [design: avoids negative × negative].
+- When `SetDisposition`/`ModDisposition` overrode the actor's disposition toward the
+  player, that value replaces `Actor Disposition + Charisma Value` so Charisma is not
+  counted twice [design, matching `functions::actor::get_disposition`].
+- When `Pass Chance > fSpeechAutoSuccessThreshold` (default 0.9), the check always passes
+  [documented: GECK wiki Speech Formula (Fallout 3)] and reports `1.0` (`100%`) [hypothesis].
+- Choice display: the choice carries `Challenge::chance` even when `KNAM` is absent
+  (resolving `AVSpeech` 0x000004BB when present, else `"Speech"` [design]) and `nvf-play`
+  shows `[Speech NN%]` [documented: GECK wiki Category:Dialogue "Speech Challenge" and
+  Fallout Wiki "Speech (Fallout 3)"; hypothesis: nearest-percent rounding and exact
+  FNV/TTW label format not yet captured in-game, §7 item 19].
+- On pass: counts `Speech Successes`, awards `iXPRewardSpeechChallenge<class>` XP, and
+  speaks the challenge line.
+- On failure: counts `Speech Failures` (no XP), marks the challenge line said without
+  speaking it or running its result scripts (so a `Say Once` challenge cannot be retried
+  [documented: Fallout Wiki "Speech (Fallout 3)"; hypothesis: via the line's said state]),
+  and speaks the speaker's line of `SpeechChallengeFailure` (DIAL 0x000000FD) whose Link
+  From names the challenge topic, falling back to an unlinked `SpeechChallengeFailure`
+  line [documented: GECK wiki Topics Tab, SpeechChallengeFailure; observed: Fallout3.esm
+  has 74 linked and 113 unlinked failure lines, #3024; hypothesis: unlinked lines serve as
+  fallback]. If no failure line is sayable, emits `NoLine` and updates/removes the failed
+  choice without speaking the pass line [design]. New Vegas deterministic checks (`KNAM`
+  without `SPEECH_CHALLENGE`) are unchanged.
+
 ### 3.4 Follow-up lines (TCFU)
 
 Not described in our sources beyond xEdit's name "Follow Up" and its target type INFO.
@@ -721,10 +759,10 @@ All of it is in `GameSnapshot`.
   of its own.
 - **Not modelled:** IdleChatter (hellos and random conversations are §5.2, scripted
   conversations between actors §5.1), radio, combat and detection barks, the reaction
-  topics (PLAYERFIREWEAPON and the rest), Low/High Intelligence lines and
-  the Dumb Response, the quest flag "Allow Repeated Conversation Topics", the Fallout 3
-  speech-challenge roll and the SpeechChallengeFailure topic, lip sync and emotions on
-  faces.
+  topics (PLAYERFIREWEAPON and the rest), the quest flag "Allow Repeated Conversation
+  Topics", lip sync and emotions on faces. (Low/High Intelligence lines and Dumb Response
+  were added 2026-10-25; the Fallout 3 speech-challenge roll and `SpeechChallengeFailure`
+  routing are in §3.3, #3406.)
 
 ### 5.1 Conversations between two actors (`Game::start_actor_conversation`)
 
@@ -1075,6 +1113,12 @@ up to C and F):
     to finish the line or walks on; what ends the line early (another line, a fight, the
     player out of earshot); whether a StartConversation from its end result waits for the
     line.
+19. Fallout 3 percentage speech challenges in the New Vegas engine (§3.3, #3406): what
+    the original shows on the choice row (exact `[Speech NN%]` wording, rounding vs
+    truncation, whether chances above `fSpeechAutoSuccessThreshold` show `100%` or the
+    raw percentage, and whether low chances use the red failure highlight), and whether
+    `fSpeechChallengeFailureBase`/`fSpeechChallengeFailureMultiplier` have any runtime
+    effect in New Vegas.
 
 ## 8. Tool contracts
 

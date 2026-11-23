@@ -33,6 +33,17 @@ use std::collections::BTreeSet;
 /// [documented: GECK wiki Topics Tab; observed: FalloutNV.esm, Fallout3.esm].
 pub const SPEECH_CHALLENGE_FAILURE: &str = "SpeechChallengeFailure";
 
+/// The difficulty GameSettings for a Fallout 3 style speech challenge, by INFO DNAM
+/// (1 Very Easy … 5 Very Hard) [documented: GECK wiki Speech Formula (Fallout 3) and
+/// Complete List of GameSettings; observed: all five values in FalloutNV.esm].
+pub const SPEECH_CHALLENGE_DIFFICULTIES: [(&str, f64); 5] = [
+    ("iSpeechChallengeDifficultyVeryEasy", 10.0),
+    ("iSpeechChallengeDifficultyEasy", 40.0),
+    ("iSpeechChallengeDifficultyAverage", 55.0),
+    ("iSpeechChallengeDifficultyHard", 70.0),
+    ("iSpeechChallengeDifficultyVeryHard", 80.0),
+];
+
 /// How far from the player a StartConversation speaker may be and still talk at once,
 /// game units ([`Game::walk_up_greet`]) [design: twice the AI's standard talk distance].
 pub const WALK_UP_REACH: f32 = 300.0;
@@ -62,18 +73,25 @@ pub struct Line {
     pub remaining: f64,
 }
 
-/// The tag of a choice whose line names an actor value or perk (KNAM): the
+/// The tag of a choice whose line names an actor value or perk (KNAM) — the
 /// "[Speech 40]" or "[Speech 37/40]" the player sees [documented: Category:Dialogue,
 /// "AV/Perk": the field only controls what is shown; whether the line is available
-/// depends on its own conditions].
+/// depends on its own conditions] — or of a Fallout 3 style percentage speech challenge
+/// (`SPEECH_CHALLENGE` flag with DNAM difficulty 1–5), carrying its pass `chance`
+/// [documented: GECK wiki Speech Formula (Fallout 3), Category:Dialogue "Speech Challenge"].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Challenge {
-    /// The actor value (AVIF) or perk (PERK).
+    /// The actor value (AVIF) or perk (PERK). For a Fallout 3 style speech challenge
+    /// without KNAM, `AVSpeech` (0x000004BB) when present, else FormId(0) [design].
     pub form: FormId,
-    /// DNAM difficulty code (the Speech Challenge flag's die roll of Fallout 3; three
-    /// lines of the masters carry it).
+    /// DNAM difficulty code (the Speech Challenge flag's die roll of Fallout 3: 1 Very
+    /// Easy … 5 Very Hard).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub difficulty: Option<u32>,
+    /// Pass chance in `0.0..=1.0` for a Fallout 3 style speech challenge
+    /// ([`Game::speech_challenge_chance`]); `None` for New Vegas deterministic KNAM checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chance: Option<f64>,
     /// The level the line asks for and the player's: the comparison value and the
     /// current value of the line's first GetActorValue-family condition run on the
     /// listener [hypothesis: the game shows the numbers of that condition; observed:
@@ -1132,10 +1150,21 @@ impl<'a> Game<'a> {
             let Some(info) = found else { continue };
             // The script-edited line, so a flag or prompt set by SUP's setters shows here too.
             let Some(def) = dv.info(&info) else { continue };
-            let challenge = def.challenge_form.map(|form| {
-                let (needed, have, skill) = self.challenge_levels(def);
-                Challenge { form, difficulty: def.challenge_difficulty, needed, have, skill }
-            });
+            let speech_difficulty = def.has(info_flag::SPEECH_CHALLENGE).then_some(def.challenge_difficulty).flatten().filter(|&d| (1..=5).contains(&d));
+            let challenge = if let Some(diff) = speech_difficulty {
+                let form = def
+                    .challenge_form
+                    .or_else(|| self.data.by_edid("AVSpeech"))
+                    .or_else(|| crate::item_text::avif_form(crate::actor_values::SPEECH).map(FormId))
+                    .unwrap_or(FormId(0));
+                let chance = self.speech_challenge_chance(actor, diff);
+                Some(Challenge { form, difficulty: Some(diff), chance: Some(chance), needed: None, have: None, skill: Some(crate::actor_values::SPEECH) })
+            } else {
+                def.challenge_form.map(|form| {
+                    let (needed, have, skill) = self.challenge_levels(def);
+                    Challenge { form, difficulty: def.challenge_difficulty, chance: None, needed, have, skill }
+                })
+            };
             let said = self.said.contains(&(actor, info));
             let dumb = dim && dv.topic(&topic).is_some_and(|t| t.dumb_response.is_some());
             out.push(Choice {
@@ -1223,15 +1252,69 @@ impl<'a> Game<'a> {
         let (actor, lines) = (c.actor, c.lines);
         let choice = c.choices.get(index).cloned().ok_or_else(|| format!("no choice {index} ({} offered)", c.choices.len()))?;
         self.emit(EventKind::ChoiceMade { actor, index, topic: choice.topic, info: choice.info });
-        // A Fallout 3 style speech challenge (the flag and a difficulty) gives its XP when
-        // its line is said. The roll is not modelled, so the line always passes
-        // [hypothesis, dialogue.md §3.3]. New Vegas's skill checks (KNAM without the
-        // flag) give none here: their pass lines' result scripts carry RewardXP (638 of
-        // the 1,499 in the masters [observed]), which would count twice.
-        if let Some(d) = self.dialogue_view().info(&choice.info).filter(|d| d.has(info_flag::SPEECH_CHALLENGE)).and_then(|d| d.challenge_difficulty) {
-            self.count_stat(crate::misc_stats::SPEECH_SUCCESSES, 1.0);
-            let x = crate::experience::speech_challenge_xp(self, d);
-            crate::experience::award(self, crate::experience::Source::SpeechChallenge, x);
+        // A Fallout 3 style speech challenge (the flag and a DNAM difficulty 1..=5) rolls
+        // against the player's Speech, Charisma, Karma, weapon state and actor disposition
+        // (`Game::speech_challenge_chance`) [documented: GECK wiki Speech Formula (Fallout 3)].
+        // On pass it counts Speech Successes, awards `iXPRewardSpeechChallenge<class>` XP and
+        // speaks the challenge line; on failure it counts Speech Failures, marks the challenge
+        // line said (so a Say Once challenge cannot be retried) and routes to
+        // `SpeechChallengeFailure` [documented: GECK wiki Topics Tab, SpeechChallengeFailure].
+        // New Vegas's skill checks (KNAM without the flag) remain deterministic and give no
+        // XP here: their pass lines' result scripts carry RewardXP (638 of the 1,499 in the
+        // masters [observed]), which would count twice.
+        let speech_challenge = self
+            .dialogue_view()
+            .info(&choice.info)
+            .filter(|d| d.has(info_flag::SPEECH_CHALLENGE))
+            .and_then(|d| d.challenge_difficulty)
+            .filter(|&d| (1..=5).contains(&d));
+        if let Some(d) = speech_challenge {
+            if self.roll_speech_challenge(actor, d) {
+                self.count_stat(crate::misc_stats::SPEECH_SUCCESSES, 1.0);
+                let x = crate::experience::speech_challenge_xp(self, d);
+                crate::experience::award(self, crate::experience::Source::SpeechChallenge, x);
+                self.speak(actor, choice.topic, choice.info);
+                self.say_farewell(actor, choice.topic, choice.info, lines + 1);
+                return Ok(choice.info);
+            }
+            self.count_stat(crate::misc_stats::SPEECH_FAILURES, 1.0);
+            // Mark the failed challenge line said without running its pass result scripts
+            // so a Say Once challenge cannot be retried and a repeatable one darkens
+            // [documented: Fallout Wiki "Speech (Fallout 3)"; hypothesis: via the line's
+            // said state].
+            self.mark_said(actor, choice.info, true);
+            if let Some((fail_topic, fail_info)) = self.select_speech_challenge_failure(actor, choice.topic) {
+                self.speak(actor, fail_topic, fail_info);
+                self.say_farewell(actor, fail_topic, fail_info, lines + 1);
+                return Ok(fail_info);
+            }
+            if let Some(fail_topic) = self.data.speech_challenge_failure {
+                self.emit(EventKind::NoLine { speaker: actor, topic: fail_topic });
+            }
+            // No failure line is available to say: keep the conversation coherent without
+            // speaking the pass line [design].
+            let still_sayable = self.can_say(actor, Some(FormId::PLAYER_REF), choice.info);
+            let info_refusal = self.dialogue_view().info(&choice.info).is_some_and(|d| d.has(info_flag::INFO_REFUSAL));
+            let empty = if let Some(c) = self.dialogue.as_mut() {
+                if !still_sayable {
+                    if index < c.choices.len() {
+                        c.choices.remove(index);
+                    }
+                } else if !info_refusal {
+                    if let Some(ch) = c.choices.get_mut(index) {
+                        ch.darkened = true;
+                    }
+                }
+                c.choices.is_empty()
+            } else {
+                false
+            };
+            if empty {
+                self.end_dialogue_as(ended::NO_CHOICES);
+            } else {
+                self.dialogue_transition();
+            }
+            return Ok(FormId(0));
         } else if let Some(passed) = choice.challenge.as_ref().and_then(speech_check_passed) {
             // A New Vegas Speech check: the line offered is the pass line when the player
             // meets the level, the fail line otherwise (dialogue.md §3.3), so choosing it
@@ -1244,6 +1327,103 @@ impl<'a> Game<'a> {
         self.speak(actor, choice.topic, choice.info);
         self.say_farewell(actor, choice.topic, choice.info, lines + 1);
         Ok(choice.info)
+    }
+
+    /// Pass chance in `0.0..=1.0` for a Fallout 3 style speech challenge against `actor`
+    /// at DNAM `difficulty` (1 Very Easy … 5 Very Hard) [documented: GECK wiki Speech
+    /// Formula (Fallout 3) and Complete List of GameSettings]:
+    ///
+    /// `Disposition Value × Speech Value × Difficulty Value`, where:
+    /// - `Charisma Value = (Player Charisma − fDispTargetCharOffset) × fDispTargetCharMult + fDispTargetCharBase`
+    /// - `Karma Value = (Actor Responsibility × fDispActorRespMult + fDispActorRespBase) × (Player Karma × fDispTargetKarmaMult)`
+    /// - `Disposition Value = ((Charisma Value + Karma Value + IsWeaponOut × fDispTargetWeaponBase + Actor Disposition − fSpeechChallengeDispositionBase) × fSpeechChallengeDispositionMultiplier) / 100 + 1`
+    /// - `Speech Value = ((Player Speech − fSpeechChallengeSpeechBase) × fSpeechChallengeMultiplier) / 100 + 1`
+    /// - `Difficulty Value = (100 − Difficulty) / 100`
+    ///
+    /// A calculated chance greater than `fSpeechAutoSuccessThreshold` (default 0.9) always
+    /// succeeds [documented: same] and is reported as `1.0` [hypothesis]. Each multiplier
+    /// factor is floored at `0.0` before multiplication so two negative factors cannot yield
+    /// a positive chance [design]. When `SetDisposition`/`ModDisposition` overrode `actor`'s
+    /// disposition toward the player, that stored value replaces `Actor Disposition + Charisma
+    /// Value` so Charisma is not counted twice [design, matching `functions::actor::get_disposition`].
+    pub fn speech_challenge_chance(&mut self, actor: FormId, difficulty: u32) -> f64 {
+        let Some(&(diff_gmst, diff_default)) = (difficulty as usize).checked_sub(1).and_then(|i| SPEECH_CHALLENGE_DIFFICULTIES.get(i)) else {
+            return 0.0;
+        };
+        let diff_setting = crate::combat::setting(self, diff_gmst, diff_default);
+        let difficulty_value = ((100.0 - diff_setting) / 100.0).max(0.0);
+
+        let speech = crate::functions::actor::actor_value_capped(self, FormId::PLAYER_REF, crate::actor_values::SPEECH);
+        let speech_base = crate::combat::setting(self, "fSpeechChallengeSpeechBase", 50.0);
+        let speech_mult = crate::combat::setting(self, "fSpeechChallengeMultiplier", 2.0);
+        let speech_value = (((speech - speech_base) * speech_mult) / 100.0 + 1.0).max(0.0);
+
+        let disp_plus_cha = if let Some(&override_disp) = self.extra.get(&actor).and_then(|e| e.dispositions.get(&FormId::PLAYER_REF)) {
+            override_disp
+        } else {
+            let base_disp = self.base_data_def(actor).map_or(0, |d| d.disposition_base) as f64;
+            let cha = crate::actor_values::capped(
+                crate::actor_values::CHARISMA,
+                crate::functions::actor::actor_value(self, FormId::PLAYER_REF, crate::actor_values::CHARISMA).unwrap_or(5.0),
+            );
+            let char_offset = crate::combat::setting(self, "fDispTargetCharOffset", 5.0);
+            let char_mult = crate::combat::setting(self, "fDispTargetCharMult", 10.0);
+            let char_base = crate::combat::setting(self, "fDispTargetCharBase", 0.0);
+            base_disp + (cha - char_offset) * char_mult + char_base
+        };
+
+        let resp = crate::functions::actor::actor_value(self, actor, crate::actor_values::RESPONSIBILITY).unwrap_or(0.0);
+        let resp_mult = crate::combat::setting(self, "fDispActorRespMult", 1.0);
+        let resp_base = crate::combat::setting(self, "fDispActorRespBase", -50.0);
+        let karma = crate::functions::actor::actor_value(self, FormId::PLAYER_REF, crate::actor_values::KARMA).unwrap_or(0.0);
+        let karma_mult = crate::combat::setting(self, "fDispTargetKarmaMult", 0.002);
+        let karma_value = (resp * resp_mult + resp_base) * (karma * karma_mult);
+
+        let weapon_base = crate::combat::setting(self, "fDispTargetWeaponBase", -10.0);
+        let weapon_value = if self.extra.get(&FormId::PLAYER_REF).is_some_and(|e| e.weapon_out) { weapon_base } else { 0.0 };
+
+        let disp_base = crate::combat::setting(self, "fSpeechChallengeDispositionBase", 30.0);
+        let disp_mult = crate::combat::setting(self, "fSpeechChallengeDispositionMultiplier", 1.0);
+        let disposition_value = (((disp_plus_cha + karma_value + weapon_value - disp_base) * disp_mult) / 100.0 + 1.0).max(0.0);
+
+        let raw = (disposition_value * speech_value * difficulty_value).clamp(0.0, 1.0);
+        if raw <= 0.0 {
+            return 0.0;
+        }
+        let auto = crate::combat::setting(self, "fSpeechAutoSuccessThreshold", 0.9);
+        if raw > auto {
+            1.0
+        } else {
+            raw
+        }
+    }
+
+    /// Roll a Fallout 3 style speech challenge using [`Game::speech_challenge_chance`] and
+    /// the game's seeded RNG.
+    fn roll_speech_challenge(&mut self, actor: FormId, difficulty: u32) -> bool {
+        let chance = self.speech_challenge_chance(actor, difficulty);
+        if chance >= 1.0 {
+            return true;
+        }
+        if chance <= 0.0 {
+            return false;
+        }
+        let roll = (self.rng.next_u64() >> 11) as f64 / (1u64 << 53) as f64;
+        roll < chance
+    }
+
+    /// The `SpeechChallengeFailure` line `actor` says when a speech challenge under `topic`
+    /// fails: a line whose Link From names `topic` first, then an unlinked line of
+    /// `SpeechChallengeFailure` [documented: GECK wiki Topics Tab, SpeechChallengeFailure;
+    /// observed: Fallout3.esm has 74 failure lines with Link From and 113 without, #3024;
+    /// hypothesis: unlinked lines act as fallback when no line links from `topic`].
+    fn select_speech_challenge_failure(&mut self, actor: FormId, topic: FormId) -> Option<(FormId, FormId)> {
+        let fail_topic = self.data.speech_challenge_failure?;
+        let listener = Some(FormId::PLAYER_REF);
+        let info = self
+            .select_line_where(actor, listener, fail_topic, |d| d.link_from.contains(&topic))
+            .or_else(|| self.select_line_where(actor, listener, fail_topic, |d| d.link_from.is_empty()))?;
+        Some((fail_topic, info))
     }
 
     /// **Off by default** (`GameConfig::goodbye_at_once`): a chosen line with the Goodbye
