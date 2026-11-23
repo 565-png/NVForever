@@ -20,13 +20,13 @@ documented values all match; golden private).
 |---|---|---|
 | GetHitAttacker | actor ref | the actor that struck the hit, if any [documented] |
 | GetHitWeapon | weapon base form | the weapon of the hit, if any [documented] |
-| GetHitProjectile | projectile or explosion **reference** | the hit's projectile or explosion, if any [documented]; see §2 |
+| GetHitProjectile | projectile or explosion **reference** | the hit's projectile or explosion, if any [documented]; live `PROJ` ref (`GetType == 51`) on bullet hits, live `EXPL` ref (`GetType == 81`) on explosion hits, `0` pre-hit and on the zero-damage pre-blast firing [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 10 official masters; jip-hits]; see §2 |
 | GetHitHealthDamage | float | the hit's Health damage; reliable only on some firings (§2) [documented] |
 | GetHitFatigueDamage | float | the hit's fatigue damage [documented] |
 | GetHitLimbDamage | float | the hit's limb damage; always 0 for an explosion, even when it hurt a limb [documented] |
-| GetHitBaseWeaponDamage | float | the weapon's base damage with the attacker's skill and the weapon's condition applied [documented] |
-| GetHitExtendedFlag | 0/1 | a flag of the hit: 0 target blocking, 1 critical, 2 fatal (killed, or knocked out if essential), 3 limb dismembered, 4 limb exploded, 5 limb crippled, 6 target's weapon broke, 7 sneak attack, 8 explosion hit. An automatic melee weapon on an already severed limb always reports 3 [documented: GetHitExtendedFlag] |
-| GetHit3DData | array_var | type 0: hit position X/Y/Z; 1: angles X/Y/Z; 2: position then angles (six elements); all 0 for an explosion [documented: GetHit3DData] |
+| GetHitBaseWeaponDamage | float | the weapon's base damage with attacker skill and weapon condition applied, **plus critical hit damage on critical hits** (`22` non-crit 10mm, `44` = `22 + 22` crit 10mm, `222` = `22 + 200` crit 10mm after `SetCritDam 200`), and **`EXPL` base damage on explosion hits** (`125.0` on `GrenadeFragExplosion`, not `0`) [documented: GetHitBaseWeaponDamage; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 runtime combat probe, 10 official masters] |
+| GetHitExtendedFlag | 0/1 | a flag of the hit by **0-based bit index** (`1` = critical, `8` = explosion; passing bitmask `256` returns `0`): 0 target blocking, 1 critical, 2 fatal (killed, or knocked out if essential), 3 limb dismembered, 4 limb exploded, 5 limb crippled, 6 target's weapon broke, 7 sneak attack, 8 explosion hit. An automatic melee weapon on an already severed limb always reports 3 [documented: GetHitExtendedFlag; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 10 official masters; jip-hits] |
+| GetHit3DData | array_var | type 0: hit position `[x, y, z]`; type 1: **unit 3D incoming travel direction vector `(nx, ny, nz)` (`||v|| == 1.0`)** (NOT Euler angles in degrees — three South->North `+Y` 10mm shots returned `(-0.304, 0.887, -0.347)`, `(-0.036, 0.999, -0.009)`, and `(-0.028, 0.999, -0.017)`); type 2: position then unit direction vector (six elements); all `0` (`[0, 0, 0]` / six zeros) for an explosion; invalid/null array (`Ar_Size == -1`) pre-hit or on invalid `dataType` (`9`) [documented: GetHit3DData; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 runtime combat probe, 10 official masters; jip-hits] |
 | GetHitLocation (base game) | int | the body part: -1 none, 0 torso, 1–2 head, 3–4 left arm, 5–6 right arm, 7–9 left leg, 10–12 right leg, 13 brain, 14 hand or weapon. Always -1 for an explosion. In OnHit blocks it works only from JIP 55.60; it works in the event handlers [documented: GetHitLocation] |
 
 ## 2. One hit, several firings
@@ -107,26 +107,34 @@ record, which fnv-esm decodes; SetWeaponOnHitSetting changes it for the session.
 
 ## 6. NVForever implementation notes
 
-- `GetHitProjectile`: returns the hit's live projectile reference (`PROJ`, created by
-  `Game::projectile_fired`) on projectile impacts, the hit's live explosion reference
-  (`EXPL`, created by `Game::explosion_placed`) on explosion hits, and `0` (`Ref(0)`) on
-  melee, unarmed, or non-projectile hits. `[design]` NVForever currently dispatches one
-  `SetOnHitEventHandler` firing per blast (with the explosion reference and flag 8 set)
-  rather than emitting the original's preceding zero-damage firing.
-- `GetHitBaseWeaponDamage`: returns the weapon's damage after attacker skill and weapon
-  condition (`fnv_combat::damage::Damage::base`, before ammo effects, perks, limb
-  multiplier, and armour) `[documented: GetHitBaseWeaponDamage]`; `0` on explosions
-  `[hypothesis: explosion damage comes from EXPL rather than the weapon formula]`.
+- `GetHitProjectile`: returns the hit's live projectile reference (`PROJ`, `GetType == 51`,
+  created by `Game::projectile_fired`) on projectile impacts, the hit's live explosion
+  reference (`EXPL`, `GetType == 81`, created by `Game::explosion_placed`) on explosion
+  hits, and `0` (`Ref(0)`) on melee, unarmed, or pre-hit queries `[observed: Fallout: New
+  Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 10 official masters; jip-hits]`. `[design]`
+  NVForever currently dispatches one `SetOnHitEventHandler` firing per blast (with the
+  explosion reference and flag 8 set) rather than emitting the original's preceding
+  zero-damage firing.
+- `GetHitBaseWeaponDamage`: returns `fnv_combat::damage::Damage::base + crit_bonus` on
+  weapon hits (weapon damage after attacker skill and weapon condition, plus critical hit
+  damage on critical hits — `22` non-crit, `44` = `22 + 22` crit, `222` = `22 + 200` crit
+  after `SetCritDam 200`) and the `EXPL` record's base damage (`125.0` on
+  `GrenadeFragExplosion`) on explosion hits `[observed: Fallout: New Vegas 1.4.0.525 +
+  xNVSE 6.4.9 + JIP LN 57.30, 10 official masters]`. `[hypothesis: whether distant
+  explosion falloff lowers GetHitBaseWeaponDamage below EXPL base damage has not been
+  probed yet; NVForever reports the EXPL base damage.]`
 - `GetHitFatigueDamage`: returns fatigue damage dealt by the hit (from ammo `Fatigue Mod`
   effects or scripted `FakeHitEx` fatigue damage), or `0` when none.
-- `GetHit3DData`: type `0` returns `[x, y, z]` impact position, type `1` returns
-  `[rx, ry, rz]` Euler angles in degrees (`[hypothesis: pitch about X and
-  clockwise-from-north heading about Z derived from the incoming direction vector, roll 0;
-  unmeasured in the original]`), and type `2` returns all six elements. Explosion hits
-  return all zeros (`[0, 0, 0]` / six zeros) `[documented: GetHit3DData; observed:
-  jip-hits]`. Actors with no hit, hits with no finite 3D coordinates, and `dataType`
-  values outside `0..=2` return an empty list array `[design]`.
-- `GetHitExtendedFlag`: bits `0` (blocking), `1` (critical), `2` (fatal), `5` (limb
-  crippled), `7` (sneak attack), and `8` (explosion hit) are populated; bits `3`
-  (limb dismembered), `4` (limb exploded), and `6` (target's weapon broke) are not built
-  yet `[not built]`.
+- `GetHit3DData`: type `0` returns `[x, y, z]` impact position, type `1` returns the unit
+  3D incoming travel direction vector `[nx, ny, nz]` (`||v|| == 1.0`, normalized via
+  `fnv_game::combat::unit_hit_dir`), and type `2` returns all six elements `[x, y, z, nx,
+  ny, nz]`. Explosion hits return all zeros (`[0, 0, 0]` / six zeros). Actors with no hit,
+  hits with non-finite/zero-length 3D vectors, and `dataType` values outside `0..=2`
+  return `ar_Null` (`XVal::Array(0)`, `Ar_Size == -1`) `[observed: Fallout: New Vegas
+  1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 10 official masters; jip-hits]`.
+- `GetHitExtendedFlag`: takes a 0-based bit index (passing bitmask `256` returns `0`)
+  `[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 10 official
+  masters; jip-hits]`; bits `0` (blocking), `1` (critical), `2` (fatal), `5` (limb
+  crippled), `7` (sneak attack), and `8` (explosion hit) are populated; bits `3` (limb
+  dismembered), `4` (limb exploded), and `6` (target's weapon broke) are not built yet
+  `[not built]`.

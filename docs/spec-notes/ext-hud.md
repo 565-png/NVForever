@@ -22,12 +22,15 @@ Plain-language notes for `crates/fnv-game/src/nvse_hud.rs` and the control funct
   [observed: hud1]. NVForever takes the point from the engine's crosshair ray; a headless run
   has no ray and gives ar_Null.
 - `GetReticleTargetLimb [maxRange]` reads -1 with no actor in the crosshair [observed:
-  hud1]. On an actor hit by the crosshair's far ray, NVForever resolves the hit capsule's
-  BPTD body part to its `BodyLocation` code (0 torso, 1–2 head, 3–4 left arm, 5–6 right
-  arm, 7–9 left leg, 10–12 right leg, 13 brain, 14 held weapon) [documented:
-  GetReticleTargetLimb, GetHitLocation], honouring the optional `maxRange` cap (0 or
-  omitted uses the full reticle reach). Non-actors, misses, gore pieces, and actors
-  without posed body parts (single-capsule fallback) read -1 [design].
+  hud1; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 reticle sweep
+  on a standing NPC returned `1` (Head), `0` (Torso), and `10` (Right Leg), and `-1` on
+  empty space, non-actor statics, and above-head misses]. On an actor hit by the
+  crosshair's far ray, NVForever resolves the hit capsule's BPTD body part to its
+  `BodyLocation` code (0 torso, 1–2 head, 3–4 left arm, 5–6 right arm, 7–9 left leg,
+  10–12 right leg, 13 brain, 14 held weapon) [documented: GetReticleTargetLimb,
+  GetHitLocation], honouring the optional `maxRange` cap (0 or omitted uses the full
+  reticle reach). Non-actors, misses, gore pieces, and actors without posed body parts
+  (single-capsule fallback) read -1 [design].
 
 ## 3. Corner messages
 

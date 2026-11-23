@@ -405,7 +405,7 @@ fn armour_lines(script: Option<&mut ScriptState>, attacker: Option<FormId>, targ
 /// units [design].
 const BLOW_PROBE: f32 = 24.0;
 
-fn blast_hit_info(cause: Option<Cause>, explosion_ref: Option<FormId>) -> HitInfo {
+fn blast_hit_info(cause: Option<Cause>, explosion_ref: Option<FormId>, base_damage: f64) -> HitInfo {
     HitInfo {
         attacker: cause.map(|c| c.actor),
         weapon: cause.map(|c| c.weapon),
@@ -413,6 +413,7 @@ fn blast_hit_info(cause: Option<Cause>, explosion_ref: Option<FormId>) -> HitInf
         location: -1,
         critical: false,
         explosion: true,
+        base_weapon_damage: base_damage,
         ..HitInfo::default()
     }
 }
@@ -5011,9 +5012,9 @@ fn melee(
                 critical: d.critical,
                 blocking: blocked,
                 sneak_attack: a.sneaking,
-                base_weapon_damage: f64::from(d.base),
+                base_weapon_damage: f64::from(d.base + d.crit_bonus),
                 hit_pos: Some(hit.point),
-                hit_angles: Some(fnv_game::combat::hit_angles_from_dir(player.look_dir()).unwrap_or([0.0; 3])),
+                hit_dir: fnv_game::combat::unit_hit_dir(player.look_dir()),
                 limb,
                 ..HitInfo::default()
             };
@@ -5409,9 +5410,9 @@ fn actor_attacks(
             critical: d.critical,
             blocking: blocked,
             sneak_attack: a.sneaking,
-            base_weapon_damage: f64::from(d.base),
+            base_weapon_damage: f64::from(d.base + d.crit_bonus),
             hit_pos: Some(b.point),
-            hit_angles: Some(fnv_game::combat::hit_angles_from_dir(b.dir).unwrap_or([0.0; 3])),
+            hit_dir: fnv_game::combat::unit_hit_dir(b.dir),
             limb: limb_hit(bp.as_ref(), &d, &w),
             ..HitInfo::default()
         };
@@ -6052,7 +6053,7 @@ fn fly(
             let d = damage::blast_hit(&c.rules, &c.tuning, raw, dt_v, dr, &ap, &tp);
             log_blast_perks(cause, target, &ap, &tp, &d);
             let dealt = d.dealt;
-            let info = blast_hit_info(cause, expl_ref);
+            let info = blast_hit_info(cause, expl_ref, f64::from(x.damage));
             // The blast's object effect on those it catches (hit-effects.md §1).
             let items: Vec<FormId> = x.enchantment.into_iter().collect();
             // Its limb damage, on the torso and legs (crippled-limbs.md §5): from the damage
@@ -6397,10 +6398,10 @@ fn fly(
             location,
             critical: d.critical,
             sneak_attack: a.sneaking,
-            base_weapon_damage: f64::from(d.base),
+            base_weapon_damage: f64::from(d.base + d.crit_bonus),
             fatigue_damage: f64::from(fatigue),
             hit_pos: Some(p.point),
-            hit_angles: Some(fnv_game::combat::hit_angles_from_dir(p.dir).unwrap_or([0.0; 3])),
+            hit_dir: fnv_game::combat::unit_hit_dir(p.dir),
             limb,
             ..HitInfo::default()
         };
@@ -7055,10 +7056,16 @@ mod tests {
     fn a_blast_hit_is_its_causes_not_the_players() {
         let by = By { actor: FormId(0x000F5704), weapon: FormId(0x000906DA), ammo: None, harmless: false, sure: None, vats: false, sneaking: false };
         let expl = FormId(0xFF00_0042);
-        let info = blast_hit_info(Some(Cause::of(&by)), Some(expl));
-        assert_eq!((info.attacker, info.weapon, info.projectile, info.location, info.critical, info.explosion), (Some(FormId(0x000F5704)), Some(FormId(0x000906DA)), Some(expl), -1, false, true));
-        let none = blast_hit_info(None, None);
-        assert_eq!((none.attacker, none.weapon, none.projectile, none.explosion), (None, None, None, true));
+        let info = blast_hit_info(Some(Cause::of(&by)), Some(expl), 125.0);
+        assert_eq!(
+            (info.attacker, info.weapon, info.projectile, info.location, info.critical, info.explosion, info.base_weapon_damage),
+            (Some(FormId(0x000F5704)), Some(FormId(0x000906DA)), Some(expl), -1, false, true, 125.0)
+        );
+        let none = blast_hit_info(None, None, 100.0);
+        assert_eq!(
+            (none.attacker, none.weapon, none.projectile, none.explosion, none.base_weapon_damage),
+            (None, None, None, true, 100.0)
+        );
     }
 
     /// A grenade's cooldown, played from the shot (the clip's `Release`, 0.867 s) as the

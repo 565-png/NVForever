@@ -157,16 +157,19 @@ pub struct HitInfo {
     pub sneak_attack: bool,
     /// Explosion hit (`GetHitExtendedFlag 8`; `GetHit3DData` reports all zeros).
     pub explosion: bool,
-    /// Weapon base damage after attacker skill and weapon condition
-    /// (`GetHitBaseWeaponDamage`, jip-hit-info.md §1).
+    /// Weapon base damage after attacker skill and weapon condition, plus critical hit
+    /// damage on critical hits, or `EXPL` base damage on explosion hits
+    /// (`GetHitBaseWeaponDamage`, jip-hit-info.md §1, §6) [observed: Fallout: New Vegas
+    /// 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30].
     pub base_weapon_damage: f64,
     /// Fatigue damage dealt by the hit (`GetHitFatigueDamage`, jip-hit-info.md §1).
     pub fatigue_damage: f64,
     /// World-space 3D impact point (`GetHit3DData 0` and elements 0..3 of `GetHit3DData 2`).
     pub hit_pos: Option<[f32; 3]>,
-    /// Impact orientation Euler angles X/Y/Z in degrees (`GetHit3DData 1` and elements 3..6
-    /// of `GetHit3DData 2`) [hypothesis: pitch/roll/yaw in degrees from incoming direction].
-    pub hit_angles: Option<[f32; 3]>,
+    /// Unit 3D incoming hit travel direction vector `[nx, ny, nz]` (`||v|| == 1.0`,
+    /// `GetHit3DData 1` and elements 3..6 of `GetHit3DData 2`) [observed: Fallout: New
+    /// Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30].
+    pub hit_dir: Option<[f32; 3]>,
     /// The body part's limb damage, when the hit is on a part with a condition.
     pub limb: Option<LimbHit>,
 }
@@ -175,20 +178,18 @@ fn finite_vec3(v: [f32; 3]) -> Option<[f32; 3]> {
     v.iter().all(|c| c.is_finite()).then_some(v)
 }
 
-/// Convert a game-space hit direction (`+X` east, `+Y` north, `+Z` up) to Euler angles
-/// `[pitch_x, roll_y, heading_z]` in degrees for `GetHit3DData` [hypothesis: pitch about X
-/// and clockwise-from-north heading about Z, roll 0; unmeasured in the original]. Returns
-/// `None` for non-finite or zero-length vectors.
-pub fn hit_angles_from_dir(dir: [f32; 3]) -> Option<[f32; 3]> {
+/// Normalize a game-space incoming hit travel direction (`+X` east, `+Y` north, `+Z` up)
+/// to a unit 3D vector `[nx, ny, nz]` (`||v|| == 1.0`) for `GetHit3DData 1` and elements
+/// `3..6` of `GetHit3DData 2` [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
+/// JIP LN 57.30 runtime combat probe, 10 official masters]. Returns `None` for non-finite
+/// or zero-length vectors.
+pub fn unit_hit_dir(dir: [f32; 3]) -> Option<[f32; 3]> {
     let dir = finite_vec3(dir)?;
-    let horiz = dir[0].hypot(dir[1]);
-    let len = horiz.hypot(dir[2]);
+    let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
     if !len.is_finite() || len <= 1e-6 {
         return None;
     }
-    let pitch_x = (-dir[2]).atan2(horiz).to_degrees();
-    let heading_z = if horiz > 1e-6 { dir[0].atan2(dir[1]).to_degrees() } else { 0.0 };
-    finite_vec3([pitch_x, 0.0, heading_z])
+    finite_vec3([dir[0] / len, dir[1] / len, dir[2] / len])
 }
 
 /// The limb-condition actor value code of a BPTD part's actor value name.
@@ -664,10 +665,10 @@ impl Game<'_> {
         let limb_damage = info.limb.map_or(0.0, |l| l.damage);
         let fatigue_damage = if info.fatigue_damage.is_finite() { info.fatigue_damage.max(0.0) } else { 0.0 };
         let base_weapon_damage = if info.base_weapon_damage.is_finite() { info.base_weapon_damage.max(0.0) } else { 0.0 };
-        let (hit_pos, hit_angles) = if info.explosion {
+        let (hit_pos, hit_dir) = if info.explosion {
             (Some([0.0; 3]), Some([0.0; 3]))
         } else {
-            (info.hit_pos.and_then(finite_vec3), info.hit_angles.and_then(finite_vec3))
+            (info.hit_pos.and_then(finite_vec3), info.hit_dir.and_then(unit_hit_dir))
         };
         let rec = crate::jip_events::JipHit {
             attacker: info.attacker,
@@ -680,7 +681,7 @@ impl Game<'_> {
             location: info.location,
             flags,
             hit_pos,
-            hit_angles,
+            hit_dir,
         };
         self.jip.hits.insert(target, rec);
         self.jip_event("hit", Some(target), Vec::new());

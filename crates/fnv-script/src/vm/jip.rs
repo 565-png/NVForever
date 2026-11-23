@@ -458,7 +458,9 @@ impl Vm<'_, '_> {
                 })))
             }
             // The current or last hit of the actor it is called on (task J7,
-            // jip-hit-info.md §1): 0, no form or an empty list array without a hit.
+            // jip-hit-info.md §1): 0, no form, or ar_Null (Ar_Size -1) without a hit or on
+            // invalid GetHit3DData dataType [observed: Fallout: New Vegas 1.4.0.525 + xNVSE
+            // 6.4.9 + JIP LN 57.30].
             "gethitattacker" | "gethitweapon" | "gethitprojectile" | "gethithealthdamage" | "gethitlimbdamage" | "gethitfatiguedamage" | "gethitbaseweapondamage" | "gethitextendedflag" | "gethit3ddata" => {
                 let who = match &c.on {
                     Some(e) => self.xeval(e)?.value()?.as_form(),
@@ -483,7 +485,7 @@ impl Vm<'_, '_> {
                 }
                 Ok(Some(match what {
                     "attacker" | "weapon" | "projectile" => XVal::Ref(0),
-                    "3d" => self.jlist(Vec::new())?,
+                    "3d" => XVal::Array(0),
                     _ => XVal::Num(0.0),
                 }))
             }
@@ -1313,8 +1315,8 @@ mod hit_info_tests {
                 "3d" => {
                     let vals: &[f64] = match k {
                         0 => &[10.0, 20.0, 30.0],
-                        1 => &[-5.0, 0.0, 90.0],
-                        2 => &[10.0, 20.0, 30.0, -5.0, 0.0, 90.0],
+                        1 => &[0.0, 1.0, 0.0],
+                        2 => &[10.0, 20.0, 30.0, 0.0, 1.0, 0.0],
                         _ => return None,
                     };
                     let entries = vals.iter().enumerate().map(|(i, &v)| (XKey::Num(i as f64), XVal::Num(v))).collect();
@@ -1354,21 +1356,21 @@ let fSz1 := Ar_Size (GetHit3DData 1)
 let fSz2 := Ar_Size (GetHit3DData 2)
 let fSzBad := Ar_Size (GetHit3DData 9)";
 
-        // Absent hit -> null ref, 0.0, empty lists.
+        // Absent hit -> null ref, 0.0, ar_Null (Ar_Size == -1).
         run_block(&mut host, decls, body);
         assert_eq!(host.vars[&1], Value::Ref(0));
         assert_eq!(host.vars[&2], Value::Num(0.0));
         assert_eq!(host.vars[&3], Value::Num(0.0));
         assert_eq!(host.vars[&4], Value::Num(0.0));
-        assert_eq!(host.vars[&5], Value::Num(0.0));
-        assert_eq!(host.vars[&6], Value::Num(0.0));
-        assert_eq!(host.vars[&7], Value::Num(0.0));
-        assert_eq!(host.vars[&8], Value::Num(0.0));
+        assert_eq!(host.vars[&5], Value::Num(-1.0));
+        assert_eq!(host.vars[&6], Value::Num(-1.0));
+        assert_eq!(host.vars[&7], Value::Num(-1.0));
+        assert_eq!(host.vars[&8], Value::Num(-1.0));
 
         // Populated hit -> routed values from Host::hit_value.
         host.populated = true;
         let body_full = format!(
-            "{body}\nlet fP1 := (GetHit3DData 0)[1]\nlet fA2 := (GetHit3DData 1)[2]\nlet fB5 := (GetHit3DData 2)[5]"
+            "{body}\nlet fP1 := (GetHit3DData 0)[1]\nlet fA2 := (GetHit3DData 1)[1]\nlet fB5 := (GetHit3DData 2)[4]"
         );
         run_block(&mut host, decls, &body_full);
         assert_eq!(host.vars[&1], Value::Ref(0xFF00_00CC));
@@ -1378,16 +1380,16 @@ let fSzBad := Ar_Size (GetHit3DData 9)";
         assert_eq!(host.vars[&5], Value::Num(3.0));
         assert_eq!(host.vars[&6], Value::Num(3.0));
         assert_eq!(host.vars[&7], Value::Num(6.0));
-        assert_eq!(host.vars[&8], Value::Num(0.0));
+        assert_eq!(host.vars[&8], Value::Num(-1.0));
         assert_eq!(host.vars[&9], Value::Num(20.0));
-        assert_eq!(host.vars[&10], Value::Num(90.0));
-        assert_eq!(host.vars[&11], Value::Num(90.0));
+        assert_eq!(host.vars[&10], Value::Num(1.0));
+        assert_eq!(host.vars[&11], Value::Num(1.0));
 
         // Different calling ref receives absent defaults.
         host.calling = Some(0x0000_0099);
         run_block(&mut host, decls, body);
         assert_eq!(host.vars[&1], Value::Ref(0));
         assert_eq!(host.vars[&2], Value::Num(0.0));
-        assert_eq!(host.vars[&5], Value::Num(0.0));
+        assert_eq!(host.vars[&5], Value::Num(-1.0));
     }
 }
