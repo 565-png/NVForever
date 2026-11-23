@@ -996,7 +996,7 @@ fn cell_models(lo: &LoadOrder, schema: &EsmSchema, index: &WorldIndex, refs: &[u
     let mut out = Vec::new();
     for &r in refs {
         let Some(p) = index.placement(lo, schema, r) else { continue };
-        if p.imposter || !p.draws_base_model() || !enabled(lo, schema, &p, 0) {
+        if !drawn_with_cell(&p) || !enabled(lo, schema, &p, 0) {
             continue;
         }
         let Some(base) = p.base.and_then(|b| base_object(lo, schema, b)) else { continue };
@@ -1004,7 +1004,7 @@ fn cell_models(lo: &LoadOrder, schema: &EsmSchema, index: &WorldIndex, refs: &[u
             continue;
         }
         let Some(path) = base.world_model_path() else { continue };
-        if script_marker(base.form_id).unwrap_or_else(|| is_marker(&path)) || hide.iter().any(|h| path.contains(h.as_str())) {
+        if is_drawn_marker(base.form_id, &path) || hide.iter().any(|h| path.contains(h.as_str())) {
             continue;
         }
         if seen.insert((path.clone(), base.world_alt_textures.clone())) {
@@ -1686,13 +1686,13 @@ pub(crate) enum DrawnAs {
 }
 
 /// The record-type decision of [`spawn_ref`] for placement `p` with its base `base`;
-/// `enabled` is asked only for references past the imposter and primitive tests.
+/// `enabled` is asked only for references past the imposter and primitive tests. Whether
+/// the reference is drawn with its cell at all is [`drawn_with_cell`]'s rule, the one
+/// every drawing path shares; when it is not, the kind says why (an imposter before a
+/// primitive).
 pub(crate) fn classify_ref(p: &Placement, base: Option<&BaseObject>, enabled: impl FnOnce() -> bool) -> RefKind {
-    if p.imposter {
-        return RefKind::Imposter;
-    }
-    if !p.draws_base_model() {
-        return RefKind::Primitive;
+    if !drawn_with_cell(p) {
+        return if p.imposter { RefKind::Imposter } else { RefKind::Primitive };
     }
     if !enabled() {
         return RefKind::Disabled;
@@ -1935,7 +1935,7 @@ pub fn spawn_model(
     if hide.iter().any(|h| path.contains(h.as_str())) {
         return false;
     }
-    if script_marker(base.form_id).unwrap_or_else(|| is_marker(&path)) {
+    if is_drawn_marker(base.form_id, &path) {
         stats.refs_skipped_type += 1;
         *stats.skipped_types.entry("marker".into()).or_default() += 1;
         return false;
@@ -2494,9 +2494,18 @@ fn base_type_name(b: Option<&BaseObject>) -> String {
 /// [`script_markers`], because every drawing path reads [`spawn_model`]'s marker test.
 static SCRIPT_MARKERS: std::sync::RwLock<std::collections::BTreeMap<u32, bool>> = std::sync::RwLock::new(std::collections::BTreeMap::new());
 
+/// Moved on each time [`SCRIPT_MARKERS`] changes, for what keeps lists classified by
+/// [`is_drawn_marker`] (distant_lights.rs) to list them again.
+static SCRIPT_MARKERS_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many times the scripts' marker changes changed (0 at the start).
+pub fn script_markers_generation() -> u64 {
+    SCRIPT_MARKERS_GENERATION.load(std::sync::atomic::Ordering::Acquire)
+}
+
 /// Whether the base `base` with model `path` is an editor marker, not drawn (a script's
 /// SetInternalMarker first): [`spawn_model`]'s test, for callers that decide before it.
-pub(crate) fn is_drawn_marker(base: u32, path: &str) -> bool {
+pub fn is_drawn_marker(base: u32, path: &str) -> bool {
     script_marker(base).unwrap_or_else(|| is_marker(path))
 }
 
@@ -2512,9 +2521,20 @@ pub fn script_markers(script: Option<Res<nvf_play::script::ScriptState>>) {
     if !same {
         if let Ok(mut m) = SCRIPT_MARKERS.write() {
             *m = changes.iter().map(|(k, v)| (k.0, *v)).collect();
+            // Moved on while the write lock is held: a reader that sees the new generation
+            // reads the new markers.
+            SCRIPT_MARKERS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             info!("render: {} base form(s) made markers or drawn by a script (SetInternalMarker)", m.len());
         }
     }
+}
+
+/// Whether a placed reference is drawn with its cell: not an imposter (drawn by the regions
+/// the camera is in, imposters.rs) and not a primitive (a trigger volume, room bounds, a
+/// portal: seen only in the editor, even where its activator was copied from one with a
+/// model, level-design.md §4.1). Every drawing path asks this.
+pub fn drawn_with_cell(p: &Placement) -> bool {
+    !p.imposter && p.draws_base_model()
 }
 
 /// Editor-only marker meshes [hypothesis: the game hides them; models named marker*].
@@ -2524,8 +2544,43 @@ fn is_marker(path: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// A synthetic placed reference with the two drawing flags; no game data.
+    pub(crate) fn flagged_placement(imposter: bool, primitive: bool) -> Placement {
+        Placement {
+            form_id: 0x100, sig: *b"REFR", flags: 0, base: Some(0x200), position: [0.0; 3], rotation: [0.0; 3], scale: 1.0,
+            enable_parent: None, open_by_default: false, teleport: false, emittance: None, imposter, primitive,
+        }
+    }
+
+    /// The ring's `classify_ref` takes "drawn with its cell" from `drawn_with_cell`, the
+    /// rule every drawing path shares: a reference that rule turns away is an imposter or
+    /// a primitive (an imposter first, `enabled` never asked), one it keeps goes on to the
+    /// enabled and record-type tests.
+    #[test]
+    fn classify_ref_shares_drawn_with_cell() {
+        let stat = BaseObject {
+            form_id: 0x200, sig: *b"STAT", edid: None, model: Some("synthetic.nif".into()), world_model: None, world_alt_textures: vec![], worn_only: false, flags: 0, bounds: None,
+        };
+        for (imposter, primitive, want) in [
+            (true, false, RefKind::Imposter),
+            (true, true, RefKind::Imposter),
+            (false, true, RefKind::Primitive),
+            (false, false, RefKind::Drawn { light: false, how: DrawnAs::Model }),
+        ] {
+            let p = flagged_placement(imposter, primitive);
+            let mut asked = false;
+            let kind = classify_ref(&p, Some(&stat), || {
+                asked = true;
+                true
+            });
+            assert_eq!(kind, want, "imposter {imposter}, primitive {primitive}");
+            assert_eq!(asked, drawn_with_cell(&p), "enabled is asked exactly for the references drawn with their cell");
+            assert_eq!(drawn_with_cell(&p), !matches!(kind, RefKind::Imposter | RefKind::Primitive));
+        }
+    }
 
     #[test]
     fn spaces() {
