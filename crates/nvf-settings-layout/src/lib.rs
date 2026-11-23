@@ -255,6 +255,8 @@ pub const SECTIONS: &[Section] = &[
             "tweak-jump-swims-up",
             "tweak-speed-scales-jump",
             "tweak-jump-ap-cost",
+            "tweak-jump-ap-danger-only",
+            "tweak-jump-without-enough-ap",
             "tweak-run-ap-cost",
             "tweak-agility-speed",
             "tweak-agility-jump",
@@ -273,6 +275,7 @@ pub const SECTIONS: &[Section] = &[
             "tweak-aiming-draws-weapon",
             "tweak-full-reload-swaps",
             "tweak-hold-breath",
+            "tweak-breath-activate",
             "tweak-breath-ap",
             "tweak-breath-sway",
             "tweak-jam-reload-pace",
@@ -762,6 +765,7 @@ pub const SECTIONS: &[Section] = &[
             "tweak-hide-equipped-barter",
             "tweak-hide-equipped-containers",
             "tweak-sync-categories",
+            "tweak-sync-categories-keep-empty",
             "tweak-quantity-shows-price",
             "tweak-quantity-shows-weight",
             "tweak-quantity-companion-cap",
@@ -973,6 +977,8 @@ pub const NEEDS: &[(&str, &str, &str)] = &[
     ("fps-counter-low", "fps-counter", "Needs the Frame Rate Counter."),
     ("fps-counter-low", "fps-counter-fps", "Needs Counter: Frame Rate."),
     ("tweak-hack-keep-matching-chars", "tweak-hack-mark-guesses-as-duds", "Needs Hacking: Mark Guesses as Duds."),
+    ("tweak-breath-activate", "tweak-hold-breath", "Needs Hold Breath Through a Scope."),
+    ("tweak-sync-categories-keep-empty", "tweak-sync-categories", "Needs Matching Categories."),
 ];
 
 /// The Controls tab's rows that are shown only while the input device is a controller

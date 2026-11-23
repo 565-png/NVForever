@@ -128,9 +128,6 @@ pub struct TweakSettings {
     pub console_timestamps: bool,
     /// `bLivingAnatomyShowDR`: Living Anatomy's line shows the DR too.
     pub living_anatomy_dr: bool,
-    /// `bSynchronizeContainerCategories`: a container's or barter's two lists change
-    /// category together.
-    pub sync_categories: bool,
     /// `bNoFastTravelTimeChange`: fast travel takes no time.
     pub no_travel_time: bool,
     /// `bPowerArmorScalesFallDamage`/`fFallDamageMult`: fall damage to anyone in power
@@ -140,6 +137,11 @@ pub struct TweakSettings {
     pub no_travel_crippled_leg: bool,
     /// `bJumpingCostsAP`/`iJumpAPCost`: Action Points a jump costs; 0 changes nothing.
     pub jump_ap_cost: f32,
+    /// `[Jumping Costs AP] bCombatOnly`: jumps only cost AP while in danger (Stewie 9.70).
+    pub jump_ap_danger_only: bool,
+    /// `[Jumping Costs AP] bJumpWithoutEnoughAP`: allow jumping with less AP than the cost,
+    /// draining remaining AP to 0 instead of refusing.
+    pub jump_without_enough_ap: bool,
     /// `bRunningCostsAP`: Action Points running costs a second; 0 changes nothing.
     pub run_ap_per_second: f32,
     /// `bDisableSellingItems`: the player cannot sell in a barter.
@@ -171,9 +173,6 @@ pub struct TweakSettings {
     /// `bCrippledLegsScaleJumpHeight`: the jump height is multiplied by this for each
     /// crippled leg; 1 changes nothing.
     pub crippled_leg_jump: f32,
-    /// `bBarterCheckActorBuySellFlags`: a merchant takes from the player only what its
-    /// list says it buys.
-    pub vendor_lists_both: bool,
     /// `bNoPlayerStaggerAnims`: the player never staggers from a hit.
     pub no_player_stagger: bool,
     /// `bPreventReloadWeaponUnholstering`: Ready Item does not draw a holstered weapon.
@@ -534,9 +533,11 @@ pub struct TweakSettings {
     pub run_overencumbered: bool,
     pub over_run_ap: f32,
     pub over_jump_ap: f32,
-    /// `bScopeHoldBreath`: Shift through a scope steadies it to `breath_sway` of its
-    /// sway, paying `breath_ap` Action Points a second.
+    /// `bScopeHoldBreath`: Shift (or Activate when `breath_activate` is on) through a scope
+    /// steadies it to `breath_sway` of its sway, paying `breath_ap` Action Points a second.
     pub hold_breath: bool,
+    /// `[Hold Breath] bActivateHoldsBreath`: holding Activate also holds breath.
+    pub breath_activate: bool,
     pub breath_sway: f32,
     pub breath_ap: f32,
     /// `bAdjustableScopeZoom`: the wheel zooms a scope in and out.
@@ -735,11 +736,12 @@ impl Default for TweakSettings {
             console_compress_repeats: false,
             console_timestamps: false,
             living_anatomy_dr: false,
-            sync_categories: false,
             no_travel_time: false,
             power_armor_fall_damage: 1.0,
             no_travel_crippled_leg: false,
             jump_ap_cost: 0.0,
+            jump_ap_danger_only: false,
+            jump_without_enough_ap: false,
             run_ap_per_second: 0.0,
             no_selling: false,
             skill_point_base: SKILL_POINTS_START.0,
@@ -754,7 +756,6 @@ impl Default for TweakSettings {
             aiming_draws_weapon: false,
             walk_angle: fnv_phys::CharacterParams::default().max_slope_deg,
             crippled_leg_jump: 1.0,
-            vendor_lists_both: false,
             no_player_stagger: false,
             ready_does_not_draw: false,
             no_hotkeys_while_reloading: false,
@@ -927,6 +928,7 @@ impl Default for TweakSettings {
             over_run_ap: 4.0,
             over_jump_ap: 10.0,
             hold_breath: false,
+            breath_activate: false,
             breath_sway: 0.2,
             breath_ap: 5.0,
             scope_wheel_zoom: false,
@@ -1216,7 +1218,8 @@ impl Plugin for TweaksPlugin {
         switch!(app, "console-compress-repeats", "Count Repeated Console Lines", "A console line said again right after itself is counted on one line (line -#2). (Stewie's Tweaks bCompressDuplicateConsoleMessages)", console_compress_repeats);
         switch!(app, "console-timestamps", "Console Times", "Console lines start with the time since the game started. (Stewie's Tweaks bConsolePrintsIncludeTimestamp)", console_timestamps);
         switch!(app, "living-anatomy-dr", "Living Anatomy Shows DR", "With Living Anatomy the target's line shows its Damage Resistance as well. (Stewie's Tweaks bLivingAnatomyShowDR)", living_anatomy_dr);
-        switch!(app, "sync-categories", "Matching Categories", "In containers and barter both lists change category together. (Stewie's Tweaks bSynchronizeContainerCategories)", sync_categories);
+        switch!(app, "sync-categories", "Matching Categories", "In containers and barter both lists change category together. (Stewie's Tweaks bSynchronizeContainerCategories)", game.sync_categories);
+        switch!(app, "sync-categories-keep-empty", "Matching Categories: Keep Emptied Category", "Stay on an emptied synchronized category after moving its last item instead of switching to All. (Stewie's Tweaks bPreventSwitchWhenEmptyingCategory)", game.prevent_switch_when_emptying_category);
         // ---- batch 6: gameplay ----
         add_setting(
             app,
@@ -1318,6 +1321,8 @@ impl Plugin for TweaksPlugin {
         switch!(app, "wait-only-seated", "Wait Only When Seated", "Waiting is refused unless the player sits (god mode excepted). (Stewie's Tweaks bOnlyAllowWaitWhileSitting)", game.wait_only_seated);
         amount!(app, "kill-reward-ap", "Action Points per Kill", "Action Points a kill by the player gives back; 0 changes nothing. (Stewie's Tweaks bKillsRewardAP)", 50.0, f64, game.kill_reward_ap);
         amount!(app, "jump-ap-cost", "Action Points per Jump", "Action Points a jump costs; with too few the player cannot jump. 0 changes nothing. (Stewie's Tweaks bJumpingCostsAP)", 50.0, f32, jump_ap_cost);
+        switch!(app, "jump-ap-danger-only", "Action Points per Jump: Only in Danger", "With Action Points per Jump above 0, jumps only cost AP while in danger. (Stewie's Tweaks bCombatOnly)", jump_ap_danger_only);
+        switch!(app, "jump-without-enough-ap", "Action Points per Jump: Jump Without Enough AP", "With Action Points per Jump above 0, still jump with too little AP, draining what is left. (Stewie's Tweaks bJumpWithoutEnoughAP)", jump_without_enough_ap);
         amount!(app, "run-ap-cost", "Action Points per Second Running", "Action Points running costs each second; with none left the player walks. 0 changes nothing. (Stewie's Tweaks bRunningCostsAP)", 20.0, f32, run_ap_per_second);
         // ---- batch 9 ----
         switch!(app, "no-selling", "No Selling", "The player cannot sell items in a barter (buying still works). (Stewie's Tweaks bDisableSellingItems)", no_selling);
@@ -1451,7 +1456,7 @@ impl Plugin for TweaksPlugin {
         // ---- batch 13 ----
         switch!(app, "aid-at-full-health", "Aid at Full Health", "The STATS page's Stimpak and Doctor's Bag can be used with nothing hurt. (Stewie's Tweaks bAllowAidAtMaxHealth)", game.aid_at_full_health);
         switch!(app, "grabbing-is-theft", "Grabbing Is Stealing", "Grabbing someone else's thing counts as stealing it. (Stewie's Tweaks bGrabbingItemsIsCrime)", game.grabbing_is_theft);
-        switch!(app, "vendor-lists", "Merchants Keep to Their Lists", "A merchant buys from the player only what its list says it deals in. (Stewie's Tweaks bBarterCheckActorBuySellFlags)", vendor_lists_both);
+        switch!(app, "vendor-lists", "Merchants Keep to Their Lists", "A merchant buys from the player only what its list says it deals in. (Stewie's Tweaks bBarterCheckActorBuySellFlags)", game.vendor_lists_both);
         switch!(app, "key-name", "Name the Key", "A lock that needs a key names it. (Stewie's Tweaks bLockNeedsKeyShowName)", game.lock_needs_key_name);
         switch!(app, "no-skill-tags", "No Skill Tags", "Dialogue topics show no skill or perk tag. (Stewie's Tweaks bNoSkillTags)", game.no_skill_tags);
         switch!(app, "no-npc-addiction", "No NPC Addiction", "Only the player becomes addicted to chems. (Stewie's Tweaks bPreventNPCAddiction)", game.no_npc_addiction);
@@ -2116,6 +2121,7 @@ impl Plugin for TweaksPlugin {
         amount!(app, "skill-cap-most", "Skill Cap Most", "No skill's cap goes above this (Skills Capped by S.P.E.C.I.A.L.). (Stewie's Tweaks bCapSkillsBySPECIAL)", 100.0, i32, game.skill_cap_most);
         switch!(app, "cap-skills-spare-tagged", "Skill Cap Spares Tagged Skills", "Tagged skills are not capped by Skills Capped by S.P.E.C.I.A.L. (Stewie's Tweaks bCapSkillsBySPECIAL)", game.cap_skills_spare_tagged);
         switch!(app, "hold-breath", "Hold Breath Through a Scope", "Holding Shift while looking through a scope steadies it, costing Action Points while held; with none left the breath goes. (Stewie's Tweaks bScopeHoldBreath)", hold_breath);
+        switch!(app, "breath-activate", "Held Breath: Activate Key", "Holding Activate also holds breath through a scope. (Stewie's Tweaks bActivateHoldsBreath)", breath_activate);
         part!(app, "breath-sway", "Held Breath Sway", "How much a scope still sways while the breath is held, as a part of its usual sway. (Stewie's Tweaks bScopeHoldBreath)", breath_sway);
         amount!(app, "breath-ap", "Held Breath AP", "Action Points holding the breath costs each second (Hold Breath Through a Scope). (Stewie's Tweaks bScopeHoldBreath)", 20.0, f32, breath_ap);
         switch!(app, "scope-wheel-zoom", "Wheel Zooms Scopes", "The mouse wheel zooms a scope in (up) and out, half to double the usual, reset each time. (Stewie's Tweaks bAdjustableScopeZoom)", scope_wheel_zoom);
@@ -2598,17 +2604,32 @@ fn clear_near_marker(
 /// [design: docs/design/tweaks.md].
 pub static BREATH_HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Shift held with a scope up holds the breath, paying [`TweakSettings::breath_ap`]
-/// Action Points a second; with none left it is let go. In god mode nothing is paid.
+/// Whether the player is asking to hold breath through a scope: `hold_breath` enabled,
+/// scope raised, and either Shift held or Activate held with `breath_activate` enabled
+/// [design; Stewie's Tweaks 9.65 public changelog / `nvse_stewie_tweaks.ini` `bActivateHoldsBreath`].
+fn hold_breath_asked(hold_breath: bool, scope_on: bool, shift_held: bool, breath_activate: bool, activate_held: bool) -> bool {
+    hold_breath && scope_on && (shift_held || (breath_activate && activate_held))
+}
+
+/// Shift (or Activate when `breath_activate` is on) held with a scope up holds the breath,
+/// paying [`TweakSettings::breath_ap`] Action Points a second; with none left it is let
+/// go. In god mode nothing is paid.
 fn hold_breath(
     time: Res<Time>,
     tweaks: Res<TweakSettings>,
     keys: Res<ButtonInput<KeyCode>>,
+    control: crate::bindings::ControlInput,
     scope: Option<Res<crate::aim_zoom::Scope>>,
     mut script: Option<ResMut<ScriptState>>,
     sim: Option<ResMut<crate::sim::SimState>>,
 ) {
-    let asked = tweaks.hold_breath && scope.is_some_and(|s| s.on) && keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let asked = hold_breath_asked(
+        tweaks.hold_breath,
+        scope.is_some_and(|s| s.on),
+        keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]),
+        tweaks.breath_activate,
+        control.pressed(crate::bindings::Control::Activate),
+    );
     let mut held = asked;
     if asked && !crate::combat::god_mode() && tweaks.breath_ap > 0.0 {
         if let (Some(rt), Some(mut sim)) = (script.as_deref_mut().and_then(|s| s.rt.as_mut()), sim) {
@@ -2629,10 +2650,37 @@ fn hold_breath(
     }
 }
 
+/// Resolve jump AP cost under `bJumpingCostsAP` (`iJumpAPCost`, `bCombatOnly` danger check,
+/// `bJumpWithoutEnoughAP`) and `bOverencumberedTweak` (`over_jump_ap`), returning
+/// `(ap_damage, jump_allowed)` [design; Stewie's Tweaks 9.70 public changelog /
+/// `nvse_stewie_tweaks.ini`].
+fn resolve_jump_ap(
+    ap: f64,
+    base_jump: f32,
+    danger_only: bool,
+    in_danger: bool,
+    allow_without_enough: bool,
+    over_jump: f32,
+) -> (f64, bool) {
+    let base = if danger_only && !in_danger { 0.0 } else { base_jump.max(0.0) };
+    let over = over_jump.max(0.0);
+    let cost = f64::from(base + over);
+    if cost <= 0.0 {
+        return (0.0, true);
+    }
+    if ap >= cost {
+        (cost, true)
+    } else if allow_without_enough && over <= 0.0 {
+        (ap.max(0.0), true)
+    } else {
+        (0.0, false)
+    }
+}
+
 /// The Action Point costs of jumping and running ([`TweakSettings::jump_ap_cost`],
 /// [`TweakSettings::run_ap_per_second`]) [design: docs/design/tweaks.md]: a jump is paid
-/// when asked for and refused without the points; running drains each frame and, with
-/// none left, the player walks. Not in god mode.
+/// when asked for and refused without the points (unless `jump_without_enough_ap` is on);
+/// running drains each frame and, with none left, the player walks. Not in god mode.
 fn ap_costs(
     time: Res<Time>,
     tweaks: Res<TweakSettings>,
@@ -2641,17 +2689,15 @@ fn ap_costs(
     sim: Option<ResMut<crate::sim::SimState>>,
     mut jumped: Local<bool>,
 ) {
-    let (mut jump, mut run) = (tweaks.jump_ap_cost, tweaks.run_ap_per_second);
     // Over the carry limit under the Overencumbered Running tweak: its own costs too, and
     // without the points the player walks as without the tweak [design: docs/design/tweaks.md].
     let over = tweaks.run_overencumbered && crate::player::OVERENCUMBERED.load(std::sync::atomic::Ordering::Relaxed);
-    if over {
-        (jump, run) = (jump + tweaks.over_jump_ap, run + tweaks.over_run_ap);
-    }
+    let over_jump = if over { tweaks.over_jump_ap } else { 0.0 };
+    let run = tweaks.run_ap_per_second + if over { tweaks.over_run_ap } else { 0.0 };
     let asked = intent.jump;
     let fresh_jump = asked && !*jumped;
     *jumped = asked;
-    if (jump <= 0.0 && run <= 0.0) || crate::combat::god_mode() {
+    if (tweaks.jump_ap_cost <= 0.0 && over_jump <= 0.0 && run <= 0.0) || crate::combat::god_mode() {
         return;
     }
     let (Some(rt), Some(mut sim)) = (script.as_deref_mut().and_then(|s| s.rt.as_mut()), sim) else { return };
@@ -2663,13 +2709,24 @@ fn ap_costs(
         let g = &mut rt.game;
         let p = fnv_sim::FormId::PLAYER_REF;
         let mut ap = fnv_game::functions::actor_value(g, p, ACTION_POINTS).unwrap_or(0.0);
-        if fresh_jump && jump > 0.0 {
-            if ap >= f64::from(jump) {
-                fnv_game::functions::add_actor_value_damage(g, p, ACTION_POINTS, f64::from(jump));
-                ap -= f64::from(jump);
-            } else {
+        if fresh_jump && (tweaks.jump_ap_cost > 0.0 || over_jump > 0.0) {
+            let in_danger = crate::hud::sneak_now(g) == crate::hud::Sneak::Danger;
+            let (drain, allowed) = resolve_jump_ap(
+                ap,
+                tweaks.jump_ap_cost,
+                tweaks.jump_ap_danger_only,
+                in_danger,
+                tweaks.jump_without_enough_ap,
+                over_jump,
+            );
+            if drain > 0.0 {
+                fnv_game::functions::add_actor_value_damage(g, p, ACTION_POINTS, drain);
+                ap -= drain;
+            }
+            if !allowed {
                 intent.jump = false;
-                info!("tweaks: jump refused, {ap:.0} AP of {jump:.0}");
+                let need = tweaks.jump_ap_cost + over_jump;
+                info!("tweaks: jump refused, {ap:.0} AP of {need:.0}");
             }
         }
         if running && run > 0.0 {
@@ -2850,14 +2907,17 @@ fn sync(
     // different rows (smoke pipboy-items-extras). The rows take the settings at the
     // list's next refresh.
     if let Some(m) = active.as_mut().and_then(|a| a.bypass_change_detection().0.as_mut()) {
-        if m.sync_categories != tweaks.sync_categories {
-            m.sync_categories = tweaks.sync_categories;
+        if m.sync_categories != tweaks.game.sync_categories {
+            m.sync_categories = tweaks.game.sync_categories;
+        }
+        if m.prevent_switch_when_emptying_category != tweaks.game.prevent_switch_when_emptying_category {
+            m.prevent_switch_when_emptying_category = tweaks.game.prevent_switch_when_emptying_category;
         }
         if m.no_selling != tweaks.no_selling {
             m.no_selling = tweaks.no_selling;
         }
-        if m.vendor_lists_both != tweaks.vendor_lists_both {
-            m.vendor_lists_both = tweaks.vendor_lists_both;
+        if m.vendor_lists_both != tweaks.game.vendor_lists_both {
+            m.vendor_lists_both = tweaks.game.vendor_lists_both;
         }
         if m.hide_misc_quest != tweaks.hide_misc_quest {
             m.hide_misc_quest = tweaks.hide_misc_quest;
@@ -3001,5 +3061,34 @@ mod tests {
         assert_eq!(t.game, Tweaks::default());
         assert_eq!(t.game.xp_multiplier, 1.0);
         assert!(!t.no_karma_messages && !t.disable_fast_travel && !t.keep_chosen_ammo);
+        assert!(!t.breath_activate && !t.jump_ap_danger_only && !t.jump_without_enough_ap);
+        assert!(!t.game.sync_categories && t.game.prevent_switch_when_emptying_category);
+    }
+
+    #[test]
+    fn hold_breath_activate_key_requires_parent_scope_and_option() {
+        assert!(!hold_breath_asked(false, true, true, true, true));
+        assert!(!hold_breath_asked(true, false, true, true, true));
+        assert!(hold_breath_asked(true, true, true, false, false));
+        assert!(!hold_breath_asked(true, true, false, false, true));
+        assert!(hold_breath_asked(true, true, false, true, true));
+        assert!(!hold_breath_asked(true, true, false, true, false));
+    }
+
+    #[test]
+    fn resolve_jump_ap_enforces_danger_gate_and_low_ap_allowance() {
+        // Default behavior (danger_only = false, allow_without_enough = false): charges AP and refuses when short.
+        assert_eq!(resolve_jump_ap(30.0, 20.0, false, false, false, 0.0), (20.0, true));
+        assert_eq!(resolve_jump_ap(10.0, 20.0, false, false, false, 0.0), (0.0, false));
+        // Stewie 9.70 danger-only gate (bCombatOnly): free outside danger, charged in danger.
+        assert_eq!(resolve_jump_ap(10.0, 20.0, true, false, false, 0.0), (0.0, true));
+        assert_eq!(resolve_jump_ap(30.0, 20.0, true, true, false, 0.0), (20.0, true));
+        assert_eq!(resolve_jump_ap(10.0, 20.0, true, true, false, 0.0), (0.0, false));
+        // Jump without enough AP (bJumpWithoutEnoughAP): drains remaining AP and still allows jump.
+        assert_eq!(resolve_jump_ap(10.0, 20.0, false, false, true, 0.0), (10.0, true));
+        assert_eq!(resolve_jump_ap(0.0, 20.0, false, false, true, 0.0), (0.0, true));
+        // Overencumbered jump AP still enforces sufficient AP.
+        assert_eq!(resolve_jump_ap(5.0, 0.0, false, false, true, 10.0), (0.0, false));
+        assert_eq!(resolve_jump_ap(15.0, 20.0, true, false, false, 10.0), (10.0, true));
     }
 }

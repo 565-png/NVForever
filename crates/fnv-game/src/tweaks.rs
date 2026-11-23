@@ -688,6 +688,15 @@ pub struct Tweaks {
     /// `bMenuSearch`: Stewie menu search-bar tile publication (`ui_search_bar`) on
     /// supported menus.
     pub menu_search: bool,
+    /// `bSynchronizeContainerCategories`: a container's or barter's two lists change
+    /// category together.
+    pub sync_categories: bool,
+    /// `bSynchronizeContainerCategories` (`bPreventSwitchWhenEmptyingCategory`): keep the
+    /// emptied synchronized category selected instead of switching back to All.
+    pub prevent_switch_when_emptying_category: bool,
+    /// `bBarterCheckActorBuySellFlags`: a merchant takes from the player only what its
+    /// service list says it deals in (Stimpaks follow Stimpaks, ignoring Chems).
+    pub vendor_lists_both: bool,
 }
 
 /// The factor on a vendor's repair price under the Barter Affects Repair Costs tweak:
@@ -1060,6 +1069,9 @@ impl Default for Tweaks {
             marker_removed_on_it: false,
             empty_reload_swaps_ammo: false,
             menu_search: false,
+            sync_categories: false,
+            prevent_switch_when_emptying_category: true,
+            vendor_lists_both: false,
         }
     }
 }

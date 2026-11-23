@@ -2,7 +2,7 @@
 //! events of scripted items.
 
 use super::{none, yes, Args, Ctx};
-use crate::game::{event, Game, InstKey};
+use crate::game::{event, menus, Game, InstKey};
 use crate::trace::EventKind;
 use fnv_script::vm::Value;
 use fnv_sim::forms::ItemKind;
@@ -52,7 +52,17 @@ pub fn add_item(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
         }
     }
     review_equipment(g, to);
+    mark_item_menu_refresh(g);
     none()
+}
+
+/// Request a one-shot menu refresh when `AddItem` or `AddItemHealthPercent` runs while
+/// an inventory, container, or barter menu is open, keeping `MenuModel` aligned with
+/// `World` [design; Stewie's Tweaks 9.70 public changelog].
+fn mark_item_menu_refresh(g: &mut Game) {
+    if g.menu_open(menus::INVENTORY) || g.menu_open(menus::CONTAINER) || g.menu_open(menus::BARTER) {
+        g.gaps.jip3.refresh_items_list = true;
+    }
 }
 
 /// An actor given something by AddItem equips the best armour and weapon it has
@@ -390,12 +400,14 @@ pub fn add_item_health_percent(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Valu
             g.emit(EventKind::ItemAdded { to, item: i, count: n, silent });
             g.item_event(to, i, event::ON_ADD, Some(Value::Ref(to.0)));
         }
+        mark_item_menu_refresh(g);
         return none();
     }
     let extra = Extra { condition: (health < 1.0).then_some(health), ..Extra::default() };
     g.world.add_item_extra(to, item, count, extra).map_err(|e| e.to_string())?;
     g.emit(EventKind::ItemAdded { to, item, count, silent: hide_flag(a, 3) });
     g.item_event(to, item, event::ON_ADD, Some(Value::Ref(to.0)));
+    mark_item_menu_refresh(g);
     none()
 }
 
