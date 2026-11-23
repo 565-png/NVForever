@@ -3815,6 +3815,20 @@ already talking takes over at once, same topic or another; nothing is queued or 
      the suitcase and which the bed, without reading a rule into them yet; compare with
      ours afterwards (aim for aim in the same spot in NVForever).
 
+## Added 2026-11-21 (relief on the landscape's texture layers, #3322)
+
+268. **Does the original draw any parallax or relief on the landscape's texture layers?**
+     (P3; #3322, pbr-materials.md "Terrain layers: parallax".) NVForever's terrain
+     parallax is an addition of its own until this is answered; ours assumes the original
+     draws none, as no landscape texture set is known to name a height texture
+     [hypothesis]. Outside Goodsprings at noon, stand on a stony layer (gravel or rocks
+     painted over the dirt base), look down at about 30 degrees and strafe slowly sideways
+     for a few seconds, then crouch and repeat closer: stones whose painted bumps slide
+     against each other as the view moves say the original draws relief; texels that move
+     rigidly with the ground say it draws none. The data offers none: no LTEX texture set
+     of FalloutNV.esm names a `TX04` map [documented: counted with fnvtool, 2026-11-21;
+     pbr-materials.md "Terrain layers: parallax"].
+
 ## Added 2026-11-21 (a lakelurk standing on a deep lake bed, #2980)
 
 269. **How does a creature that swims stand on a lake bed deeper than it is tall?**
