@@ -264,4 +264,34 @@ fn camera_overlay_refs_resolve_and_accept_nif_edits() {
         )),
         "expected Translation edit on PreIS overlay ref, got {edits:?}",
     );
+
+    // Reserved range sits strictly in [CAMERA_OVERLAY_BASE, LAMBDA_BASE), disjoint from temp_item.
+    for id in [fnv_game::nvse_jg_nif::CAMERA_OVERLAY_PRE_IS, fnv_game::nvse_jg_nif::CAMERA_OVERLAY_PRE_UI] {
+        assert!((fnv_game::game::CAMERA_OVERLAY_BASE..fnv_game::game::LAMBDA_BASE).contains(&id.0));
+        assert!(g.temp_item(id).is_none());
+    }
+
+    // A loaded plugin record occupying the same FormID wins over the synthetic fallback in
+    // form_sig (IsReference / GetType) and GetEditorID.
+    let mut f_loaded = fixture();
+    let slot = fnv_game::nvse_jg_nif::CAMERA_OVERLAY_PRE_IS;
+    f_loaded.data.sigs.insert(slot, *b"MISC");
+    f_loaded.data.edids.insert("loadedatoverlayslot".into(), slot);
+    f_loaded.data.edid_of.insert(slot, "LoadedAtOverlaySlot".into());
+    let mut g_loaded = game(&f_loaded);
+    assert_eq!(
+        n(
+            &mut g_loaded,
+            "ref rSlot\nlet rSlot := EditorIDToFormID \"LoadedAtOverlaySlot\"\nSetFunctionValue (IsFormValid rSlot) * 10 + (IsReference rSlot)",
+        ),
+        10.0,
+        "loaded MISC record must win in form_sig (valid, not REFR)",
+    );
+    assert_eq!(
+        q(
+            &mut g_loaded,
+            "ref rSlot\nlet rSlot := EditorIDToFormID \"LoadedAtOverlaySlot\"\nSetFunctionValue (GetEditorID rSlot)",
+        ),
+        XVal::Str("LoadedAtOverlaySlot".into()),
+    );
 }
