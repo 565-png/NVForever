@@ -105,10 +105,11 @@ pub fn resolve(
             Some(f) => (Some(f), "KillActor".to_string()),
             None => {
                 let bloody_mess = k.by.is_some_and(|a| with_world(rt, &mut sim, |rt| rt.game.has_bloody_mess(a)));
-                let blow = Blow { on_hit: k.on_hit, corpse: k.corpse, crippled: k.crippled, overkill: k.overkill, max_health: k.max_health, bloody_mess };
+                let sole_part = data.parts.len() == 1;
+                let blow = Blow { on_hit: k.on_hit, corpse: k.corpse, crippled: k.crippled, overkill: k.overkill, max_health: k.max_health, bloody_mess, sole_part };
                 let (pe, ps) = dismember::chances(part, &blow, &settings);
                 let fate = dismember::decide(part, &blow, &settings, d.rng.next_f32());
-                let absolute = if part.explodable() && part.explodable_absolute() { ", Absolute" } else { "" };
+                let absolute = if sole_part && !part.severable() && part.explodable() && part.location() == 0 && part.explodable_absolute() { ", sole Absolute torso" } else { "" };
                 (fate, format!("overkill {:.0} of limb share {:.0}, explode {pe:.0} %, sever {ps:.0} %{absolute}{}", k.overkill, dismember::limb_health(part, k.max_health), if bloody_mess { ", Bloody Mess" } else { "" }))
             }
         };
@@ -159,7 +160,7 @@ mod tests {
     use fnv_combat::data::{BodyPart, BodyPartData};
     use fnv_sim::{SimConfig, World as SimWorld};
 
-    fn resolve_check(part: BodyPart, on_hit: OnHit, target: FormId) -> (Vec<Dismembered>, Vec<(i32, bool)>, u32, u32) {
+    fn resolve_check(parts_list: Vec<BodyPart>, on_hit: OnHit, target: FormId) -> (Vec<Dismembered>, Vec<(i32, bool)>, u32, u32) {
         let script = ScriptState::over_no_plugins();
         let (forms, refs) = {
             let game = &script.rt.as_ref().unwrap().game;
@@ -167,8 +168,8 @@ mod tests {
         };
         let mut combat_forms = fnv_combat::CombatForms::default();
         let bptd = FormId(0x900);
-        combat_forms.body_parts.insert(bptd, BodyPartData { edid: None, model: None, parts: vec![part], ragdoll: None });
-        let combat = Combat::with_forms(combat_forms);
+        combat_forms.body_parts.insert(bptd, BodyPartData { edid: None, model: None, parts: parts_list, ragdoll: None });
+        let combat = Combat::from_forms(combat_forms);
         let mut parts = ActorParts::default();
         parts.by_ref.insert(target.0, PosedParts { data: bptd, segments: Vec::new(), weapon: None });
         let mut dm = Dismemberment::default();
@@ -202,12 +203,13 @@ mod tests {
         (events, gone, dm.exploded, dm.severed)
     }
 
-    /// #3435: a crow-style BPTD (single non-severable torso with `Explodable` + `To Hit
-    /// Chance - Absolute` at 100 %) explodes through `dismember::resolve` without Bloody
-    /// Mess for both Normal and No Dismember/Explode weapons, while an ordinary torso
-    /// without `Absolute` and a non-`Explodable` `Absolute` part stay intact.
+    /// #3435: a single-part crow-style BPTD (non-severable torso with `Explodable` + `To
+    /// Hit Chance - Absolute` at 100 %) explodes through `dismember::resolve` without
+    /// Bloody Mess on Normal / Explode Only hits, while honoring `No Dismember/Explode` and
+    /// `Dismember Only`, and leaving multi-part creatures, single-part non-torsos, ordinary
+    /// torsos, and non-`Explodable` parts unchanged.
     #[test]
-    fn resolve_explodes_crow_absolute_torso_without_bloody_mess() {
+    fn resolve_explodes_crow_sole_absolute_torso_without_bloody_mess() {
         let crow_part = BodyPart {
             part_type: Some("Torso".into()),
             flags: vec!["Explodable".into(), "To Hit Chance - Absolute".into()],
@@ -216,13 +218,28 @@ mod tests {
             explodable_chance_percent: 100,
             ..BodyPart::default()
         };
-        for on_hit in [OnHit::Normal, OnHit::Neither, OnHit::DismemberOnly] {
-            let (events, gone, exploded, severed) = resolve_check(crow_part.clone(), on_hit, FormId(0x1001));
+        for on_hit in [OnHit::Normal, OnHit::ExplodeOnly] {
+            let (events, gone, exploded, severed) = resolve_check(vec![crow_part.clone()], on_hit, FormId(0x1001));
             assert_eq!(gone, vec![(0, true)], "{on_hit:?}");
             assert_eq!((exploded, severed), (1, 0), "{on_hit:?}");
             assert_eq!(events.len(), 1, "{on_hit:?}");
             assert_eq!((events[0].form_id, events[0].part, events[0].location, events[0].exploded), (0x1001, 0, 0, true));
         }
+        // Weapon On Hit restrictions stay enforced without Bloody Mess.
+        for on_hit in [OnHit::Neither, OnHit::DismemberOnly] {
+            let (events, gone, exploded, severed) = resolve_check(vec![crow_part.clone()], on_hit, FormId(0x1001));
+            assert!(events.is_empty() && gone.is_empty() && exploded == 0 && severed == 0, "{on_hit:?}");
+        }
+
+        // Control: multi-part Explodable + Absolute torso (e.g. Eyebot / ceiling turret) stays gated.
+        let secondary = BodyPart { part_type: Some("Brain".into()), health_percent: 20, ..BodyPart::default() };
+        let (events, gone, exploded, severed) = resolve_check(vec![crow_part.clone(), secondary], OnHit::Normal, FormId(0x1004));
+        assert!(events.is_empty() && gone.is_empty() && exploded == 0 && severed == 0);
+
+        // Control: single-part non-severable Head 1 with Explodable + Absolute (Mr. House) stays gated.
+        let house_head = BodyPart { part_type: Some("Head 1".into()), ..crow_part };
+        let (events, gone, exploded, severed) = resolve_check(vec![house_head], OnHit::Normal, FormId(0x1005));
+        assert!(events.is_empty() && gone.is_empty() && exploded == 0 && severed == 0);
 
         // Control: ordinary non-severable torso without Absolute does not explode without Bloody Mess.
         let human_torso = BodyPart {
@@ -233,7 +250,7 @@ mod tests {
             explodable_chance_percent: 50,
             ..BodyPart::default()
         };
-        let (events, gone, exploded, severed) = resolve_check(human_torso, OnHit::Normal, FormId(0x1002));
+        let (events, gone, exploded, severed) = resolve_check(vec![human_torso], OnHit::Normal, FormId(0x1002));
         assert!(events.is_empty() && gone.is_empty() && exploded == 0 && severed == 0);
 
         // Control: Absolute without Explodable does not explode.
@@ -245,7 +262,7 @@ mod tests {
             explodable_chance_percent: 100,
             ..BodyPart::default()
         };
-        let (events, gone, exploded, severed) = resolve_check(no_explode, OnHit::Normal, FormId(0x1003));
+        let (events, gone, exploded, severed) = resolve_check(vec![no_explode], OnHit::Normal, FormId(0x1003));
         assert!(events.is_empty() && gone.is_empty() && exploded == 0 && severed == 0);
     }
 }

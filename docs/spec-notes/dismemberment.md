@@ -362,25 +362,24 @@ mines' No Dismember/Explode are open until observer check 136 (a frag mine and a
 beside a settled corpse in the original) says what the original does. Then
 one roll decides, with these odds [observed, §4.1, unless tagged]:
 
-1. **Explodable + Absolute parts** (BPND flag bit 6, §2.2; e.g. `NVraven02`, `EyebotBodypartdata`,
-   `TurretCeilingBodyPartData`, `NVTumbleweed`, `NVCRHouseBodyPartData`, `NVBigHorner`, #3435):
-   use `explodable_chance_percent` (clamped to 0–100 %) directly as the explosion chance,
-   bypassing the Bloody Mess torso gate and weapon On Hit restrictions [hypothesis: GECK Body
-   Part dialog "Absolute" under Explodable and the masters' BPTD values — every `Explodable` +
-   `Absolute` part in FalloutNV.esm and the official add-ons sets 100 %]. When a part is also
-   Severable and its Absolute explosion chance is below 100 %, the remaining `(100 − explode) %`
-   share stays eligible to sever by the normal weapon On Hit rule [design]. A part without
-   Explodable never explodes even if bit 6 is set.
-2. **A severable part** (head, arm, leg): 75 % on a kill, 100 % with the attacker's Bloody
+1. **A severable part** (head, arm, leg): 75 % on a kill, 100 % with the attacker's Bloody
    Mess. Overkill and crippling do not change it.
-3. **The torso** (explodable only, without Absolute): never without Bloody Mess; with it 80 %
-   if the hit crippled the torso (its condition at or below 0 after the hit), 20 % if not.
-4. **No Dismember/Explode** weapons: nothing without Bloody Mess; with it half the odds above.
-5. **Which way**: Explode Only explodes; Dismember Only severs [hypothesis for the rate: the
+2. **The torso** (explodable only): never without Bloody Mess, except for a single-part BPTD
+   whose sole part is a non-severable Torso flagged `Explodable` + `To Hit Chance - Absolute`
+   (BPND bit 6, §2.2 — matching crows `NVraven02` in #3435 and `NVTumbleweed`), which uses its
+   `explodable_chance_percent` directly without Bloody Mess while still respecting the weapon's
+   On Hit gate below [hypothesis: narrowed to #3435; the broader meaning of bit 6 on multi-part
+   creatures such as Securitrons, ants, mantises, mirelurks, Rex, eyebots, turrets, bighorners
+   and DLC Ghost People, on single-part non-torsos such as Mr. House, and on No
+   Dismember/Explode weapons is left on the measured §4.1 odds pending original-game
+   observation]. With Bloody Mess an ordinary torso explodes 80 % if the hit crippled it (its
+   condition at or below 0 after the hit), 20 % if not.
+3. **No Dismember/Explode** weapons: nothing without Bloody Mess; with it half the odds above.
+4. **Which way**: Explode Only explodes; Dismember Only severs [hypothesis for the rate: the
    laser's kills were disintegrations]; Normal severs 30 % of the parts it takes and explodes
    the rest; Bloody Mess explodes what the weapon could not take otherwise (No
    Dismember/Explode, the torso).
-6. The part and every severable or explodable part sharing its actor value are gone (§2.2).
+5. The part and every severable or explodable part sharing its actor value are gone (§2.2).
    Only the Explodable ones among them explode; the others are severed.
 
 The masters' settings of §3 are not read: iCombatExplodePartChance 75 equals the measured

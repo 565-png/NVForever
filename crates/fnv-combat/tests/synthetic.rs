@@ -264,8 +264,12 @@ fn explodable_absolute_bptd_decodes_and_explodes_without_bloody_mess() {
     assert!(p.explodable() && p.explodable_absolute() && !p.severable());
     assert_eq!(p.explodable_chance_percent, 100);
     let s = Settings::default();
-    for on_hit in [OnHit::Normal, OnHit::Neither, OnHit::DismemberOnly, OnHit::ExplodeOnly] {
-        let blow = Blow { on_hit, crippled: true, overkill: 10.0, max_health: 6.0, bloody_mess: false, corpse: false };
+    for on_hit in [OnHit::Normal, OnHit::ExplodeOnly] {
+        let blow = Blow { on_hit, crippled: true, overkill: 10.0, max_health: 6.0, bloody_mess: false, corpse: false, sole_part: b.parts.len() == 1 };
         assert_eq!(chances(p, &blow, &s), (100.0, 0.0), "{on_hit:?}");
+    }
+    for on_hit in [OnHit::Neither, OnHit::DismemberOnly] {
+        let blow = Blow { on_hit, crippled: true, overkill: 10.0, max_health: 6.0, bloody_mess: false, corpse: false, sole_part: b.parts.len() == 1 };
+        assert_eq!(chances(p, &blow, &s), (0.0, 0.0), "{on_hit:?}");
     }
 }
