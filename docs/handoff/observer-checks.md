@@ -4150,6 +4150,34 @@ capture setup, so every part of a check that needs an interior is still open.
      flagged entry is the game of Caravan. Jerry the Punk (reference 001413BF) has the
      other line, 0014C483; in Fallout 3, Pronto (Paradise Falls) has 000384CF.
 
+## Added 2026-11-23 (fast travel from an interior, #3434)
+
+285. **Does an interior refuse fast travel, and does CELL DATA bit 2 turn that round?**
+     (P2: #3434; fast-travel.md §2.) Ours: every interior refuses with the map's box and
+     `sNoFastTravelCell`'s text [documented: GECK wiki EnableFastTravel]; with bit 2 set
+     an interior allows travel and an exterior refuses it [hypothesis: "Invert Fast
+     Travel Behavior" on the wiki's GetCellFlag page, against the editor's "Can't Travel
+     From Here"]. No cell of the masters sets the bit, so set it by script.
+     - Needs xNVSE, JIP LN and ShowOff; a save in Goodsprings with no hostile near, the
+       player not over-encumbered. First `EnableFastTravel 1` and `ShowMap` with
+       canTravel 1 on Primm's marker (000CDF46), then `coc GSGeneralStore` (001057F1).
+     - (a) **Unflagged interior**: read `GetCellFlag` 2 and 7 of the cell (expect 0, 0)
+       and `GetPCCanFastTravel`; then open the Pip-Boy's World Map, click Primm, and take
+       a screenshot: the question, or a refusal? If a refusal, its text, whether it is a
+       box with a button or a corner message, and whether the map stays up; compare with
+       `GetGameSetting sNoFastTravelCell`. Expect 0 and that text.
+     - (b) **Flagged interior**: `SetCellFlag GSGeneralStore 2 1`, read both again and
+       click Primm again. Expect 1 and the question; 0 and the refusal mean the bit does
+       not invert. Answer No. If (b) reads as (a), leave by the door, come back with the
+       flag still set and read once more (it may be read only on entry). Clear the flag.
+     - (c) **Flagged exterior**: in Goodsprings read `GetPCCanFastTravel` (expect 1), set
+       the bit on the player's parent cell, read again, click Primm and take a
+       screenshot; clear it. Expect 0 and the same text.
+     - (d) **Fake exterior**: in GSGeneralStore with bit 2 clear, `SetCellFlag
+       GSGeneralStore 7 1` (leave and re-enter if nothing changes) and read
+       `GetPCCanFastTravel`. Ours: 1 [hypothesis]. With Dead Money loaded,
+       `coc NVDLC01stealthTest` (bit 7 in its record) reads the same with no script.
+
 ## Added 2026-11-23 (a thrown Lobber with gravity 0, #3441)
 
 289. **Does a thrown Nuka-grenade arc like a frag grenade?** (P2; #3441, combat-rules.md
@@ -4172,7 +4200,6 @@ capture setup, so every part of a check that needs an interior is still open.
      of food appears on the table in front of him, and roughly where it sits relative to
      his chest and to the table top. A student's `aostudenttestpaper.nif` hangs the same
      way, if one is easier to find.
-
 
 ## Added 2026-11-23 (how long the quest lines stay, #3436)
 

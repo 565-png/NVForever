@@ -456,7 +456,7 @@ unless the player binds them, so nothing changes until then.
 | Console Key | `iConsoleKey` | a key binding, `bindings::Control::Console` (`` ` `` by default, rebound on Controls > Additional Features like any control) read by `console::toggle` [design: owner 2026-11-16] |
 | Tab Closes Terminals | `bTabClosesTerminals` | `terminal::keys` sends Exit on Tab |
 | Tab Goes Back in the Pause Menu | `bTabBackInStartMenu` | `pause::choose`: Tab is Back on the main page's question and the load list; Settings and Controls keep Tab for their tabs |
-| Fast Travel From Anywhere | `bAllowUnsafeFastTravel` | `pipboy::data::travel::tweak_checks` drops the place refusal (Can't Travel From Here, Can't Fast Travel) |
+| Fast Travel From Anywhere | `bAllowUnsafeFastTravel` | `pipboy::data::travel::tweak_checks` drops the place refusal (an interior, Can't Fast Travel), as does `Game::can_fast_travel` |
 | V.A.T.S. Burst Stops on a Kill | `bVATSStopBurstIfTargetDead` | `vats_mode`: a burst's later rounds are held once the mark's target is dead |
 | Repair Needs the Weapon's Skill | `bRepairRequiresWeaponSkill` | `pipboy::repair::keys` refuses to open the list for a weapon whose `skill_req` is above the player's Repair |
 | Date Format | `iDateFormat` | `wait::model::DATE_STYLES` (as the game, day first, month first, year first; ours), set from `tweaks::sync` and read by the wait menu and the Pip-Boy heading |

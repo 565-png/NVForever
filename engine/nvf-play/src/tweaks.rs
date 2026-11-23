@@ -418,8 +418,6 @@ pub struct TweakSettings {
     pub tab_closes_terminals: bool,
     /// `bTabBackInStartMenu`: Tab goes back in the pause menu where it steps no tabs.
     pub tab_back_in_pause: bool,
-    /// `bAllowUnsafeFastTravel`: fast travel from places flagged against it (indoors).
-    pub unsafe_fast_travel: bool,
     /// `iDateFormat`: the style of `crate::wait::model::DATE_STYLES`.
     pub date_style: usize,
     /// `bEnteringVATSDoesntUnholsterWeapon`: a weapon V.A.T.S. drew goes away again when
@@ -936,7 +934,6 @@ impl Default for TweakSettings {
             shift_talks_sneaking: false,
             tab_closes_terminals: false,
             tab_back_in_pause: false,
-            unsafe_fast_travel: false,
             date_style: 0,
             vats_keeps_holstered: false,
             no_hotkey_wheel: false,
@@ -1969,7 +1966,7 @@ impl Plugin for TweaksPlugin {
         switch!(app, "hide-read-notes", "Hide Read Notes", "The Pip-Boy's notes list leaves out notes already read. (Stewie's Tweaks bHideReadNotes)", game.hide_read_notes);
         switch!(app, "tab-closes-terminals", "Tab Closes Terminals", "Tab closes a terminal from any page instead of going back a page (Backspace still goes back). (Stewie's Tweaks bTabClosesTerminals)", tab_closes_terminals);
         switch!(app, "tab-back-in-pause", "Tab Goes Back in the Pause Menu", "Tab goes back a page in the pause menu, as Backspace does (the Settings and Controls pages keep Tab for their tabs). (Stewie's Tweaks bTabBackInStartMenu)", tab_back_in_pause);
-        switch!(app, "unsafe-fast-travel", "Fast Travel From Anywhere", "Fast travel works from places flagged against it, such as interiors; leaving a scripted place this way can break it. (Stewie's Tweaks bAllowUnsafeFastTravel)", unsafe_fast_travel);
+        switch!(app, "unsafe-fast-travel", "Fast Travel From Anywhere", "Fast travel works from places flagged against it, such as interiors; leaving a scripted place this way can break it. (Stewie's Tweaks bAllowUnsafeFastTravel)", game.unsafe_fast_travel);
         switch!(app, "vats-auto-head", "V.A.T.S. Starts on the Head", "In the classic V.A.T.S., a target's head is selected first rather than the part easiest to hit. (Stewie's Tweaks bVATSAutoTargetHead)", game.vats_auto_head);
         switch!(app, "vats-drops-disarmed-shots", "V.A.T.S. Drops Shots at a Lost Weapon", "Attacks queued in V.A.T.S. on someone's weapon are not played once they no longer hold it. (Stewie's Tweaks bVATSDequeueWeaponShotsOnDisarm)", game.vats_drops_disarmed_shots);
         switch!(app, "vats-target-projectiles", "Target Projectiles in V.A.T.S.", "V.A.T.S. can mark projectiles in flight: explosives go off, others end; odds: distance, skill. (Stewie's Tweaks bTargetProjectilesInVATS)", game.vats_target_projectiles);

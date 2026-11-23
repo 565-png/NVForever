@@ -575,6 +575,8 @@ pub struct Tweaks {
     /// `bFastTravelCostsSpecialNukaBottles`: fast travel takes a Nuka-Cola Quantum,
     /// Quartz or Victory, and is refused without one.
     pub travel_costs_bottle: bool,
+    /// `bAllowUnsafeFastTravel`: fast travel from places that forbid it (indoors).
+    pub unsafe_fast_travel: bool,
     /// `bArmorCausesSinking`: medium and heavy body armour pull a swimmer down.
     pub armor_sinks: bool,
     /// `bRememberBobbyPinHealth`: the bobby pin keeps its wear from lock to lock.
@@ -1048,6 +1050,7 @@ impl Default for Tweaks {
             modding_needs_skill: false,
             planting_needs_skill: false,
             travel_costs_bottle: false,
+            unsafe_fast_travel: false,
             armor_sinks: false,
             remember_pin_health: false,
             force_spares_lock: false,
