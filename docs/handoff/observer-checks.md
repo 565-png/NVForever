@@ -4176,7 +4176,7 @@ capture setup, so every part of a check that needs an interior is still open.
 
 ## Added 2026-11-23 (how long the quest lines stay, #3436)
 
-286. **How long do "Quest added", "Quest completed" and "Location discovered" stay on
+291. **How long do "Quest added", "Quest completed" and "Location discovered" stay on
      screen, and how do they come and go?** (P2; #3436, quest-messages.md §5–§6, hud.md
      "Location discovered".) Ours [design]: each banner 4 s, an objective list 4 s and
      1.5 s more for each objective after the first, each fading in and out over 0.25 s,
