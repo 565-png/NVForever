@@ -4135,3 +4135,16 @@ capture setup, so every part of a check that needs an interior is still open.
      come back? Note also whether the generic Goodbye is offered at all, as his only
      flagged entry is the game of Caravan. Jerry the Punk (reference 001413BF) has the
      other line, 0014C483; in Fallout 3, Pronto (Paradise Falls) has 000384CF.
+
+## Added 2026-11-23 (the meal on the table eating idles, #3610)
+
+285. **Where is the plate of a table eating idle?** (P3; #3610, idles.md §10 "Objects
+     hung from the accumulation root".) Ours [hypothesis]: `aogenericmeal.nif` hangs from
+     `Bip01` in its bind pose, so the plate sits about 70 units in front of the seated
+     actor and 71 above the floor. In Primm's NCR tent (cell PrimmTentsHayes), when Lt.
+     Hayes (PrimmHayesREF) sits at the table and plays `SitTableChairEatB` (or
+     `PrimmHayesREF.PlayIdle SitTableChairEatB` once he is seated), say whether a plate
+     of food appears on the table in front of him, and roughly where it sits relative to
+     his chest and to the table top. A student's `aostudenttestpaper.nif` hangs the same
+     way, if one is easier to find.
+
