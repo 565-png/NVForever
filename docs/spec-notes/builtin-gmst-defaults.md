@@ -26,16 +26,21 @@ or the base add-ons, yet mods and console commands read or mutate them at run ti
 
 ## 2. Seeded settings
 
+Each seeded default below is absent as a `GMST` record in `FalloutNV.esm` and is
+documented with its default value on the GECK wiki
+(`https://geckwiki.com/index.php?title=FCombatEnvironmentBloodChance` and
+`https://geckwiki.com/index.php?title=Complete_List_of_GameSettings`). Settings already
+shipped in `FalloutNV.esm` (such as `fKnockbackForceMax`) are not seeded here.
+
 | Editor ID | Type | Default | Provenance | Live engine consumer |
 |---|---|---|---|---|
-| `fCombatEnvironmentBloodChance` | `Float` | `0.75` | `[documented: GECK wiki FCombatEnvironmentBloodChance, "Default = 0.7500"; docs/spec-notes/impact-decals.md §4a]` | `engine/nvf-play/src/combat.rs` (`World::setting_f32`, fallback already `WORLD_BLOOD_CHANCE = 0.75`) |
-| `iDismemberBloodDecalCount` | `Int` | `10` | `[hypothesis: GECK wiki Complete List of GameSettings secondary lookup = 10; not yet verified by an original-game GetGameSetting probe]` | None yet (script/console store parity) |
-| `fGunWobbleChaseDriftTime` | `Float` | `0.75` | `[hypothesis: GECK wiki Complete List of GameSettings secondary lookup = 0.75; not yet verified by an original-game GetGameSetting probe]` | None yet (script/console store parity) |
-| `fIronSightsFOVTimeChange` | `Float` | `0.25` | `[hypothesis: GECK wiki Complete List of GameSettings secondary lookup = 0.25; not yet verified by an original-game GetGameSetting probe]` | None yet (script/console store parity) |
-| `fKnockbackForceMax` | `Float` | `512.0` | `[documented: GECK wiki Melee Knockback Formula, 512.0; observed: FalloutNV.esm GMST = 512, docs/spec-notes/combat-data.md §3]` | `crates/fnv-combat/src/tuning.rs` (load-order `CombatForms`, default `512.0`) |
-| `FCharacterDefaultTurningSpeed` | `Float` | `90.0` | `[documented: setting name on GECK wiki Settings list, docs/spec-notes/actors.md §8.9; hypothesis: default 90.0 from GECK wiki Complete List of GameSettings secondary lookup, not yet verified by an original-game GetGameSetting probe]` | None yet (`actors.md §8.9` keeps `WALK_TURN_RATE`) |
-| `iAntiCheatDuration` | `Int` | `60` | `[hypothesis: GECK wiki Complete List of GameSettings secondary lookup = 60; not yet verified by an original-game GetGameSetting probe]` | None yet (script/console store parity) |
-| `fSeenDataUpdateRadius` | `Float` | `1024.0` | `[hypothesis: GECK wiki Complete List of GameSettings secondary lookup = 1024.0; not yet verified by an original-game GetGameSetting probe]` | None yet (script/console store parity) |
+| `fCombatEnvironmentBloodChance` | `Float` | `0.75` | `[documented: https://geckwiki.com/index.php?title=FCombatEnvironmentBloodChance, "Default = 0.7500"; docs/spec-notes/impact-decals.md §4a]` | `engine/nvf-play/src/combat.rs` (`World::setting_f32`, fallback already `WORLD_BLOOD_CHANCE = 0.75`) |
+| `iDismemberBloodDecalCount` | `Int` | `10` | `[documented: https://geckwiki.com/index.php?title=Complete_List_of_GameSettings, "iDismemberBloodDecalCount, 10.000000"]` | None yet (script/console store parity) |
+| `fGunWobbleChaseDriftTime` | `Float` | `0.75` | `[documented: https://geckwiki.com/index.php?title=Complete_List_of_GameSettings, "fGunWobbleChaseDriftTime, 0.750000"]` | None yet (script/console store parity) |
+| `fIronSightsFOVTimeChange` | `Float` | `0.25` | `[documented: https://geckwiki.com/index.php?title=Complete_List_of_GameSettings, "fIronSightsFOVTimeChange, 0.250000"]` | None yet (script/console store parity) |
+| `FCharacterDefaultTurningSpeed` | `Float` | `90.0` | `[documented: https://geckwiki.com/index.php?title=Complete_List_of_GameSettings, "fCharacterDefaultTurningSpeed, 90.000000"; setting name also on https://geckwiki.com/index.php?title=Settings, docs/spec-notes/actors.md §8.9]` | None yet (`actors.md §8.9` keeps `WALK_TURN_RATE`) |
+| `iAntiCheatDuration` | `Int` | `60` | `[documented: https://geckwiki.com/index.php?title=Complete_List_of_GameSettings, "iAntiCheatDuration, 60.000000"]` | None yet (script/console store parity) |
+| `fSeenDataUpdateRadius` | `Float` | `1024.0` | `[documented: https://geckwiki.com/index.php?title=Complete_List_of_GameSettings, "fSeenDataUpdateRadius, 1024.000000"]` | None yet (script/console store parity) |
 
 ## 3. Vanilla impact
 
@@ -43,7 +48,6 @@ Unmodded vanilla gameplay is unchanged:
 
 - `fCombatEnvironmentBloodChance` already defaulted to `0.75` (`WORLD_BLOOD_CHANCE`) when
   absent from the load order.
-- `fKnockbackForceMax` is already `512.0` in `FalloutNV.esm` and `fnv_combat::tuning`.
 - The other six settings have no gameplay consumer reading them yet, and `FormStore::settings`
   continues to hold only loaded plugin `GMST` records.
 - Unknown setting names continue to fail cleanly (`No game setting <name>` / `0`).

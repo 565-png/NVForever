@@ -2818,12 +2818,12 @@ fn builtin_default_gmsts_resolve_mutate_and_yield_to_esm_overrides() {
     let f = fixture();
     let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
 
-    // Absent from the synthetic ESM, all 8 seeded engine defaults resolve and mutate.
+    // Absent from the synthetic ESM, all 7 seeded engine defaults resolve and mutate.
     assert_eq!(w.setting_value("fCombatEnvironmentBloodChance"), Some(&Setting::Float(0.75)));
     assert_eq!(w.setting_value("iDismemberBloodDecalCount"), Some(&Setting::Int(10)));
     assert_eq!(w.setting_value("fGunWobbleChaseDriftTime"), Some(&Setting::Float(0.75)));
     assert_eq!(w.setting_value("fIronSightsFOVTimeChange"), Some(&Setting::Float(0.25)));
-    assert_eq!(w.setting_value("fKnockbackForceMax"), Some(&Setting::Float(512.0)));
+    assert_eq!(w.setting_value("fKnockbackForceMax"), None);
     assert_eq!(w.setting_value("FCharacterDefaultTurningSpeed"), Some(&Setting::Float(90.0)));
     assert_eq!(w.setting_value("fcharacterdefaultturningspeed"), Some(&Setting::Float(90.0)));
     assert_eq!(w.setting_value("iAntiCheatDuration"), Some(&Setting::Int(60)));

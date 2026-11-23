@@ -25,30 +25,27 @@ pub enum Setting {
 /// Precedence in [`crate::World`]: live session override (`setting_changes`) > load-order
 /// `GMST` record (`FormStore::settings`) > this table [design].
 pub const BUILTIN_DEFAULTS: &[(&str, Setting)] = &[
-    // [documented: GECK wiki FCombatEnvironmentBloodChance, "Default = 0.7500";
-    // docs/spec-notes/impact-decals.md §4a].
+    // [documented: https://geckwiki.com/index.php?title=FCombatEnvironmentBloodChance,
+    // "Default = 0.7500"; docs/spec-notes/impact-decals.md §4a].
     ("fCombatEnvironmentBloodChance", Setting::Float(0.75)),
-    // [hypothesis: GECK wiki Complete List of GameSettings secondary lookup = 10; not yet
-    // verified by an original-game GetGameSetting probe].
+    // [documented: https://geckwiki.com/index.php?title=Complete_List_of_GameSettings,
+    // "iDismemberBloodDecalCount, 10.000000"].
     ("iDismemberBloodDecalCount", Setting::Int(10)),
-    // [hypothesis: GECK wiki Complete List of GameSettings secondary lookup = 0.75; not
-    // yet verified by an original-game GetGameSetting probe].
+    // [documented: https://geckwiki.com/index.php?title=Complete_List_of_GameSettings,
+    // "fGunWobbleChaseDriftTime, 0.750000"].
     ("fGunWobbleChaseDriftTime", Setting::Float(0.75)),
-    // [hypothesis: GECK wiki Complete List of GameSettings secondary lookup = 0.25; not
-    // yet verified by an original-game GetGameSetting probe].
+    // [documented: https://geckwiki.com/index.php?title=Complete_List_of_GameSettings,
+    // "fIronSightsFOVTimeChange, 0.250000"].
     ("fIronSightsFOVTimeChange", Setting::Float(0.25)),
-    // [documented: GECK wiki Melee Knockback Formula, 512.0; observed: FalloutNV.esm GMST
-    // = 512, docs/spec-notes/combat-data.md §3].
-    ("fKnockbackForceMax", Setting::Float(512.0)),
-    // [documented: setting name on GECK wiki Settings list, docs/spec-notes/actors.md §8.9;
-    // hypothesis: default 90.0 from GECK wiki Complete List of GameSettings secondary
-    // lookup, not yet verified by an original-game GetGameSetting probe].
+    // [documented: https://geckwiki.com/index.php?title=Complete_List_of_GameSettings,
+    // "fCharacterDefaultTurningSpeed, 90.000000"; setting name also on
+    // https://geckwiki.com/index.php?title=Settings, docs/spec-notes/actors.md §8.9].
     ("FCharacterDefaultTurningSpeed", Setting::Float(90.0)),
-    // [hypothesis: GECK wiki Complete List of GameSettings secondary lookup = 60; not yet
-    // verified by an original-game GetGameSetting probe].
+    // [documented: https://geckwiki.com/index.php?title=Complete_List_of_GameSettings,
+    // "iAntiCheatDuration, 60.000000"].
     ("iAntiCheatDuration", Setting::Int(60)),
-    // [hypothesis: GECK wiki Complete List of GameSettings secondary lookup = 1024.0; not
-    // yet verified by an original-game GetGameSetting probe].
+    // [documented: https://geckwiki.com/index.php?title=Complete_List_of_GameSettings,
+    // "fSeenDataUpdateRadius, 1024.000000"].
     ("fSeenDataUpdateRadius", Setting::Float(1024.0)),
 ];
 
@@ -122,7 +119,7 @@ mod tests {
         assert_eq!(builtin_default("iDismemberBloodDecalCount"), Some(&Setting::Int(10)));
         assert_eq!(builtin_default("fGunWobbleChaseDriftTime"), Some(&Setting::Float(0.75)));
         assert_eq!(builtin_default("fIronSightsFOVTimeChange"), Some(&Setting::Float(0.25)));
-        assert_eq!(builtin_default("fKnockbackForceMax"), Some(&Setting::Float(512.0)));
+        assert_eq!(builtin_default("fKnockbackForceMax"), None);
         assert_eq!(builtin_default("FCharacterDefaultTurningSpeed"), Some(&Setting::Float(90.0)));
         assert_eq!(builtin_default("fCharacterDefaultTurningSpeed"), Some(&Setting::Float(90.0)));
         assert_eq!(builtin_default("iAntiCheatDuration"), Some(&Setting::Int(60)));
