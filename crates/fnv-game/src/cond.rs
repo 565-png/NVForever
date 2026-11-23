@@ -119,6 +119,20 @@ impl ParamTypes {
         for (i, t) in XEDIT_ONLY {
             m.entry(*i).or_insert_with(|| t.iter().map(|s| s.to_string()).collect());
         }
+        // Extender functions put in a CTDA by a mod: the condition index is the opcode the
+        // original gave the function (command_opcodes.json) less 0x1000, and the
+        // parameters are read by the catalogue's kinds (`extender_param_types`), so the
+        // bridge in `Game::condition_value` can hand them to the named handler (#3616).
+        for f in functions.get("functions").and_then(Json::as_array).into_iter().flatten() {
+            if f.get("family").and_then(Json::as_str) != Some("extender") {
+                continue;
+            }
+            let Some(name) = f.get("name").and_then(Json::as_str) else { continue };
+            let Some(op) = crate::nvse_debug::opcode_of(name).and_then(|o| u16::try_from(o).ok()).filter(|o| *o >= 0x1000) else { continue };
+            if let Some(t) = extender_param_types(name, f.get("params").and_then(Json::as_array).map(Vec::as_slice).unwrap_or(&[])) {
+                m.entry(op - 0x1000).or_insert(t);
+            }
+        }
         // These three named extender getters already have portable implementations and
         // observed opcodes in schemas/script/command_opcodes.json. The catalogue lists
         // a perk-form parameter for GetPerkRank and none for GetPCUsingIronSights or
@@ -129,6 +143,33 @@ impl ParamTypes {
         m.entry(IS_PLAYER_SWIMMING).or_default();
         ParamTypes(m)
     }
+}
+
+/// Extender functions whose condition parameters are not what their script parameters
+/// say: AuxVarGetFltCond's "Quest" is a quest chosen in the condition's parameter
+/// window, and its "Integer" the index of that quest script's string variable
+/// [documented: GECK wiki AuxVarGetFltCond].
+const EXTENDER_CTDA_TYPES: &[(&str, &[&str])] = &[("AuxVarGetFltCond", &["ptQuest", "ptInteger"])];
+
+/// The xEdit-style parameter types of extender function `name` in a CTDA, from the
+/// catalogue's parameter kinds: an `int` is an integer, a form, reference or other
+/// record a FormID (mapped through the plugin's masters). `None` when a parameter is of
+/// a kind a CTDA's four bytes cannot hold (a string, a float) and no entry of
+/// [`EXTENDER_CTDA_TYPES`] says otherwise [design: CTDA parameters are four raw bytes,
+/// xEdit wbCTDA].
+pub(crate) fn extender_param_types(name: &str, params: &[Json]) -> Option<Vec<String>> {
+    if let Some((_, t)) = EXTENDER_CTDA_TYPES.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+        return Some(t.iter().map(|s| s.to_string()).collect());
+    }
+    params
+        .iter()
+        .take(2)
+        .map(|p| match p.get("kind").and_then(Json::as_str) {
+            Some("int") => Some("ptInteger".to_string()),
+            Some("form" | "reference" | "other") => Some("ptForm".to_string()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// IsGreetingPlayer's condition index, without parameters [documented: xEdit

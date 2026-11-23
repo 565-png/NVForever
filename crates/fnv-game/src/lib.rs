@@ -71,6 +71,8 @@ mod common;
 #[cfg(test)]
 mod faction_modifier_tests;
 #[cfg(test)]
+mod extender_ctda_tests;
+#[cfg(test)]
 mod base_functions_tests;
 pub mod companion_wheel;
 pub mod coop;
