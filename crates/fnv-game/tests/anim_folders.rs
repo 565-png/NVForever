@@ -440,9 +440,85 @@ fn direct_kf_subfolders_resolve_and_isolate_nested_sets() {
     );
 }
 
-/// `chances.txt` weighted random selection follows exact weights, excludes weight-0
-/// variants, preserves unweighted sibling `.kf` files, works inside `Mod*` subfolders,
-/// and leaves author-note `chances.txt` files (no matching `.kf` keys) undisturbed.
+/// Two consecutive polls with nothing changed keep the exact same `chances.txt` weighted
+/// pick and leave `Game::rng` completely untouched; switching weapons or changing the
+/// matching entry set re-rolls from `AnimFolders`'s separate RNG while still leaving
+/// `Game::rng` untouched.
+#[test]
+fn chances_txt_pick_is_stable_across_unchanged_polls_and_leaves_game_rng_untouched() {
+    files();
+    let f = fixture();
+    let world = World::new(&f.forms, &f.refs, SimConfig::default());
+    let mut g = Game::new(&f.data, world, GameConfig { seed: 2026, ..GameConfig::default() });
+    g.player_entered(Some(FormId(ROOM)));
+    g.tick();
+
+    q(&mut g, "player.AddItem ChancesGun 1\nplayer.AddItem VanillaGun 1\nplayer.EquipItem ChancesGun");
+    let rng_before = g.rng.clone();
+
+    // First poll selects a weighted variant; a second (and further) poll with nothing
+    // changed keeps the exact same pick and never touches Game::rng.
+    g.refresh_anim_folders();
+    let first_poll = g.anim_overrides(FormId::PLAYER_REF, true);
+    assert_eq!(first_poll.len(), 2, "expected 1 unweighted + 1 weighted pick, got {first_poll:?}");
+    assert_eq!(first_poll[0], "AnimGroupOverride\\ChancesPack\\_1stPerson\\2hrAttack3.kf");
+    assert_eq!(g.rng, rng_before, "chances.txt draw must not touch Game::rng");
+
+    for _ in 0..32 {
+        g.refresh_anim_folders();
+        assert_eq!(
+            g.anim_overrides(FormId::PLAYER_REF, true),
+            first_poll,
+            "unchanged poll must keep the same chances.txt pick"
+        );
+    }
+    assert_eq!(g.rng, rng_before, "repeated polls must leave Game::rng untouched");
+
+    // Changing the equipped weapon and switching back invalidates the cached pick so the
+    // pool re-rolls from the separate RNG (both positive-weight variants eventually appear),
+    // while still leaving Game::rng untouched.
+    let mut saw_base = false;
+    let mut saw_a = false;
+    for _ in 0..64 {
+        q(&mut g, "player.EquipItem VanillaGun");
+        g.refresh_anim_folders();
+        q(&mut g, "player.EquipItem ChancesGun");
+        g.refresh_anim_folders();
+        let picked = g.anim_overrides(FormId::PLAYER_REF, true);
+        if picked[1].ends_with("2haJamF.kf") {
+            saw_base = true;
+        } else if picked[1].ends_with("2haJamF_a.kf") {
+            saw_a = true;
+        }
+        if saw_base && saw_a {
+            break;
+        }
+    }
+    assert!(saw_base && saw_a, "changing weapons should re-roll from the separate RNG");
+    assert_eq!(g.rng, rng_before, "re-rolling on weapon change must still leave Game::rng untouched");
+
+    // Changing the matching entry set (via TestFlag condition) also re-rolls cleanly
+    // without touching Game::rng.
+    let mut saw_entry_change_other = false;
+    let before_flag = g.anim_overrides(FormId::PLAYER_REF, true)[1].clone();
+    for i in 0..32 {
+        let flag = if i % 2 == 0 { 1 } else { 0 };
+        q(&mut g, &format!("set TestFlag to {flag}"));
+        g.refresh_anim_folders();
+        let after = g.anim_overrides(FormId::PLAYER_REF, true);
+        if after[1] != before_flag {
+            saw_entry_change_other = true;
+            break;
+        }
+    }
+    assert!(saw_entry_change_other, "changing the matching entry set should re-roll the pool");
+    assert_eq!(g.rng, rng_before, "re-rolling on entry-set change must still leave Game::rng untouched");
+}
+
+/// `chances.txt` weighted random selection follows exact weights when re-rolled across
+/// weapon equips, excludes weight-0 variants, preserves unweighted sibling `.kf` files,
+/// works inside `Mod*` subfolders, leaves author-note `chances.txt` files undisturbed,
+/// and never consumes `Game::rng`.
 #[test]
 fn chances_txt_weighted_selection_distribution_and_zero_exclusion() {
     files();
@@ -452,12 +528,18 @@ fn chances_txt_weighted_selection_distribution_and_zero_exclusion() {
     g.player_entered(Some(FormId(ROOM)));
     g.tick();
 
-    q(&mut g, "player.AddItem ChancesGun 1\nplayer.EquipItem ChancesGun");
+    q(&mut g, "player.AddItem ChancesGun 1\nplayer.AddItem VanillaGun 1\nplayer.EquipItem ChancesGun");
+    let rng_before = g.rng.clone();
     let mut base_hits = 0usize;
     let mut a_hits = 0usize;
     let mut b_hits = 0usize;
     let trials = 2_000usize;
     for _ in 0..trials {
+        // Switching away and back changes the weapon context so each trial draws once from
+        // the dedicated `AnimFolders` RNG.
+        q(&mut g, "player.EquipItem VanillaGun");
+        g.refresh_anim_folders();
+        q(&mut g, "player.EquipItem ChancesGun");
         g.refresh_anim_folders();
         let list = g.anim_overrides(FormId::PLAYER_REF, true);
         // Unweighted sibling `2hrAttack3.kf` is always present alongside the 1 weighted pick.
@@ -475,23 +557,26 @@ fn chances_txt_weighted_selection_distribution_and_zero_exclusion() {
     let a_share = a_hits as f64 / trials as f64;
     assert!((base_share - 0.75).abs() < 0.03, "base_share={base_share}");
     assert!((a_share - 0.25).abs() < 0.03, "a_share={a_share}");
+    assert_eq!(g.rng, rng_before, "2,000 weighted draws must leave Game::rng untouched");
 
     // Deterministic reproducibility: a fresh Game with the same seed draws the same sequence.
-    let world2 = World::new(&f.forms, &f.refs, SimConfig::default());
-    let mut g2 = Game::new(&f.data, world2, GameConfig { seed: 2026, ..GameConfig::default() });
-    g2.player_entered(Some(FormId(ROOM)));
-    g2.tick();
-    q(&mut g2, "player.AddItem ChancesGun 1\nplayer.EquipItem ChancesGun");
-    let seq1 = {
-        let world3 = World::new(&f.forms, &f.refs, SimConfig::default());
-        let mut g3 = Game::new(&f.data, world3, GameConfig { seed: 2026, ..GameConfig::default() });
-        g3.player_entered(Some(FormId(ROOM)));
-        g3.tick();
-        q(&mut g3, "player.AddItem ChancesGun 1\nplayer.EquipItem ChancesGun");
-        (0..16).map(|_| { g3.refresh_anim_folders(); g3.anim_overrides(FormId::PLAYER_REF, true) }).collect::<Vec<_>>()
+    let draw_sequence = || {
+        let world = World::new(&f.forms, &f.refs, SimConfig::default());
+        let mut game = Game::new(&f.data, world, GameConfig { seed: 2026, ..GameConfig::default() });
+        game.player_entered(Some(FormId(ROOM)));
+        game.tick();
+        q(&mut game, "player.AddItem ChancesGun 1\nplayer.AddItem VanillaGun 1");
+        (0..16)
+            .map(|_| {
+                q(&mut game, "player.EquipItem VanillaGun");
+                game.refresh_anim_folders();
+                q(&mut game, "player.EquipItem ChancesGun");
+                game.refresh_anim_folders();
+                game.anim_overrides(FormId::PLAYER_REF, true)
+            })
+            .collect::<Vec<_>>()
     };
-    let seq2 = (0..16).map(|_| { g2.refresh_anim_folders(); g2.anim_overrides(FormId::PLAYER_REF, true) }).collect::<Vec<_>>();
-    assert_eq!(seq1, seq2, "weighted selection must be deterministic for identical GameConfig::seed");
+    assert_eq!(draw_sequence(), draw_sequence(), "weighted selection must be deterministic for identical GameConfig::seed");
 
     // Mod1 subfolder with its own `chances.txt` (`2hrReloadA.kf = 0`, `2hrReloadA_a.kf = 100`).
     q(&mut g, "player.SetEquippedWeaponModFlags 1");
@@ -507,6 +592,7 @@ fn chances_txt_weighted_selection_distribution_and_zero_exclusion() {
     let with_notes = g.anim_overrides(FormId::PLAYER_REF, true);
     assert!(with_notes.contains(&"AnimGroupOverride\\AuthorNotesPack\\_1stPerson\\2haJamF.kf".to_string()));
     assert!(with_notes.contains(&"AnimGroupOverride\\AuthorNotesPack\\_1stPerson\\2haJamF_a.kf".to_string()));
+    assert_eq!(g.rng, rng_before, "Mod1 and author-note chances.txt checks must leave Game::rng untouched");
 }
 
 /// Vanilla weapons with no matching `AnimGroupOverride` JSON entries remain completely

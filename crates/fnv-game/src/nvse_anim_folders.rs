@@ -13,12 +13,17 @@
 
 use crate::game::Game;
 use fnv_sim::FormId;
-use rand_core::RngCore;
+use rand_chacha::ChaCha8Rng;
+use rand_core::{RngCore, SeedableRng};
 use serde_json::Value as Json;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// The folder under meshes.
 pub const ROOT: &str = "AnimGroupOverride";
+
+/// Domain-separated seed mix for `AnimFolders`'s dedicated `chances.txt` RNG so weighted
+/// animation picks never perturb `Game::rng` [design].
+const CHANCES_RNG_MIX: u64 = 0xA11F_01D5;
 
 /// How often the actors' entries are checked again, in frames (at 60 a second, four
 /// times a second) [decision: the original checks a condition when an animation starts,
@@ -30,7 +35,7 @@ const REFRESH_FRAMES: u64 = 15;
 /// weight)` pair is a `.kf` path under meshes with a finite weight `> 0.0`, ordered
 /// deterministically by path. Selection picks one file with probability proportional to
 /// its weight [hypothesis: explicit file weights in `chances.txt`; design: fail-closed
-/// validation and deterministic sampling via `Game::rng`].
+/// validation and deterministic sampling via a dedicated `AnimFolders` RNG].
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeightedGroup {
     pub candidates: Vec<(String, f64)>,
@@ -89,8 +94,34 @@ impl FolderEntry {
     }
 }
 
+/// Context identifying an actor's current matching `AnimGroupOverride` state: equipped
+/// weapon, equipped weapon-mod mask, and sorted matching entry orders. While this stays
+/// unchanged across periodic polls, `chances.txt` picks remain stable [design].
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActorPickContext {
+    weapon: Option<FormId>,
+    weapon_mods: u8,
+    entry_orders: Vec<usize>,
+}
+
+/// Identifies one `chances.txt` weighted pool within an actor's view:
+/// `(first_person, entry.order, mod_mask, pool_index)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct PoolKey {
+    first: bool,
+    entry_order: usize,
+    mod_mask: u8,
+    pool_index: usize,
+}
+
+#[derive(Debug, Clone)]
+struct CachedActorPicks {
+    context: ActorPickContext,
+    chosen: HashMap<PoolKey, String>,
+}
+
 /// What the folders give.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct AnimFolders {
     loaded: bool,
     pub entries: Vec<FolderEntry>,
@@ -100,6 +131,31 @@ pub struct AnimFolders {
     pub active: HashMap<(FormId, bool), Vec<String>>,
     /// Condition texts that failed, warned about once.
     warned: HashSet<String>,
+    /// Dedicated RNG for `chances.txt` weighted picks, kept separate from `Game::rng` so
+    /// animation packs never shift unrelated gameplay/script rolls [design]. Not saved.
+    rng: ChaCha8Rng,
+    /// Stable `chances.txt` picks per actor, retained until the actor's equipped weapon,
+    /// weapon mods, or matching entry set changes [design]. Not saved.
+    picks: HashMap<FormId, CachedActorPicks>,
+}
+
+impl Default for AnimFolders {
+    fn default() -> Self {
+        Self::with_seed(0)
+    }
+}
+
+impl AnimFolders {
+    pub(crate) fn with_seed(seed: u64) -> Self {
+        Self {
+            loaded: false,
+            entries: Vec::new(),
+            active: HashMap::new(),
+            warned: HashSet::new(),
+            rng: ChaCha8Rng::seed_from_u64(seed ^ CHANCES_RNG_MIX),
+            picks: HashMap::new(),
+        }
+    }
 }
 
 /// Normalized lowercase folder key for deduplicating walked folders and identifying
@@ -635,7 +691,9 @@ impl Game<'_> {
     /// Evaluate `entries` for one actor `a`, writing its active third- and first-person
     /// override lists into `active`. Matching `Mod1`–`Mod3` (and combined) buckets are
     /// appended after base files in specificity order; any `chances.txt` weighted pools
-    /// draw deterministically from `self.rng`.
+    /// draw from `AnimFolders`'s dedicated RNG (never `Game::rng`) and keep their pick
+    /// stable per actor and pool until the equipped weapon, weapon-mod mask, or matching
+    /// entry set changes [design].
     fn eval_anim_folders_for(&mut self, entries: &[FolderEntry], a: FormId, active: &mut HashMap<(FormId, bool), Vec<String>>) {
         let base = crate::functions::base_of(self, a);
         let weapon = crate::functions::items::equipped_weapon(self, a);
@@ -660,6 +718,16 @@ impl Game<'_> {
             hold.push(e);
         }
         hold.sort_by_key(|e| (e.priority, e.order));
+        let context = ActorPickContext {
+            weapon,
+            weapon_mods,
+            entry_orders: hold.iter().map(|e| e.order).collect(),
+        };
+        let mut chosen = match self.anim_folders.picks.remove(&a) {
+            Some(cached) if cached.context == context => cached.chosen,
+            _ => HashMap::new(),
+        };
+        let mut has_weighted = false;
         for first in [false, true] {
             let mut files = Vec::new();
             for e in &hold {
@@ -669,20 +737,44 @@ impl Game<'_> {
                     (&e.third, &e.third_weighted, &e.third_mods)
                 };
                 files.extend(base_files.iter().cloned());
-                for wg in base_weighted {
-                    let u = rng_unit(&mut self.rng);
-                    if let Some(pick) = select_weighted(&wg.candidates, u) {
-                        files.push(pick.to_string());
+                for (pool_index, wg) in base_weighted.iter().enumerate() {
+                    has_weighted = true;
+                    let key = PoolKey { first, entry_order: e.order, mod_mask: 0, pool_index };
+                    let pick = match chosen.get(&key) {
+                        Some(existing) => Some(existing.clone()),
+                        None => {
+                            let u = rng_unit(&mut self.anim_folders.rng);
+                            select_weighted(&wg.candidates, u).map(|p| {
+                                let owned = p.to_string();
+                                chosen.insert(key, owned.clone());
+                                owned
+                            })
+                        }
+                    };
+                    if let Some(pick) = pick {
+                        files.push(pick);
                     }
                 }
                 if weapon_mods != 0 {
                     for bucket in mod_buckets {
                         if bucket.mask != 0 && (weapon_mods & bucket.mask) == bucket.mask {
                             files.extend(bucket.files.iter().cloned());
-                            for wg in &bucket.weighted {
-                                let u = rng_unit(&mut self.rng);
-                                if let Some(pick) = select_weighted(&wg.candidates, u) {
-                                    files.push(pick.to_string());
+                            for (pool_index, wg) in bucket.weighted.iter().enumerate() {
+                                has_weighted = true;
+                                let key = PoolKey { first, entry_order: e.order, mod_mask: bucket.mask, pool_index };
+                                let pick = match chosen.get(&key) {
+                                    Some(existing) => Some(existing.clone()),
+                                    None => {
+                                        let u = rng_unit(&mut self.anim_folders.rng);
+                                        select_weighted(&wg.candidates, u).map(|p| {
+                                            let owned = p.to_string();
+                                            chosen.insert(key, owned.clone());
+                                            owned
+                                        })
+                                    }
+                                };
+                                if let Some(pick) = pick {
+                                    files.push(pick);
                                 }
                             }
                         }
@@ -692,6 +784,9 @@ impl Game<'_> {
             if !files.is_empty() {
                 active.insert((a, first), files);
             }
+        }
+        if has_weighted {
+            self.anim_folders.picks.insert(a, CachedActorPicks { context, chosen });
         }
     }
 
@@ -703,9 +798,10 @@ impl Game<'_> {
         }
         let entries = std::mem::take(&mut self.anim_folders.entries);
         let mut active = HashMap::new();
-        for a in actors {
+        for &a in &actors {
             self.eval_anim_folders_for(&entries, a, &mut active);
         }
+        self.anim_folders.picks.retain(|a, _| actors.contains(a));
         self.anim_folders.entries = entries;
         self.anim_folders.active = active;
     }
@@ -742,8 +838,6 @@ impl Game<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand_chacha::ChaCha8Rng;
-    use rand_core::SeedableRng;
 
     #[test]
     fn mod_folder_mask_parses_single_and_combined_slots() {

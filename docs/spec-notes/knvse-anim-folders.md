@@ -110,10 +110,13 @@ A file is a list of entries, or one entry; 59 files are empty. An entry's keys:
   with weight `0` are excluded; positive-weighted matched files form weighted pools
   (split by underscore-delimited base stem when multiple distinct multi-file variant
   families exist in the same directory, otherwise one pool for the directory) and select
-  one path per pool deterministically via `Game::rng` [design]. Unmatched `.kf` files
-  (and directories whose `chances.txt` contains only author notes such as `Short: 20%`
-  with no matching `.kf` filenames) remain unconditional and do not touch `Game::rng`
-  [design].
+  one path per pool deterministically via `AnimFolders`'s own dedicated `ChaCha8Rng`
+  (separate from `Game::rng`, so animation packs never perturb unrelated gameplay rolls)
+  [design]. Each actor's picks are cached per pool and stay stable across periodic polls
+  until the actor's equipped weapon, weapon-mod mask, or matching entry set changes
+  [design]. Unmatched `.kf` files (and directories whose `chances.txt` contains only
+  author notes such as `Short: 20%` with no matching `.kf` filenames) remain
+  unconditional and do not draw from either RNG [design].
 - **Which hold:** four times a second, for the player and each actor the engine draws: the
   entries for the actor's reference, its base or its equipped weapon, and those for every
   actor, whose condition holds on the actor (EvaluateString's compiler; a condition that

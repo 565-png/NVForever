@@ -2620,7 +2620,7 @@ impl<'a> Game<'a> {
             save_files: Default::default(),
             traits: Default::default(),
             anim_paths: Default::default(),
-            anim_folders: Default::default(),
+            anim_folders: crate::nvse_anim_folders::AnimFolders::with_seed(cfg.seed),
             knvse: Default::default(),
             jippp: Default::default(),
             vheyes: Default::default(),
