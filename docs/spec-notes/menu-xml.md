@@ -1408,3 +1408,66 @@ texels square (`textureSize=1024`, taken to be the plugin INI's default). Neithe
 been observed in the original game. Open: the plugin's
 exact look (classic mode's shading, interiors under a ceiling 10,000 over the player)
 and the INI's other settings are not read; the picture is the lit scene from above.
+
+## 12. BookMenu layout variants and JIP TextInput layout (`BookMenu`, `TextEditMenu`)
+
+No third-party plugin DLL or source code was consulted; this section relies solely on
+NVForever's existing menu-index rules, public GECK wiki documentation, and public XML
+menu layouts.
+
+### 12.1 `BookMenu` layout variants (`fnv_ui::MenuIndex`)
+
+- [documented: `menus\book_menu.xml`, audio.md; GECK wiki Hardcoded UI Shortcuts,
+  revision 39903 (`BookMenu` class ID 1026)] The base game defines `BookMenu` in
+  `menus\book_menu.xml` with `<menu name="BookMenu"><class>&BookMenu;</class>`.
+- [design: `crates/fnv-ui/src/index.rs`] Book-display mods (such as BookMenuRestored)
+  ship additional alternate-background `<menu name="BookMenu"><class>&BookMenu;</class>`
+  XML files directly under `menus\` beside `menus\book_menu.xml`. Because ASCII sorting
+  places `menus\book_menu.xml` (`_` = 95) before names like `menus\bookbackground1.xml`
+  (`b` = 98), the generic later-sorted-path-wins rule previously clobbered
+  `menus\book_menu.xml` and emitted two duplicate warnings per variant. When canonical
+  `menus\book_menu.xml` is present alongside alternate `BookMenu` XML files,
+  `MenuIndex::build` keeps `menus\book_menu.xml` as the primary `files` and `classes`
+  entry regardless of alphabetical order, records the alternate paths in sorted order
+  under `MenuIndex::variants("BookMenu")`, and suppresses duplicate-menu / duplicate-class
+  warnings for those variants. When `menus\book_menu.xml` is absent, or for any other menu
+  name/class, `MenuIndex::build` retains its existing later-sorted-path-wins and duplicate
+  warning behavior. Unmodded vanilla (`menus\book_menu.xml` alone) is unchanged.
+
+### 12.2 `TextEditMenu` and JIP `ShowTextInputMenu` (`fnv_game::ui_text_input`)
+
+- [documented: `menus\dialog\texteditmenu.xml`, chargen.md §5; GECK wiki Hardcoded UI
+  Shortcuts, revision 39903 (`TextEditMenu` class ID 1051)] Vanilla `GetPlayerName` /
+  `ShowNameMenu` opens menu `1051` (`menus::NAME`) with `menus\dialog\texteditmenu.xml`
+  (`TEM_MainRect/textedit_prompt`, `TEM_MainRect/textedit_text`,
+  `TEM_MainRect/textedit_button_ok`).
+- [observed: `docs/spec-notes/ai-observer-jip.md` §5; public JIP LN `NVSE\Plugins\textinput\texteditmenu.xml`
+  XML layout] JIP LN's public release ships `NVSE\Plugins\textinput\texteditmenu.xml`
+  declaring `<menu name="TextEditMenu"><class>&TextEditMenu;</class>` with root numeric
+  traits `user0` (width, default 400), `user1` (height, default 200), `user2` (x offset,
+  default 0), and `user3` (y offset, default 0), plus `NOGLOW_BRANCH/TEM_TitleText`,
+  `NOGLOW_BRANCH/TEM_TextInputBox/TEM_InputText`, and `NOGLOW_BRANCH/TEM_OKButton`.
+- [design: `crates/fnv-game/src/ui_text_input.rs`, `crates/fnv-game/src/ui_loading.rs`,
+  `crates/fnv-game/src/nvse_jip12.rs`, `engine/nvf-play/src/chargen.rs`]
+  - While `ShowTextInputMenu` is active (`Game::text_input().is_some()`),
+    `ui_loading::sync` prefers `nvse\plugins\textinput\texteditmenu.xml` when present in
+    the VFS, falling back to the indexed `TextEditMenu` class path
+    (`menus\dialog\texteditmenu.xml`) when absent. Vanilla `GetPlayerName` /
+    `ShowNameMenu` (`Game::text_input().is_none()`) always loads the vanilla indexed path
+    with no extra trait writes.
+  - `MenuLifetime::unavailable` keys by `(menu_code, jip_text_input)` so a missing vanilla
+    `TextEditMenu` XML does not block a present `textinput\texteditmenu.xml` (or vice
+    versa), and switching layouts directly while menu `1051` stays open unloads the stale
+    root and rebuilds from the active layout.
+  - On build and on `SetTextInputExtendedProps` / `SetTextInputString` / live typing in
+    `nvf_play::chargen`, `ui_text_input` writes only traits that already exist in the
+    loaded XML (`Ui::set_existing`): `user0`/`user1` when positive dimensions are given,
+    `user2`/`user3` offsets, title string (`TEM_TitleText` or `textedit_prompt`), and live
+    input string (`TEM_InputText` or `textedit_text`). Live text updates touch only the
+    input text tile so script `SetUIFloat`/`SetUIString` writes on other traits are not
+    overwritten.
+- [hypothesis] Whether JIP LN's original plugin updates `TEM_InputText/string` on every
+  keystroke immediately or on a deferred menu tick, and whether it uses additional internal
+  `user*` traits on `TEM_InputText` for scrollbar line math (`user0`/`user1`/`user2`),
+  have not been observed in the original game; NVForever does not render `TextEditMenu`
+  from its XML tiles yet (the hand-built `chargen::name` box continues to draw it).
