@@ -4163,7 +4163,7 @@ capture setup, so every part of a check that needs an interior is still open.
 
 ## Added 2026-11-23 (the meal on the table eating idles, #3610)
 
-285. **Where is the plate of a table eating idle?** (P3; #3610, idles.md §10 "Objects
+290. **Where is the plate of a table eating idle?** (P3; #3610, idles.md §10 "Objects
      hung from the accumulation root".) Ours [hypothesis]: `aogenericmeal.nif` hangs from
      `Bip01` in its bind pose, so the plate sits about 70 units in front of the seated
      actor and 71 above the floor. In Primm's NCR tent (cell PrimmTentsHayes), when Lt.

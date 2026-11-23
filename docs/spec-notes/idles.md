@@ -401,7 +401,7 @@ words, with where ours stands:
   node's bind put back between the node and the object (`held_root_bind`). Mr House's
   skeleton has an identity `Bip01`, so the chamber effects do not move. An object whose
   `Prn` names a node the skeleton lacks logs `anim object: <model>: its parent node
-  <name> is not in the skeleton; hung from the root` (warning). Observer check 285.
+  <name> is not in the skeleton; hung from the root` (warning). Observer check 290.
 - Not done: the player's idles (`VAOPlayerTakeReflectron`, 0x0010BAF1, gives the same
   model to `LooseVCG01PlayerTakeReflectron`, which no script or dialogue line of
   FalloutNV.esm names [observed]), the objects' own controllers, and checking against
