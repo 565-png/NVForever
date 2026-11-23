@@ -63,6 +63,16 @@ records coverage rather than claiming unexecuted current-head results.
 
 ## Off-screen projected painter and 3D model surface consumer
 
+[hypothesis] / [design] **Provenance clarification (`#2418`):** There is no published GECK
+Wiki / JIP LN documentation page for `ProjectUITile` and no named public mod script +
+version cited here documenting that `ProjectUITile` renders an isolated XML subtree onto
+the named block of a reference's model or that an exact `1x1` rectangle withdraws it.
+Inspection of an earlier local NVForever prototype is not an `[observed]` fact about the
+original JIP LN `ProjectUITile` command; accordingly, both behaviors (drawing an isolated
+XML subtree onto the named block of the reference's model, and treating an exact `1x1`
+rectangle as withdrawal) are explicitly tagged `[hypothesis]` / `[design]` (and the
+corresponding line in `#2418` is retagged from `[observed]` to `[design]`/`[hypothesis]`).
+
 [design] `nvf_play::tiles::projected_ui` (`ProjectedUiTargets`) now consumes
 `game.ui_extra.projections`: `projected_ui::reconcile` runs before `PlaySet::Ui` to retire
 stale/shadowed sources, and `projected_ui::draw` paints each admitted subtree in isolation
