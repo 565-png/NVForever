@@ -14,6 +14,7 @@ use crate::game::Game;
 use fnv_script::vm::{ArrayKind, XKey, XVal};
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// The host's answer for a path in the archives too: 0 none, 1 a loose file, 2 inside an
@@ -39,11 +40,18 @@ pub struct Roots {
 }
 
 static ROOTS: Mutex<Option<Roots>> = Mutex::new(None);
+static ROOTS_GEN: AtomicU64 = AtomicU64::new(0);
+
+/// Monotonic revision bumped whenever process-wide file roots change.
+pub(crate) fn roots_generation() -> u64 {
+    ROOTS_GEN.load(Ordering::Relaxed)
+}
 
 /// Set the roots for the games made after this (the engine, `fnvtool --config`).
 pub fn set_roots(r: Roots) {
     if let Ok(mut g) = ROOTS.lock() {
         *g = Some(r);
+        ROOTS_GEN.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -52,6 +60,7 @@ pub fn set_roots(r: Roots) {
 pub fn update_roots(f: impl FnOnce(&mut Roots)) {
     if let Ok(mut g) = ROOTS.lock() {
         f(g.get_or_insert_with(Roots::default));
+        ROOTS_GEN.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -179,6 +188,8 @@ pub struct ModFiles {
     folders: std::collections::HashSet<String>,
     /// SUP's JSONGetValue files read with iCached, by lower-case path (`crate::nvse_sup5`).
     pub(crate) json: HashMap<String, serde_json::Value>,
+    /// Monotonic counter bumped whenever this session's written files change.
+    generation: u64,
 }
 
 /// The folder of NVForever's layer standing for the game's own folder.
@@ -367,6 +378,11 @@ fn norm(p: &str) -> String {
 }
 
 impl ModFiles {
+    /// Monotonic counter bumped on session file writes and deletes.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
     /// [`ModFiles::read`] for the other files of the crate: a Data file's text, this
     /// session's write first.
     pub(crate) fn read_text(&self, rel: &str) -> Option<String> {
@@ -447,6 +463,7 @@ impl ModFiles {
             }
         }
         self.written.insert(key, text);
+        self.generation = self.generation.wrapping_add(1);
         true
     }
 
@@ -488,6 +505,9 @@ impl ModFiles {
             if may_write(&p) && std::fs::remove_file(&p).is_ok() {
                 gone = true;
             }
+        }
+        if gone {
+            self.generation = self.generation.wrapping_add(1);
         }
         gone
     }
