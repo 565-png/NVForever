@@ -345,6 +345,31 @@ pub(super) fn find_named(ui: &Ui, root: TileId, name: &str) -> Option<TileId> {
     None
 }
 
+/// [design] Resolve a tile by its exact vanilla path first (leaving unmodded trees
+/// unchanged), falling back segment-by-segment to direct child or live descendant search
+/// under each enclosing container when a UI mod wraps a tile inside an extra `<rect>` or
+/// container. Each segment stays scoped beneath the previously resolved container so
+/// generic child names (such as `button_text` or `CI_TitleText`) never escape into a
+/// sibling subtree.
+pub(super) fn resolve_tile(ui: &Ui, path: &str) -> Option<TileId> {
+    if let Some(exact) = ui.find_tile(path) {
+        return Some(exact);
+    }
+    let mut parts = path.split('/').filter(|s| !s.is_empty());
+    let root = parts.next()?;
+    let mut cur = ui.menu(root)?;
+    for seg in parts {
+        cur = list::child(ui, cur, seg).or_else(|| {
+            ui.tile(cur)
+                .children
+                .iter()
+                .copied()
+                .find_map(|c| find_named(ui, c, seg))
+        })?;
+    }
+    Some(cur)
+}
+
 /// Whether the row's template can be found from `list` as the tree looks for it: on that tile
 /// or on one above it (`fnv_ui::Ui::add_code_tile_from_template`).
 fn has_template(ui: &Ui, list: TileId, template: &str) -> bool {
