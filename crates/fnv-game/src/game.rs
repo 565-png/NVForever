@@ -2462,6 +2462,8 @@ pub struct Session {
     package_overrides: std::collections::HashMap<FormId, crate::package::PackageDef>,
     /// Session-only `SetZoneOwner` and `SetZoneFlag` bit-1 overrides (`OtherState::zone_changes`).
     zone_changes: std::collections::HashMap<FormId, crate::nvse_anh::ZoneChange>,
+    /// Session `SetObjectEffect` (`EITM/`) overrides on loaded base forms (0 = cleared).
+    object_effect_overrides: std::collections::HashMap<FormId, FormId>,
 }
 
 /// An event handler: the event (lower case), the function or lambda, the filters by
@@ -3911,7 +3913,19 @@ impl<'a> Game<'a> {
             .map(|(&id, &def)| (id, def.clone()))
             .collect();
         self.package_overrides.retain(|id, _| !self.data.package_defs.contains_key(id));
-        Session { handlers, main_loop, main_loop_registrars, jip_seq, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits), owner_ranks: std::mem::take(&mut self.other.owner_ranks), destruction: std::mem::take(&mut self.other.jip6.destruction), perk_edits: std::mem::take(&mut self.lu3.perk_edits), ref_radius: std::mem::take(&mut self.other.lutana.ref_radius), radiation: std::mem::take(&mut self.showoff.radiation), terminal_password_notes: std::mem::take(&mut self.terminals.password_notes), package_overrides, zone_changes: std::mem::take(&mut self.other.zone_changes) }
+        let object_effect_overrides = self
+            .field_overrides
+            .iter()
+            .filter_map(|((form, key), val)| {
+                if key == "EITM/" && self.data.sigs.contains_key(form) {
+                    if let fnv_script::vm::XVal::Ref(id) = *val {
+                        return Some((*form, FormId(id)));
+                    }
+                }
+                None
+            })
+            .collect();
+        Session { handlers, main_loop, main_loop_registrars, jip_seq, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits), owner_ranks: std::mem::take(&mut self.other.owner_ranks), destruction: std::mem::take(&mut self.other.jip6.destruction), perk_edits: std::mem::take(&mut self.lu3.perk_edits), ref_radius: std::mem::take(&mut self.other.lutana.ref_radius), radiation: std::mem::take(&mut self.showoff.radiation), terminal_password_notes: std::mem::take(&mut self.terminals.password_notes), package_overrides, zone_changes: std::mem::take(&mut self.other.zone_changes), object_effect_overrides }
     }
 
     /// Take over what lasts for the session ([`Game::take_session`]).
@@ -3942,6 +3956,9 @@ impl<'a> Game<'a> {
             self.change_package(id, |d| *d = def);
         }
         self.other.zone_changes = s.zone_changes;
+        for (form, ench) in s.object_effect_overrides {
+            self.field_overrides.insert((form, "EITM/".into()), fnv_script::vm::XVal::Ref(ench.0));
+        }
     }
 
     /// Run every handler registered for `event` whose filters match, highest priority

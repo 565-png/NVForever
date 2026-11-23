@@ -546,6 +546,28 @@ true, an empty ability, invalid magic-item refusal and later synchronization of 
 different actor. These are NVForever implementation regressions, not native timing
 or original-mod acceptance claims.
 
+9. **Live `SetObjectEffect` (`EITM`) overrides**: `SetObjectEffect form [effect]` sets or
+   clears (when `effect` is omitted or null `0`) the object effect (`EITM`) of an `ARMO`,
+   `WEAP`, or `EXPL` base form [documented: GECK wiki SetObjectEffect], rejecting
+   mismatched enchantment types (`ENIT` type 3 Apparel for `ARMO`, type 2 Weapon for
+   `WEAP`/`EXPL`), invalid non-form second arguments, and unsupported base form types
+   [observed: gaps6, apparel enchantment refused on a pistol; hypothesis: `EXPL` requires
+   Weapon type and other record types or non-form second arguments are refused].
+   `Game::object_effect` and `Game::object_effect_override` unify `SetObjectEffect`
+   overrides ahead of authored `EITM` data for `GetObjectEffect`, `Game::worn_enchantments`
+   (filtered to `ARMO` + Apparel), and `Game::item_effect_text` / `GetItemEffectString`.
+   `TempCloneForm` snapshots effective `EITM` via `Game::snapshot_object_effect` so
+   pre-clone edits carry onto the clone while post-clone edits on the source or clone stay
+   isolated, including clone-of-clone chains [design: copy-at-clone snapshot isolation].
+   When an `ARMO` override changes, stale `worn_dispelled` entries for that item are
+   cleared and loaded actors' worn enchantments resync immediately [design: immediate
+   resync on live edit]. Overrides on loaded base forms carry across `Game::take_session`
+   / `Game::put_session` so startup (`gr_`) edits survive save loads within the same
+   session [hypothesis: session-scoped base-form edits are not save-baked; transient
+   `TempCloneForm` overrides are excluded]. Engine-side weapon/explosion hit-effect
+   consumers (`hit_effects.rs`) are not modified by this core-only change and can query
+   `Game::object_effect_override` in a follow-up.
+
 Not settled: GetActorValueModifier did not compile in the game's probe script (the
 function needs a different form), and the script name `PoisonResist` (the original answers
 125 on Victor: 25 + PoisonImmunity's 100) is missing from our decoder's actor value
