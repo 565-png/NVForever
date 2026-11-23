@@ -407,8 +407,10 @@ impl Game<'_> {
         }
         // A body already lying knocked out is a ragdoll already [hypothesis].
         let lying = self.knockout(r).is_some_and(|k| k.lying());
+        let day = self.game_days();
         let e = self.extra.entry(r).or_default();
         e.dead = true;
+        e.died_day = day;
         e.killer = killer;
         e.killing_hit = fatal;
         // JIP's ragdoll handlers: any actor ragdolled on death [documented:
