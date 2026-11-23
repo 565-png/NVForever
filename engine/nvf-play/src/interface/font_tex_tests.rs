@@ -253,3 +253,62 @@ fn fnt_without_any_texture_or_with_only_broken_tex_returns_stand_in() {
         assert_eq!(images.len(), 0);
     }
 }
+
+#[test]
+fn face_keeps_font_9_unloaded_even_with_tex_and_dds() {
+    let fnt_bytes = synthetic_fnt("NVFont_Test_0_Lod_A");
+    let tex_bytes = synthetic_tex(4, 4, [255, 255, 255, 255]);
+    let dds_bytes = synthetic_rgba_dds(2, 2, [200, 100, 50, 255]);
+    let files = OwnedFontFiles::new(&[
+        ("nvfont_test.fnt", fnt_bytes),
+        ("nvfont_test_0_lod_a.tex", tex_bytes),
+        ("nvfont_test_0_lod_a.dds", dds_bytes),
+    ]);
+    let data = files.data();
+    let stand_in = plain_font(31.0, 15.0);
+
+    for path in [
+        FONT_FILES[8],
+        "textures/fonts/NVFont_Test.fnt",
+        "TEXTURES\\FONTS\\NVFONT_TEST.FNT",
+    ] {
+        let mut images = Assets::<Image>::default();
+        let loaded = face(path, stand_in.clone(), Some(&data), &mut images, true);
+        assert!(loaded.image.is_none(), "font 9 must stay unloaded for {path}");
+        assert_eq!(loaded.font, stand_in);
+        assert_eq!(images.len(), 0);
+    }
+}
+
+#[test]
+fn face_loads_tex_only_fonts_for_slots_1_to_8_and_skips_slot_9() {
+    let mut entries = Vec::new();
+    for (idx, path) in FONT_FILES.iter().enumerate() {
+        let fnt_name = path.rsplit('\\').next().unwrap();
+        let stem = format!("Slot_{}_Atlas", idx + 1);
+        entries.push((fnt_name, synthetic_fnt(&stem)));
+    }
+    let tex_names: Vec<String> = (1..=9).map(|i| format!("Slot_{i}_Atlas.Tex")).collect();
+    let mut all_entries: Vec<(&str, Vec<u8>)> = entries;
+    for (idx, tex_name) in tex_names.iter().enumerate() {
+        all_entries.push((tex_name.as_str(), synthetic_tex(4, 2, [idx as u8 + 10, 40, 80, 255])));
+    }
+    let files = OwnedFontFiles::new(&all_entries);
+    let data = files.data();
+    let stand_in = plain_font(31.0, 15.0);
+    let mut images = Assets::<Image>::default();
+
+    for (idx, path) in FONT_FILES.iter().enumerate() {
+        let loaded = face(path, stand_in.clone(), Some(&data), &mut images, true);
+        if idx < 8 {
+            let (_, size) = loaded
+                .image
+                .unwrap_or_else(|| panic!("slot {} ({path}) should load .Tex without .dds", idx + 1));
+            assert_eq!(size, Vec2::new(4.0, 2.0));
+        } else {
+            assert!(loaded.image.is_none(), "slot 9 ({path}) must stay unloaded");
+            assert_eq!(loaded.font, stand_in);
+        }
+    }
+    assert_eq!(images.len(), 8);
+}

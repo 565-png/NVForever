@@ -177,16 +177,7 @@ impl FontKit<'_> {
             // own first use in `draw` counts here too, outside `tiles::write`).
             let _span = info_span!("tiles::write::font_load").entered();
             let bc = bc_supported(self.formats.as_deref());
-            // Font 9 (`NVFont_Test`) is not loaded in the original game (fonts 1-8 only
-            // [observed: hud_menus capture 2026-10-31, fonts.md §3.1; sup6 fonts,
-            // LOADED_FONTS = 8; jip-forms fontfile.9 = ""]). Keep it as the stand-in
-            // without loading its texture so vanilla Font 9 stays unchanged when
-            // `.tex`-only fonts load in slots 1-8 [design].
-            let f = if n == 9 {
-                Face { font: plain_font(31.0, 15.0), image: None, vector: None }
-            } else {
-                face(FONT_FILES[n as usize - 1], plain_font(31.0, 15.0), self.data.as_deref(), &mut self.images, bc)
-            };
+            let f = face(FONT_FILES[n as usize - 1], plain_font(31.0, 15.0), self.data.as_deref(), &mut self.images, bc);
             self.fonts.faces.insert(n, f);
             self.fonts.measure = None;
         }

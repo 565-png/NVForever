@@ -176,9 +176,10 @@ sibling `.dds`), else the `.dds` (`interface::font_tex`). This draws a Russian
 install's letters (§2.1), lets modded `.fnt` + `.tex` fonts without a `.dds` load, and
 an English install's fonts change only in getting 8 bits of alpha instead of 4. Which
 file the original reads is not known [hypothesis: the `.tex`, since a localized release
-changed only it and modded font packs ship `.tex` alone]. Font 9 (`NVFont_Test`) is kept
-as the stand-in without loading its texture at the slot-9 loaders (`tiles::draw::FontKit`,
-`credits::start`), matching the original game's unloaded font 9 (§3.1;
+changed only it and modded font packs ship `.tex` alone]. Font 9 (`NVFont_Test`,
+`FONT_FILES[8]`) is kept unloaded as the stand-in inside the shared `interface::face`
+loader (covering `tiles::draw::FontKit`, `credits::start`, `loading_look::fit_tip`, and
+all other face callers), matching the original game's unloaded font 9 (§3.1;
 `nvse_sup6::LOADED_FONTS = 8`, `GetFontFile 9` returning `""`). A `.tex` that does not
 parse (wrong size for its header) is skipped with a warning, and the `.dds` is drawn when
 present.
@@ -289,10 +290,10 @@ texture, texture middles decoded from each font's `.dds`)]
   size].
 - [observed: the archives] Font 9 (`NVFont_Test`) has its `.fnt` and a `.tex` but no
   `.dds`; in the original its tiles get no `width` or `height` and draw nothing.
-  NVForever draws a font-9 text in Bevy's stand-in font (`FontKit::load` skips loading
-  slot 9's texture), on font 7's line, and a font-9 tile among the texts whose widths the
-  tile HUD writes stops those writes (`FontKit::game_fonts`) [design: not yet the
-  original's nothing].
+  NVForever draws a font-9 text in Bevy's stand-in font (`interface::face` keeps font 9
+  unloaded), on font 7's line, and a font-9 tile among the texts whose widths the tile HUD
+  writes stops those writes (`FontKit::game_fonts`) [design: not yet the original's
+  nothing].
 - Not determined: an empty string's measure. The message box's empty title read 14 x 38
   in font 6, one space wide and one line high; NVForever's `measure` gives 0 wide and
   one line high.

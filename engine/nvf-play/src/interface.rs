@@ -648,9 +648,28 @@ fn font_file_in(path: &str, install: Option<&[Option<String>; 9]>) -> String {
     own.unwrap_or_else(|| path.to_string())
 }
 
+/// Font 9 (`FONT_FILES[8]`, `NVFont_Test`) is not loaded in the original game (fonts 1-8
+/// only [observed: hud_menus capture 2026-10-31, docs/spec-notes/fonts.md §3.1; sup6
+/// `LOADED_FONTS = 8`; `GetFontFile 9` returning `""`]). Keep it unloaded in the shared
+/// [`face`] loader so every caller (`tiles::draw::FontKit`, `credits::start`,
+/// `loading_look::fit_tip`, `wait`, etc.) keeps the vanilla stand-in consistently [design].
+fn is_unloaded_font(path: &str) -> bool {
+    path.len() == FONT_FILES[8].len()
+        && path.bytes().zip(FONT_FILES[8].bytes()).all(|(a, b)| {
+            let a = if a == b'/' { b'\\' } else { a.to_ascii_lowercase() };
+            a == b
+        })
+}
+
 /// The game's font at `path` (the install's own file for it: [`font_file`]), else `stand_in`.
 pub fn face(path: &str, stand_in: Font, data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Face {
+    if is_unloaded_font(path) {
+        return Face { font: stand_in, image: None, vector: None };
+    }
     let path = &font_file(path);
+    if is_unloaded_font(path) {
+        return Face { font: stand_in, image: None, vector: None };
+    }
     let read = data.and_then(|d| {
         let font = match Font::parse(&d.read(path)?) {
             Ok(f) => f,

@@ -280,12 +280,9 @@ pub fn start(credits: &mut Credits, data: Option<&GameData>, images: &mut Assets
     let Some(src) = data.and_then(|d| std::fs::read(d.vfs.data_dir().join("Credits.txt")).ok()) else { return false };
     // 8-bit text in this run's code page (fnv_util::text, #1439).
     let src = fnv_util::text::decode(&src);
-    for n in 1..=8u8 {
+    for n in 1..=9u8 {
         credits.faces.entry(n).or_insert_with(|| face(crate::interface::FONT_FILES[n as usize - 1], plain_font(24.0, 12.0), data, images, bc));
     }
-    // Font 9 (`NVFont_Test`) is not loaded in the original game (fonts.md §3.1); keep it
-    // as the stand-in without loading its texture [design].
-    credits.faces.entry(9).or_insert_with(|| Face { font: plain_font(24.0, 12.0), image: None, vector: None });
     let faces = &credits.faces;
     let height = |f: u8| faces.get(&f).map_or(24.0, |x| x.font.size);
     let (mut items, total) = parse(&src, height);
