@@ -152,7 +152,10 @@ Read here as [hypothesis where marked]:
   got an added rim in their pale edge colours (fall off 0.95, edge colours from
   (164, 206, 240) to (213, 210, 191)). That it looked near-white and washed the yellow
   and red fills out is a hypothesis until frames of both engines are compared
-  [hypothesis: observer-checks.md item 270].
+  [hypothesis: observer-checks.md item 270]. The maintainer's run of 2026-11-22 saw a calm
+  hologram's edges brighter than its middle by eye, without telling the membrane's edge
+  from the model's own texture, and saw no yellow or red from a scripted `pms`
+  [observed: item 270]; the darkening edge stays a [hypothesis].
 - Which records the flag reaches [observed: the main session's EFSH listing over the
   masters, 2026-11-21]: it is set on FalloutNV.esm's `PlasmaGooification`,
   `PlasmaGooificationGlow` and `PlasmaGooificationSmall` (destination Source Inverted
@@ -198,8 +201,10 @@ Read here as [hypothesis where marked]:
 - An effect shader on an actor drawn see-through keeps its overlays: coverage is judged
   on the mesh's own material, not its blended copy, and the overlays' alpha is the
   record's cycle times the actor's alpha, so at 0 the membrane goes with the body
-  [hypothesis: the original's fade of a membrane with SetActorAlpha is not documented;
-  observer-checks.md item 270]. The factor is the alpha of the see-through copy the
+  [observed at 0: in the original a placed Dead Money hologram at alpha 0 drew nothing,
+  no glow without the body; observer-checks.md item 270, the maintainer's run of
+  2026-11-22]. Between 0 and 1 the fade in step with the alpha is a [hypothesis]: the
+  same run saw the hologram unchanged at 0.5 and at about 0.7 of its brightness at 0.1. The factor is the alpha of the see-through copy the
   reference's meshes wear that frame (the actor alpha is drawn first, so a membrane
   started on an actor already at 0 starts unseen), 1 without one: the player's
   third-person body is not

@@ -3790,6 +3790,24 @@ already talking takes over at once, same topic or another; nothing is queued or 
      shows red alone [hypothesis]; (d) after a save loaded with the hologram alerted but
      not fighting, whether it stays yellow or turns blue about a second later (ours: stays
      yellow) [hypothesis].
+     **Partly answered 2026-11-22** [observed: the maintainer's run in #3423, base game + all
+     DLC + xNVSE + JIP LN, save `nvfdoc`, `coc NVDLC01Vault`, 1280 x 720; job
+     `o270_holograms`]. No Dead Money save: a hologram (CREA `NVDLC01CrHologramVaultMale`)
+     was placed with `PlaceAtMe` in the Sierra Madre vault and never turned hostile.
+     - **Calm look:** at 200 units pale cyan, about (167, 233, 241) over its pixels; by eye
+       its edges read brighter than its middle, which carries horizontal scan lines.
+       Whether the blue membrane or the model's own texture makes the bright edge was not
+       separated, so it neither confirms nor rules out ours (a darkening edge).
+     - **Yellow and red: not seen.** With `pms` of `NVDLC01HologramAttention` and then
+       `NVDLC01HologramAggressive` (after `sms` of the others) it stayed pale cyan, only
+       dimmer or brighter between frames.
+     - **SetActorAlpha:** at 0.5 unchanged by eye, at 0.1 still plainly visible (about 0.7
+       of its brightness), at 0 nothing drawn and no glow left without the body, also
+       after `sms`. Ours agrees at 0; ours fades the membrane in step with the alpha
+       between, which the 0.1 frame does not show.
+     Still open: (b) the colours during its own flicker, (c) and (d) after a save loaded
+     in combat or alert, and the threat colours; they need a hostile security hologram
+     with its emitter, in the casino or the Villa, from a Dead Money save.
 
 ## Added 2026-11-16 (environment maps on other shapes, #2841)
 
