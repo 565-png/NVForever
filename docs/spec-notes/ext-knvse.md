@@ -81,9 +81,11 @@ A first run's `Floor (time × 10)` the frame after SetAnimCurrentTime 1.5 read 1
 game's frames were slow); the row keeps whole seconds.
 
 Follow-ups (engine side, slice 2 of knvse-anim.md):
-- **Wired for drawn NPCs [design]:** layered `ActivateAnim` sequences on
-  `BlendPlayer::script_layers` with sequence priority, weight, ease-in/ease-out,
-  sequence clocks, additive poses (`SetAnimAdditive`), and `Game::set_sequence_info`
-  clip metadata publication in `play_npc_sequences`.
-- **Remaining:** player `Animator` weights/additive layers, `AllowAttack`, runtime
-  text-key triggers, and cross-sequence time synchronization.
+- **Wired [design]:** `AllowAttack` player attack-cycle cooldown, swing, and flinch
+  release (`nvf-play` `combat.rs::fire` consumes `Game::take_allow_attack`); for drawn
+  NPCs, layered `ActivateAnim` sequences on `BlendPlayer::script_layers` with sequence
+  priority, weight, ease-in/ease-out, sequence clocks, additive poses (`SetAnimAdditive`),
+  and `Game::set_sequence_info` clip metadata publication in `play_npc_sequences`.
+- **Remaining:** player `Animator` weights, offsets, global time, additive poses, and
+  sequence headers (`Game::set_sequence_info`), runtime text-key triggers
+  (`AddAnimTextKey` / `SetAnimTextKeys`), and cross-sequence time synchronization.

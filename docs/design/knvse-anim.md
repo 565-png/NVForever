@@ -54,8 +54,9 @@ slice 2 plays; CopyAnimationsToForm copies the entries too.
 
 GetAnimationAttributes, Get/SetGlobalAnimTime, the blend functions, SetAnimWeight,
 SetAnimAdditive, the text-key functions, CopyAnimationsToForm and the rest are built on
-the game side (`nvse_knvse.rs`, docs/spec-notes/ext-knvse.md). The engine's per-actor
-player does not read their state yet.
+the game side (`nvse_knvse.rs`, docs/spec-notes/ext-knvse.md). `AllowAttack` cooldown
+and flinch release is now consumed for the player in `nvf-play` (`combat.rs`) [design];
+the engine's per-actor player does not yet read the rest of this state.
 
 ## 5. The player, conditions and folders (2026-11-13)
 
@@ -100,6 +101,13 @@ player does not read their state yet.
   view starts it again when drawn (smoke `knvse-npc-sequences`). ActivateAnim's layered
   sequences play on `BlendPlayer::script_layers` with explicit sequence priority, weight,
   ease-in/ease-out, clock/seek, and additive reference poses [design].
+- **Idles and `ForcePlayIdle` / `ForceStopIdle` POV** (`nvforever` idles.rs): kNVSE
+  filename overrides apply to idle clips (`clip_path_for`) while leaving actors without
+  overrides unchanged [hypothesis: idle overrides match the overridden file name as
+  `Rig::clip` does]. `ForcePlayIdle` and `ForceStopIdle` accept optional `playerPOV`
+  (`1` third-person, `2` first-person) [documented: GECK wiki ForcePlayIdle, ForceStopIdle];
+  first-person arm-only idles without `Camera1st` play on the first-person rig without
+  locking camera/movement [design].
 - **NPCs' conditional paths and posture sets** (anim_paths.rs): an actor with a
   conditional SetActorAnimationPath gets `Game::anim_overrides_now` each frame, the world
   put back, so the replacement comes and goes with its condition; the others keep
