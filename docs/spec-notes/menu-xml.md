@@ -1422,14 +1422,15 @@ centre is written to `_MapOriginX`/`_MapOriginY`. The file's own tint (`systemco
 (not the player's body or the water's own layer), without fog, clearing to black, with
 no MSAA; it draws to 20,000 units below its height over the player; when `_CameraOffset`
 does not read, it uses the file's 10,000. At startup, `nvforever::minimap_render` reads
-`NVSE\Plugins\ModernMinimap.ini` case-insensitively through the VFS (`[observed: public
-INI NVSE\Plugins\ModernMinimap.ini shipped with Modern Minimap v1, [General]
-textureSize=1024; no DLL or plugin source consulted]`) using a BOM-, comment-, and
-UTF-8-safe byte parser; positive finite `[General] textureSize` values are clamped to
-`256..=2048` and snapped to the nearest power of two (`256`, `512`, `1024`, `2048`),
-driving both the render-target `Image` extent and the size published to `RuntimeImages`.
-When the INI is absent, omits `textureSize`, or specifies a non-finite / `< 1` / invalid
-value, NVForever defaults to `1024` so unmodded vanilla behavior is unchanged.
+`NVSE\Plugins\ModernMinimap.ini` case-insensitively through the VFS ([documented:
+ModernMinimap.ini, Modern Minimap v1 (`NVSE\Plugins\ModernMinimap.ini`, comment
+`"; Controls the texture size of the minimap render"`, default `[General] textureSize=1024`;
+no DLL or plugin source consulted)]) using a BOM-, comment-, and UTF-8-safe byte parser
+[design]; positive finite `[General] textureSize` values are clamped to `256..=2048` and
+snapped to the nearest power of two (`256`, `512`, `1024`, `2048`) [design], driving both
+the render-target `Image` extent and the size published to `RuntimeImages`. When the INI is
+absent, omits `textureSize`, or specifies a non-finite / `< 1` / invalid value, NVForever
+defaults to `1024` so unmodded vanilla behavior is unchanged [design].
 
 [hypothesis] The plugin's camera is orthographic with north up. This has not been observed
 in the original game. Open: the plugin's exact look (classic mode's shading, interiors
