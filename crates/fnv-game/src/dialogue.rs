@@ -99,8 +99,9 @@ pub struct Choice {
     /// The text is the line's prompt (else the topic's name).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub prompt: bool,
-    /// The line has the Goodbye flag: it ends the conversation when it has been said
-    /// (`Game::finish_line`).
+    /// The line ends the conversation when it has been said (`Game::finish_line`): it has
+    /// the Goodbye flag, or is the GOODBYE topic's and leads nowhere
+    /// (`Game::ends_conversation`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goodbye: bool,
     /// The entry is shaded as already chosen: the actor said this line before and the
@@ -863,7 +864,8 @@ impl<'a> Game<'a> {
     ///    line ends, and stay known after the conversation];
     /// 3. a Goodbye line ends the conversation [documented: Category:Dialogue] (with
     ///    `GameConfig::goodbye_at_once` one the player chose has ended it already, as it
-    ///    started, and ends as a farewell: `Game::choose`, `Game::end_line`);
+    ///    started, and ends as a farewell: `Game::choose`, `Game::end_line`), and so does a
+    ///    line of the GOODBYE topic that leads nowhere (`Game::ends_conversation`);
     /// 4. otherwise, if the line has follow-up lines (TCFU), the first one the actor can
     ///    say is said next, with no choice by the player [owner statement 2026-10-10:
     ///    follow-ups have no player response, as in Doc Mitchell's farewell; not yet
@@ -901,7 +903,7 @@ impl<'a> Game<'a> {
         if let Some(c) = self.dialogue.as_mut() {
             c.ending = false;
         }
-        if def.goodbye {
+        if self.ends_conversation(topic, def) {
             self.end_dialogue_as(ended::GOODBYE);
             return;
         }
@@ -926,6 +928,20 @@ impl<'a> Game<'a> {
             c.topic_list = def.choices.is_empty();
         }
         self.dialogue_transition();
+    }
+
+    /// Whether `def`, said as a line of `topic`, ends the player's conversation when it is
+    /// over: a line with the Goodbye flag [documented: Category:Dialogue], or one of the
+    /// GOODBYE topic, flagged or not, that has neither choices nor follow-up lines of its
+    /// own [documented: Quest and Dialogue Tutorial: without a topic flagged Goodbye "the
+    /// dialog will end with one of those GOODBYEs"; Conversation Tab: NPCs use the topic
+    /// when the player exits the dialogue menu; hypothesis: that its unflagged lines end it
+    /// too, issue #3477, observer check 283]. FalloutNV.esm has 2 such lines without the
+    /// flag (Keith's 0x0014E019, Jerry's 0x0014C483), Fallout 3's masters 32 (Pronto's
+    /// 0x000384CF), and none of the 34 has choices, follow-ups or a result script
+    /// [observed: `fnvtool dialogue lines --topic GOODBYE`].
+    fn ends_conversation(&self, topic: FormId, def: &InfoDef) -> bool {
+        def.goodbye || (self.data.goodbye == Some(topic) && def.choices.is_empty() && def.follow_ups.is_empty())
     }
 
     /// StartConversation with the player from `speaker` farther than [`WALK_UP_REACH`]
@@ -1144,7 +1160,7 @@ impl<'a> Game<'a> {
                 chars: if dumb { dv.topic(&topic).expect("topic").dumb_response.as_deref().unwrap_or("").chars().count() } else { dv.choice_text(topic, info).chars().count() },
                 dumb,
                 prompt: def.prompt.is_some(),
-                goodbye: def.goodbye,
+                goodbye: self.ends_conversation(topic, def),
                 darkened: def.has(info_flag::ALWAYS_DARKEN) || (said && !def.has(info_flag::INFO_REFUSAL)),
                 challenge,
             });
@@ -1214,7 +1230,8 @@ impl<'a> Game<'a> {
     /// line with the Goodbye flag is said in the conversation like any other, the player
     /// held, and ends it when it is over ([`Game::finish_line`]) [owner statement
     /// 2026-11-11, issue #2157]. With `GameConfig::goodbye_at_once` it closes the
-    /// conversation at once and goes on in the world ([`Game::say_farewell`]).
+    /// conversation at once and goes on in the world ([`Game::say_farewell`]); a line of
+    /// the GOODBYE topic without the flag is held until it is over with the switch too.
     pub fn choose(&mut self, index: usize) -> Result<FormId, String> {
         let c = self.dialogue.as_ref().ok_or("no conversation is running")?;
         if c.line.is_some() {

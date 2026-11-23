@@ -1537,6 +1537,78 @@ fn a_goodbye_line_ends_the_conversation() {
     assert!(h.speech.iter().any(|s| s.farewell && s.info == FormId(I_BYE)));
 }
 
+/// The fixture with the GOODBYE topic's line as Pronto's in Fallout 3 (#3477): no Goodbye
+/// flag.
+fn unflagged_goodbye() -> Fixture {
+    let mut f = fixture();
+    let bye = f.data.infos.get_mut(&FormId(I_BYE)).unwrap();
+    bye.goodbye = false;
+    bye.flags &= !info_flag::GOODBYE;
+    f
+}
+
+/// Issue #3477: the GOODBYE topic's line ends the conversation when it is over without
+/// the Goodbye flag too, held until then like a flagged one (#2157); its entry counts as a
+/// Goodbye (Tab).
+#[test]
+fn a_goodbye_topics_line_without_the_flag_ends_the_conversation() {
+    let f = unflagged_goodbye();
+    let mut g = at_topic_list(&f);
+    assert!(g.dialogue_choices().iter().all(|c| c.goodbye == (c.topic == FormId(GOODBYE))));
+    assert_eq!(pick(&mut g, GOODBYE), FormId(I_BYE));
+    g.tick();
+    assert!(g.dialogue.as_ref().is_some_and(|c| c.line.as_ref().is_some_and(|l| l.info == FormId(I_BYE))));
+    listen(&mut g);
+    assert!(g.dialogue.is_none() && g.speech.is_empty());
+    assert!(g.events.iter().any(|e| matches!(e.kind, EventKind::DialogueEnded { reason: "goodbye", lines: 2, .. })));
+    // Skipped to its end.
+    let mut g = at_topic_list(&f);
+    pick(&mut g, GOODBYE);
+    assert!(g.skip_response() && g.dialogue.is_none());
+    // With the switch it is not moved into the world: it ends as said to the end.
+    let mut g = at_topic_list(&f);
+    g.cfg.goodbye_at_once = true;
+    pick(&mut g, GOODBYE);
+    assert!(g.dialogue.is_some() && g.speech.is_empty());
+    listen(&mut g);
+    assert!(g.dialogue.is_none() && g.speech.is_empty());
+}
+
+/// #3477: an unflagged GOODBYE line with choices or follow-ups of its own leads on.
+#[test]
+fn a_goodbye_topics_line_without_the_flag_that_leads_on_goes_on() {
+    let mut f = unflagged_goodbye();
+    f.data.infos.get_mut(&FormId(I_BYE)).unwrap().choices = vec![FormId(T_ASK)];
+    let mut g = at_topic_list(&f);
+    assert!(g.dialogue_choices().iter().all(|c| !c.goodbye));
+    pick(&mut g, GOODBYE);
+    listen(&mut g);
+    assert_eq!(offered(&g), vec![T_ASK]);
+    let mut f = unflagged_goodbye();
+    f.data.infos.get_mut(&FormId(I_BYE)).unwrap().follow_ups = vec![FormId(B_FOLLOW)];
+    let mut g = at_topic_list(&f);
+    pick(&mut g, GOODBYE);
+    listen(&mut g);
+    assert!(g.dialogue.is_some());
+    assert!(g.events.iter().any(|e| matches!(e.kind, EventKind::LineStarted { info, .. } if info == FormId(B_FOLLOW))));
+}
+
+/// #3477: the end script of an unflagged GOODBYE line runs before the conversation ends,
+/// and the conversation it starts comes after, as for a flagged line (#1107).
+#[test]
+fn a_goodbye_topics_line_without_the_flag_hands_off_like_a_flagged_one() {
+    let mut f = unflagged_goodbye();
+    let end = f.data.infos[&FormId(H_HANDOFF)].end;
+    f.data.infos.get_mut(&FormId(I_BYE)).unwrap().end = end;
+    let mut g = at_topic_list(&f);
+    pick(&mut g, GOODBYE);
+    listen(&mut g);
+    assert_eq!(g.dialogue_actor(), Some(FormId(NPC2_REF)));
+    let ended = event_at(&g, |k| matches!(k, EventKind::DialogueEnded { actor, reason: "goodbye", .. } if actor.0 == NPC1_REF));
+    let started = event_at(&g, |k| matches!(k, EventKind::DialogueStarted { actor, .. } if actor.0 == NPC2_REF));
+    assert!(ended < started, "{ended} {started}");
+}
+
 /// Owner's playtest 2026-11-11 (#2157): the last line of a conversation holds the player
 /// like the lines before it. A chosen line with the Goodbye flag stays in the
 /// conversation, the game paused, and ends it when it is over: end script, Add Topics,
