@@ -97,10 +97,13 @@ player does not read their state yet.
 - **Script-played sequences on NPCs** (`nvforever` idles.rs, `play_npc_sequences`):
   PlayAnimationPath's sequence starts on the drawn actor's idle slot, bound to its
   skeleton, once or looping as on the player; DeactivateAnim stops it; an actor out of
-  view starts it again when drawn (smoke `knvse-npc-sequences`).
-- **NPCs' conditional paths** (anim_paths.rs): an actor with a conditional
-  SetActorAnimationPath gets `Game::anim_overrides_now` each frame, the world put back,
-  so the replacement comes and goes with its condition; the others keep
-  `Game::anim_overrides`.
-- **Still not built:** ActivateAnim's layered sequences on NPCs; NPCs' replacements
-  for anything but their standing locomotion.
+  view starts it again when drawn (smoke `knvse-npc-sequences`). ActivateAnim's layered
+  sequences play on `BlendPlayer::script_layers` with explicit sequence priority, weight,
+  ease-in/ease-out, clock/seek, and additive reference poses [design].
+- **NPCs' conditional paths and posture sets** (anim_paths.rs): an actor with a
+  conditional SetActorAnimationPath gets `Game::anim_overrides_now` each frame, the world
+  put back, so the replacement comes and goes with its condition; the others keep
+  `Game::anim_overrides`. Standing (`mt`), crouched (`sneakmt`), limping (`hurtmt`),
+  swimming (`swim`), and alert (`h2h`) locomotion sets apply matching replacements and
+  restore their shared sets when cleared [design].
+- **Still not built:** NPCs' weapon-group overrides (attacks, reloads, aims, equips).

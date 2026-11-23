@@ -80,6 +80,10 @@ run does not have:
 A first run's `Floor (time × 10)` the frame after SetAnimCurrentTime 1.5 read 16 (the
 game's frames were slow); the row keeps whole seconds.
 
-Follow-ups (engine side, slice 2 of knvse-anim.md): the engine's animation player does
-not yet read the weights, offsets, global time, additive poses or text keys kept here,
-take AllowAttack, or tell the sequence headers (`Game::set_sequence_info`).
+Follow-ups (engine side, slice 2 of knvse-anim.md):
+- **Wired for drawn NPCs [design]:** layered `ActivateAnim` sequences on
+  `BlendPlayer::script_layers` with sequence priority, weight, ease-in/ease-out,
+  sequence clocks, additive poses (`SetAnimAdditive`), and `Game::set_sequence_info`
+  clip metadata publication in `play_npc_sequences`.
+- **Remaining:** player `Animator` weights/additive layers, `AllowAttack`, runtime
+  text-key triggers, and cross-sequence time synchronization.
