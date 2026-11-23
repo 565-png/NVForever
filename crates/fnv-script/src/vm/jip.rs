@@ -125,11 +125,17 @@ pub const JIP_NAMES: [&str; 1] = ["JIP NVSE Plugin"];
 ///
 /// UIO has no script functions: the engine reads its `uio\public` lists itself
 /// (`fnv_ui`), which is all the plugin does for a mod that asks whether it is there.
+/// Improved Console (`"Improved Console"`, version 3) has no script functions of its own:
+/// NVForever provides persistent console locals (`int`/`float`/`ref`/`string_var`/
+/// `array_var`) and transparent expression/statement result printing directly in the
+/// interactive console (`docs/design/console.md`, `docs/spec-notes/ext-version.md` §5)
+/// [documented: public Nexus release v3 (mod 70801); hypothesis: exact native
+/// GetPluginVersion return value unobserved in original game].
 /// Not reported, though the catalogue has functions of theirs: yUI (its two ySI trait
 /// functions are built, its menus are not, and a mod that finds it goes on to read its
 /// tiles), and the plugins whose registered name no page gives (ITR, One111, ppNVSE,
 /// vheyes-nvse and the smaller ones): ext-version.md §6.
-pub const PLUGINS: [(&str, f64); 15] = [
+pub const PLUGINS: [(&str, f64); 16] = [
     ("JIP NVSE Plugin", JIP_VERSION),
     ("JIP LN NVSE", JIP_VERSION),
     ("ShowOffNVSE Plugin", 184.0),
@@ -145,6 +151,7 @@ pub const PLUGINS: [(&str, f64); 15] = [
     ("AnhNVSE", UNOBSERVED_VERSION),
     ("Extensions for NVSE", UNOBSERVED_VERSION),
     ("UI Organizer Plugin", UNOBSERVED_VERSION),
+    ("Improved Console", 3.0),
 ];
 
 /// The version reported for a plugin the engine builds whose own number is neither
