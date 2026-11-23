@@ -91,8 +91,11 @@ are tried in, are NVForever's reading [hypothesis unless marked]:
    - A worldspace's flag forbids travel in all its cells, whatever the cell flag
      [hypothesis]. Both are read as SetCellFlag and SetWorldspaceFlag left them [design].
    - The rule is `fnv_game::fast_travel::place_forbids`, which the map and
-     GetPCCanFastTravel share. The player's tweak Fast Travel From Anywhere lifts it on
-     the map (docs/design/tweaks.md).
+     GetPCCanFastTravel share. The player's tweak Fast Travel From Anywhere lifts it for
+     both, and for `Game::fast_travel` (docs/design/tweaks.md). The map's other travel
+     tweaks (No Fast Travel, in the Air, Near Enemies, Encumbered, No Travel on a Crippled
+     Leg, Costs a Nuka-Cola) change the map's answer only [not built for the scripts'
+     check].
 3. **In the air**: the player's collision body is not on the ground (falling,
    jumping). Text `sNoFastTravelInAir`.
 4. **In combat**: a hostile actor near has detected the player — the music's battle

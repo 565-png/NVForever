@@ -115,7 +115,7 @@ pub fn tweak_checks(c: &mut Checks, t: &crate::tweaks::TweakSettings) {
     c.in_air &= !t.midair_fast_travel;
     c.hostiles_near &= !t.fast_travel_enemies_nearby;
     c.encumbered &= !t.fast_travel_overencumbered;
-    c.place &= !t.unsafe_fast_travel;
+    c.place &= !t.game.unsafe_fast_travel;
 }
 
 /// The first refusal that applies, if any.
@@ -502,7 +502,8 @@ mod tests {
         let mut indoors = Checks { target: true, place: true, ..Checks::default() };
         tweak_checks(&mut indoors, &t);
         assert_eq!(refusal(&indoors), Some(Refusal::Place));
-        tweak_checks(&mut indoors, &crate::tweaks::TweakSettings { unsafe_fast_travel: true, ..Default::default() });
+        let anywhere = fnv_game::tweaks::Tweaks { unsafe_fast_travel: true, ..Default::default() };
+        tweak_checks(&mut indoors, &crate::tweaks::TweakSettings { game: anywhere, ..Default::default() });
         assert_eq!(refusal(&indoors), None, "Fast Travel From Anywhere");
         let mut open = Checks { target: true, ..Checks::default() };
         tweak_checks(&mut open, &crate::tweaks::TweakSettings { disable_fast_travel: true, ..Default::default() });

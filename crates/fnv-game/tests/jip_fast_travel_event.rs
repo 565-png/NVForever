@@ -383,3 +383,27 @@ fn an_interior_forbids_fast_travel_unless_its_cell_inverts_it() {
     q(&mut g, "SetCellFlag TestExterior 2 1");
     assert_eq!(can(&mut g), 0.0, "the flag on an exterior forbids it");
 }
+
+/// The player's Fast Travel From Anywhere (bAllowUnsafeFastTravel) lifts the place's refusal
+/// for GetPCCanFastTravel and a scripted fast travel, as on the map; a script's block holds.
+#[test]
+fn the_unsafe_travel_tweak_lifts_the_place_for_scripts_too() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.set_found_markers([FormId(PLAIN_MARKER)]);
+    g.world.get(FormId::PLAYER_REF).unwrap().cell = Some(FormId(PLAIN_ROOM));
+    assert_eq!(n(&mut g, "GetPCCanFastTravel"), 0.0);
+    assert!(!g.fast_travel(FormId(PLAIN_MARKER)));
+    g.tweaks.unsafe_fast_travel = true;
+    assert_eq!(n(&mut g, "GetPCCanFastTravel"), 1.0);
+    q(&mut g, "EnableFastTravel 0");
+    assert!(!g.fast_travel(FormId(PLAIN_MARKER)), "a script's block holds");
+    q(&mut g, "EnableFastTravel 1");
+    assert!(g.fast_travel(FormId(PLAIN_MARKER)));
+    assert_eq!(n(&mut g, "GetPCFastTravelled"), 1.0);
+    // A worldspace flagged against it is a place too.
+    q(&mut g, "SetWorldspaceFlag TestWorld 1 1");
+    assert_eq!(n(&mut g, "GetPCCanFastTravel"), 1.0);
+    g.tweaks.unsafe_fast_travel = false;
+    assert_eq!(n(&mut g, "GetPCCanFastTravel"), 0.0);
+}

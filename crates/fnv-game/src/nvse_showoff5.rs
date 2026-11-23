@@ -158,7 +158,8 @@ impl Game<'_> {
             return false;
         }
         let cell = self.world.peek(p).and_then(|s| s.cell);
-        if cell.is_some_and(|c| self.place_forbids_travel(Some(c), self.world.placed.world_of(c))) {
+        // The player's Fast Travel From Anywhere lifts it, as on the map [design: docs/design/tweaks.md].
+        if !self.tweaks.unsafe_fast_travel && cell.is_some_and(|c| self.place_forbids_travel(Some(c), self.world.placed.world_of(c))) {
             return false;
         }
         if matches!(crate::nvse::call(self, ctx, "isinair", Some(p), &[]), Some(Ok(XVal::Num(x))) if x != 0.0) {
