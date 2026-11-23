@@ -1427,7 +1427,7 @@ pub fn same_sex(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
 /// "friend disposition game setting" without naming it, and no game setting in the
 /// shipped master is one (`fFightFriendDispBase`, -25, is a fight base) [observed:
 /// FalloutNV.esm GMSTs with "Friend" or "Disp" in their names]; 70 is NVForever's
-/// [hypothesis: observer check 287 measures it].
+/// [hypothesis: observer check 292 measures it].
 pub const FRIEND_DISPOSITION: f64 = 70.0;
 
 /// `actor.HasFriendDisposition`: 1 when the actor's disposition towards the player is at

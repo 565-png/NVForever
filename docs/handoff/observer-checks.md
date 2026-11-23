@@ -4194,7 +4194,7 @@ capture setup, so every part of a check that needs an interior is still open.
 
 ## Added 2026-11-23 (HasFriendDisposition's friend level, #3615)
 
-287. **At what disposition does HasFriendDisposition turn 1, and towards whom?** (P3;
+292. **At what disposition does HasFriendDisposition turn 1, and towards whom?** (P3;
      #3615, `crates/fnv-game/src/functions/actor.rs` `FRIEND_DISPOSITION`.) Ours
      [hypothesis]: 1 when the actor's disposition towards the player is 70 or more. The
      GECK wiki speaks of a "friend disposition game setting" without naming it, and no
