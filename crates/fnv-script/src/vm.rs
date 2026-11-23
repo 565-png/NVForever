@@ -2952,8 +2952,10 @@ impl Vm<'_, '_> {
                     _ => x.sqrt(),
                 })
             }
-            // [documented: Fatan2 notes it is faster than dATan2; hypothesis: exact degree
-            // atan2(y, x) in [-180, 180], with (0, 0) -> 0.0].
+            // [documented: https://obse.silverlock.org/obse_command_doc.html (`(atan2:float)
+            // datan2 arg1:float arg2:float`, "ATan2 and DATan2 use degrees"); cross-referenced
+            // on https://geckwiki.com/index.php?title=Fatan2 ("significantly faster than dATan2");
+            // hypothesis: exact degree atan2(y, x) in [-180, 180], with (0, 0) -> 0.0].
             "atan2" | "datan2" => {
                 let (y, x) = (val(self, 0)?.num()?, val(self, 1)?.num()?);
                 XVal::Num(if y == 0.0 && x == 0.0 { 0.0 } else { y.atan2(x).to_degrees() })
@@ -3298,6 +3300,12 @@ impl Vm<'_, '_> {
                 };
                 Ok(XVal::Num(f64::from(u8::from(ok))))
             }
+            // [documented: Let; observed: JustAssortedMods.esp, `eval x && let s += "+"`]
+            // Nested `let` inside an expression evaluates its assignment argument.
+            "let" => match c.args.first() {
+                Some(e) => self.xeval(e),
+                None => Ok(XVal::Num(0.0)),
+            },
             // [documented: GetCallingScript] 0 from a dialogue or stage result.
             "getcallingscript" => Ok(XVal::Ref(self.host.calling_script().unwrap_or(0))),
             // [documented: SetNameEx `"format" values… form`; SetNthFactionRankNameEx

@@ -43,7 +43,6 @@ script added has no conditions, and one from the record keeps its record's [hypo
 | RemoveScriptVariable, HasVariableAdded `"name" [quest]` | the added variable goes (its value too), whether it was added [documented] |
 | RemoveAllAddedVariables `[quest]` | every variable added to that script [documented] |
 | ClearJIPSavedData `scriptVars linkedRefs auxVars refMaps` | the added variables, SetLinkedReference's links, the calling mod's (1) or the public (2) permanent auxiliary variables and RefMaps [documented]. NVForever does not keep which mod added a variable or a link, so 1 clears them all [hypothesis] |
-| ClearModNVSEVars `[modName]` | legacy JIP LN command superseded by ClearJIPSavedData (no active wiki page): clears the target mod's private auxiliary variables and RefMaps (saved and session-temporary) plus its SetRefExtraData entries, defaulting to the calling script's plugin; public entries and other mods' data are preserved [hypothesis] |
 | SetScriptDisabled, GetScriptDisabled `scriptOrList [disable]` | no block of the script runs; its variables still read and set [documented] |
 | SetScriptEventDisabled, GetScriptEventDisabled `formOrList "events" [disable]` | the event blocks named (space-separated) do not run, for a reference or every reference of a base form, or a list's forms [documented] |
 | FakeScriptEvent `"event" [filter]` | the reference's (or inventory reference's) block of that event runs with the filter as its object, a block switched off too; not OnActivate, not a quest's [documented]; 1 when a block ran |

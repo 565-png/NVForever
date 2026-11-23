@@ -651,12 +651,11 @@ PAGELESS += [
     _x("GetVATSRightAreaFree", "GECK1", "float", ref="reference", cat="VATS Functions"),
 ]
 
-# Legacy JIP LN and NVSE functions with no active wiki page (ClearModNVSEVars superseded by
-# ClearJIPSavedData; dATan2 cross-referenced by Fatan2).
+# NVSE degree atan2 inherited from OBSE [documented:
+# https://obse.silverlock.org/obse_command_doc.html (`(atan2:float) datan2 arg1:float arg2:float`,
+# "ATan2 and DATan2 use degrees"); cross-referenced on
+# https://geckwiki.com/index.php?title=Fatan2 ("significantly faster than dATan2")].
 PAGELESS += [
-    {"name": "ClearModNVSEVars", "page": None, "origin": "JIP", "returns": {"type": "int", "name": None},
-     "params": [{"name": "modName", "type": "string", "kind": "string", "optional": True}],
-     "categories": ["Functions (JIP)", "Miscellaneous Functions (JIP)"]},
     {"name": "dATan2", "page": None, "origin": "NVSE", "returns": {"type": "float", "name": None},
      "params": [{"name": "y", "type": "float", "kind": "float"}, {"name": "x", "type": "float", "kind": "float"}],
      "categories": ["Functions (NVSE)", "Math Functions"]},
