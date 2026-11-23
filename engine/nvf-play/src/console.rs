@@ -1939,7 +1939,7 @@ mod tests {
         assert_eq!(call(rt, "a[0]"), ["a[0] >> 1"]);
 
         assert_eq!(call(rt, "IsPluginInstalled \"Improved Console\""), ["IsPluginInstalled \"Improved Console\" >> 1"]);
-        assert_eq!(call(rt, "GetPluginVersion \"Improved Console\""), ["GetPluginVersion \"Improved Console\" >> 9999"]);
+        assert_eq!(call(rt, "GetPluginVersion \"Improved Console\""), ["GetPluginVersion \"Improved Console\" >> 3"]);
 
         assert_eq!(call(rt, "ref r = player"), ["ref r = player >> 0x00000014 0x00000014"]);
         assert_eq!(call(rt, "player.SetAV Health 70"), ["SetActorValue on player >> 0.00"]);

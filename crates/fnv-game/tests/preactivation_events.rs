@@ -145,7 +145,14 @@ fn improved_console_guard_passes_and_missing_plugin_guard_still_stops() {
             &mut g,
             "SetFunctionValue (GetPluginVersion (\"Improved Console\"))"
         ),
-        XVal::Num(9999.0)
+        XVal::Num(3.0)
+    );
+    assert_eq!(
+        query(
+            &mut g,
+            "SetFunctionValue (GetPluginVersion (\"Improved Console\") >= 1)"
+        ),
+        XVal::Num(1.0)
     );
     // Negative control: a genuinely missing plugin still stops before registration.
     query(&mut g,"if eval !(IsPluginInstalled (\"NoSuchConsolePlugin\"))\nSetModLocalData \"owned.missing_guard\" 1\nreturn\nendif\nSetModLocalData \"owned.missing_after\" 1");

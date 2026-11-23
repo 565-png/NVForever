@@ -153,7 +153,7 @@ fn transparent_result_printing_handles_extender_calls_globals_and_plugin_checks(
     assert_eq!(run(&mut g, "ConsoleTestGlobal + 8"), Some("20".into()));
     assert_eq!(run(&mut g, "GetModelPath ConsoleTestBox"), Some(r#""Test\\Box.nif""#.into()));
     assert_eq!(run(&mut g, "IsPluginInstalled \"Improved Console\""), Some("1".into()));
-    assert_eq!(run(&mut g, "GetPluginVersion \"Improved Console\""), Some("9999".into()));
+    assert_eq!(run(&mut g, "GetPluginVersion \"Improved Console\""), Some("3".into()));
     assert_eq!(run(&mut g, "GetNVSEVersion + 1"), Some("7".into()));
     // Selected reference flows into bare calls and compound expressions.
     let on_player = RunCtx { self_ref: Some(FormId::PLAYER_REF), ..Default::default() };

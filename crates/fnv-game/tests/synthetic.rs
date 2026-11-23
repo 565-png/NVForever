@@ -5298,7 +5298,7 @@ fn built_in_plugins_report_installed() {
     // A version a mod asks for "at least" is met where none was read in the original.
     assert_eq!(q(&mut g, "GetPluginVersion \"SUP NVSE Plugin\" >= 250"), Ok(XVal::Num(1.0)));
     assert_eq!(q(&mut g, "GetPluginVersion \"CUI\""), Ok(XVal::Num(120.0)));
-    assert_eq!(q(&mut g, "GetPluginVersion \"Improved Console\""), Ok(XVal::Num(9999.0)));
+    assert_eq!(q(&mut g, "GetPluginVersion \"Improved Console\""), Ok(XVal::Num(3.0)));
     for name in ["yUI", "NVTF", "No Such Plugin"] {
         assert_eq!(q(&mut g, &format!("IsPluginInstalled \"{name}\"")), Ok(XVal::Num(0.0)), "{name}");
         assert_eq!(q(&mut g, &format!("GetPluginVersion \"{name}\"")), Ok(XVal::Num(-1.0)), "{name}");
