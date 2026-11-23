@@ -1013,6 +1013,14 @@ fn a_new_save_says_which_targets_were_not_measured() {
     let mut g = game(&f);
     g.start_combat(watchman, raider);
     assert!(reloaded(&f, &g, false).awareness.get(watchman).unwrap().scripted.contains(&raider));
+    // The snapshot is its own JSON round trip, and restored without JSON says the same.
+    let snap = g.snapshot();
+    let back: fnv_game::game::GameSnapshot = serde_json::from_str(&serde_json::to_string(&snap).unwrap()).unwrap();
+    assert_eq!(back, snap);
+    let h = Game::restore(&f.data, World::restore(&f.forms, &f.refs, &snap.sim).unwrap(), g.cfg, &snap).unwrap();
+    assert_eq!(h.awareness.actors, g.awareness.actors, "scripted too");
+    let again = h.snapshot();
+    assert_eq!((again.awareness, again.scripted_combat), (snap.awareness, snap.scripted_combat), "and saved the same again");
     g.observe_threat(watchman, raider, &Detection { value: 100.0, band: Band::Detected, ..Detection::default() }, [100.0, 0.0, 0.0]);
     let mut h = reloaded(&f, &g, false);
     assert!(h.awareness.get(watchman).unwrap().scripted.is_empty());
