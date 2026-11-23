@@ -263,6 +263,9 @@ pub struct RefTable {
     pub world_grid: HashMap<FormId, BTreeMap<(i32, i32), FormId>>,
     /// Each worldspace's persistent cell (the WRLD group's cell of persistent references).
     pub world_persistent: HashMap<FormId, FormId>,
+    /// [design: fnv-world::Worldspace::parent] Immediate worldspace parents, already
+    /// resolved across the load order by WorldIndex.
+    pub world_parents: HashMap<FormId, FormId>,
     /// Merchant containers (XMRC targets) -> the actor references whose stock they hold.
     pub merchant_containers: BTreeMap<FormId, Vec<FormId>>,
     /// Activate parents -> their activate children with each child's delay (XAPR read
@@ -314,7 +317,10 @@ impl RefTable {
                 if r.header.flags & record_flags::DELETED != 0 {
                     return (None, true, issues);
                 }
-                let pr = load_ref(lo, schema, pi, FormId(fid), r, FormId(e.cell), e.persistent, &mut issues);
+                let pr = load_ref(lo, schema, pi, FormId(fid), r, FormId(e.cell), e.persistent, &mut issues).map(|mut pr| {
+                    pr.base = FormId(ix.resolve_base(fid, pr.base.0));
+                    pr
+                });
                 (pr, false, issues)
             })
             .collect();
@@ -331,6 +337,9 @@ impl RefTable {
         }
         let mut persistent_cells = HashSet::new();
         for (w, ws) in &ix.worldspaces {
+            if let Some(parent) = ws.parent {
+                t.world_parents.insert(FormId(*w), FormId(parent));
+            }
             if let Some(z) = ws.encounter_zone {
                 t.world_zones.insert(FormId(*w), FormId(z));
             }

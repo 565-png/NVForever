@@ -53,6 +53,7 @@ use crate::pause::Paused;
 use crate::player::Player;
 use crate::sfx::{distance_gain, folder_unlisted, one_shot_heard, pan_gains, resolve, static_gain, OneShotNow, Out, Pan, Panned, PcmSound, Resolved, Sfx, SfxSettings, SoundSource};
 use crate::sim::SimState;
+use crate::sound_cover::SoundCover;
 use crate::sound_grid::FixedGrid;
 use crate::{Location, PlayState, PlayWorld};
 use bevy::audio::AudioSinkPlayback;
@@ -206,6 +207,13 @@ fn start_loop(commands: &mut Commands, amb: &mut Ambient, sfx: &mut Sfx, setting
         return None;
     }
     let Resolved { s, name, path } = resolve(sfx, vfs, FormId(sound))?;
+    // A loop the game's own record names and no archive has (`AMBLimestoneLP`, #2757) is
+    // no fault: said once at debug level, never read.
+    if crate::game_files::games_own(sound) && amb.files.peek(&path).is_none() && !vfs.exists(&path) {
+        crate::game_files::say_missing(true, &format!("ambient: {name}: {path}: not in the game's files"));
+        amb.files.mark_broken(path);
+        return None;
+    }
     // Read off the main thread (#1993): `file_pending` holds the start back until it is in.
     let crate::file_bytes::Got::Ready(bytes) = amb.files.fetch(&path, vfs, "ambient") else { return None };
     let bytes = bytes?;
@@ -257,7 +265,9 @@ fn play(
     mut sources: MessageReader<SoundSource>,
     // Not the loops fading out after a stop: they play their fade out (audio_out).
     sinks: Query<&AudioSink, (With<AmbientSound>, Without<Retiring>)>,
+    mut cover: Option<ResMut<SoundCover>>,
 ) {
+    let cover_now = std::time::Instant::now();
     let (Some(places), Some(mut sfx), Some(player), Some(data)) = (places, sfx, player, data) else {
         sources.clear();
         return;
@@ -355,6 +365,10 @@ fn play(
             // Under water a sound so flagged is held silent (audio.md §15.2).
             let muted = sfx.submerged && s.has("Mute When Submerged");
             let gain = if muted { 0.0 } else { static_gain(s) * distance_gain(s, dist) * volume };
+            // Heard at the listener while it sounds (`crate::sound_cover`), held loops not.
+            if let (false, false, Some(cover)) = (muted, held, cover.as_deref_mut()) {
+                cover.note(Some(SoundCover::key(crate::sound_cover::AMBIENT_KIND, m.key)), static_gain(s) * distance_gain(s, dist), dist, crate::sound_cover::LOOP_HOLD, cover_now);
+            }
             sounding.push(m.key);
             if let Some(p) = amb.loops.get(&m.key) {
                 p.set(gain);

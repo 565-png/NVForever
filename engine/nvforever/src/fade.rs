@@ -102,8 +102,9 @@ pub fn complement(k: u8) -> VisibilityRange {
 /// Meshes whose materials dither (nif_material.wesl, Bevy's PBR fragment for trees and
 /// grass, terrain.wesl for ground whose layers are folded into its base); water keeps its
 /// own shader and does not fade.
-type Fading = Or<(
+pub(crate) type Fading = Or<(
     With<MeshMaterial3d<NifMaterial>>,
+    With<MeshMaterial3d<nvf_assets::nif_surface_blend::NifBlendMaterial>>,
     With<MeshMaterial3d<LeafMaterial>>,
     With<MeshMaterial3d<BarkMaterial>>,
     With<MeshMaterial3d<GrassMaterial>>,
@@ -159,10 +160,12 @@ mod tests {
         let mut world = World::new();
         let ground = world.spawn(MeshMaterial3d::<TerrainMaterial>(Handle::default())).id();
         let layer = world.spawn(MeshMaterial3d::<NifMaterial>(Handle::default())).id();
+        let blend = world.spawn(MeshMaterial3d::<nvf_assets::nif_surface_blend::NifBlendMaterial>(Handle::default())).id();
         let other = world.spawn(Transform::default()).id();
         let mut q = world.query_filtered::<Entity, Fading>();
         let fading: Vec<Entity> = q.iter(&world).collect();
         assert!(fading.contains(&ground) && fading.contains(&layer));
+        assert!(fading.contains(&blend));
         assert!(!fading.contains(&other));
     }
 

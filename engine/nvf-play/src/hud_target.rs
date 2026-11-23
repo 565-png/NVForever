@@ -253,6 +253,7 @@ fn aim(
     (pick, locks, tweaks, vats): (Option<Res<crate::activate::Target>>, Option<Res<crate::control::ControlLocks>>, Option<Res<crate::tweaks::TweakSettings>>, Option<Res<crate::vats_mode::VatsMode>>),
     mut memory: Local<Memory>,
 ) {
+    // [design, #2659] Classic also holds the playback attack's actor via bar_target.
     // The classic VATS style's selected target has the bar while targets are chosen,
     // hurt or not [observed: the owner's screenshots of the original's VATS, 2026-11-10,
     // a Goodsprings settler and Sunny Smiles at full health under their bars]; so has
@@ -323,7 +324,8 @@ fn aim(
         let found = chosen.into_iter().chain(candidates(aimed, hit_last, &fighters, kept.map(|h| h.0))).find_map(|id| {
             let r = FormId(id);
             let g = &mut rt.game;
-            if g.is_dead(r) {
+            // [design, #2659] Keep the playback victim's empty bar until playback ends.
+            if g.is_dead(r) && chosen != Some(id) {
                 return None;
             }
             // Still here: enabled, not deleted, in a loaded cell.
@@ -363,7 +365,7 @@ fn aim(
     let anatomy_dr = armor.map(|a| a.1).filter(|_| tweaks.as_ref().is_some_and(|t| t.living_anatomy_dr));
     *held = held_next(kept, found.map(|f| f.0), aimed);
     let now = found.map(|(form_id, health, hp, hostile, _)| {
-        let name = sim.ref_name(script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game), form_id).unwrap_or_default().to_string();
+        let name = sim.ref_shown_name(script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game), form_id).unwrap_or_default().to_string();
         // The share after the damage in sight: the health's full value is its figure over
         // its share.
         let after = in_sight.filter(|(a, d)| *a == form_id && *d > 0.0 && health > 0.0 && hp > 0.0).map(|(_, d)| ((hp - d) / (hp / health)).clamp(0.0, 1.0));

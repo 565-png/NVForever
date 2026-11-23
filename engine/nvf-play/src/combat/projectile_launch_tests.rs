@@ -183,7 +183,7 @@ fn clearing_ammo_projectile_falls_back_to_weapon_without_leaking_neighbor_edits(
 fn ordinary_actor_shot_without_script_runtime_preserves_typed_values() {
     let mut a = app();
     a.world_mut().remove_resource::<ScriptState>();
-    a.world_mut().write_message(ActorFire { shooter: FormId::PLAYER_REF, weapon: GUN, origin: [10.0, 20.0, 94.0], aim: [0.0, 1.0, 0.0], cone: 0.0, muzzle: None, harmless: false });
+    a.world_mut().write_message(ActorFire { shooter: FormId::PLAYER_REF, weapon: GUN, origin: [10.0, 20.0, 94.0], aim: [0.0, 1.0, 0.0], cone: 0.0, muzzle: None, harmless: false, sure: None });
     tick(&mut a);
     last(&a, PROJ, 1000.0, 10.0);
     typed_unchanged(&a);
@@ -200,6 +200,9 @@ fn consumer_weapon(id: FormId, name: &str, ammo: Option<FormId>, projectile: For
     // R2 throwing-weapon helper remains unchanged for its original controls.
     let mut dnam = vec![0; 204];
     dnam[..4].copy_from_slice(&3u32.to_le_bytes());
+    // Ammo Use 1 (schema WeaponDNAM byte 14): an ordinary gun spends a round a shot; 0
+    // would spend none (#3023).
+    dnam[14] = 1;
     dnam[36..40].copy_from_slice(&projectile.0.to_le_bytes());
     dnam[42] = 1;
     let mut subs = vec![sub(b"EDID", z(name)), sub(b"DNAM", dnam), sub(b"DATA", [0i32.to_le_bytes().to_vec(), 100i32.to_le_bytes().to_vec(), 1f32.to_le_bytes().to_vec(), 10i16.to_le_bytes().to_vec(), vec![1]].concat())];
@@ -259,7 +262,7 @@ fn consumer_app() -> App {
 }
 
 fn request_actor_shot(app: &mut App, weapon: FormId) {
-    app.world_mut().write_message(ActorFire { shooter: FormId::PLAYER_REF, weapon, origin: [10.0, 20.0, 94.0], aim: [0.0, 1.0, 0.0], cone: 0.0, muzzle: None, harmless: false });
+    app.world_mut().write_message(ActorFire { shooter: FormId::PLAYER_REF, weapon, origin: [10.0, 20.0, 94.0], aim: [0.0, 1.0, 0.0], cone: 0.0, muzzle: None, harmless: false, sure: None });
 }
 
 fn take_fired(app: &mut App) -> Vec<ShotFired> {

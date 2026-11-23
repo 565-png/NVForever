@@ -229,6 +229,21 @@ the same. Out of reach the player still measures (the target is hidden,
 GetDetected 0) so that GetLineOfSight answers at any distance [observed: same capture
 det2, player.GetLineOfSight Ringo 1 and GetDetected 0 at 6,682 units outdoors]. `tdetect` and `NVF_PLAY_TEST_UNSEEN` do not stop it. The
 player's own measurements feed the two functions only: no detection state, no alarm.
+**Bodies** (#3232). Dying and dead actors are in no pair, so player.GetLineOfSight on a
+body read 0, and TTW's "Those!" never left stage 10: Fallout3.esm's MS04Script advances
+on `Player.GetLOS FredWilksRef == 1` [documented: Fallout3.esm, MS04Script's GameMode
+block as `fnvtool esm decode` reads the record, cited in the issue], and Fred Wilks lay
+dead in his house [observed: the player report's log and snapshot, body at rest 193
+units from the player, in view]. The player's camera now measures every drawn
+body: the same ±95° and wall check, from the camera to where the body lies (its
+ragdoll's trunk, else the middle of its hit volume as drawn) [documented: GECK wiki
+GetLineOfSight, on the player any object can be the target; the point aimed at:
+engineering choice]. The game keeps the bodies seen at the last measurement for 1 s
+(`Game::set_camera_sights`), read only while the body is still enabled and in a loaded
+cell [documented: same page, "Will not return true when checking if a disabled
+reference is in view"]. On a dead target that is the only answer: the pair measured
+while it lived (kept up to a second) is not read. Another actor's GetLineOfSight on a body still
+reads 0 [hypothesis: the page says only that its target must be an actor].
 Not built: player.GetLineOfSight on an object that is not an actor (the original allows
 it on the player).
 
@@ -277,7 +292,9 @@ to this case; every detector, NPCs too].
 Checks: `fnv_game::sight` tests (field of view, pairs far from the player, a ridge
 between two actors), `crates/fnv-game/tests/functions.rs`
 (`the_player_detects_and_far_pairs_fight`: player.GetDetected / GetLineOfSight from a
-measured pair; a Frenzied actor out of the player's reach goes to Combat, IsInCombat 1);
+measured pair; a Frenzied actor out of the player's reach goes to Combat, IsInCombat 1;
+`the_player_sees_a_body_in_the_cameras_view`: a dead target, #3232), `nvforever`
+detection.rs `the_camera_sees_bodies_in_view_and_clear`;
 smoke `detection-far-fight` (the NCR troopers and Cook-Cook's Fiends fight with the
 player about 5,700 units away) and `detection-game` (the player detects actors).
 
@@ -412,3 +429,40 @@ sneak word while the player sneaks (`nvf_play::sneak_gauges`):
 They show what the player gives off, not whether anyone notices (the sneak word says
 that); sneaking itself makes no less noise in the formula, only the Sneak skill counts.
 Smoke `sneak-gauges`.
+
+## 11. Sound cover (owner request 2026-11-15, #2688)
+
+The sounds of the world hide the player's own [design: not the original's; the Gameplay
+switch `sound-cover`, on by default, kept in the INI, turns it off]:
+
+- **The rule** (`fnv_game::detection::masked`): when the player's noise
+  (`Settings::noise`, §10's Noise) is under the cover, the loudest sound of the world heard
+  at the player, the sound term of every actor's detection of the player is 0
+  (`Situation::sound_cover`). With no sound left, an actor that does not see the player
+  reads it as a silent target (the target skill not counted, §2). A noise equal to the
+  cover or over it is heard whole: a shot over a generator's hum is heard with the
+  footsteps under it. Only the player is covered; NPCs detecting each other are not.
+- **The cover** (`nvf_play::sound_cover`): every sound played at a place notes its gain
+  where the listener (the player's eye) is, the record's static attenuation times its
+  attenuation curve at that distance (`sfx::distance_gain`), without the effects volume:
+  one-shots (other actors' footsteps and shots, impacts, creatures, doors, region sounds
+  about the listener) for their length, placed loops (sound markers, objects' and
+  creatures' loops) and placed radios every frame they sound, lines said at a place by
+  the voice's fall-off (`voice::voice_gain`) while they play. The loudest gain heard,
+  0–1, × 100 is the cover in the noise's units: a sound heard whole covers a run in heavy
+  armour, one at a third of its loudness a walk in light armour. Sounds at the listener
+  (the player's own footsteps and shots, interface sounds, the cells' background loops, 2D
+  region sounds) are not placed and never cover; a placed sound within 64 units of the
+  listener is taken as the player's own (an effect's loop on the player, the player's
+  weapon in third person) and does not either.
+- **On the gauge**: the noise bar's segment at the cover level wears a brighter, larger
+  square (the HUD colour half way to white, outside the segment): the noise up to it is
+  covered. It rises at once and falls back over 1.5 s as the noise does.
+
+Not built: the player's own shots' impacts and explosions are placed sounds of the world
+and can cover the player's next measurement; with sounds switched off (`--no-sound`)
+nothing plays and nothing covers. The log says `sound cover: the player's noise N is
+under the world's C: not heard` and `… is heard again` as it changes, and `sound cover
+summary: …` at the end. Checks: `fnv_game::detection` test
+`a_louder_world_covers_the_targets_noise`, `nvf_play::sound_cover` tests, smoke
+`sneak-sound-cover`.

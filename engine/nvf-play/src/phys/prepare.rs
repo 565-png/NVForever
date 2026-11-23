@@ -18,8 +18,8 @@ use fnv_collide::{CollisionObject, Iso};
 use fnv_nif::file::NifFile;
 use fnv_nif::scene::Decoded;
 use fnv_phys::{ref_collision_with, ModelCollision, PhysParams, PreparedRef, PreparedTerrain, RefCollisionOptions, RefPose};
-use fnv_world::land::{load_land, LandParts};
-use fnv_world::placed::{base_object, placement};
+use fnv_world::land_surface::{block_of, load_heights, LandIds, Surface, SurfaceSpec};
+use fnv_world::placed::base_object;
 use fnv_world::Placement;
 use nvf_assets::GameData;
 use std::collections::HashMap;
@@ -137,9 +137,12 @@ fn read_model(data: &GameData, path: &str, times: &mut LoadTimes) -> ModelResult
 
 fn read_model_unguarded(data: &GameData, path: &str, times: &mut LoadTimes) -> ModelResult {
     let schema = &*data.schema;
+    // Beside `times`: the same parts for the exit's summary of both readers (#3149).
+    let mut timed = nvf_assets::load_times::Timed::start(&nvf_assets::load_times::COLLISION);
     let t = Instant::now();
     let read = data.vfs.read(path);
     times.read += ms_since(t);
+    timed.read();
     let bytes = match read {
         None => return Err("not found".to_string()),
         Some(Err(e)) => return Err(e.to_string()),
@@ -147,7 +150,9 @@ fn read_model_unguarded(data: &GameData, path: &str, times: &mut LoadTimes) -> M
     };
     let t = Instant::now();
     let file = NifFile::parse(&bytes, Some(schema)).map_err(|e| e.to_string());
+    timed.parsed();
     let dec = file.as_ref().ok().map(|file| Decoded::new(file, &bytes, schema));
+    timed.decoded();
     times.parse += ms_since(t);
     let file = file?;
     let t = Instant::now();
@@ -191,6 +196,12 @@ pub struct Job {
     pub refs: Vec<u32>,
     /// The cell's LAND record (exterior squares with terrain).
     pub land: Option<u32>,
+    /// The LAND records of the cell and the eight around it (`fnv_world::land_surface::LandIds`):
+    /// a smoothed surface reads the neighbours' along its edges.
+    pub lands: LandIds,
+    /// The surface the terrain is built on (`crate::smooth_terrain::spec`, fixed for the
+    /// run and taken when the job is made: the worker never reads the settings).
+    pub surface: SurfaceSpec,
     /// References the simulation holds at another pose than their placement (position,
     /// Euler angles; `SimState::moved_pose`), by FormID: their collision is built there.
     pub poses: Vec<(u32, [f32; 3], [f32; 3])>,
@@ -294,7 +305,9 @@ pub struct Entry {
 /// A cell ready to insert.
 pub struct Prepared {
     pub cell: PhysCell,
-    pub heights: Option<Vec<f32>>,
+    /// The landscape surface the terrain collider was built on (exterior squares with
+    /// terrain): the LAND grid as stored or smoothed, as the renderer draws it.
+    pub surface: Option<Surface>,
     pub terrain: Option<PreparedTerrain>,
     /// The job's references, in its (FormID) order.
     pub refs: Vec<Entry>,
@@ -307,20 +320,23 @@ pub fn cell(src: &Source, job: &Job) -> Prepared {
     let mut times = LoadTimes::default();
     let d = &src.d;
     let mut out =
-        Prepared { cell: job.cell, heights: None, terrain: None, refs: Vec::with_capacity(job.refs.len()), times: LoadTimes::default() };
+        Prepared { cell: job.cell, surface: None, terrain: None, refs: Vec::with_capacity(job.refs.len()), times: LoadTimes::default() };
     if let (PhysCell::Exterior(x, y), Some(land)) = (job.cell, job.land) {
         let t = Instant::now();
-        out.heights = load_land(d.lo, d.schema, land, LandParts::HEIGHTS).and_then(|l| l.heights);
+        let mut ids = job.lands;
+        ids[1][1] = Some(land);
+        let heights = load_heights(d.lo, d.schema, &ids, job.surface.is_smoothed());
         times.records += ms_since(t);
-        if let Some(h) = &out.heights {
-            let t = Instant::now();
-            out.terrain = Some(PreparedTerrain::new(&src.params, (x, y), h));
-            times.shapes += ms_since(t);
+        let t = Instant::now();
+        out.surface = Surface::new(&block_of(&heights), job.surface);
+        if let Some(s) = &out.surface {
+            out.terrain = Some(PreparedTerrain::from_surface(&src.params, (x, y), s));
         }
+        times.shapes += ms_since(t);
     }
     for &r in &job.refs {
         let t = Instant::now();
-        let mut pl = placement(d.lo, d.schema, r).map(|pl| at_pose(pl, job.pose_of(r)));
+        let mut pl = d.index.placement(d.lo, d.schema, r).map(|pl| at_pose(pl, job.pose_of(r)));
         if let Some(s) = job.scale_of(r) {
             pl = pl.filter(|_| s > crate::sim::MIN_DRAWN_SCALE).map(|mut pl| {
                 pl.scale = s;
@@ -351,6 +367,29 @@ fn hold_jointed(objects: &mut [fnv_collide::CollisionObject], tallies: &mut Vec<
         o.motion = Motion::Keyframed;
     }
     tallies.push("jointed_held");
+}
+
+/// The record types of the things the player carries [design: as the world's drawing
+/// counts items, nvforever `world.rs`].
+fn is_item_base(sig: &[u8; 4]) -> bool {
+    matches!(sig, b"WEAP" | b"ARMO" | b"AMMO" | b"MISC" | b"ALCH" | b"BOOK" | b"KEYM" | b"NOTE" | b"IMOD" | b"CHIP" | b"CMNY" | b"CCRD")
+}
+
+/// A placed item whose model is several dynamic bodies (a teddy bear: six on five limited
+/// hinges) is joined into one rigid body as a dropped one is ([`super::one_dynamic_body`]),
+/// instead of being held by [`hold_jointed`]: held, the grab key found no loose body on it,
+/// and shots and blasts could not move it (#3428). It moves as one piece in the pose its
+/// file draws [design: the hinges are not simulated]. Fixtures (a hanging lamp, a globe on
+/// its stand) are not items and stay held. One posed from its XRGD is joined in that pose.
+/// Tallied as `jointed_item_joined`.
+pub(super) fn join_jointed_item(base_sig: Option<[u8; 4]>, objects: &mut Vec<CollisionObject>, tallies: &mut Vec<&'static str>) {
+    if !base_sig.as_ref().is_some_and(is_item_base) {
+        return;
+    }
+    if let Some(one) = super::one_dynamic_body(objects) {
+        *objects = vec![one];
+        tallies.push("jointed_item_joined");
+    }
 }
 
 /// A jointed clutter object its designer left posed (`XRGD`, a fallen skeleton: dead-on-spawn.md
@@ -441,6 +480,9 @@ fn reference_unguarded(src: &Source, pl: &Placement, model: Option<&str>, times:
         tallies.push("xrgd_posed");
         bevy::log::info!("phys: 0x{:08X} {}: collision posed from XRGD ({} bodies)", pl.form_id, model_path.as_deref().unwrap_or(""), rc.objects.len());
     }
+    // After the pose: an item its designer left posed (a teddy bear lying on its side,
+    // XRGD) is joined in that pose, as its drawing shows it.
+    join_jointed_item(rc.base_sig, &mut rc.objects, &mut tallies);
     hold_jointed(&mut rc.objects, &mut tallies);
     // Not a door that opens in place, nor an actor: its bodies that a sequence moves
     // follow what its drawn model plays (issue #1396), keyframed (a fixed one under a

@@ -32,11 +32,17 @@ use crate::table::ParamEnc;
 pub(in crate::compile) struct P<'t> {
     t: &'t [XTok],
     i: usize,
+    // Only the current expression's root owns otherwise surplus operands.
+    // Arguments and explicit groups retain their existing boundary rules.
+    inline_surplus: bool,
 }
 
 impl<'t> P<'t> {
     pub(in crate::compile) fn new(t: &'t [XTok]) -> P<'t> {
-        P { t, i: 0 }
+        P { t, i: 0, inline_surplus: false }
+    }
+    pub(in crate::compile) fn expression(t: &'t [XTok]) -> P<'t> {
+        P { t, i: 0, inline_surplus: true }
     }
     fn peek(&self) -> Option<&'t XTok> {
         self.t.get(self.i)
@@ -81,6 +87,8 @@ fn infix(t: &XTok) -> Option<(u8, u8, Infix)> {
         "^=" => (r(2).0, r(2).1, Infix::Assign(XAssign::Pow)),
         "|=" => (r(2).0, r(2).1, Infix::Assign(XAssign::BitOr)),
         "&=" => (r(2).0, r(2).1, Infix::Assign(XAssign::BitAnd)),
+        "<<=" => (r(2).0, r(2).1, Infix::Assign(XAssign::Shl)),
+        ">>=" => (r(2).0, r(2).1, Infix::Assign(XAssign::Shr)),
         "%=" => (r(2).0, r(2).1, Infix::Assign(XAssign::Mod)),
         ":" => (l(3).0, l(3).1, Infix::Bin(XOp::Slice)),
         "::" => (l(3).0, l(3).1, Infix::Bin(XOp::Pair)),
@@ -180,7 +188,9 @@ impl Gen<'_> {
             if t.kind == XKind::LBracket && POSTFIX >= min {
                 p.next();
                 let was = std::mem::replace(&mut self.in_args, false);
+                let surplus = std::mem::replace(&mut p.inline_surplus, false);
                 let inner = self.xexpr(p, 0);
+                p.inline_surplus = surplus;
                 self.in_args = was;
                 let inner = inner?;
                 if p.next().map(|t| t.kind) != Some(XKind::RBracket) {
@@ -272,7 +282,9 @@ impl Gen<'_> {
                 }
                 let was = std::mem::replace(&mut self.in_args, false);
                 let was_paren = std::mem::replace(&mut self.in_paren, true);
+                let surplus = std::mem::replace(&mut p.inline_surplus, false);
                 let e = self.xexpr(p, 0);
+                p.inline_surplus = surplus;
                 self.in_args = was;
                 self.in_paren = was_paren;
                 let e = e?;
@@ -609,6 +621,25 @@ impl Gen<'_> {
         f.opcode.is_none() && self.table.unnumbered.get(&n.to_ascii_lowercase()).and_then(|u| u.params.get(k)).is_some_and(|p| p.kind == "axis" || p.wiki_type.as_deref().is_some_and(axis_letters))
     }
 
+    /// JIP's `SetOnPlayGroupEventHandler` takes an animation group keyword in its fourth
+    /// argument (index 3) [documented: SetOnPlayGroupEventHandler].
+    fn anim_group_param(&self, f: &XFn, k: usize) -> bool {
+        let FuncId::Name(n) = &f.func else { return false };
+        f.opcode.is_none() && k == 3 && n.eq_ignore_ascii_case("setonplaygroupeventhandler")
+    }
+
+    /// An extender function without an opcode whose parameter `k` the catalogue gives as
+    /// an actor value (`kind: "actor_value"`): a bare known actor-value name compiles to
+    /// its numeric code without an `unquoted_argument` warning [documented: GECK wiki
+    /// GetThresholdedActorValue (alias GetThresholdAV), GetActorValueModifier,
+    /// GetActorValueModifierAlt, GetBaseActorValueAlt, ModBaseActorValue,
+    /// SetEmbeddedWeaponAV, UnforceAV, UnsetAV, GetActorValueDamage, GetActorValueName].
+    fn actor_value_param(&self, f: &XFn, k: usize) -> bool {
+        let FuncId::Name(n) = &f.func else { return false };
+        f.opcode.is_none()
+            && self.table.unnumbered.get(&n.to_ascii_lowercase()).and_then(|u| u.params.get(k)).is_some_and(|p| p.kind == "actor_value")
+    }
+
     /// The function's parameter `k` takes a form, or is named for a global (the base
     /// game's GetGlobalValue included).
     fn form_param(&self, f: &XFn, k: usize) -> bool {
@@ -638,6 +669,9 @@ impl Gen<'_> {
         let mut args = Vec::new();
         loop {
             if f.params.is_some_and(|n| args.len() >= n) {
+                if self.unknown_calls && p.inline_surplus {
+                    self.drop_inline_surplus(p)?;
+                }
                 break;
             }
             let mut comma = false;
@@ -661,10 +695,10 @@ impl Gen<'_> {
             // compiled bytes holding the variable and the box operator as the first of
             // five arguments, #2275].
             let boxed = comma && p.peek().is_some_and(|t| t.is(XKind::Op, "&"));
-            // `{expr}` not followed by `=>` is the expression, one argument (`call Fn
-            // {(BuildRef 0 n)}`, `call Fn {Quest.var}`) [observed: Animated Ingestibles.esp
-            // ships both with compiled bytes holding the value alone as the one argument,
-            // #2275].
+            // `{expr}` or `{arg1 arg2}` / `{arg1, arg2}` not followed by `=>` passes the
+            // braced expression(s) as argument(s) (`call Fn {(BuildRef 0 n)}`, `call Fn
+            // {Quest.var}` [observed: Animated Ingestibles.esp, #2275]; multiple space- or
+            // comma-separated arguments in braces, `call Fn {a b}` [hypothesis]).
             let braced = p.peek().is_some_and(|t| t.kind == XKind::LBrace) && !lambda_at(p);
             let boxing = f.params != Some(0) && p.peek().is_some_and(|t| t.sign && (t.is(XKind::Op, "*") || t.is(XKind::Op, "&")));
             if !starts_operand(p.peek()) && !minus_first && !boxed && !boxing && !braced {
@@ -672,17 +706,44 @@ impl Gen<'_> {
             }
             if braced {
                 p.next();
-                let was = std::mem::replace(&mut self.in_args, false);
-                let was_paren = std::mem::replace(&mut self.in_paren, true);
-                let e = self.xexpr(p, 0);
-                self.in_args = was;
-                self.in_paren = was_paren;
-                let e = e?;
+                let mut braced_count = 0usize;
+                while p.peek().is_some_and(|c| c.kind != XKind::RBrace) {
+                    if f.params.is_some_and(|n| args.len() >= n) {
+                        break;
+                    }
+                    let mut braced_comma = false;
+                    if braced_count > 0 && p.peek().is_some_and(|t| t.kind == XKind::Comma) {
+                        p.next();
+                        braced_comma = true;
+                        if p.peek().is_some_and(|c| c.kind == XKind::RBrace) {
+                            break;
+                        }
+                    }
+                    let b_prefix = p.peek().is_some_and(|t| {
+                        t.kind == XKind::Op
+                            && matches!(t.text.as_str(), "-" | "&" | "*")
+                            && (braced_comma || braced_count == 0 || t.sign)
+                    });
+                    let b_lambda = p.peek().is_some_and(|t| t.kind == XKind::LBrace) && lambda_at(p);
+                    if !starts_operand(p.peek()) && !b_prefix && !b_lambda {
+                        break;
+                    }
+                    let was = std::mem::replace(&mut self.in_args, true);
+                    let was_any = std::mem::replace(&mut self.in_arg_any, true);
+                    let was_paren = std::mem::replace(&mut self.in_paren, true);
+                    let surplus = std::mem::replace(&mut p.inline_surplus, false);
+                    let e = self.xexpr(p, 0);
+                    p.inline_surplus = surplus;
+                    self.in_args = was;
+                    self.in_arg_any = was_any;
+                    self.in_paren = was_paren;
+                    args.push(e?);
+                    braced_count += 1;
+                }
                 if p.next().map(|c| c.kind) != Some(XKind::RBrace) {
                     self.xerr("syntax", "missing }");
                     return None;
                 }
-                args.push(e);
                 continue;
             }
             // A string variable given by name to an xNVSE function's plain string
@@ -739,7 +800,7 @@ impl Gen<'_> {
                 // do not compile; Armor Damage Fix's gr_CondDamFix.txt ships `… 0 f`].
                 if let Some(t) = p.peek().filter(|t| matches!(t.kind, XKind::Word | XKind::Num) && !t.text.contains('.')).cloned() {
                     let alone = !p.peek2().is_some_and(|n| matches!(n.kind, XKind::LBracket | XKind::Op));
-                    let named = self.var(&t.text).is_some() || self.form(&t.text).is_some();
+                    let named = t.kind == XKind::Word && (self.var(&t.text).is_some() || self.form(&t.text).is_some());
                     if let (true, false, Some(fi)) = (alone, named, self.hex_form_id(&t.text)) {
                         p.next();
                         args.push(val_expr(self.form_val(fi, &t.text)));
@@ -750,6 +811,24 @@ impl Gen<'_> {
             let enc = match f.opcode {
                 Some(o) => self.table.param_enc(o, args.len()),
                 None if self.axis_param(f, args.len()) => ParamEnc::Axis,
+                None if self.anim_group_param(f, args.len())
+                    && p.peek().is_some_and(|t| {
+                        t.kind == XKind::Word
+                            && !t.text.contains('.')
+                            && self.var(&t.text).is_none()
+                            && self.form(&t.text).is_none()
+                            && self.xfunction(&t.text).is_none()
+                            && self.enums.get("anim_group").is_some_and(|m| m.contains_key(&t.text.to_ascii_lowercase()))
+                    }) => ParamEnc::Enum("anim_group".into()),
+                None if self.actor_value_param(f, args.len())
+                    && p.peek().is_some_and(|t| {
+                        t.kind == XKind::Word
+                            && !t.text.contains('.')
+                            && self.var(&t.text).is_none()
+                            && !self.form(&t.text).is_some_and(|fi| &fi.sig == b"GLOB")
+                            && self.xfunction(&t.text).is_none()
+                            && self.enums.get("actor_value").is_some_and(|m| m.contains_key(&t.text.to_ascii_lowercase()))
+                    }) => ParamEnc::Enum("actor_value".into()),
                 None => ParamEnc::Value,
             };
             // Inside an expression an NVSE-aware function's argument stops at a comparison
@@ -760,8 +839,13 @@ impl Gen<'_> {
             // 0x0700254B, Party Banter 2.esm SCPT 0x0701D892, #2275]. Arithmetic stays in
             // the argument and a range or pair (`1:2`, `"k"::v`) continues it, as in an
             // override block [hypothesis].
+            // `TestExpr` and `let` accept assignments (`=`, `:=`) inside their whole-expression
+            // argument [documented: TestExpr; Let].
+            let assign_param = matches!(&f.func, FuncId::Name(n) if n.eq_ignore_ascii_case("testexpr") || n.eq_ignore_ascii_case("let")) && args.is_empty();
             let nested_aware = f.aware && self.in_expression() && !self.expression_param(f, args.len());
-            let min = if f.aware && !nested_aware {
+            let min = if assign_param {
+                0
+            } else if f.aware && !nested_aware {
                 ARG_OVERRIDE
             } else if self.co || nested_aware {
                 ARG_IN_OVERRIDE
@@ -770,6 +854,7 @@ impl Gen<'_> {
             };
             let was = std::mem::replace(&mut self.in_args, true);
             let was_any = std::mem::replace(&mut self.in_arg_any, true);
+            let surplus = std::mem::replace(&mut p.inline_surplus, false);
             let mut a = self.xarg(p, &enc, min);
             while nested_aware && a.is_some() {
                 let op = match p.peek() {
@@ -786,6 +871,7 @@ impl Gen<'_> {
             }
             self.in_args = was;
             self.in_arg_any = was_any;
+            p.inline_surplus = surplus;
             let a = a?;
             if self.runtime {
                 self.runtime_refusal(f, args.len(), &a);
@@ -793,6 +879,40 @@ impl Gen<'_> {
             args.push(a);
         }
         Some(args)
+    }
+
+    /// Apply the existing mod-source surplus policy at an expression's own call
+    /// boundary. The enclosing operator and an outer call's arguments stay owned
+    /// by their original consumers (script-compiler.md, inline surplus operands).
+    fn drop_inline_surplus(&mut self, p: &mut P<'_>) -> Option<()> {
+        let starts = |p: &P<'_>| {
+            let postfix_call = p.peek().is_some_and(|t| t.kind == XKind::Word && t.text.starts_with('.'));
+            // A minus after a complete call already belongs to the enclosing
+            // expression, even when the lexer marks an adjacent signed number.
+            !postfix_call && starts_operand(p.peek())
+        };
+        if !starts(p) { return Some(()); }
+        let from = p.i;
+        let permission = std::mem::replace(&mut p.inline_surplus, false);
+        let count = self.discard_parsed(|g| {
+            let mut count = 0;
+            while starts(p) {
+                let was = std::mem::replace(&mut g.in_args, true);
+                let was_any = std::mem::replace(&mut g.in_arg_any, true);
+                let operand = g.xexpr(p, ARG);
+                g.in_args = was;
+                g.in_arg_any = was_any;
+                operand?;
+                count += 1;
+            }
+            Some(count)
+        });
+        p.inline_surplus = permission;
+        let text = p.t[from..p.i.min(p.t.len())].iter().map(|t| t.text.as_str()).collect::<Vec<_>>().join(" ");
+        match count {
+            Some(count) => { self.diag("surplus_arguments", false, format!("{count} dropped: {text}")); Some(()) }
+            None => { self.diag("syntax", true, format!("invalid surplus argument: {text}")); None }
+        }
     }
 
     /// What the extender's runtime compiler refuses in argument `k` of `f`

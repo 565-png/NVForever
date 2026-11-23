@@ -161,6 +161,13 @@ impl Prompt {
 
     pub fn of(t: &Targeted, sim: &SimState) -> Prompt {
         let (mut action, name) = outcome::prompt(&t.name, &t.action);
+        // Session changes share the script reader's authority; XATO below still wins
+        // (docs/spec-notes/string-settings.md).
+        if matches!(t.action, Action::Talk) {
+            if let Some(fnv_sim::settings::Setting::Str(text)) = sim.world.setting_value("sTargetTypeTalk") {
+                action = text.clone();
+            }
+        }
         // An owned item is stolen, not taken [hypothesis: the game's word; owner's
         // playtest list 2 of 2026-10-12].
         if t.crime && matches!(t.action, Action::Take { .. }) {
@@ -686,7 +693,8 @@ fn draw(
         }
     }
     let barred = |t: &Targeted| bar.as_ref().and_then(|b| b.0.as_ref()).is_some_and(|b| under_bar(t, b.form_id));
-    let want = target.0.as_ref().filter(|t| !locks.rollover && t.prompted() && !barred(t)).map(|t| Prompt::bound(t, &sim, bindings.as_deref()));
+    // Quick Loot's list stands for the prompt while it shows (`crate::quick_loot`).
+    let want = target.0.as_ref().filter(|t| !locks.rollover && t.prompted() && !barred(t) && !crate::quick_loot::holds_input()).map(|t| Prompt::bound(t, &sim, bindings.as_deref()));
     if *shown != want {
         let Ok(e) = texts.single() else { return };
         commands.entity(e).despawn_related::<Children>().with_children(|p| {
@@ -801,7 +809,7 @@ mod tests {
 
     #[test]
     fn the_prompt_steps_aside_for_the_bar_over_the_same_actor() {
-        let t = Targeted { form_id: 0x1234, name: "Cazador".into(), action: Action::Name, distance: 100.0, source: crate::activate::pick::Source::Bounds, crime: false, empty: false };
+        let t = Targeted { form_id: 0x1234, name: "Cazador".into(), action: Action::Name, distance: 100.0, source: crate::activate::pick::Source::Bounds, crime: false, empty: false, through: None };
         assert!(under_bar(&t, 0x1234));
         assert!(!under_bar(&t, 0x5678));
     }
@@ -810,7 +818,7 @@ mod tests {
     /// no word for E); a peaceful creature with nothing to say keeps its name.
     #[test]
     fn a_hostile_actor_has_no_prompt() {
-        let of = |action| Targeted { form_id: 0x1234, name: "Radscorpion".into(), action, distance: 100.0, source: crate::activate::pick::Source::Bounds, crime: false, empty: false };
+        let of = |action| Targeted { form_id: 0x1234, name: "Radscorpion".into(), action, distance: 100.0, source: crate::activate::pick::Source::Bounds, crime: false, empty: false, through: None };
         assert!(!of(Action::Hostile).prompted());
         assert_eq!(Action::Hostile.label(), "");
         for shown in [Action::Name, Action::Talk, Action::Steal, Action::Search] {
@@ -830,3 +838,6 @@ mod tests {
         assert_eq!(value_text(None), "--");
     }
 }
+
+#[cfg(test)]
+mod string_settings_tests;

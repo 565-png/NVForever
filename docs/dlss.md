@@ -14,10 +14,23 @@ DLSS needs:
 
 NVForever ships no NVIDIA file. NVIDIA's files come under NVIDIA's own licence terms.
 
+## Getting the files from the launcher
+
+[design: #2765, `crates/nvf-launcher/src/dlss.rs`] The launcher's **Settings > Graphics** starts
+with an NVIDIA DLSS card: what DLSS needs and what this PC has (Windows, the graphics card
+Windows names, how many of the four upscaling and four frame generation files the `dlss`
+folder holds), **Download DLSS…**, **Open dlss folder**, NVIDIA's release page and **Check
+again**. Download DLSS… shows NVIDIA's licence first and runs the very download the game's
+dialog runs (below; the code is shared, `crates/nvf-dlss-files`): nothing goes online before
+**I accept** is clicked with the mouse, the same eight files, pins and signature checks, and
+the same `dlss` folder beside `nvforever.exe`. The card shows its progress (Cancel download
+stops it with nothing written); the game uses DLSS from its next start.
+
 ## Getting the files from the settings: Download DLSS…
 
-[design: `settings.rs`, `dlss/download/files.rs`] While any of the eight upscaling and frame
-generation files is missing, the Upscaler row (pause menu, **Settings > Graphics**) offers
+[design: `settings.rs`, `nvf-dlss-files` `download/files.rs`] While any of the eight upscaling and frame
+generation files is missing, the Upscaler row (pause menu, **Settings > Display**, Upscaling
+and Anti-Aliasing) offers
 **Download DLSS…** beside Off, FSR 3.1 and DLSS (Windows only, with the Vulkan renderer).
 Choosing it changes nothing in the row; it opens a dialog:
 
@@ -37,7 +50,7 @@ Choosing it changes nothing in the row; it opens a dialog:
    (`https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.14.16/streamline-sdk-v2.14.16.zip`):
    it reads the archive's list of files from its end and asks for just those eight entries,
    including the four frame generation files listed below, or only the ones your `dlss` folder
-   does not hold yet [design: `dlss/download/install.rs`, `still_missing`]. The four frame
+   does not hold yet [design: `nvf-dlss-files` `download/install.rs`, `still_missing`]. The four frame
    generation files are about 4.6 MB of the download [observed: the official zip, 2026-11-13]. The dialog shows the step,
    the file and the megabytes; **Hide** (Esc) closes it and the download goes on while you play (the Upscaler
    row then reads "Downloading DLSS… n%", and choosing it shows the dialog again);
@@ -58,7 +71,7 @@ Choosing it changes nothing in the row; it opens a dialog:
    own) and offers the manual way: **Open release page**, **Open dlss folder** (made if it is
    not there) and **Try again**.
 
-[design: `settings.rs`, `dlss/download/install.rs`] If you already have the four upscaling
+[design: `settings.rs`, `nvf-dlss-files` `download/install.rs`] If you already have the four upscaling
 files, DLSS upscaling keeps working and **Download DLSS…** stays offered for the missing frame
 generation files. Accepting again fetches and adds only the files the folder lacks: a file
 already there is kept as it is, so your own `nvngx_dlss.dll` of another DLSS version stays.
@@ -96,7 +109,7 @@ ignores them with one warning in the log.
    download the release **2.14.16**, the archive `streamline-sdk-v2.14.16.zip`. Other
    versions are not tested with NVForever.
 2. Open the archive's `bin\x64` folder and take these eight files
-   [design: `dlss/download/files.rs`]:
+   [design: `nvf-dlss-files` `download/files.rs`]:
    - `sl.interposer.dll`
    - `sl.common.dll`
    - `sl.dlss.dll`
@@ -168,7 +181,8 @@ Streamline's Reflex (`sl.reflex.dll`) rather than its own calls; without them it
 
 ## Turning it on
 
-In the pause menu, **Settings > Graphics**, set **Upscaler** to **DLSS**, and
+In the pause menu, **Settings > Display** (Upscaling and Anti-Aliasing), set **Upscaler** to
+**DLSS**, and
 **Upscaling mode** to Native AA (DLSS at full resolution, also called DLAA), Quality,
 Balanced, Performance or Ultra Performance. Each mode shows the share of the screen's width and
 height the world is drawn at, for example Quality (67%): Native AA for full resolution with
@@ -258,6 +272,13 @@ vsync off". Latency reduction turns on with it, through NVIDIA's Reflex. The HUD
 not generated; menus and loading screens show real frames only. The performance overlay's frame
 rate shows the frames shown and, in brackets, the real ones. The log's `DLSS-G:` lines say what
 happened.
+
+The **Frame rate limit** counts the frames shown: with frame generation on, real frames are held
+to the limit divided by the frames shown for each (144 at 2x: 72 real frames a second). In menus,
+and whenever no frames are being generated (another window in front), real frames get the whole
+limit. A limit divided that far that fewer than 60 real frames a second are left (144 at 4x: 36)
+can feel choppy; the Generated frames row then says so. Fewer generated frames, or a limit nearer
+the screen's refresh rate, give more real frames.
 
 ## When DLSS is greyed out
 

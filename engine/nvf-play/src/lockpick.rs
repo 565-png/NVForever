@@ -69,6 +69,7 @@ use crate::ui_pointer::PointerState;
 use bevy::window::PrimaryWindow;
 use fnv_game::lockpick::{self as rules, Opening, Phase, Picking, Refusal, Settings, PIN_RANGE};
 use fnv_sim::FormId;
+use fnv_util::words::{tr, trf};
 use rand_chacha::ChaCha8Rng;
 use rand_core::{RngCore, SeedableRng};
 
@@ -235,7 +236,7 @@ pub struct Session {
 impl Session {
     pub fn force_label(&self) -> String {
         // [observed: "Force Lock [15%]", the owner's screenshots as noted 2026-10-11]
-        format!("Force Lock [{:.0}%]", self.game.force_chance())
+        trf("Force Lock [{chance}%]", &[("chance", &format!("{:.0}", self.game.force_chance()))])
     }
 
     /// How much of the menu is drawn: 1, down to 0 as it leaves.
@@ -413,13 +414,14 @@ fn unit(rng: &mut ChaCha8Rng) -> f32 {
 }
 
 /// The line shown when the menu does not open [hypothesis: the original's words are its
-/// own settings, not in the plugins; these are NVForever's].
+/// own settings, not in the plugins; these are NVForever's], in the chosen language
+/// (`lang/*.toml`, #3146).
 pub fn refusal_line(r: Refusal) -> String {
     match r {
-        Refusal::RequiresKey => "This lock requires a key.".into(),
-        Refusal::Broken => "This lock is broken. It can only be opened with a key.".into(),
-        Refusal::Skill { needed } => format!("You need a Lockpick skill of {needed:.0} to pick this lock."),
-        Refusal::NoPins => "You have no bobby pins.".into(),
+        Refusal::RequiresKey => tr("This lock requires a key.").into(),
+        Refusal::Broken => tr("This lock is broken. It can only be opened with a key.").into(),
+        Refusal::Skill { needed } => trf("You need a Lockpick skill of {needed} to pick this lock.", &[("needed", &format!("{needed:.0}"))]),
+        Refusal::NoPins => tr("You have no bobby pins.").into(),
     }
 }
 
@@ -456,7 +458,7 @@ fn open(
     };
     let reference = FormId(asked.reference);
     let name = match practice {
-        Some(_) => "practice lock".to_string(),
+        Some(_) => tr("practice lock").to_string(),
         None => sim.base_of(asked.reference).and_then(|b| sim.name(b)).map_or_else(|| reference.to_string(), str::to_string),
     };
     let now = time.elapsed_secs();
@@ -479,7 +481,7 @@ fn open(
             // The player's tweak names the key a lock needs [design: docs/design/tweaks.md].
             let key = matches!(r, Refusal::RequiresKey).then(|| rt.game.tweaks.lock_needs_key_name).unwrap_or(false).then(|| rt.game.world.peek(reference).and_then(|s| s.lock).and_then(|l| l.key)).flatten();
             // The player's tweak says the player's own skill [design: docs/design/tweaks.md].
-            let line = if matches!(r, Refusal::Skill { .. }) && rt.game.tweaks.show_current_skill { format!("{} (yours: {skill:.0})", line.trim_end_matches('.')) } else { line };
+            let line = if matches!(r, Refusal::Skill { .. }) && rt.game.tweaks.show_current_skill { trf("{line} (yours: {skill})", &[("line", &line.trim_end_matches('.')), ("skill", &format!("{skill:.0}"))]) } else { line };
             let line = match key.and_then(|k| sim.name(k)) {
                 Some(k) => format!("{}: {k}.", line.trim_end_matches('.')),
                 None => line,
@@ -720,7 +722,7 @@ fn apply(
                             let owner = with_world(rt, &mut sim, |rt| rules::opened(&mut rt.game, reference, level, false));
                             crime_hook(&mut opened, reference, owner, true);
                         }
-                        s.status = Some("Lock forced open".into());
+                        s.status = Some(tr("Lock forced open").into());
                         s.ended = Some(now);
                         sounds.write(UiSound { menu: UiMenu::Lockpick, event: UiEvent::Unlocked });
                     }
@@ -729,7 +731,7 @@ fn apply(
                         stats.pins_broken += 1;
                         with_world(rt, &mut sim, |rt| rules::pin_broke(&mut rt.game));
                         info!("lockpick: Force Lock ({chance:.0}%, roll {roll:.1}): failed, the pin broke and the lock holds ({} left, tweak)", g.pins);
-                        s.status = Some(if g.pins > 0 { "The bobby pin broke".into() } else { "You have no bobby pins left".into() });
+                        s.status = Some(if g.pins > 0 { tr("The bobby pin broke").into() } else { tr("You have no bobby pins left").into() });
                         if g.pins == 0 {
                             s.ended = Some(now);
                         }
@@ -742,7 +744,7 @@ fn apply(
                             with_world(rt, &mut sim, |rt| rules::broke(&mut rt.game, reference));
                         }
                         info!("lockpick: Force Lock ({chance:.0}%, roll {roll:.1}): {reference} broken for good, the pin with it ({} left)", g.pins);
-                        s.status = Some("The lock is broken".into());
+                        s.status = Some(tr("The lock is broken").into());
                         s.ended = Some(now);
                         s.pin(PinClip::Break, now);
                         sounds.write(UiSound { menu: UiMenu::Lockpick, event: UiEvent::ForceFailed });
@@ -843,10 +845,10 @@ fn step(
                 s.pin(PinClip::Break, now);
                 if left == 0 {
                     stats.out_of_pins += 1;
-                    s.status = Some("You have no bobby pins left".into());
+                    s.status = Some(tr("You have no bobby pins left").into());
                     s.ended = Some(now);
                 } else {
-                    s.status = Some("Your bobby pin broke".into());
+                    s.status = Some(tr("Your bobby pin broke").into());
                 }
             }
             rules::Event::NewPin => {
@@ -870,7 +872,7 @@ fn step(
                     ui(UiEvent::Strain { on: false });
                 }
                 ui(UiEvent::Unlocked);
-                s.status = Some("Lock picked".into());
+                s.status = Some(tr("Lock picked").into());
                 s.ended = Some(now);
             }
         }
@@ -923,6 +925,45 @@ fn report(mut exit: MessageReader<AppExit>, stats: Res<LockpickStats>) {
         "lockpick summary: {} asked, {} opened ({} refused); {} picked, {} forced, {} broken by forcing; {} torque tries, {} pins broken, {} times out of pins; {} left before the end",
         s.asked, s.opened, s.refused, s.picked, s.forced, s.broken, s.tries, s.pins_broken, s.out_of_pins, s.left
     );
+}
+
+/// [design, #2403] Synthetic logical/ineffective states for detector regressions.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_progress_fixture(step: usize) -> LockpickScreen {
+    let mut game = Picking::new(rules::Level::Easy, 50.0, 10, 0.5, Settings::default());
+    if step >= 1 {
+        game.set_pin(100.0);
+    }
+    if step >= 2 {
+        game.turn = 10.0;
+    }
+    if step >= 3 {
+        game.pins -= 1;
+    }
+    if step >= 4 {
+        game.phase = Phase::PinBroken { since: step as f32 };
+    }
+    LockpickScreen(Some(Session {
+        reference: FormId(42),
+        practice: true,
+        name: "Synthetic lock".into(),
+        game,
+        status: (step >= 5).then(|| "Synthetic status".into()),
+        opened: step as f32,
+        pin_clip: PinClip::In,
+        pin_since: step as f32,
+        ended: None,
+        help: (step >= 6).then(|| Help {
+            title: "Synthetic help".into(),
+            text: String::new(),
+            words: help::BoxWords { manual: String::new(), close: String::new(), close_hint: String::new() },
+        }),
+        words: Words { skill: String::new(), picks: String::new(), level: String::new(), exit: String::new(), force_hint: String::new(), exit_hint: String::new() },
+        leaving: (step >= 7).then_some((step as f32, "synthetic")),
+        moved: step as f32,
+        aid_torque_until: Some(step as f32),
+    }))
 }
 
 #[cfg(test)]

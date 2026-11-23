@@ -413,9 +413,9 @@ pub fn guard_write(path: &Path, game: Option<&GameInstall>) -> Result<(), Instal
 /// ```
 ///
 /// `Path` is the original game's install folder (the one holding `Data`), read-only input.
-/// `CodePage` is the code page of the game's 8-bit text (`fnv_util::text`, #1439): 1252
-/// (the default, English installs), 1251 (Russian) or 1250 (Central European); written
-/// only by hand, never by [`Config::save`].
+/// `CodePage` is the encoding of the game's text (`fnv_util::text`, #1439): 1252
+/// (the default, English installs), 1251 (Russian), 1250 (Central European), or
+/// 936 (GB18030/GBK for simplified Chinese). [`Config::save`] preserves this setting.
 /// Saving changes only the keys it owns and keeps every other line, so the file can carry
 /// comments and settings of later builds.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -424,6 +424,8 @@ pub struct Config {
     pub game_dir: Option<PathBuf>,
     /// `[Text] CodePage`, as written (checked where it is used); None: not set.
     pub code_page: Option<String>,
+    /// `[Interface] CjkFontPath`, absolute or relative to the INI.
+    pub cjk_font_path: Option<PathBuf>,
 }
 
 /// `nvforever.json` of earlier builds; unknown keys are ignored.
@@ -453,13 +455,20 @@ impl Config {
         };
         let c: LegacyConfig =
             serde_json::from_str(&text).map_err(|e| InstallError::Config(format!("{}: {e}", legacy.display())))?;
-        Ok(Config { game_dir: c.game_dir, code_page: None })
+        Ok(Config {
+            game_dir: c.game_dir,
+            ..Config::default()
+        })
     }
 
     pub fn from_ini(text: &str) -> Config {
         Config {
             game_dir: ini_get(text, "Game", "Path").filter(|s| !s.is_empty()).map(PathBuf::from),
             code_page: ini_get(text, "Text", "CodePage").filter(|s| !s.is_empty()),
+            cjk_font_path: ini_get(text, "Interface", "CjkFontPath")
+                .map(|path| path.trim_matches('"').trim().to_owned())
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from),
         }
     }
 
@@ -487,7 +496,7 @@ impl Config {
 /// flushed, then renamed over the old one. A crash or a full disk mid-write leaves the
 /// old file, not a cut one (a cut plugins.txt would come back with the lost plugins
 /// switched off, #1982). The caller has passed `path` through [`guard_write`].
-pub(crate) fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), InstallError> {
+pub fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), InstallError> {
     use std::io::Write;
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(".tmp");
@@ -514,6 +523,24 @@ fn ini_pair(line: &str) -> Option<(&str, &str)> {
         return None;
     }
     t.split_once('=').map(|(k, v)| (k.trim(), v.trim()))
+}
+
+/// Every `key=value` line of `[section]` (the section's name compared without case), in
+/// file order, comments left out; a key given twice is listed twice. The launcher lists
+/// the `[Settings]` rows with it.
+pub fn ini_pairs(text: &str, section: &str) -> Vec<(String, String)> {
+    let mut in_section = false;
+    let mut out = Vec::new();
+    for line in text.lines() {
+        if let Some(s) = ini_section(line) {
+            in_section = s.eq_ignore_ascii_case(section);
+        } else if in_section {
+            if let Some((k, v)) = ini_pair(line) {
+                out.push((k.to_string(), v.to_string()));
+            }
+        }
+    }
+    out
 }
 
 /// The value of `key` in `[section]` (names compared without case); the first one wins.
@@ -803,12 +830,30 @@ mod tests {
 
     #[test]
     fn code_page_is_read_and_kept() {
-        let c = Config::from_ini("[Game]\nPath=C:\\FNV\n\n[Text]\nCodePage = 1251\n");
-        assert_eq!(c.code_page.as_deref(), Some("1251"));
         assert_eq!(Config::from_ini("[Text]\nCodePage=\n").code_page, None);
-        // Saving the game folder keeps the hand-written code page.
-        let again = Config { game_dir: Some(PathBuf::from("D:\\FNV")), ..Config::default() }.to_ini("[Text]\nCodePage=1251\n");
-        assert_eq!(Config::from_ini(&again).code_page.as_deref(), Some("1251"));
+        for page in ["1251", "936"] {
+            let ini = format!("[Game]\nPath=C:\\FNV\n\n[Text]\nCodePage = {page}\n");
+            assert_eq!(Config::from_ini(&ini).code_page.as_deref(), Some(page));
+            let again = Config { game_dir: Some(PathBuf::from("D:\\FNV")), ..Config::default() }.to_ini(&ini);
+            assert_eq!(Config::from_ini(&again).code_page.as_deref(), Some(page));
+        }
+    }
+
+    #[test]
+    fn cjk_font_path_is_optional_and_kept_when_saving() {
+        let text = "[Interface]\nCjkFontPath = \"fonts/My CJK font.otf\"\n";
+        let path = Path::new("fonts/My CJK font.otf");
+        assert_eq!(Config::from_ini(text).cjk_font_path.as_deref(), Some(path));
+        assert_eq!(
+            Config::from_ini("[Interface]\nCjkFontPath=\n").cjk_font_path,
+            None
+        );
+        assert_eq!(
+            Config::from_ini(&Config::default().to_ini(text))
+                .cjk_font_path
+                .as_deref(),
+            Some(path)
+        );
     }
 
     #[test]
@@ -834,6 +879,22 @@ mod tests {
         }
         let new = Config::default().to_ini("");
         assert!(new.contains("add a [UI] section with an empty TileMenus= line"));
+    }
+
+    #[test]
+    fn ini_pairs_lists_one_section() {
+        let t = "[Game]
+Path=X
+
+[settings]
+; c
+a=1
+ b = 0.50 
+[Other]
+c=2
+";
+        assert_eq!(ini_pairs(t, "Settings"), vec![("a".to_string(), "1".to_string()), ("b".to_string(), "0.50".to_string())]);
+        assert!(ini_pairs(t, "None").is_empty());
     }
 
     #[test]

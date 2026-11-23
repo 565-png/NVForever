@@ -110,7 +110,31 @@ of a form the unit's plugin can see (the plugin and its masters, the last defini
 wins); then an 8-digit hex FormID, stored file-local [observed: scripts.md §3.4]. A quoted
 Editor ID names its form. In an enum position (actor values, animation groups) a name is a
 spelling from encodings.json `enums`. `Head.var` is variable `var` of the script that
-`Head` runs: a quest's script, or a reference's base form's script.
+`Head` runs: a quest's script, or a reference's base form's script. When a reference's base
+actor (`NPC_`/`CREA`) has `ACBS` template flag `Use Script` (bit 9) set and a `TPLT`
+pointing to a visible actor record [documented: GECK wiki Template Data, "Use Script";
+`schemas/fnv/gameplay.json` NPC_/CREA `ACBS.template_flags`], `LoadOrderIndex` /
+`PluginEnv::script_vars` and `ScriptIndex::script_of` follow the `TPLT` chain to resolve
+that script's variables, matching `Game::ref_script` and `GameData::base_template_source`.
+
+[observed: original installed plugin records, inspected through SCVR declarations
+and each plugin's master table] A master script can declare a variable which a later
+override omits, while a third plugin depends on the master and does not list that
+override as a master.
+
+[design] The running engine indexes every standalone script record's variable
+metadata for this lookup, including overridden master versions. Execution still
+uses the winning script. An empty script override supplies an empty variable list,
+so it cannot expose declarations from an older version when that override is visible.
+
+Implementation validation: four synthetic `source_metadata::` integration tests run
+through ordinary Auto selection and `GameData::build`. The identical-fixture baseline
+had one passing control and three assertion failures; source commit `9948cf526` passed
+all four, with zero ignored and 917 other integration tests filtered out. The controls
+check quest and placed-reference indices/types, visible replacement variables,
+nonvisible and missing names, empty overrides, unchanged execution winners and retained
+compiled bytes on source failure. These are compiler tests, not original-game gameplay
+or complete mod compatibility evidence.
 
 - **Seeded** (the default for `fnvtool script compile`, and what a running engine should
   use for a unit that has lists): the unit's own variable and reference lists start the
@@ -120,6 +144,22 @@ spelling from encodings.json `enums`. `Head.var` is variable `var` of the script
 - **Fresh** (`--fresh`): empty lists. Variables get indices 1, 2, … in declaration order,
   and references are added in order of first use. This mode tests name resolution
   through the load order.
+
+[observed: original installed SCTX, SCRO and compiled vanilla call] A source command
+uses a bare five-digit hexadecimal receiver; its compiled `StartConversation` call
+names the corresponding placed actor through the reference list. The same source
+uses a six-digit topic argument, which is evidence for an argument, not for a
+six-digit receiver.
+
+[design] Source recompilation also admits a known file-local form for a bare
+five-digit receiver, using the existing short-form argument lookup. The rule follows
+`Seed::unknown_calls`, which mod runtime compilation (`compile_mod_runtime`) also
+enables. The shared receiver lookup serves direct, inline, Set and extended calls;
+Auto selection is one entry point. A local variable and then an Editor ID still take
+precedence. Strict fresh compilation, eight-digit
+and quoted receiver lookup, and bytecode fallback on source failure keep their
+existing rules. Other bare short receiver widths remain open for a GECK compilation
+probe; no new native byte encoding is introduced.
 
 ## 5. Parity (`L5.script.compile.vanilla`, `fnvtool script compile`)
 
@@ -287,8 +327,11 @@ expression parser), `vm.rs` (`xeval`).
   variable. Lambdas: `(begin function {params} … end)`, which may span lines, and
   `{params} => expr` [documented: Lambda], both an `XExpr::Lambda` whose parameters and
   variables are the enclosing script's; the block form's statements are compiled with the
-  unit's own lists. Running them (calls, the 30-call nesting limit, SetFunctionValue) is
-  B7/B8.
+  unit's own lists. [design, #2985] The block lambda's `(` may directly follow the command
+  name: `Call(begin function {params} … end) args` in NVForever has the same argument
+  structure as `Call (begin function {params} … end) args`.
+  [hypothesis] The original extender parses the joined form the same way; this has not been observed.
+  Running them (calls, the 30-call nesting limit, SetFunctionValue) is B7/B8.
 - **Compiler-override blocks** (A12): `Begin _GameMode` (any block name after `_`) is that
   block, and inside it `if`, `elseif` and `set` take extended expressions too, with the
   argument rule above [documented: Script Compiler Override].
@@ -699,6 +742,88 @@ rules; what NVForever decides where they are open is tagged here.
   GetNumItems]; the entry here is the item's base form, where the original gives a
   temporary reference to the stack that stops being valid the next frame [hypothesis
   until B5 builds inventory references].
+
+### Inline surplus operands in mod expressions
+
+[documented: [IsAnimPlayingEx](https://geckwiki.com/index.php/IsAnimPlayingEx)]
+The command has one required category and two optional integer parameters. The
+catalogue keeps that signature. [observed: an installed B42 Optics Script Runner
+source file, read locally on 2026-11-17; no mod text is copied here] It supplies a
+fourth operand inside a negated boolean condition. The original runtime behavior
+and any fourth native parameter or byte encoding remain unverified.
+
+[implementation evidence: public source 98fb59a9] Standalone extender calls
+already discard surplus operands with a diagnostic, but an unparenthesized
+condition leaves the operand behind and fails syntax checking. A lambda body's
+expression has its own token stream even while the containing handler call is
+parsing an argument.
+
+[design] Engine design choice, not a claim about the original runtime (see the
+`[hypothesis]` below). In mod-source mode only, a bounded-arity call at the current whole
+expression's root applies the existing surplus policy: parse and discard extra
+operands, emit `surplus_arguments`, then leave enclosing operators in place.
+Parsing a discarded operand retains no references, locals, lambda identities or
+incidental diagnostics. An unreadable operand remains a syntax error. The next
+argument of an enclosing call and existing parenthesized/braced/indexed expression
+boundaries retain their previous consumers. Strict runtime/editor compilation,
+catalogue signatures, native encodings and API implementations are unchanged.
+
+[implementation evidence: Linux CI on source eb9bfef2, 2026-11-17] The nine
+shared-target controls compiled: three passed and six stopped at diagnostic
+assertions that incorrectly treated legacy non-error `variable_added` and
+`reference_added` information as semantic warnings. The fixture correction
+retains those informational entries explicitly and checks all other diagnostics;
+VM values, reference/local rollback, strict refusal and byte oracles are retained.
+Assertions after the failed checks were not reached in that run. All nine
+corrected controls passed in Linux CI for `ae6c1110` at checkout `50231146`.
+The Main integration at `abb5f67f` (hosted merge `22dc2e5` with Main `5fbad071`,
+run 44298689511) passed all seven hosted checks, with all nine controls passing once.
+
+The shared `compile` test target's `inline_surplus_operands::` cases compile an
+independent handler-shaped condition
+through `compile_mod_runtime`, decode its bytes, and exercise call arguments and
+boolean behavior through the VM. Controls cover optional arguments, enclosing
+calls/operators, short circuiting, strict admission, explicit parentheses,
+discarded references/lambdas and unreadable operands. The actual installed file,
+controlled baseline/candidate comparison and game-load acceptance remain UNRUN
+for this source candidate. No installed mod text is included in the tests.
+
+[hypothesis] Whether the original extender runtime drops these inline operands,
+or the caller intended another behavior, remains open. Extend the owning surplus
+argument observer check with a query-only condition before claiming original-game
+parity; parsing this caller does not establish B42 Optics compatibility.
+
+### Mod-source declarations, braced call arguments, `TestExpr`, and aiming `anim_group` codes
+
+- **Aiming `anim_group` names** (`crates/fnv-script/data/encodings.json`): `AimUp` (18),
+  `AimDown` (19), `AimIS` (20), `AimISUp` (21), and `AimISDown` (22)
+  [documented: https://geckwiki.com/index.php?title=AnimGroups]. Both `PlayGroup` /
+  `IsAnimPlaying` bytecode parameters and `SetOnPlayGroupEventHandler` / `Game::anim_group_code`
+  share this table; vanilla master scripts do not use these codes so vanilla bytes are unchanged.
+- **Plain declarations with trailing words** (`compile/parse.rs`): [design] a non-initializing
+  declaration line (`int a`, `int a, b`) declares only the first word and any further words
+  explicitly separated by commas. Unseparated trailing words (such as a missing `=` before a
+  function call) are not declared as additional locals, preventing a function name from being
+  shadowed by a spurious local variable in later lines or lambdas.
+- **Inline declarations in `if`/`elseif`/`set` and assignments inside `TestExpr` / `let`**
+  (`compile/parse.rs`, `compile/gen.rs`, `compile/gen/x.rs`): [documented: Inline variable
+  declaration; TestExpr; Let] inline declarations (`if TestExpr ref r = …`, `if (int n = …) == 2`,
+  and nested inline declarations in a declaration initializer) declare the local and strip the
+  type keyword when lowering to extended expressions, and `TestExpr` / `let` accept `=` / `:=`
+  inside their whole-expression argument (`min = 0`).
+- **Braced call argument lists** (`compile/gen/x.rs`): `{expr}` was previously observed for one
+  argument (`call Fn {(BuildRef 0 n)}`, `call Fn {Quest.var}`, #2275). [hypothesis] Zero or more
+  space- or comma-separated arguments inside `{ … }` not followed by `=>` (`call Fn {a b}`,
+  `call Fn {a, b}`, `call Fn {}`) pass those expressions as arguments up to the callee's parameter
+  limit, while `{params} => expr` keeps its lambda grammar and an unclosed `{` still fails with
+  `syntax: missing }`. Original xNVSE runtime behavior for multi-argument braced lists remains to
+  be confirmed by a game compile probe.
+- **Preserved catalogue signatures**: `SetCritDam` remains unregistered pending the original-game
+  `GetCommandOpcode` capture in `docs/spec-notes/ext-last-core.md` §7; `IsAnimPlayingEx` (3
+  params, §9 above), `SetJohnnyOnRenderUpdateEventHandler` (3 params, `ext-script-runner.md` §6
+  and observer check 81), `PushActorNoRagdoll` (3 params, `jip-physics-13.md`), and
+  `GetReticleRange` (0 params in the GECK wiki export) keep their documented catalogue signatures
+  unchanged pending original-game parameter captures.
 
 ## 10. Open
 

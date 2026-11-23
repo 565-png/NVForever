@@ -75,7 +75,7 @@ impl Value {
 /// for `short`), 2147483647.5 → 2147483647, 3000000000.5 and −3000000000.5 →
 /// −2147483648; `L5.quest.var_storage`, docs/spec-notes/scripts.md §4.1].
 pub fn to_int_storage(x: f64) -> i32 {
-    if x.is_nan() || x >= 2_147_483_648.0 || x < -2_147_483_648.0 {
+    if !(-2_147_483_648.0..2_147_483_648.0).contains(&x) {
         i32::MIN
     } else {
         x.trunc() as i32
@@ -294,7 +294,8 @@ pub trait Host {
         None
     }
     /// A value of an actor's current or last hit (JIP's GetHit…, jip-hit-info.md):
-    /// `what` is attacker, weapon, health, limb or flag (`k` the flag number).
+    /// `what` is attacker, weapon, projectile, health, limb, fatigue, base_weapon,
+    /// flag (`k` the flag number) or 3d (`k` the data type 0..=2).
     fn hit_value(&mut self, _actor: u32, _what: &str, _k: i64) -> Option<XVal> {
         None
     }
@@ -2952,9 +2953,13 @@ impl Vm<'_, '_> {
                     _ => x.sqrt(),
                 })
             }
-            "atan2" => {
+            // [documented: https://obse.silverlock.org/obse_command_doc.html (`(atan2:float)
+            // datan2 arg1:float arg2:float`, "ATan2 and DATan2 use degrees"); cross-referenced
+            // on https://geckwiki.com/index.php?title=Fatan2 ("significantly faster than dATan2");
+            // hypothesis: exact degree atan2(y, x) in [-180, 180], with (0, 0) -> 0.0].
+            "atan2" | "datan2" => {
                 let (y, x) = (val(self, 0)?.num()?, val(self, 1)?.num()?);
-                XVal::Num(y.atan2(x).to_degrees())
+                XVal::Num(if y == 0.0 && x == 0.0 { 0.0 } else { y.atan2(x).to_degrees() })
             }
             "pow" => {
                 let (a, b) = (val(self, 0)?.num()?, val(self, 1)?.num()?);
@@ -3147,11 +3152,15 @@ impl Vm<'_, '_> {
             n if n.starts_with("ar_") || n == "typeof" => self.array_function(n, c),
             // `[ref.]Call udf args…` [documented: Call; User Defined Function].
             "call" => {
-                let f = arg(self, 0)?;
                 let on = match &c.on {
                     Some(e) => Some(self.xeval(e)?.value()?),
                     None => None,
                 };
+                if on.is_some_and(|v| v.as_form().is_none()) {
+                    self.host.no_reference_call("call", on, c);
+                    return Err(VmError::NoReference("call".to_string()));
+                }
+                let f = arg(self, 0)?;
                 let mut args = Vec::with_capacity(c.args.len().saturating_sub(1));
                 for k in 1..c.args.len() {
                     args.push(arg(self, k)?);
@@ -3292,6 +3301,12 @@ impl Vm<'_, '_> {
                 };
                 Ok(XVal::Num(f64::from(u8::from(ok))))
             }
+            // [documented: Let; observed: JustAssortedMods.esp, `eval x && let s += "+"`]
+            // Nested `let` inside an expression evaluates its assignment argument.
+            "let" => match c.args.first() {
+                Some(e) => self.xeval(e),
+                None => Ok(XVal::Num(0.0)),
+            },
             // [documented: GetCallingScript] 0 from a dialogue or stage result.
             "getcallingscript" => Ok(XVal::Ref(self.host.calling_script().unwrap_or(0))),
             // [documented: SetNameEx `"format" values… form`; SetNthFactionRankNameEx
@@ -3495,6 +3510,8 @@ fn assign_op(op: XAssign) -> XOp {
         XAssign::Pow => XOp::Pow,
         XAssign::BitOr => XOp::BitOr,
         XAssign::BitAnd => XOp::BitAnd,
+        XAssign::Shl => XOp::Shl,
+        XAssign::Shr => XOp::Shr,
         XAssign::Mod | XAssign::Set => XOp::Mod,
     }
 }

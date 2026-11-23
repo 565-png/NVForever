@@ -591,6 +591,45 @@ fn automatic_fire_rate_and_regen() {
     assert_eq!(shots(&run(&mut c, &t, 10, 0.05, |k| k == 0, 0)), 1);
 }
 
+/// #2739: an NPC's semi-automatic gun is spaced by its attack clip in the actor's rig, as
+/// the player's: a 2.0 s clip without an `a:` key gives a shot every 2.0 s, not 1 ÷ Attack
+/// Shots/Sec (0.63 s for 1.5789); with an `a:` key (the sentry bot's `a:R` at 0.967 s),
+/// from that key. Without a clip, 1 ÷ Attack Shots/Sec as before. An automatic weapon
+/// keeps its Fire Rate, its clip left out. The NPC's timing has no wind-up (its clip
+/// starts with the shot).
+#[test]
+fn an_npcs_semi_automatic_gun_follows_its_attack_clip() {
+    let t = CombatTuning::default();
+    let launcher = WeaponStats { clip_size: 1, attack_shots_per_sec: 1.578_947_4, attack_mult: 1.0, anim_mult: 1.0, embedded: true, ..gun(20) };
+    let interval = |w: &WeaponStats, clips: &ClipTiming| Timing::of(w, &fnv_combat::attack::npc_clip_timing(clips, w.automatic), &t);
+    let clip = ClipTiming { attack_len: Some(2.0), hit_time: Some(0.067), reload_len: Some(1.5), ..ClipTiming::default() };
+    let timed = interval(&launcher, &clip);
+    assert!((timed.interval - 2.0).abs() < 1e-5, "{timed:?}");
+    assert_eq!((timed.fire_delay, timed.reload), (0.0, 1.5));
+    let keyed = interval(&launcher, &ClipTiming { next_attack: Some((0.967, NextAttack::Right)), ..clip });
+    assert!((keyed.interval - 0.967).abs() < 1e-5, "{keyed:?}");
+    let unknown = interval(&launcher, &ClipTiming::default());
+    assert!((unknown.interval - 1.0 / 1.578_947_4).abs() < 1e-5, "{unknown:?}");
+    // The cycle: a trigger pulled whenever it is ready fires every 2.0 s, not every 0.63 s.
+    let mut c = Cycle::new(&launcher, timed, true, 1);
+    let (dt, mut held, mut at, mut times) = (1.0 / 120.0, false, 0.0f32, Vec::new());
+    while at < 9.0 {
+        let trigger = !held;
+        held = trigger;
+        if c.step(&t, Input { trigger, reload: false, dt, carried: 0 }).iter().any(|e| matches!(e, Event::Fired { .. })) {
+            times.push(at);
+        }
+        at += dt;
+    }
+    let gaps: Vec<f32> = times.windows(2).map(|p| p[1] - p[0]).collect();
+    assert!(gaps.len() >= 3 && gaps.iter().all(|g| (g - 2.0).abs() < 0.03), "{gaps:?}");
+    // An automatic weapon: its Fire Rate, whatever its attack clip.
+    let minigun = WeaponStats { automatic: true, fire_rate: 15.0, clip_size: 255, attack_shots_per_sec: 15.0, ..gun(9) };
+    let auto = interval(&minigun, &ClipTiming { attack_len: Some(2.0), next_attack: Some((0.5, NextAttack::Right)), spin_up: Some(0.9), ..ClipTiming::default() });
+    assert!((auto.interval - 1.0 / 15.0).abs() < 1e-5 && auto.spin_up == 0.0, "{auto:?}");
+    assert_eq!(auto.interval, interval(&minigun, &ClipTiming::default()).interval);
+}
+
 /// A minigun: its attack clip puts the first shot 0.967 s in (`2hhattackspin.kf`).
 #[test]
 fn a_spinning_weapon_fires_after_its_spin_up() {
@@ -1334,6 +1373,24 @@ fn flame_fence_range() {
 }
 
 #[test]
+fn a_lobber_of_gravity_zero_falls_and_a_missile_of_zero_does_not() {
+    // #3441: the Nuka-grenade's PROJ is a Lobber with gravity 0; it is thrown on an arc
+    // like the frag grenade (gravity 1), not dead straight.
+    let t = CombatTuning::default();
+    let nuka = proj("Lobber", &["Explosion"], 1200.0, 0.0);
+    assert_eq!(nuka.fall(), 1.0);
+    let thrown = Projectile::spawn(&nuka, Some(BOOM), [0.0, 0.0, 100.0], [1.0, 0.0, 0.0], Some(1), G, &t);
+    assert_eq!(thrown.gravity, G);
+    assert!(fnv_combat::vats::throw_reach(nuka.speed, nuka.fall() * G).is_finite());
+    // The field is still a multiplier where it is set.
+    assert_eq!(proj("Lobber", &[], 1200.0, 1.5).fall(), 1.5);
+    // A missile of 0 keeps flying straight.
+    let missile = proj("Missile", &[], 3000.0, 0.0);
+    assert_eq!(missile.fall(), 0.0);
+    assert_eq!(Projectile::spawn(&missile, None, [0.0; 3], [1.0, 0.0, 0.0], Some(1), G, &t).gravity, 0.0);
+}
+
+#[test]
 fn lobbers_timer_proximity_detonation() {
     let t = CombatTuning::default();
     let empty = Toy { actors: vec![], fence: false, wall: None };
@@ -1470,6 +1527,23 @@ fn shots_splash_into_water_and_strike_what_is_under_it() {
         ev.extend(g.step(&empty, 1.0 / 60.0));
     }
     assert_eq!(splashes(&ev).len(), 1, "{ev:?}");
+}
+
+#[test]
+fn ordinary_ground_melee_keeps_its_fixed_body_margin() {
+    // Synthetic low body and short weapon [design, #2535]. No eye-height ray
+    // reaches it; the default ground fallback ends at reach + 24 exactly.
+    let t = CombatTuning::default();
+    let reach = 53.5 + 22.0;
+    for (distance, expected) in [(reach + 24.0 - 0.01, true), (reach + 24.0 + 0.01, false)] {
+        for forward in [[1.0, 0.0, 0.0], vec::normalize([1.0, 0.0, -1.0])] {
+            let world = Toy { actors: vec![(7, [distance, 0.0, 15.0], 15.0)], fence: false, wall: None };
+            let hits = swing_reaching(&world, &t, [0.0, 0.0, 112.0], 0.0, forward, reach, 1);
+            assert_eq!(hits.iter().any(|h| h.0 == 7), expected);
+            let blocked = Toy { wall: Some(40.0), ..world };
+            assert!(swing_reaching(&blocked, &t, [0.0, 0.0, 112.0], 0.0, forward, reach, 1).is_empty());
+        }
+    }
 }
 
 #[test]
@@ -1711,4 +1785,23 @@ fn the_radius_buff_keeps_the_inner_part_whole() {
     assert_eq!(fnv_combat::damage::explosion_damage(&t, 100.0, 100.0, 20.0), 100.0);
     assert!((fnv_combat::damage::explosion_damage(&t, 100.0, 100.0, 100.0) - 20.0).abs() < 1e-3);
     assert!((fnv_combat::damage::explosion_damage(&CombatTuning::default(), 100.0, 100.0, 100.0) - 25.0).abs() < 1e-3);
+}
+
+/// #3023: a weapon whose Ammo Use is 0 (the Laser Detonator: automatic, a clip of one, Fire
+/// Rate 10) spends no round a shot: held, it fires at its rate with no reload between
+/// shots, from an empty magazine and with nothing carried.
+#[test]
+fn ammo_use_zero_spends_no_round_and_never_reloads() {
+    let t = CombatTuning::default();
+    let w = WeaponStats { clip_size: 1, ammo_use: 0, automatic: true, attack_shots_per_sec: 10.0, ..gun(20) };
+    let timing = Timing { interval: 0.1, fire_delay: 0.0, reload: 2.0, spin_up: 0.0, rounds: None, attach: None };
+    for magazine in [1, 0] {
+        let mut c = Cycle::new(&w, timing, false, magazine);
+        let ev = run(&mut c, &t, 200, 0.01, |_| true, 0);
+        assert!(!ev.iter().any(|e| matches!(e, Event::ReloadStarted | Event::DryFire)), "{ev:?}");
+        assert!(ev.iter().all(|e| !matches!(e, Event::Fired { rounds } if *rounds != 0)), "{ev:?}");
+        let n = shots(&ev);
+        assert!((19..=21).contains(&n), "about 10 a second for 2 s from a magazine of {magazine}: {n}");
+        assert_eq!(c.magazine, magazine);
+    }
 }

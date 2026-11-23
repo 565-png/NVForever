@@ -50,6 +50,8 @@ const DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT: u32                  = 1u << 
 const DIRECTIONAL_LIGHT_FLAGS_VOLUMETRIC_BIT: u32                       = 1u << 1u;
 const DIRECTIONAL_LIGHT_FLAGS_AFFECTS_LIGHTMAPPED_MESH_DIFFUSE_BIT: u32 = 1u << 2u;
 const DIRECTIONAL_LIGHT_FLAGS_CONTACT_SHADOWS_ENABLED_BIT: u32           = 1u << 3u;
+// NVForever sun visibility (light.rs `NvfOutdoorSun`): the light is the outdoor sun.
+const DIRECTIONAL_LIGHT_FLAGS_NVF_OUTDOOR_SUN_BIT: u32                  = 1u << 4u;
 
 struct RectLight {
     color: vec4<f32>,
@@ -103,6 +105,9 @@ struct Fog {
     directional_light_exponent: f32,
     bi: vec3<f32>,
     mode: u32,
+    /// NVForever fog parameters (`fog.rs` `GpuFog::nvf_params`; nvforever `aerial.rs`): zero
+    /// unless the application sets them; Bevy's fog functions do not read them.
+    nvf_params: array<vec4<f32>, 3>,
 }
 
 // Important: These must be kept in sync with `fog.rs`

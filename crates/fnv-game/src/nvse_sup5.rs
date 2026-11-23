@@ -147,7 +147,7 @@ fn json_file(g: &Game, path: &str) -> Result<serde_json::Value, i32> {
 }
 
 /// A file's time: 0 created, 1 last read, 2 last written [documented: GetFileTime].
-fn file_time(g: &Game, path: &str, request: f64) -> Option<chrono::DateTime<chrono::Local>> {
+fn file_time(g: &Game, path: &str, request: f64) -> Option<jiff::ZonedDateTime> {
     let (_, disk) = g.mod_files.root_file(&safe_path(path)?)?;
     let m = std::fs::metadata(disk?).ok()?;
     let t = match request as i32 {
@@ -157,7 +157,7 @@ fn file_time(g: &Game, path: &str, request: f64) -> Option<chrono::DateTime<chro
         _ => return None,
     }
     .ok()?;
-    Some(t.into())
+    Some(jiff::Timestamp::try_from(t).ok()?.to_zoned_datetime(crate::local_time::system_zone()))
 }
 
 pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormId>, args: &[XVal]) -> Option<Result<XVal, String>> {
@@ -301,14 +301,14 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let path = text(args, 0).unwrap_or_default();
             let key = text(args, 1).unwrap_or_default();
             let cached = num(args, 2, 0.0) != 0.0;
-            let ck = path.trim().replace('/', "\\").to_ascii_lowercase();
-            let root = match g.mod_files.json.get(&ck).filter(|_| cached) {
+            let ck = crate::nvse_json::key_of(&path);
+            let root = match g.other.json.cache.get(&ck).filter(|_| cached) {
                 Some(v) => Some(v.clone()),
                 None => json_file(g, &path).ok(),
             };
             let Some(root) = root else { return Some(Ok(list(g, vec![XVal::Str(String::new())]))) };
             if cached {
-                g.mod_files.json.insert(ck, root.clone());
+                g.other.json.cache.entry(ck).or_insert_with(|| crate::nvse_json::sorted(root.clone()));
             }
             match json_lookup(&root, &key).cloned() {
                 Some(v @ (serde_json::Value::Array(_) | serde_json::Value::Object(_))) => json_value(g, &v),
@@ -328,7 +328,6 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // session-only write or a request outside 0-2 gives an empty array [hypothesis].
         "getfiletime" => {
             let t = file_time(g, &text(args, 0).unwrap_or_default(), num(args, 1, 0.0));
-            use chrono::{Datelike, Timelike};
             let items = t.map(|t| [f64::from(t.year()), f64::from(t.month()), f64::from(t.day()), f64::from(t.hour()), f64::from(t.minute()), f64::from(t.second())].map(XVal::Num).to_vec()).unwrap_or_default();
             list(g, items)
         }
@@ -337,7 +336,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "getfiletimestr" => {
             let t = file_time(g, &text(args, 0).unwrap_or_default(), num(args, 1, 0.0));
             let fmt = if num(args, 2, 0.0) as i32 == 1 { "%m/%d/%y %H:%M" } else { "%d/%m/%y %H:%M" };
-            XVal::Str(t.map(|t| t.format(fmt).to_string()).unwrap_or_default())
+            XVal::Str(t.map(|t| t.strftime(fmt).to_string()).unwrap_or_default())
         }
         // The load order into SUPNVSE.log in the game's folder [documented: DumpLoadOrder]
         // (NVForever's copy of it, appended to this session's lines): one line a plugin,

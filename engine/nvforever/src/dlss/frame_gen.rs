@@ -10,8 +10,9 @@
 //!     number's token (`frame_token.rs`); DLSS's evaluate then sets none of its own.
 //!   - [`tag`] (after the post passes, before the UI, where FSR's frame generation copies its
 //!     frame without the HUD, `crate::frame_gen` `capture_hudless`): on a frame that may be
-//!     generated ([`may_generate`]) the frame without the HUD is copied into a display-sized
-//!     texture of its own (two used in turn), the upscaler's depth (`PreparedUpscale::depth`,
+//!     generated ([`may_generate`]) the frame without the HUD is written, sRGB-encoded, into a
+//!     display-sized `Rgba8Unorm` texture of its own (two used in turn; [`ENCODED_FORMAT`]: the
+//!     back buffer's colour space, as the guide asks), the upscaler's depth (`PreparedUpscale::depth`,
 //!     render size), the prepass motion (its render rectangle) and that copy are moved to
 //!     `RESOURCE` on Bevy's encoder and tagged `eValidUntilPresent` with `slSetTagForFrame`,
 //!     each `Resource` reporting the layout wgpu-hal puts `RESOURCE` in, as the SR evaluate does
@@ -34,8 +35,20 @@
 //!     `crate::frame_gen::GeneratedFrames` (the performance overlay's count); a line every ten
 //!     seconds with real and presented frames; a status other than `eOk` while on turns frame
 //!     generation off for the session, said once with the flags' names [documented: §14.3].
+//!     The frames presented, with whether the mode was on, also decide what frame pacing's cap
+//!     is divided by (`fg_cap.rs`, #2731): the frames DLSS-G presents while it generates, 1 in
+//!     menus and while it presents one per real frame; each change is one `frame cap:` line.
 //! - **UI buffer** ([`ui_buffer`], stage 4 item 2; after the UI, before Bevy's upscaling blit,
-//!   where FSR's frame generation's `generate` sits): on a tagged frame a full-screen pass writes
+//!   where FSR's frame generation's `generate` sits): on a tagged frame the UI is drawn a second
+//!   time, alone, over transparent black (`fg_ui_layer.rs`, the main texture's format), which
+//!   gives the UI's coverage (its alpha); a full-screen pass ([`UI_COLOUR_WGSL`]) turns it, the
+//!   frame and the HUD-less copy into the UI colour and alpha in the back buffer's encoded values
+//!   (`Rgba8Unorm`, two used in turn), its colour premultiplied and chosen so DLSS-G's blend gives
+//!   back the real frame, and tags it `kBufferTypeUIColorAndAlpha` `eValidUntilPresent`
+//!   [documented: `ProgrammingGuideDLSS_G.md` §5.1: "the RGB channels must be pre-multiplied by
+//!   alpha", `Final_Color.RGB = UI.RGB + (1 - UI.Alpha) x Hudless.RGB`]: see-through HUD pixels
+//!   keep their own alpha. With
+//!   `NVF_FG_UI_LAYER=0`, as before, a full-screen pass writes
 //!   a display-sized `R16Float` UI alpha from the frame (with the UI) and its HUD-less copy: 1
 //!   where they differ, 0 elsewhere. With alpha 1 the UI's colour is the frame's, so the guide's
 //!   rules hold: 0 where there is no UI, above 0 where there is, and `Final = UI.RGB + (1 -
@@ -85,7 +98,34 @@
 //! - **Exit** ([`exit_watch`], in the extraction before Bevy's `extract_windows`): on `AppExit`
 //!   the mode is set off for the frame being extracted, which is still presented; on a window
 //!   closing the mode is set off at once (`extract_windows` queues the surface's removal, which
-//!   Bevy applies at the render world's `ExtractCommands`, before that frame renders).
+//!   Bevy applies at the render world's `ExtractCommands`, before that frame renders). Both
+//!   then reach `win.rs` `shutdown` from `main` once `App::run` has returned.
+//!   The order of the teardown, whatever ends the run:
+//!   1. the mode off ([`exit_mode_off`], once a run; the guide's way of disabling frame
+//!      generation, `mode` `eOff` [documented: `ProgrammingGuideDLSS_G.md` §6.4]) and the
+//!      window's swapchain released while it is off ("Turn DLSS-G off ... before any window
+//!      manipulation", §17; the swapchain released after the GPU is idle, §18.0's pseudocode);
+//!   2. the tags set null, the GPU drained and DLSS-G's resources freed with `slFreeResources`
+//!      ([documented: `ProgrammingGuide.md` §2.8 and the null tag before a resource goes,
+//!      `ProgrammingGuide.md:1017-1025`; `ProgrammingGuideDLSS_G.md` §6.4 step 2]);
+//!   3. `slShutdown`, "before destroying ... Vulkan instances, devices" [documented:
+//!      `ProgrammingGuideDLSS_G.md` §2.0; `ProgrammingGuide.md` §2.15], which unloads every
+//!      plugin (each one's `onShutdown`, then `FreeLibrary`) [documented: Streamline's source,
+//!      `src/sl.cpp:289-327` `slShutdown`, `src/pluginManager.cpp:1200-1229` `unloadPlugins`].
+//!
+//!   A loaded save's handoff ends the old run without `App::run` returning: `handoff.rs`
+//!   `end_now` calls `std::process::exit` from the `EndNow` schedule after `Last`, so neither
+//!   this frame's extraction (where [`exit_watch`] would see its `AppExit`) nor `main`'s
+//!   shutdown ran, and Streamline and DLSS-G were left to the DLLs' detach at process exit
+//!   [design]. In a player's runs every such exit with DLSS-G set up crashed in
+//!   `nvngx_dlssg.dll` on the main thread (#2733) [observed: the player's logs and dumps,
+//!   2026-11-15]; that the detach without `slShutdown` is the cause is a [hypothesis] the fix
+//!   tests. It now runs the same steps first (`super::end_now`): the render app taken back
+//!   from the render thread, FSR frame generation's presenters stopped and joined (they
+//!   present on threads of their own and hold the surface), then [`end_now`] here (step 1, the
+//!   mode off at once as for a closing window; the handoff's loading screen keeps the options
+//!   off before, `may_generate` needs play [design]), then `win.rs` `shutdown` (steps 2 and
+//!   3); the process ends after.
 //! - **Errors**: with DLSS-G loaded, `vkQueuePresentKHR` and `vkAcquireNextImageKHR` run
 //!   asynchronously inside Streamline and the host sees only "the last known error"; the
 //!   callback reports each call whose `VkResult` is not `VK_SUCCESS` and must return at once
@@ -116,7 +156,7 @@ use bevy::render::sync_world::MainEntity;
 use bevy::render::view::{create_surfaces, extract_windows, prepare_view_targets, ExtractedView, ExtractedWindow, HoldSurfaceReconfigure, SurfaceData, ViewTarget};
 use bevy::render::{Extract, ExtractSchedule, Render, RenderSystems};
 use bevy::window::{PrimaryWindow, WindowClosing};
-use bevy::ui_render::ui_pass;
+use bevy::ui_render::{ui_pass, UiCameraView};
 
 use super::evaluate::{constants_for, describe, ConstantsInput, VIEWPORT};
 use super::ffi::{
@@ -155,12 +195,31 @@ struct Decision {
     output: UVec2,
 }
 
-/// The frame without the HUD: two textures used in turn, at the output size and in the main
-/// texture's format.
+/// The frame without the HUD, or the UI colour and alpha: two textures used in turn, at the
+/// output size, in [`ENCODED_FORMAT`].
 struct Hudless {
     textures: [wgpu::Texture; 2],
     views: [wgpu::TextureView; 2],
     next: usize,
+}
+
+impl Hudless {
+    fn new(device: &wgpu::Device, size: wgpu::Extent3d, label: &'static str) -> Self {
+        let textures: [wgpu::Texture; 2] = std::array::from_fn(|_| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: ENCODED_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+        });
+        let views = std::array::from_fn(|i| textures[i].create_view(&wgpu::TextureViewDescriptor::default()));
+        Self { textures, views, next: 0 }
+    }
 }
 
 /// Real and presented frames since the period began.
@@ -216,26 +275,174 @@ struct FrameGen {
     pending_load: Option<bool>,
     /// The app is exiting: the mode stays off ([`exit_watch`]).
     exiting: bool,
+    /// The mode was set off at once for an exit ([`exit_mode_off`]): once a run.
+    exit_off: bool,
     /// This frame's HUD-less copy, for the UI buffer ([`ui_buffer`]); set by a tagged frame.
     ui_source: Option<wgpu::TextureView>,
-    /// The UI buffer's pass and its two textures.
+    /// The UI buffer's pass and its two textures (`NVF_FG_UI_LAYER=0`: the UI alpha).
     ui: Option<UiPass>,
+    /// The UI drawn alone (`fg_ui_layer.rs`, the main texture's format), read in the same frame.
+    ui_layer: Option<(wgpu::Texture, wgpu::TextureView)>,
+    /// The UI colour and alpha tagged ([`ENCODED_FORMAT`], two used in turn) and its pass
+    /// (the module comment's "UI buffer").
+    ui_colour: Option<Hudless>,
+    ui_colour_pass: Option<Fullscreen>,
+    /// The HUD-less copy's encoding pass.
+    hudless_pass: Option<Fullscreen>,
     /// The UI buffer was tagged once (said).
     ui_said: bool,
     /// The swapchain was just made again by the live toggle: the mode stays off one frame more
     /// ([`window_changes`]).
     just_switched: bool,
+    /// What frame pacing's cap is divided by, from the frames presented ([`state`], `fg_cap.rs`).
+    cap: super::fg_cap::CapDivisor,
 }
 
-/// The UI buffer's full-screen pass, its textures (two used in turn, as the HUD-less) and the
-/// bind groups made for them (the main texture's two views and the HUD-less copies).
+/// The UI alpha's full-screen pass (`NVF_FG_UI_LAYER=0`) and its textures (two used in turn,
+/// as the HUD-less).
 struct UiPass {
-    pipeline: wgpu::RenderPipeline,
-    layout: wgpu::BindGroupLayout,
+    pass: Fullscreen,
     textures: Option<([wgpu::Texture; 2], [wgpu::TextureView; 2])>,
     next: usize,
-    groups: Vec<((wgpu::TextureView, wgpu::TextureView), wgpu::BindGroup)>,
 }
+
+/// A full-screen pass of DLSS-G's own: its inputs loaded at the pixel (bindings 0, 1, ...), one
+/// target, no blending; the bind groups made once for each set of input views (the main
+/// texture's two views, the copies used in turn), the last eight kept.
+struct Fullscreen {
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+    groups: Vec<(Vec<wgpu::TextureView>, wgpu::BindGroup)>,
+}
+
+impl Fullscreen {
+    /// `body` after [`COMMON_WGSL`] (the vertex stage and `encode`); `inputs` textures.
+    fn new(device: &wgpu::Device, label: &'static str, body: &str, inputs: u32, format: wgpu::TextureFormat) -> Self {
+        let source = format!("{COMMON_WGSL}{body}");
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some(label), source: wgpu::ShaderSource::Wgsl(source.into()) });
+        let entries: Vec<wgpu::BindGroupLayoutEntry> = (0..inputs)
+            .map(|binding| wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                count: None,
+            })
+            .collect();
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries: &entries });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some(label), bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vertex"), compilation_options: default(), buffers: &[] },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fragment"),
+                compilation_options: default(),
+                targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            primitive: default(),
+            depth_stencil: None,
+            multisample: default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        Self { pipeline, layout, groups: Vec::new() }
+    }
+
+    /// Draws every pixel of `target` (load, not clear) from `inputs`.
+    fn draw(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, inputs: &[&wgpu::TextureView], target: &wgpu::TextureView) {
+        let group = match self.groups.iter().find(|(k, _)| k.iter().eq(inputs.iter().copied())) {
+            Some((_, group)) => group.clone(),
+            None => {
+                let entries: Vec<wgpu::BindGroupEntry> =
+                    inputs.iter().zip(0..).map(|(view, binding)| wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }).collect();
+                let group = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("dlssg_fullscreen"), layout: &self.layout, entries: &entries });
+                if self.groups.len() >= 8 {
+                    self.groups.remove(0);
+                }
+                self.groups.push((inputs.iter().map(|v| (*v).clone()).collect(), group.clone()));
+                group
+            }
+        };
+        let mut render = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("dlssg_fullscreen"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        render.set_pipeline(&self.pipeline);
+        render.set_bind_group(0, &group, &[]);
+        render.draw(0..3, 0..1);
+    }
+}
+
+/// The HUD-less copy's and the UI colour and alpha's format: the window's 8-bit kind holding
+/// sRGB-encoded values, as the back buffer DLSS-G is given does. DLSS-G wants the HUD-less "same
+/// color space ... as the color back buffer" and blends `UI.RGB + (1 - UI.Alpha) x Hudless.RGB`
+/// in it, and does not take FP16 [documented: `ProgrammingGuideDLSS_G.md` §5.1 table, §11.0].
+/// The window's image is a UNORM image drawn through an sRGB view (Streamline refuses sRGB
+/// back buffers; vendored `bevy_render` `view/window/mod.rs` `formats`), so it holds encoded
+/// values; the main texture is linear `Rgba16Float`, which a plain copy left linear: the
+/// generated frames' HUD then sat on a background unlike the real frames' (the crosshair's
+/// faint glow flickered [observed: #3595]). `VK_FORMAT_R8G8B8A8_UNORM` is in Streamline's table
+/// [documented: `source/platforms/sl.chi/vulkan.cpp` `getFormat`].
+const ENCODED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// The full-screen vertex stage and the sRGB encoding (IEC 61966-2-1), in every pass here.
+const COMMON_WGSL: &str = "
+@vertex
+fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+    let uv = vec2<f32>(f32((index << 1u) & 2u), f32(index & 2u));
+    return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+}
+
+fn encode(c: vec3<f32>) -> vec3<f32> {
+    let x = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+    return select(1.055 * pow(x, vec3<f32>(1.0 / 2.4)) - 0.055, x * 12.92, x <= vec3<f32>(0.0031308));
+}
+";
+
+/// The HUD-less copy: the frame before the UI, sRGB-encoded ([`ENCODED_FORMAT`]).
+const HUDLESS_WGSL: &str = "
+@group(0) @binding(0) var frame: texture_2d<f32>;
+
+@fragment
+fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    return vec4<f32>(encode(textureLoad(frame, vec2<i32>(position.xy), 0).rgb), 1.0);
+}
+";
+
+/// The UI colour and alpha from the frame with the UI (linear), its HUD-less copy (encoded) and
+/// the UI drawn alone (`fg_ui_layer.rs`, linear, premultiplied): the alpha is the layer's, as the
+/// 8-bit target will hold it; the colour is what makes DLSS-G's blend in the encoded values give
+/// back the real frame exactly, `UI.RGB = encode(Final) - (1 - UI.A) x Hudless`. A blend in
+/// encoded values cannot equal the frame's linear blend over every background; this one is
+/// exact over the real frame's own and close over the nearby ones a generated frame shows.
+/// Where the alpha is 0, nothing (the guide's "0.0 for pixels with no UI elements").
+const UI_COLOUR_WGSL: &str = "
+@group(0) @binding(0) var final_color: texture_2d<f32>;
+@group(0) @binding(1) var hudless: texture_2d<f32>;
+@group(0) @binding(2) var layer: texture_2d<f32>;
+
+@fragment
+fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let p = vec2<i32>(position.xy);
+    let a = round(clamp(textureLoad(layer, p, 0).a, 0.0, 1.0) * 255.0) / 255.0;
+    if a <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    let f = encode(textureLoad(final_color, p, 0).rgb);
+    let h = textureLoad(hudless, p, 0).rgb;
+    return vec4<f32>(clamp(f - (1.0 - a) * h, vec3<f32>(0.0), vec3<f32>(1.0)), a);
+}
+";
 
 /// The format of the UI alpha (one channel, 0 or 1 is all it holds). `R16Float`, not `R8Unorm`:
 /// Streamline 2.14.16 reads a tagged Vulkan image's format through its own table, which has
@@ -244,23 +451,19 @@ struct UiPass {
 /// `isFormatSupported` 3070-3081; observed in the 2026-11-13 runs].
 const UI_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 
-/// The UI buffer from the frame and its HUD-less copy (the module comment's "UI buffer").
+/// The UI alpha (`NVF_FG_UI_LAYER=0`) from the frame (linear) and its HUD-less copy (encoded,
+/// 8 bits): 1 where they differ by more than the copy's own rounding (the same `encode` of the
+/// same value, stored to 8 bits: at most half a step off, 0.6 with a GPU's looser rounding).
 const UI_BUFFER_WGSL: &str = "
 @group(0) @binding(0) var final_color: texture_2d<f32>;
 @group(0) @binding(1) var hudless: texture_2d<f32>;
 
-@vertex
-fn vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
-    let uv = vec2<f32>(f32((index << 1u) & 2u), f32(index & 2u));
-    return vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
-}
-
 @fragment
 fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let p = vec2<i32>(position.xy);
-    let f = textureLoad(final_color, p, 0);
-    let h = textureLoad(hudless, p, 0);
-    return vec4<f32>(select(0.0, 1.0, any(f.rgb != h.rgb)), 0.0, 0.0, 0.0);
+    let f = encode(textureLoad(final_color, p, 0).rgb) * 255.0;
+    let h = round(textureLoad(hudless, p, 0).rgb * 255.0);
+    return vec4<f32>(select(0.0, 1.0, any(abs(f - h) > vec3<f32>(0.75))), 0.0, 0.0, 0.0);
 }
 ";
 
@@ -274,6 +477,9 @@ impl FrameGen {
         shared.store(load, Ordering::Relaxed);
         self.applied = None;
         self.presented_off = true;
+        // Loaded or unloaded: the cap's divisor starts again at the full limit (`fg_cap.rs`).
+        self.cap = super::fg_cap::CapDivisor::default();
+        super::FG_DIVISOR.store(1, Ordering::Relaxed);
     }
 
     fn new(get_state: SlDlssgGetState, set_options: SlDlssgSetOptions, loaded: bool) -> Self {
@@ -301,10 +507,16 @@ impl FrameGen {
             last_index: None,
             pending_load: None,
             exiting: false,
+            exit_off: false,
             ui_source: None,
             ui: None,
+            ui_layer: None,
+            ui_colour: None,
+            ui_colour_pass: None,
+            hudless_pass: None,
             ui_said: false,
             just_switched: false,
+            cap: super::fg_cap::CapDivisor::default(),
         }
     }
 }
@@ -348,11 +560,13 @@ fn on() -> bool {
 /// `slGetFeatureFunction` under `kFeatureDLSS_G`.
 pub(super) fn install(get_state: SlDlssgGetState, set_options: SlDlssgSetOptions, loaded: bool) {
     *frame_gen() = Some(FrameGen::new(get_state, set_options, loaded));
+    super::FG_DIVISOR.store(1, Ordering::Relaxed);
     ON.store(true, Ordering::Relaxed);
     ACTIVE.store(true, Ordering::Relaxed);
 }
 
-/// At shutdown (stage 4 item 6; `win.rs` `shutdown`, the render thread gone), the first steps of
+/// At shutdown (stage 4 item 6; `win.rs` `shutdown`, the render thread gone, or idle with the
+/// render app taken back from it at a handoff's end, `super::end_now`), the first steps of
 /// the order eOff, null tags, drain, `slFreeResources`, `slShutdown`: the mode set off and the frame's
 /// tags set null for the next frame number [documented:
 /// `ProgrammingGuide.md:1017-1025`, a tag set to null before the resource goes; fork-notes
@@ -559,7 +773,7 @@ fn tag(
         failed: fg.status_failed.is_some() || fg.window_off || !fg.loaded,
     };
     let tagged = match motion.filter(|_| may_generate(facts)) {
-        Some(motion) => tag_inputs(fg, &mut ctx, &adapter, index, prepared, main, &motion.texture.texture, &motion.texture.default_view),
+        Some(motion) => tag_inputs(fg, &mut ctx, &adapter, index, prepared, (main, target.main_texture_view()), &motion.texture.texture, &motion.texture.default_view),
         None => {
             let tags = null_tags();
             let result = frame_token::set_tags(index, &tags);
@@ -583,26 +797,13 @@ fn tag_inputs(
     adapter: &RenderAdapter,
     index: u32,
     prepared: &PreparedUpscale,
-    main: &wgpu::Texture,
+    (main, main_view): (&wgpu::Texture, &wgpu::TextureView),
     motion: &wgpu::Texture,
     motion_view: &wgpu::TextureView,
 ) -> bool {
     let device = ctx.render_device().wgpu_device().clone();
-    if fg.hudless.as_ref().is_none_or(|h| h.textures[0].size() != main.size() || h.textures[0].format() != main.format()) {
-        let textures: [wgpu::Texture; 2] = std::array::from_fn(|_| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("dlssg_hudless"),
-                size: main.size(),
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: main.format(),
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            })
-        });
-        let views = std::array::from_fn(|i| textures[i].create_view(&wgpu::TextureViewDescriptor::default()));
-        fg.hudless = Some(Hudless { textures, views, next: 0 });
+    if fg.hudless.as_ref().is_none_or(|h| h.textures[0].size() != main.size()) {
+        fg.hudless = Some(Hudless::new(&device, main.size(), "dlssg_hudless"));
     }
     let Some(hudless) = fg.hudless.as_mut() else { return false };
     let at = hudless.next;
@@ -627,8 +828,9 @@ fn tag_inputs(
         return false;
     };
     {
+        let pass = fg.hudless_pass.get_or_insert_with(|| Fullscreen::new(&device, "dlssg_hudless", HUDLESS_WGSL, 1, ENCODED_FORMAT));
         let encoder = ctx.command_encoder();
-        encoder.copy_texture_to_texture(main.as_image_copy(), hudless_texture.as_image_copy(), main.size());
+        pass.draw(&device, encoder, &[main_view], &hudless_view);
         let transition = |texture, state| wgpu::TextureTransition { texture, selector: None, state };
         encoder.transition_resources(
             std::iter::empty(),
@@ -768,6 +970,13 @@ fn state(world: &mut World) {
         period.presented += u64::from(state.num_frames_actually_presented);
     }
     let is_on = fg.applied.is_some_and(|a| a.on);
+    // What frame pacing's cap is divided by now (`fg_cap.rs`): the frames this present showed,
+    // whether the mode was on for it, the frames asked for.
+    let asked = fg.applied.map_or(1, |a| a.frames + 1);
+    if let Some(change) = fg.cap.after(super::fg_cap::Present { mode_on: is_on, presented: state.num_frames_actually_presented, asked }) {
+        super::FG_DIVISOR.store(change.to, Ordering::Relaxed);
+        note_fg(Level::INFO, change.line());
+    }
     {
         if let Some(generated) = &generated {
             generated.0.fetch_add(u64::from(state.num_frames_actually_presented.saturating_sub(1)), Ordering::Relaxed);
@@ -794,34 +1003,9 @@ fn state(world: &mut World) {
     }
 }
 
-/// The UI buffer's pass for the main texture's format.
+/// The UI alpha's pass.
 fn ui_pass_for(device: &wgpu::Device, format: wgpu::TextureFormat) -> UiPass {
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("dlssg_ui_buffer"), source: wgpu::ShaderSource::Wgsl(UI_BUFFER_WGSL.into()) });
-    let texture = |binding| wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
-        count: None,
-    };
-    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("dlssg_ui_buffer"), entries: &[texture(0), texture(1)] });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("dlssg_ui_buffer"), bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("dlssg_ui_buffer"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState { module: &shader, entry_point: Some("vertex"), compilation_options: default(), buffers: &[] },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fragment"),
-            compilation_options: default(),
-            targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
-        }),
-        primitive: default(),
-        depth_stencil: None,
-        multisample: default(),
-        multiview_mask: None,
-        cache: None,
-    });
-    UiPass { pipeline, layout, textures: None, next: 0, groups: Vec::new() }
+    UiPass { pass: Fullscreen::new(device, "dlssg_ui_buffer", UI_BUFFER_WGSL, 2, format), textures: None, next: 0 }
 }
 
 /// The tags a frame that is not generated sets null (DLSS-G's inputs, the HUD-less and
@@ -834,13 +1018,20 @@ fn null_tags() -> [ResourceTag; 5] {
 /// The UI buffer on a tagged frame (the module comment's "UI buffer"): the pass, the move to
 /// `RESOURCE`, the tag. When it cannot be made, whatever the reason, the frame is not
 /// generated: its tags go null.
-fn ui_buffer(view: ViewQuery<(&ViewTarget, &PreparedUpscale)>, adapter: Res<RenderAdapter>, mut ctx: RenderContext) {
-    let (target, prepared) = view.into_inner();
+fn ui_buffer(
+    world: &World,
+    view: ViewQuery<(&ViewTarget, &PreparedUpscale, &ExtractedCamera, Option<&UiCameraView>)>,
+    adapter: Res<RenderAdapter>,
+    mut ctx: RenderContext,
+) {
+    let (target, prepared, camera, ui) = view.into_inner();
     let mut guard = frame_gen();
     let Some(fg) = guard.as_mut() else { return };
     let hudless_view = fg.ui_source.take();
     let (Some(index), Some(decision)) = (fg.last_index, fg.decision.filter(|d| d.generate)) else { return };
+    let layer = *crate::fg_ui_layer::ENABLED;
     let result = match hudless_view {
+        Some(hudless_view) if layer => draw_ui_layer(fg, &mut ctx, &adapter, world, ui, camera, target, prepared, index, &hudless_view),
         Some(hudless_view) => draw_ui_alpha(fg, &mut ctx, &adapter, target, prepared, index, &hudless_view),
         None => Err("no HUD-less copy this frame".to_string()),
     };
@@ -848,10 +1039,15 @@ fn ui_buffer(view: ViewQuery<(&ViewTarget, &PreparedUpscale)>, adapter: Res<Rend
         Ok(()) => {
             if !fg.ui_said {
                 fg.ui_said = true;
+                let what = if layer {
+                    format!("{ENCODED_FORMAT:?} UI colour and alpha (the UI drawn alone over transparent black, premultiplied, sRGB-encoded as the back buffer with the HUD-less copy)")
+                } else {
+                    "R16Float UI alpha (1 where the frame differs from its HUD-less copy, 0 elsewhere)".to_string()
+                };
                 note_fg(
                     Level::INFO,
                     format!(
-                        "UI buffer: {}x{} R16Float UI alpha (1 where the frame differs from its HUD-less copy, 0 elsewhere), tagged eValidUntilPresent with the HUD-less copy; user interface recomposition on",
+                        "UI buffer: {}x{} {what}, tagged eValidUntilPresent with the HUD-less copy; user interface recomposition on",
                         prepared.output_size.x, prepared.output_size.y
                     ),
                 );
@@ -868,7 +1064,64 @@ fn ui_buffer(view: ViewQuery<(&ViewTarget, &PreparedUpscale)>, adapter: Res<Rend
     }
 }
 
-/// The UI alpha's pass, transition and tag for frame number `index`.
+/// The UI drawn alone (`fg_ui_layer.rs`), the UI colour and alpha made from it with the frame
+/// and its HUD-less copy ([`UI_COLOUR_WGSL`], [`ENCODED_FORMAT`]), its transition and its tag
+/// for frame number `index`: `Final = UI.RGB + (1 - UI.A) * Hudless` with the colour
+/// premultiplied, as DLSS-G asks [documented: `ProgrammingGuideDLSS_G.md` §5.1].
+#[allow(clippy::too_many_arguments)]
+fn draw_ui_layer(
+    fg: &mut FrameGen,
+    ctx: &mut RenderContext,
+    adapter: &RenderAdapter,
+    world: &World,
+    ui: Option<&UiCameraView>,
+    camera: &ExtractedCamera,
+    target: &ViewTarget,
+    prepared: &PreparedUpscale,
+    index: u32,
+    hudless_view: &wgpu::TextureView,
+) -> Result<(), String> {
+    let main: &wgpu::Texture = target.main_texture();
+    let main_view: &wgpu::TextureView = target.main_texture_view();
+    let device = ctx.render_device().wgpu_device().clone();
+    if fg.ui_layer.as_ref().is_none_or(|(t, _)| t.size() != main.size() || t.format() != main.format()) {
+        let texture = crate::fg_ui_layer::layer_texture(&device, main.size(), main.format(), "dlssg_ui_layer");
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        fg.ui_layer = Some((texture, view));
+        if let Some(pass) = fg.ui_colour_pass.as_mut() {
+            pass.groups.clear();
+        }
+    }
+    if fg.ui_colour.as_ref().is_none_or(|c| c.textures[0].size() != main.size()) {
+        fg.ui_colour = Some(Hudless::new(&device, main.size(), "dlssg_ui_color_alpha"));
+    }
+    let (Some((_, layer_view)), Some(colour)) = (fg.ui_layer.as_ref(), fg.ui_colour.as_mut()) else { return Err("no UI layer texture".to_string()) };
+    let layer_view = layer_view.clone();
+    let at = colour.next;
+    colour.next = 1 - at;
+    let (ui_texture, ui_view) = (colour.textures[at].clone(), colour.views[at].clone());
+    let described = {
+        // SAFETY: only read.
+        let Some(hal) = (unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }) else { return Err("not a Vulkan adapter".to_string()) };
+        describe(&hal, &ui_texture, &ui_view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+    };
+    let Some(mut ui_res) = described else { return Err("the UI colour and alpha has no Vulkan handle".to_string()) };
+    crate::fg_ui_layer::draw(world, ui, camera, ctx, &layer_view)?;
+    let pass = fg.ui_colour_pass.get_or_insert_with(|| Fullscreen::new(&device, "dlssg_ui_color_alpha", UI_COLOUR_WGSL, 3, ENCODED_FORMAT));
+    let encoder = ctx.command_encoder();
+    pass.draw(&device, encoder, &[main_view, hudless_view, &layer_view], &ui_view);
+    encoder.transition_resources(std::iter::empty(), std::iter::once(wgpu::TextureTransition { texture: &ui_texture, selector: None, state: wgpu::TextureUses::RESOURCE }));
+    let output = Extent { top: 0, left: 0, width: prepared.output_size.x, height: prepared.output_size.y };
+    let tag = [ResourceTag::new(&raw mut ui_res, BUFFER_UI_COLOR_AND_ALPHA, LIFECYCLE_VALID_UNTIL_PRESENT, output)];
+    let result = frame_token::set_tags(index, &tag);
+    if let Some(kept) = fg.kept.back_mut() {
+        kept.0.push(ui_texture);
+        kept.1.push(ui_view);
+    }
+    if result.is_ok() { Ok(()) } else { Err(format!("slSetTagForFrame {}", result.name())) }
+}
+
+/// The UI alpha's pass, transition and tag for frame number `index` (`NVF_FG_UI_LAYER=0`).
 #[allow(clippy::too_many_arguments)]
 fn draw_ui_alpha(
     fg: &mut FrameGen,
@@ -898,58 +1151,21 @@ fn draw_ui_alpha(
         });
         let views = std::array::from_fn(|i| textures[i].create_view(&wgpu::TextureViewDescriptor::default()));
         pass.textures = Some((textures, views));
-        pass.groups.clear();
+        pass.pass.groups.clear();
     }
     let Some((textures, views)) = pass.textures.as_ref() else { return Err("no UI texture".to_string()) };
     let at = pass.next;
     pass.next = 1 - at;
     let (ui_texture, ui_view) = (textures[at].clone(), views[at].clone());
-    // The bind groups made once for each pair of the main texture's views and the HUD-less copies.
-    let key = (main_view.clone(), hudless_view.clone());
-    let bind_group = match pass.groups.iter().find(|(k, _)| *k == key) {
-        Some((_, group)) => group.clone(),
-        None => {
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("dlssg_ui_buffer"),
-                layout: &pass.layout,
-                entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(main_view) }, wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(hudless_view) }],
-            });
-            if pass.groups.len() >= 8 {
-                pass.groups.remove(0);
-            }
-            pass.groups.push((key, group.clone()));
-            group
-        }
-    };
     let described = {
         // SAFETY: only read.
         let Some(hal) = (unsafe { adapter.as_hal::<wgpu::hal::api::Vulkan>() }) else { return Err("not a Vulkan adapter".to_string()) };
         describe(&hal, &ui_texture, &ui_view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
     };
     let Some(mut ui_res) = described else { return Err("the UI texture has no Vulkan handle".to_string()) };
-    {
-        let encoder = ctx.command_encoder();
-        {
-            // Load, not clear: the draw writes every pixel.
-            let mut render = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("dlssg_ui_buffer"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &ui_view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            render.set_pipeline(&pass.pipeline);
-            render.set_bind_group(0, &bind_group, &[]);
-            render.draw(0..3, 0..1);
-        }
-        encoder.transition_resources(std::iter::empty(), std::iter::once(wgpu::TextureTransition { texture: &ui_texture, selector: None, state: wgpu::TextureUses::RESOURCE }));
-    }
+    let encoder = ctx.command_encoder();
+    pass.pass.draw(&device, encoder, &[main_view, hudless_view], &ui_view);
+    encoder.transition_resources(std::iter::empty(), std::iter::once(wgpu::TextureTransition { texture: &ui_texture, selector: None, state: wgpu::TextureUses::RESOURCE }));
     let output = Extent { top: 0, left: 0, width: prepared.output_size.x, height: prepared.output_size.y };
     let tag = [ResourceTag::new(&raw mut ui_res, BUFFER_UI_ALPHA, LIFECYCLE_VALID_UNTIL_PRESENT, output)];
     let result = frame_token::set_tags(index, &tag);
@@ -969,7 +1185,6 @@ fn follow_request(request: Extract<Option<Res<crate::frame_gen::DlssgRequest>>>)
     let mut guard = frame_gen();
     let Some(fg) = guard.as_mut() else { return };
     fg.requested_frames = request.frames.clamp(1, 3);
-    super::FG_MULTIPLIER.store(fg.requested_frames + 1, Ordering::Relaxed);
     if request.on == fg.loaded {
         // A newer choice cancels a switch that has not reached Streamline yet.
         fg.toggle = None;
@@ -1106,12 +1321,7 @@ fn toggle_switch(world: &mut World) {
     // is drained with the device.
     let quiet = crate::gpu_poll::quiet();
     let polled = world.resource::<bevy::render::renderer::RenderDevice>().wgpu_device().poll(wgpu::PollType::wait_indefinitely());
-    if let Some(mut window) = world.get_mut::<ExtractedWindow>(entity) {
-        drop(window.swap_chain_texture.take());
-        window.swap_chain_texture_view = None;
-    }
-    // wgpu waits for the device and destroys the swapchain, then the surface.
-    world.entity_mut(entity).remove::<SurfaceData>();
+    release_surface(world, entity);
     let freed = (!load).then(super::win::free_frame_generation);
     let result = super::win::set_frame_generation_loaded(load);
     drop(quiet);
@@ -1121,10 +1331,14 @@ fn toggle_switch(world: &mut World) {
     if result.is_ok() && !load {
         // Nothing reads them while DLSS-G is unloaded (the GPU was drained above).
         fg.hudless = None;
+        fg.ui_layer = None;
+        fg.ui_colour = None;
         fg.kept.clear();
+        for pass in [fg.hudless_pass.as_mut(), fg.ui_colour_pass.as_mut(), fg.ui.as_mut().map(|u| &mut u.pass)].into_iter().flatten() {
+            pass.groups.clear();
+        }
         if let Some(pass) = fg.ui.as_mut() {
             pass.textures = None;
-            pass.groups.clear();
         }
     }
     fg.hold_frames = 0;
@@ -1157,13 +1371,30 @@ fn exit_watch(mut exits: Extract<MessageReader<AppExit>>, mut closing: Extract<M
     if fg.exiting {
         return;
     }
-    fg.exiting = true;
     if !closes {
+        fg.exiting = true;
         note_fg(Level::INFO, "exit: DLSS-G's mode off for the last frame (AppExit)");
         return;
     }
+    // The render thread waits during the extraction: nothing else calls DLSS-G.
+    exit_mode_off(fg, "the window closes");
+}
+
+/// The mode set off at once for an exit (the module comment's "Exit", step 1), whatever ends
+/// the run: the window closing ([`exit_watch`]) or the run ending without Bevy's teardown
+/// ([`end_now`]). Once a run: a second call does nothing. The caller makes sure no other
+/// thread calls DLSS-G meanwhile (its functions are not thread safe, `sl_dlss_g.h:187-208`).
+/// Logs `exit: <why>: DLSS-G's mode off now: <result>`. Returns whether `slDLSSGSetOptions`
+/// was called.
+fn exit_mode_off(fg: &mut FrameGen, why: &str) -> bool {
+    fg.exiting = true;
+    if fg.exit_off {
+        return false;
+    }
+    fg.exit_off = true;
     if !fg.loaded {
-        return;
+        note_fg(Level::INFO, format!("exit: {why}: DLSS-G unloaded (the live toggle); no mode to set off"));
+        return false;
     }
     let mut options = off_options();
     if let Some(a) = fg.applied {
@@ -1171,12 +1402,62 @@ fn exit_watch(mut exits: Extract<MessageReader<AppExit>>, mut closing: Extract<M
     }
     let viewport = ViewportHandle::new(VIEWPORT);
     // SAFETY: DLSS-G's function with its header signature, options and viewport alive for the
-    // call; the render thread waits during the extraction.
+    // call; no other thread calls DLSS-G (the caller's condition).
     let result = unsafe { (fg.set_options)(&viewport, &options) };
     if result.is_ok() {
         fg.applied = fg.applied.map(|a| Applied { on: false, ..a });
     }
-    note_fg(if result.is_ok() { Level::INFO } else { Level::WARN }, format!("exit: the window closes: DLSS-G's mode off now: {}", result.name()));
+    note_fg(if result.is_ok() { Level::INFO } else { Level::WARN }, format!("exit: {why}: DLSS-G's mode off now: {}", result.name()));
+    true
+}
+
+/// A window's image dropped and its surface released: wgpu waits for the device and destroys
+/// the swapchain (Streamline's proxy while DLSS-G is loaded), then the surface, when the last
+/// reference goes (wgpu-hal `Swapchain::release_resources`). For the live toggle's switch
+/// ([`toggle_switch`]) and a run's end ([`end_now`]); the caller drains the GPU first and holds
+/// `gpu_poll::quiet`.
+fn release_surface(world: &mut World, entity: Entity) {
+    if let Some(mut window) = world.get_mut::<ExtractedWindow>(entity) {
+        drop(window.swap_chain_texture.take());
+        window.swap_chain_texture_view = None;
+    }
+    world.entity_mut(entity).remove::<SurfaceData>();
+}
+
+/// The run ends without Bevy's teardown (`super::end_now`, the module comment's "Exit"): with
+/// the render thread idle (its render app taken back, `render_world`) and `gpu_poll::quiet`
+/// held by the caller, the mode off at once ([`exit_mode_off`]), the GPU drained and every
+/// window's swapchain released, before `win.rs` `shutdown` frees DLSS-G's resources and shuts
+/// Streamline down. Nothing while DLSS-G is not installed. Without the render world (no
+/// pipelined rendering, or the render thread stopped; `super::end_now` says so) only the mode
+/// goes off. The line says whether the options had the mode on until now: what is known of the
+/// last presents, not that one was presented off ([`state`] counts no present as off).
+pub(super) fn end_now(render_world: Option<&mut World>, why: &str) {
+    if !active() {
+        return;
+    }
+    let was_on = {
+        let mut guard = frame_gen();
+        let Some(fg) = guard.as_mut() else { return };
+        let was_on = fg.applied.is_some_and(|a| a.on);
+        exit_mode_off(fg, why);
+        was_on
+    };
+    let options = if was_on { "the mode was on in the options until now" } else { "the mode was off in the options already" };
+    let Some(world) = render_world else { return };
+    let polled = world.get_resource::<bevy::render::renderer::RenderDevice>().map(|d| d.wgpu_device().poll(wgpu::PollType::wait_indefinitely()));
+    let entities: Vec<Entity> = world.query_filtered::<Entity, (With<ExtractedWindow>, With<SurfaceData>)>().iter(world).collect();
+    for &entity in &entities {
+        release_surface(world, entity);
+    }
+    note_fg(
+        Level::INFO,
+        format!(
+            "exit: {why}: GPU drained ({}), {} window swapchain(s) released ({options})",
+            if matches!(&polled, Some(Ok(s)) if s.wait_finished()) { "ok" } else { "incomplete" },
+            entities.len()
+        ),
+    );
 }
 
 /// The state line, with the present and acquire results since the last one: errors (negative),
@@ -1212,6 +1493,54 @@ fn ratio_line(over: Duration, real: u64, presented: u64, failed: Option<&str>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_passes_shaders_are_valid_wgsl() {
+        use wgpu::naga;
+        for body in [HUDLESS_WGSL, UI_COLOUR_WGSL, UI_BUFFER_WGSL] {
+            let source = format!("{COMMON_WGSL}{body}");
+            let module = naga::front::wgsl::parse_str(&source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(&source)));
+            naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&module).unwrap_or_else(|e| panic!("{e:?}"));
+        }
+    }
+
+    /// `encode` of `COMMON_WGSL`, one channel.
+    fn encode(x: f32) -> f32 {
+        let x = x.clamp(0.0, 1.0);
+        if x <= 0.003_130_8 { x * 12.92 } else { 1.055 * x.powf(1.0 / 2.4) - 0.055 }
+    }
+
+    /// Stored to 8 bits and read back.
+    fn unorm8(x: f32) -> f32 {
+        (x.clamp(0.0, 1.0) * 255.0).round() / 255.0
+    }
+
+    /// The UI colour and alpha (`UI_COLOUR_WGSL`, stored to 8 bits) blended by DLSS-G's rule over
+    /// the HUD-less copy (encoded, 8 bits) gives back the real frame as the window holds it
+    /// (encoded), for faint glows and opaque HUD over dark and bright scenes; no UI, nothing.
+    #[test]
+    fn dlss_gs_blend_of_the_ui_colour_gives_back_the_frame() {
+        let mut worst: f32 = 0.0;
+        for alpha in [0.0, 0.004, 0.02, 0.1, 0.35, 0.7, 1.0] {
+            for ui in [0.0, 0.3, 0.9, 1.0] {
+                for scene in [0.0, 0.002, 0.05, 0.2, 0.6, 1.0] {
+                    let layer_a = alpha;
+                    let layer_rgb = ui * alpha; // premultiplied, linear (`fg_ui_layer.rs`)
+                    let frame = layer_rgb + (1.0 - layer_a) * scene; // Bevy's blend, linear
+                    let hudless = unorm8(encode(scene));
+                    let a = unorm8(layer_a);
+                    let rgb = if a <= 0.0 { 0.0 } else { unorm8((encode(frame) - (1.0 - a) * hudless).clamp(0.0, 1.0)) };
+                    if a <= 0.0 {
+                        assert_eq!(rgb, 0.0);
+                    }
+                    let shown = rgb + (1.0 - a) * hudless;
+                    let real = unorm8(encode(frame));
+                    worst = worst.max((shown - real).abs());
+                }
+            }
+        }
+        assert!(worst <= 1.5 / 255.0, "worst {worst}");
+    }
 
     #[test]
     fn dlss_to_fsr_stays_blocked_until_unload_succeeds() {
@@ -1315,6 +1644,35 @@ mod tests {
 
     unsafe extern "C" fn dummy_set_options(_: *const ViewportHandle, _: *const DlssgOptions) -> super::super::ffi::SlResult {
         super::super::ffi::SlResult::OK
+    }
+
+    /// Calls of [`counting_set_options`] and the mode of the last one.
+    static SET_CALLS: AtomicU32 = AtomicU32::new(0);
+    static SET_MODE: AtomicI32 = AtomicI32::new(-1);
+
+    unsafe extern "C" fn counting_set_options(_: *const ViewportHandle, options: *const DlssgOptions) -> super::super::ffi::SlResult {
+        SET_CALLS.fetch_add(1, Ordering::SeqCst);
+        // SAFETY: the options `exit_mode_off` passes, alive for the call.
+        SET_MODE.store(unsafe { (*options).mode } as i32, Ordering::SeqCst);
+        super::super::ffi::SlResult::OK
+    }
+
+    #[test]
+    fn an_exit_sets_the_mode_off_once_whatever_ends_the_run() {
+        let mut fg = FrameGen::new(dummy_get_state, counting_set_options, true);
+        fg.applied = Some(Applied { on: true, frames: 1, render: UVec2::new(853, 480), output: UVec2::new(1280, 720), back_buffers: 0 });
+        assert!(exit_mode_off(&mut fg, "the run hands over to a new one"), "the first exit sets the mode off");
+        assert_eq!(SET_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(SET_MODE.load(Ordering::SeqCst), DLSSG_MODE_OFF as i32);
+        assert!(fg.exiting && fg.exit_off && !fg.applied.unwrap().on, "the mode stays off for the frames left");
+        assert!(!exit_mode_off(&mut fg, "the window closes"), "a second exit path does nothing");
+        assert_eq!(SET_CALLS.load(Ordering::SeqCst), 1, "slDLSSGSetOptions called once");
+        assert!(!wanted(&fg, Some(Decision { generate: true, render: UVec2::new(853, 480), output: UVec2::new(1280, 720) })).on, "no frame turns it on again");
+
+        let mut unloaded = FrameGen::new(dummy_get_state, counting_set_options, false);
+        assert!(!exit_mode_off(&mut unloaded, "the run hands over to a new one"), "unloaded: no DLSS-G call");
+        assert!(unloaded.exiting && unloaded.exit_off);
+        assert_eq!(SET_CALLS.load(Ordering::SeqCst), 1);
     }
 
     #[test]

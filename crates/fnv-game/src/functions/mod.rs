@@ -30,6 +30,7 @@ pub mod navigation;
 pub(crate) mod objects;
 pub use objects::{critical_stage_culls, CRITICAL_DISINTEGRATE_END, CRITICAL_GOO_END};
 pub(crate) mod player;
+pub(crate) mod player_source;
 mod quest;
 pub(crate) mod refs;
 pub use refs::FADE_OUT_HOLD;
@@ -360,6 +361,14 @@ pub fn registry() -> &'static [(u16, &'static str, Kind)] {
             (0x1089, "SetFactionRank", Impl(actor::add_to_faction)),
             (0x11AB, "GetIsVoiceType", Impl(actor::get_is_voice_type)),
             (0x1046, "GetIsSex", Impl(actor::get_is_sex)),
+            (0x102C, "SameSex", Impl(actor::same_sex)),
+            (0x102A, "SameFaction", Impl(actor::same_faction)),
+            (0x1193, "HasFriendDisposition", Impl(actor::has_friend_disposition)),
+            (0x1080, "GetFatiguePercentage", Impl(actor::get_fatigue_percentage)),
+            (0x1169, "GetTimeDead", Impl(actor::get_time_dead)),
+            (0x11FE, "GetLastHitCritical", Impl(actor::get_last_hit_critical)),
+            (0x11B1, "GetIsObjectType", Impl(actor::get_is_object_type)),
+            (0x1028, "GetVampire", NoOp("a leftover from Oblivion that never returns anything but 0 [documented: GECK wiki GetVampire]")),
             (0x1083, "GetPCIsSex", Impl(actor::get_pc_is_sex)),
             (0x11E7, "SexChange", Impl(actor::sex_change)),
             (0x1045, "GetIsRace", Impl(actor::get_is_race)),
@@ -399,6 +408,7 @@ pub fn registry() -> &'static [(u16, &'static str, Kind)] {
             (0x1024, "MenuMode", Impl(misc::menu_mode)),
             (0x10DD, "SetOpenState", Impl(refs::set_open_state)),
             (0x109D, "GetOpenState", Impl(refs::get_open_state)),
+            (0x10D7, "GetDefaultOpen", Impl(refs::get_default_open)),
             (0x11BA, "EnterTrigger", Impl(refs::enter_trigger)),
             (0x11C5, "SetPlayerTeammate", Impl(actor::set_player_teammate)),
             (0x11C6, "GetPlayerTeammate", Impl(actor::get_player_teammate)),
@@ -491,6 +501,7 @@ pub fn registry() -> &'static [(u16, &'static str, Kind)] {
             (0x103C, "GetFactionRankDifference", Impl(actor::get_faction_rank_difference)),
             (0x10C6, "SetPCEnemyOfFaction", Impl(actor::set_pc_enemy_of_faction)),
             (0x10C5, "GetPCEnemyOfFaction", Impl(actor::get_pc_enemy_of_faction)),
+            (0x10C1, "GetPCExpelled", Impl(actor::get_pc_expelled)),
             (0x11C9, "ClearFactionPlayerEnemyFlag", Impl(actor::clear_faction_player_enemy_flag)),
             (0x11CC, "GetActorFactionPlayerEnemy", Impl(actor::get_actor_faction_player_enemy)),
             (0x10AB, "IgnoreCrime", Impl(actor::ignore_crime)),
@@ -674,6 +685,10 @@ pub fn registry() -> &'static [(u16, &'static str, Kind)] {
             (0x1196, "SetCellImageSpace", Impl(misc::set_cell_image_space)),
             (0x1104, "SetWeather", Impl(crate::weather::set_weather)),
             (0x103E, "IsRaining", Impl(crate::weather::is_raining)),
+            (0x104B, "IsSnowing", Impl(crate::weather::is_snowing)),
+            (0x110A, "IsPleasant", Impl(crate::weather::is_pleasant)),
+            (0x110B, "IsCloudy", Impl(crate::weather::is_cloudy)),
+            (0x1094, "GetCurrentWeatherPercent", Impl(crate::weather::get_current_weather_percent)),
             (0x1095, "GetIsCurrentWeather", Impl(crate::weather::get_is_current_weather)),
             (0x11F7, "GetRadiationLevel", Impl(senses::get_radiation_level)),
             (0x11D6, "StartRadioConversation", Impl(crate::radio::start_radio_conversation)),

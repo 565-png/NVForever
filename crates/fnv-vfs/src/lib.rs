@@ -13,7 +13,50 @@
 use fnv_bsa::Archive;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+
+/// What every [`Vfs`] of the process has read so far (issue #2407): files, stored bytes,
+/// time spent in the reads themselves (the archive's seek and read, a loose file's read;
+/// not inflating) and time spent waiting for another reader's turn on the same archive.
+/// A loading screen takes the difference over its time: many seconds of reading for few
+/// bytes is a slow or cold disk.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReadStats {
+    pub files: u64,
+    pub bytes: u64,
+    pub read_ns: u64,
+    pub queued_ns: u64,
+}
+
+impl ReadStats {
+    /// What was read after `before`.
+    pub fn since(&self, before: &ReadStats) -> ReadStats {
+        ReadStats {
+            files: self.files.saturating_sub(before.files),
+            bytes: self.bytes.saturating_sub(before.bytes),
+            read_ns: self.read_ns.saturating_sub(before.read_ns),
+            queued_ns: self.queued_ns.saturating_sub(before.queued_ns),
+        }
+    }
+}
+
+static FILES: AtomicU64 = AtomicU64::new(0);
+static BYTES: AtomicU64 = AtomicU64::new(0);
+static READ_NS: AtomicU64 = AtomicU64::new(0);
+static QUEUED_NS: AtomicU64 = AtomicU64::new(0);
+
+/// The process's [`ReadStats`] so far.
+pub fn read_stats() -> ReadStats {
+    ReadStats { files: FILES.load(Ordering::Relaxed), bytes: BYTES.load(Ordering::Relaxed), read_ns: READ_NS.load(Ordering::Relaxed), queued_ns: QUEUED_NS.load(Ordering::Relaxed) }
+}
+
+fn count_read(bytes: usize, queued: std::time::Duration, read: std::time::Duration) {
+    FILES.fetch_add(1, Ordering::Relaxed);
+    BYTES.fetch_add(bytes as u64, Ordering::Relaxed);
+    QUEUED_NS.fetch_add(queued.as_nanos() as u64, Ordering::Relaxed);
+    READ_NS.fetch_add(read.as_nanos() as u64, Ordering::Relaxed);
+}
 
 /// `SArchiveList` of the shipped `Fallout_default.ini` and of the owner's `Fallout.ini`
 /// [observed: both identical on FNV 1.4.0.525].
@@ -143,9 +186,14 @@ enum Location {
 pub struct Vfs {
     data_dir: PathBuf,
     archives: Vec<(String, Mutex<Archive>)>,
+    /// The file each `archives` entry was opened from (`Data` or a mod folder, #1526).
+    archive_files: Vec<PathBuf>,
     index: HashMap<String, Location>,
     /// Lower-cased loose path → winning physical path (preserving filesystem casing).
     loose: HashMap<String, PathBuf>,
+    /// The folders loose files were indexed from, lowest precedence first: `Data`, then
+    /// the mods folders (#1526).
+    loose_roots: Vec<PathBuf>,
     /// The highest archive copy of each loose path that also sits in an archive, which
     /// the loose file hides from [`Vfs::read`] ([`Vfs::read_archived`], #975).
     under_loose: HashMap<String, Location>,
@@ -172,24 +220,53 @@ impl Vfs {
     /// (`fnv_install::plugins::plugin_path`). The base list and `Update.bsa` come from
     /// `data_dir` only.
     pub fn archive_order_in(data_dir: &Path, mods: Option<&Path>, archive_list: &[&str], plugins: &[&str]) -> Vec<String> {
-        let bsas = |dir: &Path| -> Vec<String> {
-            std::fs::read_dir(dir)
-                .map(|rd| {
-                    rd.filter_map(|e| e.ok())
-                        .map(|e| e.file_name().to_string_lossy().into_owned())
-                        .filter(|n| n.to_ascii_lowercase().ends_with(".bsa"))
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-        let present = bsas(data_dir);
-        let in_mods: Vec<String> = mods.map(bsas).unwrap_or_default();
+        let present = top_archives(data_dir);
+        let in_mods: Vec<String> = mods.map(top_archives).unwrap_or_default();
         // Each plugin archive's name, and what `Vfs::open` is given for it.
         let mut owned: Vec<(String, String)> = present.iter().filter(|n| !in_mods.iter().any(|m| m.eq_ignore_ascii_case(n))).map(|n| (n.clone(), n.clone())).collect();
         if let Some(m) = mods {
             owned.extend(in_mods.iter().map(|n| (n.clone(), m.join(n).to_string_lossy().into_owned())));
         }
-        let find = |name: &str| present.iter().find(|p| p.eq_ignore_ascii_case(name)).cloned();
+        Vfs::order_from_owned(&owned, &present, archive_list, plugins)
+    }
+
+    /// [`Vfs::archive_order_in`] for any number of mod roots layered over `Data`, lowest
+    /// precedence first (#1526 phase 2): an archive name is opened from the highest layer
+    /// that has it, the overwrite folder first, so a mod's copy of a base archive replaces
+    /// the game's, as usvfs' merged `Data` would show it. The order is the base list's,
+    /// then `Update.bsa`, then each plugin's archives as [`Vfs::archive_order_in`].
+    pub fn archive_files_layered(data_dir: &Path, roots: &[PathBuf], archive_list: &[&str], plugins: &[&str]) -> Vec<(String, PathBuf)> {
+        let mut layers: Vec<&Path> = vec![data_dir];
+        layers.extend(roots.iter().filter(|r| r.is_dir()).map(PathBuf::as_path));
+        let mut found: Vec<(String, PathBuf)> = Vec::new();
+        for dir in layers {
+            let mut names = top_archives(dir);
+            names.sort();
+            for n in names {
+                let entry = (n.clone(), dir.join(&n));
+                match found.iter_mut().find(|(o, _)| o.eq_ignore_ascii_case(&n)) {
+                    Some(slot) => *slot = entry,
+                    None => found.push(entry),
+                }
+            }
+        }
+        let owned: Vec<(String, String)> = found.iter().map(|(n, p)| (n.clone(), p.to_string_lossy().into_owned())).collect();
+        let base: Vec<String> = found.iter().map(|(n, _)| n.clone()).collect();
+        let names = Vfs::order_from_owned(&owned, &base, archive_list, plugins);
+        names
+            .into_iter()
+            .filter_map(|n| {
+                let (o, p) = owned.iter().find(|(o, p)| o.eq_ignore_ascii_case(&n) || p.eq_ignore_ascii_case(&n))?;
+                Some((o.clone(), PathBuf::from(p)))
+            })
+            .collect()
+    }
+
+    /// The precedence order of the archive files `owned` (display name, what to open),
+    /// lowest precedence first: the base list, `Update.bsa`, then each active plugin's own
+    /// archives. Shared by [`Vfs::archive_order_in`] and [`Vfs::archive_files_layered`].
+    fn order_from_owned(owned: &[(String, String)], base: &[String], archive_list: &[&str], plugins: &[&str]) -> Vec<String> {
+        let find = |name: &str| base.iter().find(|n| n.eq_ignore_ascii_case(name)).cloned();
         let mut order: Vec<String> = Vec::new();
         let push = |n: Option<String>, order: &mut Vec<String>| {
             if let Some(n) = n {
@@ -233,14 +310,30 @@ impl Vfs {
 
     /// Open the archives (lowest precedence first) and index loose files under `data_dir`.
     pub fn open(data_dir: &Path, archives: &[String]) -> Result<Vfs, VfsError> {
-        let mut vfs =
-            Vfs { data_dir: data_dir.to_path_buf(), archives: Vec::new(), index: HashMap::new(), loose: HashMap::new(), under_loose: HashMap::new(), skipped: Vec::new(), broken: Vec::new() };
-        for name in archives {
+        let files: Vec<(String, PathBuf)> = archives.iter().map(|n| (n.clone(), data_dir.join(n))).collect();
+        Vfs::open_files(data_dir, &files)
+    }
+
+    /// [`Vfs::open`] with each archive's file given (a mod's archive does not sit in
+    /// `Data`, #1526 phase 2); `archives` keeps the display names.
+    pub fn open_files(data_dir: &Path, archives: &[(String, PathBuf)]) -> Result<Vfs, VfsError> {
+        let mut vfs = Vfs {
+            data_dir: data_dir.to_path_buf(),
+            archives: Vec::new(),
+            archive_files: Vec::new(),
+            index: HashMap::new(),
+            loose: HashMap::new(),
+            loose_roots: Vec::new(),
+            under_loose: HashMap::new(),
+            skipped: Vec::new(),
+            broken: Vec::new(),
+        };
+        for (name, file) in archives {
             // A bad or wrong-version archive is skipped; the others still load.
-            let a = match Archive::open(data_dir.join(name)) {
+            let a = match Archive::open(file) {
                 Ok(a) => a,
                 Err(e) => {
-                    tracing::warn!(archive = %name, error = %e, "archive skipped: cannot be read");
+                    tracing::warn!(archive = %name, path = %file.display(), error = %e, "archive skipped: cannot be read");
                     vfs.skipped.push((name.clone(), e.to_string()));
                     vfs.broken.push((name.clone(), e.to_string()));
                     continue;
@@ -258,14 +351,19 @@ impl Vfs {
                 );
             }
             vfs.archives.push((name.clone(), Mutex::new(a)));
+            vfs.archive_files.push(file.clone());
         }
         vfs.index_loose(data_dir);
         Ok(vfs)
     }
 
     fn index_loose(&mut self, root: &Path) {
+        if !self.loose_roots.iter().any(|r| r == root) {
+            self.loose_roots.push(root.to_path_buf());
+        }
         let mut files = Vec::new();
-        walk(root, root, &mut files, &mut self.skipped);
+        let mut open: Vec<PathBuf> = std::fs::canonicalize(root).into_iter().collect();
+        walk(root, root, &mut open, &mut files, &mut self.skipped);
         for rel in files {
             let key = normalize(&rel.to_string_lossy());
             // Plugins and archives at the top level are not part of the asset namespace.
@@ -310,6 +408,37 @@ impl Vfs {
         Ok(vfs)
     }
 
+    /// [`Vfs::open_for_plugins`] with loose files from the mods folders `roots` layered
+    /// over `Data`, lowest precedence first (issue #1526: Mod Organizer 2's enabled mods
+    /// from the lowest priority up, then its overwrite folder). The archives mounted are
+    /// the base list's (the profile's, under `--mo2`), `Update.bsa` and the plugins'
+    /// archives, each taken from the highest layer that holds it.
+    pub fn open_for_plugins_layered<S: AsRef<str>>(data_dir: &Path, roots: &[PathBuf], plugins: &[S]) -> Result<Vfs, VfsError> {
+        let files = Vfs::order_for_plugins_layered(data_dir, roots, plugins).0;
+        let mut vfs = Vfs::open_files(data_dir, &files)?;
+        for root in roots {
+            // An absent optional layer is ordinary; other errors retain walk's diagnostics.
+            if root.as_path() == data_dir || matches!(root.try_exists(), Ok(false)) {
+                continue;
+            }
+            vfs.index_loose(root);
+        }
+        Ok(vfs)
+    }
+
+    /// Index `root`'s loose files over every layer already indexed (the highest precedence),
+    /// for this mount only: nothing is written anywhere. For a test aid that mounts a fixture
+    /// folder it created for the run (nvf-assets `pbr_field/reflect.rs` `seed_mount_pack`)
+    /// instead of writing into a mods folder.
+    pub fn add_loose_root(&mut self, root: &Path) {
+        self.index_loose(root);
+    }
+
+    /// The folders loose files were read from, lowest precedence first (`Data` first).
+    pub fn loose_roots(&self) -> &[PathBuf] {
+        &self.loose_roots
+    }
+
     /// The archives [`Vfs::open_for_plugins`] mounts, lowest precedence first, and
     /// whether they came from the [`ARCHIVE_ORDER_ENV`] override (`fnvtool vfs order`).
     /// The base list is [`archive_list`]'s: an `SArchiveList` set for the run, else the
@@ -331,8 +460,50 @@ impl Vfs {
         }
     }
 
+    /// [`Vfs::order_for_plugins`] for layered roots: each archive is opened from the highest
+    /// layer that holds it (#1526 phase 2). The [`ARCHIVE_ORDER_ENV`] override applies as
+    /// there, its names resolved through the layers too.
+    pub fn order_for_plugins_layered<S: AsRef<str>>(data_dir: &Path, roots: &[PathBuf], plugins: &[S]) -> (Vec<(String, PathBuf)>, bool) {
+        match std::env::var(ARCHIVE_ORDER_ENV) {
+            Ok(list) if !list.trim().is_empty() => {
+                let files = parse_archive_list(&list)
+                    .into_iter()
+                    .map(|n| {
+                        let p = Vfs::archive_file_in_layers(data_dir, roots, &n).unwrap_or_else(|| data_dir.join(&n));
+                        (n, p)
+                    })
+                    .collect();
+                (files, true)
+            }
+            _ => {
+                let plugins: Vec<&str> = plugins.iter().map(AsRef::as_ref).collect();
+                let list = archive_list();
+                let list: Vec<&str> = list.iter().map(String::as_str).collect();
+                (Vfs::archive_files_layered(data_dir, roots, &list, &plugins), false)
+            }
+        }
+    }
+
+    /// The highest layer's file `name`, matched without case: `roots` highest priority
+    /// first, then `data_dir`.
+    pub fn archive_file_in_layers(data_dir: &Path, roots: &[PathBuf], name: &str) -> Option<PathBuf> {
+        for dir in roots.iter().rev().map(PathBuf::as_path).chain(std::iter::once(data_dir)) {
+            let Ok(rd) = std::fs::read_dir(dir) else { continue };
+            if let Some(p) = rd.flatten().map(|e| e.path()).find(|p| p.is_file() && p.file_name().is_some_and(|f| f.to_string_lossy().eq_ignore_ascii_case(name))) {
+                return Some(p);
+            }
+        }
+        None
+    }
+
     pub fn archives(&self) -> impl Iterator<Item = &str> {
         self.archives.iter().map(|(n, _)| n.as_str())
+    }
+
+    /// The file the archive `name` was opened from: `Data`'s folder, or a mod's (#1526).
+    pub fn archive_path(&self, name: &str) -> Option<&Path> {
+        let i = self.archives.iter().position(|(n, _)| n.eq_ignore_ascii_case(name))?;
+        self.archive_files.get(i).map(PathBuf::as_path)
     }
 
     /// The game's `Data` folder (its top-level files, `Credits.txt`, are not in the asset
@@ -393,15 +564,24 @@ impl Vfs {
 
     fn read_at(&self, key: &str, at: Location) -> std::io::Result<Vec<u8>> {
         match at {
-            Location::Loose => std::fs::read(&self.loose[key]),
+            Location::Loose => {
+                let t = std::time::Instant::now();
+                let bytes = std::fs::read(&self.loose[key]);
+                count_read(bytes.as_ref().map_or(0, |b| b.len()), std::time::Duration::ZERO, t.elapsed());
+                bytes
+            }
             Location::Archive { archive, folder, file } => {
                 // The lock covers only the seek and read of the stored bytes; inflating
                 // happens after it is let go, so workers reading the same archive do not
                 // queue behind each other's decompression (#997).
                 let stored = {
+                    let asked = std::time::Instant::now();
                     let mut a = self.archives[archive].1.lock().unwrap_or_else(|p| p.into_inner());
+                    let got = std::time::Instant::now();
                     let r = a.folders[folder].files[file].clone();
-                    a.read_stored(&r)
+                    let stored = a.read_stored(&r);
+                    count_read(r.stored_size() as usize, got - asked, got.elapsed());
+                    stored
                 };
                 stored.and_then(|b| b.decode()).map_err(std::io::Error::other)
             }
@@ -416,39 +596,84 @@ impl Vfs {
     }
 }
 
-/// Every loose file under `dir`. A folder or entry that cannot be read is skipped (and
-/// noted in `skipped`); the rest of the walk goes on.
-fn walk(root: &Path, dir: &Path, out: &mut Vec<PathBuf>, skipped: &mut Vec<(String, String)>) {
-    let mut skip = |p: &Path, e: std::io::Error| {
+/// The `*.bsa` files directly in `dir` (a mod's archive lies at its root, not nested).
+fn top_archives(dir: &Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.to_ascii_lowercase().ends_with(".bsa"))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Every loose file under `dir`, following directory symlinks and Windows NTFS directory
+/// junctions while skipping cycles (links back into an active ancestor in `open`) and
+/// broken links. A folder or entry that cannot be read is skipped (and noted in `skipped`);
+/// the rest of the walk goes on.
+fn walk(root: &Path, dir: &Path, open: &mut Vec<PathBuf>, out: &mut Vec<PathBuf>, skipped: &mut Vec<(String, String)>) {
+    fn skip(skipped: &mut Vec<(String, String)>, p: &Path, e: std::io::Error) {
         tracing::warn!(path = %p.display(), error = %e, "loose files skipped: cannot be read");
         skipped.push((p.display().to_string(), e.to_string()));
-    };
+    }
     let rd = match std::fs::read_dir(dir) {
         Ok(rd) => rd,
-        Err(e) => return skip(dir, e),
+        Err(e) => return skip(skipped, dir, e),
     };
-    let mut subdirs = Vec::new();
+    let mut subdirs: Vec<(PathBuf, bool)> = Vec::new();
     for e in rd {
         let e = match e {
             Ok(e) => e,
             Err(err) => {
-                skip(dir, err);
+                skip(skipped, dir, err);
                 continue;
             }
         };
         let p = e.path();
         match e.file_type() {
-            Ok(t) if t.is_dir() => subdirs.push(p),
-            Ok(_) => {
+            Ok(t) if t.is_dir() => subdirs.push((p, false)),
+            Ok(t) if t.is_file() => {
                 if let Ok(rel) = p.strip_prefix(root) {
                     out.push(rel.to_path_buf());
                 }
             }
-            Err(err) => skip(&p, err),
+            // Symlinks and Windows NTFS directory junctions report neither `is_dir` nor
+            // `is_file` on `DirEntry::file_type()`: follow via `metadata` and guard cycles.
+            Ok(_) => match std::fs::metadata(&p) {
+                Ok(m) if m.is_dir() => subdirs.push((p, true)),
+                Ok(m) if m.is_file() => {
+                    if let Ok(rel) = p.strip_prefix(root) {
+                        out.push(rel.to_path_buf());
+                    }
+                }
+                Ok(_) => {}
+                Err(err) => skip(skipped, &p, err),
+            },
+            Err(err) => skip(skipped, &p, err),
         }
     }
-    for p in subdirs {
-        walk(root, &p, out, skipped);
+    for (p, linked) in subdirs {
+        let real = match open.last() {
+            Some(parent) if !linked => p.file_name().map(|name| parent.join(name)),
+            _ => match std::fs::canonicalize(&p) {
+                Ok(r) => Some(r),
+                Err(err) => {
+                    skip(skipped, &p, err);
+                    continue;
+                }
+            },
+        };
+        if let Some(real) = real {
+            if open.contains(&real) {
+                continue;
+            }
+            open.push(real);
+            walk(root, &p, open, out, skipped);
+            open.pop();
+        } else {
+            walk(root, &p, open, out, skipped);
+        }
     }
 }
 
@@ -498,6 +723,29 @@ mod tests {
         assert_eq!(normal_map_beside("textures\\characters\\male\\.dds"), None);
         assert_eq!(normal_map_beside("textures\\characters\\male\\headhuman."), None);
         assert_eq!(normal_map_beside("textures\\characters\\male\\headhuman"), None);
+    }
+
+    /// A folder added after the mount opened lies over Data's loose files and is listed last.
+    #[test]
+    fn an_added_loose_root_lies_over_every_other() {
+        let base = std::env::temp_dir().join(format!("nvf-vfs-added-root-{}", std::process::id()));
+        let (data, extra) = (base.join("Data"), base.join("extra"));
+        std::fs::create_dir_all(data.join("textures/a")).unwrap();
+        std::fs::create_dir_all(extra.join("textures/a")).unwrap();
+        std::fs::write(data.join("textures/a/both.dds"), b"data").unwrap();
+        std::fs::write(data.join("textures/a/data_only.dds"), b"data").unwrap();
+        std::fs::write(extra.join("textures/a/both.dds"), b"extra").unwrap();
+        std::fs::write(extra.join("textures/a/extra_only.dds"), b"extra").unwrap();
+        let mut vfs = Vfs::open(&data, &[]).unwrap();
+        assert!(!vfs.exists("textures\\a\\extra_only.dds"));
+        vfs.add_loose_root(&extra);
+        assert_eq!(vfs.read("textures\\a\\both.dds").unwrap().unwrap(), b"extra");
+        assert_eq!(vfs.read("textures\\a\\data_only.dds").unwrap().unwrap(), b"data");
+        assert_eq!(vfs.read("textures\\a\\extra_only.dds").unwrap().unwrap(), b"extra");
+        assert_eq!(vfs.loose_roots().last(), Some(&extra));
+        // Nothing was written into either folder.
+        assert_eq!(std::fs::read(data.join("textures/a/both.dds")).unwrap(), b"data");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -685,6 +933,75 @@ mod tests {
         let order = Vfs::archive_order(&dir, &[], &["Merge.esp", "Merge3.esp"]);
         assert_eq!(order, ["Merge.bsa", "Merge1 - Textures.bsa", "Merge1.bsa", "Merge2.bsa", "Merge10.bsa", "Merge3.bsa"]);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn link_dir(target: &Path, link: &Path) -> bool {
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, link).is_ok();
+        #[cfg(windows)]
+        return std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .is_ok_and(|o| o.status.success());
+        #[cfg(not(any(unix, windows)))]
+        return false;
+    }
+
+    /// Directory junctions (Windows) and directory symlinks (Unix) inside `Data` or a mods
+    /// overlay are followed so loose files inside linked folders (e.g. `textures\pbr`) are
+    /// indexed and readable, while cyclic links back to an ancestor terminate without looping.
+    #[test]
+    fn loose_walk_follows_directory_links_and_stops_on_cycles() {
+        let base = std::env::temp_dir().join(format!("nvf-vfs-junctions-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let data = base.join("Data");
+        let mods = base.join("mods");
+        let overlay = base.join("overlay_pbr");
+        std::fs::create_dir_all(data.join("textures")).unwrap();
+        std::fs::create_dir_all(mods.join("textures")).unwrap();
+        std::fs::create_dir_all(overlay.join("landscape")).unwrap();
+        std::fs::write(overlay.join("landscape").join("dirt_p.dds"), b"height-bytes").unwrap();
+
+        let pbr_link = mods.join("textures").join("pbr");
+        let cycle_link = overlay.join("loop_back");
+        let made = link_dir(&overlay, &pbr_link) && link_dir(&mods, &cycle_link);
+        #[cfg(any(unix, windows))]
+        assert!(made, "directory link creation should succeed on unix and windows");
+        if made {
+            let vfs = Vfs::open_for_plugins_in(&data, Some(&mods), &[] as &[&str]).unwrap();
+            let pbr_paths = vfs.paths(|k| k.starts_with("textures\\pbr\\"));
+            assert_eq!(pbr_paths, ["textures\\pbr\\landscape\\dirt_p.dds"]);
+            assert!(!vfs.exists("textures\\pbr"), "linked directory must not be indexed as a file");
+            assert_eq!(vfs.read("textures\\pbr\\landscape\\dirt_p.dds").unwrap().unwrap(), b"height-bytes");
+        }
+        let _ = std::fs::remove_dir(&cycle_link);
+        let _ = std::fs::remove_dir(&pbr_link);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A dangling directory link is skipped cleanly without registering a phantom file.
+    #[test]
+    fn loose_walk_skips_dangling_directory_link() {
+        let base = std::env::temp_dir().join(format!("nvf-vfs-dangling-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let data = base.join("Data");
+        let target = base.join("vanished");
+        std::fs::create_dir_all(data.join("textures")).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        let link = data.join("textures").join("broken_dir");
+        let made = link_dir(&target, &link);
+        #[cfg(any(unix, windows))]
+        assert!(made, "directory link creation should succeed on unix and windows");
+        if made {
+            std::fs::remove_dir(&target).unwrap();
+            let vfs = Vfs::open(&data, &[]).unwrap();
+            assert!(!vfs.exists("textures\\broken_dir"));
+            assert!(!vfs.skipped().is_empty(), "dangling link should be recorded in skipped");
+        }
+        let _ = std::fs::remove_dir(&link);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
 

@@ -84,7 +84,7 @@ impl<'a> Game<'a> {
         match functions::base_of(self, actor) {
             // AddPackageAt's, RemovePackageAt's and RemoveAllPackages' list first.
             Some(base) if self.other.package_lists.contains_key(&base) => self.other.package_lists[&base].clone(),
-            Some(base) => self.data.base_package_list_at(base, self.pick_seed(actor), self.leveled_at(actor)),
+            Some(base) => self.template_source(base, actor, |d| d.template_packages).map(|(_, d)| d.packages.clone()).unwrap_or_default(),
             None => Vec::new(),
         }
     }
@@ -439,6 +439,24 @@ impl<'a> Game<'a> {
             self.evaluate_package(a);
         }
         actors
+    }
+
+    /// `actor` was put somewhere else (a script's MoveTo, a door, brought along with the
+    /// player): the packages it set aside because their place could not be reached
+    /// ([`Game::block_package`]) may be chosen again, and it chooses now, as after an
+    /// unlocked door ([`Game::unblock_packages`]). Returns whether it had any [hypothesis:
+    /// the original's handling is not documented; #3472: Rex, his follow package set aside
+    /// at the scrapyard, stood idle for half an hour next to the player in Jacobstown].
+    pub fn unblock_packages_of(&mut self, actor: FormId) -> bool {
+        let had = self.extra.get_mut(&actor).is_some_and(|e| {
+            let had = !e.package_blocked.is_empty();
+            e.package_blocked.clear();
+            had
+        });
+        if had {
+            self.evaluate_package(actor);
+        }
+        had
     }
 
     /// A list package with a schedule duration and no starting hour runs for that many

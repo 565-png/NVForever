@@ -21,6 +21,21 @@ Paths compare without regard to case [decision: as the first slice, knvse-anim.m
 
 ## 2. Weights, additive poses, text keys, attributes
 
+[design: pipboy.md §2, first-person script animations] The player's first-person
+clock additionally counts script frame time while a Pip-Boy menu holds game time.
+The rendered sequence, clock getters/setters, deferred seeks and release/resume
+share that per-view clock. Other actors and the player's third-person view keep
+their existing game clock. This is NVForever's mapped menu animation behavior;
+the default clock origins are admitted when animation time is first used even
+if an explicitly set value for the other view supplies that call's result.
+Admission inserts missing origins only; it preserves explicit per-view values,
+their set times and the cumulative menu clock. A first-person activation must
+therefore progress without requiring an earlier first-person getter.
+This remains a mapped design;
+the exact native pause policy is not established by the documented clock syntax
+or the earlier non-menu captures. Authored regression selectors and remaining
+validation are in [Pip-Boy animation validation](../handoff/pipboy-menu-animation-validation.md).
+
 | Function | NVForever |
 |---|---|
 | SetAnimWeight `path weight` | kept by actor and path, read back as `seqWeight` [documented] |
@@ -65,6 +80,8 @@ run does not have:
 A first run's `Floor (time × 10)` the frame after SetAnimCurrentTime 1.5 read 16 (the
 game's frames were slow); the row keeps whole seconds.
 
-Follow-ups (engine side, slice 2 of knvse-anim.md): the engine's animation player does
-not yet read the weights, offsets, global time, additive poses or text keys kept here,
-take AllowAttack, or tell the sequence headers (`Game::set_sequence_info`).
+Follow-ups (engine side, slice 2 of knvse-anim.md):
+- **Wired [design]:** `AllowAttack` player attack-cycle cooldown, swing, and flinch
+  release (`nvf-play` `combat.rs::fire` consumes `Game::take_allow_attack`).
+- **Remaining:** weights, offsets, global time, additive poses, text keys, and sequence
+  headers (`Game::set_sequence_info`).

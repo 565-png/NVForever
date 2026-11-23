@@ -914,6 +914,37 @@ have no `.nif` of their name; which model each belongs to is [open].
 
 Hair shine is a material question: docs/spec-notes/nif.md §6, "Hair".
 
+### 4.4 Hair outside an old-head race's list (#2714)
+
+[documented: issue #2714, spooknik's 2026-11-15 comment, record/archive audit at
+main 1790ab94a; supplied findings, not a new run or original-game observation]
+Roy is VFSRoyREF 0x0011365D, base VFSLocalVictim03 0x00113649. His race is
+CaucasianOldAged 0x000987DF, with `headold.nif`, but his HAIR is
+HairAfricanAmericanBase 0x000306BE (Buzz Cut): `hairbase.nif`, texture
+`hairafricanamericanbase.dds`, HCLR 192,192,192, and no hat. That HAIR is outside
+the race's HNAM list: 0x000987DA, 0x000987D8, 0x00044529, 0x00044528,
+0x00044527, 0x000987D9. The race's default male hair is HairBaldingOld.
+
+[documented: the same #2714 audit] Old-head alternatives include HairBaseOld
+0x00044528 (`hairbaseold.nif`, with `hairbaseoldnohat.egm` /
+`hairbaseoldhat.egm`) and HairAfricanAmericanBaseOld 0x000987D9
+(`hairafricanamericanbaseold.nif`). Of the 24 placed old-head NPCs surveyed,
+20 use an `…old.nif` hair. The exceptions are Roy (`hairbase.nif`),
+VNovacDoctorMerc2 (`hairraiderspike.nif`, no old version), DeadSlaveFemale
+(`hairbun.nif`) and Boomer05F (`hairfemaleb.nif`, under a hat).
+
+[design: `crates/fnv-actor/src/resolve.rs`, hair selection;
+`engine/nvforever/src/facegen.rs::FaceGenCache::morph`] NVForever keeps the
+NPC's selected HAIR model (race default only when no hair is selected), then
+uses that model's own applicable EGM, including per-shape files such as
+`hairbasenohat.egm`. It does not substitute an old-head model because the hair
+is outside HNAM. [hypothesis, #2714] A model fitted to `headhuman.nif` could
+leave a gap at the back of `headold.nif`; the original might keep that gap,
+substitute an old-head hair, or use the race default. Keep the current model
+provisionally; no hair resolution or morphing change is justified yet.
+Observer check [210](../handoff/observer-checks.md) compares Roy from behind
+and VNovacDoctorMerc2 to distinguish those alternatives [design, #2714].
+
 ## 5. CLI contract
 
 - `fnvtool actor forms <Data> <plugins…> --schema <dir>` → `fnv.actor.forms/1`:
@@ -2344,9 +2375,37 @@ Per prefix (length of equip / unequip in seconds; where the weapon hangs, §9.2)
   is holstered, since h2h weapons hang on the forearm either way; hypothesis: the
   both-hands case, no such addon checked]. An NPC is dressed again when its weapon
   changes to one with other addons (`outfits::same_worn`). The player's third-person body
-  wears them too. The first-person arms keep the bare hand [hypothesis: the first-person
-  weapon model is drawn over it, as before]. The placement was left as it was: the
-  frames show the gauntlet in the same place in both.
+  wears them too. The placement was left as it was: the frames show the gauntlet in the
+  same place in both.
+- **The first-person arms and a fist weapon's addon** (#3226). 21 weapons of
+  FalloutNV.esm and the add-ons have a BIPL and no MODL (nor WNAM): the Bladed Gauntlet
+  (`WeapBladedGauntlet` 0x001519E0 → `ARMABladedGuantlet`, Right Hand,
+  `bladedguantlet.nif`: shapes `rightglove:0` and `bladedguantlet:0`, both skinned to
+  `Bip01 R ForeTwist`, the hand and the finger bones), its unique and poisoned variants,
+  the brass and spiked knuckles (and `WeapNVSpikedKnucklesUnique`), the deathclaw
+  gauntlets (with Lonesome Road's two), the mantis gauntlets (Honest Hearts' poisoned one,
+  Gun Runners' Arsenal's unique one), Honest Hearts' three yao guai gauntlets, Old World
+  Blues' five gloves (`NVDLC03WeapGlovesScientist`, …) and the Securitrons'
+  `WeapNVSecuritronPowerFist`; their MOD4 is a ground object, so the addon is the only
+  model they name besides it [documented: record decode of the ten plugins; asset
+  inspection of `bladedguantlet.nif`, `fnvtool nif decode`]. An ARMA has a male and a
+  female biped model and no first-person one [documented: GECK wiki ArmorAddon;
+  `schemas/fnv/objects.json` ARMA], and none of these addon models has a `…1st.nif`
+  beside it [documented: asset inspection, archive listings]. For the Bladed Gauntlet a
+  player's log showed the addon on the third-person body and on neither the
+  first-person arms nor in the hand there (#3226, [observed]); the other 20 have the
+  same record shape, so the same rule applies to them [hypothesis: drawn the same, not
+  seen running]. Rule (`fnv_actor::first_person::wears_weapon_addons`,
+  `first_person_worn`): the first-person arms wear a held weapon's addons when the
+  weapon has no model for that view (`Weapon::model_for` with no mods: no WNAM, no
+  MODL), with the third-person body's slot rules (the race's right hand and an outfit's
+  right glove give way to it); a weapon with a model of its own (the power fist's and
+  ballistic fist's rigid gauntlets, the boxing gloves, the Shishkebab, the zap and
+  displacer gloves, the dog-tag fists) keeps the bare hand under that model in first
+  person, as before [hypothesis: the original draws the addon on the first-person arms
+  as on the body; for the weapons with a model, that model is drawn over the bare hand;
+  an in-game first-person look at the Bladed Gauntlet and the power fist would settle
+  both].
 - That NPCs show holstered weapons at the pelvis or on the back is [hypothesis, from the
   holster clips]; an in-game screenshot of an NPC with a holstered pistol and one with a
   rifle would settle it.

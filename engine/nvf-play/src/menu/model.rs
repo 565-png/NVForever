@@ -38,7 +38,10 @@
 //! simulation and the status line says so [documented: GECK wiki Category:Items, the
 //! player cannot drop one]. Storing one in a container is allowed [hypothesis: the page
 //! does not mention containers]. They cannot be sold [documented: the same page], so the
-//! barter menu does not list them [hypothesis: hidden rather than refused].
+//! barter menu does not list them [hypothesis: hidden rather than refused]. Keys
+//! (`ItemKind::Key`, `KEYM`) are also excluded from both sides of the barter menu (#3432)
+//! [hypothesis: issue #3432 reports that keys do not appear in barter in the original
+//! engine], while remaining listed in the inventory (`Keyring` folder) and in containers.
 //!
 //! Barter ([`Mode::Barter`], [`Trade`]): items are put up from either side and listed on
 //! the other side, first, marked, until the trade is accepted [observed: the owner's
@@ -65,6 +68,9 @@ use fnv_sim::refs::PlacedRef;
 use fnv_sim::world::{Encumbrance, SimError};
 use fnv_sim::{FormId, Pick, RefTable, World};
 use std::collections::BTreeMap;
+
+mod search;
+pub use search::{SearchError, MAX_SEARCH_CHARS};
 
 /// Rows the inventory (the Pip-Boy's ITEMS list) shows at once; the list scrolls to keep
 /// the selection visible. Its list is 468 high and a row 51 (`pipboy::items`).
@@ -711,6 +717,9 @@ pub struct Trade {
     /// A script's price multipliers, buying and selling (SetBarterPriceMult,
     /// `fnv_game::nvse_jip12`), in place of the rules'.
     pub mult_set: [Option<f32>; 2],
+    /// Items hidden by `HideItemBarterEx` for this merchant (`1` hidden on vendor's side,
+    /// `2` hidden on player's side, `3` hidden on both) [documented: HideItemBarterEx].
+    pub hidden: BTreeMap<FormId, i64>,
 }
 
 /// Whether the merchant sells an item: `None` when it does, else the name of the service
@@ -771,6 +780,17 @@ impl Trade {
         }
     }
 
+    /// Whether `HideItemBarterEx` hides `item` on `side` (`1` hidden on vendor's side,
+    /// `2` hidden on player's side, `3` hidden on both) [documented: HideItemBarterEx].
+    pub fn is_hidden(&self, item: FormId, side: Side) -> bool {
+        match self.hidden.get(&item).copied().unwrap_or(0) {
+            1 => side == Side::Container,
+            2 => side == Side::Player,
+            3 => true,
+            _ => false,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.offered.iter().all(BTreeMap::is_empty)
     }
@@ -780,6 +800,7 @@ impl Trade {
 #[derive(Debug, Clone)]
 pub struct MenuModel {
     pub mode: Mode,
+    search: search::Search,
     /// The column that has the keyboard (always `Player` in the inventory menu).
     pub focus: Side,
     /// Selected row per column, indexed by `Side as usize`.
@@ -852,6 +873,9 @@ pub struct MenuModel {
     /// Show Equipped Ammo tweak (`ammo_mark_in_containers`).
     pub current_ammo: Option<FormId>,
     pub ammo_mark_in_containers: bool,
+    /// What the log last said of the Ammo tab's rows ([`MenuModel::refresh`]): said again
+    /// only when it changes.
+    ammo_told: String,
     pub title_case_categories: bool,
     /// The price of things worth nothing in a barter (the tweak; 0: as they are).
     pub free_item_price: f32,
@@ -967,6 +991,40 @@ impl Steal {
     }
 }
 
+/// The seed of one opening of `victim`'s pocket: `aid`, the test aid's number, gives the
+/// same rolls at every opening of that victim (smoke scenarios that need a take to go
+/// one way); else `clock` (the wall clock, nanoseconds) and `opening` (how many pockets
+/// this session has opened) make every opening roll afresh, so a caught take can go
+/// otherwise after a reload. Seeded by the victim alone, a victim whose first roll was
+/// over fPickPocketMaxChance (85) could never be robbed at the first try: the Legion
+/// assassin at Kimball's speech rolled 90.79 every time (#2751) [design: that the
+/// original rolls afresh each time is taken from its being a chance at all, GECK wiki
+/// Pickpocket; not captured].
+pub fn steal_seed(victim: FormId, aid: Option<u64>, clock: u64, opening: u64) -> u64 {
+    match aid {
+        Some(a) => u64::from(victim.0) ^ a,
+        None => clock ^ (u64::from(victim.0) << 24) ^ opening.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+    }
+}
+
+/// [`steal_seed`] for a pocket opened now. The test aid `NVF_PLAY_TEST_PICKPOCKET_SEED`
+/// (a number, decimal or `0x` hexadecimal) fixes the rolls per victim.
+pub fn steal_seed_now(victim: FormId) -> u64 {
+    static OPENINGS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let aid = std::env::var("NVF_PLAY_TEST_PICKPOCKET_SEED").ok().and_then(|v| {
+        let v = v.trim();
+        match v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
+            Some(h) => u64::from_str_radix(h, 16).ok(),
+            None => v.parse().ok(),
+        }
+    });
+    if let Some(a) = aid {
+        bevy::log::info!("pickpocket: test aid NVF_PLAY_TEST_PICKPOCKET_SEED: the rolls on {victim} are seeded with {a:#X}, the same at every opening");
+    }
+    let clock = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64);
+    steal_seed(victim, aid, clock, OPENINGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
 const PLAYER: FormId = FormId::PLAYER_REF;
 
 impl MenuModel {
@@ -1007,6 +1065,7 @@ impl MenuModel {
             sells: None,
             withheld: Vec::new(),
             mult_set: [None; 2],
+            hidden: BTreeMap::new(),
         });
         m.focus = Side::Player;
         m.refresh(world)?;
@@ -1021,9 +1080,18 @@ impl MenuModel {
         self.refresh(world)
     }
 
+    /// Apply active `HideItemBarterEx` item flags for this merchant and list the trade again.
+    pub fn set_barter_hidden(&mut self, world: &mut World<'_>, hidden: BTreeMap<FormId, i64>) -> Result<(), SimError> {
+        if let Some(t) = self.trade.as_mut() {
+            t.hidden = hidden;
+        }
+        self.refresh(world)
+    }
+
     fn empty(mode: Mode, title: String) -> MenuModel {
         MenuModel {
             mode,
+            search: Default::default(),
             focus: Side::Player,
             selected: [0; 2],
             scroll: [0; 2],
@@ -1053,6 +1121,7 @@ impl MenuModel {
             usable_ammo: Vec::new(),
             current_ammo: None,
             ammo_mark_in_containers: false,
+            ammo_told: String::new(),
             title_case_categories: false,
             free_item_price: 0.0,
             barter_kind_mults: None,
@@ -1105,6 +1174,7 @@ impl MenuModel {
     /// the same row when it is still there (else on the same position).
     pub fn refresh(&mut self, world: &mut World<'_>) -> Result<(), SimError> {
         let keep = [Side::Container, Side::Player].map(|s| self.selected_row(s).map(|r| (r.units(), r.bartered, r.folder, r.live)));
+        let search_keep = [Side::Container, Side::Player].map(|s| self.search.capture(self, s));
         if self.trade.is_some() {
             self.refresh_trade(world)?;
         } else {
@@ -1146,6 +1216,20 @@ impl MenuModel {
                         r.loaded = true;
                     }
                 }
+                // The Ammo tab's rows in the log, so a report about its marks can be read
+                // (#3442): how many, and which carries the loaded mark.
+                if self.mode == Mode::Inventory && self.category[side as usize] == Category::Ammo {
+                    let marked = match (l.rows.iter().find(|r| r.loaded), self.current_ammo) {
+                        (Some(r), _) => format!("{:?} ({}) carries the loaded mark", r.name, r.item),
+                        (None, Some(a)) => format!("none carries the loaded mark: the weapon loads {a}, which is not in the list"),
+                        (None, None) => "none carries the loaded mark: the weapon loads no ammo".to_string(),
+                    };
+                    let told = format!("menu: Ammo tab: {} rows, {marked}", l.rows.len());
+                    if told != self.ammo_told {
+                        bevy::log::info!("{told}");
+                        self.ammo_told = told;
+                    }
+                }
                 // The player's tweak: the list by value or weight, the most first, name
                 // order kept between equals [design: docs/design/tweaks.md].
                 if self.mode == Mode::Inventory {
@@ -1161,10 +1245,15 @@ impl MenuModel {
                 self.lists[side as usize] = l;
             }
         }
-        for &side in self.columns() {
+        let columns = self.columns();
+        self.search.filter(&mut self.lists, columns);
+        for &side in columns {
             let i = side as usize;
             let rows = &self.lists[i].rows;
-            let at = keep[i].and_then(|k| rows.iter().position(|r| (r.units(), r.bartered, r.folder, r.live) == k));
+            let at = match search_keep[i] {
+                Some(key) => key.find(rows),
+                None => keep[i].and_then(|k| rows.iter().position(|r| (r.units(), r.bartered, r.folder, r.live) == k)),
+            };
             self.selected[i] = at.unwrap_or(self.selected[i]).min(rows.len().saturating_sub(1));
             self.ensure_visible(side);
         }
@@ -1194,8 +1283,19 @@ impl MenuModel {
             own[i] = l
                 .rows
                 .into_iter()
-                // A live explosive (`Row::live`) is not for trade (#1640).
-                .filter(|r| r.item != t.caps && !r.quest && !r.live && !(side == Side::Player && hide_equipped && r.equipped) && !(side == Side::Player && hotkeyed.contains(&r.item)))
+                // Caps, quest items, keys (`ItemKind::Key`, #3432), and live explosives
+                // (`Row::live`, #1640) are not for trade; items hidden by
+                // `HideItemBarterEx` (`t.is_hidden`) stay off the requested side(s).
+                .filter(|r| {
+                    r.item != t.caps
+                        && !r.quest
+                        && !r.live
+                        && r.kind != Some(ItemKind::Key)
+                        && world.resolve_item(r.item).is_none_or(|i| i.kind != ItemKind::Key)
+                        && !t.is_hidden(r.item, side)
+                        && !(side == Side::Player && hide_equipped && r.equipped)
+                        && !(side == Side::Player && hotkeyed.contains(&r.item))
+                })
                 .filter(|r| {
                     // The player's tweak holds the player's side to the merchant's list too [design: docs/design/tweaks.md].
                     let why = (side == Side::Container || both_sides).then(|| t.sells.as_ref().and_then(|s| (s.0)(r.item))).flatten();
@@ -1874,3 +1974,88 @@ impl BarterKindMults {
 
 #[cfg(test)]
 mod tests;
+/// [design, #2403] Synthetic list/quantity/confirmation states for detector regressions.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_progress_fixture(mode: Mode, step: usize) -> MenuModel {
+    let mut m = MenuModel::empty(mode, "Synthetic menu".into());
+    let rows: Vec<_> = (0..20)
+        .map(|i| Row {
+            item: FormId(100 + i),
+            at: None,
+            name: format!("Synthetic item {i}"),
+            count: 10,
+            weight: Some(1.0),
+            value: Some(1),
+            kind: Some(ItemKind::Weapon),
+            equipped: false,
+            quest: false,
+            condition: Some(1.0),
+            icon: None,
+            price: None,
+            bartered: false,
+            loaded: false,
+            mods: 0,
+            mods_value: 0,
+            folder: None,
+            reference: None,
+            live: false,
+        })
+        .collect();
+    m.lists = [Listing { rows: rows.clone(), ..Default::default() }, Listing { rows, ..Default::default() }];
+    if step >= 1 {
+        m.selected[0] = 1;
+    }
+    if step >= 2 {
+        m.scroll[0] = 1;
+    }
+    if step >= 3 {
+        m.category[0] = Category::Weapons;
+    }
+    if step >= 4 {
+        m.quantity = Some(Quantity { cmd: Command::One, side: Side::Player, row: 0, max: 3, amount: 1 });
+    }
+    if step >= 5 {
+        m.quantity.as_mut().unwrap().amount = 2;
+    }
+    if step >= 6 {
+        m.lists[0].value = 42;
+    }
+    if step >= 7 {
+        m.confirming_take_all = true;
+    }
+    if step >= 8 {
+        m.status = Some("Synthetic result".into());
+    }
+    m.navigated = step as u32;
+    m.pointer_pick = step >= 9;
+    m
+}
+
+/// [design, #2403] A zero-balance barter still changes when another item is offered.
+#[cfg(feature = "report-test-support")]
+#[doc(hidden)]
+pub fn report_trade_progress_fixture(step: usize) -> MenuModel {
+    let mut m = report_progress_fixture(Mode::Barter(FormId(42)), 0);
+    let mut t = Trade {
+        merchant: FormId(42),
+        stock: FormId(43),
+        caps: FormId(44),
+        discount: 0,
+        skill: 50.0,
+        prices: Prices::from_settings(&FormStore::default()),
+        offered: Default::default(),
+        purse: [100; 2],
+        balance: 0,
+        sells: None,
+        withheld: vec![],
+        mult_set: [None; 2],
+        hidden: BTreeMap::new(),
+    };
+    if step >= 1 {
+        t.offered[0].insert((FormId(100), None, 0), 1);
+    }
+    m.trade = Some(t);
+    m.navigated = step as u32;
+    m
+}

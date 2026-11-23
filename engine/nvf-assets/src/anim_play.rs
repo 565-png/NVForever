@@ -62,6 +62,8 @@ pub struct EmitterTrack {
     pub priority: i32,
     pub rate: Option<Arc<ValueTrack>>,
     pub active: Option<BoolTrack>,
+    /// [design, #2685] Modifier name and on/off track from the same external KF.
+    pub modifiers: Vec<(String, BoolTrack)>,
 }
 
 impl EmitterTrack {
@@ -269,19 +271,27 @@ impl Clip {
         for t in &seq.tracks {
             materials.extend(MaterialTrack::of(t));
             lights.extend(LightTrack::of(t));
-            if let (Some(n), Some("NiPSysEmitterCtlr")) = (&t.node_name, t.controller_type.as_deref()) {
-                let priority = t.priority.unwrap_or(0) as i32;
-                let k = match emitters.iter().position(|e| e.system == *n && e.priority == priority) {
-                    Some(k) => k,
-                    None => {
-                        emitters.push(EmitterTrack { system: n.clone(), priority, rate: None, active: None });
-                        emitters.len() - 1
+            if let (Some(n), Some(controller)) = (&t.node_name, t.controller_type.as_deref()) {
+                if matches!(controller, "NiPSysEmitterCtlr" | "NiPSysModifierActiveCtlr") {
+                    let priority = t.priority.unwrap_or(0) as i32;
+                    let k = match emitters.iter().position(|e| e.system == *n && e.priority == priority) {
+                        Some(k) => k,
+                        None => {
+                            emitters.push(EmitterTrack { system: n.clone(), priority, rate: None, active: None, modifiers: Vec::new() });
+                            emitters.len() - 1
+                        }
+                    };
+                    if controller == "NiPSysModifierActiveCtlr" {
+                        if let (Some(name), Some(keys)) = (&t.controller_id, &t.bools) {
+                            emitters[k].modifiers.push((name.clone(), keys.clone()));
+                        }
+                    } else {
+                        match t.interpolator_id.as_deref() {
+                            Some("BirthRate") => emitters[k].rate = t.values.clone().map(Arc::new),
+                            Some("EmitterActive") => emitters[k].active = t.bools.clone(),
+                            _ => {}
+                        }
                     }
-                };
-                match t.interpolator_id.as_deref() {
-                    Some("BirthRate") => emitters[k].rate = t.values.clone().map(Arc::new),
-                    Some("EmitterActive") => emitters[k].active = t.bools.clone(),
-                    _ => {}
                 }
             }
             if let (Some(n), Some(b), Some("NiVisController")) = (&t.node_name, &t.bools, t.controller_type.as_deref()) {
@@ -714,6 +724,20 @@ impl BoundClip {
         let (Some(start), Some(end)) = (self.clip.root_ground(0.0), self.clip.root_ground(self.clip.length())) else { return self };
         if self.clip.root_reach() > ROOT_EXCURSION_RATIO * (end - start).length() {
             self.hold_xy = Some(start);
+        }
+        self
+    }
+
+    /// Bind a turn played in place: the actor's heading owns its placement, so the
+    /// accumulation-root rotation starts at the identity. Keep rotation relative to
+    /// that starting basis and every child-bone pose, including `Bip01 NonAccum`.
+    /// [design: animation.md §9.13] An exported static root orientation must not tip
+    /// the whole actor over when its AI starts a turn.
+    pub fn turn_in_place(mut self) -> BoundClip {
+        if let Some((k, _, _, basis)) = &mut self.root_track {
+            if let Some([w, x, y, z]) = self.tracks.get(*k).and_then(|(_, track, _)| track.rotation_at(self.clip.start)) {
+                *basis = Quat::from_xyzw(x, y, z, w).normalize();
+            }
         }
         self
     }
@@ -1344,7 +1368,7 @@ pub fn advance(time: Res<Time>, mut state: ResMut<AnimState>, mut transforms: Qu
 /// Advance every [`Playing`] component (world objects with their own animation), posing
 /// their nodes and showing and hiding them ([`Playing::show`]). Returns how many nodes
 /// switched between shown and hidden.
-pub fn advance_instances(time: Res<Time>, mut playing: Query<&mut Playing>, mut transforms: Query<&mut Transform>, mut visibility: Query<&mut Visibility>) -> usize {
+pub fn advance_instances<F: bevy::ecs::query::QueryFilter>(time: Res<Time>, mut playing: Query<&mut Playing, F>, mut transforms: Query<&mut Transform>, mut visibility: Query<&mut Visibility>) -> usize {
     let dt = time.delta_secs();
     let mut switched = 0;
     for mut p in &mut playing {
@@ -2306,6 +2330,78 @@ mod tests {
         p.sample(&mut out);
         let root = out.iter().find(|(j, _)| *j == 1).unwrap().1.rotation;
         assert!((root.to_axis_angle().1.to_degrees() - 90.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn turn_in_place_removes_start_basis_with_non_accum_track() {
+        let (mut p, ix) = player();
+        let basis = Quat::from_euler(EulerRot::XYZ, 1.2, -0.4, 0.8);
+        let pelvis = Quat::from_rotation_z(0.7);
+        let rotation = |q: Quat| Channel::Static(Some([q.w, q.x, q.y, q.z]));
+        let source = prio_clip(1.0, vec![
+            ("Bip01", track(Channel::Static(Some([0.0, 0.0, 67.0])), rotation(basis)), 26),
+            ("Bip01 NonAccum", track(Channel::Static(Some([0.0, 0.0, 61.0])), rotation(pelvis)), 26),
+            ("Other", pose([9.0, 0.0, 0.0]), 26),
+        ]);
+        let plain = Arc::new(BoundClip::bind(source.clone(), &ix));
+        let turn = Arc::new(BoundClip::bind(source, &ix).turn_in_place());
+        let mut out = Vec::new();
+        // Generic clips still own their authored root orientation.
+        p.layers[0] = Some(Layer { clip: plain, phase: 0.0, weight: 1.0 });
+        p.sample(&mut out);
+        let root = out.iter().find(|(i, _)| *i == 1).unwrap().1;
+        assert!(root.rotation.dot(basis).abs() > 1.0 - 1e-6);
+        assert!((root.rotation * Vec3::Z).distance(Vec3::Z) > 0.5);
+        // Enter, advance, wrap and release a turn through the real pose sampler.
+        for phase in [0.0, 0.25, 0.75, 0.0, 0.5] {
+            p.layers[0] = Some(Layer { clip: turn.clone(), phase, weight: 1.0 });
+            p.sample(&mut out);
+            let root = out.iter().find(|(i, _)| *i == 1).unwrap().1;
+            let body = out.iter().find(|(i, _)| *i == 2).unwrap().1;
+            assert!(root.rotation.dot(Quat::IDENTITY).abs() > 1.0 - 1e-6);
+            assert!(root.translation.abs_diff_eq(Vec3::ZERO, 1e-6));
+            assert!(body.rotation.dot(pelvis).abs() > 1.0 - 1e-6);
+            assert_eq!(body.translation.z, 61.0);
+            assert_eq!(out.iter().find(|(i, _)| *i == 3).unwrap().1.translation.x, 9.0);
+        }
+        p.layers[0] = None;
+        p.sample(&mut out);
+        assert_eq!(out.iter().find(|(i, _)| *i == 1).unwrap().1, p.bind[1]);
+    }
+
+    #[test]
+    fn turn_in_place_preserves_relative_keyed_root_rotation() {
+        let (mut p, ix) = player();
+        let basis = Quat::from_euler(EulerRot::XYZ, -0.8, 0.3, -0.4);
+        let end = basis * Quat::from_rotation_z(0.6);
+        let rotations = Keys {
+            kind: KeyKind::Linear,
+            keys: [(0.0, basis), (1.0, end)].map(|(time, q)| Key {
+                time, value: [q.w, q.x, q.y, q.z], forward: [0.0; 4], backward: [0.0; 4], tbc: [0.0; 3],
+            }).to_vec(),
+        };
+        let source = prio_clip(1.0, vec![
+            ("Bip01", track(Channel::Static(Some([0.0; 3])), Channel::Keys(rotations)), 30),
+            ("Bip01 NonAccum", pose([0.0, 0.0, 61.0]), 30),
+        ]);
+        let turn = Arc::new(BoundClip::bind(source, &ix).turn_in_place());
+        let mut out = Vec::new();
+        for phase in [0.0, 0.25, 0.5, 0.75] {
+            p.layers[0] = Some(Layer { clip: turn.clone(), phase, weight: 1.0 });
+            p.sample(&mut out);
+            let root = out.iter().find(|(i, _)| *i == 1).unwrap().1.rotation;
+            assert!(root.dot(Quat::from_rotation_z(0.6 * phase)).abs() > 1.0 - 1e-6);
+        }
+    }
+
+    #[test]
+    fn turn_in_place_without_an_authored_root_rotation_keeps_binding() {
+        let (_, ix) = player();
+        for tracks in [vec![("Other", pose([3.0, 0.0, 0.0]))], vec![("Bip01", track(Channel::Static(Some([0.0; 3])), Channel::Static(None)))]] {
+            let plain = BoundClip::bind(clip(1.0, tracks), &ix);
+            let before = plain.root_track;
+            assert_eq!(plain.turn_in_place().root_track, before);
+        }
     }
 
     #[test]

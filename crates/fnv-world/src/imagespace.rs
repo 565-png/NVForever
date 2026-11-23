@@ -109,12 +109,26 @@ impl Cinematic {
         }
     }
 
-    /// This grade with an adapter applied: each value × mult + add; an adapter tint gives
-    /// the colour and scales the base tint amount by its alpha, like the other
-    /// multipliers [hypothesis: replacing the amount outright made the Mojave night far
-    /// bluer than the owner's in-game screenshots].
+    /// This grade with an adapter applied: each value × mult + add. An adapter's tint is one
+    /// more tint beside the image space's own: the colours averaged by their amounts, the
+    /// larger amount kept, the rule for several modifiers' tints [documented: GECK wiki
+    /// "ImageSpace Modifiers"; hypothesis that a weather's adapter counts as one;
+    /// observed 2026-11-16, world.md §6 "Adapter tint": the tint amount that fits the
+    /// original's ground is 0.31 in the Capital Wasteland (base amount 0, adapter 0.314)
+    /// and 0.36 in the Mojave at noon (base 0.33, adapter 0.392), where scaling the base
+    /// amount by the adapter's alpha gave 0 and 0.13].
     pub fn adapt(&self, a: &Adapter) -> Cinematic {
-        let (tint, tint_amount) = a.tint.map_or((self.tint, self.tint_amount), |(c, alpha)| (c, self.tint_amount * alpha));
+        let (tint, tint_amount) = match a.tint {
+            None => (self.tint, self.tint_amount),
+            Some((c, alpha)) => {
+                let (wb, wa) = (self.tint_amount.max(0.0), alpha.max(0.0));
+                if wb + wa > 0.0 {
+                    (std::array::from_fn(|i| (self.tint[i] * wb + c[i] * wa) / (wb + wa)), wb.max(wa))
+                } else {
+                    (self.tint, 0.0)
+                }
+            }
+        };
         Cinematic {
             saturation: a.saturation.apply(self.saturation),
             contrast: a.contrast.apply(self.contrast),
@@ -146,6 +160,65 @@ pub fn image_space(lo: &LoadOrder, schema: &Schema, fid: u32) -> Option<Cinemati
         tint: [at(4)?, at(5)?, at(6)?],
         tint_amount: at(7)?,
     })
+}
+
+/// Apply JIP `SetImageSpaceTrait` session overrides (traits `0..=32`) onto an image
+/// space's [`Cinematic`] grade [documented: GECK wiki GetImageSpaceTrait /
+/// SetImageSpaceTrait; design: traits 18..=24 (GetHit / NightEye) have no rendered
+/// `Cinematic` consumer and are ignored here, while traits 29..=31 (Cinematic tint RGB)
+/// convert from 0–255 to 0–1]. Non-finite values are ignored.
+pub fn apply_image_space_traits(
+    mut base: Cinematic,
+    overrides: impl IntoIterator<Item = (i64, f64)>,
+) -> Cinematic {
+    for (trait_id, raw) in overrides {
+        let v = raw as f32;
+        if !v.is_finite() {
+            continue;
+        }
+        match trait_id {
+            0 => base.hdr.v[HDR_EYE_ADAPT_SPEED] = v,
+            1 => base.hdr.v[HDR_BLUR_RADIUS] = v,
+            2 => base.hdr.blur_passes = v,
+            3 => base.hdr.v[HDR_EMISSIVE_MULT] = v,
+            4 => base.hdr.v[HDR_TARGET_LUM] = v,
+            5 => base.hdr.v[HDR_UPPER_LUM_CLAMP] = v,
+            6 => base.hdr.v[HDR_BRIGHT_SCALE] = v,
+            7 => base.hdr.v[HDR_BRIGHT_CLAMP] = v,
+            8 => base.hdr.v[HDR_LUM_RAMP_NO_TEX] = v,
+            9 => base.hdr.v[HDR_LUM_RAMP_MIN] = v,
+            10 => base.hdr.v[HDR_LUM_RAMP_MAX] = v,
+            11 => base.hdr.v[HDR_SUNLIGHT_DIMMER] = v,
+            12 => base.hdr.v[HDR_GRASS_DIMMER] = v,
+            13 => base.hdr.v[HDR_TREE_DIMMER] = v,
+            14 => base.hdr.v[HDR_SKIN_DIMMER] = v,
+            15 => base.hdr.v[HDR_BLOOM_BLUR_RADIUS] = v,
+            16 => base.hdr.v[HDR_BLOOM_ALPHA_INTERIOR] = v,
+            17 => base.hdr.v[HDR_BLOOM_ALPHA_EXTERIOR] = v,
+            // 18..=20: GetHit; 21..=24: NightEye (no Cinematic consumer).
+            25 => base.saturation = v,
+            26 => base.contrast_avg_lum = v,
+            27 => base.contrast = v,
+            28 => base.brightness = v,
+            29 => base.tint[0] = v / 255.0,
+            30 => base.tint[1] = v / 255.0,
+            31 => base.tint[2] = v / 255.0,
+            32 => base.tint_amount = v,
+            _ => {}
+        }
+    }
+    base
+}
+
+/// Read an IMGS record's [`Cinematic`] grade with session `SetImageSpaceTrait` overrides
+/// applied on top of its authored DNAM values.
+pub fn image_space_with_traits(
+    lo: &LoadOrder,
+    schema: &Schema,
+    fid: u32,
+    overrides: impl IntoIterator<Item = (i64, f64)>,
+) -> Option<Cinematic> {
+    Some(apply_image_space_traits(image_space(lo, schema, fid)?, overrides))
 }
 
 /// The HDR and bloom values of an IMGS DNAM (`skin`: the 152-byte layout with the skin
@@ -263,10 +336,11 @@ pub fn weather_adapters(lo: &LoadOrder, schema: &Schema, w: &Weather) -> [Option
     std::array::from_fn(|i| f.get(&[i as u8, b'I', b'A', b'D']).as_ref().and_then(formid_of).and_then(|l| global(lo, pi, l)))
 }
 
-/// The grade at `hour`: the base image space with the weather's adapter for each of the
-/// four main times applied, blended like the weather colours (world.md §6).
+/// The grade at `hour`: the base image space with the weather's adapter for each time of
+/// day applied, blended like the weather colours (world.md §6): the high-noon adapter at
+/// 12:00 when the weather has one, never the midnight one ([`crate::sky::keys_at`]).
 pub fn cinematic_at(base: &Cinematic, adapters: &[Option<Adapter>; 6], c: &Climate, hour: f32) -> Cinematic {
-    let [(k0, w0), (k1, w1)] = time_keys(c, hour, false);
+    let [(k0, w0), (k1, w1)] = crate::sky::keys_at(c, hour, adapters[4].is_some());
     let at = |k: usize| adapters.get(k).copied().flatten().map_or(*base, |a| base.adapt(&a));
     let (a, b) = (at(k0 as usize), at(k1 as usize));
     a.lerp(&b, if w0 + w1 > 0.0 { w1 / (w0 + w1) } else { 0.0 })
@@ -281,7 +355,10 @@ pub const REFERENCE_DIMMER: [f32; 4] = [1.65, 1.21, 1.3, 1.1];
 /// How much stronger the sun or moon is than the Mojave's at `hour`: `dimmer` (this
 /// world's blended sunlight dimmer) over [`REFERENCE_DIMMER`] blended the same way, so
 /// the Mojave's clear weather gives 1 [hypothesis: the dimmer scales the directional light
-/// directly; world.md §6 "Sunlight Dimmer"].
+/// directly; world.md §6 "Sunlight Dimmer"]. The reference has no high-noon entry of its
+/// own: NVWastelandClear's high-noon adapter is its day adapter (`NVWastelandIS`, both
+/// ×1.1) [observed: fnvtool esm decode], so the four times blended give the same value at
+/// every hour as [`cinematic_at`]'s keys do for that weather.
 pub fn sun_scale(dimmer: f32, c: &Climate, hour: f32) -> f32 {
     let [(k0, w0), (k1, w1)] = time_keys(c, hour, false);
     let r = |k: usize| REFERENCE_DIMMER.get(k).copied().unwrap_or(REFERENCE_DIMMER[3]);
@@ -345,7 +422,14 @@ mod tests {
             ..Default::default()
         };
         let n = base.adapt(&night);
-        assert!((n.contrast - 1.32).abs() < 1e-6 && n.saturation == 1.1 && (n.tint_amount - 0.198).abs() < 1e-6);
+        // The adapter's tint beside the base's: the larger amount, the colours by amount.
+        assert!((n.contrast - 1.32).abs() < 1e-6 && n.saturation == 1.1 && (n.tint_amount - 0.6).abs() < 1e-6);
+        let mixed = |b: f32, a: f32| (b * 0.33 + a * 0.6) / 0.93;
+        assert!((n.tint[0] - mixed(1.0, 0.2)).abs() < 1e-6 && (n.tint[2] - mixed(0.0, 0.9)).abs() < 1e-6);
+        // A base without a tint (the Capital Wasteland's) takes the adapter's as it is.
+        let plain = Cinematic { tint: [0.0; 3], tint_amount: 0.0, ..base };
+        let p = plain.adapt(&night);
+        assert!((p.tint_amount - 0.6).abs() < 1e-6 && p.tint.iter().zip([0.2, 0.5, 0.9]).all(|(a, b)| (a - b).abs() < 1e-6));
         let sunset = Adapter { contrast: MultAdd { mult: 1.0, add: 0.3 }, ..Default::default() };
         assert!((base.adapt(&sunset).contrast - 1.4).abs() < 1e-6);
         // No tint in the adapter keeps the base tint.
@@ -378,5 +462,64 @@ mod tests {
         // The Big MT's day adapter ×2.25: 2.475 / 1.21.
         let big_mt = [m(3.0, 0.0), m(2.25, 0.0), m(2.0, 0.0), m(2.0, 0.0), None, None];
         assert!((sun_scale(dimmer(&big_mt, 12.0), &c, 12.0) - 2.475 / 1.21).abs() < 1e-5);
+    }
+
+    #[test]
+    fn apply_image_space_traits_overlays_hdr_bloom_and_cinematic_values() {
+        let base = Cinematic::default();
+        let out = apply_image_space_traits(
+            base,
+            [
+                (0, 0.45),
+                (1, 5.0),
+                (2, 3.0),
+                (3, 2.2),
+                (4, 1.8),
+                (6, 2.5),
+                (11, 1.35),
+                (14, 0.75),
+                (15, 0.04),
+                (16, 0.85),
+                (17, 0.25),
+                // GetHit & NightEye (18..=24) have no Cinematic fields and must not alter anything.
+                (18, 9.0),
+                (21, 128.0),
+                (24, 3.0),
+                // Cinematic (25..=32); tint RGB converts 0..=255 -> 0..=1.
+                (25, 0.75),
+                (26, 0.42),
+                (27, 1.25),
+                (28, 1.15),
+                (29, 255.0),
+                (30, 127.5),
+                (31, 0.0),
+                (32, 0.35),
+                // Non-finite, out-of-f32-range, and out-of-range slots are ignored.
+                (25, f64::NAN),
+                (28, f64::INFINITY),
+                (25, 1e300),
+                (28, -1e300),
+                (99, 42.0),
+            ],
+        );
+        assert_eq!(out.hdr.v[HDR_EYE_ADAPT_SPEED], 0.45);
+        assert_eq!(out.hdr.v[HDR_BLUR_RADIUS], 5.0);
+        assert_eq!(out.hdr.blur_passes, 3.0);
+        assert_eq!(out.hdr.v[HDR_EMISSIVE_MULT], 2.2);
+        assert_eq!(out.hdr.v[HDR_TARGET_LUM], 1.8);
+        assert_eq!(out.hdr.v[HDR_BRIGHT_SCALE], 2.5);
+        assert_eq!(out.hdr.v[HDR_SUNLIGHT_DIMMER], 1.35);
+        assert_eq!(out.hdr.v[HDR_SKIN_DIMMER], 0.75);
+        assert_eq!(out.hdr.v[HDR_BLOOM_BLUR_RADIUS], 0.04);
+        assert_eq!(out.hdr.v[HDR_BLOOM_ALPHA_INTERIOR], 0.85);
+        assert_eq!(out.hdr.v[HDR_BLOOM_ALPHA_EXTERIOR], 0.25);
+        assert_eq!(out.saturation, 0.75);
+        assert_eq!(out.contrast_avg_lum, 0.42);
+        assert_eq!(out.contrast, 1.25);
+        assert_eq!(out.brightness, 1.15);
+        assert!((out.tint[0] - 1.0).abs() < 1e-6);
+        assert!((out.tint[1] - 0.5).abs() < 1e-6);
+        assert!((out.tint[2] - 0.0).abs() < 1e-6);
+        assert_eq!(out.tint_amount, 0.35);
     }
 }
