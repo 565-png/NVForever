@@ -390,8 +390,8 @@ impl Fullscreen {
 /// The window's image is a UNORM image drawn through an sRGB view (Streamline refuses sRGB
 /// back buffers; vendored `bevy_render` `view/window/mod.rs` `formats`), so it holds encoded
 /// values; the main texture is linear `Rgba16Float`, which a plain copy left linear: the
-/// generated frames' HUD then sat on a background darker than the real frames' (the crosshair's
-/// faint glow flickered, owner 2026-11-23). `VK_FORMAT_R8G8B8A8_UNORM` is in Streamline's table
+/// generated frames' HUD then sat on a background unlike the real frames' (the crosshair's
+/// faint glow flickered [observed: #3595]). `VK_FORMAT_R8G8B8A8_UNORM` is in Streamline's table
 /// [documented: `source/platforms/sl.chi/vulkan.cpp` `getFormat`].
 const ENCODED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 

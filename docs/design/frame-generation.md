@@ -95,7 +95,7 @@ this real frame's HUD exactly, its see-through and faint parts included. Cost: t
 twice and one full-screen blend a real frame. `NVF_FG_UI_LAYER=0` keeps the mode below, for
 comparisons.
 
-*Why it was needed* [observed: owner's screenshot 2026-11-23, the HP bar's ticks doubled or
+*Why it was needed* [observed: #3595, the HP bar's ticks doubled or
 smeared in motion]: the HUD-less mode below takes the HUD's pixel in proportion to how much the
 two frames differ, saturating at about 10% (`CalculateStaticContentFactor`), so the HUD's
 faint parts (glow, soft edges, see-through fills) were mixed with the interpolated scene.

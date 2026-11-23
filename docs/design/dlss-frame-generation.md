@@ -94,8 +94,8 @@ and calls after: at most three moves can happen meanwhile).
    window's image is a UNORM image drawn through an sRGB view (Streamline refuses sRGB back
    buffers), so it holds encoded values, while the main texture is linear `Rgba16Float`. The
    first build of the layer (and before it the HUD-less copy) gave DLSS-G linear values: the
-   generated frames' HUD sat on a darker background than the real frames', and the crosshair's
-   faint glow flickered (owner 2026-11-23). Both buffers are now encoded, 8 bits
+   generated frames' HUD sat on a background unlike the real frames', and the crosshair's
+   faint glow flickered [observed: #3595]. Both buffers are now encoded, 8 bits
    (`VK_FORMAT_R8G8B8A8_UNORM` is in Streamline's format table).
    With `NVF_FG_UI_LAYER=0`, as before, the **UI alpha**: `R16Float` (Streamline's Vulkan format
    table has no `R8_UNORM` [documented: `sl.chi/vulkan.cpp` `getFormat`]), 1 where the frame
