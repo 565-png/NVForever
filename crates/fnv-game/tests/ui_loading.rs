@@ -99,6 +99,56 @@ fn uio_uses_active_plugins_and_survives_menu_lifetime() {
 }
 
 #[test]
+fn uio_builtin_conditions_and_three_line_entries_follow_load_order_and_prefabs() {
+    // [design] Vanilla control: with no UIO list files, loading is completely unchanged.
+    let f_vanilla = fixture();
+    let mut g_vanilla = Game::new(&f_vanilla.data, World::new(&f_vanilla.forms, &f_vanilla.refs, SimConfig::default()), GameConfig::default());
+    let vanilla_src = lifetime_files();
+    let vanilla_paths = vanilla_src.files.keys().cloned().collect::<Vec<_>>();
+    let vanilla_report = ui_loading::load(&mut g_vanilla, Box::new(vanilla_src), vanilla_paths);
+    assert_eq!((vanilla_report.menus, vanilla_report.tiles), (6, 12));
+    assert!(g_vanilla.ui_tree.uio.decisions.is_empty());
+    assert!(g_vanilla.ui_tree.uio.warnings.is_empty());
+
+    // [design] Synthetic load order with `Vanilla UI Plus.esp` + `DarN_Fonts` exercises
+    // `vui+`, `darn`, `darnui`, and 3-line public list entries through real `ui_loading::load`.
+    let gmst = record(b"GMST", 0, 0x800, &[sub(b"EDID", z("sProbe")), sub(b"DATA", z("plugin text"))]);
+    let plugins = vec![
+        Plugin::parse(&[tes4(), top(b"GMST", &gmst)].concat(), "Empty.esm".into()).unwrap(),
+        Plugin::parse(&tes4(), "Vanilla UI Plus.esp".into()).unwrap(),
+    ];
+    let lo = LoadOrder::new(&plugins).unwrap();
+    let schema = Schema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap();
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/script/functions.json");
+    let json = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+    let forms = FormStore::build(&lo, &schema);
+    let refs = RefTable::build(&lo, &schema);
+    let data = GameData::build(&lo, &schema, FunctionTable::load(&p).unwrap(), &json, &refs);
+    let mut g = Game::new(&data, World::new(&forms, &refs, SimConfig::default()), GameConfig::default());
+
+    let src = lifetime_files()
+        .with("menus/prefabs/DarN_Fonts/DarN_Fonts.xml", "<rect name=\"Fonts\"/>")
+        .with_loose("menus/prefabs/vui_patch.xml", "<rect name=\"VuiPatch\"/>")
+        .with_loose("menus/prefabs/darn_patch.xml", "<rect name=\"DarnPatch\"/>")
+        .with_loose("menus/prefabs/vanilla_patch.xml", "<rect name=\"VanillaPatch\"/>")
+        .with_loose("menus/prefabs/three_line.xml", "<rect name=\"ThreeLine\"/>")
+        .with(
+            "uio/public/builtin_and_three_line.txt",
+            "vui_patch.xml::HUDMainMenu\nvui+\n\
+             darn_patch.xml::HUDMainMenu\ndarn || darnui\n\
+             vanilla_patch.xml::HUDMainMenu\n!vui+ && !darn\n\
+             three_line.xml::InventoryMenu\n#vui_patch.xml\ntrue\n",
+        );
+    let paths = src.files.keys().cloned().collect::<Vec<_>>();
+    let _report = ui_loading::load(&mut g, Box::new(src), paths);
+    assert!(g.ui_tree.uio.warnings.is_empty(), "{:?}", g.ui_tree.uio.warnings);
+    assert!(g.ui_tree.find_tile("HUDMainMenu/VuiPatch").is_some());
+    assert!(g.ui_tree.find_tile("HUDMainMenu/DarnPatch").is_none(), "DarN_Fonts must not activate darn/darnui");
+    assert!(g.ui_tree.find_tile("HUDMainMenu/VanillaPatch").is_none());
+    assert!(g.ui_tree.find_tile("InventoryMenu/ThreeLine").is_some());
+}
+
+#[test]
 fn open_close_and_inject_again() {
     use fnv_game::game::menus;
     let f = fixture();
