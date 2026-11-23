@@ -1166,8 +1166,14 @@ pub(crate) fn feed(mut script: ResMut<ScriptState>, switch: Res<TileMenus>, from
     let is_paused = paused.as_ref().is_some_and(|p| p.0);
     let model = active.as_ref().and_then(|a| a.0.as_ref()).filter(|m| m.mode == Mode::Inventory);
     let prompt = model.is_some_and(|m| m.quantity.is_some());
-    let menu = takes(&tiles, *switch, &pip, game, is_paused, closed, prompt).filter(|_| !tiles.others && !out.taken.taken() && out.hold.controller.is_none());
+    let claimed = takes(&tiles, *switch, &pip, game, is_paused, closed, prompt);
+    let menu = claimed.filter(|_| !tiles.others && !out.taken.taken() && out.hold.controller.is_none());
     let (Some(menu), Some(m)) = (menu, model) else {
+        // `tiles::input::feed` skipped `idle` because `takes` claimed this frame; still
+        // drain any queued script clicks (`ClickMenuTile` / `ClickMenuButton`) [design].
+        if claimed.is_some() && !tiles.others {
+            fnv_game::ui_input::idle(game);
+        }
         *state = Feed::default();
         tiles.view.drag = None;
         return;

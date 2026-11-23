@@ -1955,6 +1955,9 @@ pub(crate) fn feed(
     let menu = takes(&tiles, *switch, &pip, game, is_paused).filter(|_| !tiles.others);
     // The tiles found for this tab: a tab changed before this step was not painted yet.
     let (Some(menu), Some(p), Some(mut view)) = (menu, tiles.written.paths.filter(|p| Some(p.menu) == tiles.shown && p.page == tab), view) else {
+        if menu.is_some() {
+            fnv_game::ui_input::idle(game);
+        }
         *state = Feed::default();
         return;
     };
