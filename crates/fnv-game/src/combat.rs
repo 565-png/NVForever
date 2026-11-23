@@ -588,6 +588,7 @@ impl Game<'_> {
         // The difficulty scales the player's hits and the hits on the player, limb damage
         // too (`crate::difficulty`, docs/spec-notes/difficulty.md §3).
         let mult = self.damage_mult(info.attacker, target);
+        let base = damage;
         let damage = damage * mult;
         if let Some(l) = info.limb.as_mut() {
             l.damage *= mult;
@@ -597,6 +598,12 @@ impl Game<'_> {
             let health = actor::actor_value(self, target, HEALTH).unwrap_or(0.0);
             let corpse = self.is_dead(target);
             return HitResult { health, max_health, immune: true, corpse, overkill: if corpse { damage.max(0.0) } else { 0.0 }, ..HitResult::default() };
+        }
+        // Every hit the difficulty changes, so a run shows what each level does to real hits
+        // (weapons, blows, blasts, falls), not only to the test aid's.
+        if mult != 1.0 && base > 0.0 {
+            let by = info.attacker.map_or_else(|| "nobody".to_string(), |a| a.to_string());
+            tracing::info!("difficulty: a hit of {base:.1} on {target} by {by} is {damage:.1} (x{mult:.2})");
         }
         let before = actor::actor_value(self, target, HEALTH).unwrap_or(max_health);
         let essential = self.is_essential(target);

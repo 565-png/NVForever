@@ -77,6 +77,9 @@ the settings page row `difficulty` and the console's `SetGameDifficulty` /
   settings page, at once, but the INI is written only when the page changes a row
   [design]. Log line:
   `difficulty: Very Hard (4): damage by the player x0.50, to the player x2.00, kill XP x1.00`.
+- Every hit the difficulty changes (a multiplier other than 1) logs its base and scaled
+  damage, so a run shows real hits (weapons, blows, blasts, falls) as well as the aid's:
+  `difficulty: a hit of 20.0 on 00000014 by 00104C80 is 40.0 (x2.00)` (`Game::hit`) [design].
 - `NVF_PLAY_TEST_HIT` takes `by=<reference>`: that actor is the attacker instead of the
   player (to hit the player: `player` as the target) [test aid].
 - A script's `SetGameDifficulty` (JIP, through the script engine rather than the console's

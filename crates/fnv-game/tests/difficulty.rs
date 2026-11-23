@@ -165,6 +165,66 @@ fn custom_takes_the_players_multipliers() {
     assert_eq!(g.difficulty_multipliers(Difficulty::Custom), CustomDifficulty { dealt: 2.0, taken: 2.0, kill_xp: 2.0 });
 }
 
+/// Every level, every direction: the player's hit on an NPC, an NPC's hit on the player, a
+/// hit on the player by nobody (a fall, an unowned blast), an NPC's hit on another NPC, and
+/// the kill XP; each against the level's own numbers (the defaults: no plugin sets them
+/// here).
+#[test]
+fn every_level_scales_each_direction_and_the_kill_xp() {
+    use fnv_game::difficulty::{BY_PC, LEVELS, TO_PC, XP};
+    let f = fixture();
+    let normal_xp = game(&f, Difficulty::Normal).kill_xp(RAIDER_REF);
+    assert!(normal_xp > 0.0);
+    for d in LEVELS {
+        let i = d.code();
+        let mut g = game(&f, d);
+        assert_eq!(g.hit(RAIDER_REF, 20.0, by(FormId::PLAYER_REF)).dealt, 20.0 * BY_PC[i], "{d:?}: the player's hit");
+        assert_eq!(g.hit(FormId::PLAYER_REF, 20.0, by(RAIDER_REF)).dealt, 20.0 * TO_PC[i], "{d:?}: a hit on the player");
+        assert_eq!(g.hit(FormId::PLAYER_REF, 20.0, HitInfo { location: -1, ..HitInfo::default() }).dealt, 20.0 * TO_PC[i], "{d:?}: nobody's hit on the player");
+        assert_eq!(g.hit(GUARD_REF, 20.0, by(RAIDER_REF)).dealt, 20.0, "{d:?}: an NPC's hit on an NPC");
+        assert_eq!(game(&f, d).kill_xp(RAIDER_REF), normal_xp * XP[i], "{d:?}: kill XP");
+    }
+}
+
+/// Custom: each slider moves only its own number, at the ends and between them.
+#[test]
+fn each_custom_slider_moves_only_its_own_number() {
+    let f = fixture();
+    let normal_xp = game(&f, Difficulty::Normal).kill_xp(RAIDER_REF);
+    for m in [0.5, 0.75, 1.0, 1.25, 2.0, 3.0] {
+        for axis in 0..3 {
+            let c = CustomDifficulty { dealt: if axis == 0 { m } else { 1.0 }, taken: if axis == 1 { m } else { 1.0 }, kill_xp: if axis == 2 { m } else { 1.0 } };
+            let mut g = game(&f, Difficulty::Custom);
+            g.set_custom_difficulty(c);
+            assert_eq!(g.hit(RAIDER_REF, 20.0, by(FormId::PLAYER_REF)).dealt, 20.0 * c.dealt, "{c:?}: the player's hit");
+            assert_eq!(g.hit(FormId::PLAYER_REF, 20.0, by(RAIDER_REF)).dealt, 20.0 * c.taken, "{c:?}: a hit on the player");
+            assert_eq!(g.hit(FormId::PLAYER_REF, 20.0, HitInfo { location: -1, ..HitInfo::default() }).dealt, 20.0 * c.taken, "{c:?}: nobody's hit on the player");
+            assert_eq!(g.hit(GUARD_REF, 20.0, by(RAIDER_REF)).dealt, 20.0, "{c:?}: an NPC's hit on an NPC");
+            assert_eq!(game_custom(&f, c).kill_xp(RAIDER_REF), normal_xp * c.kill_xp, "{c:?}: kill XP");
+        }
+    }
+}
+
+/// A Custom limb hit scales as the Health hit does (crippling follows the slider).
+#[test]
+fn custom_limb_damage_follows_player_damage() {
+    let f = fixture();
+    let hit = |dealt: f64| {
+        let mut g = game_custom(&f, CustomDifficulty { dealt, ..CustomDifficulty::default() });
+        let info = HitInfo { limb: Some(LimbHit { condition: LEFT_ARM, health_percent: 10.0, damage: 10.0, points: false }), ..by(FormId::PLAYER_REF) };
+        g.hit(RAIDER_REF, 1.0, info).crippled
+    };
+    assert!(hit(2.0), "200%: 20 limb damage cripples");
+    assert!(!hit(0.5), "50%: 5 does not");
+}
+
+/// The game at Custom with these multipliers.
+fn game_custom(f: &Fixture, c: CustomDifficulty) -> Game<'_> {
+    let mut g = game(f, Difficulty::Custom);
+    g.set_custom_difficulty(c);
+    g
+}
+
 /// A script's SetGameDifficulty sets the level and leaves it for the engine to keep.
 #[test]
 fn a_scripts_level_is_left_for_the_engine() {
