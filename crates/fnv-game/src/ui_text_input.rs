@@ -3,10 +3,11 @@
 //!
 //! Vanilla `GetPlayerName` / `ShowNameMenu` opens `menus\dialog\texteditmenu.xml` without
 //! any extra trait writes. When JIP LN's `ShowTextInputMenu` opens menu `1051`, if the
-//! VFS provides `NVSE\Plugins\textinput\texteditmenu.xml` (shipped alongside JIP LN's
-//! text-input layout [observed: `docs/spec-notes/ai-observer-jip.md` §5]), that file is
-//! loaded into the tile tree instead; otherwise the vanilla `TextEditMenu` XML is used as
-//! a fallback.
+//! VFS provides `NVSE\Plugins\textinput\texteditmenu.xml` ([observed: JIP LN NVSE Plugin
+//! 57.30, archive `JIP LN NVSE Plugin-58277-57-30-1716662080`, shipped
+//! `NVSE\Plugins\textinput\texteditmenu.xml` read directly; only the XML layout was read,
+//! not the DLL or source]), that file is loaded into the tile tree instead; otherwise the
+//! vanilla `TextEditMenu` XML is used as a fallback.
 //!
 //! Only traits already declared in the loaded XML are written (`Ui::set_existing`), and
 //! only while `Game::text_input()` is active, so unmodded vanilla `GetPlayerName` behavior
@@ -51,7 +52,11 @@ fn input_tile(ui: &Ui, root: TileId) -> Option<TileId> {
 }
 
 /// Write `input`'s size (`user0`/`user1`), offset (`user2`/`user3`), title, and live text
-/// into the existing traits of a loaded `TextEditMenu` root [design].
+/// into the existing traits of a loaded `TextEditMenu` root [design; layout trait roles,
+/// defaults, and `NOGLOW_BRANCH/TEM_*` tile names observed: JIP LN NVSE Plugin 57.30,
+/// archive `JIP LN NVSE Plugin-58277-57-30-1716662080`, shipped
+/// `NVSE\Plugins\textinput\texteditmenu.xml` read directly; only the XML layout was read,
+/// not the DLL or source].
 ///
 /// Uses `Ui::set_existing` so traits not present in the loaded XML (such as `user0`..`user3`
 /// on vanilla `menus\dialog\texteditmenu.xml`) are never invented, and only writes `user0` /

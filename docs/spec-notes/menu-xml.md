@@ -1441,10 +1441,12 @@ menu layouts.
   `ShowNameMenu` opens menu `1051` (`menus::NAME`) with `menus\dialog\texteditmenu.xml`
   (`TEM_MainRect/textedit_prompt`, `TEM_MainRect/textedit_text`,
   `TEM_MainRect/textedit_button_ok`).
-- [observed: `docs/spec-notes/ai-observer-jip.md` §5; public JIP LN `NVSE\Plugins\textinput\texteditmenu.xml`
-  XML layout] JIP LN's public release ships `NVSE\Plugins\textinput\texteditmenu.xml`
-  declaring `<menu name="TextEditMenu"><class>&TextEditMenu;</class>` with root numeric
-  traits `user0` (width, default 400), `user1` (height, default 200), `user2` (x offset,
+- [observed: JIP LN NVSE Plugin 57.30 (`JIP LN NVSE Plugin-58277-57-30-1716662080`),
+  shipped `NVSE\Plugins\textinput\texteditmenu.xml` read directly; only the XML layout
+  was read, not the DLL or source] JIP LN 57.30 ships
+  `NVSE\Plugins\textinput\texteditmenu.xml` declaring
+  `<menu name="TextEditMenu"><class>&TextEditMenu;</class>` with root numeric traits
+  `user0` (width, default 400), `user1` (height, default 200), `user2` (x offset,
   default 0), and `user3` (y offset, default 0), plus `NOGLOW_BRANCH/TEM_TitleText`,
   `NOGLOW_BRANCH/TEM_TextInputBox/TEM_InputText`, and `NOGLOW_BRANCH/TEM_OKButton`.
 - [design: `crates/fnv-game/src/ui_text_input.rs`, `crates/fnv-game/src/ui_loading.rs`,
