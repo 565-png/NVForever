@@ -143,8 +143,12 @@ pub struct TweakSettings {
     /// `bRunningCostsAP`: Action Points running costs a second; 0 changes nothing.
     pub run_ap_per_second: f32,
     /// `bRunningCostsAP` (`fSneakAPDrainCostBase`, `fSneakRunAPEnduranceMult`): Action
-    /// Points running while sneaking costs a second (`base + mult * (Endurance - 5)`,
-    /// clamped to `>= 0`); 0 base changes nothing.
+    /// Points running while sneaking costs a second (`fSneakAPDrainCostBase +
+    /// fSneakRunAPEnduranceMult * (Endurance - 5)`) [documented: Stewie Tweaks v10.05
+    /// generated `nvse_stewie_tweaks.ini` `[Running Costs AP]` comment; option names also
+    /// in v10.05 Readme & `AllTweaks.json`; hypothesis: sign vs. the v10.05 Readme's
+    /// `(5 - Endurance)` standing-run formula is unobserved in the original binary;
+    /// design: clamp at 0, off when the base is 0, Endurance fallback of 5].
     pub sneak_run_ap_base: f32,
     pub sneak_run_ap_endurance_mult: f32,
     /// `bDisableSellingItems`: the player cannot sell in a barter.
@@ -221,9 +225,11 @@ pub struct TweakSettings {
     /// once; so does an attack this many seconds after the death (0: not by attacking).
     pub skip_death_cam: bool,
     pub skip_death_cam_attack: f32,
-    /// `bReplaceHelpWithConsole` (`[Help Button Replacer] sButtonLabel`): the pause menu
+    /// `bReplaceHelpWithConsole` (`[Help Button Replacer] sButtonLabel` [documented:
+    /// Stewie Tweaks v10.05 Readme & generated `nvse_stewie_tweaks.ini`]): the pause menu
     /// has a Console entry where the original has Help, using `help_console_label` when
-    /// non-empty (else `"Console"`).
+    /// non-empty (else `"Console"`, read at startup from `NVForever.ini` `[Settings]
+    /// tweak-help-console-label` [design]).
     pub help_is_console: bool,
     pub help_console_label: String,
     /// `bHeatbeatSoundsFade` (`fDuration`): the low-health heartbeat fades out over this
@@ -697,17 +703,50 @@ impl TweakSettings {
         }
     }
 
-    /// Label shown for the pause menu's Console entry (`[Help Button Replacer] sButtonLabel`),
-    /// falling back to `"Console"` when empty or whitespace-only.
+    /// Label shown for the pause menu's Console entry (`[Help Button Replacer] sButtonLabel`
+    /// [documented: Stewie Tweaks v10.05 Readme & generated `nvse_stewie_tweaks.ini`]),
+    /// falling back to `"Console"` when empty or whitespace-only [design].
     pub fn console_label(&self) -> &str {
         let trimmed = self.help_console_label.trim();
         if trimmed.is_empty() { "Console" } else { trimmed }
     }
 }
 
-/// Action Points per second drained while sneak-running under `[Running Costs AP]`
-/// (`fSneakAPDrainCostBase + fSneakRunAPEnduranceMult * (Endurance - 5)`), clamped at `0.0`.
-/// Returns `0.0` whenever `base <= 0.0` (disabled).
+/// `NVForever.ini` `[Settings]` key supplying custom text for the pause menu's Console entry
+/// (`[Help Button Replacer] sButtonLabel` [documented: Stewie Tweaks v10.05 Readme & generated
+/// `nvse_stewie_tweaks.ini`]) [design: no free-text widget on the Tweaks tab; kept in
+/// `NVForever.ini` alongside `tweak-help-is-console`, never imported from
+/// `nvse_stewie_tweaks.ini`].
+pub const HELP_CONSOLE_LABEL_KEY: &str = "tweak-help-console-label";
+
+/// Read `[Settings] tweak-help-console-label` from `NVForever.ini` (`SettingsFile`) at startup
+/// into [`TweakSettings::help_console_label`] [design]. Unattended runs in the player's own
+/// home (`SettingsFile(None)`) leave the label at its default.
+pub(crate) fn read_help_console_label(file: Option<Res<crate::settings::SettingsFile>>, mut tweaks: ResMut<TweakSettings>) {
+    let Some(path) = file.and_then(|f| f.0.clone()) else { return };
+    let Ok(text) = std::fs::read_to_string(&path) else { return };
+    if let Some(label) = parse_help_console_label(&text) {
+        info!("tweaks: [{}] {HELP_CONSOLE_LABEL_KEY}={label} read from {}", crate::settings::SECTION, path.display());
+        tweaks.help_console_label = label;
+    }
+}
+
+fn parse_help_console_label(text: &str) -> Option<String> {
+    let raw = fnv_install::ini_get(text, crate::settings::SECTION, HELP_CONSOLE_LABEL_KEY)?;
+    let trimmed = raw.trim();
+    let unquoted = trimmed.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(trimmed).trim();
+    (!unquoted.is_empty()).then(|| unquoted.to_string())
+}
+
+/// Action Points per second drained while sneak-running under `[Running Costs AP]`:
+/// `fSneakAPDrainCostBase + fSneakRunAPEnduranceMult * (Endurance - 5)`
+/// [documented: Stewie Tweaks v10.05 generated `nvse_stewie_tweaks.ini` `[Running Costs AP]`
+/// comment; option names also in v10.05 Readme & `AllTweaks.json`; hypothesis: sign vs. the
+/// v10.05 Readme's `(5 - Endurance)` standing-run formula is unobserved in the original
+/// binary].
+///
+/// [design]: returns `0.0` whenever `base <= 0.0` (disabled) and clamps the computed drain
+/// rate at `0.0` (never negative).
 pub fn sneak_run_ap_rate(base: f32, endurance_mult: f32, endurance: f32) -> f32 {
     if base <= 0.0 {
         return 0.0;
@@ -1166,6 +1205,7 @@ impl Plugin for TweaksPlugin {
         crate::save::add_save_hook(app, HIDE_HUD_SAVE_HOOK);
         app.init_resource::<TweakSettings>()
             .init_resource::<ItemPlaces>()
+            .add_systems(Startup, read_help_console_label)
             .add_systems(Update, remember_item_places.after(crate::menu::MenuSystems))
             .add_systems(Update, sync.in_set(crate::PlaySet::Input))
             .add_systems(Update, (keys, drop_weapon, radio_volume_keys, last_weapon, hold_breath, repeat_activate, toggle_sight, place_marker_here, clear_near_marker, hide_hud_key, skip_radio_song, toggle_device).in_set(crate::PlaySet::Input))
@@ -1353,7 +1393,7 @@ impl Plugin for TweaksPlugin {
                 "tweak-sneak-run-ap-endurance",
                 GROUP,
                 "Sneak-Running AP: Endurance Factor",
-                "Added to sneak-running AP per second for each point of Endurance over 5, subtracted below; negative saves AP. 0 changes nothing. (Stewie's Tweaks bRunningCostsAP, fSneakRunAPEnduranceMult)",
+                "With Action Points per Second Sneak-Running above 0, added per Endurance over 5 (negative saves AP); 0 changes nothing. (Stewie's Tweaks bRunningCostsAP, fSneakRunAPEnduranceMult)",
                 Slider {
                     get: |w| w.get_resource::<TweakSettings>().map_or(0.5, |t| ((t.sneak_run_ap_endurance_mult + 1.0) / 2.0).clamp(0.0, 1.0)),
                     set: |w, v| {
@@ -2729,6 +2769,8 @@ fn ap_costs(
         let move_rate = if running {
             run
         } else if sneak_running {
+            // [design]: Endurance fallback of 5.0 when the actor value is unavailable;
+            // sneak_run_ap_rate returns 0.0 when base <= 0.0 and clamps at 0.0.
             let endurance = fnv_game::functions::actor_value(g, p, ENDURANCE).unwrap_or(5.0) as f32;
             sneak_run_ap_rate(sneak_run_base, tweaks.sneak_run_ap_endurance_mult, endurance)
         } else {
@@ -3085,5 +3127,49 @@ mod tests {
         assert_eq!(t.console_label(), "Console");
         t.help_console_label = " Dev Console ".to_string();
         assert_eq!(t.console_label(), "Dev Console");
+    }
+
+    #[test]
+    fn help_console_label_reads_from_nvforever_ini_and_survives_settings_save() {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvf-help-console-label-{}-{stamp}", std::process::id()));
+        let path = dir.join("NVForever.ini");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "[Settings]\ntweak-help-is-console=1\ntweak-help-console-label=\"Dev Console\"\n").unwrap();
+
+        let mut app = App::new();
+        app.add_plugins(TweaksPlugin);
+        app.insert_resource(crate::settings::SettingsFile(Some(path.clone())));
+        crate::settings::apply_stored(app.world_mut());
+        app.world_mut().run_system_cached(read_help_console_label).unwrap();
+        {
+            let tweaks = app.world().resource::<TweakSettings>();
+            assert!(tweaks.help_is_console);
+            assert_eq!(tweaks.help_console_label, "Dev Console");
+            assert_eq!(tweaks.console_label(), "Dev Console");
+        }
+
+        // Saving registered settings preserves the INI-only label line untouched.
+        let i = app.world().resource::<crate::settings::Settings>().index("tweak-no-karma-messages").unwrap();
+        crate::settings::flip(app.world_mut(), i);
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(fnv_install::ini_get(&saved, crate::settings::SECTION, HELP_CONSOLE_LABEL_KEY).as_deref(), Some("\"Dev Console\""), "{saved}");
+
+        // Blank/whitespace value falls back to default "Console".
+        std::fs::write(&path, "[Settings]\ntweak-help-console-label=\"   \"\n").unwrap();
+        let mut blank = App::new();
+        blank.add_plugins(TweaksPlugin);
+        blank.insert_resource(crate::settings::SettingsFile(Some(path.clone())));
+        blank.world_mut().run_system_cached(read_help_console_label).unwrap();
+        assert_eq!(blank.world().resource::<TweakSettings>().console_label(), "Console");
+
+        // Unattended run with SettingsFile(None) reads nothing.
+        let mut none = App::new();
+        none.add_plugins(TweaksPlugin);
+        none.insert_resource(crate::settings::SettingsFile(None));
+        none.world_mut().run_system_cached(read_help_console_label).unwrap();
+        assert_eq!(none.world().resource::<TweakSettings>().console_label(), "Console");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -7125,4 +7125,24 @@ mod tests {
         let fallback = drawn_now(app.world_mut());
         assert!(fallback.column.iter().any(|(l, ok)| l == CONSOLE_LABEL && *ok), "{:?}", fallback.column);
     }
+
+    #[test]
+    fn console_entry_reads_custom_label_from_nvforever_ini() {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvf-pause-console-label-{}-{stamp}", std::process::id()));
+        let path = dir.join("NVForever.ini");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "[Settings]\ntweak-help-is-console=1\ntweak-help-console-label=Command Prompt\n").unwrap();
+
+        let mut app = App::new();
+        app.add_plugins((crate::tweaks::TweaksPlugin, PausePlugin));
+        app.insert_resource(crate::settings::SettingsFile(Some(path.clone())));
+        crate::settings::apply_stored(app.world_mut());
+        app.world_mut().run_system_cached(crate::tweaks::read_help_console_label).unwrap();
+        let drawn = drawn_now(app.world_mut());
+        assert!(drawn.column.iter().any(|(l, ok)| l == "Command Prompt" && *ok), "{:?}", drawn.column);
+        assert!(!drawn.column.iter().any(|(l, _)| l == CONSOLE_LABEL), "{:?}", drawn.column);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
