@@ -3125,6 +3125,12 @@ impl<'a> Game<'a> {
             let silent = !d1 || self.quest(q).completed;
             self.emit(EventKind::ObjectiveCompleted { quest: q, index, on: c1, silent });
         }
+        if displayed.is_some() && !d0 && d1 {
+            self.showoff_on_display_objective(q, index);
+        }
+        if !c0 && c1 {
+            self.showoff_on_complete_objective(q, index);
+        }
         true
     }
 
@@ -6549,20 +6555,30 @@ impl<'a> Game<'a> {
 
     /// ApplyImageSpaceModifier: the modifier starts playing. One that is already on the
     /// screen starts again from its beginning [hypothesis: one instance per modifier;
-    /// image-modifiers.md §3].
+    /// image-modifiers.md §3]. Dispatches xNVSE `OnApplyIMOD` with `(modifier)` when
+    /// handled [documented: GECK wiki NVSE Event Handling; hypothesis: 1-arg layout and
+    /// re-apply dispatch].
     pub fn apply_image_modifier(&mut self, modifier: FormId) {
         self.image_modifiers.retain(|m| m.modifier != modifier);
         self.image_modifiers.push(ActiveImageModifier { modifier, elapsed: 0.0 });
         self.emit(EventKind::ImageModifierApplied { modifier });
+        if self.handled("onapplyimod") {
+            self.dispatch_event("OnApplyIMOD", vec![fnv_script::vm::XVal::Ref(modifier.0)], None);
+        }
     }
 
-    /// RemoveImageSpaceModifier: whether the modifier was on the screen.
+    /// RemoveImageSpaceModifier: whether the modifier was on the screen. Dispatches
+    /// xNVSE `OnRemoveIMOD` with `(modifier)` when an active modifier is removed and
+    /// handled [documented: GECK wiki NVSE Event Handling; hypothesis: 1-arg layout].
     pub fn remove_image_modifier(&mut self, modifier: FormId) -> bool {
         let before = self.image_modifiers.len();
         self.image_modifiers.retain(|m| m.modifier != modifier);
         let was = self.image_modifiers.len() != before;
         if was {
             self.emit(EventKind::ImageModifierRemoved { modifier, ended: false });
+            if self.handled("onremoveimod") {
+                self.dispatch_event("OnRemoveIMOD", vec![fnv_script::vm::XVal::Ref(modifier.0)], None);
+            }
         }
         was
     }
@@ -6575,6 +6591,8 @@ impl<'a> Game<'a> {
     /// Age the modifiers; an animatable one whose duration has passed ends [hypothesis
     /// from the shipped scripts: 29 lines wait for IsImageSpaceActive to read 0 on
     /// FadeToBlackISFX (4 s), which no script removes; image-modifiers.md §3].
+    /// Dispatches xNVSE `OnRemoveIMOD` when an active modifier expires and is handled
+    /// [hypothesis: natural duration expiry fires `OnRemoveIMOD`].
     fn update_image_modifiers(&mut self, dt: f64) {
         let data = self.data;
         let mut ended = Vec::new();
@@ -6588,6 +6606,9 @@ impl<'a> Game<'a> {
         });
         for modifier in ended {
             self.emit(EventKind::ImageModifierRemoved { modifier, ended: true });
+            if self.handled("onremoveimod") {
+                self.dispatch_event("OnRemoveIMOD", vec![fnv_script::vm::XVal::Ref(modifier.0)], None);
+            }
         }
     }
 
