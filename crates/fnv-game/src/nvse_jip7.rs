@@ -775,12 +775,13 @@ impl Game<'_> {
     }
 
     /// A climate's weathers (WLST), ClimateAddWeatherType's and ClimateRemoveWeatherType's
-    /// changes first.
+    /// changes first (clone-first, original fallback).
     pub fn climate_weathers(&self, climate: FormId) -> Vec<ClimateWeather> {
-        if let Some(v) = self.other.jip7.climate_weathers.get(&climate) {
+        let orig = self.unclone(climate);
+        if let Some(v) = self.other.jip7.climate_weathers.get(&climate).or_else(|| self.other.jip7.climate_weathers.get(&orig)) {
             return v.clone();
         }
-        let list = self.data.record_field(climate, "WLST", "").and_then(Json::as_array);
+        let list = self.data.record_field(orig, "WLST", "").and_then(Json::as_array);
         list.into_iter()
             .flatten()
             .filter_map(|e| {
@@ -1441,7 +1442,11 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         "setweathertransitiontimeoverride" => {
             // NaN or infinity changes nothing.
             if let Some(s) = field_number(num(args, 0, 0.0), 0.0, F32.1) {
-                g.other.jip7.weather_transition = (s > 0.0).then_some(s);
+                let next = (s > 0.0).then_some(s);
+                if g.other.jip7.weather_transition != next {
+                    g.other.jip7.weather_transition = next;
+                    g.traits.note_weather_visual_change();
+                }
             }
             zero
         }

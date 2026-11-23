@@ -138,6 +138,20 @@ fn bounce_out(t: f64) -> f64 {
     }
 }
 
+impl Game<'_> {
+    /// The session display name set for map marker `r` by `SetMapMarkerName`, if any.
+    pub fn map_marker_name_override(&self, r: FormId) -> Option<&str> {
+        self.gaps.marker_names.get(&r).map(String::as_str)
+    }
+
+    /// The session reputation override set for map marker `r` by `SetMapMarkerRep`:
+    /// `Some(Some(rep))` replaces the marker's reputation, `Some(None)` clears it, and
+    /// `None` leaves the authored `WMI1` record intact.
+    pub fn map_marker_reputation_override(&self, r: FormId) -> Option<Option<FormId>> {
+        self.gaps.marker_reputations.get(&r).copied()
+    }
+}
+
 /// The functions of this file; `None` for any other name.
 pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<FormId>, args: &[XVal]) -> Option<Result<XVal, String>> {
     let base = |g: &Game, f: FormId| crate::functions::base_of(g, f).unwrap_or(f);
@@ -198,8 +212,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             XVal::Num(if a == FormId::PLAYER_REF { f64::from(g.player.perks.get(&p).copied().unwrap_or(0)) } else { 0.0 })
         }
         "getingestibleflag" => {
-            let f = form(args, 0).unwrap_or(FormId(0));
-            let flags = crate::nvse::record_value(g, f, "ENIT", "flags").and_then(|v| v.num().ok()).unwrap_or(0.0) as u32;
+            let flags = form(args, 0).and_then(|f| g.ingestible_def(f)).map_or(0, |d| u32::from(d.flags));
             let k = num(args, 1, -1.0);
             yes((0.0..4.0).contains(&k) && INGESTIBLE_BITS[k as usize].is_some_and(|b| flags >> b & 1 != 0))
         }

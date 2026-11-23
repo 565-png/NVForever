@@ -293,6 +293,11 @@ impl PlayClock {
         self.stopped
     }
 
+    /// This frame's real time while the virtual clock stands still (capped at 0.25 s).
+    pub fn frame_secs(&self) -> Option<f32> {
+        self.frame
+    }
+
     /// A clock whose frame stood still for `secs` of real time (tests).
     #[cfg(test)]
     pub(crate) fn frozen_frame(secs: f32) -> PlayClock {
@@ -5871,6 +5876,7 @@ mod tests {
             ("Light glow (HDR)", "Light Glow (HDR)"),
             ("V.A.T.S. time slowdown", "V.A.T.S. Time Slowdown"),
             ("Use Pip-Boy", "Use Pip-Boy"),
+            ("ALC shadows", "ALC Shadows"),
             ("Close In on the Speaker", "Close In on the Speaker"),
             ("Sky follows the game clock", "Sky Follows the Game Clock"),
             ("Aim lock-on", "Aim Lock-On"),
