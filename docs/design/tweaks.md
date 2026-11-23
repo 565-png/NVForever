@@ -675,7 +675,9 @@ tweak asks ("already so").
 
 The "to do" rows, the ones Viva New Vegas turns on first. Not yet: reading a player's
 own `nvse_stewie_tweaks.ini` as the starting values (it would need the INI read from the
-game's Data folder, read-only).
+game's Data folder, read-only). Mod-shipped modular override folders
+(`Data\NVSE\Plugins\Tweaks\INIs\*.ini` and `Data\NVSE\Plugins\Tweaks\GameSettings\*.ini`)
+are loaded at startup beneath `NVForever.ini` ([stewie-modular-inis.md](../spec-notes/stewie-modular-inis.md)).
 
 ## Catalogue
 

@@ -2551,6 +2551,12 @@ impl<'a> Game<'a> {
         world.set_inventory_sources(sources);
         // JIP LN's write for JIP Companions Command & Control's MCM page (`crate::jip_ccc`).
         crate::jip_ccc::write_globals(&data.load_order, &mut world);
+        // Stewie Tweaks modular override folders (`Data\NVSE\Plugins\Tweaks\INIs\*.ini`
+        // and `Data\NVSE\Plugins\Tweaks\GameSettings\*.ini`): no-op when absent or empty.
+        let mut tweaks = crate::tweaks::Tweaks::default();
+        let (_, modular_tweaks) = crate::stewie_inis::load_modular_inis_from_data();
+        crate::stewie_inis::apply_modular_tweaks_to_game(&modular_tweaks, &mut tweaks);
+        crate::stewie_inis::apply_modular_game_settings_to_world(&mut world);
         Game {
             data,
             ext: Default::default(),
@@ -2646,7 +2652,7 @@ impl<'a> Game<'a> {
             ui_extra: Default::default(),
             ui_pointer: fnv_ui::input::Pointer::default(),
             difficulty: Default::default(),
-            tweaks: Default::default(),
+            tweaks,
             combat_requests: Vec::new(),
             destruction_changes: Vec::new(),
             due_children: Vec::new(),
@@ -2867,6 +2873,23 @@ impl<'a> Game<'a> {
     pub fn note_notice_text(&self, note: FormId) -> String {
         let name = self.data.notes.get(&note).and_then(|n| n.name.clone()).filter(|n| !n.trim().is_empty());
         format!("Note: {}", self.expand_codes(&name.unwrap_or_else(|| self.data.name(note))))
+    }
+
+    /// Re-read and apply Stewie Tweaks modular override folders
+    /// (`Data\NVSE\Plugins\Tweaks\INIs\*.ini` and
+    /// `Data\NVSE\Plugins\Tweaks\GameSettings\*.ini`) from both disk read roots and this
+    /// session's `mod_files` writes. Returns `(tweak_fields_applied, gmsts_applied)`.
+    /// Bound application settings (`bind_stewie_stat_settings`) are left intact.
+    pub fn apply_stewie_modular_inis(&mut self) -> (usize, usize) {
+        let tweaks_applied = if self.small.stewie_stat_settings_loaded {
+            0
+        } else {
+            let (_, overrides) = crate::stewie_inis::load_modular_inis(&self.mod_files);
+            crate::stewie_inis::apply_modular_tweaks_to_game(&overrides, &mut self.tweaks)
+        };
+        let (_, gmsts) = crate::stewie_inis::load_modular_game_settings(&self.mod_files);
+        let gmsts_applied = crate::stewie_inis::apply_game_settings_to_world(&mut self.world, &gmsts);
+        (tweaks_applied, gmsts_applied)
     }
 
     /// The new-game state: every quest flagged "Start game enabled" is running, with no
