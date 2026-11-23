@@ -574,6 +574,12 @@ impl Game<'_> {
             if self.allies_stay_out(c.actor, about) {
                 continue;
             }
+            // An actor that only fights `about` because it is assisting another NPC
+            // (`Why::Assist { victim }` with `victim != PLAYER_REF`) does not relay the
+            // alarm to its own allies when it later enters Combat [design, #3459].
+            if self.assisted_npc_fight(c.actor, about) {
+                continue;
+            }
             let at = c.at.or_else(|| near.get(&about).copied()).unwrap_or(from);
             let starter = self.first_starter(about);
             let starter_at = hearers.get(&starter).copied().unwrap_or(at);

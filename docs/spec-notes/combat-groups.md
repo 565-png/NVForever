@@ -27,6 +27,17 @@ town's side.
   measures only drawn actors]. Who among them answers is unchanged (combat-ai.md §12.3:
   its own kind, or an ally or friend whose Assistance helps the sender; never against its
   own ally or friend; a coward stays out).
+- **No transitive relay through an assisting helper** [design, #3459]: an actor that only
+  fights a foe through an assist grudge for another NPC (`Why::Assist { victim }` with
+  `victim != PLAYER_REF`, including when the foe is the player's teammate and the grudge
+  is against the player) neither re-broadcasts an alarm when it later enters `Combat`
+  (`Game::raise_alarms`) nor recruits its own third-party allies through
+  `Game::call_allies`. This keeps the "an alarm passed on by an ally is not passed on
+  again" invariant intact across `Alert → Combat` and stops a shared-faction bridge
+  (`CrDogNCRFollow`, in both `DogFaction` and `ArmorNCRFactionNV`/`VNCRSnifferFaction`)
+  from turning a neutral faction (NCR troopers) hostile when `CrDogNCRAggressive` attacks
+  the player. Direct assistance (one hop, such as Gibson's dogs helping mole rats, §4)
+  and direct assaults (`Why::Assault`) are unchanged.
 
 ## 2. Joiners fight the first of the foes to start
 

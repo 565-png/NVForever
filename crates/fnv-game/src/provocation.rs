@@ -556,6 +556,15 @@ impl Game<'_> {
         let mut attacks: HashMap<(FormId, FormId), bool> = HashMap::new();
         for (victim, mut foes) in fights {
             foes.retain(|&(foe, _)| !self.allies_stay_out(victim, foe));
+            // Do not chain assistance through a helper that is only fighting `foe` to
+            // assist another NPC (`Why::Assist { victim: orig }` with `orig != PLAYER_REF`):
+            // otherwise a shared-faction bridge (such as CrDogNCRFollow between
+            // DogFaction and NCR) pulls a neutral third-party faction into a fight it has
+            // no stake in [design, #3459]. Watchers that would help `orig` directly still
+            // do so on `orig`'s own fight.
+            if victim != FormId::PLAYER_REF {
+                foes.retain(|&(foe, _)| !self.assisted_npc_fight(victim, foe));
+            }
             if foes.is_empty() {
                 continue;
             }
@@ -706,6 +715,19 @@ impl Game<'_> {
 }
 
 impl Game<'_> {
+    /// Whether `actor` only fights `foe` because it is assisting another NPC
+    /// (`Why::Assist { victim }` with `victim != PLAYER_REF`), including when `foe` is
+    /// the player's teammate and `actor` only fights the player under that assist grudge
+    /// [design, #3459]. A script-forced fight (`StartCombat`) still counts as `actor`'s
+    /// own fight.
+    pub(crate) fn assisted_npc_fight(&self, actor: FormId, foe: FormId) -> bool {
+        let key = if self.is_teammate(foe) && !self.provocations.holds(actor, foe) { FormId::PLAYER_REF } else { foe };
+        if self.awareness.forced.contains(&(actor, key)) {
+            return false;
+        }
+        self.provocations.grudges.get(&(actor, key)).is_some_and(|g| matches!(g.why, Why::Assist { victim } if victim != FormId::PLAYER_REF))
+    }
+
     /// Actors that detect an attacker which would attack them too join the fight against
     /// it (module notes, "A danger to itself"). Returns how many joined.
     fn join_against_dangers(&mut self) -> usize {
@@ -739,6 +761,11 @@ impl Game<'_> {
                     continue;
                 }
                 if self.provocations.holds(helper, attacker) || self.would_attack(helper, attacker) || !self.would_attack(attacker, helper) {
+                    continue;
+                }
+                // A Very Aggressive attacker whose aggro radius leaves `helper` (a Neutral
+                // bystander) out of reach is not attacking `helper` [design, #3459].
+                if crate::awareness::position(self, helper).is_some_and(|helper_at| self.neutral_out_of_reach(attacker, helper, helper_at)) {
                     continue;
                 }
                 if matches!(self.reaction_to(helper, attacker), ALLY | FRIEND) || self.stays_out(helper, attacker) || self.package_has(helper, crate::package::flags::DEFENSIVE_COMBAT) {

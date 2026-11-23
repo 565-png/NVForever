@@ -2216,3 +2216,203 @@ fn set_combat_disabled_blocks_combat_entry_allows_being_attacked_and_resets_on_l
     assert_eq!(eval_on(&mut same_run, bandit, "GetCombatDisabled"), 0.0);
     assert!(same_run.would_attack(bandit, player));
 }
+
+#[test]
+fn neutral_bystanders_outside_aggro_radius_stay_out_when_enemy_attacks_player() {
+    // #3459: a Neutral actor (bystander trooper, Aggressive) watches a Very Aggressive
+    // actor with an aggro radius of 2,000 (HELIOS One's CrDogNCRAggressive) fight the
+    // player (its Enemy). Outside the dog's 2,000-unit aggro radius:
+    // 1. Being in Combat with the player does not drop `neutral_out_of_reach` for the
+    //    unrelated Neutral bystander (the dog still leaves the trooper alone).
+    // 2. `join_against_dangers` respects `neutral_out_of_reach`, so the trooper does not
+    //    take a grudge against the dog or alarm its own faction.
+    // Inside the 2,000-unit aggro radius, the danger is real and the bystander still joins.
+    let mut f = fixture();
+    // Make HOUNDS an Enemy of PLAYER_FACTION, matching CrDogNCRAggressive's
+    // GeneralHostileToPlayerFaction -> PlayerFaction Enemy.
+    f.data.faction_reactions.entry(FormId(HOUNDS)).or_default().push((FormId(PLAYER_FACTION), 1));
+    let mut g = game(&f);
+    // `trooper` (HELPER_REF, RATS) shares no faction with `hound` (HOUNDS), `mate`
+    // (IDLERS, player's teammate), or `player` (PLAYER_FACTION): Neutral to all three.
+    let (hound, trooper, mate, player) = (FormId(HOUND_REF), FormId(HELPER_REF), FormId(LOAFER_REF), FormId::PLAYER_REF);
+    only_near(&mut g, &[HOUND_REF, HELPER_REF, LOAFER_REF]);
+    // Give the bystander trooper Aggressive, Foolhardy, Helps Friends and Allies
+    // (matching HeliosExtLvlNCRTrooperGun), so `stays_out` cannot mask the aggro-radius check.
+    const SET_AV: u16 = 0x100F;
+    call(&mut g, SET_AV, HELPER_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
+    call(&mut g, SET_AV, HELPER_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(4.0))]);
+    call(&mut g, SET_AV, HELPER_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(2.0))]);
+    g.extra.entry(mate).or_default().teammate = true;
+    g.world.get(hound).unwrap().pos = [0.0, 0.0, 0.0];
+    g.world.get(player).unwrap().pos = [1200.0, 0.0, 0.0];
+    g.world.get(mate).unwrap().pos = [1100.0, 0.0, 0.0];
+    g.world.get(trooper).unwrap().pos = [2123.0, 0.0, 0.0];
+
+    let seen = Detection { value: 20.0, band: Band::Detected, ..Default::default() };
+    // Hound enters Combat against the player (its Enemy).
+    g.observe_threat(hound, player, &seen, [1200.0, 0.0, 0.0]);
+    g.settle_awareness();
+    assert_eq!(g.awareness.state(hound), State::Combat);
+    assert_eq!(g.combat_target_of(hound), Some(player));
+
+    // While fighting the player, the hound still leaves the Neutral trooper at 2,123 units
+    // (outside its 2,000-unit aggro radius) off its target list.
+    g.observe_threat(hound, trooper, &seen, [2123.0, 0.0, 0.0]);
+    assert!(
+        g.awareness.get(hound).is_some_and(|a| !a.targets.contains_key(&trooper)),
+        "combat with the player must not lift the aggro-radius bound for an unrelated Neutral bystander"
+    );
+
+    // The trooper detects the hound fighting the player (and the companion defending) at
+    // 2,123 units: outside the hound's aggro radius, the trooper stays out and sends no
+    // alarm about the hound.
+    g.detection.pairs.insert((trooper, hound), (seen, g.time));
+    g.detection.pairs.insert((trooper, player), (seen, g.time));
+    g.detection.pairs.insert((trooper, mate), (seen, g.time));
+    fighting(&mut g, LOAFER_REF, HOUND_REF);
+    assert_eq!(g.call_allies(), 0, "bystander outside aggro radius must not join against the hound");
+    assert!(!g.provocations.holds(trooper, hound));
+    assert!(!g.would_attack(trooper, hound));
+    g.settle_awareness();
+    assert_eq!(g.awareness.state(trooper), State::Normal);
+    let near: std::collections::BTreeMap<FormId, [f32; 3]> =
+        [(hound, [0.0, 0.0, 0.0]), (trooper, [2123.0, 0.0, 0.0]), (player, [1200.0, 0.0, 0.0])].into_iter().collect();
+    g.awareness.changes.clear();
+    assert_eq!(g.raise_alarms(&near), 0);
+
+    // Control: once the bystander stands inside the hound's 2,000-unit aggro radius
+    // (as Sunny Smiles beside geckos), `join_against_dangers` still lets it join at once.
+    g.world.get(trooper).unwrap().pos = [900.0, 0.0, 0.0];
+    assert_eq!(g.call_allies(), 1, "bystander inside aggro radius joins against the danger");
+    assert!(g.provocations.holds(trooper, hound));
+}
+
+#[test]
+fn shared_faction_bridge_does_not_relay_assist_fight_to_neutral_third_party_faction() {
+    // #3459: HELIOS One topology — `hound` (HOUNDS, Enemy of player) alarms `bridge`
+    // (in both HOUNDS and RATS, Neutral to player, Aggressive, Helps Allies), while
+    // `trooper` (RATS only, Neutral to both hound and player, Helps Allies) stands nearby.
+    // `bridge` takes up `hound`'s fight against the player (one hop, matching #2927),
+    // but when `bridge` enters Combat against the player (or the player's teammate),
+    // neither `raise_alarms` nor `call_allies` relays that assist fight to `trooper`.
+    use fnv_game::awareness::Change;
+    let mut f = fixture();
+    f.data.faction_reactions.entry(FormId(HOUNDS)).or_default().push((FormId(HOUNDS), 2));
+    let mut g = game(&f);
+    let (hound, bridge, trooper, mate, player) = (FormId(HOUND_REF), FormId(OWN_REF), FormId(HELPER_REF), FormId(LOAFER_REF), FormId::PLAYER_REF);
+    only_near(&mut g, &[HOUND_REF, OWN_REF, HELPER_REF, LOAFER_REF]);
+    // `hound` is in HOUNDS + RAIDERS (Enemy of player, Neutral to RATS), matching
+    // CrDogNCRAggressive; `bridge` is in HOUNDS + RATS (Ally of hound, Ally of trooper,
+    // Neutral to player, Aggressive, Brave, Helps Friends and Allies), matching CrDogNCRFollow.
+    const SET_AV: u16 = 0x100F;
+    call(&mut g, ADD_TO_FACTION, HOUND_REF, &[form(RAIDERS), num(0.0)]);
+    call(&mut g, ADD_TO_FACTION, OWN_REF, &[form(HOUNDS), num(0.0)]);
+    call(&mut g, SET_AV, OWN_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
+    call(&mut g, SET_AV, OWN_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(3.0))]);
+    call(&mut g, SET_AV, OWN_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(2.0))]);
+    call(&mut g, SET_AV, HELPER_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
+    call(&mut g, SET_AV, HELPER_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(4.0))]);
+    call(&mut g, SET_AV, HELPER_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(2.0))]);
+    g.extra.entry(mate).or_default().teammate = true;
+    g.world.get(hound).unwrap().pos = [0.0, 0.0, 0.0];
+    g.world.get(bridge).unwrap().pos = [1000.0, 0.0, 0.0];
+    g.world.get(trooper).unwrap().pos = [1200.0, 0.0, 0.0];
+    g.world.get(player).unwrap().pos = [600.0, 0.0, 0.0];
+    g.world.get(mate).unwrap().pos = [650.0, 0.0, 0.0];
+
+    assert!(!g.would_attack(bridge, player) && !g.would_attack(trooper, player));
+    assert!(!g.would_attack(trooper, hound));
+
+    // Step 1: hound notices the player and alarms its HOUNDS ally `bridge`, not `trooper`.
+    let near: std::collections::BTreeMap<FormId, [f32; 3]> =
+        [(hound, [0.0, 0.0, 0.0]), (bridge, [1000.0, 0.0, 0.0]), (trooper, [1200.0, 0.0, 0.0]), (player, [600.0, 0.0, 0.0]), (mate, [650.0, 0.0, 0.0])].into_iter().collect();
+    let now = g.time;
+    g.awareness.changes.push(Change { actor: hound, from: State::Normal, to: State::Alert, time: now, about: Some(player), cause: Some(Cause::Noticed), at: Some([600.0, 0.0, 0.0]), value: Some(-10.0) });
+    assert_eq!(g.raise_alarms(&near), 1, "hound alarms bridge (shared HOUNDS)");
+    assert!(g.would_attack(bridge, player));
+    assert!(!g.would_attack(trooper, player), "trooper is Neutral to hound and must not be alarmed");
+
+    // Step 2: bridge later detects the player and enters Combat (`Alert -> Combat`, cause None).
+    let seen = Detection { value: 85.0, band: Band::Detected, ..Default::default() };
+    g.awareness.changes.clear();
+    g.settle_awareness();
+    assert_eq!(g.awareness.state(bridge), State::Alert);
+    g.awareness.changes.clear();
+    g.observe_threat(bridge, player, &seen, [600.0, 0.0, 0.0]);
+    g.observe_threat(bridge, mate, &seen, [650.0, 0.0, 0.0]);
+    g.settle_awareness();
+    assert_eq!(g.awareness.state(bridge), State::Combat);
+
+    // Bridge's hostility reason names the assist grudge ("helps ... against the player")
+    // rather than claiming it was attacked, both for the player and for the teammate.
+    let why_player = g.hostility_text(bridge, player).expect("bridge hostile to player");
+    assert!(why_player.contains("helps") && why_player.contains("against the player"), "unexpected hostility text: {why_player}");
+    let why_mate = g.hostility_text(bridge, mate).expect("bridge hostile to teammate");
+    assert!(why_mate.contains("helps") && why_mate.contains("against the player"), "unexpected teammate hostility text: {why_mate}");
+
+    // Step 3: bridge must NOT relay the alarm to its RATS ally `trooper`.
+    assert_eq!(g.raise_alarms(&near), 0, "assisted bridge must not relay alarm to neutral third-party faction");
+    assert!(!g.would_attack(trooper, player));
+    assert!(!g.would_attack(trooper, mate));
+
+    // Step 4: `trooper` directly watching `bridge` fight the player (and teammate, even
+    // after teammate hits `bridge` in self-defence) must NOT join via `call_allies`.
+    g.hurt_by(bridge, mate, [650.0, 0.0, 0.0]);
+    g.detection.pairs.insert((trooper, bridge), (seen, g.time));
+    assert_eq!(g.call_allies(), 0, "trooper must not transitively join bridge's assisted fight");
+    assert!(!g.would_attack(trooper, player));
+    assert!(!g.would_attack(trooper, mate));
+
+    // Control: if the player directly assaults a calm `bridge` (`Why::Assault`), `bridge`
+    // DOES alarm `trooper` and its hostility text says "(it was attacked)".
+    let mut g2 = game(&f);
+    only_near(&mut g2, &[OWN_REF, HELPER_REF]);
+    call(&mut g2, ADD_TO_FACTION, OWN_REF, &[form(HOUNDS), num(0.0)]);
+    call(&mut g2, SET_AV, OWN_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
+    call(&mut g2, SET_AV, OWN_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(3.0))]);
+    call(&mut g2, SET_AV, OWN_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(2.0))]);
+    call(&mut g2, SET_AV, HELPER_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
+    call(&mut g2, SET_AV, HELPER_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(4.0))]);
+    call(&mut g2, SET_AV, HELPER_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(2.0))]);
+    assert!(g2.attacked_by(bridge, player));
+    let why_assault = g2.hostility_text(bridge, player).expect("assaulted bridge hostile to player");
+    assert!(why_assault.contains("it was attacked"), "unexpected assault hostility text: {why_assault}");
+    g2.observe_threat(bridge, player, &seen, [600.0, 0.0, 0.0]);
+    g2.settle_awareness();
+    let near2: std::collections::BTreeMap<FormId, [f32; 3]> =
+        [(bridge, [1000.0, 0.0, 0.0]), (trooper, [1200.0, 0.0, 0.0]), (player, [600.0, 0.0, 0.0])].into_iter().collect();
+    assert!(g2.raise_alarms(&near2) >= 1, "directly assaulted bridge alarms its RATS ally");
+    assert!(g2.awareness.get(trooper).is_some_and(|a| a.alarms.iter().any(|x| x.owner == player && x.cause == Cause::Ally)));
+    assert!(g2.would_attack(trooper, player));
+}
+
+#[test]
+fn hostility_text_names_every_grudge_kind_and_neutral_aggression() {
+    // #3459: every Combat transition against a non-enemy logs its specific reason:
+    // Assault, Assist (helps X against Y), Aggro (aggro radius), and Aggression on Neutral.
+    let f = fixture();
+    let mut g = game(&f);
+    let (own, helper, hound, ganger, player) = (FormId(OWN_REF), FormId(HELPER_REF), FormId(HOUND_REF), FormId(GANGER_B_REF), FormId::PLAYER_REF);
+
+    // 1. Neutral attacked by Very Aggressive actor.
+    let neutral_text = g.hostility_text(hound, ganger).expect("Very Aggressive vs Neutral");
+    assert!(neutral_text.contains("Aggression 2") && neutral_text.contains("neutral (0)"), "{neutral_text}");
+
+    // 2. Assault grudge.
+    assert!(g.attacked_by(own, player));
+    let assault_text = g.hostility_text(own, player).expect("assault grudge");
+    assert!(assault_text.contains("it was attacked"), "{assault_text}");
+
+    // 3. Assist grudge (from call_allies / raise_alarms).
+    fighting(&mut g, OWN_REF, PLAYER);
+    g.detection.pairs.insert((helper, own), (Detection { value: 50.0, band: Band::Detected, ..Default::default() }, g.time));
+    assert_eq!(g.call_allies(), 1);
+    let assist_text = g.hostility_text(helper, player).expect("assist grudge");
+    assert!(assist_text.contains("helps") && assist_text.contains("against the player"), "{assist_text}");
+
+    // 4. Aggro-radius grudge.
+    let lurker = FormId(LURKER_REF);
+    g.provocations.grudges.insert((lurker, player), fnv_game::provocation::Grudge { why: fnv_game::provocation::Why::Aggro, since: g.time });
+    let aggro_text = g.hostility_text(lurker, player).expect("aggro grudge");
+    assert!(aggro_text.contains("stayed inside its aggro radius"), "{aggro_text}");
+}
