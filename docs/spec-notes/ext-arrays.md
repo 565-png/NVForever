@@ -182,9 +182,13 @@ original's (shared) [documented: Ar Copy].
 
 **Ar_DeepCopy** `let b := Ar_DeepCopy a`: a copy with every nested array copied too,
 all the way down [documented: Ar DeepCopy]. An array met twice (`[b, b]`) is copied twice,
-so the two copies stay apart; an array that holds itself is copied with the same shape,
-the entry leading back standing for the copy (#1089) [hypothesis: not probed in the
-original].
+so the two copies stay apart [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with
+the 10 official base masters, clean-room black-box script probe
+`core_02_ar_deepcopy_shared_and_self` (`Ar_DeepCopy`, `#3678` / PR `#3679`): mutating
+`aCopy[0][0]` to `99` left `aOrig[0][0] == 10` and `aCopy[1][0] == 10` (`10,99,10`); no
+DLL or source consulted]. [hypothesis: not probed in the original] An array that holds
+itself is copied with the same shape, the entry leading back standing for the copy
+(#1089).
 
 **Ar_DeepEquals** (alias **Ar_DeepCompare**) `Ar_DeepEquals a, b` (xNVSE 6.2.1 and
 later): 1 when both hold the same key–element pairs in the same order, nested arrays
@@ -304,3 +308,12 @@ One row per function the plan lists for this task (docs/handoff/extender-core-ta
 | any.empty / all.empty | ar_Any / ar_All on an empty array | 0 / 1 | the usual convention |
 | foreach.erase_current | erase the current element in foreach (4 elements) | 2 entries ran | elements are skipped, no error |
 | foreach.append | append during foreach | appended elements are visited | the loop sees the growing array |
+
+### Clean-room Wave 4B observations (`#3678` / PR `#3679`)
+
+[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters,
+clean-room black-box script probe `b3_core_ex_01_ar_find_sort_bounds` (`Ar_Find`/`Ar_Sort`/
+slice, reproducible via `#3678` / PR `#3679`, `tools/capture/nvse/`); no DLL or source
+consulted] On `aL = [30, 10, 20]`, `Ar_Find 999 aL` returns `-99999` (`Ar_BadNumericIndex`),
+`Ar_Sort aL` sorts ascending (`aS[0] == 10`), and an upper-past-end slice `aS[1:99]` clamps
+to the remaining elements (`ar_Size == 2`, `aSl[0] == 20`: `miss=-99999,s0=10,slSz=2,sl0=20`).

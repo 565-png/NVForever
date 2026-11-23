@@ -53,11 +53,16 @@ key returns `"Number"`; directly indexing an absent key fails. All three result
 rows completed. The reference process later faulted during automatic shutdown;
 this is API evidence, not native-client stability acceptance.
 
+[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base
+masters, clean-room black-box script probe `core_04_typeof_missing_map_key` (`TypeOf`,
+reproducible via `#3678` / PR `#3679`, `tools/capture/nvse/`); no DLL or source
+consulted] `TypeOf (aM["missing"])` on an empty stringmap returns `"NULL"` without
+inserting the missing key (`ar_Size aM` remains `0`: `NULL,0`).
+
 [hypothesis: absent-element handling boundary] Handle only the missing-element
-condition in `TypeOf`, without inserting a key or suppressing unrelated expression
-errors. The authored regression covers absent/present values, non-insertion,
-ordinary indexing and invalid holder/key, host and budget errors. It does not
-establish complete mod compatibility.
+condition in `TypeOf`, without suppressing unrelated expression errors. The authored
+regression covers absent/present values, non-insertion, ordinary indexing and invalid
+holder/key, host and budget errors. It does not establish complete mod compatibility.
 
 ## 2. Form IDs as text
 
