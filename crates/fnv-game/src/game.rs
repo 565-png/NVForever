@@ -2505,8 +2505,13 @@ const NO_FUNCTION_BLOCK: &str = " has no Function block";
 
 /// Internal callable regions. Loaded records can also occupy these numbers: allocation
 /// skips them and dispatch uses actual ownership (callable-identity.md).
-/// Ids of foreach's temporary inventory references (B5), below the lambdas'.
+/// Ids of foreach's temporary inventory references (B5), in
+/// `[TEMP_REF_BASE, CAMERA_OVERLAY_BASE)`.
 pub const TEMP_REF_BASE: u32 = 0xFE40_0000;
+/// Fixed engine-owned runtime references (such as JohnnyGuitar's camera overlay
+/// references), carved out in `[CAMERA_OVERLAY_BASE, LAMBDA_BASE)` above temporary
+/// inventory references and below lambdas [design].
+pub const CAMERA_OVERLAY_BASE: u32 = 0xFE7F_0000;
 /// Ids of the scripts CompileScript made from text files, below the temporary
 /// references' [decision, as the lambdas'].
 pub const COMPILED_BASE: u32 = 0xFE20_0000;
@@ -3855,17 +3860,21 @@ impl<'a> Game<'a> {
     }
 
     /// A temporary inventory reference for one kind of item in a container (B5).
+    /// Bounded strictly below [`CAMERA_OVERLAY_BASE`] so temporary inventory references
+    /// can never collide with reserved camera overlay references.
     pub(crate) fn temp_ref(&mut self, container: FormId, item: FormId) -> FormId {
         if let Some(i) = self.temp_refs.iter().position(|&(c, x)| c == container && x == item) {
             return FormId(TEMP_REF_BASE + i as u32);
         }
+        let max = (CAMERA_OVERLAY_BASE - TEMP_REF_BASE) as usize;
+        assert!(self.temp_refs.len() < max, "temporary inventory references exhausted");
         self.temp_refs.push((container, item));
         FormId(TEMP_REF_BASE + self.temp_refs.len() as u32 - 1)
     }
 
     /// The container and item of a live temporary inventory reference.
     pub fn temp_item(&self, r: FormId) -> Option<(FormId, FormId)> {
-        let i = r.0.checked_sub(TEMP_REF_BASE).filter(|_| r.0 < LAMBDA_BASE)?;
+        let i = r.0.checked_sub(TEMP_REF_BASE).filter(|_| r.0 < CAMERA_OVERLAY_BASE)?;
         self.temp_refs.get(i as usize).copied()
     }
 
@@ -7590,6 +7599,11 @@ impl Host for Exec<'_, '_> {
         // The player reference is no record of a plugin [documented: PlayerREF, 00000014].
         if let Some(s) = self.game.data.sig(f).or_else(|| (f == FormId::PLAYER_REF).then_some(*b"ACHR")) {
             return Some(s);
+        }
+        // Built-in JohnnyGuitar camera overlay references fall back to REFR only when no
+        // loaded plugin record occupies the same FormID [design].
+        if crate::nvse_jg_nif::is_camera_overlay_ref(f) {
+            return Some(*b"REFR");
         }
         // A reference made at run time (a dropped item, PlaceAtMe) is a reference too, an
         // actor's by its base [observed: rgb-ui, OnDrop's dropped stimpak is a reference
