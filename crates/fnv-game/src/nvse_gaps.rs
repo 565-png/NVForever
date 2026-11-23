@@ -993,8 +993,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             XVal::Num(if a == FormId::PLAYER_REF || g.package_actors().contains(&a) { 0.0 } else { 3.0 })
         }
         // `persistent:0/1`: sets or clears the persistent record flag (0x400) on the
-        // calling reference for the session [documented: GECK wiki SetPersistent;
-        // observed: gaps6, returns 0].
+        // calling reference, saved in `GameSnapshot::persistent_overrides` [documented:
+        // GECK wiki SetPersistent; observed: gaps6 returns 0; p2_persistent SAVED].
         "setpersistent" => {
             if let Some(r) = subject.filter(|&r| r != FormId::PLAYER_REF) {
                 let on = num(args, 0, 0.0) != 0.0;

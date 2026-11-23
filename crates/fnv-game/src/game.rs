@@ -2210,6 +2210,11 @@ pub struct GameSnapshot {
     /// AddScriptVariable, SetRefExtraData, "saved with the game"] (`crate::nvse_jip10`).
     #[serde(default, skip_serializing_if = "crate::nvse_jip10::Jip10Saved::is_empty")]
     pub jip10: crate::nvse_jip10::Jip10Saved,
+    /// Explicit `SetPersistent` overrides saved with the game [observed: Fallout: New
+    /// Vegas 1.4.0.525 + xNVSE 6.4.9, `p2_persistent`: `SetPersistent 1` on a dynamic
+    /// reference persists across both same-run and cold-boot loads].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub persistent_overrides: BTreeMap<FormId, bool>,
 }
 
 impl GameSnapshot {
@@ -6885,6 +6890,13 @@ impl<'a> Game<'a> {
         }
         let retired_scene_bases = self.retired_scene_snapshot(&sim);
         let clone_sequence_floor = (!retired_scene_bases.is_empty()).then_some(self.clone_seq);
+        let persistent_overrides = self
+            .other
+            .persistent_overrides
+            .iter()
+            .filter(|(id, _)| !sim.deleted_created.contains_key(id))
+            .map(|(&r, &on)| (r, on))
+            .collect();
         GameSnapshot {
             format: match (retired_scene_bases.is_empty(), self.lambdas.is_empty()) {
                 (true, true) => SNAPSHOT_FORMAT,
@@ -6955,6 +6967,7 @@ impl<'a> Game<'a> {
             object_groups: self.anims.asked_all().clone(),
             extra_misc_stats: self.jip2.misc_stats.iter().map(|(k, v)| (k.clone(), *v)).collect(),
             jip10: self.jip10_saved(),
+            persistent_overrides,
         }
     }
 
@@ -7055,6 +7068,20 @@ impl<'a> Game<'a> {
         g.anims.restore_asked(s.object_groups.clone());
         g.jip2.misc_stats = s.extra_misc_stats.iter().map(|(k, v)| (k.clone(), *v)).collect();
         g.restore_jip10(&s.jip10);
+        for (&r, &on) in &s.persistent_overrides {
+            if r == FormId::PLAYER_REF {
+                continue;
+            }
+            let cur = crate::nvse_other::record_flags_of(&g, r)
+                | if g.persistent(r) { fnv_sim::refs::FLAG_PERSISTENT } else { 0 };
+            let next = if on {
+                cur | fnv_sim::refs::FLAG_PERSISTENT
+            } else {
+                cur & !fnv_sim::refs::FLAG_PERSISTENT
+            };
+            g.other.flags.insert(r, next);
+            g.other.persistent_overrides.insert(r, on);
+        }
         g.awareness.actors = s.awareness.clone();
         g.awareness.forced = s.forced_combat.clone();
         // A save from before `fighting` was saved cannot say which starts had run: everyone

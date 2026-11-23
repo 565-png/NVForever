@@ -424,3 +424,62 @@ fn script_runner_and_queries_resolve_placed_ref_vars() {
     );
     assert_eq!(compiled.errors().next().map(|e| e.kind), Some("unresolved_remote_variable"));
 }
+
+#[test]
+fn prefix_order_runs_ln_before_gn_and_gl_and_rejects_unknown_prefixes() {
+    use fnv_game::mod_files::{set_roots, Roots};
+    let _guard = ROOTS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let base = fresh_temp_dir("prefix-order");
+    let scripts = base.join("NVSE/Plugins/Scripts");
+    std::fs::create_dir_all(scripts.join("sub")).unwrap();
+
+    // Record exact execution order via decimal digits in SROrder:
+    // gr=1, ln=2, gn=3, gl=4, gx=5, unknown zz=9 (must never run).
+    // Also check RegisterSRScript rejects missing files and unknown prefixes (zz_).
+    std::fs::write(
+        scripts.join("gr_boot.txt"),
+        "set SROrder to SROrder * 10 + 1\r\n\
+         set SRRegistered to RegisterSRScript \"sub\\missing.txt\"\r\n\
+         set SRRegistered to SRRegistered * 10 + RegisterSRScript \"sub\\zz_bad.txt\"\r\n\
+         set SRRegistered to SRRegistered * 10 + RegisterSRScript \"sub\\gl_reg.txt\"\r\n\
+         set SRRegistered to SRRegistered * 10 + RegisterSRScript \"sub\\ln_reg.txt\"\r\n",
+    )
+    .unwrap();
+    // Alphabetically "gl_" and "gn_" sort before "ln_", so ln_ must still execute first.
+    std::fs::write(scripts.join("gn_new.txt"), "set SROrder to SROrder * 10 + 3\r\n").unwrap();
+    std::fs::write(scripts.join("gl_load.txt"), "set SROrder to SROrder * 10 + 4\r\n").unwrap();
+    std::fs::write(scripts.join("ln_both.txt"), "set SROrder to SROrder * 10 + 2\r\n").unwrap();
+    std::fs::write(scripts.join("gx_exit.txt"), "set SROrder to SROrder * 10 + 5\r\n").unwrap();
+    std::fs::write(scripts.join("zz_unknown.txt"), "set SROrder to SROrder * 10 + 9\r\n").unwrap();
+    std::fs::write(scripts.join("sub/zz_bad.txt"), "set SROrder to SROrder * 10 + 9\r\n").unwrap();
+    std::fs::write(scripts.join("sub/gl_reg.txt"), "set SRLoads to SRLoads * 10 + 4\r\n").unwrap();
+    std::fs::write(scripts.join("sub/ln_reg.txt"), "set SRLoads to SRLoads * 10 + 2\r\n").unwrap();
+
+    set_roots(Roots { read: vec![base.clone()], ..Roots::default() });
+    let f = fixture();
+
+    // Boot 1: Startup -> New Game -> Same-Run Load -> Exit:
+    // gr_ -> ln_ -> gn_ -> ln_ -> gl_ -> gx_ (zz_ never runs).
+    let mut g = game(&f);
+    let r_gr = g.run_script_runner(Moment::Restart);
+    let r_ng = g.run_script_runner(Moment::NewGame);
+    let r_ld = g.run_script_runner(Moment::Load);
+    let r_gx = g.run_exit_scripts();
+
+    assert_eq!(r_gr.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(), ["gr_boot.txt"]);
+    assert_eq!(r_ng.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(), ["ln_both.txt", "sub\\ln_reg.txt", "gn_new.txt"]);
+    assert_eq!(r_ld.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(), ["ln_both.txt", "sub\\ln_reg.txt", "gl_load.txt", "sub\\gl_reg.txt"]);
+    assert_eq!(r_gx.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(), ["gx_exit.txt"]);
+    assert_eq!(value(&mut g, "SROrder"), 123245.0, "gr(1) -> ln(2) -> gn(3) -> ln(2) -> gl(4) -> gx(5)");
+    assert_eq!(value(&mut g, "SRRegistered"), 11.0, "missing=0, zz_=0, sub\\gl_reg=1, sub\\ln_reg=1");
+    assert_eq!(value(&mut g, "SRLoads"), 224.0, "sub\\ln_reg on NewGame (2), then sub\\ln_reg (2) before sub\\gl_reg (4) on Load");
+
+    // Boot 2: Cold Startup -> Load -> Exit: gr_ -> ln_ -> gl_ -> gx_ (gn_ never runs).
+    let mut g2 = game(&f);
+    g2.run_script_runner(Moment::Restart);
+    g2.run_script_runner(Moment::Load);
+    g2.run_exit_scripts();
+    assert_eq!(value(&mut g2, "SROrder"), 1245.0, "gr(1) -> ln(2) -> gl(4) -> gx(5)");
+
+    std::fs::remove_dir_all(&base).ok();
+}

@@ -47,23 +47,36 @@ impl Moment {
             Moment::Exit => "game exit",
         }
     }
+
+    /// Prefixes that run at this moment, in execution order [observed: Fallout: New Vegas
+    /// 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, `p2_script_runner_prefixes`: `ln_` runs
+    /// before `gn_` on new game (`gr_ -> ln_ -> gn_`) and before `gl_` on load
+    /// (`gr_ -> ln_ -> gl_`), `gx_` runs on exit, and unknown prefixes never run].
+    pub fn prefixes(self) -> &'static [Prefix] {
+        match self {
+            Moment::Restart => &[Prefix::Restart],
+            Moment::NewGame => &[Prefix::LoadOrNew, Prefix::NewGame],
+            Moment::Load => &[Prefix::LoadOrNew, Prefix::Load],
+            Moment::Exit => &[Prefix::Exit],
+        }
+    }
 }
 
 /// A file name's prefix, which says when it runs (ext-script-runner.md §2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Prefix {
     /// `gr_`: game restart [documented: RegisterSRScript, "Game Restart ('gr_' prefix)";
-    /// InitExtraMiscStat, a plugin's MenuMode 4 block (the main menu) is a gr_ file's].
+    /// InitExtraMiscStat; observed: `p2_script_runner_prefixes`].
     Restart,
-    /// `gl_`: a save loaded [hypothesis: the name; the files' own uses, ext-script-runner.md §2].
+    /// `gl_`: a save loaded, after `ln_` [observed: `p2_script_runner_prefixes`].
     Load,
-    /// `gn_`: a new game [hypothesis: as gl_].
+    /// `gn_`: a new game, after `ln_` [observed: `p2_script_runner_prefixes`].
     NewGame,
-    /// `ln_`: a save loaded or a new game [hypothesis: as gl_; the files guard work they
-    /// should do once with a flag of their own].
+    /// `ln_`: a save loaded or a new game, before `gn_` and `gl_` [observed:
+    /// `p2_script_runner_prefixes`].
     LoadOrNew,
-    /// `gx_`: game exit [hypothesis: MCM Extender's file says "on game exit"; no extender
-    /// DLL/source consulted] (ext-script-runner.md §2).
+    /// `gx_`: game exit [observed: `p2_script_runner_prefixes`; 4 mod files in
+    /// ext-script-runner.md §2].
     Exit,
 }
 
@@ -141,11 +154,14 @@ fn file_name(path: &str) -> &str {
 }
 
 impl<'a> Game<'a> {
-    /// Run the Script Runner files of `m`: the folder's, in the order of their names
-    /// [hypothesis: the order is not documented], then the registered ones in the order
-    /// they were registered; a file registered while the Restart files run, with the gr_
-    /// prefix, runs after them [hypothesis]. A file that does not compile is skipped and
-    /// traced (`Skipped`), as are the errors of one that runs; nothing here stops the game.
+    /// Run the Script Runner files of `m` in prefix order (`Moment::prefixes`: `ln_`
+    /// before `gn_` on new game, `ln_` before `gl_` on load [observed:
+    /// `p2_script_runner_prefixes`]). Within each prefix, the folder's files run in the
+    /// order of their names [hypothesis: within-prefix order is not documented], then the
+    /// registered ones in registration order; a file registered while the Restart files
+    /// run, with the `gr_` prefix, runs after them [hypothesis]. A file that does not
+    /// compile is skipped and traced (`Skipped`), as are the errors of one that runs;
+    /// nothing here stops the game.
     ///
     /// [`Moment::Exit`] is idempotent per [`Game`] instance and returns immediately with no
     /// work when no `gx_` files are discovered or registered [design].
@@ -162,26 +178,28 @@ impl<'a> Game<'a> {
         }
         self.sr.running = Some(m);
         let mut runs = Vec::new();
-        let mut i = 0;
-        loop {
-            let listed = self.sr.files.as_ref().map_or(0, Vec::len);
-            let file = if i < listed { self.sr.files.as_ref().map(|f| f[i].clone()) } else { self.sr.registered.get(i - listed).cloned() };
-            let Some(file) = file else { break };
-            i += 1;
-            if !file.prefix.runs_at(m) {
-                continue;
-            }
-            let result = self.sr_unit(&file.path).and_then(|unit| {
-                if self.run_statements(unit, RunCtx::default()) {
-                    Ok(())
-                } else {
-                    Err("the script stopped on an error".into())
+        for &prefix in m.prefixes() {
+            let mut i = 0;
+            loop {
+                let listed = self.sr.files.as_ref().map_or(0, Vec::len);
+                let file = if i < listed { self.sr.files.as_ref().map(|f| f[i].clone()) } else { self.sr.registered.get(i - listed).cloned() };
+                let Some(file) = file else { break };
+                i += 1;
+                if file.prefix != prefix {
+                    continue;
                 }
-            });
-            if let Err(e) = &result {
-                self.emit(crate::trace::EventKind::Skipped { unit: format!("Script Runner {}", file.path), what: e.clone() });
+                let result = self.sr_unit(&file.path).and_then(|unit| {
+                    if self.run_statements(unit, RunCtx::default()) {
+                        Ok(())
+                    } else {
+                        Err("the script stopped on an error".into())
+                    }
+                });
+                if let Err(e) = &result {
+                    self.emit(crate::trace::EventKind::Skipped { unit: format!("Script Runner {}", file.path), what: e.clone() });
+                }
+                runs.push(SrRun { path: file.path, result });
             }
-            runs.push(SrRun { path: file.path, result });
         }
         self.sr.running = None;
         runs
@@ -309,5 +327,9 @@ mod tests {
             assert!(!p.runs_at(Moment::Exit));
         }
         assert_eq!(Moment::Exit.name(), "game exit");
+        assert_eq!(Moment::Restart.prefixes(), &[Prefix::Restart]);
+        assert_eq!(Moment::NewGame.prefixes(), &[Prefix::LoadOrNew, Prefix::NewGame]);
+        assert_eq!(Moment::Load.prefixes(), &[Prefix::LoadOrNew, Prefix::Load]);
+        assert_eq!(Moment::Exit.prefixes(), &[Prefix::Exit]);
     }
 }

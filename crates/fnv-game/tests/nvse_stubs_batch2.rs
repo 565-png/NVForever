@@ -375,6 +375,103 @@ fn set_persistent_ignores_unrelated_flag_writes_on_persistent_group_ref() {
 }
 
 #[test]
+fn set_persistent_survives_save_and_cold_or_samerun_load() {
+    let f = fixture();
+    let mut g = game(&f);
+
+    // Baseline snapshot taken BEFORE SetPersistent (used to verify Session does not leak it).
+    let spawned = g.world.place(FormId(STAT), Some(FormId(CELL_UNLOADED)), [30.0, 0.0, 0.0], [0.0; 3], 1).unwrap();
+    let snap_before = g.snapshot();
+
+    // Mutate: dynamic ref 0 -> 1, originally persistent ref 1 -> 0.
+    g.run_query(
+        "Begin Function { }\nSetPersistent 1\nEnd\n",
+        RunCtx { self_ref: Some(spawned), ..RunCtx::default() },
+    )
+    .unwrap();
+    q(&mut g, "PersistCrateRef.SetPersistent 0");
+
+    let snap_after = g.snapshot();
+    // Roundtrip through JSON to verify serde persistence for GameSnapshot::persistent_overrides.
+    let json = serde_json::to_string(&snap_after).unwrap();
+    let decoded: fnv_game::game::GameSnapshot = serde_json::from_str(&json).unwrap();
+    let session = g.take_session();
+
+    // Cold-boot restore from decoded snapshot: both overrides persist and stay synchronized.
+    let mut cold = Game::restore(
+        &f.data,
+        World::restore(&f.forms, &f.refs, &decoded.sim).unwrap(),
+        GameConfig::default(),
+        &decoded,
+    )
+    .unwrap();
+    assert_eq!(
+        cold.run_query(
+            "Begin Function { }\nSetFunctionValue (IsPersistent)\nEnd\n",
+            RunCtx { self_ref: Some(spawned), ..RunCtx::default() },
+        )
+        .unwrap(),
+        XVal::Num(1.0),
+        "dynamic ref SetPersistent 1 survives cold-boot load"
+    );
+    assert_eq!(
+        cold.run_query(
+            "Begin Function { }\nSetFunctionValue (GetReferenceFlag 1024)\nEnd\n",
+            RunCtx { self_ref: Some(spawned), ..RunCtx::default() },
+        )
+        .unwrap(),
+        XVal::Num(1.0),
+        "flag bit 0x400 stays synchronized after cold-boot load"
+    );
+    assert_eq!(num(&mut cold, "PersistCrateRef.IsPersistent"), 0.0, "SetPersistent 0 survives cold-boot load");
+    assert_eq!(num(&mut cold, "PersistCrateRef.GetReferenceFlag 1024"), 0.0);
+    assert_eq!(num(&mut cold, "Ar_Size (GetFormRefs TestCrate)"), 1.0, "only persistent dynamic ref matches TestCrate");
+
+    // Same-run restore with Session: overrides still match the loaded snapshot.
+    let mut same_run = Game::restore(
+        &f.data,
+        World::restore(&f.forms, &f.refs, &decoded.sim).unwrap(),
+        GameConfig::default(),
+        &decoded,
+    )
+    .unwrap();
+    same_run.put_session(session);
+    assert_eq!(
+        same_run
+            .run_query(
+                "Begin Function { }\nSetFunctionValue (IsPersistent)\nEnd\n",
+                RunCtx { self_ref: Some(spawned), ..RunCtx::default() },
+            )
+            .unwrap(),
+        XVal::Num(1.0),
+        "dynamic ref SetPersistent 1 survives same-run load"
+    );
+    assert_eq!(num(&mut same_run, "PersistCrateRef.IsPersistent"), 0.0);
+
+    // Loading the earlier snapshot in the same run must NOT inherit the later SetPersistent edits.
+    let session2 = same_run.take_session();
+    let mut earlier = Game::restore(
+        &f.data,
+        World::restore(&f.forms, &f.refs, &snap_before.sim).unwrap(),
+        GameConfig::default(),
+        &snap_before,
+    )
+    .unwrap();
+    earlier.put_session(session2);
+    assert_eq!(
+        earlier
+            .run_query(
+                "Begin Function { }\nSetFunctionValue (IsPersistent)\nEnd\n",
+                RunCtx { self_ref: Some(spawned), ..RunCtx::default() },
+            )
+            .unwrap(),
+        XVal::Num(0.0),
+        "SetPersistent is save-scoped, not carried by Session into earlier saves"
+    );
+    assert_eq!(num(&mut earlier, "PersistCrateRef.IsPersistent"), 1.0);
+}
+
+#[test]
 fn get_fall_time_remaining_handles_grounded_direct_and_kinematic_airborne() {
     let f = fixture();
     let mut g = game(&f);

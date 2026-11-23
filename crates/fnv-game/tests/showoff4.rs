@@ -203,6 +203,30 @@ fn enable_parents_can_be_changed_and_ignored() {
     q(&mut g, "TestChildRef.SetEnableParent");
     assert!(on(&g, CHILD), "its own flag again");
     assert_eq!(n(&mut g, "TestChildRef.GetParentRef"), 0.0);
+
+    // SetEnableParent is CLEARED_ON_LOAD: neither saved in GameSnapshot nor carried in
+    // Game::Session / WorldSession across same-run or cold-boot loads [observed: p2_enable_parent].
+    q(&mut g, "TestChildRef.SetEnableParent TestParentRef");
+    assert_eq!(n(&mut g, "TestChildRef.GetParentRef"), f64::from(PARENT));
+    let snap = g.snapshot();
+    let world_session = g.world.take_session();
+    let game_session = g.take_session();
+
+    let mut cold = Game::restore(&f.data, World::restore(&f.forms, &f.refs, &snap.sim).unwrap(), GameConfig::default(), &snap).unwrap();
+    assert_eq!(n(&mut cold, "TestChildRef.GetParentRef"), f64::from(PARENT), "reverts to authored XESP on cold load");
+
+    // On a dynamic ref with no authored XESP, SetEnableParent -> Player clears to 0 on both loads.
+    let dyn_ref = g.world.place(FormId(WEAP), None, [0.0; 3], [0.0; 3], 1).unwrap();
+    g.world.set_enable_parent(dyn_ref, Some(FormId::PLAYER_REF));
+    assert_eq!(g.world.enable_parent(dyn_ref).map(|e| e.reference), Some(FormId::PLAYER_REF));
+    let snap2 = g.snapshot();
+    let mut same_run_world = World::restore(&f.forms, &f.refs, &snap2.sim).unwrap();
+    same_run_world.put_session(world_session);
+    let mut same_run = Game::restore(&f.data, same_run_world, GameConfig::default(), &snap2).unwrap();
+    same_run.put_session(game_session);
+    assert_eq!(same_run.world.enable_parent(dyn_ref), None, "cleared on same-run load");
+    let cold2 = Game::restore(&f.data, World::restore(&f.forms, &f.refs, &snap2.sim).unwrap(), GameConfig::default(), &snap2).unwrap();
+    assert_eq!(cold2.world.enable_parent(dyn_ref), None, "cleared on cold-boot load");
 }
 
 #[test]

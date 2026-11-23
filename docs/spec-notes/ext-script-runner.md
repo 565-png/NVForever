@@ -21,8 +21,14 @@ game yet (§5).
 - Only the folder's own files run unless registered: of the 203, 202 lie directly in the
   folder and one in a subfolder [observed], and a subfolder's file needs RegisterSRScript
   (§3) [documented: "must include at least one subfolder"].
-- The order of the files at one moment is not documented: NVForever runs them in the
-  order of their names, any case [hypothesis].
+- The order of the files within one prefix is not documented: NVForever runs them in the
+  order of their names, any case [hypothesis]. Across prefixes at the same moment, `ln_`
+  runs before `gn_` on new game and before `gl_` on load [observed: Fallout: New Vegas
+  1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, clean-room
+  black-box script probe `p2_script_runner_prefixes` (`tools/capture/nvse/catalogs/persistence_matrix.json`,
+  #3678 / PR #3679): Boot 1 (startup -> new game -> save -> same-run load -> quit) ran
+  `gr_ -> ln_ -> gn_ -> ln_ -> gl_ -> gx_`, Boot 2 (startup -> cold load -> quit) ran
+  `gr_ -> ln_ -> gl_ -> gx_`, and unknown prefix `zz_` never ran; no DLL or source consulted].
 - Text is UTF-8 when it is, else 8-bit text in the run's code page, as CompileScript reads
   its files.
 - The folder is read in NVForever's own layer first, then in Data (an MO2 run sees the
@@ -35,13 +41,13 @@ The first three letters of the file name say when it runs [documented: RegisterS
 
 | Prefix | Files | When, in NVForever | Evidence |
 |---|---|---|---|
-| `gr_` | 126 | game restart: once a run, before any save is in place | [documented: RegisterSRScript, "Game Restart ('gr_' prefix)"; InitExtraMiscStat, a plugin uses a MenuMode 4 block (the main menu) where an SR file uses gr_] |
-| `ln_` | 64 | a save loaded, and a new game | [hypothesis: the name; the files guard work they must do once a session with an aux variable flag, as code that runs at every load would] |
-| `gl_` | 7 | a save loaded | [hypothesis: the name; RegisterSRScript's example registers `gl_Option2.txt`] |
-| `gx_` | 4 | game exit: once on `AppExit` before teardown | [hypothesis: game exit; MCM Extender's file says "Saved cached INIs on game exit"; observed: 4 files in the 2026-11-03 list; no extender DLL/source read] |
-| `gn_` | 1 | a new game | [hypothesis: the name] |
+| `gr_` | 126 | game restart: once a run, before any save is in place | [documented: RegisterSRScript, "Game Restart ('gr_' prefix)"; InitExtraMiscStat, a plugin uses a MenuMode 4 block (the main menu) where an SR file uses gr_; observed: `p2_script_runner_prefixes` (`persistence_matrix.json`, #3678 / PR #3679): ran once at startup on both Boot 1 and Boot 2] |
+| `ln_` | 64 | a save loaded, and a new game (runs before `gn_` and before `gl_`) | [observed: `p2_script_runner_prefixes` (`persistence_matrix.json`, #3678 / PR #3679): ran before `gn_` on new game and before `gl_` on both same-run and cold load; no DLL or source consulted] |
+| `gl_` | 7 | a save loaded (runs after `ln_`) | [observed: `p2_script_runner_prefixes` (`persistence_matrix.json`, #3678 / PR #3679): ran after `ln_` on both same-run and cold load, never on new game; no DLL or source consulted] |
+| `gx_` | 4 | game exit: once on `AppExit` before teardown | [observed: `p2_script_runner_prefixes` (`persistence_matrix.json`, #3678 / PR #3679): ran once on `con_QuitGame` in both Boot 1 and Boot 2; 4 files in the 2026-11-03 list; no DLL or source consulted] |
+| `gn_` | 1 | a new game (runs after `ln_`) | [observed: `p2_script_runner_prefixes` (`persistence_matrix.json`, #3678 / PR #3679): ran after `ln_` on new game only, never on cold load; no DLL or source consulted] |
 
-A file with another prefix (or none) never runs [hypothesis].
+A file with another prefix (or none) never runs [observed: `p2_script_runner_prefixes` (`persistence_matrix.json`, #3678 / PR #3679): `zz_` never executed in Boot 1 or Boot 2; no DLL or source consulted].
 
 **Moments in NVForever.** A load while playing starts a new run of the engine, so the
 game restart comes again after every load, as GetGameRestarted does
@@ -73,7 +79,7 @@ same process, hypothesis].
 |---|---|
 | When | only while the game restart's files run; elsewhere it does nothing and returns 0 [documented: "may only be called from a Game Restart ('gr_' prefix) SR script, and will have no effect otherwise"] |
 | Path | relative to `scripts\`, with at least one subfolder [documented]; `..` and empty parts refused [decision] |
-| 0 when | the file cannot be read, does not compile, or a file of that name was already registered [documented]; or its name has no known prefix [hypothesis] |
+| 0 when | the file cannot be read, does not compile, or a file of that name was already registered [documented]; or its name has no known prefix [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, `b3_sr_01_register_sr_script_edges` (`tools/capture/nvse/catalogs/wave4b_extenders.json`, #3678 / PR #3679): `miss=0,badPfx=0`; no DLL or source consulted] |
 | Then | the file runs at its prefix's moments for the rest of the session; a registered `gr_` file runs after the folder's `gr_` files [hypothesis] |
 
 ## 4. What is not built
