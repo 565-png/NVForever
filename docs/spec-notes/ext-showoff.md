@@ -206,7 +206,7 @@ ShowOff function left. GetHitLocationLingering on the unhurt player crashed the 
 | GetProjectileRefIsStuck | a shot that hit something and stays (`ProjState`) [hypothesis: the isStuck flag] |
 | SpawnTracingProjectile | 0 [not built: the engine has no request to fire a bare projectile; follow-up] |
 | SetForceDrawHitscanProjectiles `[forceDraw]`, SetProjectileTracerChanceOverride `[chance]` | whether before / the override before; the engine draws hitscan shots, never or always rolls tracers by them (`nvf_play::combat::shot_switches`) [documented] |
-| GetPCHasScriptedFastTravelOverride, GetPCCanFastTravel | EnableFastTravel 0's bar [hypothesis: that is the override]; the Pip-Boy's checks but the marker's: the bar, the cell's or world's flag, in the air, in combat, hostiles within fHostileActor…Distance, over-encumbered without Long Haul [documented: "the same check"; hypothesis: combat as the player's combat state] |
+| GetPCHasScriptedFastTravelOverride, GetPCCanFastTravel | EnableFastTravel 0's bar [hypothesis: that is the override]; the Pip-Boy's checks but the marker's: the bar, an interior or the world's flag (fast-travel.md §2; lifted by the player's Fast Travel From Anywhere, the map's other travel tweaks not built here), in the air, in combat, hostiles within fHostileActor…Distance, over-encumbered without Long Haul [documented: "the same check"; hypothesis: combat as the player's combat state] |
 | IsActorInvisibleToPlayer, HighlightAdditionalReferenceAlt `[check] [flash]` | Invisibility or Chameleon above 0 and no Improved Detection [documented]; the highlight list is kept, the engine's VATS highlight does not draw it yet [not built: follow-up] |
 | GetNumCombatActorsFromActor `[maxDistance] [flags]` | the caller's combat targets (2) and allies (1), 0 meaning 3; 4 no invisible ones, 8 only detected ones [documented]; an ally fights one of the caller's targets and would not attack the caller [hypothesis] |
 | ForceHitStaggerReaction (ForceHitReaction), ForceRecoilAnim | stagger: 1 when the actor has a hit location (and, when asked, no Ignore Crippled Limbs) [documented; observed: 0 on the unhurt player]; recoil: 1 for a living actor [observed 2026-11-08: recoil.player 1; the save's weapon not recorded; hypothesis: whatever it holds]; the engine does not play the animations [not built, as ForceWeaponJamAnim §4] |
@@ -299,7 +299,55 @@ RemoveAllItemsShowOff.
   [preactivation-events.md](preactivation-events.md). No extender DLL or source code
   was consulted.
 
-## 10. `ShowOff:OnFireWeapon`
+## 10. `ShowOff:OnCompleteObjective`, `ShowOff:OnDisplayObjective` and `ShowOff:OnWeaponUnholster`
+
+- **`ShowOff:OnDisplayObjective`** [documented: GECK wiki,
+  [Category:Event Handlers (ShowOff NVSE)](https://geckwiki.com/index.php?title=Category:Event_Handlers_%28ShowOff_NVSE%29),
+  `ShowOff:OnDisplayObjective`]: fires when a quest objective is displayed, passing
+  `(quest, objective_index)` as two arguments (`"first"` / `1::` filters the quest form;
+  `"second"` / `2::` filters the integer objective index). NVForever dispatches it from
+  `Game::set_objective_whatever` only on `displayed` transitioning `false -> true` (so
+  hiding an objective with `0`, repeating display on an already-displayed objective,
+  referencing an undefined objective index, or calling `SetObjectiveDisplayed` on an
+  already completed/failed quest does not fire), with `on = None` and
+  `GetObjectiveDisplayed` already reading `1` inside the callback [hypothesis:
+  transition-only dispatch, no calling reference, and post-update getter visibility
+  unobserved in original-game captures].
+- **`ShowOff:OnCompleteObjective`** [documented: GECK wiki,
+  [Category:Event Handlers (ShowOff NVSE)](https://geckwiki.com/index.php?title=Category:Event_Handlers_%28ShowOff_NVSE%29),
+  `ShowOff:OnCompleteObjective`]: fires when a quest objective is completed, passing
+  `(quest, objective_index)` as two arguments (`"first"` / `1::` filters the quest form;
+  `"second"` / `2::` filters the integer objective index). NVForever dispatches it from
+  `Game::set_objective_whatever` (covering both `SetObjectiveCompleted` and
+  `CompleteAllObjectives`) only on `completed` transitioning `false -> true` (so
+  un-completing with `0`, clearing `completed` when re-displaying a hidden objective,
+  repeating completion on an already-completed objective, referencing an undefined
+  objective index, or calling `SetObjectiveCompleted` on an already completed/failed
+  quest does not fire), with `on = None` and `GetObjectiveCompleted` already reading `1`
+  inside the callback [hypothesis: transition-only dispatch, `CompleteAllObjectives`
+  firing per newly completed objective in ascending index order, hidden-objective
+  completion firing, no calling reference, and post-update getter visibility unobserved].
+- **`ShowOff:OnWeaponUnholster`** [documented: GECK wiki,
+  [ShowOff:OnWeaponUnholster](https://geckwiki.com/index.php?title=ShowOff%3AOnWeaponUnholster)]:
+  added in ShowOff NVSE 1.80; fires when an actor unholsters a weapon, with the actor as
+  the calling reference (`GetSelf` / `GetSelfAlt` / `0::`) and the weapon form as the
+  single argument (`"first"` / `1::`). NVForever dispatches it from `Game::set_weapon_out`
+  (driven by `nvf_play::combat::weapon_state` for the player and `nvforever::idles` for
+  drawn NPCs/creatures) and `Game::hud_tick` (scripted `SetWeaponOut 1` after
+  `WEAPON_FRAMES`) only on `weapon_out` transitioning `false -> true`, with `IsWeaponOut`
+  already reading `1` inside the callback. The weapon argument resolves from the actor's
+  equipped weapon (`equipped_weapon`), else the animating side's `held_weapon`, else
+  `Fists` (`0x000001F4`) when defined as a `WEAP` record in game data, else null form `0`
+  [hypothesis: firing at weapon-out completion rather than draw-start, unarmed/creature
+  weapon argument fallback, and `IsWeaponOut` visibility inside the callback unobserved].
+  Save restore writes `extra` directly without firing a spurious unholster event
+  [design].
+- [design] All three events short-circuit on `Game::handled(...)` before allocating
+  argument vectors or resolving weapon forms, leaving unmodded vanilla gameplay
+  unchanged with zero allocations. No ShowOff NVSE DLL, PDB, or C++ source code was
+  consulted.
+
+## 11. `ShowOff:OnFireWeapon`
 
 - **`ShowOff:OnFireWeapon`** [documented: GECK wiki Category:Event Handlers (ShowOff NVSE),
   [SetEventHandlerAlt](https://geckwiki.com/index.php?title=SetEventHandlerAlt); observed:

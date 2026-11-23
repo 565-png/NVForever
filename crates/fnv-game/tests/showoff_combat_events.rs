@@ -1,5 +1,5 @@
 //! ShowOff NVSE `ShowOff:OnFireWeapon` and `ForceWeaponJamAnim` / `ForceJamAnim`
-//! rules-layer tests (docs/spec-notes/ext-showoff.md §4, §10) on a synthetic plugin.
+//! rules-layer tests (docs/spec-notes/ext-showoff.md §4, §11) on a synthetic plugin.
 
 use crate::common::*;
 use fnv_esm::{LoadOrder, Plugin, Schema};
