@@ -15334,7 +15334,7 @@ source = "#3569: the difficulty scales real hits, not only the test aid's: the p
 note = "in Goodsprings, Easy Pete is brought 300 units north (3 s); the console sets Very Hard at 4 s and Pete is set on the player at 5 s (his own weapon). The player shoots him with the 9mm (no spread) at 9.1 s: x0.50; Pete's hits on the player: x2.00. Pete hits fast (13 a hit, 26 at Very Hard), so the console restores the player's Health at 13 s. Pause 15-18: Custom, Player Damage 125% (part 0.3), NPC Damage 150% (part 0.4); after it Pete's hits are x1.50 and the shots at 20.1 and 22.1 s x1.25 (two tries: a shot asked for at once after the pause was not fired). Each side is judged in its own order (Pete may hit before the first shot). Each hit the difficulty changes logs its base and scaled damage (Game::hit)"
 areas = ["combat"]
 paths = ["crates/fnv-game/src/difficulty.rs", "engine/nvf-play/src/difficulty.rs", "crates/fnv-game/src/combat.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:EasyPeteRef:player:0:300:0,5:combat:EasyPeteRef:player", NVF_PLAY_TEST_CONSOLE = "4:setgamedifficulty 4;4.3:close;13:player.RestoreAV Health 200;13.3:close", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:50", NVF_PLAY_TEST_CONTROL = "6:weapon,9:aimactor,9.1:fire,20:aimactor,20.1:fire,22:aimactor,22.1:fire", NVF_PLAY_TEST_PAUSE = "15:18", NVF_PLAY_TEST_SETTINGS = "15.5:difficulty=Custom,16:difficulty-player-damage=0.3,16.5:difficulty-npc-damage=0.4" }
+env = { RUST_LOG = "info,fnv_game::difficulty=debug", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_NO_SPREAD = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:EasyPeteRef:player:0:300:0,5:combat:EasyPeteRef:player", NVF_PLAY_TEST_CONSOLE = "4:setgamedifficulty 4;4.3:close;13:player.RestoreAV Health 200;13.3:close", NVF_PLAY_TEST_EQUIP = "0000434F", NVF_PLAY_TEST_GIVE = "00004241:50", NVF_PLAY_TEST_CONTROL = "6:weapon,9:aimactor,9.1:fire,20:aimactor,20.1:fire,22:aimactor,22.1:fire", NVF_PLAY_TEST_PAUSE = "15:18", NVF_PLAY_TEST_SETTINGS = "15.5:difficulty=Custom,16:difficulty-player-damage=0.3,16.5:difficulty-npc-damage=0.4" }
 args = ["--play", "--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--hour", "12", "--no-voice"]
 run_seconds = 25
 order = [
@@ -15358,7 +15358,7 @@ source = "#3569: fall damage is damage the player takes: the difficulty scales i
 note = "in Goodsprings, Very Hard at 6 s, then the player is put 900 units up at 8 s (not god mode, unlike falls-player); the landing's hit is doubled"
 areas = ["combat"]
 paths = ["crates/fnv-game/src/difficulty.rs", "engine/nvf-play/src/falls.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "6:setgamedifficulty 4;6.3:close;8:player.setpos z 9600;8.3:close" }
+env = { RUST_LOG = "info,fnv_game::difficulty=debug", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_CONSOLE = "6:setgamedifficulty 4;6.3:close;8:player.setpos z 9600;8.3:close" }
 args = ["--cell", "Goodsprings", "--play", "--pos=-68375,4800,8700", "--no-voice", "--no-messages"]
 run_seconds = 16
 expect = [

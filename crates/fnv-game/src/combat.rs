@@ -600,10 +600,11 @@ impl Game<'_> {
             return HitResult { health, max_health, immune: true, corpse, overkill: if corpse { damage.max(0.0) } else { 0.0 }, ..HitResult::default() };
         }
         // Every hit the difficulty changes, so a run shows what each level does to real hits
-        // (weapons, blows, blasts, falls), not only to the test aid's.
+        // (weapons, blows, blasts, falls), not only to the test aid's. Debug, under its own
+        // target: a run asks for it with RUST_LOG=info,fnv_game::difficulty=debug.
         if mult != 1.0 && base > 0.0 {
             let by = info.attacker.map_or_else(|| "nobody".to_string(), |a| a.to_string());
-            tracing::info!("difficulty: a hit of {base:.1} on {target} by {by} is {damage:.1} (x{mult:.2})");
+            tracing::debug!(target: "fnv_game::difficulty", "difficulty: a hit of {base:.1} on {target} by {by} is {damage:.1} (x{mult:.2})");
         }
         let before = actor::actor_value(self, target, HEALTH).unwrap_or(max_health);
         let essential = self.is_essential(target);
