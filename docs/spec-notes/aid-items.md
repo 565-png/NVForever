@@ -119,7 +119,12 @@ The ActorValue page's three pools (actor-values.md §1) [documented: ActorValue]
   outside Hardcore also runs `RestoreAllBodyPartsSCRIPT` (effect `RestoreAllLimbs`): with
   it every limb is whole after the use; in Hardcore its limbs get 36 × potency
   [observed: `fnvtool actor aid --use NVDoctorBag`, 2026-10-23, Medicine 15: a left arm
-  at 0 went to 100, and to 46.8 with `--hardcore`].
+  at 0 went to 100, and to 46.8 with `--hardcore`]. Used on one limb from the Pip-Boy's
+  CND page in Hardcore (pipboy.md §5.1, `Game::ingest_on` with `limb: Some(code)` on an
+  instant Limb Condition effect; duration effects like Hydra stay un-aimed), only that
+  limb is restored to full (`amount.max(100.0)`) and the others are untouched [design:
+  #3431; hypothesis: exact original-game Hardcore single-limb vs all-limbs magnitudes
+  remain to be captured].
 - **Hardcore on and off while the game runs** (SetHardcore, `Game::set_hardcore`):
   the needs and the weight of ammunition follow it; the simulation counts ammunition's
   weight by its own switch (`fnv_sim::World::set_hardcore`), which SetHardcore now

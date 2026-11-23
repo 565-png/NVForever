@@ -53,7 +53,10 @@ const POISON: u32 = 0x86D;
 const WITHDRAWAL_HELD: u32 = 0x873;
 const NAMED_FX: u32 = 0x85B;
 const SCRIPT_FX: u32 = 0x85C;
+const LIMB_COND_FX: u32 = 0x85D;
 const PSYCHO: u32 = 0x86E;
+const DRBAG: u32 = 0x86F;
+const HYDRA: u32 = 0x874;
 
 const P: FormId = FormId::PLAYER_REF;
 const STRENGTH: u16 = 5;
@@ -181,6 +184,8 @@ fn plugin_bytes() -> Vec<u8> {
         // Psycho's "Damage +25%", and one not, as a Nuka-Cola's cap.
         mgef(NAMED_FX, "PsychoMagicEffect", 1 << 13, 1, -1),
         mgef(SCRIPT_FX, "PlainScriptEffect", 0, 1, -1),
+        // Limb Condition (archetype 35): NVRestoreLimbs for Doctor's Bag (instant) and Hydra (over time).
+        mgef(LIMB_COND_FX, "RestoreLimbs", 0, 35, -1),
     ]
     .concat();
     let alchs = [
@@ -204,6 +209,8 @@ fn plugin_bytes() -> Vec<u8> {
         alch(CHEM_HELD, "ChemHeld", 0, WITHDRAWAL_HELD, 0.0, vec![effect(MOD_STR, 2, 4, 5)]),
         alch(POISON, "TestVenom", 0, 0, 0.0, vec![effect(POISON_FX, 5, 0, 16)]),
         alch(PSYCHO, "Psycho", 0, 0, 0.0, vec![effect(NAMED_FX, 0, 240, -1), effect(SCRIPT_FX, 0, 240, -1), effect(MOD_STR, 1, 240, 5)]),
+        alch(DRBAG, "DrBag", 4, 0, 0.0, vec![effect(LIMB_COND_FX, 36, 0, -1)]),
+        alch(HYDRA, "Hydra", 0, 0, 0.0, vec![effect(LIMB_COND_FX, 10, 6, -1)]),
     ]
     .concat();
     let spels = [
@@ -341,6 +348,39 @@ fn a_stimpak_on_a_limb_gives_it_the_whole_amount() {
     assert!(near(av(&mut g, HEALTH), 79.0));
     assert!(near(av(&mut g, PERCEPTION_CONDITION), 89.0));
     assert!(near(av(&mut g, PERCEPTION_CONDITION + 1), 50.0));
+}
+
+/// A Doctor's Bag aimed at one limb in Hardcore heals only that limb to full; un-aimed it
+/// restores every limb by `36 * potency`, and a duration Limb Condition item (Hydra) still
+/// restores all limbs over time (#3431).
+#[test]
+fn a_doctors_bag_aimed_at_a_limb_heals_only_that_limb() {
+    let f = fixture();
+    let mut g = game(&f);
+    let head = PERCEPTION_CONDITION;
+    let left_arm = PERCEPTION_CONDITION + 2;
+    let left_leg = PERCEPTION_CONDITION + 4;
+    // Aimed at left arm: only left arm heals to 100; head and left leg stay crippled.
+    for limb in [head, left_arm, left_leg] {
+        add_actor_value_damage(&mut g, P, limb, 100.0);
+    }
+    g.ingest_on(P, FormId(DRBAG), Some(left_arm));
+    assert!(near(av(&mut g, head), 0.0), "head must stay untouched when left arm is targeted");
+    assert!(near(av(&mut g, left_arm), 100.0), "targeted left arm heals to full");
+    assert!(near(av(&mut g, left_leg), 0.0), "left leg must stay untouched");
+    // Aimed at head: only head heals to 100; left leg stays at 0.
+    g.ingest_on(P, FormId(DRBAG), Some(head));
+    assert!(near(av(&mut g, head), 100.0));
+    assert!(near(av(&mut g, left_leg), 0.0));
+    // Un-aimed (body): restores every damaged limb by floor(36 * 1.3) = 46 at Medicine 15.
+    add_actor_value_damage(&mut g, P, head, 100.0);
+    g.ingest_on(P, FormId(DRBAG), None);
+    assert!(near(av(&mut g, head), 46.0));
+    assert!(near(av(&mut g, left_leg), 46.0));
+    // Duration Limb Condition (Hydra): restores all limbs over time even if a limb was passed.
+    g.ingest_on(P, FormId(HYDRA), Some(head));
+    g.frames(120);
+    assert!(av(&mut g, head) > 65.0 && av(&mut g, left_leg) > 65.0);
 }
 
 /// Without Recover and with a duration the magnitude is restored every second while
