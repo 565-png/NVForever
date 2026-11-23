@@ -15503,10 +15503,10 @@ order = [[
 [[scenario]]
 name = "fast-travel-interior"
 source = "#3434 (docs/spec-notes/fast-travel.md §2): no fast travel from an interior cell, and GetPCCanFastTravel agrees; CELL DATA bit 2 (Invert Fast Travel Behavior), set by SetCellFlag, allows it there"
-note = "the Goodsprings general store 0x00010C0E; Primm 0x000CDF46 made a travel target by ShowMap; EnableFastTravel 1 does not lift the interior's refusal; the cell flag is set at 18 s, between the two asks; the question is answered No"
+note = "the Goodsprings general store 0x001057F1; Primm 0x000CDF46 made a travel target by ShowMap; EnableFastTravel 1 does not lift the interior's refusal; the cell flag is set at 18 s, between the two asks; the question is answered No"
 areas = ["pipboy", "fast-travel"]
 paths = ["engine/nvf-play/src/pipboy/data/travel.rs", "crates/fnv-game/src/fast_travel.rs", "crates/fnv-game/src/nvse_showoff5.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "6:call:-:ShowMap:0x000CDF46:1,6.5:call:-:EnableFastTravel:1,7:call:-:GetPCCanFastTravel,18:call:-:SetCellFlag:0x00010C0E:2:1,18.5:call:-:GetPCCanFastTravel", NVF_PLAY_TEST_PIPBOY = "12:open,14:page=data,15:tab=1,16:travel=000CDF46,17:key=use,20:travel=000CDF46,21:key=down,22:key=use,24:close" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "6:call:-:ShowMap:0x000CDF46:1,6.5:call:-:EnableFastTravel:1,7:call:-:GetPCCanFastTravel,18:call:-:SetCellFlag:0x001057F1:2:1,18.5:call:-:GetPCCanFastTravel", NVF_PLAY_TEST_PIPBOY = "12:open,14:page=data,15:tab=1,16:travel=000CDF46,17:key=use,20:travel=000CDF46,21:key=down,22:key=use,24:close" }
 args = ["--cell", "GSGeneralStore", "--play", "--no-voice", "--no-messages", "--hour", "12"]
 run_seconds = 28
 order = [[

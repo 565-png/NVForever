@@ -4007,7 +4007,7 @@ capture setup, so every part of a check that needs an interior is still open.
      From Here"]. No cell of the masters sets the bit, so set it by script.
      - Needs xNVSE, JIP LN and ShowOff; a save in Goodsprings with no hostile near, the
        player not over-encumbered. First `EnableFastTravel 1` and `ShowMap` with
-       canTravel 1 on Primm's marker (000CDF46), then `coc GSGeneralStore` (00010C0E).
+       canTravel 1 on Primm's marker (000CDF46), then `coc GSGeneralStore` (001057F1).
      - (a) **Unflagged interior**: read `GetCellFlag` 2 and 7 of the cell (expect 0, 0)
        and `GetPCCanFastTravel`; then open the Pip-Boy's World Map, click Primm, and take
        a screenshot: the question, or a refusal? If a refusal, its text, whether it is a
