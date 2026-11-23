@@ -1,0 +1,609 @@
+{
+  "schema": "nvf.nvse.persistence.catalog/1",
+  "catalog_id": "persistence_matrix",
+  "description": "Two-boot Save/Load 3-tier persistence matrix (27 state items: SAVED / SESSION_ONLY / CLEARED_ON_LOAD) plus Script Runner prefix lifecycle.",
+  "game_version": "Fallout: New Vegas 1.4.0.525 (040020D0)",
+  "xnvse_version": "6.4.9",
+  "official_masters": [
+    "FalloutNV.esm",
+    "DeadMoney.esm",
+    "HonestHearts.esm",
+    "OldWorldBlues.esm",
+    "LonesomeRoad.esm",
+    "GunRunnersArsenal.esm",
+    "CaravanPack.esm",
+    "ClassicPack.esm",
+    "MercenaryPack.esm",
+    "TribalPack.esm"
+  ],
+  "extender_versions": {
+    "JIP LN NVSE": "57.30 (5730)",
+    "ShowOffNVSE Plugin": "184",
+    "JohnnyGuitarNVSE": "528",
+    "kNVSE": "37",
+    "SUP NVSE Plugin": "855",
+    "yUI": "140 (1.4d)",
+    "AnhNVSE": "131",
+    "lStewieAl's Tweaks": "1005"
+  },
+  "probe_save_name": "nvseprobe_p2",
+  "items": [
+    {
+      "id": "p2_auxvar_perm",
+      "key": "auxvar",
+      "extender": "JIP LN 57.30",
+      "spec_file": "docs/spec-notes/jip-variable-stores.md",
+      "spec_line": 62,
+      "functions_tested": [
+        "AuxVarSetFlt",
+        "AuxVarGetFlt"
+      ],
+      "description": "Permanent AuxVar (no '*' prefix)",
+      "expected_tier": "SAVED",
+      "field": "perm",
+      "baseline": "0.0"
+    },
+    {
+      "id": "p2_auxvar_temp",
+      "key": "auxvar",
+      "extender": "JIP LN 57.30",
+      "spec_file": "docs/spec-notes/jip-variable-stores.md",
+      "spec_line": 62,
+      "functions_tested": [
+        "AuxVarSetFlt",
+        "AuxVarGetFlt"
+      ],
+      "description": "Temporary AuxVar ('*' prefix)",
+      "expected_tier": "SESSION_ONLY",
+      "field": "temp",
+      "baseline": "0.0"
+    },
+    {
+      "id": "p2_refmap_perm",
+      "key": "refmap",
+      "extender": "JIP LN 57.30",
+      "spec_file": "docs/spec-notes/jip-variable-stores.md",
+      "spec_line": 91,
+      "functions_tested": [
+        "RefMapArraySetFloat",
+        "RefMapArrayGetFloat"
+      ],
+      "description": "Permanent RefMap (no '*' prefix)",
+      "expected_tier": "SAVED",
+      "field": "perm",
+      "baseline": "0.0"
+    },
+    {
+      "id": "p2_refmap_temp",
+      "key": "refmap",
+      "extender": "JIP LN 57.30",
+      "spec_file": "docs/spec-notes/jip-variable-stores.md",
+      "spec_line": 91,
+      "functions_tested": [
+        "RefMapArraySetFloat",
+        "RefMapArrayGetFloat"
+      ],
+      "description": "Temporary RefMap ('*' prefix)",
+      "expected_tier": "SESSION_ONLY",
+      "field": "temp",
+      "baseline": "0.0"
+    },
+    {
+      "id": "p2_auxstrmap_perm",
+      "key": "auxstrmap",
+      "extender": "ShowOffNVSE 184",
+      "spec_file": "docs/spec-notes/ext-unlisted-rest.md",
+      "spec_line": 82,
+      "functions_tested": [
+        "AuxStringMapArraySetFloat",
+        "AuxStringMapArrayGetFloat"
+      ],
+      "description": "Permanent AuxStringMapArray (no '*' prefix)",
+      "expected_tier": "SAVED",
+      "field": "perm",
+      "baseline": "0.0"
+    },
+    {
+      "id": "p2_auxstrmap_temp",
+      "key": "auxstrmap",
+      "extender": "ShowOffNVSE 184",
+      "spec_file": "docs/spec-notes/ext-unlisted-rest.md",
+      "spec_line": 82,
+      "functions_tested": [
+        "AuxStringMapArraySetFloat",
+        "AuxStringMapArrayGetFloat"
+      ],
+      "description": "Temporary AuxStringMapArray ('*' prefix)",
+      "expected_tier": "SESSION_ONLY",
+      "field": "temp",
+      "baseline": "0.0"
+    },
+    {
+      "id": "p2_armor_pen",
+      "key": "armor_pen",
+      "extender": "JIP LN 57.30",
+      "spec_file": "docs/spec-notes/jip-records-7.md",
+      "spec_line": 103,
+      "functions_tested": [
+        "SetArmorConditionPenalty"
+      ],
+      "description": "SetArmorConditionPenalty (1.00 -> 3.50)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "1.00"
+    },
+    {
+      "id": "p2_semiauto_delay",
+      "key": "semiauto_delay",
+      "extender": "JIP LN 57.30",
+      "spec_file": "docs/spec-notes/jip-records-8.md",
+      "spec_line": 60,
+      "functions_tested": [
+        "SetWeaponSemiAutoFireDelay",
+        "GetWeaponSemiAutoFireDelay"
+      ],
+      "description": "SetWeaponSemiAutoFireDelay (0.00 -> 0.75)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "0.00"
+    },
+    {
+      "id": "p2_crit_dmg",
+      "key": "crit_dmg",
+      "extender": "xNVSE 6.4.9 core",
+      "spec_file": "docs/spec-notes/ext-last-core.md",
+      "spec_line": 136,
+      "functions_tested": [
+        "SetWeaponCritDamage",
+        "GetWeaponCritDamage"
+      ],
+      "description": "SetWeaponCritDamage (22.0 -> 77.0)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "22.0"
+    },
+    {
+      "id": "p2_setstagealt",
+      "key": "setstagealt",
+      "extender": "JIP LN 57.30",
+      "spec_file": "docs/spec-notes/jip-scripts-10.md",
+      "spec_line": 25,
+      "functions_tested": [
+        "SetStageAlt",
+        "GetStage",
+        "GetStageDone"
+      ],
+      "description": "SetStageAlt (quest 0x80664 -> stage 20)",
+      "expected_tier": "SAVED",
+      "baseline": "stg=0,done20=0"
+    },
+    {
+      "id": "p2_viewmodel_clip",
+      "key": "viewmodel_clip",
+      "extender": "JohnnyGuitarNVSE 528",
+      "spec_file": "docs/spec-notes/ext-jg7.md",
+      "spec_line": 24,
+      "functions_tested": [
+        "SetViewmodelClipDistance",
+        "GetViewmodelClipDistance"
+      ],
+      "description": "SetViewmodelClipDistance (0.00 -> 12.50)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "0.00"
+    },
+    {
+      "id": "p2_add_new_effect",
+      "key": "add_new_effect",
+      "extender": "JIP LN 57.30",
+      "spec_file": "docs/spec-notes/jip-last-14.md",
+      "spec_line": 19,
+      "functions_tested": [
+        "AddNewEffect",
+        "GetNumEffects"
+      ],
+      "description": "AddNewEffect on Stimpak (4 -> 5 effects)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "n=4"
+    },
+    {
+      "id": "p2_recipe_count",
+      "key": "recipe_count",
+      "extender": "JIP LN 57.30",
+      "spec_file": "docs/spec-notes/ext-lutana.md",
+      "spec_line": 63,
+      "functions_tested": [
+        "SetRecipeInputCount",
+        "GetRecipeInputCount"
+      ],
+      "description": "SetRecipeInputCount (Gecko Steak meat 1 -> 7)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "1"
+    },
+    {
+      "id": "p2_hide_barter",
+      "key": "hide_barter",
+      "extender": "JohnnyGuitarNVSE 528",
+      "spec_file": "docs/spec-notes/ext-jg7.md",
+      "spec_line": 32,
+      "functions_tested": [
+        "HideItemBarterEx",
+        "IsItemBarterHiddenEx"
+      ],
+      "description": "HideItemBarterEx readback via IsItemBarterHiddenEx",
+      "expected_tier": "UNCHANGED",
+      "baseline": "0"
+    },
+    {
+      "id": "p2_combat_disabled",
+      "key": "combat_disabled",
+      "extender": "xNVSE 6.4.9 core",
+      "spec_file": "docs/spec-notes/ext-last-core.md",
+      "spec_line": 175,
+      "functions_tested": [
+        "SetCombatDisabled",
+        "GetCombatDisabled"
+      ],
+      "description": "SetCombatDisabled (DocRef 0 -> 1)",
+      "expected_tier": "CLEARED_ON_LOAD",
+      "baseline": "0"
+    },
+    {
+      "id": "p2_item_unique",
+      "key": "item_unique",
+      "extender": "xNVSE 6.4.9 core",
+      "spec_file": "docs/spec-notes/nvse-stubs-persistent-fall-spread-unique.md",
+      "spec_line": 116,
+      "functions_tested": [
+        "ToggleItemUnique",
+        "IsItemUnique"
+      ],
+      "description": "ToggleItemUnique (10mm Pistol 0 -> 1)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "0"
+    },
+    {
+      "id": "p2_persistent",
+      "key": "persistent",
+      "extender": "xNVSE 6.4.9 core",
+      "spec_file": "docs/spec-notes/nvse-stubs-persistent-fall-spread-unique.md",
+      "spec_line": 116,
+      "functions_tested": [
+        "SetPersistent",
+        "IsPersistent"
+      ],
+      "description": "SetPersistent (placed ref FF001321: 0 -> 1)",
+      "expected_tier": "SAVED",
+      "field": "pers",
+      "baseline": "0"
+    },
+    {
+      "id": "p2_zone_flag",
+      "key": "zone_flag",
+      "extender": "JIP LN 57.30",
+      "spec_file": "docs/spec-notes/ext-lutana.md",
+      "spec_line": 94,
+      "functions_tested": [
+        "SetZoneFlag",
+        "GetZoneFlag",
+        "GetZoneRespawns"
+      ],
+      "description": "SetZoneFlag (Vault11Zone flag 1: 1 -> 0)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "flag1=1,respawns=0"
+    },
+    {
+      "id": "p2_light_radius",
+      "key": "light_radius",
+      "extender": "JIP LN 57.30",
+      "spec_file": "docs/spec-notes/ext-lutana.md",
+      "spec_line": 123,
+      "functions_tested": [
+        "SetRadius",
+        "GetRadius"
+      ],
+      "description": "SetRadius on Light base 0x695BE (200 -> 444)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "200.0"
+    },
+    {
+      "id": "p2_base_faction_rank",
+      "key": "base_faction_rank",
+      "extender": "JIP LN 57.30",
+      "spec_file": "docs/spec-notes/jip-actors-11.md",
+      "spec_line": 75,
+      "functions_tested": [
+        "SetBaseFactionRank",
+        "GetBaseFactionRank"
+      ],
+      "description": "SetBaseFactionRank (DocBase GoodspringsFaction 0 -> 5)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "0"
+    },
+    {
+      "id": "p2_owning_fac_rank",
+      "key": "owning_fac_rank",
+      "extender": "xNVSE 6.4.9 core",
+      "spec_file": "docs/spec-notes/ext-last-core.md",
+      "spec_line": 17,
+      "functions_tested": [
+        "SetOwningFactionRequiredRank",
+        "GetOwningFactionRequiredRank"
+      ],
+      "description": "SetOwningFactionRequiredRank (Door 0x103E61: 0 -> 3)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "0"
+    },
+    {
+      "id": "p2_pkg_target_dist",
+      "key": "pkg_target_dist",
+      "extender": "xNVSE 6.4.9 core",
+      "spec_file": "docs/spec-notes/ext-last-core.md",
+      "spec_line": 18,
+      "functions_tested": [
+        "SetPackageTargetDistance",
+        "GetPackageTargetDistance"
+      ],
+      "description": "SetPackageTargetDistance (PACK 0x105BD2: 420 -> 250)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "420"
+    },
+    {
+      "id": "p2_enable_parent",
+      "key": "enable_parent",
+      "extender": "ShowOffNVSE 184",
+      "spec_file": "docs/spec-notes/ext-showoff.md",
+      "spec_line": 234,
+      "functions_tested": [
+        "SetEnableParent",
+        "GetParentRef"
+      ],
+      "description": "SetEnableParent (placed ref -> Player 00000014)",
+      "expected_tier": "CLEARED_ON_LOAD",
+      "baseline": "00000000"
+    },
+    {
+      "id": "p2_rad_extradata",
+      "key": "rad_extradata",
+      "extender": "ShowOffNVSE 184",
+      "spec_file": "docs/spec-notes/ext-showoff.md",
+      "spec_line": 127,
+      "functions_tested": [
+        "SetRadiationExtraData",
+        "GetRadiationExtraData"
+      ],
+      "description": "SetRadiationExtraData (DocRef 0.00 -> 12.50)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "0.00"
+    },
+    {
+      "id": "p2_actor_base_flags",
+      "key": "actor_base_flags",
+      "extender": "xNVSE 6.4.9 core",
+      "spec_file": "docs/spec-notes/ext-last-core.md",
+      "spec_line": 221,
+      "functions_tested": [
+        "SetActorBaseFlagsLow",
+        "GetActorBaseFlagsLow",
+        "IsEssential"
+      ],
+      "description": "SetActorBaseFlagsLow (DocBase 0 -> 2 Essential)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "low=0,ess=0"
+    },
+    {
+      "id": "p2_showoff_toggles",
+      "key": "showoff_toggles",
+      "extender": "ShowOffNVSE 184",
+      "spec_file": "docs/spec-notes/ext-showoff.md",
+      "spec_line": 226,
+      "functions_tested": [
+        "ToggleQuestMessages",
+        "FreezeAmmoRegen"
+      ],
+      "description": "ToggleQuestMessages (1->0) & FreezeAmmoRegen (0->1)",
+      "expected_tier": "SESSION_ONLY",
+      "baseline": "qmsg=1,frz=0"
+    },
+    {
+      "id": "p2_sup_save_meta",
+      "key": "sup_save_meta",
+      "extender": "SUP NVSE 855",
+      "spec_file": "docs/spec-notes/ext-sup4.md",
+      "spec_line": 26,
+      "functions_tested": [
+        "GetSaveName",
+        "GetSavedSaveSize",
+        "GetLoadedSaveSize"
+      ],
+      "description": "SUP GetSaveName 0/1 & GetSavedSaveSize / GetLoadedSaveSize 0/1",
+      "expected_tier": "OBSERVE_ONLY"
+    }
+  ],
+  "script_runner_lifecycle": {
+    "id": "p2_script_runner_prefixes",
+    "extender": "JIP LN 57.30",
+    "spec_file": "docs/spec-notes/ext-script-runner.md",
+    "spec_line": 39,
+    "functions_tested": [
+      "Script Runner gr_/gn_/ln_/gl_/gx_/zz_"
+    ],
+    "expected_boot1_sequence": [
+      "gr_fired",
+      "ln_fired",
+      "gn_fired",
+      "ln_fired",
+      "gl_fired",
+      "gx_fired"
+    ],
+    "expected_boot2_sequence": [
+      "gr_fired",
+      "ln_fired",
+      "gl_fired",
+      "gx_fired"
+    ]
+  },
+  "mutate_script_lines": [
+    "ref rDocRef = GetFormFromMod \"FalloutNV.esm\" \"104C0F\"",
+    "ref rDocBase = GetFormFromMod \"FalloutNV.esm\" \"104C0C\"",
+    "ref rGun = GetFormFromMod \"FalloutNV.esm\" \"434F\"",
+    "ref rStim = GetFormFromMod \"FalloutNV.esm\" \"15169\"",
+    "ref rRec = GetFormFromMod \"FalloutNV.esm\" \"175AA9\"",
+    "ref rMeat = GetFormFromMod \"FalloutNV.esm\" \"16D5BA\"",
+    "ref rQuest = GetFormFromMod \"FalloutNV.esm\" \"80664\"",
+    "ref rZone = GetFormFromMod \"FalloutNV.esm\" \"E9081\"",
+    "ref rTerm = GetFormFromMod \"FalloutNV.esm\" \"13253C\"",
+    "ref rNote = GetFormFromMod \"FalloutNV.esm\" \"14E6E2\"",
+    "ref rLight = GetFormFromMod \"FalloutNV.esm\" \"695BE\"",
+    "ref rGsFac = GetFormFromMod \"FalloutNV.esm\" \"104C6E\"",
+    "ref rDoor = GetFormFromMod \"FalloutNV.esm\" \"103E61\"",
+    "ref rPkg = GetFormFromMod \"FalloutNV.esm\" \"105BD2\"",
+    "ref rBaseCap = GetFormFromMod \"FalloutNV.esm\" \"F\"",
+    "; Place a non-persistent cap ref in cell & save its ref in a permanent AuxVar so we can re-find it after cold load!",
+    "ref rPlaced = Player.PlaceAtMe rBaseCap 1",
+    "Player.AuxVarSetRef \"w4b_placed_ref\" rPlaced",
+    "; 1-2. AuxVar permanent vs temporary (*)",
+    "Player.AuxVarSetFlt \"w4b_av_perm\" 123.5",
+    "Player.AuxVarSetFlt \"*w4b_av_temp\" 456.5",
+    "; 3-4. RefMap permanent vs temporary (*)",
+    "RefMapArraySetFloat \"w4b_rm_perm\" 321.5 rDocRef",
+    "RefMapArraySetFloat \"*w4b_rm_temp\" 654.5 rDocRef",
+    "; 5-6. AuxStringMapArray permanent vs temporary (*)",
+    "Player.AuxStringMapArraySetFloat \"w4b_asm_perm\" \"k\" 777.5",
+    "Player.AuxStringMapArraySetFloat \"*w4b_asm_temp\" \"k\" 888.5",
+    "; 7. SetArmorConditionPenalty (default 1.0 -> 3.5)",
+    "SetArmorConditionPenalty 3.5",
+    "; 8. SetWeaponSemiAutoFireDelay (default 0.0 -> 0.75)",
+    "SetWeaponSemiAutoFireDelay rGun 0 0.75",
+    "; 9. SetWeaponCritDamage (default 22 -> 77)",
+    "SetWeaponCritDamage 77 rGun",
+    "; 10. SetStageAlt (quest 80664 -> stage 20)",
+    "SetStageAlt rQuest 20",
+    "; 11. SetViewmodelClipDistance (default 0 -> 12.5)",
+    "SetViewmodelClipDistance 12.5",
+    "; 12. AddNewEffect on Stimpak (default 4 -> 5)",
+    "ref rEf0 = GetNthEffectBase rStim 0",
+    "AddNewEffect rStim rEf0 5 10 0 0 1",
+    "; 13. SetRecipeInputCount (Gecko Steak meat default 1 -> 7)",
+    "SetRecipeInputCount rRec rMeat 7",
+    "; 14. HideItemBarterEx on 10mm Pistol",
+    "HideItemBarterEx rGun 1 1",
+    "; 15. SetCombatDisabled on Doc Mitchell (default 0 -> 1)",
+    "rDocRef.SetCombatDisabled 1",
+    "; 16. ToggleItemUnique on 10mm Pistol (default 0 -> 1)",
+    "ToggleItemUnique rGun 1",
+    "; 17. SetPersistent on rPlaced (default 0 -> 1)",
+    "rPlaced.SetPersistent 1",
+    "; 18. SetZoneFlag / SetZoneRespawns on Vault11Zone (0xE9081: flag 1 = NeverResets, default 1 -> 0 so respawns=1)",
+    "SetZoneFlag rZone 1 0",
+    "; 19. SetPasswordNote on terminal 0x13253C -> note 0x14E6E2",
+    "SetPasswordNote rNote rTerm",
+    "; 20. SetRadius on Light 0x695BE (default 200 -> 444)",
+    "SetRadius 444 rLight",
+    "; 21. SetBaseFactionRank on Doc base (0x104C0C, faction 0x104C6E -> rank 5)",
+    "SetBaseFactionRank rGsFac 5 rDocBase",
+    "; 22. SetOwningFactionRequiredRank on Door 0x103E61 (default 0 -> 3)",
+    "rDoor.SetOwningFactionRequiredRank 3",
+    "; 23. SetPackageTargetDistance on Pack 0x105BD2 (default 420 -> 250)",
+    "SetPackageTargetDistance rPkg 250",
+    "; 24. SetEnableParent on rPlaced -> Player",
+    "rPlaced.SetEnableParent Player",
+    "; 25. SetRadiationExtraData on DocRef (default 0 -> 12.5)",
+    "rDocRef.SetRadiationExtraData 12.5",
+    "; 26. SetActorBaseFlagsLow on DocBase (default 0 -> 2 Essential)",
+    "SetActorBaseFlagsLow 2 rDocBase",
+    "; 27. ToggleQuestMessages (default 1 -> 0) & FreezeAmmoRegen (default 0 -> 1)",
+    "ToggleQuestMessages 0",
+    "FreezeAmmoRegen 1",
+    "; 28. SetEventHandler custom event survival across load",
+    "Player.AuxVarSetFlt \"*w4b_evt_hit\" 0",
+    "ref rEvtCb = CompileScript \"nvseprobe_s_hlp_evt.gek\"",
+    "SetEventHandler \"W4BPersistEvt\" rEvtCb",
+    "; Read back BEFORE save!",
+    "Call (CompileScript \"nvseprobe_s_p2_readback.gek\") \"BEFORE\""
+  ],
+  "readback_script_lines": [
+    "ref rDocRef = GetFormFromMod \"FalloutNV.esm\" \"104C0F\"",
+    "ref rDocBase = GetFormFromMod \"FalloutNV.esm\" \"104C0C\"",
+    "ref rGun = GetFormFromMod \"FalloutNV.esm\" \"434F\"",
+    "ref rStim = GetFormFromMod \"FalloutNV.esm\" \"15169\"",
+    "ref rRec = GetFormFromMod \"FalloutNV.esm\" \"175AA9\"",
+    "ref rMeat = GetFormFromMod \"FalloutNV.esm\" \"16D5BA\"",
+    "ref rQuest = GetFormFromMod \"FalloutNV.esm\" \"80664\"",
+    "ref rZone = GetFormFromMod \"FalloutNV.esm\" \"E9081\"",
+    "ref rTerm = GetFormFromMod \"FalloutNV.esm\" \"13253C\"",
+    "ref rLight = GetFormFromMod \"FalloutNV.esm\" \"695BE\"",
+    "ref rGsFac = GetFormFromMod \"FalloutNV.esm\" \"104C6E\"",
+    "ref rDoor = GetFormFromMod \"FalloutNV.esm\" \"103E61\"",
+    "ref rPkg = GetFormFromMod \"FalloutNV.esm\" \"105BD2\"",
+    "ref rPlaced = Player.AuxVarGetRef \"w4b_placed_ref\"",
+    "float vAvP = Player.AuxVarGetFlt \"w4b_av_perm\"",
+    "float vAvT = Player.AuxVarGetFlt \"*w4b_av_temp\"",
+    "float vRmP = RefMapArrayGetFloat \"w4b_rm_perm\" rDocRef",
+    "float vRmT = RefMapArrayGetFloat \"*w4b_rm_temp\" rDocRef",
+    "float vAsmP = Player.AuxStringMapArrayGetFloat \"w4b_asm_perm\" \"k\"",
+    "float vAsmT = Player.AuxStringMapArrayGetFloat \"*w4b_asm_temp\" \"k\"",
+    "float vArmPen = SetArmorConditionPenalty",
+    "float vSemi = GetWeaponSemiAutoFireDelay rGun 0",
+    "float vCrit = GetWeaponCritDamage rGun",
+    "int vStg = GetStage rQuest",
+    "int vStg20 = GetStageDone rQuest 20",
+    "float vClip = GetViewmodelClipDistance",
+    "int vEffN = GetNumEffects rStim",
+    "int vRecC = GetRecipeInputCount rRec rMeat",
+    "int vHide = IsItemBarterHiddenEx rGun",
+    "int vCmbDis = rDocRef.GetCombatDisabled",
+    "int vUniq = IsItemUnique rGun",
+    "int vPers = -1",
+    "ref rPar = 0",
+    "if IsFormValid rPlaced",
+    "  let vPers := rPlaced.IsPersistent",
+    "  let rPar := rPlaced.GetParentRef",
+    "endif",
+    "int vZoneF = GetZoneFlag rZone 1",
+    "int vZoneR = GetZoneRespawns rZone",
+    "ref rPw = GetPasswordNote rTerm",
+    "float vRadL = GetRadius rLight",
+    "int vFacRk = GetBaseFactionRank rGsFac rDocBase",
+    "int vOwnRk = rDoor.GetOwningFactionRequiredRank",
+    "int vPkgD = GetPackageTargetDistance rPkg",
+    "float vRadEx = rDocRef.GetRadiationExtraData",
+    "int vFlagsL = GetActorBaseFlagsLow rDocBase",
+    "int vEss = rDocRef.IsEssential",
+    "int vQMsg = ToggleQuestMessages",
+    "int vFrz = FreezeAmmoRegen",
+    "; Dispatch custom event to check whether SetEventHandler survived!",
+    "Player.AuxVarSetFlt \"*w4b_evt_hit\" 0",
+    "DispatchEvent \"W4BPersistEvt\"",
+    "int vEvt = Player.AuxVarGetFlt \"*w4b_evt_hit\"",
+    "; SUP save/load metadata",
+    "string_var svSavNm = GetSaveName 0",
+    "string_var svLdNm = GetSaveName 1",
+    "int iSavSz0 = GetSavedSaveSize 0",
+    "int iSavSz1 = GetSavedSaveSize 1",
+    "int iLdSz0 = GetLoadedSaveSize 0",
+    "int iLdSz1 = GetLoadedSaveSize 1",
+    "  PrintToConsole \"P2|%z|auxvar|perm=%.1f,temp=%.1f\" svTag vAvP vAvT",
+    "  PrintToConsole \"P2|%z|refmap|perm=%.1f,temp=%.1f\" svTag vRmP vRmT",
+    "  PrintToConsole \"P2|%z|auxstrmap|perm=%.1f,temp=%.1f\" svTag vAsmP vAsmT",
+    "  PrintToConsole \"P2|%z|armor_pen|%.2f\" svTag vArmPen",
+    "  PrintToConsole \"P2|%z|semiauto_delay|%.2f\" svTag vSemi",
+    "  PrintToConsole \"P2|%z|crit_dmg|%.1f\" svTag vCrit",
+    "  PrintToConsole \"P2|%z|setstagealt|stg=%g,done20=%g\" svTag vStg vStg20",
+    "  PrintToConsole \"P2|%z|viewmodel_clip|%.2f\" svTag vClip",
+    "  PrintToConsole \"P2|%z|add_new_effect|n=%g\" svTag vEffN",
+    "  PrintToConsole \"P2|%z|recipe_count|%g\" svTag vRecC",
+    "  PrintToConsole \"P2|%z|hide_barter|%g\" svTag vHide",
+    "  PrintToConsole \"P2|%z|combat_disabled|%g\" svTag vCmbDis",
+    "  PrintToConsole \"P2|%z|item_unique|%g\" svTag vUniq",
+    "  PrintToConsole \"P2|%z|persistent|ref=%i,pers=%g\" svTag rPlaced vPers",
+    "  PrintToConsole \"P2|%z|zone_flag|flag1=%g,respawns=%g\" svTag vZoneF vZoneR",
+    "  PrintToConsole \"P2|%z|password_note|%i\" svTag rPw",
+    "  PrintToConsole \"P2|%z|light_radius|%.1f\" svTag vRadL",
+    "  PrintToConsole \"P2|%z|base_faction_rank|%g\" svTag vFacRk",
+    "  PrintToConsole \"P2|%z|owning_fac_rank|%g\" svTag vOwnRk",
+    "  PrintToConsole \"P2|%z|pkg_target_dist|%g\" svTag vPkgD",
+    "  PrintToConsole \"P2|%z|enable_parent|%i\" svTag rPar",
+    "  PrintToConsole \"P2|%z|rad_extradata|%.2f\" svTag vRadEx",
+    "  PrintToConsole \"P2|%z|actor_base_flags|low=%g,ess=%g\" svTag vFlagsL vEss",
+    "  PrintToConsole \"P2|%z|showoff_toggles|qmsg=%g,frz=%g\" svTag vQMsg vFrz",
+    "  PrintToConsole \"P2|%z|event_handler|hit=%g\" svTag vEvt",
+    "  PrintToConsole \"P2|%z|sup_save_meta|sav=[%z],ld=[%z],savSz=%g/%g,ldSz=%g/%g\" svTag svSavNm svLdNm iSavSz0 iSavSz1 iLdSz0 iLdSz1"
+  ]
+}
