@@ -12545,6 +12545,25 @@ forbid = [
   { re = 'hud: sneak \[(DETECTED|CAUTION)\]', label = "Boone alone sets neither [DETECTED] nor [CAUTION]" },
 ]
 
+# ------------------------------------------------------------------ enemies left behind (issue #3390)
+
+[[scenario]]
+name = "hud-sneak-left-behind"
+source = "issue #3390 (docs/design/alert.md §2): an enemy whose pair with the player is measured no more (its cell unloaded) loses the player: [DANGER] goes, and it goes Lost and then Normal on the timers"
+note = "a gecko (NVCrGecko, the first created reference, 0xFF000000) placed at the player in Goodsprings at 3 s, put 600 units away and set on the player at 6 s, the player sneaking from 7 s; at 10 s the player is moved to the XMarker in Boone's room (0x000CAEB6, NovacBoonesRoom), where no enemy is. The gecko: hidden 1 s later, Lost 15 s after it last detected the player, Normal 30 s after it was hidden. Not run yet"
+areas = ["hud", "detection", "combat"]
+paths = ["crates/fnv-game/src/awareness.rs", "engine/nvforever/src/detection.rs", "engine/nvf-play/src/hud.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:call:player:PlaceAtMe:NVCrGecko:1,5:moveto:0xFF000000:player:0:600:0,6:combat:0xFF000000:player,10:moveto:player:0x000CAEB6", NVF_PLAY_TEST_CONTROL = "7:sneak" }
+args = ["--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 70
+order = [[
+  { re = 'alert: .*FF000000 (Normal|Alert) → Combat', label = "the gecko fights the player" },
+  { re = 'hud: sneak \[DANGER\]', label = "in the fight the sneak word is [DANGER]" },
+  { re = 'hud: sneak \[(HIDDEN|DETECTED)\]', label = "left behind, it is [DANGER] no more" },
+  { re = 'alert: .*FF000000 Combat → Lost', label = "the gecko loses the player" },
+  { re = 'alert: .*FF000000 Lost → Normal', label = "and gives up" },
+]]
+
 # ------------------------------------------------------------------ the enemy bar's show rule (issue #935)
 
 [[scenario]]
