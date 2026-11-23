@@ -732,7 +732,11 @@ impl Game<'_> {
     /// functions at the current game time. An enemy of a ghost does not detect it
     /// ([`Game::ghost_hidden_from`]): the value is held at the top of the Hidden band
     /// [engineering choice: the note says only that it is not detected], sight
-    /// (GetLineOfSight) as measured.
+    /// (GetLineOfSight) as measured. So is an unconscious detector's (SetUnconscious),
+    /// which detects no one: "Actors that are unconscious will not use AI behavior"
+    /// [documented: GECK wiki SetUnconscious; hypothesis: detecting is part of it; check
+    /// 282]. Old World Blues' X-13 test needs it: its script watches GetDetected on the
+    /// robots the player has shut down too (#3479).
     pub fn detect(&mut self, settings: &Settings, detector: FormId, target: FormId, s: &Situation) -> (Detection, Option<Band>) {
         let p = self.detection_pair(detector, target);
         let mut d = settings.evaluate(&p, s);
@@ -743,7 +747,7 @@ impl Game<'_> {
             d.value = self.forced_detection(target, d.value);
             d.band = if d.value > 0.0 { Band::Detected } else if d.value > settings.noticed_min { Band::Noticed } else { Band::Hidden };
         }
-        if self.ghost_hidden_from(detector, target) {
+        if self.extra.get(&detector).is_some_and(|e| e.unconscious) || self.ghost_hidden_from(detector, target) {
             d.value = d.value.min(settings.noticed_min);
             d.band = Band::Hidden;
         }

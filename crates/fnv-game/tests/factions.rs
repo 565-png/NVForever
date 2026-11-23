@@ -1511,6 +1511,23 @@ fn nobody_fights_or_detects_a_ghost_and_a_ghosted_player_is_still_hurt() {
     assert_ne!(det.band, Band::Hidden, "{det:?}");
 }
 
+/// #3479: a robot the player shut down (SetUnconscious 1) detects no one, as Old World
+/// Blues' X-13 test needs; the sight itself stays measured.
+#[test]
+fn an_unconscious_actor_detects_no_one() {
+    let f = fixture();
+    let mut g = game(&f);
+    let (own, player) = (FormId(OWN_REF), FormId::PLAYER_REF);
+    let s = fnv_game::detection::Settings::default();
+    let seen = fnv_game::detection::Situation { distance: 100.0, line_of_sight: true, in_view: true, light: 100.0, ..Default::default() };
+    assert_eq!(g.detect(&s, own, player, &seen).0.band, Band::Detected);
+    g.extra.entry(own).or_default().unconscious = true;
+    let det = g.detect(&s, own, player, &seen).0;
+    assert_eq!((det.band, det.seen), (Band::Hidden, true), "{det:?}");
+    g.extra.entry(own).or_default().unconscious = false;
+    assert_eq!(g.detect(&s, own, player, &seen).0.band, Band::Detected);
+}
+
 #[test]
 fn a_mine_spares_its_owners_side() {
     let f = fixture();
