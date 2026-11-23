@@ -729,10 +729,63 @@ fn format_codes() {
 #[test]
 fn big_numbers_in_g_are_scientific() {
     // [observed: probe format1 in the game: "1e+06", "1.230e+05", "0.5", "123.457",
-    // "1.23457E+06", "1.2e+02"].
-    let h = run("string_var s\nstring_var t\nbegin GameMode\nlet s := Sv_Construct \"%g %.3e\", 1000000, 123000\nlet t := Sv_Construct \"%g|%g|%G|%.2g|%g\", 0.5, 123.456789, 1234567, 123.456, 100000\nend");
+    // "1.23457E+06", "1.2e+02"; clean-room probe core_03_format_bare_e_and_E:
+    // "%.3e|%.3E|%g" -> "1.230e+05|1.230E+05|123.457", "[%e][%E]" -> "[][]"].
+    let h = run("string_var s\nstring_var t\nstring_var u\nstring_var v\nbegin GameMode\nlet s := Sv_Construct \"%g %.3e\", 1000000, 123000\nlet t := Sv_Construct \"%g|%g|%G|%.2g|%g\", 0.5, 123.456789, 1234567, 123.456, 100000\nlet u := Sv_Construct \"%.3e|%.3E|%g\", 123000, 123000, 123.456789\nlet v := Sv_Construct \"[%e][%E]\"\nend");
     assert_eq!(h.text(1), "1e+06 1.230e+05");
     assert_eq!(h.text(2), "0.5|123.457|1.23457E+06|1.2e+02|100000");
+    assert_eq!(h.text(3), "1.230e+05|1.230E+05|123.457");
+    assert_eq!(h.text(4), "[][]");
+}
+
+#[test]
+fn eval_truthiness_for_arrays_and_strings() {
+    // [observed: core_05_eval_empty_array_and_string_truth (1,0,1,1) and
+    // core_24_string_var_destruct_zero (eval=1->0,len=5->-1)]: initialized empty
+    // arrays and initialized empty string_vars evaluate truthy (1); ar_Null and
+    // uninitialized or sv_Destruct-ed string_vars evaluate 0. Standalone `(eval ...)`
+    // coerces arrays (including array ID >= 2) and strings to 1/0 while preserving
+    // numeric passthrough (`eval 5 == 5`, #2275).
+    let h = run(
+        "array_var aEmp\narray_var aTwo\narray_var aNul\nstring_var sUninit\nstring_var sEmp\nstring_var sNon\n\
+         int bAE\nint bAN\nint bSU\nint bSE\nint bSN\nint bBefore\nint bAfter\nint bNotEmp\nint bNotUninit\nint bAnd\n\
+         int bArrTwo\nint bArrNull\nint bNum\n\
+         begin GameMode\n\
+         let aEmp := ar_Construct \"array\"\n\
+         let aTwo := ar_Construct \"array\"\n\
+         let aNul := ar_Null\n\
+         let sEmp := \"\"\n\
+         let sNon := \"x\"\n\
+         if eval aEmp\n  let bAE := 1\nendif\n\
+         if eval aNul\n  let bAN := 1\nendif\n\
+         if eval sUninit\n  let bSU := 1\nendif\n\
+         if eval sEmp\n  let bSE := 1\nendif\n\
+         if eval sNon\n  let bSN := 1\nendif\n\
+         let bBefore := eval sNon\n\
+         sv_Destruct sNon\n\
+         let bAfter := eval sNon\n\
+         let bNotEmp := !sEmp\n\
+         let bNotUninit := !sUninit\n\
+         let bAnd := (sEmp && 5) + (sUninit && 5)\n\
+         let bArrTwo := eval aTwo\n\
+         let bArrNull := eval aNul\n\
+         let bNum := eval 5\n\
+         end",
+    );
+    let get = |k: u16| h.0.get(&k).copied().unwrap_or(Value::ZERO);
+    assert_eq!(get(7), Value::Num(1.0), "initialized empty array is truthy");
+    assert_eq!(get(8), Value::Num(0.0), "ar_Null is falsy");
+    assert_eq!(get(9), Value::Num(0.0), "uninitialized string_var is falsy");
+    assert_eq!(get(10), Value::Num(1.0), "initialized empty string_var is truthy");
+    assert_eq!(get(11), Value::Num(1.0), "non-empty string_var is truthy");
+    assert_eq!(get(12), Value::Num(1.0), "eval sNon before sv_Destruct is 1");
+    assert_eq!(get(13), Value::Num(0.0), "eval sNon after sv_Destruct is 0");
+    assert_eq!(get(14), Value::Num(0.0), "!sEmp is 0");
+    assert_eq!(get(15), Value::Num(1.0), "!sUninit is 1");
+    assert_eq!(get(16), Value::Num(5.0), "sEmp && 5 == 5, sUninit && 5 == 0");
+    assert_eq!(get(17), Value::Num(1.0), "eval aTwo (array ID >= 2) coerces to 1, not raw array ID");
+    assert_eq!(get(18), Value::Num(0.0), "eval ar_Null coerces to 0");
+    assert_eq!(get(19), Value::Num(5.0), "eval 5 preserves numeric passthrough (#2275)");
 }
 
 #[test]

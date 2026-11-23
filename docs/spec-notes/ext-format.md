@@ -41,7 +41,7 @@ from a cited document or from compiling our own test scripts with xNVSE,
 |---|---|
 | `%X.Yf` | a number at least X characters wide with at most Y decimals: `%.2f` two decimals, `%.0f` none, `%5.0f` padded to 5 |
 | `%g`, `%G` | the C library's: 6 significant digits (`%.Yg` Y), scientific below 1e-4 or from 10^Y, trailing zeros dropped (0.5 → `0.5`, 123.456789 → `123.457`, 1000000 → `1e+06`, `%G` 1234567 → `1.23457E+06`) [observed: probe format1 (#1006), sv_Construct in the game; the wiki's "as an integer; 1E+006" differs, hypothesis: the older runtime's] |
-| `%.3e`, `%.3E` | scientific form with 3 decimals, a two-digit exponent (123000 → `1.230e+05`) [observed: format1; the wiki's `1.23E+005` differs, hypothesis: the older runtime's]; `%e` without a precision writes nothing [observed: format1], `%E` likewise [hypothesis: by analogy, not probed] |
+| `%.3e`, `%.3E` | scientific form with 3 decimals, a two-digit exponent (123000 → `1.230e+05`, `1.230E+05`) [observed: format1; Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters, clean-room script probe `core_03_format_bare_e_and_E` (`sv_Construct`: `1.230e+05\|1.230E+05\|123.457\|[][]`); no DLL or source consulted; the wiki's `1.23E+005` differs, hypothesis: the older runtime's]; bare `%e` and bare `%E` without a precision write nothing [observed: format1; `core_03_format_bare_e_and_E`] |
 | `%%` | a percent sign |
 | Player Character String Codes | the player's name, race, sex or pronouns: see §6 |
 | `sUActn…` | the key bound to a control, in messages, terminals, dialogue and notes; `&-` before it adds " button", `p&-` adds "Press … button" (`p&-sUActnForward` → "Press W button") [documented: sUActn, pasted by the owner from geckwiki.com, 2026-10-25] |

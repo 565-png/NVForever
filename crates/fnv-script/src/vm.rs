@@ -492,14 +492,20 @@ impl<'t, 'h> Vm<'t, 'h> {
                 // A failing extended condition counts as false and the script goes on
                 // [observed: probe loops/03, reading past a shrunk list in `if eval` does not
                 // stop the original's script]; strict runs stop.
-                Token::X { e } => match self.xeval(e).and_then(|v| v.value()) {
-                    Ok(v) => v,
-                    Err(err @ (VmError::Type(_) | VmError::MissingElement(_) | VmError::NotBuilt(_) | VmError::Expression(_) | VmError::Host(_))) if !self.opts.strict => {
-                        self.skip(&err);
-                        Value::ZERO
+                Token::X { e } => {
+                    let evaluated = self.xeval_truthy(e).and_then(|(v, truthy)| match v {
+                        XVal::Str(_) => Ok(Value::bool(truthy)),
+                        other => other.value(),
+                    });
+                    match evaluated {
+                        Ok(v) => v,
+                        Err(err @ (VmError::Type(_) | VmError::MissingElement(_) | VmError::NotBuilt(_) | VmError::Expression(_) | VmError::Host(_))) if !self.opts.strict => {
+                            self.skip(&err);
+                            Value::ZERO
+                        }
+                        Err(err) => return Err(err),
                     }
-                    Err(err) => return Err(err),
-                },
+                }
                 Token::Op { op } => {
                     let b = stack.pop().ok_or_else(|| VmError::Expression(format!("{} without operands", op.symbol())))?;
                     if *op == Op::Neg {
@@ -643,7 +649,7 @@ impl<'t, 'h> Vm<'t, 'h> {
                 // observed, extender-core-tasks.md B4].
                 Stmt::While { cond, body } => loop {
                     self.step()?;
-                    let go = self.xeval(cond)?.truthy();
+                    let go = self.xeval_truthy(cond)?.1;
                     if self.host.take_return() {
                         return Ok(Flow::Return);
                     }
@@ -1492,6 +1498,31 @@ impl Vm<'_, '_> {
         }
     }
 
+    /// Evaluate an extended expression together with its truthiness.
+    ///
+    /// [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base
+    /// masters, clean-room script probes `core_05_eval_empty_array_and_string_truth`
+    /// (`1,0,1,1`) and `core_24_string_var_destruct_zero` (`eval=1->0,len=5->-1`); no DLL
+    /// or source consulted]: both an initialised empty array and an initialised empty
+    /// `string_var` (`""`) evaluate truthy (`1`); only `ar_Null` and an uninitialised or
+    /// `sv_Destruct`-ed `string_var` evaluate `0`.
+    fn xeval_truthy(&mut self, e: &XExpr) -> Result<(XVal, bool), VmError> {
+        if let XExpr::Var { var, .. } = e {
+            if self.host.var_kind(var) == VarKind::String {
+                let id = self.host.get_var(var).map_err(VmError::Host)?.num() as u32;
+                let text = self.store()?.text(id).map(str::to_string);
+                let valid = id != 0 && text.is_some();
+                return Ok((XVal::Str(text.unwrap_or_default()), valid));
+            }
+        }
+        let v = self.xeval(e)?;
+        let truthy = match &v {
+            XVal::Str(_) => true,
+            other => other.truthy(),
+        };
+        Ok((v, truthy))
+    }
+
     /// Evaluate an extended expression (docs/spec-notes/ext-syntax.md, ext-values.md).
     /// Arrays and the extender's own functions are tasks B3 and D, and stop the statement
     /// with `NotBuilt`.
@@ -1514,11 +1545,14 @@ impl Vm<'_, '_> {
             }
             XExpr::Lambda { .. } => self.host.make_lambda(e).map_err(VmError::Host)?,
             XExpr::Call { call } => self.xcall(call)?,
+            XExpr::Unary { op: XUnary::Not, e } => {
+                XVal::Num(if self.xeval_truthy(e)?.1 { 0.0 } else { 1.0 })
+            }
             XExpr::Unary { op, e } => {
                 let v = self.xeval(e)?;
                 match op {
                     XUnary::Neg => XVal::Num(-v.num()?),
-                    XUnary::Not => XVal::Num(if v.truthy() { 0.0 } else { 1.0 }),
+                    XUnary::Not => unreachable!(),
                     XUnary::Stringize => XVal::Str(self.text_of(&v)?),
                     XUnary::Numericize => match v {
                         XVal::Str(s) => XVal::Num(text_number(&s)),
@@ -1546,16 +1580,17 @@ impl Vm<'_, '_> {
             // and evaluate the right one only when it decides [documented: NVSE
             // Expressions; Eval (short-circuit)].
             XExpr::Binary { op: XOp::Or, l, r } => {
-                let a = self.xeval(l)?;
-                let d = if a.truthy() { a } else { self.xeval(r)? };
-                XVal::Num(as_operand(&d))
+                let (a, at) = self.xeval_truthy(l)?;
+                let (d, dt) = if at { (a, at) } else { self.xeval_truthy(r)? };
+                XVal::Num(as_operand(&d, dt))
             }
             XExpr::Binary { op: XOp::And, l, r } => {
-                let a = self.xeval(l)?;
-                if !a.truthy() {
+                let (_, at) = self.xeval_truthy(l)?;
+                if !at {
                     XVal::Num(0.0)
                 } else {
-                    XVal::Num(as_operand(&self.xeval(r)?))
+                    let (b, bt) = self.xeval_truthy(r)?;
+                    XVal::Num(as_operand(&b, bt))
                 }
             }
             XExpr::Binary { op: XOp::Subscript, l, r } => {
@@ -3127,12 +3162,24 @@ impl Vm<'_, '_> {
             }
         };
         match name.to_ascii_lowercase().as_str() {
-            // `(eval Expression)` inside an expression: the expression's value [documented:
-            // Eval, an NVSE-aware command taking an expression; observed: the owner's Blue
-            // Moon list's Script Runner files write `AuxVarSetFlt "*x" (eval
-            // GetINIFloat_Cached "s:k" "f.ini" 1) 5`, and their statements were skipped as
-            // not built, #2275].
-            "eval" => arg(self, 0),
+            // `(eval Expression)` inside an expression: coerces string and array results
+            // to `1.0`/`0.0` via `xeval_truthy` [observed: core_24_string_var_destruct_zero
+            // (`int b1 = eval s` -> 1 before / 0 after `sv_Destruct`),
+            // core_05_eval_empty_array_and_string_truth; hypothesis for standalone
+            // `(eval <array_var>)` and `(eval <string_literal>)`], while passing numeric
+            // and ref values through unchanged [design: preserves `#2275`, where Blue
+            // Moon's Script Runner files write `AuxVarSetFlt "*x" (eval
+            // GetINIFloat_Cached "s:k" "f.ini" 1) 5`].
+            "eval" => {
+                let Some(a) = c.args.first() else {
+                    return Err(VmError::Expression(format!("{name} without its argument")));
+                };
+                let (v, truthy) = self.xeval_truthy(a)?;
+                Ok(match v {
+                    XVal::Str(_) | XVal::Array(_) => XVal::Num(if truthy { 1.0 } else { 0.0 }),
+                    other => other,
+                })
+            }
             // [documented: ToString; ToNumber] (the hex and reportError arguments of
             // ToNumber: D1).
             "tostring" => {
@@ -3518,11 +3565,11 @@ fn assign_op(op: XAssign) -> XOp {
 
 /// A deciding operand of `&&`/`||` as their value: a number as itself, anything else as
 /// 1 or 0 [documented: NVSE Expressions].
-fn as_operand(v: &XVal) -> f64 {
+fn as_operand(v: &XVal, truthy: bool) -> f64 {
     match v {
         XVal::Num(x) => *x,
-        other => {
-            if other.truthy() {
+        _ => {
+            if truthy {
                 1.0
             } else {
                 0.0

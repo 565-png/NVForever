@@ -1109,14 +1109,15 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // enter combat (though others may still attack them, and UseWeapon / Use Weapon
         // packages still work); reset on every save load [documented: GECK wiki
         // SetCombatDisabled]. Returns 0 either way [observed: gaps2]; GetCombatDisabled
-        // reads it [observed: gaps3].
+        // reads it [observed: gaps3]. Enabling SetCombatDisabled 1 on an actor already
+        // in combat does not immediately stop its active combat [observed: Fallout: New
+        // Vegas 1.4.0.525 + xNVSE 6.4.9, clean-room script probe
+        // core_20_set_combat_disabled_stops_combat: StartCombat -> IsInCombat 1 ->
+        // SetCombatDisabled 1 -> GetCombatDisabled 1, IsInCombat 1].
         "setcombatdisabled" => {
             if let Some(r) = subject {
                 if num(args, 0, 0.0) != 0.0 {
                     g.gaps.combat_disabled.insert(r);
-                    if r != FormId::PLAYER_REF {
-                        g.stop_combat(r);
-                    }
                 } else {
                     g.gaps.combat_disabled.remove(&r);
                 }

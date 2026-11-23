@@ -118,13 +118,18 @@ these paths (player and NPC melee, player and NPC projectiles) is inferred from
 the documented base-form change, not observed.
 
 [documented: `schemas/fnv/objects.json`, WEAP CRDT] The accepted data model holds
-critical damage in an unsigned 16-bit field. [design] Preserve the accepted setter's
-numeric conversion and source readback; combat consumes the numeric override in
-its existing unsigned 32-bit damage domain (fractional values truncate and values
-outside that domain saturate). [hypothesis] Native fractional, negative,
-out-of-range and nonnumeric conversion needs a game probe. These cases are not
-qualified for native parity. The accepted generic setter's explicit invalid
-weapon-argument fallback remains unchanged pending behavioral evidence.
+critical damage in an unsigned 16-bit field. Negative integers wrap modulo 65536 into that
+unsigned 16-bit field [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10
+official base masters, clean-room script probe `core_16_set_weapon_crit_damage_edge`
+(`GetWeaponCritDamage`/`SetWeaponCritDamage`/`TempCloneForm` on `Weap10mmPistol`: initial
+`22.0`, after `SetWeaponCritDamage 77` a `TempCloneForm` clone read `77.0`, and
+`SetWeaponCritDamage -5` read back `65531.0`); no DLL or source consulted]. [design]
+`SetWeaponCritDamage` stores finite numeric inputs truncated toward zero and wrapped into
+`u16` (`0..=65535`, non-finite as `0`) so both script readback and combat consume the same
+unsigned 16-bit value. [hypothesis] Fractional and non-numeric conversion (beyond
+truncation toward zero) and values above `65535` remain uncaptured. The accepted generic
+setter's explicit invalid weapon-argument fallback remains unchanged pending behavioral
+evidence.
 
 [hypothesis] The spelling `SetCritDam` is not established by the consulted public
 function documentation or accepted catalogue. Keep its registration open pending
@@ -133,10 +138,10 @@ encoding. This note does not import FOSE opcode numbers into New Vegas.
 
 [design] Overrides retain this module's existing session lifetime: save/load
 resets them, and a weapon clone without its own override reads its source
-weapon's. [hypothesis] Whether the original saves the change, and whether a
-temporary clone inherits it, need separate
-captures. Core source execution, engine hit calculation, native captures and real
-installed-mod acceptance are separate validation states.
+weapon's, matching the observed `TempCloneForm` inheritance (`77.0`) [observed:
+`core_16_set_weapon_crit_damage_edge`]. [hypothesis] Whether the original saves the change
+needs a separate capture. Core source execution, engine hit calculation, native captures
+and real installed-mod acceptance are separate validation states.
 
 ## 8. Player swimming and Hardcore achievement eligibility
 
@@ -154,8 +159,12 @@ always-Hardcore eligibility. [design] It sets the existing saved
 `PlayerState::hardcore_was_off` field, consumed by `IsAlwaysHardcore`; repeated calls
 are idempotent. The eligibility state survives a serialized snapshot and cannot be
 restored by calling `SetHardcore 1` (the documented "permanently").
+[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters,
+clean-room script probe `core_17_disable_hardcore_tracking_ret`
+(`DisableHardcoreTracking`/`IsAlwaysHardcore`): `IsAlwaysHardcore` `1 -> 0` and
+`DisableHardcoreTracking` returned `0` (`1,0,0`); no DLL or source consulted].
 [hypothesis] It does not turn off Hardcore mode or toggle needs accumulation; the
-documentation describes only the eligibility flag. It returns 0.
+documentation describes only the eligibility flag.
 This is separate from `ToggleHardcoreTracking` and `GetHardcoreTracking`, whose
 existing needs-tracking switch is unchanged.
 
@@ -172,10 +181,14 @@ a combat-disabled actor never enters combat with other actors (though others may
 still attack it, and `UseWeapon` / `Use Weapon` packages are unaffected), and the
 state resets on every saved-game load (kept out of both `GameSnapshot` and
 `Game::Session`). `SetCombatDisabled` returns 0 [observed: gaps2] and
-`GetCombatDisabled` reads the flag [observed: gaps3]. [hypothesis] Enabling
-`SetCombatDisabled 1` on an actor already in combat immediately stops its active
-combat (`Game::stop_combat`) and suppresses ally/provocation alarms (`awareness.rs`,
-`combat_group.rs`, `provocation.rs`).
+`GetCombatDisabled` reads the flag [observed: gaps3]. Enabling `SetCombatDisabled 1` on an
+actor already in combat leaves active combat running (`IsInCombat == 1`) rather than
+immediately terminating it [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the
+10 official base masters, clean-room script probe `core_20_set_combat_disabled_stops_combat`
+(`StartCombat` -> `IsInCombat 1` -> `SetCombatDisabled 1` -> `GetCombatDisabled 1`,
+`IsInCombat 1`: `1,1,1`); no DLL or source consulted]. [hypothesis] While enabled it
+suppresses new combat entry and ally/provocation alarms (`awareness.rs`, `combat_group.rs`,
+`provocation.rs`).
 
 ## 10. Live `SetActorBaseFlagsLow` / `SetActorBaseFlagsHigh` consumers (`actor_values.rs`)
 
