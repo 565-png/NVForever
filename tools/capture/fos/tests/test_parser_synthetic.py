@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """Pure-synthetic offline unit test suite for `tools/capture/fos/`.
 
-Constructs minimal `FO3SAVEGAME` buffers and minimal TES4/FNV ESMs entirely in
-memory or `tempfile.TemporaryDirectory()`. Requires ZERO game files, ZERO `.fos`
+Constructs minimal `FO3SAVEGAME` buffers entirely in memory or
+`tempfile.TemporaryDirectory()`. Requires ZERO game files, ZERO `.fos`
 fixtures, ZERO `.esm`/`.esp` assets, and ZERO third-party dependencies.
 """
 
 from __future__ import annotations
 
+import hashlib
 import io
 import os
 import re
-import stat
 import struct
 import sys
 import tempfile
@@ -691,7 +691,7 @@ class TestGlobalsAndChangedForms(unittest.TestCase):
 
 class TestCampaignsSchemaAndHygiene(unittest.TestCase):
     def test_campaign_schema_and_clean_room_hygiene(self) -> None:
-        self.assertGreaterEqual(len(fos_campaigns.ALL_CAMPAIGNS), 18)
+        self.assertEqual(len(fos_campaigns.ALL_CAMPAIGNS), 16)
         self.assertEqual(len(fos_campaigns.ALL_CAMPAIGNS), len(fos_campaigns.CAMPAIGNS_BY_NAME))
         seen_steps: set[str] = set()
         for camp in fos_campaigns.ALL_CAMPAIGNS:
@@ -704,238 +704,172 @@ class TestCampaignsSchemaAndHygiene(unittest.TestCase):
                 for cmd in step.commands:
                     cmd.encode("ascii")
                     self.assertNotRegex(cmd, r"[A-Za-z]:\\")
+                    self.assertNotIn("WriteStringToFile", cmd)
+                    self.assertNotIn("fos_probe_r3.esp", cmd)
 
         self.assertEqual(fos_campaigns.COVERAGE_SUMMARY["total_converter_keys"], 87)
         self.assertEqual(fos_campaigns.COVERAGE_SUMMARY["unresolved_hypothesis_keys"], 0)
+        self.assertEqual(fos_campaigns.COVERAGE_SUMMARY["vanilla_campaigns"], 16)
+        self.assertEqual(fos_campaigns.COVERAGE_SUMMARY["verify_assertions_vanilla"], 61)
+        self.assertEqual(fos_campaigns.COVERAGE_SUMMARY["verify_assertions_optional_geck"], 7)
         self.assertEqual(fos_campaigns.COVERAGE_SUMMARY["verify_assertions"], 68)
 
 
-class TestHarnessBackupEspAndStaging(unittest.TestCase):
-    def test_patch_ini_updates_adds_and_preserves(self) -> None:
-        orig = "[General]\r\n; keep comment\r\nSLocalSavePath=Saves\\\r\nKeepMe=1\r\n"
-        patched = fos_harness.patch_ini(
-            orig, "General", {"SLocalSavePath": "Saves\\fosprobe\\", "bAllowConsole": "1"}
-        )
-        self.assertIn("; keep comment", patched)
-        self.assertIn("KeepMe=1", patched)
-        self.assertIn("SLocalSavePath=Saves\\fosprobe\\", patched)
-        self.assertIn("bAllowConsole=1", patched)
+def _snapshot_tree(root: Path) -> dict[str, str]:
+    """Return `{rel_posix: sha256_or_DIR}` for every entry under `root`."""
+    snap: dict[str, str] = {}
+    for p in sorted(root.rglob("*")):
+        rel = p.relative_to(root).as_posix()
+        if p.is_dir():
+            snap[rel] = "DIR"
+        else:
+            snap[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
+    return snap
 
-        patched2 = fos_harness.patch_ini(patched, "Display", {"bFull Screen": "0"})
-        self.assertIn("[Display]\r\nbFull Screen=0\r\n", patched2)
 
-    def test_file_backup_guard_restores_bytes_mode_and_removes_temp_files(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            tdp = Path(td)
-            ini = tdp / "Fallout.ini"
-            prefs = tdp / "FalloutPrefs.ini"
-            custom = tdp / "FalloutCustom.ini"
-            orig_ini = b"[General]\r\nSLocalSavePath=Saves\\\r\n"
-            orig_prefs = b"[Display]\r\nbFull Screen=1\r\n"
-            ini.write_bytes(orig_ini)
-            prefs.write_bytes(orig_prefs)
-            os.chmod(ini, stat.S_IREAD)
-            orig_ini_hash = fos_harness.sha256_file(ini)
-            orig_prefs_hash = fos_harness.sha256_file(prefs)
-
-            with self.assertRaises(RuntimeError):
-                with fos_harness.FileBackupGuard([ini, prefs, custom]):
-                    ini.write_bytes(b"MODIFIED")
-                    prefs.write_bytes(b"MODIFIED")
-                    custom.write_bytes(b"TEMP")
-                    raise RuntimeError("simulated crash")
-
-            self.assertEqual(ini.read_bytes(), orig_ini)
-            self.assertEqual(fos_harness.sha256_file(ini), orig_ini_hash)
-            self.assertEqual(prefs.read_bytes(), orig_prefs)
-            self.assertEqual(fos_harness.sha256_file(prefs), orig_prefs_hash)
-            self.assertFalse(custom.exists())
-            # Make writable so TemporaryDirectory cleanup succeeds on Windows
-            os.chmod(ini, stat.S_IWRITE | stat.S_IREAD)
+class TestHarnessReadOnlyStagingAndCollect(unittest.TestCase):
+    def test_no_synthetic_esp_builder_or_ini_rewriter_present(self) -> None:
+        self.assertFalse(hasattr(fos_harness, "build_synthetic_probe_esp"))
+        self.assertFalse(hasattr(fos_harness, "patch_ini"))
+        self.assertFalse(hasattr(fos_harness, "FileBackupGuard"))
 
     def test_collision_guard_refuses_when_running(self) -> None:
         fos_harness.check_no_running_fnv(is_running=lambda: False)
         with self.assertRaises(RuntimeError):
             fos_harness.check_no_running_fnv(is_running=lambda: True, wait_seconds=0.0)
 
-    def test_synthetic_esp_builder_and_dry_run_end_to_end(self) -> None:
-        # Build a tiny synthetic FalloutNV.esm with only the 7 template records.
-        def mk_sub(sig: bytes, data: bytes) -> bytes:
-            return fos_harness._subrec(sig, data)
-
-        def mk_rec(sig: bytes, fid: int, subs: list[tuple[bytes, bytes]]) -> bytes:
-            return fos_harness._record(sig, fid, b"".join(mk_sub(s, d) for s, d in subs))
-
-        tes4 = mk_rec(b"TES4", 0, [(b"HEDR", struct.pack("<fII", 1.34, 7, 0x800))])
-        ligh = mk_rec(b"LIGH", 0x00177ADD, [(b"EDID", b"TplLigh\x00")])
-        armo = mk_rec(
-            b"ARMO",
-            0x00020423,
-            [(b"EDID", b"TplArmo\x00"), (b"FULL", b"Leather\x00"), (b"BMDT", struct.pack("<IB3x", 4, 0))],
-        )
-        ench = mk_rec(
-            b"ENCH",
-            0x001673BF,
-            [(b"EDID", b"TplEnch\x00"), (b"FULL", b"Ench\x00"), (b"ENIT", struct.pack("<IIII", 2, 0, 0, 0))],
-        )
-        weap1 = mk_rec(b"WEAP", 0x000E3778, [(b"EDID", b"Tpl9mm\x00"), (b"FULL", b"9mm\x00")])
-        weap2 = mk_rec(b"WEAP", 0x00162C92, [(b"EDID", b"TplKnife\x00"), (b"FULL", b"Knife\x00")])
-        cell = mk_rec(b"CELL", 0x00103DF9, [(b"EDID", b"GSDocMitchellHouse\x00")])
-        refr = mk_rec(
-            b"REFR",
-            0x001059AE,
-            [(b"EDID", b"TplPlunger\x00"), (b"DATA", struct.pack("<6f", 10.0, 20.0, 30.0, 0.0, 0.0, 0.0))],
-        )
-        esm_bytes = (
-            tes4
-            + fos_harness._grup(b"LIGH", 0, ligh)
-            + fos_harness._grup(b"ARMO", 0, armo)
-            + fos_harness._grup(b"ENCH", 0, ench)
-            + fos_harness._grup(b"WEAP", 0, weap1 + weap2)
-            + fos_harness._grup(b"CELL", 0, cell + refr)
-        )
-
+    def test_stage_collect_and_dry_run_never_write_to_game_or_ini_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             tdp = Path(td)
             gdir = tdp / "game"
             idir = tdp / "ini"
-            ldir = tdp / "local"
-            odir = tdp / "out"
-            (gdir / "Data").mkdir(parents=True)
-            idir.mkdir()
-            ldir.mkdir()
+            sdir = idir / "Saves" / "fosprobe"
+            stage_dir = tdp / "out_stage"
+            collect_dir = tdp / "out_collect"
+            dry_dir = tdp / "out_dry"
 
-            esm_path = gdir / "Data" / "FalloutNV.esm"
-            esm_path.write_bytes(esm_bytes)
+            # Populate simulated game folder + Documents\My Games\FalloutNV tree
+            (gdir / "Data" / "NVSE" / "user_defined_functions").mkdir(parents=True)
+            (gdir / "Data" / "NVSE" / "Plugins" / "Scripts").mkdir(parents=True)
+            (gdir / "nvse_loader.exe").write_bytes(b"MZ-stub")
+            (gdir / "FalloutNV.exe").write_bytes(b"MZ-stub")
+            (gdir / "Data" / "FalloutNV.esm").write_bytes(b"TES4-stub")
+            (gdir / "Data" / "NVSE" / "user_defined_functions" / "s_user_mod.gek").write_bytes(
+                b"begin Function {}\r\nend\r\n"
+            )
+            (gdir / "Data" / "NVSE" / "Plugins" / "Scripts" / "gr_user_mod.txt").write_bytes(
+                b"; user startup script\r\n"
+            )
+
+            sdir.mkdir(parents=True)
             (idir / "Fallout.ini").write_bytes(b"[General]\r\nSLocalSavePath=Saves\\\r\n")
             (idir / "FalloutPrefs.ini").write_bytes(b"[Display]\r\nbFull Screen=1\r\n")
-            (ldir / "plugins.txt").write_bytes(b"FalloutNV.esm\r\n")
-            (ldir / "loadorder.txt").write_bytes(b"FalloutNV.esm\r\n")
+            (idir / "FalloutCustom.ini").write_bytes(b"[General]\r\n; custom\r\n")
+            (idir / "plugins.txt").write_bytes(b"FalloutNV.esm\r\n")
+            (idir / "loadorder.txt").write_bytes(b"FalloutNV.esm\r\n")
+            (sdir / "p00_base.fos").write_bytes(b"FO3SAVEGAME-stub-0")
+            (sdir / "p01_scale.fos").write_bytes(b"FO3SAVEGAME-stub-1")
+            (sdir / "unrelated_save.fos").write_bytes(b"FO3SAVEGAME-other")
 
-            # Standalone ESP builder check
-            esp_test = tdp / "out.esp"
-            fos_harness.build_synthetic_probe_esp(esm_path, esp_test)
-            esp_raw = esp_test.read_bytes()
-            self.assertTrue(esp_raw.startswith(b"TES4"))
-            extracted = fos_harness._extract_esm_records(
-                esp_test,
-                {
-                    (b"LIGH", 0x01000801),
-                    (b"ARMO", 0x01000802),
-                    (b"ENCH", 0x01000805),
-                    (b"WEAP", 0x01000806),
-                    (b"WEAP", 0x01000807),
-                    (b"CELL", 0x00103DF9),
-                    (b"REFR", 0x01000810),
-                    (b"REFR", 0x01000815),
-                },
-            )
-            self.assertEqual(len(extracted), 8)
+            game_before = _snapshot_tree(gdir)
+            ini_before = _snapshot_tree(idir)
 
-            # Place unrelated user/mod scripts to prove harness never deletes them.
-            udf_dir = gdir / "Data" / "NVSE" / "user_defined_functions"
-            scripts_dir = gdir / "Data" / "NVSE" / "Plugins" / "Scripts"
-            udf_dir.mkdir(parents=True, exist_ok=True)
-            scripts_dir.mkdir(parents=True, exist_ok=True)
-            user_udf = udf_dir / "s_user_mod.gek"
-            user_udf.write_bytes(b"begin Function {}\r\nend\r\n")
-            user_gr = scripts_dir / "gr_user_mod.txt"
-            user_gr.write_bytes(b"; user startup script\r\n")
-
-            # Direct staging check: creates fosprobe_s_* UDFs and preserves s_user_mod.gek
-            loop_path, gr_path = fos_harness.stage_campaign_scripts(
-                gdir, fos_campaigns.RUN21_SYNTHETIC_ESP
+            # 1. Stage scripts strictly into stage_dir
+            loop_path, gr_path, setup_path = fos_harness.stage_campaign_scripts(
+                stage_dir, fos_campaigns.RUN1_PLAYER
             )
             self.assertTrue(loop_path.is_file())
             self.assertTrue(gr_path.is_file())
-            self.assertTrue((udf_dir / "fosprobe_s_01_r21_00_base.gek").is_file())
-            self.assertIn(
-                'CompileScript "fosprobe_s_01_r21_00_base.gek"',
-                loop_path.read_text(encoding="ascii"),
+            self.assertTrue(setup_path.is_file())
+            self.assertTrue(loop_path.is_relative_to(stage_dir))
+            self.assertTrue(gr_path.is_relative_to(stage_dir))
+            self.assertTrue(
+                (stage_dir / "Data" / "NVSE" / "user_defined_functions" / "fosprobe_s_01_p00_base.gek").is_file()
             )
-            self.assertTrue(user_udf.is_file())
-            self.assertTrue(user_gr.is_file())
+            loop_text = loop_path.read_text(encoding="ascii")
+            gr_text = gr_path.read_text(encoding="ascii")
+            self.assertIn('CompileScript "fosprobe_s_01_p00_base.gek"', loop_text)
+            self.assertNotIn("WriteStringToFile", loop_text)
+            self.assertNotIn("WriteStringToFile", gr_text)
+            self.assertNotIn("fosprobe_trace.txt", loop_text)
+            self.assertNotIn("fosprobe_trace.txt", gr_text)
 
-            # Dry-run campaign with --enable-synthetic-esp must clean ESP, remove all
-            # harness-staged scripts in finally:, restore INIs & load order, and preserve
-            # unrelated user/mod scripts (s_user_mod.gek, gr_user_mod.txt).
-            fos_harness.run_campaign(
-                campaign=fos_campaigns.RUN21_SYNTHETIC_ESP,
+            # 2. Collect saves read-only (campaign-filtered)
+            copied = fos_harness.collect_saves(sdir, collect_dir, campaign=fos_campaigns.RUN1_PLAYER)
+            self.assertEqual(sorted(p.name for p in copied), ["p00_base.fos", "p01_scale.fos"])
+            self.assertFalse((collect_dir / "unrelated_save.fos").exists())
+
+            # 3. Dry-run campaign read-only
+            dry_copied = fos_harness.run_campaign(
+                campaign=fos_campaigns.RUN1_PLAYER,
                 game_dir=gdir,
-                ini_dir=idir,
-                out_dir=odir,
-                loadorder_dir=ldir,
-                enable_synthetic_esp=True,
+                saves_dir=sdir,
+                out_dir=dry_dir,
                 dry_run=True,
             )
-            self.assertFalse((gdir / "Data" / fos_harness.SYNTHETIC_ESP_FILENAME).exists())
-            self.assertEqual((ldir / "plugins.txt").read_bytes(), b"FalloutNV.esm\r\n")
-            self.assertEqual((ldir / "loadorder.txt").read_bytes(), b"FalloutNV.esm\r\n")
-            self.assertEqual(
-                (idir / "Fallout.ini").read_bytes(), b"[General]\r\nSLocalSavePath=Saves\\\r\n"
-            )
-            self.assertFalse(loop_path.exists())
-            self.assertFalse(gr_path.exists())
-            self.assertEqual(
-                [p.name for p in udf_dir.iterdir() if p.name.startswith("fosprobe_")], []
-            )
-            self.assertEqual(
-                [p.name for p in scripts_dir.iterdir() if p.name.startswith("gr_fosprobe")], []
-            )
-            self.assertTrue(user_udf.is_file())
-            self.assertEqual(user_udf.read_bytes(), b"begin Function {}\r\nend\r\n")
-            self.assertTrue(user_gr.is_file())
+            self.assertEqual(sorted(p.name for p in dry_copied), ["p00_base.fos", "p01_scale.fos"])
 
-            # Refuses synthetic-esp campaign without opt-in flag
-            with self.assertRaises(ValueError):
-                fos_harness.run_campaign(
-                    campaign=fos_campaigns.RUN21_SYNTHETIC_ESP,
-                    game_dir=gdir,
-                    ini_dir=idir,
-                    out_dir=odir,
-                    enable_synthetic_esp=False,
-                    dry_run=True,
-                )
+            # 4. Assert ZERO writes/creations/modifications/deletions in game_dir or ini_dir
+            self.assertEqual(_snapshot_tree(gdir), game_before)
+            self.assertEqual(_snapshot_tree(idir), ini_before)
 
-    def test_staged_scripts_cleaned_on_launch_error_and_user_udfs_preserved(self) -> None:
+    def test_run_campaign_missing_loader_leaves_game_dir_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             tdp = Path(td)
             gdir = tdp / "game"
-            idir = tdp / "ini"
+            sdir = tdp / "saves"
             odir = tdp / "out"
-            udf_dir = gdir / "Data" / "NVSE" / "user_defined_functions"
-            scripts_dir = gdir / "Data" / "NVSE" / "Plugins" / "Scripts"
-            udf_dir.mkdir(parents=True)
-            scripts_dir.mkdir(parents=True)
-            idir.mkdir()
-            (idir / "Fallout.ini").write_bytes(b"[General]\r\nSLocalSavePath=Saves\\\r\n")
-            (idir / "FalloutPrefs.ini").write_bytes(b"[Display]\r\nbFull Screen=1\r\n")
-            user_udf = udf_dir / "s_user_mod.gek"
-            user_udf.write_bytes(b"begin Function {}\r\nend\r\n")
-
-            # Missing FalloutNV.exe raises FileNotFoundError AFTER staging; finally: must still clean up.
+            gdir.mkdir()
+            sdir.mkdir()
+            (gdir / "marker.txt").write_bytes(b"untouched")
+            before = _snapshot_tree(gdir)
             with self.assertRaises(FileNotFoundError):
                 fos_harness.run_campaign(
                     campaign=fos_campaigns.RUN1_PLAYER,
                     game_dir=gdir,
-                    ini_dir=idir,
+                    saves_dir=sdir,
                     out_dir=odir,
                     dry_run=False,
                     is_running_fn=lambda: False,
                 )
+            self.assertEqual(_snapshot_tree(gdir), before)
 
-            self.assertFalse((udf_dir / "fosprobe_loop.gek").exists())
-            self.assertFalse((scripts_dir / "gr_fosprobe.txt").exists())
-            self.assertEqual([p.name for p in udf_dir.iterdir()], ["s_user_mod.gek"])
-            self.assertEqual(list(scripts_dir.iterdir()), [])
-
-    def test_cli_list_and_verify_missing_dir(self) -> None:
+    def test_cli_list_stage_collect_and_verify_missing_dir(self) -> None:
         buf = io.StringIO()
         with redirect_stdout(buf):
-            rc = fos_harness.main(["--campaign", "list"])
+            rc = fos_harness.main(["list"])
         self.assertEqual(rc, 0)
         self.assertIn("run1_player", buf.getvalue())
         self.assertIn("run27_dead_npc_drop_0x6e", buf.getvalue())
+        self.assertNotIn("run21_synthetic_esp", buf.getvalue())
+
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            stage_out = tdp / "staged"
+            saves_in = tdp / "saves"
+            collect_out = tdp / "collected"
+            saves_in.mkdir()
+            (saves_in / "p00_base.fos").write_bytes(b"FO3SAVEGAME-stub")
+
+            with redirect_stdout(io.StringIO()):
+                rc_stage = fos_harness.main(
+                    ["stage", "--campaign", "run1_player", "--out-dir", str(stage_out)]
+                )
+                rc_collect = fos_harness.main(
+                    [
+                        "collect",
+                        "--campaign",
+                        "run1_player",
+                        "--saves-dir",
+                        str(saves_in),
+                        "--out-dir",
+                        str(collect_out),
+                    ]
+                )
+            self.assertEqual(rc_stage, 0)
+            self.assertEqual(rc_collect, 0)
+            self.assertTrue((stage_out / "Data" / "NVSE" / "Plugins" / "Scripts" / "gr_fosprobe.txt").is_file())
+            self.assertTrue((collect_out / "p00_base.fos").is_file())
 
         with self.assertRaises(FileNotFoundError):
             fos_verify.verify_directory(Path(tempfile.gettempdir()) / "nonexistent_fos_dir_xyz")

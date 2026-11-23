@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Clean-room A/B `.fos` capture verification suite (68 assertions across Rounds 1-3).
+"""Clean-room A/B `.fos` capture verification suite (61 pure-vanilla + 7 optional manual-GECK-plugin assertions, 68 total).
 
 Point `--saves-dir` (or `FNV_FOS_SAVES_DIR`) at a private directory of local
 Fallout: New Vegas 1.4.0.525 captures produced by `harness.py` to assert all
@@ -61,7 +61,7 @@ def _round_av_map(av_map: dict[int, float]) -> dict[int, float]:
 
 
 def verify_directory(saves_dir: str | os.PathLike[str]) -> list[CheckResult]:
-    """Run all 68 clean-room A/B assertions against `.fos` files in `saves_dir`."""
+    """Run 61 pure-vanilla (+ 7 optional manual-GECK-plugin) assertions (68 total) against `.fos` files in `saves_dir`."""
     sdir = Path(saves_dir)
     if not sdir.is_dir():
         raise FileNotFoundError(f"Saves directory does not exist: {sdir}")
@@ -523,7 +523,8 @@ def verify_directory(saves_dir: str | os.PathLike[str]) -> list[CheckResult]:
         "r14_01 tok[76]=13 -> r14_04 tok[76]=12 with zero 0x6E on weapon",
     )
 
-    # 12. Round 3 confirmations, bugs #11/#12/#13, and negative proofs (14 checks)
+    # 12. Round 3 confirmations, bugs #12/#13 (pure 10-master vanilla), plus optional
+    # GECK test-plugin checks (bug #11, 0x22/0x1C/0x30, and 0x26/0x17/0x28 negative proofs)
     r19_01 = load("r19_01_misc_setitemvalue.fos")
     r19_02 = load("r19_02_npc_crea_fullname.fos")
     r19_03 = load("r19_03_player_fullname.fos")
@@ -531,12 +532,6 @@ def verify_directory(saves_dir: str | os.PathLike[str]) -> list[CheckResult]:
     r19_06 = load("r19_06_npc_multibit.fos")
     r19b_03 = load("r19b_03_matchface.fos")
     r20_10 = load("r20_10_boone_hp.fos")
-    r21_02 = load("r21_02_pickup_xglb_orig_scale.fos")
-    r21_03 = load("r21_03_cont_and_drop_picked.fos")
-    r21_04 = load("r21_04_torch_equipped.fos")
-    r21_08 = load("r21_08_rings_dual_two_copies.fos")
-    r23_01 = load("r23_01_torch_equip_log.fos")
-    r23_04 = load("r23_04_combat_after.fos")
     r27_03 = load("r27_03_player_7rounds.fos")
 
     ok(
@@ -592,46 +587,6 @@ def verify_directory(saves_dir: str | os.PathLike[str]) -> list[CheckResult]:
         "NPC_ 0x7 bit11 len=676 rem=0 (50 fggs + 30 fgga + 50 fgts + hair/eyes/hlen/hcol/parts)",
     )
 
-    p21_02 = r21_02.decode_player()
-    pen_entries = next(it["entries"] for it in p21_02["inventory"] if it["item"] == 0x05B63C)
-    plu_entries = next(it["entries"] for it in p21_02["inventory"] if it["item"] == 0x0340A4)
-    dr21 = r21_03.decode_refr(0x103E37)
-    dr_pen = next(it["entries"] for it in dr21["inventory"] if it["item"] == 0x05B63C)
-    ok(
-        "r3.item_extra_0x22_xglb",
-        any(e.get("0x22") == 0x38 for e in pen_entries)
-        and any(e.get("0x22") == 0x38 for e in plu_entries)
-        and any(e.get("0x22") == 0x38 for e in dr_pen)
-        and ("0x22", 0x38) in r21_03.decode_refr(0x0A000813)["extras"],
-        "0x22 ref3(0x38 GameHour)| confirmed in player inv, container inv, & re-dropped REFR",
-    )
-    ok(
-        "r3.item_extra_0x1C_orig_ref",
-        any(e.get("0x1C") == 0x0A000810 for e in pen_entries)
-        and any(e.get("0x1C") == 0x0A000813 for e in pen_entries)
-        and any(e.get("0x1C") == 0x0A000810 for e in dr_pen),
-        "0x1C ref3(orig REFR)| confirmed in player inv & container inv",
-    )
-    ok(
-        "r3.item_extra_0x30_scale",
-        any(e.get("0x30") == 1.5 for e in pen_entries)
-        and any(e.get("0x30") == 1.75 for e in plu_entries)
-        and any(e.get("0x30") == 1.5 for e in dr_pen),
-        "0x30 f32(1.5 / 1.75)| confirmed in player inv & container inv",
-    )
-
-    # BUG #11: REFR bit 10 (0x400) for 0x1C holder on picked-up world REFRs
-    picked_legacy = r21_02.decode_refr(0x0A000810, include_bit6_bit10=False)
-    picked_fixed = r21_02.decode_refr(0x0A000810, include_bit6_bit10=True)
-    ok(
-        "bug11.refr_bit10_0x1C_omitted_from_extra_bits",
-        picked_legacy["flags"] == 0x00000403
-        and picked_legacy["rem"] == 8
-        and picked_fixed["rem"] == 0
-        and ("0x1C", 0x14) in picked_fixed["extras"],
-        "REFR 0x0A000810 flags=0x403: legacy rem=8, fixed parses 0x1C=0x14 with rem=0",
-    )
-
     # BUG #12: Item extra 0x3E (EquipItem <item> 1)
     boone_legacy = r20_10.decode_actor(1, 0x096BCE, strict_legacy_0x3e=True)
     boone_fixed = r20_10.decode_actor(1, 0x096BCE, strict_legacy_0x3e=False)
@@ -657,47 +612,104 @@ def verify_directory(saves_dir: str | os.PathLike[str]) -> list[CheckResult]:
         "0x6E (ref3|u32|) + 0x39 confirmed on NPC-dropped 0xFF001315 (.357:5) & 0xFF001316 (9mm:4)",
     )
 
-    # Negative proofs: 0x26, 0x17, 0x28
-    ok(
-        "r3.neg_0x26_carried_ligh_unequippable",
-        next(
-            it["entries"] for it in r23_01.decode_player()["inventory"] if it["item"] == 0x0A000801
+    # Optional manual GECK test-plugin captures (run when present in --saves-dir)
+    optional_geck_files = (
+        "r21_02_pickup_xglb_orig_scale.fos",
+        "r21_03_cont_and_drop_picked.fos",
+        "r21_04_torch_equipped.fos",
+        "r21_08_rings_dual_two_copies.fos",
+        "r23_01_torch_equip_log.fos",
+        "r23_04_combat_after.fos",
+    )
+    if all((sdir / fn).is_file() for fn in optional_geck_files):
+        r21_02 = load("r21_02_pickup_xglb_orig_scale.fos")
+        r21_03 = load("r21_03_cont_and_drop_picked.fos")
+        r21_04 = load("r21_04_torch_equipped.fos")
+        r21_08 = load("r21_08_rings_dual_two_copies.fos")
+        r23_01 = load("r23_01_torch_equip_log.fos")
+        r23_04 = load("r23_04_combat_after.fos")
+
+        p21_02 = r21_02.decode_player()
+        pen_entries = next(it["entries"] for it in p21_02["inventory"] if it["item"] == 0x05B63C)
+        plu_entries = next(it["entries"] for it in p21_02["inventory"] if it["item"] == 0x0340A4)
+        dr21 = r21_03.decode_refr(0x103E37)
+        dr_pen = next(it["entries"] for it in dr21["inventory"] if it["item"] == 0x05B63C)
+        ok(
+            "r3.item_extra_0x22_xglb",
+            any(e.get("0x22") == 0x38 for e in pen_entries)
+            and any(e.get("0x22") == 0x38 for e in plu_entries)
+            and any(e.get("0x22") == 0x38 for e in dr_pen)
+            and ("0x22", 0x38) in r21_03.decode_refr(0x0A000813)["extras"],
+            "0x22 ref3(0x38 GameHour)| confirmed in player inv, container inv, & re-dropped REFR",
         )
-        == []
-        and all(
-            "0x26" not in e
-            for it in r21_04.decode_player()["inventory"]
-            for e in it["entries"]
-        ),
-        "Synthetic CanBeCarried LIGH (Time=120s) refused equip, zero 0x26 emitted",
-    )
-    ok(
-        "r3.neg_0x17_worn_left_unused",
-        next(
-            it["entries"] for it in r21_08.decode_player()["inventory"] if it["item"] == 0x0A000802
-        )[0].get("0x16_worn")
-        is True
-        and all(
-            "0x17_worn" not in e
-            for it in r21_08.decode_player()["inventory"]
-            for e in it["entries"]
-        ),
-        "Dual-slot ring BMDT 0x180 equipped twice wears 1 copy with 0x16, zero 0x17 emitted",
-    )
-    foe_k = r23_04.get_rec(1, 0xFF001311)["data"]
-    foe_p = r23_04.get_rec(1, 0xFF001313)["data"]
-    ok(
-        "r3.neg_0x28_weapon_charge_unused",
-        b"\x28\x7c" not in foe_k[:200] and b"\x28\x7c" not in foe_p[:200],
-        "Synthetic EITM(charge=500,cost=25)+EAMT=500 knife & pistol dealt live combat damage with zero 0x28",
-    )
+        ok(
+            "r3.item_extra_0x1C_orig_ref",
+            any(e.get("0x1C") == 0x0A000810 for e in pen_entries)
+            and any(e.get("0x1C") == 0x0A000813 for e in pen_entries)
+            and any(e.get("0x1C") == 0x0A000810 for e in dr_pen),
+            "0x1C ref3(orig REFR)| confirmed in player inv & container inv",
+        )
+        ok(
+            "r3.item_extra_0x30_scale",
+            any(e.get("0x30") == 1.5 for e in pen_entries)
+            and any(e.get("0x30") == 1.75 for e in plu_entries)
+            and any(e.get("0x30") == 1.5 for e in dr_pen),
+            "0x30 f32(1.5 / 1.75)| confirmed in player inv & container inv",
+        )
+
+        # BUG #11: REFR bit 10 (0x400) for 0x1C holder on picked-up world REFRs
+        picked_legacy = r21_02.decode_refr(0x0A000810, include_bit6_bit10=False)
+        picked_fixed = r21_02.decode_refr(0x0A000810, include_bit6_bit10=True)
+        ok(
+            "bug11.refr_bit10_0x1C_omitted_from_extra_bits",
+            picked_legacy["flags"] == 0x00000403
+            and picked_legacy["rem"] == 8
+            and picked_fixed["rem"] == 0
+            and ("0x1C", 0x14) in picked_fixed["extras"],
+            "REFR 0x0A000810 flags=0x403: legacy rem=8, fixed parses 0x1C=0x14 with rem=0",
+        )
+
+        # Negative proofs: 0x26, 0x17, 0x28
+        ok(
+            "r3.neg_0x26_carried_ligh_unequippable",
+            next(
+                it["entries"] for it in r23_01.decode_player()["inventory"] if it["item"] == 0x0A000801
+            )
+            == []
+            and all(
+                "0x26" not in e
+                for it in r21_04.decode_player()["inventory"]
+                for e in it["entries"]
+            ),
+            "GECK CanBeCarried LIGH (Time=120s) refused equip, zero 0x26 emitted",
+        )
+        ok(
+            "r3.neg_0x17_worn_left_unused",
+            next(
+                it["entries"] for it in r21_08.decode_player()["inventory"] if it["item"] == 0x0A000802
+            )[0].get("0x16_worn")
+            is True
+            and all(
+                "0x17_worn" not in e
+                for it in r21_08.decode_player()["inventory"]
+                for e in it["entries"]
+            ),
+            "Dual-slot ring BMDT 0x180 equipped twice wears 1 copy with 0x16, zero 0x17 emitted",
+        )
+        foe_k = r23_04.get_rec(1, 0xFF001311)["data"]
+        foe_p = r23_04.get_rec(1, 0xFF001313)["data"]
+        ok(
+            "r3.neg_0x28_weapon_charge_unused",
+            b"\x28\x7c" not in foe_k[:200] and b"\x28\x7c" not in foe_p[:200],
+            "GECK EITM(charge=500,cost=25)+EAMT=500 knife & pistol dealt live combat damage with zero 0x28",
+        )
 
     return checks
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
-        description="Verify all 68 clean-room A/B `.fos` capture invariants against a local capture directory."
+        description="Verify 61 pure-vanilla (+ 7 optional manual-GECK-plugin) clean-room A/B `.fos` capture invariants (68 total) against a local capture directory."
     )
     ap.add_argument(
         "--saves-dir",

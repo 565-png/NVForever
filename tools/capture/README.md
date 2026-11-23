@@ -692,10 +692,17 @@ that tile. `--no-inherited` leaves them out.
 
 ## `.fos` save-pair capture & verification harness (`fos/`)
 
-`tools/capture/fos/` contains a clean-room black-box `.fos` save-pair capture
-runner, stdlib-only binary parser/differ, declarative Round 1–3 campaign
-definitions, 68-assertion verifier, and offline synthetic test suite. See
-[`tools/capture/fos/README.md`](fos/README.md) for usage and clean-room rules.
+`tools/capture/fos/` contains a clean-room black-box `.fos` save-pair
+staging/collection tool, stdlib-only binary parser/differ, 16 pure-vanilla
+declarative Round 1–3 campaign definitions, read-only verifier (61 pure-vanilla
++ 7 optional manual-GECK-plugin assertions, 68 total), and offline synthetic
+test suite. Like §10, the Python tools never write into the game folder or
+`Documents\My Games\FalloutNV` and the staged scripts write nothing into the
+game folder; during live capture after one-time manual setup, `fosprobe_loop.gek`
+intentionally calls `con_Save <step.name>` inside `FalloutNV.exe` to write
+`.fos` saves into the user-configured `Saves\fosprobe\` subfolder. See
+[`tools/capture/fos/README.md`](fos/README.md) for manual setup steps, usage,
+and clean-room rules.
 
 ## Tests
 

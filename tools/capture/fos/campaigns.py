@@ -1,14 +1,11 @@
 """Declarative single-variable A/B `.fos` capture campaign definitions (Rounds 1-3).
 
-Covers all 87 `.fos` converter keys, all 13 parser/converter regression triggers,
-and all 3 `[observed]` negative-proof checks for unemittable Oblivion-era item
-extras (`0x17`, `0x26`, `0x28`).
-
-Every base-game FormID is referenced via `BuildRef 0 <decimal_id>` so campaign
-UDFs compile cleanly in-game without hardcoding bare EditorIDs. Optional Group B
-campaigns (`requires_synthetic_esp=True`) reference local FormIDs in the
-on-demand clean-room synthetic test plugin (`fos_probe_r3.esp`) at load-order
-index 10 (`BuildRef 10 <local_id>`).
+Covers pure-vanilla 10-master probe campaigns exercising `.fos` converter keys
+and parser/converter regression triggers using only `BuildRef 0 <decimal_id>`
+and vanilla commands (zero custom `.esp` plugins generated or required).
+Optional rare-extra probes requiring a manually authored GECK test plugin
+(`XGLB` `0x22`, carried `LIGH` `0x26`, dual-slot ring `0x17`, charged `WEAP`
+`0x28`) are documented in `tools/capture/fos/README.md`.
 """
 
 from __future__ import annotations
@@ -21,17 +18,12 @@ def bref(var: str, form_id: int, mod_index: int = 0) -> str:
     return f"ref {var} = BuildRef {mod_index} {form_id}"
 
 
-def espref(var: str, local_id: int, mod_index: int = 10) -> str:
-    """Emit a `BuildRef` targeting the temporary clean-room synthetic test plugin."""
-    return bref(var, local_id, mod_index=mod_index)
-
-
 def _log_ammo(tag: str) -> tuple[str, ...]:
     return (
         "int rCnt = GetPlayerCurrentAmmoRounds",
         "ref aCur = GetPlayerCurrentAmmo",
         f'string_var sLog = sv_Construct "{tag} ammo=%i rounds=%g" aCur rCnt',
-        'WriteStringToFile "fosprobe_trace.txt" 1 "%z%r" sLog',
+        'PrintToConsole "FOSPROBE %z" sLog',
     )
 
 
@@ -53,7 +45,6 @@ class Campaign:
     round_num: int
     description: str
     steps: tuple[ProbeStep, ...]
-    requires_synthetic_esp: bool = False
     interval: int = 15
     max_wait: int = 140
     start_chargen_quest: str = "00102037"
@@ -813,165 +804,6 @@ RUN20A_AMMO_AND_NOUNEQUIP = Campaign(
     ),
 )
 
-RUN21_SYNTHETIC_ESP = Campaign(
-    name="run21_synthetic_esp",
-    round_num=3,
-    requires_synthetic_esp=True,
-    start_chargen_quest="",
-    description=(
-        "Optional clean-room synthetic test-plugin campaign for rare item extras: "
-        "0x22 XGLB, 0x1C orig ref + REFR bit 10 (BUG #11), 0x30 item scale, plus "
-        "negative-proof probes for 0x26 carried LIGH and 0x17 dual-slot rings."
-    ),
-    max_wait=150,
-    steps=(
-        ProbeStep(
-            "r21_00_base",
-            (
-                "SetInChargen 0",
-                "EnablePlayerControls 1 1 1 1 1 1 1",
-                'int iEspIdx = GetModIndex "fos_probe_r3.esp"',
-                'string_var sM = sv_Construct "ESP_MOD_INDEX=%g" iEspIdx',
-                'WriteStringToFile "fosprobe_trace.txt" 1 "%z%r" sM',
-            ),
-            2,
-        ),
-        ProbeStep(
-            "r21_01_world_touch_xglb_xscl",
-            (
-                espref("rP1", 0x810),
-                espref("rP2", 0x811),
-                espref("rP3", 0x812),
-                espref("rT1", 0x813),
-                espref("rT2", 0x814),
-                "float z0 = rP1.GetPos Z",
-                "rP1.SetPos Z (z0 + 2.0)",
-                "rP2.SetPos Z (z0 + 2.0)",
-                "rP3.SetPos Z (z0 + 2.0)",
-                "rT1.SetPos Z (z0 + 2.0)",
-                "rT2.SetPos Z (z0 + 2.0)",
-                "rT2.SetScale 1.75",
-            ),
-            3,
-        ),
-        ProbeStep(
-            "r21_02_pickup_xglb_orig_scale",
-            (
-                espref("rP1", 0x810),
-                espref("rP2", 0x811),
-                espref("rP3", 0x812),
-                espref("rT1", 0x813),
-                espref("rT2", 0x814),
-                "rP1.Activate Player 1",
-                "rP2.Activate Player 1",
-                "rP3.Activate Player 1",
-                "rT1.Activate Player 1",
-                "rT2.Activate Player 1",
-            ),
-            3,
-        ),
-        ProbeStep(
-            "r21_03_cont_and_drop_picked",
-            (
-                bref("rPen", 0x05B63C),
-                bref("rPlu", 0x0340A4),
-                bref("rSgl", 0x0340B5),
-                bref("rDresser", 0x103E37),
-                "Player.Drop rPen 1",
-                "Player.Drop rPlu 1",
-                "Player.Drop rSgl 1",
-                "Player.RemoveAllItems rDresser 1",
-            ),
-            3,
-        ),
-        ProbeStep(
-            "r21_04_torch_equipped",
-            (
-                espref("rTorch", 0x801),
-                espref("rTorchRef", 0x815),
-                "rTorchRef.Activate Player 1",
-                "Player.AddItem rTorch 1",
-                "Player.EquipItem rTorch",
-            ),
-            30,
-        ),
-        ProbeStep(
-            "r21_08_rings_dual_two_copies",
-            (
-                espref("rRDual", 0x802),
-                "Player.AddItem rRDual 2",
-                "Player.EquipItem rRDual",
-                "Player.EquipItem rRDual",
-            ),
-            4,
-        ),
-    ),
-)
-
-RUN23_SYNTHETIC_ESP_DEEP = Campaign(
-    name="run23_synthetic_esp_deep",
-    round_num=3,
-    requires_synthetic_esp=True,
-    start_chargen_quest="",
-    description=(
-        "Exhaustive negative-proof campaign (synthetic ESP) for 0x26 carried LIGH, "
-        "0x17 WornLeft + 0x3E noUnequip, and 0x28 weapon charge in live combat."
-    ),
-    max_wait=120,
-    steps=(
-        ProbeStep("r23_00_base", ("SetInChargen 0", "EnablePlayerControls 1 1 1 1 1 1 1"), 2),
-        ProbeStep(
-            "r23_01_torch_equip_log",
-            (
-                espref("rTorch", 0x801),
-                bref("rDoc", 0x104C0F),
-                "Player.AddItem rTorch 2",
-                "Player.EquipItem rTorch 1 1",
-                "int eqP = Player.GetEquipped rTorch",
-                "rDoc.AddItem rTorch 1",
-                "rDoc.EquipItem rTorch 1 1",
-                "int eqD = rDoc.GetEquipped rTorch",
-                'string_var sT = sv_Construct "TORCH_EQUIP player=%g doc=%g" eqP eqD',
-                'WriteStringToFile "fosprobe_trace.txt" 1 "%z%r" sT',
-            ),
-            20,
-        ),
-        ProbeStep(
-            "r23_03_charged_melee_combat_hit",
-            (
-                bref("rPG", 0x15F312),
-                espref("rCKni", 0x807),
-                espref("rCPis", 0x806),
-                bref("rA9", 0x08ED03),
-                "Player.SetAV Health 5000",
-                "ref rFoe = Player.PlaceAtMe rPG 1",
-                "rFoe.RemoveAllItems",
-                "rFoe.AddItem rCKni 1",
-                "rFoe.EquipItem rCKni 1 1",
-                "rFoe.SetAV Aggression 3",
-                "rFoe.StartCombat Player",
-                "ref rFoe2 = Player.PlaceAtMe rPG 1",
-                "rFoe2.RemoveAllItems",
-                "rFoe2.AddItem rCPis 1",
-                "rFoe2.AddItem rA9 50",
-                "rFoe2.EquipItem rCPis 1 1",
-                "rFoe2.SetAV Aggression 3",
-                "rFoe2.StartCombat Player",
-            ),
-            35,
-        ),
-        ProbeStep(
-            "r23_04_combat_after",
-            (
-                "float hp1 = Player.GetAV Health",
-                'string_var sH1 = sv_Construct "COMBAT_AFTER player_hp=%g" hp1',
-                'WriteStringToFile "fosprobe_trace.txt" 1 "%z%r" sH1',
-            ),
-            2,
-        ),
-    ),
-)
-
 RUN27_DEAD_NPC_DROP_0X6E = Campaign(
     name="run27_dead_npc_drop_0x6e",
     round_num=3,
@@ -1071,8 +903,6 @@ ALL_CAMPAIGNS: tuple[Campaign, ...] = (
     RUN19A_NAMES_MISC_FACE,
     RUN19B_APPEARANCE,
     RUN20A_AMMO_AND_NOUNEQUIP,
-    RUN21_SYNTHETIC_ESP,
-    RUN23_SYNTHETIC_ESP_DEEP,
     RUN27_DEAD_NPC_DROP_0X6E,
 )
 
@@ -1085,5 +915,8 @@ COVERAGE_SUMMARY: dict[str, int] = {
     "regression_keys_affected": 15,
     "negative_proof_extras": 3,
     "unresolved_hypothesis_keys": 0,
+    "vanilla_campaigns": len(ALL_CAMPAIGNS),
+    "verify_assertions_vanilla": 61,
+    "verify_assertions_optional_geck": 7,
     "verify_assertions": 68,
 }

@@ -11,5 +11,5 @@ from test_parser_synthetic import (  # noqa: E402,F401
     TestCampaignsSchemaAndHygiene,
     TestCursorAndPrimitives,
     TestGlobalsAndChangedForms,
-    TestHarnessBackupEspAndStaging,
+    TestHarnessReadOnlyStagingAndCollect,
 )
