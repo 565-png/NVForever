@@ -30124,7 +30124,7 @@ env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "dlssg-ui-home", NVF_PLAY_TEST
 args = ["--cell", "Goodsprings", "--pos=-69814,774,8451", "--heading", "205.5", "--pitch=-6.4", "--play", "--hour", "12", "--size", "1280x720", "--upscaler", "dlss", "--upscaler-quality", "quality", "--frame-generation", "dlss", "--log-frame-times", "10", "--no-voice", "--no-lodgen"]
 run_seconds = 22
 expect = [
-  { re = 'DLSS-G: UI buffer: 1280x720 Rgba16Float UI colour and alpha \(the UI drawn alone over transparent black, premultiplied\), tagged eValidUntilPresent with the HUD-less copy; user interface recomposition on', label = "the UI layer tagged as the UI colour and alpha" },
+  { re = 'DLSS-G: UI buffer: 1280x720 Rgba8Unorm UI colour and alpha \(the UI drawn alone over transparent black, premultiplied, sRGB-encoded as the back buffer with the HUD-less copy\), tagged eValidUntilPresent with the HUD-less copy; user interface recomposition on', label = "the UI layer tagged as the UI colour and alpha, encoded as the back buffer" },
   { re = 'DLSS-G: options: mode On, .*user interface recomposition on: eOk', label = "recomposition asked for" },
   { re = 'DLSS: evaluates: ([1-9]\d*) ok, 0 failed', label = "evaluates ok" },
 ]
