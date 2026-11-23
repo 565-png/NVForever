@@ -186,6 +186,45 @@ fn every_level_scales_each_direction_and_the_kill_xp() {
     }
 }
 
+/// The Custom sliders do nothing while one of the five levels is chosen (the page hides
+/// them then): with the sliders at either end, set before or after the level, every level
+/// keeps its own numbers in every direction, its kill XP and its log line.
+#[test]
+fn custom_sliders_do_nothing_under_the_five_levels() {
+    use fnv_game::difficulty::{BY_PC, LEVELS, TO_PC, XP};
+    let f = fixture();
+    let normal_xp = game(&f, Difficulty::Normal).kill_xp(RAIDER_REF);
+    let ends = [CustomDifficulty { dealt: 3.0, taken: 0.5, kill_xp: 3.0 }, CustomDifficulty { dealt: 0.5, taken: 3.0, kill_xp: 0.5 }];
+    for c in ends {
+        for d in LEVELS {
+            let i = d.code();
+            let plain = game(&f, d).set_difficulty(d);
+            // Custom chosen and moved first, then the level (the player's way through the page),
+            // and the sliders moved while the level is chosen (an INI written under Custom).
+            let mut first = game_custom(&f, c);
+            let line = first.set_difficulty(d);
+            let mut after = game(&f, d);
+            after.set_custom_difficulty(c);
+            assert_eq!(line, plain, "{d:?} after Custom {c:?}: the level's own line");
+            for g in [&mut first, &mut after] {
+                assert_eq!(g.hit(RAIDER_REF, 20.0, by(FormId::PLAYER_REF)).dealt, 20.0 * BY_PC[i], "{d:?}, {c:?}: the player's hit");
+                assert_eq!(g.hit(FormId::PLAYER_REF, 20.0, by(RAIDER_REF)).dealt, 20.0 * TO_PC[i], "{d:?}, {c:?}: a hit on the player");
+                assert_eq!(g.hit(FormId::PLAYER_REF, 20.0, HitInfo { location: -1, ..HitInfo::default() }).dealt, 20.0 * TO_PC[i], "{d:?}, {c:?}: nobody's hit on the player");
+                assert_eq!(g.hit(GUARD_REF, 20.0, by(RAIDER_REF)).dealt, 20.0, "{d:?}, {c:?}: an NPC's hit on an NPC");
+            }
+            let mut g = game_custom(&f, c);
+            g.set_difficulty(d);
+            assert_eq!(g.kill_xp(RAIDER_REF), normal_xp * XP[i], "{d:?}, {c:?}: kill XP");
+            let mut g = game(&f, d);
+            g.set_custom_difficulty(c);
+            assert_eq!(g.kill_xp(RAIDER_REF), normal_xp * XP[i], "{d:?}, {c:?}: kill XP, sliders moved under the level");
+            // The values wait: choosing Custom again brings them back.
+            g.set_difficulty(Difficulty::Custom);
+            assert_eq!(g.hit(RAIDER_REF, 20.0, by(FormId::PLAYER_REF)).dealt, 20.0 * c.dealt, "{d:?} -> Custom {c:?}: the slider again");
+        }
+    }
+}
+
 /// Custom: each slider moves only its own number, at the ends and between them.
 #[test]
 fn each_custom_slider_moves_only_its_own_number() {
