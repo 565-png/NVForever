@@ -139,3 +139,60 @@ Compiler, runtime, strict-lint and hosted checks on the corrected integration re
 UNRUN. The historical six ordinary and three opt-in results do not qualify this
 candidate. Identical-fixture baselines, original-game and installed-workload
 comparisons, native profile semantics and full Stewie compatibility remain open.
+
+## 4. Sky plugin INI configs (`MoonlightNVSE.ini` and `CloudUpgrade.ini`)
+
+Built in `engine/nvforever/src/sky_ini.rs` and wired into `engine/nvforever/src/sky.rs`,
+`worldspace.rs`, `cloud_shadows.rs`, and `main.rs`.
+
+**Provenance.** Neither plugin's DLL nor source code was consulted or disassembled.
+Section/key names and high-level behaviour come strictly from public Nexus Mods
+descriptions of MoonlightNVSE (by Wall_SoGB) and Cloud Upgrade NVSE (by doodlum) plus
+the shipped default INI schemas; unverified default values and exact third-party runtime
+formulas remain `[hypothesis]`, and NVForever's own VFS loading, clamping, and cloud
+modulation choices are tagged `[design]`.
+
+- **Vanilla invariance `[design]`:** Both INI files are discovered case-insensitively
+  through the engine VFS at startup (`Data\NVSE\Plugins\MoonlightNVSE.ini` and
+  `Data\NVSE\Plugins\CloudUpgrade.ini`) and carried across worldspace/climate sky
+  rebuilds (`worldspace::carry_sky`). When either file is absent or unreadable, the
+  corresponding option stays `None` and vanilla sky lighting and cloud animation remain
+  bit-for-bit unchanged. Neither plugin is added to `IsPluginInstalled` /
+  `GetPluginVersion` reporting (`ext-version.md`).
+- **Shared INI parsing `[design]`:** Lossy UTF-8 decoding with optional leading UTF-8 BOM
+  stripped; `;` and `#` comments ignored (full-line and inline); section and key names
+  matched ASCII case-insensitively; unknown sections/keys and non-finite or malformed
+  values ignored without aborting loading; duplicate keys take the last valid value.
+- **`MoonlightNVSE.ini`:**
+  - `[documented: public MoonlightNVSE mod description and shipped INI schema]` `[Main]`
+    contains `bMoonPhaseBrightness` (toggle enabling dynamic nighttime brightness by moon
+    phase) and `fMoonMult0`..`fMoonMult4` (multipliers from new moon = `0` to full moon
+    = `4`).
+  - `[hypothesis]` When `MoonlightNVSE.ini` is present, omitted keys default to
+    `bMoonPhaseBrightness=1` and `fMoonMult0..=fMoonMult4 = [0.33, 0.5, 0.7, 0.9, 1.0]`.
+  - `[hypothesis]` The 8-phase lunar cycle (`fnv_world::sky::MOON_PHASES`: `full`,
+    `three_wan`, `half_wan`, `one_wan`, `new`, `one_wax`, `half_wax`, `three_wax`) maps
+    symmetrically onto `fMoonMult4` (full), `fMoonMult3` (gibbous), `fMoonMult2` (half),
+    `fMoonMult1` (crescent), and `fMoonMult0` (new).
+  - `[design]` Multipliers are clamped to `0.0..=10.0` (so negative presets produce pitch
+    dark directional moonlight without negative PBR illuminance). Scaling multiplies
+    `MOON_SHARE` inside `sky::aim_sun` only outdoors when the sun is below the horizon and
+    the active climate displays a moon (`Climate::has_moon()`); daytime directional light,
+    interiors, and `bMoonPhaseBrightness=0` stay bit-for-bit equal to vanilla.
+- **`CloudUpgrade.ini`:**
+  - `[documented: public Cloud Upgrade NVSE mod description and shipped INI schema]`
+    `[Global]` defines `Speed`, `MaxSpeed`, and `Volatility`; `[Layer 1]`..`[Layer 4]`
+    define per-layer `SubSpeed` and `SubVolatility` for the four WTHR cloud layers (`0..4`).
+  - `[hypothesis]` When `CloudUpgrade.ini` is present, omitted keys default to
+    `Speed=100.0`, `MaxSpeed=5.0`, `Volatility=5.0`, `SubSpeed=[0.2, 1.0, 0.7, 0.3]`, and
+    `SubVolatility=[0.2, 0.3, 0.4, 0.5]`.
+  - `[design]` Parsed values are clamped (`Speed` `0..=10000`, `MaxSpeed` `0..=50`,
+    `SubSpeed` `0..=50`, `Volatility`/`SubVolatility` `0..=100`). Effective layer scroll
+    scale is `(Speed / 100.0) * SubSpeed` capped at `MaxSpeed`. Because vanilla WTHR
+    horizon layers commonly store `ONAM` speed `0`, active `CloudUpgrade.ini` uses a
+    fallback base rate of `32 * CLOUD_SCROLL_PER_UNIT` for `ONAM == 0` layers (while
+    `Speed == 0`, `MaxSpeed == 0`, or `SubSpeed == 0` stops the layer). Non-zero
+    `Volatility * SubVolatility` applies a smooth, bounded cosine speed modulation
+    (`amplitude = 0.5 * vol / (vol + 5.0)`, distinct per-layer periods `[180, 145, 115, 90]`
+    s, peak rate capped at `base * MaxSpeed`) integrated analytically in `f64` so UV scroll
+    offsets remain monotonic, stateless, deterministic, and synced with `cloud_shadows`.
