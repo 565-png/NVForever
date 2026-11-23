@@ -199,3 +199,70 @@ Misc statistics: Caravan Games Won and Caravan Games Lost are counted (misc-stat
   labels, in the table frame's units, scaled into the view (`help_clear`,
   `lockpick::help::box_rect`); at full size it ran through both (issue #1663) [design: the
   original's placement over this menu is not captured].
+
+## 9. Better Caravan INI compatibility
+
+Clean-room support for `BetterCaravan.ini` (`crates/fnv-game/src/caravan.rs`,
+`engine/nvf-play/src/caravan.rs`, `engine/nvf-play/src/caravan/screen.rs`).
+
+Sources: the public `BetterCaravan.ini` schema (`[Better Caravan]` section and its 16
+documented keys) and public mod feature description [documented: BetterCaravan.ini public
+schema]. The third-party plugin's DLL/binary and source code were not consulted.
+
+- **Lookup and vanilla-unchanged default** [design]: when opening the Caravan menu,
+  `BetterCaravanConfig::load_from_game` reads `Data\NVSE\Plugins\BetterCaravan.ini` first
+  and falls back to `Data\Config\BetterCaravan.ini` through `ModFiles` and the Data VFS.
+  When neither file exists, every option defaults to off (`false` / `0` / `None`), leaving
+  unmodded vanilla Caravan rules, visuals, key bindings, RNG draws, and AI bit-for-bit
+  unchanged.
+- **INI syntax** [design]: UTF-8 BOM safe (both UTF-8 `\u{FEFF}` and Latin-1-decoded
+  `0xEF 0xBB 0xBF` bytes from `ModFiles`), ASCII case-insensitive section (`[Better Caravan]`)
+  and key matching, `;` and `#` comment lines skipped, inline comments stripped on boolean,
+  integer, and key-name values, and full trimmed text preserved (including `=` characters)
+  for `sDescription*` strings.
+- **AI options** (`bAiFixes`, `bImprovedAI`) [documented: BetterCaravan.ini public schema;
+  design: NVForever's own clean-room scoring on top of §6's `evaluate`/`choose`]:
+  - When both are off, `choose_with_config` delegates directly to vanilla `choose`.
+  - `bAiFixes`: deterministically prefers immediate wins and avoids immediate losses
+    without noise/attack penalties overriding them; rewards busting an opponent caravan over
+    26 and penalizes sabotaging one's own winning caravan, discarding a non-busted track, or
+    playing a face card that helps/un-busts an opponent's caravan.
+  - `bImprovedAI`: adds table-state win-threat detection (heavily rewards breaking an
+    opponent's 2-track lead, penalizes leaving the opponent at 2 winning tracks, rewards
+    securing a 2nd winning track and stronger 21–26 totals, and lowers low-skill noise and
+    attack hesitation).
+- **Move preview and winning highlight** (`bPreviewMoveResult`,
+  `bHighlightWinningCaravans`) [documented: BetterCaravan.ini public schema; design:
+  NVForever display formatting]:
+  - `bHighlightWinningCaravans`: renders any caravan currently winning its track (21–26
+    and ahead of the opponent) in white (`Color::WHITE`) instead of amber.
+  - `bPreviewMoveResult`: previews the resulting values and track winners of all six
+    caravans for the highlighted placement or track discard (`Game::preview_move`) as
+    `old->new` ASCII text (red if busting over 26, white if winning with
+    `bHighlightWinningCaravans`, warm highlight otherwise), updating both on keyboard
+    navigation and on pointer hover over a placement mark.
+- **Deck modification at match start** (`iModCardMode`, `iModCardCount`) [documented:
+  BetterCaravan.ini public schema (`0 = add`, `1 = remove`, `2 = replace`); design:
+  match-only deck mutation and `MIN_DECK` floor]:
+  - Active only when `iModCardCount > 0`; leaves the saved deck untouched and modifies
+    only the dealt match deck (`apply_deck_mod`). `Add` adds up to `count` unused owned
+    cards, `Remove` removes up to `count` cards while keeping at least `MIN_DECK` (30)
+    cards when the deck starts at or above `MIN_DECK`, and `Replace` swaps up to `count`
+    deck cards with unused owned cards.
+- **Opponent cards face up** (`bViewNpcCards`) [documented: BetterCaravan.ini public
+  schema]: draws cards in the opponent's hand face up when non-zero; face down otherwise.
+- **Face-card reminders** (`sDescriptionJack`, `sDescriptionQueen`, `sDescriptionKing`,
+  `sDescriptionJoker`) [documented: BetterCaravan.ini public schema; design: banner
+  placement]: displays the configured reminder text while viewing a matching face card in
+  the Deck builder or Play hand (`active_face_description`).
+- **Additional directional keys** (`sKeyUp`, `sKeyDown`, `sKeyLeft`, `sKeyRight`)
+  [documented: BetterCaravan.ini public schema; design: key mapping and vertical track
+  stepping]: parsed case-insensitively (`parse_better_caravan_key`) and deduplicated
+  against all vanilla keys bound in that stage (so overlapping configs such as WASD never
+  fire conflicting actions). In `Deck`, Left/Right scroll cards and Up/Down map to Add/Remove.
+  In `Play`, Left/Right step horizontally across hand cards or destinations, Up lifts a
+  hand card onto the table or moves upward along a track (player cards to opponent cards),
+  and Down moves downward along a track or returns to the hand from the bottom (`step_vertical`).
+- **Debug logging** (`bDebug`) [documented: BetterCaravan.ini public schema; design:
+  log lines]: emits `caravan [BetterCaravan debug]: …` `info!` lines for loaded config
+  path/flags, deck modification, and AI move choices; silent when off.
