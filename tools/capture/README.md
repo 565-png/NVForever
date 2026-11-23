@@ -690,6 +690,13 @@ those three both from the top-level root and from the menu's root, and checks th
 page's own example (`RadiationMeter/radiation_text/depth`: -50, then 0) when the tree has
 that tile. `--no-inherited` leaves them out.
 
+## `.fos` save-pair capture & verification harness (`fos/`)
+
+`tools/capture/fos/` contains a clean-room black-box `.fos` save-pair capture
+runner, stdlib-only binary parser/differ, declarative Round 1–3 campaign
+definitions, 68-assertion verifier, and offline synthetic test suite. See
+[`tools/capture/fos/README.md`](fos/README.md) for usage and clean-room rules.
+
 ## Tests
 
 ```
