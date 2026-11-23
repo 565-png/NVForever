@@ -1228,6 +1228,8 @@ impl Ai {
     /// Prospector Saloon after VMS16's MoveTo to the gas station, owner playtest].
     pub fn relocate(&mut self, game: &mut Game, actor: FormId) {
         let Some(place) = goal::place_of_ref(game, actor) else { return };
+        // From the new place a package set aside as out of reach may be reachable (#3472).
+        game.unblock_packages_of(actor);
         let heading = game.world.peek(actor).map_or(0.0, |s| s.rot[2]);
         self.script_moved.insert(actor, game.time);
         self.set_using(game, actor, None);
@@ -2213,6 +2215,15 @@ impl Ai {
         // (an actor, a talking activator) is not held back. The actor stays as it is
         // (waiting, or at the end of its walk) and tries again every update.
         let needs_sight = talk.target == FormId::PLAYER_REF;
+        // The player in another space than the actor (a load door just took them out,
+        // which moves the player's cell at once while the walkers' places catch up a
+        // frame later) is not talked to. Gomorrah's entrance guard started its weapons
+        // check with a player leaving by the inner door, the door's script having reset
+        // iInGomorrah; the hand-over set it again and the next way in kept the controls
+        // the outer door took (#2835).
+        if needs_sight && !same_space(game, actor, talk.target) {
+            return;
+        }
         if needs_sight && !game.greet_sight(actor, talk.target) {
             if self.unseen_greets.insert(actor) {
                 self.log(game, actor, AiEvent::TalkUnseen { package, target: talk.target, away });
@@ -3541,6 +3552,17 @@ pub const LEAD_STUCK_SECONDS: f64 = 1.5;
 
 /// How much nearer the point counts as progress on that walk, in units [our choice].
 const LEAD_GAIN: f32 = 8.0;
+
+/// Whether two references are in the same space now, as the world has their cells: one
+/// worldspace (any of its exterior cells), or one interior cell. Unknown cells count as the
+/// same.
+fn same_space(game: &Game, a: FormId, b: FormId) -> bool {
+    let cell = |r: FormId| game.world.peek(r).and_then(|s| s.cell).or_else(|| game.world.placed.get(r).and_then(|p| p.cell));
+    match (cell(a), cell(b)) {
+        (Some(x), Some(y)) => x == y || game.world.placed.world_of(x).is_some_and(|w| game.world.placed.world_of(y) == Some(w)),
+        _ => true,
+    }
+}
 
 #[cfg(test)]
 mod tests {

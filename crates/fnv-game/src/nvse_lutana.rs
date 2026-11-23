@@ -550,12 +550,11 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         "setzoneflag" => {
             if let (Some(z), Some(bit)) = (form(args, 0).filter(|z| g.world.forms.zones.contains_key(z)), num(args, 1).map(|b| b as i64 as u8)) {
                 let on = num(args, 2).unwrap_or(0.0) != 0.0;
-                let c = g.other.zone_changes.entry(z).or_default();
                 if bit & 1 != 0 {
-                    c.never_resets = Some(on);
+                    g.other.zone_changes.entry(z).or_default().never_resets = Some(on);
                 }
                 if bit & 2 != 0 {
-                    c.match_pc_below_min = Some(on);
+                    g.world.set_zone_match_level(z, on);
                 }
             }
             zero
@@ -589,12 +588,13 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             let unlocked = crate::data::terminal_flag::UNLOCKED;
             XVal::Num(t.and_then(|t| g.data.terminals.get(&t)).map_or(0.0, |d| if d.has(unlocked) { -1.0 } else { f64::from(d.difficulty) }))
         }
-        // `[terminal]`: TERM PNAM [documented: GetPasswordNote], SetPasswordNote's first.
-        "getpasswordnote" => reff(form(args, 0).or(subject).map(|f| base(g, f)).and_then(|t| record_ref(g, t, "PNAM"))),
+        // `[terminal]`: TERM PNAM [documented: GetPasswordNote], SetPasswordNote's first
+        // (`crate::terminal::password_note`, shared with `terminal::has_password` and
+        // `PlayerHasKey` and carried across same-run loads via `Game::Session`).
+        "getpasswordnote" => reff(form(args, 0).or(subject).map(|f| base(g, f)).and_then(|t| crate::terminal::password_note(g, t))),
         "setpasswordnote" => {
-            let t = form(args, 1).or(subject).map(|f| base(g, f)).filter(|&t| g.data.sig(t) == Some(*b"TERM"));
-            if let Some(t) = t {
-                g.field_overrides.insert((t, "PNAM/".into()), XVal::Ref(form(args, 0).map_or(0, |f| f.0)));
+            if let Some(t) = form(args, 1).or(subject).map(|f| base(g, f)) {
+                crate::terminal::set_password_note(g, t, form(args, 0));
             }
             zero
         }
@@ -664,16 +664,10 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // door with no lock of its own reads the other side's [hypothesis: as GetLockLevel].
         "playerhaskey" => {
             let Some(r) = subject else { return Some(Ok(zero)) };
-            let key = if is_terminal(g, r) {
-                let b = base(g, r);
-                let note = record_ref(g, b, "PNAM");
-                if note.is_some_and(|n| g.player.notes.contains(&n)) {
-                    return Some(Ok(XVal::Num(1.0)));
-                }
-                note
-            } else {
-                g.world.lock_of(r).and_then(|l| l.key)
-            };
+            if is_terminal(g, r) {
+                return Some(Ok(yes(crate::terminal::has_password(g, base(g, r)))));
+            }
+            let key = g.world.lock_of(r).and_then(|l| l.key);
             yes(key.is_some_and(|k| g.world.item_count(FormId::PLAYER_REF, k).is_ok_and(|n| n > 0)))
         }
         // `[ref]`: XAPD "Parent Activate Only" [documented: IsParentActivateOnly; the
