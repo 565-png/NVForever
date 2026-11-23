@@ -4,6 +4,8 @@
 
 #[path = "compile/inline_surplus_operands.rs"]
 mod inline_surplus_operands;
+#[path = "compile/extender_params.rs"]
+mod extender_params;
 
 use fnv_script::compile::{compile, Compiled, Env, FormInfo, Seed, PLAYER};
 use fnv_script::unit::RefSlot;
