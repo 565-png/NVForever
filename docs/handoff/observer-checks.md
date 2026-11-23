@@ -3614,6 +3614,35 @@ already talking takes over at once, same topic or another; nothing is queued or 
      (say how near the two edges are: 17 to 31 units across, a step of 31 or more); if
      it does not, the rooms are the player's alone in the original too.
 
+## Added 2026-11-23 (Harland's greeting as the player leaves, #3464)
+
+280. **Does Harland greet a player who leaves his room in the REPCONN basement?** (P2:
+     #3464, a player could not leave; packages.md §3.) His Dialogue package has an
+     activate distance of 1200 and the doorway trigger as its trigger location; a second
+     trigger 370 units out on the way to the stairs calls `ResetAI` on him. In the
+     original, with VMS01 at stage 30 (the ghouls' friend not found yet): talk to Harland
+     and say goodbye, then walk out of his room towards the stairs and on past the reset
+     trigger. Say whether he greets again on the way out (where: in the doorway, past the
+     reset trigger, not at all), whether the player is walked back towards the doorway
+     or held, and whether coming back into the doorway greets again. If he greets past
+     the reset trigger without walking the player back, NVForever's 30 s rule matches;
+     if he never greets on the way out, the activate distance or sight is read
+     differently by the original.
+
+## Added 2026-11-22 (ammo the equipped weapon cannot fire, #3442)
+
+288. **Does the Pip-Boy's Ammo tab dim the ammo the equipped weapon cannot fire?** (P3:
+     #3442, a player expected it; with check 193, the mark on the loaded ammo.) Ours
+     [design]: every row at full strength; the loaded ammo's row carries the equipped
+     square. In the original, carry four kinds of ammo (12 gauge, 20 gauge, 9mm, .357)
+     and equip a 12 gauge shotgun, then open ITEMS, Ammo and take a frame; equip the 9mm
+     pistol and take another; holster the weapon and take a third; equip nothing (fists)
+     and take a fourth. For each frame say which rows are dimmer than the others (sample
+     the text's colour of a full-strength row and of a dim one), which row carries the
+     square, and whether a dim row can still be selected, dropped or put on a hotkey.
+     With a weapon that takes several kinds (12 gauge and its slugs, or the .357 with
+     .38 Special), say whether the other kinds it can fire are at full strength.
+
 ## Added 2026-11-21 (the compass's actor ticks against the strip, #3310)
 
 261. **Where does an actor's tick on the compass end against the strip's line?** (P3;
@@ -3785,6 +3814,20 @@ already talking takes over at once, same topic or another; nothing is queued or 
      separately, as it may name another reference than the prompt. Record which aims give
      the suitcase and which the bed, without reading a rule into them yet; compare with
      ours afterwards (aim for aim in the same spot in NVForever).
+
+## Added 2026-11-21 (relief on the landscape's texture layers, #3322)
+
+268. **Does the original draw any parallax or relief on the landscape's texture layers?**
+     (P3; #3322, pbr-materials.md "Terrain layers: parallax".) NVForever's terrain
+     parallax is an addition of its own until this is answered; ours assumes the original
+     draws none, as no landscape texture set is known to name a height texture
+     [hypothesis]. Outside Goodsprings at noon, stand on a stony layer (gravel or rocks
+     painted over the dirt base), look down at about 30 degrees and strafe slowly sideways
+     for a few seconds, then crouch and repeat closer: stones whose painted bumps slide
+     against each other as the view moves say the original draws relief; texels that move
+     rigidly with the ground say it draws none. The data offers none: no LTEX texture set
+     of FalloutNV.esm names a `TX04` map [documented: counted with fnvtool, 2026-11-21;
+     pbr-materials.md "Terrain layers: parallax"].
 
 ## Added 2026-11-21 (a lakelurk standing on a deep lake bed, #2980)
 
