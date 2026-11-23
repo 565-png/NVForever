@@ -1353,8 +1353,10 @@ From the ESM audit (docs/handoff/esm-full-audit-2026-10-24.md, gaps 7, 15, 17). 
   rolled within its maximum distance.
 - **Other actors** [design] (`sfx::ActorSound`): the sounds of another actor's or a
   creature's clips (sound keys, footfalls, armour footfalls, rustles, creature sound
-  types), its jumps and landings, a creature's hit and death, a load door it passes (`DRSVegasDoorOpen`, the Freeside gates') and an
-  effect hitting it go by the record's distances whatever its flags, gain and reach both,
+  types), its jumps and landings, a creature's hit and death, a load door it passes
+  (`DRSVegasDoorOpen`, the Freeside gates'), an effect hitting it and the sound a placed
+  line plays instead of a voice (107 responses name a 2D one, 105 of them songs [observed:
+  INFO records]) go by the record's distances whatever its flags, gain and reach both,
   as before #3444; the player's own keys and placed objects' keys do not. The generic
   `chair_leftexit.kf` (IDLE `ChairLeftStand`) keys `NPCDocMStandUp` (2D, 265 to 1,600
   units): whole, every actor rising from a seat within 3,000 units (`ACTOR_RANGE`) would be
