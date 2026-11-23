@@ -54,8 +54,9 @@ slice 2 plays; CopyAnimationsToForm copies the entries too.
 
 GetAnimationAttributes, Get/SetGlobalAnimTime, the blend functions, SetAnimWeight,
 SetAnimAdditive, the text-key functions, CopyAnimationsToForm and the rest are built on
-the game side (`nvse_knvse.rs`, docs/spec-notes/ext-knvse.md). The engine's per-actor
-player does not read their state yet.
+the game side (`nvse_knvse.rs`, docs/spec-notes/ext-knvse.md). `AllowAttack` cooldown
+and flinch release is now consumed for the player in `nvf-play` (`combat.rs`) [design];
+the engine's per-actor player does not yet read the rest of this state.
 
 ## 5. The player, conditions and folders (2026-11-13)
 
