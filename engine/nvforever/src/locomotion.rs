@@ -550,8 +550,13 @@ fn under_clip(idle: &BoundClip) -> BoundClip {
 }
 
 impl Locomotion {
+    /// Every actor sets off at once from a standing clip, even part way through a fade
+    /// into one (`Blend::set_off_at_once`): people as creatures (#3670), else a person
+    /// walking off during a fade into the idle or a turn slid on that standing clip.
     pub fn new(set: Arc<ClipSet>, phase: f32) -> Locomotion {
-        Locomotion { stand: set.clone(), set, blend: Blend::new(Move::Idle, phase), prev_set: None, velocity: [0.0; 2], turn: 0.0, hold: false, sneak: None, hurt: None, hurt_alert: None, sneaking: false, limping: false, swim: None, swimming: false, alert: None, alerted: false, pace: 1.0, gait_speed: 0.0, in_air: false, jump: Default::default(), armed: None, armed_on: false, armed_logged: Vec::new(), idle_under: false, under: Under::default(), clipless_logged: 0, baseless_logged: false, bed_fade: false }
+        let mut blend = Blend::new(Move::Idle, phase);
+        blend.set_off_at_once = true;
+        Locomotion { stand: set.clone(), set, blend, prev_set: None, velocity: [0.0; 2], turn: 0.0, hold: false, sneak: None, hurt: None, hurt_alert: None, sneaking: false, limping: false, swim: None, swimming: false, alert: None, alerted: false, pace: 1.0, gait_speed: 0.0, in_air: false, jump: Default::default(), armed: None, armed_on: false, armed_logged: Vec::new(), idle_under: false, under: Under::default(), clipless_logged: 0, baseless_logged: false, bed_fade: false }
     }
 
     /// The standing set now (kNVSE's SetActorAnimationPath swaps it, anim_paths.rs).
@@ -1650,6 +1655,28 @@ mod tests {
         lo.layers(&mut player);
         player.layers[0].as_mut().expect("idle").weight = f32::NAN;
         assert_eq!(lo.base_fault(&player).as_deref(), Some("its Idle clip in its standing set has weight NaN and phase 0; nothing on layer 1"));
+    }
+
+    /// #3670: a person (no creature flag set) walking off part way through a turn's fade
+    /// back into the idle starts the walk at once, not when the fade ends: before, the
+    /// body slid on the standing clip for the rest of the fade.
+    #[test]
+    fn a_person_sets_off_at_once_during_a_fade_into_a_standing_clip() {
+        let mut lo = Locomotion::new(set(), 0.0);
+        // Turning on the spot, then the turn stops: a fade from the turn into the idle.
+        lo.turn = 2.0;
+        lo.step(1.0 / 60.0);
+        for _ in 0..30 {
+            lo.step(1.0 / 60.0);
+        }
+        assert!(matches!(lo.blend.cur.mv, Move::TurnLeft | Move::TurnRight), "turning: {:?}", lo.blend.cur.mv);
+        lo.turn = 0.0;
+        lo.step(1.0 / 60.0);
+        assert!(!lo.blend.cur.mv.is_moving() && lo.blend.prev.is_some(), "a fade into a standing clip runs");
+        // Walking off in the next frame, with that fade still running.
+        lo.velocity = [0.0, 85.26];
+        lo.step(1.0 / 60.0);
+        assert_eq!(lo.blend.cur.mv, Move::Forward, "the walk starts at once");
     }
 
     #[test]
