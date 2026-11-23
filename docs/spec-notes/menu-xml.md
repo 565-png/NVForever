@@ -1115,7 +1115,10 @@ Implemented consumers and remaining exclusions:
   scrolled how) are not known [hypothesis]. Textures are decoded
   only up to `repeat::MAX_TEXELS`, read from the file's header first, by these bakes and
   by `crate::repeat`'s (the tiled pictures, the compass strip), whose oversized textures
-  keep Bevy's drawing. An offset that changes alone re-bakes the kept image, or moves the
+  keep Bevy's drawing; when a source texture exceeds `repeat::MAX_TEXELS` (such as a
+  4096 x 4096 modded UI atlas), `crate::repeat` and `compass_strip` decode only the
+  requested sub-rectangle directly from level 0 when that region fits within
+  `repeat::MAX_TEXELS` [design]. An offset that changes alone re-bakes the kept image, or moves the
   compass strip on, in place (same nodes and handle), only when it is another texel
   shift, within `texmod::BAKE_BUDGET` texels a frame (unspent budget accrues up to three
   largest images, the most one bake costs: its output and both textures decoded again, or
