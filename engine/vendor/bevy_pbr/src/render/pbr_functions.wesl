@@ -190,7 +190,9 @@ fn apply_normal_mapping(
     if (standard_material_flags & pbr_types::STANDARD_MATERIAL_FLAGS_TWO_COMPONENT_NORMAL_MAP) != 0u {
         // Only use the xy components and derive z for 2-component normal maps.
         Nt = vec3<f32>(Nt.rg * 2.0 - 1.0, 0.0);
-        Nt.z = sqrt(1.0 - Nt.x * Nt.x - Nt.y * Nt.y);
+        // NVForever two-channel normal clamp: XY outside the unit disk (BC5 endpoints,
+        // filtering) gives Z 0 instead of a NaN (#2981, engine/vendor/README.md).
+        Nt.z = sqrt(max(1.0 - Nt.x * Nt.x - Nt.y * Nt.y, 0.0));
     } else {
         Nt = Nt * 2.0 - 1.0;
     }
@@ -309,6 +311,10 @@ fn calculate_contact_shadow(
 
     let depth_size = vec2<f32>(textureDimensions(view_bindings::depth_prepass_texture));
     var rm = raymarch::depth_ray_march_new_from_depth(depth_size);
+    // NVForever (main pass viewport): drawn below its output size (FSR, DLSS), the view fills
+    // only `main_pass_viewport` of the depth texture (`DepthRayMarch::depth_uv_scale`).
+    rm.depth_uv_scale = view_bindings::view.main_pass_viewport.zw / depth_size;
+    rm.depth_uv_offset = view_bindings::view.main_pass_viewport.xy / depth_size;
     raymarch::depth_ray_march_from_cs(&rm, position_world_to_ndc(world_position));
     raymarch::depth_ray_march_to_ws(&rm, world_position + light_dir * view_bindings::contact_shadows_settings.length);
     rm.linear_steps = contact_shadow_steps;

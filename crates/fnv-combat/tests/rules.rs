@@ -1430,6 +1430,24 @@ fn flame_fence_range() {
 }
 
 #[test]
+fn a_lobber_of_gravity_zero_falls_and_a_missile_of_zero_does_not() {
+    // #3441: the Nuka-grenade's PROJ is a Lobber with gravity 0; it is thrown on an arc
+    // like the frag grenade (gravity 1), not dead straight.
+    let t = CombatTuning::default();
+    let nuka = proj("Lobber", &["Explosion"], 1200.0, 0.0);
+    assert_eq!(nuka.fall(), 1.0);
+    let thrown = Projectile::spawn(&nuka, Some(BOOM), [0.0, 0.0, 100.0], [1.0, 0.0, 0.0], Some(1), G, &t);
+    assert_eq!(thrown.gravity, G);
+    assert!(fnv_combat::vats::throw_reach(nuka.speed, nuka.fall() * G).is_finite());
+    // The field is still a multiplier where it is set.
+    assert_eq!(proj("Lobber", &[], 1200.0, 1.5).fall(), 1.5);
+    // A missile of 0 keeps flying straight.
+    let missile = proj("Missile", &[], 3000.0, 0.0);
+    assert_eq!(missile.fall(), 0.0);
+    assert_eq!(Projectile::spawn(&missile, None, [0.0; 3], [1.0, 0.0, 0.0], Some(1), G, &t).gravity, 0.0);
+}
+
+#[test]
 fn lobbers_timer_proximity_detonation() {
     let t = CombatTuning::default();
     let empty = Toy { actors: vec![], fence: false, wall: None };
@@ -1824,4 +1842,23 @@ fn the_radius_buff_keeps_the_inner_part_whole() {
     assert_eq!(fnv_combat::damage::explosion_damage(&t, 100.0, 100.0, 20.0), 100.0);
     assert!((fnv_combat::damage::explosion_damage(&t, 100.0, 100.0, 100.0) - 20.0).abs() < 1e-3);
     assert!((fnv_combat::damage::explosion_damage(&CombatTuning::default(), 100.0, 100.0, 100.0) - 25.0).abs() < 1e-3);
+}
+
+/// #3023: a weapon whose Ammo Use is 0 (the Laser Detonator: automatic, a clip of one, Fire
+/// Rate 10) spends no round a shot: held, it fires at its rate with no reload between
+/// shots, from an empty magazine and with nothing carried.
+#[test]
+fn ammo_use_zero_spends_no_round_and_never_reloads() {
+    let t = CombatTuning::default();
+    let w = WeaponStats { clip_size: 1, ammo_use: 0, automatic: true, attack_shots_per_sec: 10.0, ..gun(20) };
+    let timing = Timing { interval: 0.1, fire_delay: 0.0, reload: 2.0, spin_up: 0.0, rounds: None, attach: None };
+    for magazine in [1, 0] {
+        let mut c = Cycle::new(&w, timing, false, magazine);
+        let ev = run(&mut c, &t, 200, 0.01, |_| true, 0);
+        assert!(!ev.iter().any(|e| matches!(e, Event::ReloadStarted | Event::DryFire)), "{ev:?}");
+        assert!(ev.iter().all(|e| !matches!(e, Event::Fired { rounds } if *rounds != 0)), "{ev:?}");
+        let n = shots(&ev);
+        assert!((19..=21).contains(&n), "about 10 a second for 2 s from a magazine of {magazine}: {n}");
+        assert_eq!(c.magazine, magazine);
+    }
 }
