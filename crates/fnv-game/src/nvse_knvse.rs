@@ -38,6 +38,39 @@ fn transition_weight(g: &mut Game, actor: FormId, first: bool, path: &str, weigh
     }
 }
 
+/// Align `dst`'s clock to a currently playing `timeSync` sequence on `(actor, first)`
+/// [design: scales by normalized phase `(src_t - src_begin) / src_span` when both
+/// `SequenceInfo` headers have positive finite spans, else copies `src`'s current clock
+/// time; returns `false` when `sync` is empty or not playing so callers still run the
+/// blend transition with `destFrame` or the default clock rather than failing].
+fn apply_time_sync(g: &mut Game, actor: FormId, first: bool, sync: &str, dst: &str) -> bool {
+    if sync.is_empty() || !g.plays_for(actor, first, sync) {
+        return false;
+    }
+    let src_time = g.script_sequence_time_for(actor, sync, first);
+    if !src_time.is_finite() {
+        return false;
+    }
+    let synced = match (g.knvse.sequences.get(&key(sync)), g.knvse.sequences.get(&key(dst))) {
+        (Some(si), Some(di)) => {
+            let src_span = si.end - si.begin;
+            let dst_span = di.end - di.begin;
+            if src_span.is_finite() && src_span > 1e-6 && dst_span.is_finite() && dst_span > 1e-6 {
+                let phase = ((src_time - si.begin) / src_span).rem_euclid(1.0);
+                di.begin + phase * dst_span
+            } else {
+                src_time
+            }
+        }
+        _ => src_time,
+    };
+    if !synced.is_finite() {
+        return false;
+    }
+    transition_offset(g, actor, first, dst, synced);
+    true
+}
+
 fn transition_offset(g: &mut Game, actor: FormId, first: bool, path: &str, time: f64) {
     if !time.is_finite() {
         return;
@@ -440,10 +473,10 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         }
         // `source dest [first] [ease] [priority] [startOver] [weight] [timeSync]`: the
         // source must play and the destination not; then the source stops (fading over
-        // `ease`) and the destination plays at `weight` (default 1) with `ease` and
-        // `priority`; 1 / 0 [documented: CrossFadeAnims, "simply a convenience function
-        // that calls DeactivateAnim on the source sequence and ActivateAnim on the
-        // destination"].
+        // `ease`) and the destination plays at `weight` (default 1) with `ease`,
+        // `priority`, and optional `timeSync` phase alignment; 1 / 0 [documented:
+        // CrossFadeAnims, "simply a convenience function that calls DeactivateAnim on the
+        // source sequence and ActivateAnim on the destination"].
         "crossfadeanims" => {
             let (src, dst) = (text(args, 0), text(args, 1));
             let first = a == FormId::PLAYER_REF && num(args, 2, f64::from(u8::from(g.senses.first_person))) != 0.0;
@@ -458,7 +491,6 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             if !priority.is_finite()
                 || !weight.is_finite()
                 || ease.is_some_and(|v| !v.is_finite() || v < 0.0 || v > f64::from(f32::MAX))
-                || !sync.is_empty()
             {
                 return Some(Ok(zero));
             }
@@ -478,6 +510,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             if started == 0.0 {
                 return Some(Ok(zero));
             }
+            apply_time_sync(g, a, first, &sync, &dst);
             crate::nvse_anim::deactivate_anim_for(g, a, first, &src, ease.unwrap_or(0.2));
             transition_weight(g, a, first, &dst, weight);
             XVal::Num(1.0)
@@ -509,7 +542,6 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
                 || !dw.is_finite()
                 || duration.is_some_and(|v| !v.is_finite() || v < 0.0 || v > f64::from(f32::MAX))
                 || dest_frame.is_some_and(|v| !v.is_finite())
-                || !sync.is_empty()
             {
                 return Some(Ok(zero));
             }
@@ -531,13 +563,16 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
                 }
             }
             transition_weight(g, a, first, &dst, dw);
+            let synced = apply_time_sync(g, a, first, &sync, &dst);
             if sw <= 0.0 {
                 crate::nvse_anim::deactivate_anim_for(g, a, first, &src, duration.unwrap_or(0.2));
             } else {
                 transition_weight(g, a, first, &src, sw);
             }
-            if let Some(f) = dest_frame {
-                transition_offset(g, a, first, &dst, f);
+            if !synced {
+                if let Some(f) = dest_frame {
+                    transition_offset(g, a, first, &dst, f);
+                }
             }
             XVal::Num(1.0)
         }
@@ -560,7 +595,6 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             if !priority.is_finite()
                 || duration.is_some_and(|v| !v.is_finite() || v < 0.0 || v > f64::from(f32::MAX))
                 || dest_frame.is_some_and(|v| !v.is_finite())
-                || !sync.is_empty()
             {
                 return Some(Ok(zero));
             }
@@ -581,8 +615,10 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
                     seq.ease_in = Some(d as f32);
                 }
             }
-            if let Some(f) = dest_frame {
-                transition_offset(g, a, first, &path, f);
+            if !apply_time_sync(g, a, first, &sync, &path) {
+                if let Some(f) = dest_frame {
+                    transition_offset(g, a, first, &path, f);
+                }
             }
             XVal::Num(1.0)
         }

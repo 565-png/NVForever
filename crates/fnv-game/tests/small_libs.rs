@@ -958,4 +958,61 @@ fn knvse_transition_duration_view_weights_additive_and_non_finite_dest_frame() {
         assert!(!g.anim_paths.sequences.contains_key(&(FormId::PLAYER_REF, false, "test\\b.kf".into())));
     }
     assert!(g.script_sequence_time_for(FormId::PLAYER_REF, "test\\d.kf", true).is_finite());
+
+    // timeSync in CrossFadeAnims, BlendToAnim, and BlendToAnimFromPose:
+    // - aligns destination clock by normalized phase when both SequenceInfo spans are known;
+    // - copies sync clock directly when SequenceInfo spans are absent;
+    // - never refuses and still runs the transition when timeSync is not currently playing.
+    let mut g_sync = game(&f);
+    g_sync.senses.first_person = true;
+    g_sync.set_sequence_info(
+        "test\\a.kf",
+        fnv_game::nvse_knvse::SequenceInfo {
+            name: "a".into(),
+            accum_root: "Bip01".into(),
+            frequency: 1.0,
+            begin: 0.0,
+            end: 2.0,
+            cycle: 0,
+            text_keys: Vec::new(),
+        },
+    );
+    g_sync.set_sequence_info(
+        "test\\b.kf",
+        fnv_game::nvse_knvse::SequenceInfo {
+            name: "b".into(),
+            accum_root: "Bip01".into(),
+            frequency: 1.0,
+            begin: 0.0,
+            end: 4.0,
+            cycle: 0,
+            text_keys: Vec::new(),
+        },
+    );
+    assert_eq!(q(&mut g_sync, "SetFunctionValue (PlayerREF.ActivateAnim \"test\\a.kf\" 1 1 1 1 0.1)"), n(1.0));
+    q(&mut g_sync, "PlayerREF.SetAnimCurrentTime \"test\\a.kf\" 0.5");
+    g_sync.tick();
+    let a_time = g_sync.script_sequence_time_for(FormId::PLAYER_REF, "test\\a.kf", true);
+    assert!((a_time - (0.5 + g_sync.cfg.frame_seconds)).abs() < 1e-6);
+    // CrossFadeAnims with timeSync = source ("test\\a.kf", span 2.0) scales "test\\b.kf" (span 4.0) by normalized phase.
+    let expected_b = (a_time / 2.0).rem_euclid(1.0) * 4.0;
+    assert_eq!(
+        q(&mut g_sync, "SetFunctionValue (PlayerREF.CrossFadeAnims \"test\\a.kf\" \"test\\b.kf\" 1 0.2 3 1 0.9 \"test\\a.kf\")"),
+        n(1.0)
+    );
+    assert!((g_sync.script_sequence_time_for(FormId::PLAYER_REF, "test\\b.kf", true) - expected_b).abs() < 1e-6);
+
+    // BlendToAnim with playing timeSync without SequenceInfo on destination copies sync clock directly.
+    assert_eq!(
+        q(&mut g_sync, "SetFunctionValue (PlayerREF.BlendToAnim \"test\\b.kf\" \"test\\c.kf\" 1 0.25 0 0 0.8 4 \"test\\b.kf\")"),
+        n(1.0)
+    );
+    assert!((g_sync.script_sequence_time_for(FormId::PLAYER_REF, "test\\c.kf", true) - expected_b).abs() < 1e-6);
+
+    // BlendToAnimFromPose with a non-playing timeSync still succeeds (returns 1) and honors destFrame (0.35).
+    assert_eq!(
+        q(&mut g_sync, "SetFunctionValue (PlayerREF.BlendToAnimFromPose \"test\\d.kf\" 1 0.2 0.35 5 \"test\\a.kf\")"),
+        n(1.0)
+    );
+    assert!((g_sync.script_sequence_time_for(FormId::PLAYER_REF, "test\\d.kf", true) - 0.35).abs() < 1e-6);
 }
