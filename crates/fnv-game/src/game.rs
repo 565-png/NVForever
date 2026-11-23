@@ -370,6 +370,11 @@ pub struct RefExtra {
     /// Who killed the actor (KillActor's killer), for IsKiller.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub killer: Option<FormId>,
+    /// GameDaysPassed when the actor died, for GetTimeDead; cleared by a Disable ("If the
+    /// actor gets disabled after dying, it loses its info about when it has died"
+    /// [documented: GECK wiki GetTimeDead]). `None` for a corpse laid out at the start.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub died_day: Option<f64>,
     /// KillActor's cause of death, which GetCauseofDeath reads before the killing hit.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub death_cause: Option<i32>,

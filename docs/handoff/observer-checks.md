@@ -4191,3 +4191,16 @@ capture setup, so every part of a check that needs an interior is still open.
      Goodsprings Source from the town). For each: when the words appear, when the name
      has fully come in (and whether it comes letter by letter or fades), when it starts
      to go and how long the fade lasts, and the gap before the next line.
+
+## Added 2026-11-23 (HasFriendDisposition's friend level, #3615)
+
+292. **At what disposition does HasFriendDisposition turn 1, and towards whom?** (P3;
+     #3615, `crates/fnv-game/src/functions/actor.rs` `FRIEND_DISPOSITION`.) Ours
+     [hypothesis]: 1 when the actor's disposition towards the player is 70 or more. The
+     GECK wiki speaks of a "friend disposition game setting" without naming it, and no
+     GMST in FalloutNV.esm is one. In the console, select an NPC (Sunny Smiles in the
+     Prospector Saloon), `SetDisposition player 100`, then `GetDisposition player` and
+     `HasFriendDisposition`; lower it in steps (`SetDisposition player 80`, 70, 60, 50 ...)
+     and note the lowest value at which it still reads 1. Then `SetDisposition` towards
+     another actor at 100 with the player's at 0: does it read 1 (not towards the player
+     only)?
