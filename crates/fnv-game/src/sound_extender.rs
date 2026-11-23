@@ -1,4 +1,4 @@
-//! Clean-room `Data\NVSE\Plugins\SoundExtender\*.txt` JSON config loader
+//! Clean-room `Data\NVSE\Plugins\SoundExtender\*.json` / `*.txt` JSON config loader
 //! (`docs/spec-notes/sound-extender.md`).
 //!
 //! Discovers and resolves per-form collision sound overrides (`mod`, `form`, `sound`)
@@ -26,9 +26,9 @@ const RECORD_FLAG_DELETED: u32 = 0x0000_0020;
 /// and tests.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SoundExtenderReport {
-    /// Number of valid JSON array `.txt` files parsed.
+    /// Number of valid JSON array config files (`.json` / `.txt`) parsed.
     pub files_loaded: usize,
-    /// Number of `.txt` files skipped because they were unreadable, invalid UTF-8,
+    /// Number of config files skipped because they were unreadable, invalid UTF-8,
     /// malformed JSON, or did not have a top-level JSON array.
     pub files_malformed: usize,
     /// Number of valid entries resolved and applied (including overwrites of earlier rules).
@@ -55,7 +55,7 @@ impl SoundExtenderReport {
 }
 
 /// Resolved per-form collision sound overrides loaded from
-/// `Data\NVSE\Plugins\SoundExtender\*.txt`.
+/// `Data\NVSE\Plugins\SoundExtender\` (`*.json` and `*.txt`).
 #[derive(Debug, Default, Clone)]
 pub struct SoundExtenderTable {
     overrides: HashMap<FormId, FormId>,
@@ -171,14 +171,13 @@ impl SoundExtenderTable {
         table
     }
 
-    /// Discover and load `Data\NVSE\Plugins\SoundExtender\*.txt` through the engine
-    /// [`fnv_vfs::Vfs`] (case-insensitive, deterministic sorted order, layered roots and
-    /// archives included).
+    /// Discover and load `Data\NVSE\Plugins\SoundExtender\` (`*.json` and `*.txt`) through
+    /// the engine [`fnv_vfs::Vfs`] (case-insensitive, deterministic sorted order, layered
+    /// roots and archives included).
     pub fn load_from_vfs(lo: &LoadOrder<'_>, vfs: &fnv_vfs::Vfs) -> SoundExtenderTable {
         let paths = vfs.paths(|p| {
-            p.strip_prefix(VFS_PREFIX).is_some_and(|rest| {
-                !rest.is_empty() && !rest.contains('\\') && rest.ends_with(".txt")
-            })
+            p.strip_prefix(VFS_PREFIX)
+                .is_some_and(|rest| !rest.is_empty() && !rest.contains('\\') && is_config_filename(rest))
         });
         if paths.is_empty() {
             return SoundExtenderTable::default();
@@ -215,16 +214,12 @@ impl SoundExtenderTable {
         table
     }
 
-    /// Discover and load `Data\NVSE\Plugins\SoundExtender\*.txt` through
+    /// Discover and load `Data\NVSE\Plugins\SoundExtender\` (`*.json` and `*.txt`) through
     /// [`crate::mod_files`] (case-insensitive, deterministic sorted order).
     pub fn load_from_mod_files(lo: &LoadOrder<'_>) -> SoundExtenderTable {
         let names: Vec<String> = crate::mod_files::files_in(MOD_FILES_DIR)
             .into_iter()
-            .filter(|name| {
-                Path::new(name)
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
-            })
+            .filter(|name| is_config_filename(name))
             .collect();
         if names.is_empty() {
             return SoundExtenderTable::default();
@@ -255,11 +250,25 @@ impl SoundExtenderTable {
     }
 }
 
+/// Accept `.json` ([documented: Nexus Mods mod 78637 v1.0 "a JSON file with a name of your
+/// choice"]) and `.txt` ([hypothesis: community configs shipped with `.txt` extension, e.g.
+/// `NovaArizona.txt`]) while ignoring unrelated extensions and mod-manager marker files
+/// (`[design]`).
+fn is_config_filename(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("json") || ext.eq_ignore_ascii_case("txt"))
+}
+
 fn string_field<'a>(obj: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a str> {
     let s = obj.get(key)?.as_str()?.trim();
     (!s.is_empty()).then_some(s)
 }
 
+/// Parse `"form"` as a hexadecimal FormID string (`1..=8` ASCII hex digits with an optional
+/// `0x`/`0X` prefix) `[hypothesis: the Nexus Mods mod 78637 v1.0 example `"4353"` matches
+/// `WeapSniperRifle` `0x00004353` in `FalloutNV.esm`, though the page text does not state
+/// hexadecimal explicitly]`.
 fn parse_hex_form_id(raw: &str) -> Option<u32> {
     let hex = raw
         .trim()
@@ -501,15 +510,24 @@ mod tests {
         assert_eq!(table.report(), &SoundExtenderReport::default());
         assert_eq!(table.resolve(FormId(0x0000_4353)), None);
 
-        // Directory exists but holds only non-.txt files and nested subdirectories.
+        // Directory exists but holds only unrelated extensions/marker files and nested subdirectories.
         let se_dir = dir.join("NVSE").join("Plugins").join("SoundExtender");
         std::fs::create_dir_all(se_dir.join("nested")).unwrap();
-        std::fs::write(se_dir.join("notes.json"), r#"[{"mod":"Base.esm","form":"4353","sound":"SynthSndOne"}]"#).unwrap();
+        std::fs::write(se_dir.join("readme.md"), "not a sound extender config").unwrap();
+        std::fs::write(se_dir.join("__folder_managed_by_vortex"), "").unwrap();
+        std::fs::write(se_dir.join("nested").join("deep.json"), r#"[{"mod":"Base.esm","form":"4353","sound":"SynthSndOne"}]"#).unwrap();
         std::fs::write(se_dir.join("nested").join("deep.txt"), r#"[{"mod":"Base.esm","form":"4353","sound":"SynthSndOne"}]"#).unwrap();
         let vfs2 = fnv_vfs::Vfs::open(&dir, &[]).unwrap();
         let table2 = SoundExtenderTable::load_from_vfs(&lo, &vfs2);
         assert!(table2.is_empty());
         assert_eq!(table2.report().files_loaded, 0);
+
+        assert!(is_config_filename("custom.json"));
+        assert!(is_config_filename("CUSTOM.JSON"));
+        assert!(is_config_filename("NovaArizona.txt"));
+        assert!(is_config_filename("LEGACY.TXT"));
+        assert!(!is_config_filename("readme.md"));
+        assert!(!is_config_filename("__folder_managed_by_vortex"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -530,9 +548,9 @@ mod tests {
             "\u{feff}[\n  {\"mod\": \"base.esm\", \"form\": \"4353\", \"sound\": \"synthSndOne\"},\n  {\"mod\": \"Addon.esp\", \"form\": \"0xE4B\", \"sound\": \"AddonCustomPhys\"}\n]\n",
         )
         .unwrap();
-        // 02_SECOND.TXT overrides Base.esm:4353 deterministically because "02_second.txt" > "01_first.txt".
+        // 02_SECOND.JSON overrides Base.esm:4353 deterministically because "02_second.json" > "01_first.txt".
         std::fs::write(
-            base_se.join("02_SECOND.TXT"),
+            base_se.join("02_SECOND.JSON"),
             r#"[{"mod": "Base.esm", "form": "00004353", "sound": "SynthSndTwo"}]"#,
         )
         .unwrap();
@@ -547,11 +565,11 @@ mod tests {
         assert_eq!(table.resolve(FormId(0x0000_4353)), Some(FormId(0x0000_0802)));
         assert_eq!(table.resolve(FormId(0x0100_0E4B)), Some(FormId(0x0100_0901)));
 
-        // Higher-precedence VFS layer replacing 02_SECOND.TXT overrides base_data's copy.
+        // Higher-precedence VFS layer replacing 02_SECOND.JSON overrides base_data's copy.
         let layer_se = mod_layer.join("NVSE").join("Plugins").join("SoundExtender");
         std::fs::create_dir_all(&layer_se).unwrap();
         std::fs::write(
-            layer_se.join("02_second.txt"),
+            layer_se.join("02_second.json"),
             r#"[{"mod": "Base.esm", "form": "4353", "sound": "AddonCustomPhys"}]"#,
         )
         .unwrap();

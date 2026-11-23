@@ -458,8 +458,8 @@ collision material 30 BABY_RATTLE) rolling, `PHYBabyRattle`. `PHYTumbleweed` exi
 nothing links it to the tumbleweed (its MSTT has no `SNAM`) [observed].
 
 Mods may supply per-form collision sound overrides via
-`Data\NVSE\Plugins\SoundExtender\*.txt` (`sound-extender.md`); when no overrides are
-present, knocks take the material table above unchanged.
+`Data\NVSE\Plugins\SoundExtender\` (`*.json` / `*.txt`, `sound-extender.md`); when no
+overrides are present, knocks take the material table above unchanged.
 
 ### 11.3 Items, containers, activators
 

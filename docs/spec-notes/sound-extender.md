@@ -1,4 +1,4 @@
-# SoundExtender (`Data/NVSE/Plugins/SoundExtender/*.txt`) Per-Form Collision Sound Loader
+# SoundExtender (`Data/NVSE/Plugins/SoundExtender/*.json`, `*.txt`) Per-Form Collision Sound Loader
 
 NVForever natively loads SoundExtender JSON per-form collision sound configs
 (`crates/fnv-game/src/sound_extender.rs`) and consumes them in dynamic loose-body physics
@@ -18,11 +18,14 @@ uncaptured native plugin runtime details remain `[hypothesis]`.
   Custom per-form collision sound JSON files live in `Data\NVSE\Plugins\SoundExtender`:
   > "To use this feature, simply create a JSON file with a name of your choice, place it in
   > the folder `Data\NVSE\Plugins\SoundExtender`, and type away!"
-- `[design]` NVForever discovers direct `*.txt` children under
-  `nvse\plugins\soundextender\` (case-insensitive directory and extension match, ignoring
-  subdirectories and non-`.txt` files) through the engine VFS (`fnv_vfs::Vfs`, covering
-  layered mod roots, loose files, and archives), with a `fnv_game::mod_files` fallback
-  when no `GameData` VFS resource is mounted.
+- `[design]` / `[hypothesis]` NVForever discovers direct `*.json` (`[documented: Nexus
+  Mods "Sound Extender" mod 78637 v1.0, "a JSON file with a name of your choice"]`) and
+  `*.txt` (`[hypothesis: community mods also ship SoundExtender JSON configs with a .txt
+  extension, e.g. NovaArizona.txt]`) children under `nvse\plugins\soundextender\`
+  (case-insensitive directory and extension match, ignoring subdirectories and unrelated
+  extensions or mod-manager marker files `[design]`) through the engine VFS
+  (`fnv_vfs::Vfs`, covering layered mod roots, loose files, and archives), with a
+  `fnv_game::mod_files` fallback when no `GameData` VFS resource is mounted.
 - `[design]` Higher-precedence VFS / mod layers override lower-precedence files with the
   same case-insensitive filename. Distinct files are applied in deterministic ascending
   case-insensitive filename order (tie-breaking on exact filename).
@@ -53,7 +56,10 @@ uncaptured native plugin runtime details remain `[hypothesis]`.
   > have its collision sounds replaced with those defined in the form with editorID
   > `UIMenuCancel`."
   - `"mod"`: plugin filename containing the target form (`"FalloutNV.esm"` in the example).
-  - `"form"`: target form ID as a hexadecimal string (`"4353"` for `WeapSniperRifle`).
+  - `"form"`: target form ID string (`"4353"` for `WeapSniperRifle` in the example).
+    `[hypothesis]` Parsed as a hexadecimal local FormID (`1..=8` ASCII hex digits, optional
+    `0x`/`0X` prefix): `"4353"` matches `WeapSniperRifle` (`0x00004353` in `FalloutNV.esm`),
+    though the Nexus Mods description page does not state hexadecimal explicitly.
   - `"sound"`: EditorID of the replacement sound form (`"UIMenuCancel"`, a `SOUN` record).
 - `[design]` An optional leading UTF-8 BOM (`U+FEFF`) is stripped. Unreadable files,
   non-UTF-8 files, malformed JSON, and JSON documents whose root is not an array fail
@@ -75,8 +81,8 @@ uncaptured native plugin runtime details remain `[hypothesis]`.
 
 ## 3. Precedence and live consumer
 
-- `[hypothesis]` When multiple valid entries (within one file or across sorted `*.txt`
-  files) target the same resolved base form, the later entry overwrites the earlier one.
+- `[hypothesis]` When multiple valid entries (within one file or across sorted `*.json` /
+  `*.txt` files) target the same resolved base form, the later entry overwrites the earlier one.
   Exact native DLL conflict-resolution order across files has not been captured.
 - `[design]` `nvf_play::world_sounds::init` builds `SoundExtenderTable` once at startup
   and stores it on `WorldSounds`.
@@ -93,7 +99,7 @@ uncaptured native plugin runtime details remain `[hypothesis]`.
 
 - Dedicated interior/exterior weapon firing sound switching (`*INTERIOR` suffix) and
   per-material bullet casing collision sounds are separate Sound Extender plugin features
-  outside the `Data\NVSE\Plugins\SoundExtender\*.txt` JSON config format and are not built
+  outside the `Data\NVSE\Plugins\SoundExtender\` JSON config format and are not built
   here.
 - `"SoundExtender"` is intentionally left unregistered in `fnv_script::vm::jip::PLUGINS`
   until the full plugin contract is qualified.

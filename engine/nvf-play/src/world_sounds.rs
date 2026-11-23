@@ -336,7 +336,7 @@ struct Tracked {
 #[derive(Resource, Default)]
 pub struct WorldSounds {
     forms: SoundForms,
-    /// Per-form collision sound overrides loaded from `Data\NVSE\Plugins\SoundExtender\*.txt`
+    /// Per-form collision sound overrides loaded from `Data\NVSE\Plugins\SoundExtender\` (`*.json` / `*.txt`)
     /// (`docs/spec-notes/sound-extender.md`).
     sound_extender: fnv_game::sound_extender::SoundExtenderTable,
     /// SOUN FormIDs by Editor ID (from `Sfx`, the first frame it is there).
@@ -2333,7 +2333,7 @@ mod tests {
         assert_eq!(knock_sound(&empty_se, &phy, Some(FormId(BASE_MAPPED)), Some(24), false), Some(SND_BOTTLE_L));
         assert_eq!(knock_sound(&empty_se, &phy, Some(FormId(BASE_DROPPED)), None, true), None);
 
-        // 2) Populate temp VFS with sorted SoundExtender *.txt configs + one malformed file.
+        // 2) Populate temp VFS with sorted SoundExtender *.txt / *.json configs + one malformed file.
         let se_dir = dir.join("NVSE").join("Plugins").join("SoundExtender");
         std::fs::create_dir_all(&se_dir).unwrap();
         std::fs::write(
@@ -2346,7 +2346,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            se_dir.join("02_override.TXT"),
+            se_dir.join("02_override.JSON"),
             r#"[{"mod": "SynthAudio.esm", "form": "0xE4B", "sound": "SynthDrumKnock"}]"#,
         )
         .unwrap();
