@@ -7491,7 +7491,7 @@ impl Host for Exec<'_, '_> {
         if self.game.gaps.projs.gone.contains(&f) {
             return None;
         }
-        if self.game.temp_item(f).is_some() {
+        if self.game.temp_item(f).is_some() || crate::nvse_jg_nif::is_camera_overlay_ref(f) {
             return Some(*b"REFR");
         }
         let f = self.game.unclone(f);

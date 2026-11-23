@@ -51,10 +51,23 @@ JIP block functions.
 The engine tells the camera each frame (`CameraRequests::view`): place, heading, pitch,
 roll, vertical field of view and the width over the height (GetPlayerCamFOV, JohnnyGuitar batch 9, may read it).
 
+**Camera overlay references (`JG_CameraOverlayRef_PreIS`, `JG_CameraOverlayRef_PreUI`).**
+JohnnyGuitar NVSE provides 3D camera overlay references rendered before image-space (`PreIS`)
+and before UI (`PreUI`) passes [documented: JohnnyGuitar NVSE release notes], which scripts
+resolve via `EditorIDToFormID` and pass to `AttachModel`, `SetNifBlockTranslation` /
+`SetNifTrans`, and particle/material setters. NVForever exposes both EditorIDs as
+engine-owned runtime references (`0xFE60_0001` and `0xFE60_0002`, outside `CLONE_BASE`,
+`COMPILED_BASE`, `TEMP_REF_BASE`, and `LAMBDA_BASE`) [design]: `EditorIDToFormID` and
+`GetEditorID` round-trip both names (without overriding an explicit `SetEditorID` or loaded
+plugin record), `IsFormValid` and `IsReference` report `1` (`REFR`), and NIF/particle
+script calls accept them without raising `NoReference` [hypothesis: exact native FormIDs
+and renderer-side overlay pass behavior are unobserved].
+
 ## 3. Engine follow-ups
 
 The alpha and stencil properties drawn as set; the first-person model's nodes (pc); the
-other sequence slots of GetSequenceAnimGroup.
+other sequence slots of GetSequenceAnimGroup; renderer-side 3D drawing of models attached
+to `JG_CameraOverlayRef_PreIS` and `JG_CameraOverlayRef_PreUI`.
 
 ## 4. Probe answers (set jgnif, run 2026-11-09)
 
