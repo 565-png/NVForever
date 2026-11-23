@@ -45,14 +45,22 @@ ran.
 
 ## 4. ForceWeaponJamAnim
 
-- It returned 0 with the 10mm pistol away and 1 with it drawn [observed]. IsAnimPlayingEx 4
-  (reload) never read 1 over the 60 frames after [observed], so the jam is not a reload as
-  that function counts them.
+- It returned 0 with the 10mm pistol away and 1 with it drawn [observed: showoff1].
+  `IsAnimPlayingEx 4` (reload) never read 1 over the 60 frames after [observed: showoff1],
+  so the jam is not a reload as that function counts them.
 - A weapon without a jam animation gives 0 [documented: GECK wiki
   [ForceWeaponJamAnim](https://geckwiki.com/index.php?title=ForceWeaponJamAnim), the .357
   Magnum Revolver cannot jam], and calling it interrupts the actor's current hand action
   (such as canceling an active reload and replacing it with the jam animation)
   [documented: ForceWeaponJamAnim].
+- Live probes `[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin
+  184 (10 official base masters, clean-room harness #3678 / PR #3679)]` confirmed:
+  - Drawn 10mm pistol (`Weap10mmPistol`, `jam_time = 1.4`) returns **`1`**; immediately
+    afterward, `GetAnimAction` reads **`9`** (not `13`), `IsAnimPlayingEx 4` remains
+    **`0`**, and calling `ForceWeaponJamAnim` again while already jamming returns
+    **`1`**.
+  - Drawn `.357 Magnum Revolver` (`WeapNV357Revolver`, `jam_time = 0.0`), holstered 10mm
+    pistol, drawn Baseball Bat (melee), and drawn Fists (unarmed) return **`0`**.
 - NVForever checks that the actor is alive, has its weapon drawn, and has an equipped gun
   (`DNAM/animation_type` in `3..=9`) with finite `DNAM/jam_time > 0` (`GetWeaponAnimJamTime`;
   honoring session overrides and `TempCloneForm` clones) [observed: FalloutNV.esm WEAP
@@ -64,11 +72,11 @@ ran.
   (`Game::take_force_jam_requests`). For the player, `nvf_play::combat::fire` interrupts
   any active reload or attack phase via `Cycle::jam` and increments `WeaponAnim::jams`
   (which `nvforever::player_body` plays on the reload layer, interrupting any active reload
-  clip) while reporting `AnimAction::ForceScriptAnim` (13), so `IsAnimPlayingEx 4` remains
-  0 and `SetOnReloadWeaponEventHandler` does not fire. Repeated calls while `Cycle::jammed`
-  is already true do not restart the active jam timer [design]. NPC jam animation playback
-  remains [not built] (`nvf-play` models `Cycle` for the player only). No ShowOff DLL or
-  source code was consulted.
+  clip) while reporting `AnimAction::Jam` (code `9` for `GetAnimAction`, while
+  `IsAnimPlayingEx 4` remains `0` and `SetOnReloadWeaponEventHandler` does not fire).
+  Repeated calls while `Cycle::jammed` is already true return `1` without restarting the
+  active jam timer [design]. NPC jam animation playback remains [not built] (`nvf-play`
+  models `Cycle` for the player only). No ShowOff DLL or source code was consulted.
 
 ## 5. The 2026-10-30 batch (#1010, `nvse_showoff2.rs`)
 
@@ -294,16 +302,20 @@ RemoveAllItemsShowOff.
 ## 10. `ShowOff:OnFireWeapon`
 
 - **`ShowOff:OnFireWeapon`** [documented: GECK wiki Category:Event Handlers (ShowOff NVSE),
-  [SetEventHandlerAlt](https://geckwiki.com/index.php?title=SetEventHandlerAlt)]:
-  dispatched when an actor fires a ranged weapon, with the firing actor reference as the
-  calling reference (`0::` filter, `GetSelf`/`GetSelfAlt`) and the weapon base form as
-  the first argument (`1::` / `"first"::` filter, `Begin Function { ref rWeapon }`)
-  [hypothesis: calling reference and argument list inferred from public GECK wiki event
-  conventions; no standalone `ShowOff:OnFireWeapon` wiki article existed in the dump].
+  [SetEventHandlerAlt](https://geckwiki.com/index.php?title=SetEventHandlerAlt); observed:
+  Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184 (10 official base
+  masters, clean-room harness #3678 / PR #3679)]: dispatched when an actor fires a ranged
+  weapon, with the firing actor reference as the calling reference (`0::` filter,
+  `GetSelf`/`GetSelfAlt`, observed for both `Player 0x14` and an NPC ref) and the `WEAP`
+  base form as the single argument (`1::` / `"first"::` filter,
+  `Begin Function { ref rWeapon }`, observed `0x434F` 10mm pistol and `0xCD53A` Caravan
+  Shotgun with `arg2 = 0`).
 - Dispatched from `Game::weapon_fired` (player shots) and `Game::projectile_fired`
   (NPC shots and scripted `FireWeapon` shots), deduplicated per `(frame, actor, weapon)`
   so `weapon_fired` followed by `projectile_fired` or a multi-pellet shotgun burst fires
-  once per round [hypothesis: per-frame deduplication across `weapon_fired` and pellets].
+  once per shot [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin
+  184 (clean-room harness #3678 / PR #3679): firing the 7-pellet Caravan Shotgun fires
+  `ShowOff:OnFireWeapon` once, not 7 times].
 - Excludes non-actors (e.g., trap activators) and melee weapons (`DNAM/animation_type`
   `0..=2`), and is not suppressed by player god mode (`ToggleGodMode`), unlike JIP's
   `SetOnFireWeaponEventHandler` whose god-mode omission is a JIP-documented quirk

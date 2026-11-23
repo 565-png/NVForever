@@ -66,6 +66,11 @@ pub enum AnimAction {
     /// 9: reloading [documented; observed: about two seconds after a magazine's last
     /// shot, every gun of the gunfight].
     Reload,
+    /// 9: weapon jam (`GetAnimAction == 9` while `IsAnimPlayingEx 4 == 0` and without
+    /// firing `SetOnReloadWeaponEventHandler`) [observed: Fallout: New Vegas 1.4.0.525,
+    /// xNVSE 6.4.9, ShowOffNVSE Plugin 184 (clean-room harness #3678 / PR #3679),
+    /// `ForceWeaponJamAnim` on drawn 10mm pistol].
+    Jam,
     /// 12: ANIM_ACTION_WAIT_FOR_SPECIAL_IDLE [documented: the name]. No NPC of the
     /// campaign `anim_actions` read 10–12 [observed]. The player read 12
     /// for about 49 frames, starting about 50 frames after a jump [observed: capture
@@ -99,7 +104,7 @@ impl AnimAction {
             AnimAction::Thrown => 6,
             AnimAction::Block => 7,
             AnimAction::Stagger => 8,
-            AnimAction::Reload => 9,
+            AnimAction::Reload | AnimAction::Jam => 9,
             AnimAction::WaitForSpecialIdle => 12,
             AnimAction::ForceScriptAnim => 13,
             AnimAction::ReloadOpen => 17,
@@ -435,6 +440,7 @@ mod tests {
             (AnimAction::Block, 7),
             (AnimAction::Stagger, 8),
             (AnimAction::Reload, 9),
+            (AnimAction::Jam, 9),
             (AnimAction::WaitForSpecialIdle, 12),
             (AnimAction::ForceScriptAnim, 13),
             (AnimAction::ReloadOpen, 17),

@@ -302,15 +302,26 @@ fn force_weapon_jam_anim_interrupts_reload_blocks_firing_and_clears() {
     app.world_mut().resource_mut::<PlayerControl>().trigger = false;
     step_app(&mut app, 0.2);
 
+    // Register JIP SetOnReloadWeaponEventHandler to confirm reload fires once (on reload),
+    // not again when ForceJamAnim enters AnimAction::Jam (GetAnimAction == 9).
+    run_nvse(
+        &mut app,
+        "SetOnReloadWeaponEventHandler (Begin Function {ref rW}\n\
+           PlayerREF.AuxVarSetFlt \"*jip_reload\" 1 -1\n\
+         End) 1 PlayerREF",
+    );
+
     // Start a reload (magazine is 3/8) and verify reload anim state.
     app.world_mut().resource_mut::<PlayerControl>().reload = true;
     step_app(&mut app, 0.05);
     assert!(app.world().resource::<Combat>().cycle.as_ref().unwrap().reloading());
     assert_eq!(nvse_num(&mut app, "PlayerREF.GetAnimAction"), f64::from(AnimAction::Reload.code()));
     assert_eq!(nvse_num(&mut app, "PlayerREF.IsAnimPlayingEx 4"), 1.0);
+    assert_eq!(nvse_num(&mut app, "PlayerREF.AuxVarSize \"*jip_reload\""), 1.0);
     assert_eq!(app.world().resource::<Combat>().cycle.as_ref().unwrap().magazine, 3);
 
-    // ForceJamAnim interrupts the reload immediately and enters Phase::Jammed (AnimAction 13, IsAnimPlayingEx 4 == 0).
+    // ForceJamAnim interrupts the reload immediately and enters Phase::Jammed
+    // (GetAnimAction == 9 via AnimAction::Jam, IsAnimPlayingEx 4 == 0, no reload event).
     assert_eq!(nvse_num(&mut app, "PlayerREF.ForceJamAnim"), 1.0);
     step_app(&mut app, 0.05);
     {
@@ -323,13 +334,17 @@ fn force_weapon_jam_anim_interrupts_reload_blocks_firing_and_clears() {
     }
     assert_eq!(app.world().resource::<WeaponAnim>().jams, 1, "WeaponAnim::jams incremented for player_body playback");
     assert_eq!(app.world().resource::<CombatStats>().jams, 1);
-    assert_eq!(nvse_num(&mut app, "PlayerREF.GetAnimAction"), f64::from(AnimAction::ForceScriptAnim.code()));
+    assert_eq!(nvse_num(&mut app, "PlayerREF.GetAnimAction"), f64::from(AnimAction::Jam.code()));
+    assert_eq!(nvse_num(&mut app, "PlayerREF.GetAnimAction"), 9.0);
     assert_eq!(nvse_num(&mut app, "PlayerREF.IsAnimPlayingEx 4"), 0.0, "jam is not counted as reload by IsAnimPlayingEx 4");
+    assert_eq!(nvse_num(&mut app, "PlayerREF.AuxVarSize \"*jip_reload\""), 1.0, "jam must not fire SetOnReloadWeaponEventHandler");
 
-    // While jammed, pulling trigger or pressing reload does nothing, and repeated ForceJamAnim does not restart anim.jams.
+    // While jammed, pulling trigger or pressing reload does nothing, and re-calling
+    // ForceWeaponJamAnim / ForceJamAnim returns 1 without restarting anim.jams.
     app.world_mut().resource_mut::<PlayerControl>().trigger = true;
     app.world_mut().resource_mut::<PlayerControl>().reload = true;
     assert_eq!(nvse_num(&mut app, "PlayerREF.ForceWeaponJamAnim"), 1.0);
+    assert_eq!(nvse_num(&mut app, "PlayerREF.ForceJamAnim"), 1.0);
     step_app(&mut app, 0.2);
     assert_eq!(app.world().resource::<CombatStats>().shots, 1, "cannot fire while jammed");
     assert_eq!(app.world().resource::<WeaponAnim>().jams, 1, "repeated ForceJamAnim while jammed does not restart jam clip");
@@ -377,7 +392,8 @@ fn showoff_on_fire_weapon_engine_dispatch_and_same_frame_force_jam() {
     );
     assert!(app.world().resource::<Combat>().cycle.as_ref().unwrap().jammed(), "same-frame ForceJamAnim from OnFireWeapon jams cycle");
     assert_eq!(app.world().resource::<WeaponAnim>().jams, 1);
-    assert_eq!(nvse_num(&mut app, "PlayerREF.GetAnimAction"), f64::from(AnimAction::ForceScriptAnim.code()));
+    assert_eq!(nvse_num(&mut app, "PlayerREF.GetAnimAction"), f64::from(AnimAction::Jam.code()));
+    assert_eq!(nvse_num(&mut app, "PlayerREF.IsAnimPlayingEx 4"), 0.0);
 
     // Switching to a .357-like weapon (jam_time == 0.0): ShowOff:OnFireWeapon still fires,
     // but ForceJamAnim returns 0 and never jams the revolver.

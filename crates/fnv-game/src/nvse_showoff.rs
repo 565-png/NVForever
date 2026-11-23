@@ -76,7 +76,8 @@ pub struct ShowOffState {
     pub in_pre_activate_item: bool,
     /// `(frame, [(actor, weapon)])` already dispatched to `ShowOff:OnFireWeapon` this
     /// frame, deduplicating `weapon_fired` -> `projectile_fired` and multi-pellet bursts
-    /// [hypothesis].
+    /// [observed: Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9, ShowOffNVSE Plugin 184
+    /// (clean-room harness #3678 / PR #3679): 7-pellet Caravan Shotgun fires once].
     pub fired_this_frame: (u64, Vec<(FormId, FormId)>),
     /// Actors asked by `ForceWeaponJamAnim` / `ForceJamAnim` to play their weapon's jam
     /// animation (`Game::take_force_jam_requests`, consumed by `nvf_play::combat::fire`).
@@ -268,11 +269,13 @@ impl Game<'_> {
 
     /// `ShowOff:OnFireWeapon`: fired when an actor fires a ranged weapon. Calling
     /// reference (`0::`) is `actor`; first argument (`1::` / `"first"::`) is `weapon`
-    /// base form [documented: GECK wiki Category:Event Handlers (ShowOff NVSE),
-    /// SetEventHandlerAlt; hypothesis: calling reference = firing actor, arg0 = weapon
-    /// base form, non-actors and melee animation types 0..=2 excluded, not suppressed in
-    /// god mode, per-frame deduplication across `weapon_fired` and multi-pellet
-    /// `projectile_fired`]. Free when no handler is registered.
+    /// base form, firing once per shot even on multi-pellet weapons [documented: GECK
+    /// wiki Category:Event Handlers (ShowOff NVSE), SetEventHandlerAlt; observed:
+    /// Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9, ShowOffNVSE Plugin 184 (clean-room
+    /// harness #3678 / PR #3679): Player 0x14 and NPC ref calling ref, WEAP base form
+    /// arg 0, 7-pellet Caravan Shotgun fires once; hypothesis: non-actor and melee
+    /// animation types 0..=2 exclusion, god-mode firing]. Free when no handler is
+    /// registered.
     pub(crate) fn showoff_on_fire_weapon(&mut self, actor: FormId, weapon: FormId, dedup_same_frame: bool) -> usize {
         if !self.handled(ON_FIRE_WEAPON) || weapon.0 == 0 {
             return 0;
@@ -355,13 +358,18 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
             }
             XVal::Num(1.0)
         }
-        // 1 when the actor is alive, has a weapon out, and the weapon has a jam animation;
-        // 0 otherwise [documented: GECK wiki ForceWeaponJamAnim (.357 revolver has no jam
-        // animation and returns 0) and GetWeaponAnimJamTime; observed: showoff1, 10mm
-        // pistol away = 0 and drawn = 1; observed: FalloutNV.esm WEAP DNAM Weap10mmPistol
-        // jam_time = 1.4 vs WeapNV357Revolver jam_time = 0.0; hypothesis: animation_type
-        // 3..=9 + DNAM/jam_time > 0 as the rules-side jam-animation check]. Queues the
-        // actor for `nvf_play::combat::fire` to trigger `Cycle::jam` and `WeaponAnim::jams`.
+        // 1 when the actor is alive, has a weapon out, and the weapon has a jam animation
+        // (including when already jamming); 0 otherwise [documented: GECK wiki
+        // ForceWeaponJamAnim (.357 revolver has no jam animation and returns 0) and
+        // GetWeaponAnimJamTime; observed: showoff1, 10mm pistol away = 0 and drawn = 1;
+        // observed: FalloutNV.esm WEAP DNAM Weap10mmPistol jam_time = 1.4 vs
+        // WeapNV357Revolver jam_time = 0.0; observed: Fallout: New Vegas 1.4.0.525,
+        // xNVSE 6.4.9, ShowOffNVSE Plugin 184 (clean-room harness #3678 / PR #3679):
+        // drawn 10mm = 1, re-calling while jamming = 1, GetAnimAction = 9 and
+        // IsAnimPlayingEx 4 = 0 during jam, drawn .357 Magnum Revolver = 0, holstered
+        // 10mm = 0, Baseball Bat = 0, Fists = 0; hypothesis: animation_type 3..=9 +
+        // DNAM/jam_time > 0 as the rules-side jam-animation check]. Queues the actor for
+        // `nvf_play::combat::fire` to trigger `Cycle::jam` and `WeaponAnim::jams`.
         "forceweaponjamanim" | "forcejamanim" => {
             let a = subject.unwrap_or(FormId::PLAYER_REF);
             let ok = !g.is_dead(a)

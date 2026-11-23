@@ -325,6 +325,18 @@ fn force_weapon_jam_anim_checks_weapon_jam_capability_overrides_and_cap() {
     assert_eq!(g.take_force_jam_requests(), vec![FormId::PLAYER_REF]);
     assert!(g.take_force_jam_requests().is_empty());
 
+    // Re-calling ForceWeaponJamAnim / ForceJamAnim while already jamming (AnimAction::Jam,
+    // GetAnimAction == 9, IsAnimPlayingEx 4 == 0) still returns 1.
+    g.set_anim_state(
+        FormId::PLAYER_REF,
+        fnv_game::anim_state::AnimState { action: Some(fnv_game::anim_state::AnimAction::Jam), ..Default::default() },
+    );
+    assert_eq!(num(&mut g, "PlayerREF.GetAnimAction"), 9.0);
+    assert_eq!(num(&mut g, "PlayerREF.IsAnimPlayingEx 4"), 0.0);
+    assert_eq!(num(&mut g, "PlayerREF.ForceWeaponJamAnim"), 1.0);
+    assert_eq!(num(&mut g, "PlayerREF.ForceJamAnim"), 1.0);
+    assert_eq!(g.take_force_jam_requests(), vec![FormId::PLAYER_REF]);
+
     // Drawn .357-like revolver (jam_time == 0.0) -> 0 and no queued request.
     g.world.add_item(FormId::PLAYER_REF, FormId(REVOLVER_357), 1).unwrap();
     g.world.equip(FormId::PLAYER_REF, FormId(REVOLVER_357)).unwrap();
@@ -337,6 +349,11 @@ fn force_weapon_jam_anim_checks_weapon_jam_capability_overrides_and_cap() {
     assert_eq!(g.take_force_jam_requests(), vec![FormId::PLAYER_REF]);
     q(&mut g, "SetWeaponAnimJamTime 0 TestRevolver357");
     assert_eq!(num(&mut g, "PlayerREF.ForceJamAnim"), 0.0);
+    assert!(g.take_force_jam_requests().is_empty());
+
+    // Unarmed / fists (no equipped weapon, weapon drawn) -> 0.
+    g.world.unequip(FormId::PLAYER_REF, FormId(REVOLVER_357)).unwrap();
+    assert_eq!(num(&mut g, "PlayerREF.ForceWeaponJamAnim"), 0.0);
     assert!(g.take_force_jam_requests().is_empty());
 
     // Drawn melee (animation_type 1) and thrown grenade (animation_type 10, even with jam_time > 0) -> 0.
