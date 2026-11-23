@@ -703,8 +703,12 @@ All of it is in `GameSnapshot`.
 - **GOODBYE.** When the topic list holds no Goodbye line, the actor's line of the
   GOODBYE topic is offered last, if it has one [documented: Quest and Dialogue Tutorial;
   Conversation Tab]. **Its line ends the conversation when it is over, with or without
-  the Goodbye flag, unless it has choices or follow-up lines of its own**
-  (`Game::ends_conversation`, issue #3477) [documented: Quest and Dialogue Tutorial:
+  the Goodbye flag, unless it leads on: the actor can say a line of one of its own links
+  now, a follow-up, a choice, or a player topic whose line names GOODBYE in its Link
+  From (§3.5)** (`Game::ends_conversation`, issue #3477). The topic list is no link of
+  the line. Only links the actor can say something for count [design]: a Link From names
+  the topic, so it is a link of every actor's GOODBYE, and one actor's reply in a plugin
+  would otherwise bring the topic list back after everyone else's [documented: Quest and Dialogue Tutorial:
   without a topic flagged Goodbye "the dialog will end with one of those GOODBYEs";
   Conversation Tab: NPCs use the topic when the player exits the dialogue menu;
   hypothesis: that this holds for its lines without the flag, observer check 283]. Such
@@ -715,7 +719,7 @@ All of it is in `GameSnapshot`.
   DialogueParadiseFalls, Pronto's 0x000384CF among them) and 1 of PointLookout.esm's 36;
   no New Vegas add-on has one. All 34 are Conversation lines with no choices, follow-ups,
   result scripts or Add Topics, and no line names GOODBYE in its Link From: they lead
-  nowhere, so ending cuts nothing off. Two of them are between NPCs (Mr. Brotch and
+  nowhere, so ending cuts nothing off, and the exception is for plugins. Two of them are between NPCs (Mr. Brotch and
   Freddie), whose exchange ends for want of links (§5.1). With the flag, 5 lines of
   Fallout3.esm have choices as well (4 of them between NPCs); the flag ends the player's
   conversation there, as before. With `GameConfig::goodbye_at_once` an unflagged line is

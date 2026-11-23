@@ -4000,8 +4000,8 @@ capture setup, so every part of a check that needs an interior is still open.
 ## Added 2026-11-23 (the GOODBYE topic without the Goodbye flag, #3477)
 
 283. **Does a GOODBYE line without the Goodbye flag end the conversation?** (P2; #3477,
-     dialogue.md §5.) Ours since #3477 [hypothesis]: yes, when the line is over, if it has
-     no choices or follow-ups of its own (none in the data has). Talk to Keith (NPC
+     dialogue.md §5.) Ours since #3477 [hypothesis]: yes, when the line is over, if
+     nothing it links to can be said (none in the data links anywhere). Talk to Keith (NPC
      1EKeith 000F839C, reference 000F83A5, Aerotech Suite 200, cell
      AerotechOfficeInterior02) and pick the generic Goodbye at the end of his topic list
      (INFO 0014E019): does the dialogue menu close after the line, or does his topic list
