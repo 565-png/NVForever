@@ -75,15 +75,16 @@ pub enum Kw {
 }
 
 /// The assignments the Let macro takes without `let` [documented: Let Macro: `=`, `+=`,
-/// `-=`, `*=`; NVSE Expressions: `:=`, `/=`, `%=`, `^=`, `|=`, `&=`; observed: `/=`,
-/// JustAssortedMods.esp 4.6 ships `fAP /= GetNumericGameSetting …` (JBTOnFireWeaponUDF)
-/// with compiled bytes, so the original's compiler takes it; `:=`, thirteen units of the
-/// owner's Blue Moon list (TLD_Travelers.esm `doOnce := 1`, DryWellsReloaded.esm
-/// `Quest.iObjectivePoint := 1`, DefenderRifle.esp `rContainer := GetContainer`, …) ship
-/// compiled bytes where the line is the same Let as with `let` (#2275); `%=`, `^=`, `|=`,
-/// `&=`, `<<=`, `>>=` in bare Let-macro form: hypothesis matching `let` compound
-/// assignments].
-const MACRO_OPS: [&str; 12] = ["=", ":=", "+=", "-=", "*=", "/=", "%=", "^=", "|=", "&=", "<<=", ">>="];
+/// `-=`, `*=`; observed: `/=`, JustAssortedMods.esp 4.6 ships `fAP /=
+/// GetNumericGameSetting …` (JBTOnFireWeaponUDF) with compiled bytes, so the original's
+/// compiler takes it; `:=`, thirteen units of the owner's Blue Moon list
+/// (TLD_Travelers.esm `doOnce := 1`, DryWellsReloaded.esm `Quest.iObjectivePoint := 1`,
+/// DefenderRifle.esp `rContainer := GetContainer`, …) ship compiled bytes where the line
+/// is the same Let as with `let` (#2275); observed: Fallout: New Vegas 1.4.0.525 + xNVSE
+/// 6.4.9 runtime script probe (10 official masters) confirms bare `+=`, `-=`, `*=`, `/=`,
+/// `|=`, `&=`, `%=` compile and execute, whereas bare `^=` and `<<=`/`>>=` fail to
+/// precompile].
+const MACRO_OPS: [&str; 9] = ["=", ":=", "+=", "-=", "*=", "/=", "%=", "|=", "&="];
 
 /// A line of the extender's grammar, by its first words.
 fn extender(l: &Line) -> Option<Kw> {

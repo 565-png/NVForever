@@ -305,10 +305,13 @@ impl XTok {
 }
 
 /// Operators of the extender's expressions, longest first [documented: NVSE Expressions;
-/// `<<=` and `>>=` compound shift assignments, hypothesis].
-const XOPS: [&str; 35] = [
-    "<<=", ">>=", "<-", "=>", ":=", "+=", "-=", "*=", "/=", "^=", "|=", "&=", "%=", "::", "->", "<<", ">>", "==", "!=", "<=", ">=", "&&",
-    "||", ":", "|", "&", "+", "-", "*", "/", "%", "^", "<", ">", "=",
+/// observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 runtime script probe confirms
+/// `<<=` and `>>=` do not exist (bare forms fail to precompile; `let x <<= y` / `let x >>= y`
+/// log `Error: Too many operators.` and fall back to plain RHS assignment); design: NVForever
+/// rejects `let x <<= y` / `let x >>= y` at compile time rather than assigning the RHS].
+const XOPS: [&str; 33] = [
+    "<-", "=>", ":=", "+=", "-=", "*=", "/=", "^=", "|=", "&=", "%=", "::", "->", "<<", ">>", "==", "!=", "<=", ">=", "&&", "||", ":", "|",
+    "&", "+", "-", "*", "/", "%", "^", "<", ">", "=",
 ];
 
 /// Tokens of a line in the extender's grammar. Words and numbers as in [`tokens`]; `!`,
@@ -344,7 +347,7 @@ pub fn xtokens(line: &str) -> Vec<XTok> {
             i += n;
             continue;
         }
-        let rest: String = cs[i..(i + 3).min(cs.len())].iter().collect();
+        let rest: String = cs[i..(i + 2).min(cs.len())].iter().collect();
         if let Some(op) = XOPS.iter().find(|o| rest.starts_with(**o)) {
             let spaced = i > 0 && cs[i - 1].is_whitespace();
             // `*` and `&` with a space before and a name or `(` right after are the unbox
