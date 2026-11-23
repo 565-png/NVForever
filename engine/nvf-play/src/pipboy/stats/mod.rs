@@ -1283,6 +1283,16 @@ pub fn use_hints(
             sounds.write(UiSound { menu: UiMenu::Inventory, event: UiEvent::Refused });
             continue;
         }
+        if let Some(rt) = script.as_mut().and_then(|s| s.rt.as_mut()).filter(|rt| rt.game.has_pre_activate_inventory_handlers()) {
+            let allowed = crate::script::with_world(rt, &mut sim, |rt| rt.game.pre_activate_inventory_item(FormId::PLAYER_REF, item, 0, true));
+            if !allowed {
+                info!("pipboy stats: {name} not used: activation prevented by script");
+                if let Some(m) = active.0.as_mut().filter(|m| m.mode == crate::menu::model::Mode::Inventory) {
+                    let _ = m.refresh(&mut sim.world);
+                }
+                continue;
+            }
+        }
         if let Err(e) = sim.world.remove_item(FormId::PLAYER_REF, item, 1) {
             warn!("pipboy stats: {name} not used: {e}");
             continue;
