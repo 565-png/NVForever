@@ -3599,6 +3599,21 @@ already talking takes over at once, same topic or another; nothing is queued or 
      stands sizes it. Not in the list: the original's way is the theft (or a speech or
      barter line not in our list).
 
+## Added 2026-11-23 (Harland's greeting as the player leaves, #3464)
+
+280. **Does Harland greet a player who leaves his room in the REPCONN basement?** (P2:
+     #3464, a player could not leave; packages.md §3.) His Dialogue package has an
+     activate distance of 1200 and the doorway trigger as its trigger location; a second
+     trigger 370 units out on the way to the stairs calls `ResetAI` on him. In the
+     original, with VMS01 at stage 30 (the ghouls' friend not found yet): talk to Harland
+     and say goodbye, then walk out of his room towards the stairs and on past the reset
+     trigger. Say whether he greets again on the way out (where: in the doorway, past the
+     reset trigger, not at all), whether the player is walked back towards the doorway
+     or held, and whether coming back into the doorway greets again. If he greets past
+     the reset trigger without walking the player back, NVForever's 30 s rule matches;
+     if he never greets on the way out, the activate distance or sight is read
+     differently by the original.
+
 ## Added 2026-11-21 (the compass's actor ticks against the strip, #3310)
 
 261. **Where does an actor's tick on the compass end against the strip's line?** (P3;
