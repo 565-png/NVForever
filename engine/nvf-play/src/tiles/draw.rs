@@ -811,6 +811,7 @@ pub(crate) struct Drawn {
     /// pictures').
     target: Option<Target>,
     counts: (usize, usize),
+    font_revision: u32,
     /// The whole menu's start line is written (T12a).
     told: bool,
     pictures: Option<Pictures>,
@@ -1651,7 +1652,10 @@ fn paint(commands: &mut Commands, drawn: &mut Drawn, mut pieces: Vec<Piece>, tar
     super::runtime_images::present(&mut pieces, kit.runtime.as_deref(), ui);
     drawn.tex.frame();
     drawn.tex.prune(&pieces, ui);
-    if pieces == drawn.pieces && drawn.target == Some(target) {
+    let font_revision = crate::cjk_font::revision();
+    let font_changed = drawn.font_revision != font_revision;
+    drawn.font_revision = font_revision;
+    if !font_changed && pieces == drawn.pieces && drawn.target == Some(target) {
         return;
     }
     // Nothing drawn yet and nothing to draw (a menu switched off): no root node either.
@@ -1697,7 +1701,8 @@ fn paint(commands: &mut Commands, drawn: &mut Drawn, mut pieces: Vec<Piece>, tar
             commands.entity(slot.node).insert(ZIndex(i as i32));
             slot.order = i;
         }
-        let mut how = change(was, piece);
+        let font_changed = font_changed && matches!(piece.look, Look::Text { .. });
+        let mut how = if font_changed { Change::Spawn } else { change(was, piece) };
         // Only the offset changed: its image baked again in place, its nodes kept (#1833).
         if how == Change::Spawn && super::texmod::only_offset_differs(was, piece) {
             let strip = nodes.children.iter_descendants(slot.node).find(|e| nodes.strips.contains(*e));
@@ -1752,6 +1757,11 @@ fn paint(commands: &mut Commands, drawn: &mut Drawn, mut pieces: Vec<Piece>, tar
         }
     }
     if !spawn.is_empty() {
+        for &i in &spawn {
+            if let Look::Text { font, .. } = &pieces[i].look {
+                kit.load(f64::from(*font));
+            }
+        }
         let bc = bc_supported(kit.formats.as_deref());
         let data = kit.data.as_deref();
         let pictures = drawn.pictures.get_or_insert_with(|| Pictures::load(data));
@@ -1910,6 +1920,24 @@ pub(crate) fn scroll(hud: Option<Res<HudView>>, mut images: ResMut<Assets<Image>
 #[cfg(test)]
 #[path = "draw_layout_tests.rs"]
 mod layout_tests;
+
+#[cfg(test)]
+#[derive(Resource)]
+pub(super) struct TestPainted(pub Ui, pub TileId);
+
+#[cfg(test)]
+pub(super) fn paint_test_menu(
+    mut commands: Commands,
+    painted: Res<TestPainted>,
+    mut kit: FontKit,
+    mut nodes: Nodes,
+    glyphs: Res<crate::pad::PadGlyphs>,
+    mut drawn: Local<Drawn>,
+) {
+    let measure = |_: f64, _: &str, _: Option<f64>| (0.0, 0.0);
+    let (set, _) = pieces(&painted.0, painted.1, &measure, Select::Whole { kept: &[], strip: None }, true);
+    paint(&mut commands, &mut drawn, set, Target::window(1.0, 1), Brightness::File, 0.0, Some(&painted.0), &mut kit, &mut nodes, &glyphs);
+}
 
 #[cfg(test)]
 mod tests {
@@ -2498,6 +2526,34 @@ mod tests {
         assert_eq!(lines.iter().map(|(_, _, base)| *base).collect::<Vec<_>>(), [30.0, 30.0 + 52.0]);
     }
 
+    #[test]
+    fn measured_and_drawn_cjk_tile_lines_use_the_same_advances() {
+        let mut font = plain_font(31.0, 15.0);
+        let glyph = fnv_font::Glyph {
+            width: 20.0,
+            ..default()
+        };
+        for c in "甲乙丙丁".chars() {
+            font.extra.insert(c, glyph);
+        }
+        crate::cjk_font::with_enabled_for_test(|| {
+            let text = "甲乙丙丁";
+            let wrap = Some(40.0);
+            assert_eq!(dimensions(&font, 1, text, wrap), (40.0, 62.0, 2.0));
+            let lines = text_lines(&font, 1, text, wrap, Alignment::Right, 50.0);
+            assert_eq!(
+                lines
+                    .iter()
+                    .map(|(line, x, base)| (line.text(), line.width, *x, *base))
+                    .collect::<Vec<_>>(),
+                [
+                    ("甲乙".to_string(), 40.0, 10.0, 20.0),
+                    ("丙丁".to_string(), 40.0, 10.0, 51.0)
+                ]
+            );
+        });
+    }
+
     /// #979: a text with no `font` is font 1 ([`font_number`]), whose line stands 20 under
     /// its top (the level digits' ink, hud.md §14.10); font 9, which draws nothing in the
     /// original (no texture), takes font 7's 24 and its file's size as its pitch [design].
@@ -2958,6 +3014,61 @@ mod tests {
         assert!((after[0].2.rotation.sin + 1.0).abs() < 1e-6 && after[0].2.rotation.cos.abs() < 1e-6);
         assert_eq!(app.world().resource::<super::super::runtime_images::RuntimeImages>().stamp("recipient"), stamp);
         assert_eq!(app.world().resource::<Painted>().0.get_float("Recipient/Map/rotateangle"), Some(1.));
+    }
+
+    #[test]
+    fn font_kit_loads_tex_only_slot_1_and_keeps_font_9_undrawn() {
+        use crate::interface::font_tex_tests::{synthetic_fnt, synthetic_tex, OwnedFontFiles};
+        let files = OwnedFontFiles::new(&[
+            ("glow_monofonto_large.fnt", synthetic_fnt("Glow_Monofonto_Large")),
+            ("Glow_Monofonto_Large.Tex", synthetic_tex(4, 2, [255, 255, 255, 255])),
+            ("nvfont_test.fnt", synthetic_fnt("NVFont_Test_0_Lod_A")),
+            ("nvfont_test_0_lod_a.tex", synthetic_tex(4, 4, [255, 255, 255, 255])),
+        ]);
+        let src = MemSource::default().with(
+            "fonts.xml",
+            r#"<menu name="Fonts">
+                <text name="Slot1"><string>A</string><font>1</font></text>
+                <text name="Slot9"><string>A</string><font>9</font></text>
+            </menu>"#,
+        );
+        let mut ui = Ui::new();
+        ui.load_menu(&src, "fonts.xml").unwrap();
+        ui.update();
+        let t1 = ui.find_tile("Fonts/Slot1").unwrap();
+        let t9 = ui.find_tile("Fonts/Slot9").unwrap();
+
+        #[derive(Resource, Default)]
+        struct Seen {
+            f1_image: bool,
+            f9_image: bool,
+            f1_game: bool,
+            f9_game: bool,
+        }
+        #[derive(Resource)]
+        struct Probe {
+            ui: Ui,
+            t1: TileId,
+            t9: TileId,
+        }
+        fn check(mut kit: FontKit, probe: Res<Probe>, mut seen: ResMut<Seen>) {
+            seen.f1_game = kit.game_fonts(&probe.ui, &[probe.t1]);
+            seen.f9_game = kit.game_fonts(&probe.ui, &[probe.t9]);
+            seen.f1_image = kit.face(1.0).is_some_and(|f| f.image.is_some());
+            seen.f9_image = kit.face(9.0).is_some_and(|f| f.image.is_some());
+        }
+
+        let mut app = App::new();
+        app.init_resource::<Assets<Image>>()
+            .init_resource::<TileFonts>()
+            .init_resource::<Seen>()
+            .insert_resource(files.data())
+            .insert_resource(Probe { ui, t1, t9 })
+            .add_systems(Update, check);
+        app.update();
+        let seen = app.world().resource::<Seen>();
+        assert!(seen.f1_image && seen.f1_game, "tex-only slot 1 should load");
+        assert!(!seen.f9_image && !seen.f9_game, "vanilla font 9 should remain stand-in");
     }
 
 }

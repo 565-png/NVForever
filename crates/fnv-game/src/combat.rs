@@ -146,11 +146,49 @@ pub struct LimbHit {
 pub struct HitInfo {
     pub attacker: Option<FormId>,
     pub weapon: Option<FormId>,
+    /// Live projectile or explosion reference responsible for the hit (`GetHitProjectile`).
+    pub projectile: Option<FormId>,
     /// GetHitLocation's index (−1 none, 0 torso, …).
     pub location: i32,
     pub critical: bool,
+    /// Target blocked the melee/unarmed blow (`GetHitExtendedFlag 0`).
+    pub blocking: bool,
+    /// Sneak attack (`GetHitExtendedFlag 7`).
+    pub sneak_attack: bool,
+    /// Explosion hit (`GetHitExtendedFlag 8`; `GetHit3DData` reports all zeros).
+    pub explosion: bool,
+    /// Weapon base damage after attacker skill and weapon condition
+    /// (`GetHitBaseWeaponDamage`, jip-hit-info.md §1).
+    pub base_weapon_damage: f64,
+    /// Fatigue damage dealt by the hit (`GetHitFatigueDamage`, jip-hit-info.md §1).
+    pub fatigue_damage: f64,
+    /// World-space 3D impact point (`GetHit3DData 0` and elements 0..3 of `GetHit3DData 2`).
+    pub hit_pos: Option<[f32; 3]>,
+    /// Impact orientation Euler angles X/Y/Z in degrees (`GetHit3DData 1` and elements 3..6
+    /// of `GetHit3DData 2`) [hypothesis: pitch/roll/yaw in degrees from incoming direction].
+    pub hit_angles: Option<[f32; 3]>,
     /// The body part's limb damage, when the hit is on a part with a condition.
     pub limb: Option<LimbHit>,
+}
+
+fn finite_vec3(v: [f32; 3]) -> Option<[f32; 3]> {
+    v.iter().all(|c| c.is_finite()).then_some(v)
+}
+
+/// Convert a game-space hit direction (`+X` east, `+Y` north, `+Z` up) to Euler angles
+/// `[pitch_x, roll_y, heading_z]` in degrees for `GetHit3DData` [hypothesis: pitch about X
+/// and clockwise-from-north heading about Z, roll 0; unmeasured in the original]. Returns
+/// `None` for non-finite or zero-length vectors.
+pub fn hit_angles_from_dir(dir: [f32; 3]) -> Option<[f32; 3]> {
+    let dir = finite_vec3(dir)?;
+    let horiz = dir[0].hypot(dir[1]);
+    let len = horiz.hypot(dir[2]);
+    if !len.is_finite() || len <= 1e-6 {
+        return None;
+    }
+    let pitch_x = (-dir[2]).atan2(horiz).to_degrees();
+    let heading_z = if horiz > 1e-6 { dir[0].atan2(dir[1]).to_degrees() } else { 0.0 };
+    finite_vec3([pitch_x, 0.0, heading_z])
 }
 
 /// The limb-condition actor value code of a BPTD part's actor value name.
@@ -254,9 +292,12 @@ pub fn worn_armor_class(world: &fnv_sim::World, id: FormId) -> fnv_sim::forms::A
         .equipment(id)
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|i| world.forms.item(i))
-        .find(|it| it.kind == ItemKind::Armor && it.slots.is_some_and(|s| s & crate::detection::UPPER_BODY != 0))
-        .map_or(ArmorClass::Light, |it| it.armor_class)
+        .find(|&i| {
+            world.resolve_item(i).is_some_and(|it| it.kind == ItemKind::Armor)
+                && world.effective_slots(i).is_some_and(|s| s & crate::detection::UPPER_BODY != 0)
+        })
+        .and_then(|i| world.effective_armor_class(i))
+        .unwrap_or(ArmorClass::Light)
 }
 
 /// Settings with their documented defaults (GECK wiki Experience Settings).
@@ -278,8 +319,8 @@ impl Game<'_> {
         if let Some(l) = self.extra.get(&r).and_then(|e| e.level) {
             return l as f64;
         }
-        let Some(d) = self.stats_def(r) else { return 1.0 };
-        if d.pc_level_mult {
+        let Some((id, d)) = self.stats_source(r) else { return 1.0 };
+        if self.acbs_flag(id, d, crate::actor_values::acbs::PC_LEVEL_MULT, |d| d.pc_level_mult) {
             let l = (self.player_level() * d.level_raw as f64 / 1000.0).round().max(d.calc_min as f64);
             if d.calc_max > 0 {
                 l.min(d.calc_max as f64)
@@ -295,7 +336,7 @@ impl Game<'_> {
     /// Maximum health before any script changed it (see the module notes).
     pub fn max_health(&mut self, r: FormId) -> f64 {
         let level = self.actor_level(r);
-        let Some(d) = self.stats_def(r) else { return 100.0 };
+        let Some((id, d)) = self.stats_source(r) else { return 100.0 };
         // The permanent value, as before the other actor values were read
         // [hypothesis: whether damage to Endurance lowers the maximum].
         let end = actor::actor_value_base(self, r, crate::actor_values::ENDURANCE);
@@ -308,7 +349,8 @@ impl Game<'_> {
         if &d.sig == b"CREA" {
             return (d.base_health as f64).max(1.0);
         }
-        let by_level = if d.autocalc { (level - 1.0).max(0.0) * setting(self, "fAVDNPCHealthLevelMult", 5.0) } else { 0.0 };
+        let autocalc = self.acbs_flag(id, d, crate::actor_values::acbs::AUTOCALC, |d| d.autocalc);
+        let by_level = if autocalc { (level - 1.0).max(0.0) * setting(self, "fAVDNPCHealthLevelMult", 5.0) } else { 0.0 };
         (d.base_health as f64 + (end - 1.0).max(0.0) * setting(self, "fAVDNPCHealthEnduranceMult", 5.0) + by_level).max(1.0)
     }
 
@@ -330,7 +372,7 @@ impl Game<'_> {
     /// Whether `r`'s base has "No Low Level Processing": its AI is not updated outside
     /// the loaded area [documented: GECK wiki Category:NPC].
     pub fn no_low_level_processing(&self, r: FormId) -> bool {
-        self.base_data_def(r).is_some_and(|d| d.no_low_level)
+        self.base_data_source(r).is_some_and(|(id, d)| self.acbs_flag(id, d, crate::actor_values::acbs::NO_LOW_LEVEL, |d| d.no_low_level))
     }
 
     /// Lay out the corpses of a new game: every placed actor that starts dead
@@ -357,7 +399,9 @@ impl Game<'_> {
     /// ghosted player is still hurt: "Though NPCs and creatures can not be damaged in this
     /// state, the player can" [documented: GECK wiki SetGhost notes].
     pub fn is_immune(&self, r: FormId) -> bool {
-        let invulnerable = self.base_data_def(r).is_some_and(|d| d.invulnerable);
+        let invulnerable = self
+            .base_data_source(r)
+            .is_some_and(|(id, d)| &d.sig == b"CREA" && self.acbs_flag(id, d, crate::actor_values::acbs::INVULNERABLE, |d| d.invulnerable));
         let ghost = r != FormId::PLAYER_REF && self.is_ghost(r);
         invulnerable || ghost || self.actor_race(r).is_some_and(|race| self.data.child_races.contains(&race))
     }
@@ -401,8 +445,10 @@ impl Game<'_> {
         }
         // A body already lying knocked out is a ragdoll already [hypothesis].
         let lying = self.knockout(r).is_some_and(|k| k.lying());
+        let day = self.game_days();
         let e = self.extra.entry(r).or_default();
         e.dead = true;
+        e.died_day = day;
         e.killer = killer;
         e.killing_hit = fatal;
         // JIP's ragdoll handlers: any actor ragdolled on death [documented:
@@ -424,8 +470,13 @@ impl Game<'_> {
         }
         // Its effects end, but those whose base effect has "No Death Dispel" (a flamer's
         // burning) and abilities (docs/spec-notes/hit-effects.md §4).
-        let data = self.data;
-        self.dispel(r, None, |e| !e.permanent && !data.magic_effects.get(&e.effect).is_some_and(|m| m.has(MagicEffectDef::NO_DEATH_DISPEL)));
+        let keep: Vec<u32> = self
+            .effects
+            .iter()
+            .filter(|e| e.target == r && (e.permanent || self.magic_effect_def(e.effect).is_some_and(|m| m.has(MagicEffectDef::NO_DEATH_DISPEL))))
+            .map(|e| e.id)
+            .collect();
+        self.dispel(r, None, |e| !keep.contains(&e.id));
         self.death_line(r, killer);
         true
     }
@@ -605,9 +656,32 @@ impl Game<'_> {
         // before the hit] (jip-hit-info.md).
         let fatal = before - dealt <= floor;
         self.hits_running.push(target);
-        let flags = (u16::from(info.critical) << 1) | (u16::from(fatal) << 2);
+        let flags = u16::from(info.blocking)
+            | (u16::from(info.critical) << 1)
+            | (u16::from(fatal) << 2)
+            | (u16::from(info.sneak_attack) << 7)
+            | (u16::from(info.explosion) << 8);
         let limb_damage = info.limb.map_or(0.0, |l| l.damage);
-        let rec = crate::jip_events::JipHit { attacker: info.attacker, weapon: info.weapon, health_damage: dealt, limb_damage, location: info.location, flags };
+        let fatigue_damage = if info.fatigue_damage.is_finite() { info.fatigue_damage.max(0.0) } else { 0.0 };
+        let base_weapon_damage = if info.base_weapon_damage.is_finite() { info.base_weapon_damage.max(0.0) } else { 0.0 };
+        let (hit_pos, hit_angles) = if info.explosion {
+            (Some([0.0; 3]), Some([0.0; 3]))
+        } else {
+            (info.hit_pos.and_then(finite_vec3), info.hit_angles.and_then(finite_vec3))
+        };
+        let rec = crate::jip_events::JipHit {
+            attacker: info.attacker,
+            weapon: info.weapon,
+            projectile: info.projectile,
+            health_damage: dealt,
+            limb_damage,
+            fatigue_damage,
+            base_weapon_damage,
+            location: info.location,
+            flags,
+            hit_pos,
+            hit_angles,
+        };
         self.jip.hits.insert(target, rec);
         self.jip_event("hit", Some(target), Vec::new());
         actor::add_damage(self, target, HEALTH, dealt);
@@ -623,6 +697,14 @@ impl Game<'_> {
         }
         if let Some(a) = info.attacker {
             self.extra.entry(a).or_default().last_target = Some(target);
+        }
+        if info.critical {
+            // [documented: SetOnCriticalHitEventHandler] this = struck actor;
+            // arguments: source, weapon. Fired after `last_hit` is recorded so
+            // `GetHitLocation` reads this hit as in the wiki example.
+            let source = fnv_script::vm::XVal::Ref(info.attacker.map_or(0, |a| a.0));
+            let weapon = fnv_script::vm::XVal::Ref(info.weapon.map_or(0, |w| w.0));
+            self.jip_event("criticalhit", Some(target), vec![source, weapon]);
         }
         if dealt > 0.0 {
             // [documented: SetOnHealthDamageEventHandler] the amount negative, the source.
@@ -730,11 +812,15 @@ impl Game<'_> {
 
     /// Tell the scripts whether an actor has its weapon out (IsWeaponOut). The animating
     /// side tells it every frame for the actors it draws; for the others the rule decides
-    /// ([`Game::wants_weapon_out`]).
+    /// ([`Game::wants_weapon_out`]). Transitioning from holstered (`false`) to drawn
+    /// (`true`) dispatches `ShowOff:OnWeaponUnholster`.
     pub fn set_weapon_out(&mut self, actor: FormId, out: bool) {
         self.senses.weapon_told.insert(actor, self.time);
         if self.extra.get(&actor).is_some_and(|e| e.weapon_out) != out {
             self.extra.entry(actor).or_default().weapon_out = out;
+            if out {
+                self.showoff_on_weapon_unholster(actor);
+            }
         }
     }
 
@@ -814,6 +900,21 @@ impl Game<'_> {
                 (l.condition, after, crippled)
             })
             .collect()
+    }
+
+    /// Apply an explosion's live object effect (`EITM`, respecting `SetExplosionTraitForm`
+    /// trait 5 and `TempCloneForm` snapshots via [`Game::explosion_traits`]) to `target`
+    /// as a hit effect. Dead or immune targets and explosions without an enchantment
+    /// apply nothing. Returns the active-effect ids started on `target`.
+    pub fn apply_explosion_effect(&mut self, explosion: FormId, target: FormId, caster: Option<FormId>) -> Vec<u32> {
+        if self.is_dead(target) || self.is_immune(target) {
+            return Vec::new();
+        }
+        let Some(ench) = self.explosion_traits(explosion).and_then(|t| t.enchantment) else {
+            return Vec::new();
+        };
+        let mods = crate::aid::Mods { hit: true, ..crate::aid::Mods::default() };
+        self.apply_magic_item_with(target, ench, caster, false, &mods).into_iter().filter(|a| !a.extended).map(|a| a.id).collect()
     }
 
     /// Lower a limb's condition by a hit (see the module notes): its condition after, and
@@ -1085,9 +1186,12 @@ impl Game<'_> {
 
     /// Run the OnFire blocks of the weapon `actor` fired (its object script)
     /// [documented: block name; observed: the detonator's script, `DetonatorOnFire`, is
-    /// an OnFire block].
+    /// an OnFire block], and fire JIP's `SetOnFireWeaponEventHandler` event
+    /// [documented: SetOnFireWeaponEventHandler]. Returns whether an OnFire block ran.
     pub fn weapon_fired(&mut self, actor: FormId, weapon: FormId) -> bool {
-        self.item_event(actor, weapon, event::ON_FIRE, None)
+        let ran = self.item_event(actor, weapon, event::ON_FIRE, None);
+        self.fire_weapon_jip_event(actor, weapon, false);
+        ran
     }
 
     /// The XP the player earns for killing `target` (see the module notes): none for the

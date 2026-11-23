@@ -79,9 +79,11 @@ fn fields(lo: &'static LoadOrder<'static>, schema: &'static Schema, id: u32) -> 
     Some((pi, Fields::new(rec, pi, schema).ok()?))
 }
 
-/// A zero-ended text of single-byte characters.
-fn zstring(b: &[u8]) -> String {
-    b.iter().take_while(|&&c| c != 0).map(|&c| c as char).collect()
+/// A zero-ended text in `page`, the load order's code page as `FULL` is read in: an
+/// AVIF's short name (ANAM) on a Russian install is Windows-1251, and read byte for byte
+/// as Latin-1 its letters had no glyphs and showed as `?` (#3400).
+fn zstring(b: &[u8], page: fnv_util::text::CodePage) -> String {
+    page.decode_z(b)
 }
 
 impl Forms {
@@ -98,7 +100,7 @@ impl Forms {
                 name: f.string(b"FULL").unwrap_or_default(),
                 description: f.string(b"DESC").unwrap_or_default().trim().to_string(),
                 icon: f.string(b"ICON").filter(|s| !s.trim().is_empty()),
-                short: f.raw(b"ANAM").map(|s| zstring(&s.data)).filter(|s| !s.is_empty()),
+                short: f.raw(b"ANAM").map(|s| zstring(&s.data, fnv_util::text::code_page())).filter(|s| !s.is_empty()),
             }
         })
     }
@@ -404,17 +406,34 @@ pub fn snapshot(forms: &mut Forms, sim: &mut SimState, script: Option<&mut Scrip
                     modifier.then(|| Change { value: short(forms, code), amount, detrimental })
                 })
                 .collect();
-            if !changes.is_empty() {
+            // Script effects shown by name (Psycho's "Damage +25%"), after the values (#3119).
+            let mut named: Vec<FormId> = Vec::new();
+            for x in g.effects.iter().filter(|x| x.target == p && x.source == e.source && !x.inactive) {
+                if !named.contains(&x.effect) && g.data.magic_effects.get(&x.effect).is_some_and(|m| m.shows_name()) {
+                    named.push(x.effect);
+                }
+            }
+            let text = with_names(model::changes_text(&changes), named.iter().map(|m| forms.text(m.0).name.clone()));
+            if !text.is_empty() {
                 // The player's tweak adds the seconds left [design: docs/design/tweaks.md].
                 let name = forms.text(e.source.0).name.clone();
                 let name = if g.tweaks.effect_time_left && e.duration > 0.0 { format!("{name} ({:.0}s)", (e.duration - e.elapsed).max(0.0)) } else { name };
-                s.effects.push(EffectLine { name, text: model::changes_text(&changes) });
+                s.effects.push(EffectLine { name, text });
             }
         }
     });
     skills.sort_by(|a, b| a.name.cmp(&b.name));
     s.skills = skills;
     s
+}
+
+/// An item's effect text: its value changes, then the names of its effects shown by name
+/// ([`fnv_game::data::MagicEffectDef::shows_name`]), comma-separated [hypothesis: the
+/// original's layout is not captured, #3119]; empty names are left out.
+pub fn with_names(values: String, names: impl IntoIterator<Item = String>) -> String {
+    let mut parts: Vec<String> = if values.is_empty() { Vec::new() } else { vec![values] };
+    parts.extend(names.into_iter().filter(|n| !n.trim().is_empty()));
+    parts.join(", ")
 }
 
 /// The player's health (now, most), limb conditions, Hardcore, and the Aid at Full

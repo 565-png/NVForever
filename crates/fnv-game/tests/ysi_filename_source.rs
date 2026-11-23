@@ -440,7 +440,7 @@ fn mapped_file_bound_and_malformed_configuration_refuse_explicitly() {
     let files = Files::new();
     files.write("ySI.json", &certain("Owned/base.dds"));
     let f = fixture();
-    for n in 0..31 {
+    for n in 0..127 {
         files.write(&format!("owned-{n}.json"), "{}");
     }
     let mut at_bound = game(&f);
@@ -451,7 +451,7 @@ fn mapped_file_bound_and_malformed_configuration_refuse_explicitly() {
         ),
         XVal::Str("Owned/base.dds".into())
     );
-    files.write("owned-31.json", "{}");
+    files.write("owned-127.json", "{}");
     let mut g = game(&f);
     assert_eq!(
         query(
@@ -460,7 +460,7 @@ fn mapped_file_bound_and_malformed_configuration_refuse_explicitly() {
         ),
         Err("ySI filename configuration exceeds the mapped file bound".into())
     );
-    for n in 0..32 {
+    for n in 0..128 {
         std::fs::remove_file(
             files
                 .root
@@ -698,4 +698,499 @@ fn aggregate_valid_rule_limit_reaches_the_final_winner_and_refuses_the_next_rule
         success(&mut fresh, assign),
         XVal::Str("Owned/rule-limit.dds".into())
     );
+}
+
+const ITEM_B: FormId = FormId(0x821);
+const MOD_ITEM: FormId = FormId(0x822);
+const ACTI_BASE: FormId = FormId(0x830);
+const ACTI_PLACED: FormId = FormId(0x901);
+const LIST_A: FormId = FormId(0x840);
+const LIST_B: FormId = FormId(0x841);
+
+fn extended_fixture() -> Fixture {
+    let item_a = record(
+        b"MISC",
+        0,
+        ITEM.0,
+        &[
+            sub(b"EDID", z("OwnYsiItem")),
+            sub(b"DATA", [1i32.to_le_bytes(), 1f32.to_le_bytes()].concat()),
+        ],
+    );
+    let item_b = record(
+        b"MISC",
+        0,
+        ITEM_B.0,
+        &[
+            sub(b"EDID", z("OwnYsiItemB")),
+            sub(b"DATA", [2i32.to_le_bytes(), 1f32.to_le_bytes()].concat()),
+        ],
+    );
+    let mod_item = record(
+        b"IMOD",
+        0,
+        MOD_ITEM.0,
+        &[
+            sub(b"EDID", z("OwnYsiMod")),
+            sub(b"DATA", [5i32.to_le_bytes(), 1f32.to_le_bytes()].concat()),
+        ],
+    );
+    let acti = record(b"ACTI", 0, ACTI_BASE.0, &[sub(b"EDID", z("OwnYsiActi"))]);
+    let list_a = record(
+        b"FLST",
+        0,
+        LIST_A.0,
+        &[
+            sub(b"EDID", z("OwnYsiListA")),
+            sub(b"LNAM", ITEM.0.to_le_bytes().to_vec()),
+        ],
+    );
+    let list_b = record(b"FLST", 0, LIST_B.0, &[sub(b"EDID", z("OwnYsiListB"))]);
+    let placed_item = record(
+        b"REFR",
+        0,
+        PLACED.0,
+        &[
+            sub(b"EDID", z("OwnYsiPlaced")),
+            sub(b"NAME", ITEM.0.to_le_bytes().to_vec()),
+            sub(b"DATA", vec![0; 24]),
+        ],
+    );
+    let placed_acti = record(
+        b"REFR",
+        0,
+        ACTI_PLACED.0,
+        &[
+            sub(b"EDID", z("OwnYsiActiPlaced")),
+            sub(b"NAME", ACTI_BASE.0.to_le_bytes().to_vec()),
+            sub(b"DATA", vec![0; 24]),
+        ],
+    );
+    let room = record(b"CELL", 0, 0x200, &[sub(b"EDID", z("OwnYsiRoom"))]);
+    let children = group(
+        0x200u32.to_le_bytes(),
+        6,
+        &group(0x200u32.to_le_bytes(), 9, &[placed_item, placed_acti].concat()),
+    );
+    let bytes = [
+        tes4(),
+        top(b"MISC", &[item_a, item_b].concat()),
+        top(b"IMOD", &mod_item),
+        top(b"ACTI", &acti),
+        top(b"FLST", &[list_a, list_b].concat()),
+        top(
+            b"NPC_",
+            &record(b"NPC_", 0, 7, &[sub(b"EDID", z("Player"))]),
+        ),
+        top(
+            b"CELL",
+            &group(
+                0i32.to_le_bytes(),
+                2,
+                &group(0i32.to_le_bytes(), 3, &[room, children].concat()),
+            ),
+        ),
+    ]
+    .concat();
+    let plugins = vec![Plugin::parse(&bytes, "OwnedYsi.esm".into()).unwrap()];
+    let order = LoadOrder::new(&plugins).unwrap();
+    let schema =
+        Schema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../schemas/script/functions.json");
+    let catalogue = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let forms = FormStore::build(&order, &schema);
+    let refs = RefTable::build(&order, &schema);
+    let data = GameData::build(
+        &order,
+        &schema,
+        FunctionTable::load(&path).unwrap(),
+        &catalogue,
+        &refs,
+    );
+    Fixture { data, forms, refs }
+}
+
+#[test]
+fn json_backed_tag_and_icon_traits_honor_overrides_tag_sharing_and_clearing() {
+    let files = Files::new();
+    files.write(
+        "ySI.json",
+        &config(
+            serde_json::json!([
+                {"priority": 10, "formType": 31, "tag": "(shared)"},
+                {"priority": 20, "mod": "OwnedYsi.esm", "form": "00000822", "tag": "(modtag)"}
+            ]),
+            serde_json::json!([
+                {"priority": 10, "tag": "(shared)", "filename": "Owned/shared.dds"},
+                {"priority": 10, "tag": "(alt)", "filename": "Owned/alt.dds"},
+                {"priority": 10, "tag": "(modtag)", "filename": "Owned/mod.dds"}
+            ]),
+        ),
+    );
+    let f = extended_fixture();
+    let mut g = game(&f);
+
+    // JSON-backed "tag" and "icon" work for both explicit forms and placed references.
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"tag\" OwnYsiItem)"),
+        XVal::Str("(shared)".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (OwnYsiPlaced.ySIGetTrait \"icon\")"),
+        XVal::Str("Owned/shared.dds".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"icon\" OwnYsiItemB)"),
+        XVal::Str("Owned/shared.dds".into())
+    );
+
+    // Setting "icon" on one JSON-tagged form updates every form sharing that tag,
+    // while leaving the bounded "filename" configuration reader intact.
+    success(&mut g, "ySISetTrait \"icon\" \"Owned/overridden.dds\" OwnYsiItem");
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"icon\" OwnYsiItem)"),
+        XVal::Str("Owned/overridden.dds".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"icon\" OwnYsiItemB)"),
+        XVal::Str("Owned/overridden.dds".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItemB)"),
+        XVal::Str("Owned/shared.dds".into())
+    );
+
+    // Reassigning a form's tag to another JSON tag immediately switches "icon" to that tag's JSON icon.
+    success(&mut g, "ySISetTrait \"tag\" \"(alt)\" OwnYsiItem");
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"tag\" OwnYsiItem)"),
+        XVal::Str("(alt)".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"icon\" OwnYsiItem)"),
+        XVal::Str("Owned/alt.dds".into())
+    );
+
+    // Explicitly clearing a tag to "" suppresses the JSON tag/icon without affecting other forms.
+    success(&mut g, "ySISetTrait \"tag\" \"\" OwnYsiItem");
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"tag\" OwnYsiItem)"),
+        XVal::Str(String::new())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"icon\" OwnYsiItem)"),
+        XVal::Str(String::new())
+    );
+    success(&mut g, "ySISetTrait \"icon\" \"Owned/solo.dds\" OwnYsiItem");
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"icon\" OwnYsiItem)"),
+        XVal::Str("Owned/solo.dds".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"icon\" OwnYsiItemB)"),
+        XVal::Str("Owned/overridden.dds".into())
+    );
+
+    // Missing ySI.json returns "" for "tag" and "icon" without errors.
+    std::fs::remove_file(files.root.join("Data/menus/ySI/ySI.json")).unwrap();
+    let mut no_cfg = game(&f);
+    assert_eq!(
+        success(&mut no_cfg, "SetFunctionValue (ySIGetTrait \"tag\" OwnYsiItem)"),
+        XVal::Str(String::new())
+    );
+    assert_eq!(
+        success(&mut no_cfg, "SetFunctionValue (ySIGetTrait \"icon\" OwnYsiItem)"),
+        XVal::Str(String::new())
+    );
+}
+
+#[test]
+fn full_form_type_codes_and_non_item_tag_and_icon_queries_resolve() {
+    let files = Files::new();
+    files.write(
+        "ySI.json",
+        &config(
+            serde_json::json!([
+                {"priority": 10, "formType": 103, "tag": "(imod)"},
+                {"priority": 10, "formType": 21, "tag": "(acti)"}
+            ]),
+            serde_json::json!([
+                {"priority": 10, "tag": "(imod)", "filename": "Owned/imod.dds"},
+                {"priority": 10, "tag": "(acti)", "filename": "Owned/acti.dds"}
+            ]),
+        ),
+    );
+    let f = extended_fixture();
+    let mut g = game(&f);
+
+    // Full form-type codes cover IMOD (103) and ACTI (21) beyond the 10-item inventory subset.
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"tag\" OwnYsiMod)"),
+        XVal::Str("(imod)".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"icon\" OwnYsiMod)"),
+        XVal::Str("Owned/imod.dds".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiMod)"),
+        XVal::Str("Owned/imod.dds".into())
+    );
+
+    // Non-item forms (base or placed reference) resolve "tag" and "icon",
+    // while "filename" retains its strict live-inventory-item requirement.
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"tag\" OwnYsiActi)"),
+        XVal::Str("(acti)".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (OwnYsiActiPlaced.ySIGetTrait \"icon\")"),
+        XVal::Str("Owned/acti.dds".into())
+    );
+    assert!(query(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiActi)").is_err());
+}
+
+#[test]
+fn formlist_predicate_supports_authored_and_live_flst_membership_and_refuses_unknown_modes() {
+    let files = Files::new();
+    files.write(
+        "ySI.json",
+        &config(
+            serde_json::json!([
+                {"priority": 10, "formType": 31, "tag": "(base)"},
+                {"priority": 20, "mod": "OwnedYsi.esm", "form": "00000840", "formlist": 1, "tag": "(listA)"},
+                {"priority": 25, "mod": "OwnedYsi.esm", "form": ["00000841"], "formlist": 1, "tag": "(listB)"},
+                {"priority": 15, "mod": "OwnedYsi.esm", "form": "00000821", "formlist": 0, "tag": "(directB)"}
+            ]),
+            serde_json::json!([
+                {"priority": 10, "tag": "(base)", "filename": "Owned/base.dds"},
+                {"priority": 10, "tag": "(listA)", "filename": "Owned/list-a.dds"},
+                {"priority": 10, "tag": "(listB)", "filename": "Owned/list-b.dds"},
+                {"priority": 10, "tag": "(directB)", "filename": "Owned/direct-b.dds"}
+            ]),
+        ),
+    );
+    let f = extended_fixture();
+    let mut g = game(&f);
+
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"),
+        XVal::Str("Owned/list-a.dds".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"tag\" OwnYsiItemB)"),
+        XVal::Str("(directB)".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItemB)"),
+        XVal::Str("Owned/direct-b.dds".into())
+    );
+
+    // Live FLST mutation takes effect on the next query without reloading files.
+    success(&mut g, "AddFormToFormList OwnYsiListB OwnYsiItemB");
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"tag\" OwnYsiItemB)"),
+        XVal::Str("(listB)".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"icon\" OwnYsiItemB)"),
+        XVal::Str("Owned/list-b.dds".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItemB)"),
+        XVal::Str("Owned/list-b.dds".into())
+    );
+
+    // Unverified formlist mode (2) and non-FLST targets remain conservative Match::Unknown.
+    for extra in [
+        serde_json::json!({"priority": 30, "mod": "OwnedYsi.esm", "form": "00000840", "formlist": 2, "tag": "(mode2)"}),
+        serde_json::json!({"priority": 30, "mod": "OwnedYsi.esm", "form": "00000820", "formlist": 1, "tag": "(notFlst)"}),
+    ] {
+        files.write(
+            "ySI.json",
+            &config(
+                serde_json::json!([
+                    {"priority": 10, "formType": 31, "tag": "(base)"},
+                    extra
+                ]),
+                serde_json::json!([
+                    {"priority": 10, "tag": "(base)", "filename": "Owned/base.dds"}
+                ]),
+            ),
+        );
+        let mut fresh = game(&f);
+        assert_eq!(
+            query(&mut fresh, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"),
+            Err("an unsupported ySI predicate could change the highest-priority tag".into())
+        );
+        assert_eq!(
+            success(&mut fresh, "SetFunctionValue (ySIGetTrait \"tag\" OwnYsiItem)"),
+            XVal::Str(String::new())
+        );
+    }
+}
+
+#[test]
+fn empty_auxiliary_json_stubs_are_ignored_while_main_file_and_bad_comments_still_refuse() {
+    let files = Files::new();
+    files.write("ySI.json", &certain("Owned/with-stubs.dds"));
+    files.write("stub-empty.json", "");
+    files.write("stub-comment-only.json", "// placeholder stub\n/* empty */\n");
+    let f = fixture();
+    let mut g = game(&f);
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"),
+        XVal::Str("Owned/with-stubs.dds".into())
+    );
+    assert_eq!(
+        success(&mut g, "SetFunctionValue (ySIGetTrait \"tag\" OwnYsiItem)"),
+        XVal::Str("OwnedTag".into())
+    );
+
+    // An unterminated comment in an auxiliary file still refuses explicitly.
+    files.write("stub-bad.json", "/* unclosed");
+    let mut bad = game(&f);
+    assert_eq!(
+        query(&mut bad, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"),
+        Err("unterminated ySI configuration comment".into())
+    );
+    std::fs::remove_file(files.root.join("Data/menus/ySI/stub-bad.json")).unwrap();
+
+    // An empty main ySI.json still refuses explicitly.
+    files.write("ySI.json", "");
+    let mut empty_main = game(&f);
+    assert_eq!(
+        query(&mut empty_main, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"),
+        Err("invalid ySI commented configuration".into())
+    );
+}
+
+#[test]
+fn weapon_armor_and_aid_record_predicates_match_and_disqualify_cleanly() {
+    const GUN: FormId = FormId(0x850);
+    const HELMET: FormId = FormId(0x851);
+    const POWER_SUIT: FormId = FormId(0x852);
+    const FOOD: FormId = FormId(0x853);
+    const MED: FormId = FormId(0x854);
+    const WITHDRAWAL: FormId = FormId(0x855);
+
+    let mut dnam = vec![0u8; 204];
+    // WeaponDNAM (204 B): animation_type at 0..4 = 6 (Rifle - Automatic), flags1 at 12 = 0x07 (ignores DT/DR | auto | scope), skill at 104..108 = 41 (Guns).
+    dnam[0..4].copy_from_slice(&6u32.to_le_bytes());
+    dnam[12] = 0x07;
+    dnam[104..108].copy_from_slice(&41u32.to_le_bytes());
+    let weap_data = [100i32.to_le_bytes().as_slice(), &100i32.to_le_bytes(), &2.0f32.to_le_bytes(), &10i16.to_le_bytes(), &[12u8]].concat();
+    let gun = record(b"WEAP", 0, GUN.0, &[sub(b"EDID", z("OwnYsiGun")), sub(b"DATA", weap_data), sub(b"DNAM", dnam)]);
+
+    let make_armo = |id: FormId, edid: &str, slots: u32, general: u8| {
+        let bmdt = [slots.to_le_bytes().as_slice(), &[general, 0, 0, 0]].concat();
+        let data = [100i32.to_le_bytes().as_slice(), &100i32.to_le_bytes(), &5.0f32.to_le_bytes()].concat();
+        let dnam = [0i16.to_le_bytes().as_slice(), &[0, 0], &10.0f32.to_le_bytes(), &[0, 0, 0, 0]].concat();
+        record(b"ARMO", 0, id.0, &[sub(b"EDID", z(edid)), sub(b"BMDT", bmdt), sub(b"DATA", data), sub(b"DNAM", dnam)])
+    };
+    let helmet = make_armo(HELMET, "OwnYsiHelmet", 1 << 0, 0x08);
+    let power_suit = make_armo(POWER_SUIT, "OwnYsiPowerSuit", 1 << 2, 0xA0);
+
+    let make_alch = |id: FormId, edid: &str, flags: u8, withdrawal: u32| {
+        let enit = [1u32.to_le_bytes().as_slice(), &[flags, 0, 0, 0], &withdrawal.to_le_bytes(), &0.5f32.to_le_bytes(), &0u32.to_le_bytes()].concat();
+        record(b"ALCH", 0, id.0, &[sub(b"EDID", z(edid)), sub(b"ETYP", 10i32.to_le_bytes().to_vec()), sub(b"DATA", 0.5f32.to_le_bytes().to_vec()), sub(b"ENIT", enit)])
+    };
+    let food = make_alch(FOOD, "OwnYsiFood", 0x02, 0);
+    let med = make_alch(MED, "OwnYsiMed", 0x04, WITHDRAWAL.0);
+    let spel = record(b"SPEL", 0, WITHDRAWAL.0, &[sub(b"EDID", z("OwnYsiWithdrawal"))]);
+    let misc = record(b"MISC", 0, ITEM.0, &[sub(b"EDID", z("OwnYsiItem")), sub(b"DATA", [1i32.to_le_bytes(), 1f32.to_le_bytes()].concat())]);
+    let room = record(b"CELL", 0, 0x200, &[sub(b"EDID", z("OwnYsiRoom"))]);
+    let bytes = [
+        tes4(),
+        top(b"MISC", &misc),
+        top(b"WEAP", &gun),
+        top(b"ARMO", &[helmet, power_suit].concat()),
+        top(b"ALCH", &[food, med].concat()),
+        top(b"SPEL", &spel),
+        top(b"NPC_", &record(b"NPC_", 0, 7, &[sub(b"EDID", z("Player"))])),
+        top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &room))),
+    ]
+    .concat();
+    let plugins = vec![Plugin::parse(&bytes, "OwnedYsi.esm".into()).unwrap()];
+    let order = LoadOrder::new(&plugins).unwrap();
+    let schema = Schema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/script/functions.json");
+    let catalogue = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let forms = FormStore::build(&order, &schema);
+    let refs = RefTable::build(&order, &schema);
+    let data = GameData::build(&order, &schema, FunctionTable::load(&path).unwrap(), &catalogue, &refs);
+    let f = Fixture { data, forms, refs };
+
+    let files = Files::new();
+    files.write(
+        "ySI.json",
+        &config(
+            serde_json::json!([
+                {"priority": 10, "formType": 31, "tag": "MiscBase"},
+                {"priority": 20, "weaponSkill": 41, "weaponType": [5, 6], "weaponIsAutomatic": 1, "weaponHasScope": 1, "weaponIgnoresDTDR": 1, "tag": "AutoScopedGun"},
+                {"priority": 20, "armorClass": 2, "armorHead": 1, "armorHat": -1, "armorMask": -1, "armorPower": 0, "tag": "MedHelmet"},
+                {"priority": 20, "armorClass": 3, "armorUpperBody": 1, "armorPower": 1, "tag": "PowerArmor"},
+                {"priority": 20, "aidIsFood": 1, "aidIsMedicine": 0, "aidIsAddictive": 0, "tag": "FoodItem"},
+                {"priority": 20, "aidIsMedicine": 1, "aidIsAddictive": 1, "tag": "AddictiveMed"},
+                // High-priority rule with unknown predicate is decisively disqualified on non-WEAP forms via weaponSkill.
+                {"priority": 50, "weaponSkill": 34, "unknownPredicate": 1, "tag": "EnergyUnknown"}
+            ]),
+            serde_json::json!([
+                {"priority": 10, "tag": "MiscBase", "filename": "Owned/misc.dds"},
+                {"priority": 10, "tag": "AutoScopedGun", "filename": "Owned/auto-gun.dds"},
+                {"priority": 10, "tag": "MedHelmet", "filename": "Owned/helmet.dds"},
+                {"priority": 10, "tag": "PowerArmor", "filename": "Owned/power.dds"},
+                {"priority": 10, "tag": "FoodItem", "filename": "Owned/food.dds"},
+                {"priority": 10, "tag": "AddictiveMed", "filename": "Owned/med.dds"}
+            ]),
+        ),
+    );
+    let mut g = game(&f);
+
+    // Non-WEAP forms disqualify the priority-50 EnergyUnknown rule instead of refusing on unknownPredicate.
+    assert_eq!(success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"), XVal::Str("Owned/misc.dds".into()));
+    assert_eq!(success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiGun)"), XVal::Str("Owned/auto-gun.dds".into()));
+    assert_eq!(success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiHelmet)"), XVal::Str("Owned/helmet.dds".into()));
+    assert_eq!(success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiPowerSuit)"), XVal::Str("Owned/power.dds".into()));
+    assert_eq!(success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiFood)"), XVal::Str("Owned/food.dds".into()));
+    assert_eq!(success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiMed)"), XVal::Str("Owned/med.dds".into()));
+
+    // Malformed boolean flag values remain conservative Match::Unknown and refuse.
+    files.write(
+        "ySI.json",
+        &config(
+            serde_json::json!([
+                {"priority": 10, "armorClass": 2, "tag": "MedHelmet"},
+                {"priority": 30, "armorHead": 2, "tag": "BadFlag"}
+            ]),
+            serde_json::json!([{"priority": 10, "tag": "MedHelmet", "filename": "Owned/helmet.dds"}]),
+        ),
+    );
+    let mut bad = game(&f);
+    assert_eq!(
+        query(&mut bad, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiHelmet)"),
+        Err("an unsupported ySI predicate could change the highest-priority tag".into())
+    );
+
+    // Non-existent shorthand key names (`weaponAutomatic` / `weaponScope`) stay Match::Unknown
+    // rather than aliasing `weaponIsAutomatic` / `weaponHasScope`.
+    for unknown_key in ["weaponAutomatic", "weaponScope"] {
+        files.write(
+            "ySI.json",
+            &config(
+                serde_json::json!([
+                    {"priority": 10, "weaponSkill": 41, "tag": "GunsBase"},
+                    {"priority": 30, unknown_key: 1, "tag": "UnknownShorthand"}
+                ]),
+                serde_json::json!([{"priority": 10, "tag": "GunsBase", "filename": "Owned/auto-gun.dds"}]),
+            ),
+        );
+        let mut g_unknown = game(&f);
+        assert_eq!(
+            query(&mut g_unknown, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiGun)"),
+            Err("an unsupported ySI predicate could change the highest-priority tag".into()),
+            "{unknown_key} must stay Match::Unknown"
+        );
+    }
 }
