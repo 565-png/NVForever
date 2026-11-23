@@ -115,6 +115,9 @@
 //!   off, on, off (or left alone with `hold`), optionally from its own pose on a spot of
 //!   ground the march moves, and log lines for what lies under the view's centre and how the
 //!   ground's texture there moved between them (`moved`, `still`, `bare`, ...).
+//! - `NVF_PLAY_TEST_PICK_LOG=1` (activate.rs): each new crosshair target is logged with
+//!   what it was picked from: the raw first collision hit, every render box the view ray
+//!   enters (entry and exit distances, rough, bed) and the boxes set aside (#3323).
 //!
 //! - `NVF_PLAY_TEST_POSE_WATCH=[<seconds>:]<text>[,<text>...]` (nvforever's
 //!   `swimming.rs`): from that time on, a line whenever what a watched actor plays
