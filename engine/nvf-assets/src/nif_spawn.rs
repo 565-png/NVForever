@@ -177,8 +177,9 @@ pub(crate) struct Props {
     /// An actor's part whose material carries an NiAlphaController for the actor's
     /// clips to drive ([`shape_alpha_mode`], [`material_alpha_controlled`]).
     pub(crate) alpha_gated: bool,
-    /// Some stored vertex alpha of an unlit shape without a NiAlphaProperty is below 1
-    /// ([`fades_by_vertex_alpha`]).
+    /// BSShaderFlags bit 3 "Vertex_Alpha" itself, without Dynamic_Alpha's part in
+    /// [`uses_vertex_alpha`], on an unlit shape without a NiAlphaProperty, some stored
+    /// vertex alpha of which is below 1 ([`fades_by_vertex_alpha`]).
     vertex_faded: bool,
     /// The caller keeps the shape off authored sets (#2981): particle systems, object LOD
     /// (`crate::authored::shape_eligible`).
@@ -423,6 +424,8 @@ fn apply_property(file: &NifFile, dec: &Decoded, r: i32, p: &mut Props) {
         let flags = s.int("shader_flags").unwrap_or(0);
         p.specular = flags & 1 != 0;
         p.vertex_alpha = uses_vertex_alpha(ty, flags);
+        // The flag's part; `shape_props` asks the rest of the shape.
+        p.vertex_faded = flags & (1 << 3) != 0;
         p.dynamic_alpha = ty == "BSShaderNoLightingProperty" && flags & (1 << 19) != 0;
         p.hair = flags & (1 << 18) != 0;
         p.skin = s.int("shader_type") == Some(SHADER_SKIN);
@@ -579,11 +582,13 @@ pub(crate) fn shape_alpha_mode(props: &Props) -> AlphaMode {
 }
 
 /// Whether a shape is an unlit one whose only picture is its vertex alpha: a
-/// BSShaderNoLightingProperty that names no texture and takes the vertex alpha
-/// ([`uses_vertex_alpha`]), no NiAlphaProperty, and some stored vertex alpha below 1. It is
-/// blended SRC_ALPHA / INV_SRC_ALPHA ([`shape_alpha_mode`]) [hypothesis: no frame of the
-/// original was compared, observer check 286; docs/spec-notes/nif.md §6 "Unlit shapes faded
-/// by vertex alpha alone"]. 21 shapes of the base game's and the add-ons' archives are such:
+/// BSShaderNoLightingProperty that names no texture and sets bit 3 "Vertex_Alpha"
+/// (Dynamic_Alpha alone, which also takes the vertex alpha, [`uses_vertex_alpha`], is not
+/// asked for: no shape without texture and NiAlphaProperty has it alone), no
+/// NiAlphaProperty, and some stored vertex alpha below 1. It is blended SRC_ALPHA /
+/// INV_SRC_ALPHA ([`shape_alpha_mode`]) [hypothesis: no frame of the original was compared,
+/// observer check 286; docs/spec-notes/nif.md §6 "Unlit shapes faded by vertex alpha
+/// alone"]. 21 shapes of the base game's and the add-ons' archives are such:
 /// dark patches under gurneys and at tunnel mouths, fog shells, two small orange shapes of
 /// static collections, the silo lift's cone. 1,507 others have the same shader, no texture
 /// and an alpha below 1 and do store the property, 1,458 of them with this blend. The cone,
@@ -592,7 +597,7 @@ pub(crate) fn shape_alpha_mode(props: &Props) -> AlphaMode {
 /// and shader, and a NiAlphaProperty 0x10ED [observed, decoded from the archives]. Drawn
 /// opaque it was a flat white cone (player report R-F8KPPE34, #3443).
 pub(crate) fn fades_by_vertex_alpha(props: &Props) -> bool {
-    props.alpha.is_none() && props.unlit && props.vertex_alpha && props.vertex_faded && props.textures.iter().all(|t| t.is_empty())
+    props.alpha.is_none() && props.unlit && props.vertex_faded && props.textures.iter().all(|t| t.is_empty())
 }
 
 /// Whether a shape's stored vertex colours hold an alpha below 1 (cleaned as they are
@@ -665,7 +670,7 @@ pub(crate) fn shape_props(file: &NifFile, dec: &Decoded, o: &SceneObject, by_blo
             }
         }
     }
-    props.vertex_faded = props.unlit && props.vertex_alpha && props.alpha.is_none() && vertex_alpha_below_one(dec, o.block);
+    props.vertex_faded = props.vertex_faded && props.unlit && props.alpha.is_none() && vertex_alpha_below_one(dec, o.block);
     props
 }
 
@@ -2604,6 +2609,12 @@ mod tests {
         }
         // No Vertex_Alpha, no alpha below 1, or a texture: a picture, opaque as before.
         assert_eq!(faded_model(0x8200_0040, "", fading, None).1.base.alpha_mode, AlphaMode::Opaque);
+        // Dynamic_Alpha alone takes the vertex alpha, and is not the flag this rule asks for;
+        // with Vertex_Alpha beside it (a fog shell) it does not stand in the way.
+        let (dynamic, opaque) = faded_model(0x8208_0000, "", [0.5; 4], None);
+        assert!(dynamic.vertex_alpha && dynamic.dynamic_alpha);
+        assert_eq!(opaque.base.alpha_mode, AlphaMode::Opaque);
+        assert_eq!(faded_model(0x8208_0008, "", [0.5; 4], None).1.base.alpha_mode, AlphaMode::Blend);
         assert_eq!(faded_model(CONE, "", [1.0; 4], None).1.base.alpha_mode, AlphaMode::Opaque);
         assert_eq!(faded_model(CONE, "map.dds", fading, None).1.base.alpha_mode, AlphaMode::Opaque);
         // Where there is a property its own flags decide.

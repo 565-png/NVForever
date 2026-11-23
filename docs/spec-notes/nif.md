@@ -889,6 +889,9 @@ quaternions [documented: nif.xml hkQuaternion vs Quaternion].
   with no NiAlphaProperty, no texture, Vertex_Alpha and some vertex alpha below 1 is
   blended SRC_ALPHA / INV_SRC_ALPHA, as its twin asks, and takes every rule of such blends
   (the stored multiplier, the view-angle falloff, the √alpha scale above, no shadow).
+  Bit 3 itself is asked for, not Dynamic_Alpha (bit 19), which also takes the vertex alpha
+  ("Vertex colours"): no unlit shape, hidden ones and editor markers included, has bit 19
+  without bit 3, no texture and no NiAlphaProperty [observed, the same survey].
   Textured ones stay opaque (the lit map boards, `nv_pleximap01.nif`, alpha 0.75 all over;
   the Lucky 38's light bands), and so do shapes whose vertex alpha is 1 throughout. Open:
   whether the original blends the 21 (observer-checks.md 286).
