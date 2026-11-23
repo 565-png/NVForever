@@ -915,14 +915,10 @@ impl<'a> Game<'a> {
             self.end_dialogue_as(ended::GOODBYE);
             return;
         }
-        let listener = Some(FormId::PLAYER_REF);
-        for &f in &def.follow_ups {
-            let Some(fd) = dv.info(&f) else { continue };
-            if !(fd.goodbye && !def.choices.is_empty()) && self.can_say(actor, listener, f) {
-                self.drop_held_greet();
-                self.speak(actor, fd.topic.unwrap_or(FormId(0)), f);
-                return;
-            }
+        if let Some(f) = self.next_follow_up(actor, def) {
+            self.drop_held_greet();
+            self.speak(actor, dv.info(&f).and_then(|d| d.topic).unwrap_or(FormId(0)), f);
+            return;
         }
         let choices = self.build_choices(actor, topic, def);
         if choices.is_empty() {
@@ -938,6 +934,15 @@ impl<'a> Game<'a> {
         self.dialogue_transition();
     }
 
+    /// The follow-up of `def` the actor says next in the player's conversation: the first
+    /// it can say now, passing over Goodbye lines when `def` has choices
+    /// ([`Game::finish_line`], #964).
+    fn next_follow_up(&mut self, actor: FormId, def: &InfoDef) -> Option<FormId> {
+        let dv = self.dialogue_view();
+        let listener = Some(FormId::PLAYER_REF);
+        def.follow_ups.iter().copied().find(|&f| dv.info(&f).is_some_and(|fd| !fd.goodbye || def.choices.is_empty()) && self.can_say(actor, listener, f))
+    }
+
     /// Whether `def`, said by `actor` as a line of `topic`, ends the player's conversation
     /// when it is over: a line with the Goodbye flag [documented: Category:Dialogue], or
     /// one of the GOODBYE topic, flagged or not, that leads nowhere [documented: Quest and
@@ -951,22 +956,25 @@ impl<'a> Game<'a> {
     /// `--all`].
     ///
     /// A line leads on when the actor can say now a line of one of its own links: a
-    /// follow-up, a choice, or a topic linked by Link From ([`Game::player_links`], as
-    /// [`Game::build_choices`] takes them; also one the topic list has anyway). The topic
-    /// list itself does not count. Only what can be said counts [design]: a Link From
-    /// names the topic, so it is a link of every actor's GOODBYE, and one actor's reply in
-    /// a plugin would otherwise bring back the topic list after everyone else's.
+    /// follow-up ([`Game::next_follow_up`]), a choice, or a topic linked by Link From
+    /// ([`Game::player_links`], as [`Game::build_choices`] takes them; also one the topic
+    /// list has anyway). The topic list itself does not count. Only what can be said
+    /// counts [design]: a Link From names the topic, so it is a link of every actor's
+    /// GOODBYE, and one actor's reply in a plugin would otherwise bring back the topic
+    /// list after everyone else's.
     ///
     /// A choice's [`Choice::goodbye`] asks it when the list is built, the conversation
     /// when the line is over. Conditions are evaluated only for an unflagged GOODBYE line
-    /// with links, and no Random line is drawn.
+    /// with links, and no Random line is drawn. A link whose condition is random
+    /// (GetRandomPercent) may be rolled differently here and when it is offered: a line
+    /// taken to lead on by a follow-up or a Link From then brings the ordinary topic list,
+    /// as before.
     fn ends_conversation(&mut self, actor: FormId, topic: FormId, def: &InfoDef) -> bool {
         if def.goodbye || self.data.goodbye != Some(topic) {
             return def.goodbye;
         }
         let (data, dv, listener) = (self.data, self.dialogue_view(), Some(FormId::PLAYER_REF));
-        let follows = def.follow_ups.iter().any(|&f| dv.info(&f).is_some() && self.can_say(actor, listener, f));
-        !follows
+        self.next_follow_up(actor, def).is_none()
             && !self.player_links(topic, def).iter().any(|l| {
                 let lines = data.lines_tried(l.topic);
                 lines.iter().any(|i| dv.info(i).is_some_and(|d| l.takes_for_player(d)) && self.can_say(actor, listener, *i))

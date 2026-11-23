@@ -1629,7 +1629,19 @@ fn a_goodbye_topics_line_without_the_flag_that_leads_on_goes_on() {
     listen(&mut g);
     assert!(g.dialogue.is_some());
     assert!(g.events.iter().any(|e| matches!(e.kind, EventKind::LineStarted { info, .. } if info == FormId(B_FOLLOW))));
+    // Choices that cannot be said and a Goodbye follow-up, which a line with choices
+    // passes over (#964): nothing is left to lead on to.
+    let bye = f.data.infos.get_mut(&FormId(I_BYE)).unwrap();
+    bye.choices = vec![FormId(T_HIDDEN)];
+    bye.follow_ups = vec![FormId(C_BYE)];
+    let mut g = at_topic_list(&f);
+    assert!(g.dialogue_choices().iter().any(|c| c.goodbye && c.topic == FormId(GOODBYE)));
+    pick(&mut g, GOODBYE);
+    listen(&mut g);
+    assert!(g.dialogue.is_none());
+    assert!(g.events.iter().any(|e| matches!(e.kind, EventKind::DialogueEnded { reason: "goodbye", lines: 2, .. })));
     // A follow-up the actor cannot say: the topic list does not come back.
+    f.data.infos.get_mut(&FormId(I_BYE)).unwrap().choices.clear();
     f.data.infos.get_mut(&FormId(I_BYE)).unwrap().follow_ups = vec![FormId(R1)];
     let mut g = at_topic_list(&f);
     pick(&mut g, GOODBYE);
