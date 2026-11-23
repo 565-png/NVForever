@@ -217,6 +217,7 @@ mod effect_shaders;
 mod vats_highlight;
 mod tree;
 mod treelod;
+mod ui_project;
 mod river_flow;
 mod underwater;
 mod underwater_caustics;
@@ -2176,6 +2177,8 @@ fn main() -> AppExit {
             app.add_plugins(dialogue_look::DialogueLookPlugin);
             // AttachUIComponent's rects over their model nodes (ui_attach.rs, #1835).
             app.add_plugins(ui_attach::UiAttachPlugin);
+            // ProjectUITile's off-screen textures bound onto target model surfaces (ui_project.rs, #2418).
+            app.add_plugins(ui_project::UiProjectPlugin);
             // Who says a line to someone turns to them (speech_look.rs).
             app.add_plugins(speech_look::SpeechLookPlugin);
             // Who perceives whom (detection.rs): the drawn actors and the player.

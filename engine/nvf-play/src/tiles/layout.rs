@@ -351,6 +351,16 @@ pub fn layout_by_locus(ui: &Ui, root: TileId, measure: &Measure<'_>, t15: bool) 
     layout_in(ui, root, measure, Context { t15, by_locus: true, ..Default::default() })
 }
 
+/// [design] Lay out an isolated live subtree rooted at `root` without inheriting ancestor
+/// offsets, clips, alpha, or hidden flags from tiles above `root` (used by projected-UI
+/// painting so a subtree kept hidden in the main HUD can render into an off-screen target).
+pub fn layout_isolated(ui: &Ui, root: TileId, measure: &Measure<'_>, t15: bool) -> Vec<DrawItem> {
+    if !ui.is_live(root) {
+        return Vec::new();
+    }
+    walk_subtree(ui, root, Context { t15, ..Default::default() }, measure)
+}
+
 fn layout_in(ui: &Ui, root: TileId, measure: &Measure<'_>, start: Context) -> Vec<DrawItem> {
     let mut ancestors = Vec::new();
     let mut at = ui.tile(root).parent;
@@ -366,6 +376,10 @@ fn layout_in(ui: &Ui, root: TileId, measure: &Measure<'_>, start: Context) -> Ve
         }
         context = children_context(tile, place(tile, &kind(tile), context, measure), context);
     }
+    walk_subtree(ui, root, context, measure)
+}
+
+fn walk_subtree(ui: &Ui, root: TileId, context: Context, measure: &Measure<'_>) -> Vec<DrawItem> {
     let mut out = Vec::new();
     let mut stack = vec![(root, context)];
     while let Some((id, parent)) = stack.pop() {

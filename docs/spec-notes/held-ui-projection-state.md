@@ -60,3 +60,16 @@ Process qualification: historical CI belongs to its pinned checkout. Every later
 head requires its own applicable tests, lint, audits and review; the generator
 regression and existing real FunctionTable/VM control must both execute. This note
 records coverage rather than claiming unexecuted current-head results.
+
+## Off-screen projected painter and 3D model surface consumer
+
+[design] `nvf_play::tiles::projected_ui` (`ProjectedUiTargets`) now consumes
+`game.ui_extra.projections`: `projected_ui::reconcile` runs before `PlaySet::Ui` to retire
+stale/shadowed sources, and `projected_ui::draw` paints each admitted subtree in isolation
+(`layout::layout_isolated`, viewport shift and clip intersection) into a per-target
+`Camera2d` + `RenderTarget::Image` (`order = -3`) via `tiles::draw::paint` (reusing
+`runtime_images::mark` and `runtime_images::present`). `nvforever::ui_project`
+(`UiProjectPlugin`) binds each published texture onto matching `(reference, block)` mesh
+surfaces in `PostUpdate` after `nif_mirror::MirrorSystems` using an owned unlit
+`NifMaterial` copy with ownership-conditional restoration. Native `0x2925` parameter-frame
+decoding and live GPU held-map captures remain separate follow-up gates.
