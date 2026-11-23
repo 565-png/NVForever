@@ -605,6 +605,15 @@ Notes on the most used:
 |---|---|---|---|---|
 | GetIsObjectType | 0x11B1 | 0 | 1 | a form type by code (xEdit `ptFormType`); the Form Type IDs table is not in the local GECK wiki export |
 
+Condition indices with no page in the catalogue were not counted here until #3614
+(2026-11-23): 123 and 258 reached every player (as `0x107B` and `0x1102` in the player
+reports) through three base-game IDLE records. xEdit's wbCTDAFunctions names them
+IsGreetingPlayer and GetUsedItemLevel (no parameters); `Game::condition_value` answers
+them (`cond::IS_GREETING_PLAYER`, `cond::GET_USED_ITEM_LEVEL`), and `fnvtool script
+stubs` now scans every CTDA of the load order and lists, under `unhandled` with
+`"counted_from": "CTDA"`, any index neither the registry nor `cond::answered_without_opcode`
+knows. Over the ten masters it finds none [observed: 2026-11-23].
+
 AddItemToLeveledList, IsDLCInstalled and GetXPForNextLevel were registered in §3.2.
 GetOffersServicesNow (0x10FF; no use in the masters, for mods' vendor conditions) was
 registered 2026-10-21 ([vendor-services](../spec-notes/vendor-services.md) §3).
