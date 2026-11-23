@@ -2253,10 +2253,14 @@ unchanged.
 
 [design] Distant-water invalidation includes camera cell, effective LOD radius
 (including off/interior) and the exact loaded-cell keys. Compare stable keys
-without allocating each frame; retain a copy only when coverage changes. Then
-remove no-longer-eligible planes, create newly eligible planes and retain the
-same entities/materials for unaffected cells. Existing water type, depth,
-reflection, alpha, material and mesh policy is unchanged.
+without allocating each frame; retain a copy only when coverage changes, and clear
+those keys alongside planes/surfaces on worldspace switches (`DistantWater::clear`).
+Then remove no-longer-eligible planes, create newly eligible planes and retain the
+same entities/materials for unaffected cells. Order `update_water_sky` and
+`update_ripples` after `world::stream` and `distant_water` so newly streamed water
+materials receive current sky, sun, water-effects, and ripple parameters on their
+first rendered frame rather than flashing placeholder defaults. Existing water type,
+depth, reflection, alpha, material and mesh policy is unchanged.
 
 [hypothesis] Coplanar retained distant/local planes are a causal renderer boundary
 to test for reported water flicker, not yet proof of every observed flicker.
@@ -2269,8 +2273,11 @@ claimed by authored CPU fixtures.
 #### Current-camera underwater fog handoff
 
 [design: engine render scheduling] The water fog override is composed after the current
-camera transform propagates, before the reflection camera copies that fog. The
-weather/interior composition is shared with the ordinary sky updater. Leaving water
+camera transform propagates, before auxiliary world cameras copy that fog (the reflection
+camera in `reflection.rs`, the 3D scope lens fog sync in `scope_view.rs`, and JIP extra
+cameras in `extra_camera.rs`). Active `RemapWaterType` remaps (`WaterRemaps`) apply to
+underwater fog in both classic and enhanced water modes, matching `water::water_material`.
+The weather/interior composition is shared with the ordinary sky updater. Leaving water
 restores its current values in the same frame, including weather, lighting, HDR emissive
 and interior-fog preferences changed while submerged; it does not replay a pre-entry
 snapshot [hypothesis: that the original's fog returns in the frame the camera leaves the
@@ -2289,8 +2296,9 @@ acceptance remains separate from CPU producer results.
 ### CPU validation scope
 
 The water producer/camera-fog and live-IMAD grade controls exercise CPU consumers;
-revision-specific CI and failure history are recorded in PR #2861. The
-identical-fixture baseline comparisons, nonfinite/overflow guard, auxiliary-camera
-and reflection scheduling, worldspace clearing, HDR restoration, native behavior,
-original mod initialization and installed-profile/persistent-cyan/GPU/FPS outcomes
-are not established by those controls.
+revision-specific CI and failure history are recorded in PR #2861, with follow-on CPU
+controls covering nonfinite/f32-overflow guards, nonanimated HDR/fade/radial/DoF/motion
+traits, worldspace clearing, first-frame water sky sync, classic-mode `WaterRemaps`
+underwater fog, and auxiliary-camera fog handoff with HDR emissive restoration. The
+identical-fixture baseline comparisons, native behavior, original mod initialization and
+installed-profile/persistent-cyan/GPU/FPS outcomes are not established by those controls.
