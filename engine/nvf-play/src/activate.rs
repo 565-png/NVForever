@@ -839,7 +839,8 @@ pub(crate) fn activate(
         }
         return;
     }
-    let a = match crate::script::activate_by_hand(script.map(|s| s.into_inner()), &mut sim, t.form_id) {
+    let mut script = script.map(|s| s.into_inner());
+    let a = match crate::script::activate_by_hand(script.as_deref_mut(), &mut sim, t.form_id) {
         Ok(crate::script::ByHand::Default(a)) => {
             sounds.write(crate::world_sounds::Activated { reference: t.form_id });
             if t.action == Action::Drink {
@@ -890,13 +891,21 @@ pub(crate) fn activate(
     if let (true, Outcome::PickedUp { item, .. }) = (quick, &a.outcome) {
         let armour = sim.forms.item(*item).is_some_and(|i| i.kind == ItemKind::Armor && i.armor_dt.is_some_and(|dt| dt > 0.0));
         if !armour {
-            let r = crate::hotkeys::use_slot(&mut sim.world, Some(crate::hotkeys::Slot { item: item.0, mods: 0 }));
-            if let crate::hotkeys::Used::UsedUp(u) = r {
-                if let Some(m) = used.as_mut() {
-                    m.write(crate::ItemUsed { item: u.0, limb: None });
+            let allowed = match script.and_then(|s| s.rt.as_mut()).filter(|rt| rt.game.has_pre_activate_inventory_handlers()) {
+                Some(rt) => crate::script::with_world(rt, &mut sim, |rt| rt.game.pre_activate_inventory_item(FormId::PLAYER_REF, *item, 0, true)),
+                None => true,
+            };
+            if allowed {
+                let r = crate::hotkeys::use_slot(&mut sim.world, Some(crate::hotkeys::Slot { item: item.0, mods: 0 }));
+                if let crate::hotkeys::Used::UsedUp(u) = r {
+                    if let Some(m) = used.as_mut() {
+                        m.write(crate::ItemUsed { item: u.0, limb: None });
+                    }
                 }
+                info!("activate 0x{:08X} {}: quick use: {} (tweak)", t.form_id, t.name, r.describe(&t.name));
+            } else {
+                info!("activate 0x{:08X} {}: quick use prevented by script", t.form_id, t.name);
             }
-            info!("activate 0x{:08X} {}: quick use: {} (tweak)", t.form_id, t.name, r.describe(&t.name));
         }
     }
     // Opened with the player's key: the lock's opening sound, as a picked lock's

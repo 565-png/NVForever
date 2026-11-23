@@ -149,9 +149,15 @@ impl Game<'_> {
         (released, grabbed)
     }
 
-    /// The engine tells whether the camera is in first person.
+    /// The engine tells whether the camera is in first person. Fires
+    /// `ShowOff:OnPOVChange` only on actual perspective transitions (`1` = first person,
+    /// `0` = third person) [documented: GECK wiki ShowOff:OnPOVChange].
     pub fn set_first_person(&mut self, on: bool) {
+        let changed = self.senses.first_person != on;
         self.senses.first_person = on;
+        if changed {
+            self.showoff_on_pov_change(on);
+        }
     }
 
     pub fn motion(&self, actor: FormId) -> Motion {

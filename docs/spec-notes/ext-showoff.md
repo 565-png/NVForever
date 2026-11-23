@@ -256,3 +256,20 @@ GetVATSMaxEngageDistance, GetVATSTargetable, ToANSIChar, GetHitLocationLingering
 PlayerHasNightVisionActive, PlayerIsDrinkingPlacedWater, GetIsActivationPromptShown,
 IsPlayerLookingAround, GetSpellUsageNumEx, PlaceAtReticleAlt, RefillPlayerAmmo,
 RemoveAllItemsShowOff.
+
+## 9. `ShowOff:OnPOVChange` and preactivation events
+
+- **`ShowOff:OnPOVChange`** [documented: GECK wiki,
+  [ShowOff:OnPOVChange](https://geckwiki.com/index.php?title=ShowOff%3AOnPOVChange)]:
+  fires when the player's camera perspective switches between first-person and
+  third-person, passing one integer argument (`1` = first-person, `0` = third-person).
+  NVForever dispatches it from `Game::set_first_person` (fed every frame by
+  `nvf_play::control::tell_scripts`) only when `senses.first_person` actually changes,
+  with `IsPC1stPerson` already reflecting the new perspective and no calling reference
+  [hypothesis: calling reference and getter visibility during callback unobserved].
+  Save restore syncs `senses.first_person` directly to the restored camera POV without
+  emitting a spurious transition [design]. Free when no handler is registered.
+- **`ShowOff:OnPreScriptedActivate`**, **`ShowOff:OnPreActivateInventoryItem`**, and
+  **`ShowOff:OnPreActivateInventoryItemAlt`**: see
+  [preactivation-events.md](preactivation-events.md). No extender DLL or source code
+  was consulted.
