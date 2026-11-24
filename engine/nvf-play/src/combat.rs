@@ -1354,6 +1354,87 @@ impl Combat {
         world.remove_resource::<Combat>().unwrap()
     }
 
+    /// Build a [`Combat`] resource from [`CombatForms`] with default runtime state.
+    /// Shared by [`init_combat`] and unit tests so adding a field to `Combat` updates one
+    /// production constructor.
+    pub(crate) fn from_forms(forms: CombatForms) -> Self {
+        let rules = Rules::from_forms(&forms);
+        // A thrown grenade's restitution (combat-rules.md §5).
+        let grenade_restitution = forms.setting("fGrenadeRestitution").unwrap_or(CombatTuning::default().grenade_restitution);
+        let fists = forms.by_edid("Fists");
+        Combat {
+            forms,
+            rules,
+            tuning: CombatTuning {
+                grenade_restitution,
+                ..CombatTuning::default()
+            },
+            weapon: None,
+            equipped: None,
+            mods: 0,
+            silenced_logged: None,
+            fists,
+            ammo: None,
+            self_ammo: false,
+            melee: false,
+            swings: Melee::default(),
+            blows: 0,
+            boom: Vec::new(),
+            meltdowns: HashSet::new(),
+            debris: Vec::new(),
+            cycle: None,
+            kick: Kick::default(),
+            flying: Vec::new(),
+            dropped_live: Vec::new(),
+            settled: Vec::new(),
+            landed: Vec::new(),
+            fire_landed: Vec::new(),
+            splashes: Vec::new(),
+            ghosts: Vec::new(),
+            looping: None,
+            ejects_seen: 0,
+            vats_throw: None,
+            last_shot: 0.0,
+            next_visual: 0,
+            pending: Vec::new(),
+            script_shots: Vec::new(),
+            guarding: HashMap::new(),
+            blocked_blows: Vec::new(),
+            fresh_reload: false,
+            guard_down_until: 0.0,
+            marks: Vec::new(),
+            rng: SplitMix(1),
+            swing_rng: SplitMix(2),
+            time: 0.0,
+            no_spread: false,
+            tracer_hold: None,
+            load_magazine: None,
+            load_ammo: None,
+            chosen_ammo: std::collections::BTreeMap::new(),
+            crosshair_cone: None,
+            player_spread: None,
+            grenade_hold: 0.0,
+            grenade_held: false,
+            vats_cone: None,
+            vats_blast: VatsBlast::default(),
+            player_blocked_at: None,
+            special_swing: None,
+            throw_logged: None,
+            spread_perks_logged: None,
+            flinch_until: 0.0,
+            flinch_end: None,
+            flinch_rng: SplitMix(3),
+            kick_rng: SplitMix(5),
+            kick_just_settled: false,
+            kick_left: [0.0; 2],
+            kick_back_goal: [0.0; 2],
+            kick_back: [crate::ease::Spring::default(); 2],
+            spent_rng: SplitMix(4),
+            blood_rng: SplitMix(6),
+            blood_chance_logged: false,
+        }
+    }
+
     /// Whether the player's flinch (a staggering hit, [`player_flinch`]) still plays: the
     /// player does not walk meanwhile (`crate::player::flinch_holds_walk`).
     pub fn player_flinching(&self) -> bool {
@@ -2622,82 +2703,11 @@ pub(crate) fn init_combat(mut commands: Commands, d: Res<PlayWorld>) {
     let t = std::time::Instant::now();
     let tracer_hold = std::env::var("NVF_PLAY_TEST_TRACERS").ok().and_then(|v| v.trim().parse().ok()).filter(|s: &f32| *s > 0.0);
     let forms = CombatForms::build(d.lo, d.schema);
-    let rules = Rules::from_forms(&forms);
-    // A thrown grenade's restitution (combat-rules.md §5).
-    let grenade_restitution = forms.setting("fGrenadeRestitution").unwrap_or(CombatTuning::default().grenade_restitution);
-    let fists = forms.by_edid("Fists");
     info!("combat: {} weapons, {} ammo, {} projectiles, {} explosions read in {:.0} ms", forms.weapons.len(), forms.ammo.len(), forms.projectiles.len(), forms.explosions.len(), t.elapsed().as_secs_f64() * 1000.0);
-    commands.insert_resource(Combat {
-        forms,
-        rules,
-        tuning: CombatTuning {
-            grenade_restitution,
-            ..CombatTuning::default()
-        },
-        weapon: None,
-        equipped: None,
-        mods: 0,
-        silenced_logged: None,
-        fists,
-        ammo: None,
-        self_ammo: false,
-        melee: false,
-        swings: Melee::default(),
-        blows: 0,
-        boom: Vec::new(),
-        meltdowns: HashSet::new(),
-        debris: Vec::new(),
-        cycle: None,
-        kick: Kick::default(),
-        flying: Vec::new(),
-        dropped_live: Vec::new(),
-        settled: Vec::new(),
-        landed: Vec::new(),
-        fire_landed: Vec::new(),
-        splashes: Vec::new(),
-        ghosts: Vec::new(),
-        looping: None,
-        ejects_seen: 0,
-        vats_throw: None,
-        last_shot: 0.0,
-        next_visual: 0,
-        pending: Vec::new(),
-        script_shots: Vec::new(),
-        guarding: HashMap::new(),
-        blocked_blows: Vec::new(),
-        fresh_reload: false,
-        guard_down_until: 0.0,
-        marks: Vec::new(),
-        rng: SplitMix(1),
-        swing_rng: SplitMix(2),
-        time: 0.0,
-        no_spread: std::env::var_os("NVF_PLAY_TEST_NO_SPREAD").is_some_and(|v| v != "0"),
-        tracer_hold,
-        load_magazine: None,
-        load_ammo: None,
-        chosen_ammo: std::collections::BTreeMap::new(),
-        crosshair_cone: None,
-        player_spread: None,
-        grenade_hold: 0.0,
-        grenade_held: false,
-        vats_cone: None,
-        vats_blast: VatsBlast::default(),
-        player_blocked_at: None,
-        special_swing: None,
-        throw_logged: None,
-        spread_perks_logged: None,
-        flinch_until: 0.0,
-        flinch_end: None,
-        flinch_rng: SplitMix(3),
-        kick_rng: SplitMix(5),
-        kick_just_settled: false,
-        kick_left: [0.0; 2],
-        kick_back_goal: [0.0; 2],
-        kick_back: [crate::ease::Spring::default(); 2],
-        spent_rng: SplitMix(4),
-        blood_rng: SplitMix(6),
-        blood_chance_logged: false,
-    });
+    let mut combat = Combat::from_forms(forms);
+    combat.no_spread = std::env::var_os("NVF_PLAY_TEST_NO_SPREAD").is_some_and(|v| v != "0");
+    combat.tracer_hold = tracer_hold;
+    commands.insert_resource(combat);
 }
 
 /// The player's spread perks for the weapon `id`: Modify Weapon Strength Req (points off
@@ -7444,7 +7454,7 @@ mod tests {
             check
         };
         let roll = |check: &crate::dismember::Check, bloody_mess: bool, r: f32| {
-            let blow = Blow { on_hit: check.on_hit, corpse: check.corpse, crippled: check.crippled, overkill: check.overkill, max_health: check.max_health, bloody_mess };
+            let blow = Blow { on_hit: check.on_hit, corpse: check.corpse, crippled: check.crippled, overkill: check.overkill, max_health: check.max_health, bloody_mess, sole_part: bptd.parts.len() == 1 };
             decide(&bptd.parts[check.part], &blow, &s, r)
         };
         // Beside its trunk: the torso faces it, and goes only with Bloody Mess (80 % on a
