@@ -181,8 +181,8 @@ fn nif(blocks: &[(&str, Vec<u8>)], strings: &[&str]) -> Vec<u8> {
 }
 
 /// Synthetic camera-overlay NIF with NiMaterialProperty, NiAlphaProperty (opaque/0),
-/// and NiStencilProperty (backface cull/0) on `OverlayShape` under `OverlayNode`.
-fn overlay_nif() -> Vec<u8> {
+/// and NiStencilProperty (`stencil_flags`) on `OverlayShape` under `OverlayNode`.
+fn overlay_nif_with_stencil(stencil_flags: u16) -> Vec<u8> {
     nif(
         &[
             ("BSFadeNode", node(0, [0., 0., 0.], &[1])),
@@ -191,11 +191,15 @@ fn overlay_nif() -> Vec<u8> {
             ("NiTriStripsData", geometry()),
             ("NiMaterialProperty", material(25.)),
             ("NiAlphaProperty", alpha_prop(0, 128)),
-            ("NiStencilProperty", stencil_prop(0, 0, 255)),
+            ("NiStencilProperty", stencil_prop(stencil_flags, 0, 255)),
             ("BSShaderPPLightingProperty", lit_shader()),
         ],
         &["OverlayRoot", "OverlayNode", "OverlayShape"],
     )
+}
+
+fn overlay_nif() -> Vec<u8> {
+    overlay_nif_with_stencil(0)
 }
 
 struct OverlayFiles(PathBuf);
@@ -212,6 +216,14 @@ impl OverlayFiles {
         ));
         std::fs::create_dir_all(root.join("meshes/overlay")).unwrap();
         std::fs::write(root.join("meshes/overlay/test.nif"), overlay_nif()).unwrap();
+        for mode in 0u16..=3 {
+            let flags = (mode << 10) | 0x0015;
+            std::fs::write(
+                root.join(format!("meshes/overlay/stencil_{mode}.nif")),
+                overlay_nif_with_stencil(flags),
+            )
+            .unwrap();
+        }
         Self(root)
     }
 }
@@ -1021,4 +1033,100 @@ fn attached_overlay_particle_consumer_reads_mutates_and_isolates_from_placed_sys
     assert_eq!(placed_sys.len(), 1);
     assert_eq!(placed_sys[0].rate, 99.0);
     assert_eq!(placed_sys[0].emitter.life, 7.0);
+}
+
+#[test]
+fn stencil_draw_modes_match_at_spawn_and_after_set_stencil_property_value() {
+    use bevy::render::render_resource::Face;
+
+    let (mut app, _files, _main_cam, _win) = harness();
+
+    let expected = [
+        (0u16, (false, Some(Face::Back))),
+        (1u16, (false, Some(Face::Back))),
+        (2u16, (false, Some(Face::Front))),
+        (3u16, (true, None)),
+    ];
+
+    for (mode, want) in expected {
+        let flags = (mode << 10) | 0x0015;
+        let path = format!("overlay\\stencil_{mode}.nif");
+        eval(
+            &mut app,
+            &format!(
+                "ref rCam\n\
+                 let rCam := EditorIDToFormID \"JG_CameraOverlayRef_PreIS\"\n\
+                 AttachModel rCam 3 \"Scene Root|{path}\""
+            ),
+        );
+        app.update();
+        app.update();
+
+        let (shape_e, spawn_mat) = app
+            .world_mut()
+            .query::<(Entity, &Name, &MeshMaterial3d<NifMaterial>)>()
+            .iter(app.world())
+            .find(|(_, name, _)| name.as_str() == "OverlayShape")
+            .map(|(e, _, m)| (e, m.0.clone()))
+            .expect("OverlayShape spawned");
+
+        let at_spawn = {
+            let m = app
+                .world()
+                .resource::<Assets<NifMaterial>>()
+                .get(&spawn_mat)
+                .expect("spawned material");
+            (m.base.double_sided, m.base.cull_mode)
+        };
+        assert_eq!(
+            at_spawn, want,
+            "spawn-time NiStencilProperty draw mode {mode} (flags {flags:#x}) must match unified mapping"
+        );
+
+        // Setting the exact same flags through SetStencilPropertyValue must yield the exact
+        // same material double_sided / cull_mode as at spawn.
+        eval(
+            &mut app,
+            &format!(
+                "ref rCam\n\
+                 let rCam := EditorIDToFormID \"JG_CameraOverlayRef_PreIS\"\n\
+                 rCam.SetStencilPropertyValue \"OverlayShape\" 0 {flags}"
+            ),
+        );
+        app.update();
+
+        let after_handle = app
+            .world()
+            .get::<MeshMaterial3d<NifMaterial>>(shape_e)
+            .expect("shape material after SetStencilPropertyValue")
+            .0
+            .clone();
+        let after_set = {
+            let m = app
+                .world()
+                .resource::<Assets<NifMaterial>>()
+                .get(&after_handle)
+                .expect("updated material");
+            (m.base.double_sided, m.base.cull_mode)
+        };
+        assert_eq!(
+            after_set, at_spawn,
+            "SetStencilPropertyValue with identical flags ({flags:#x}, draw mode {mode}) must preserve spawn material culling"
+        );
+        assert_eq!(
+            after_set,
+            nvf_assets::nif_spawn::stencil_cull(i64::from(flags)),
+            "SetStencilPropertyValue must match nif_spawn::stencil_cull for draw mode {mode}"
+        );
+
+        eval(
+            &mut app,
+            &format!(
+                "ref rCam\n\
+                 let rCam := EditorIDToFormID \"JG_CameraOverlayRef_PreIS\"\n\
+                 AttachModel rCam 2 \"Scene Root|{path}\""
+            ),
+        );
+        app.update();
+    }
 }
