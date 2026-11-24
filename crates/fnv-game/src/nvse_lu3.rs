@@ -335,31 +335,28 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let (a, Some(p)) = (subject.unwrap_or(FormId::PLAYER_REF), form(args, 0).filter(|&p| g.data.perks.contains_key(&p))) else { return Some(Ok(zero)) };
             let max = g.data.perks.get(&p).map_or(1, |d| d.ranks.max(1));
             let rank = (num(args, 1, 0.0).max(0.0) as u8).min(max);
+            // rank == 0 (or negative, clamped to 0) leaves the held rank unchanged
+            // [observed: lu3 perkrank; Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
+            // JIP LN 57.30, 2026-11-23, GSDocMitchellHouse (0x00103DF9), 10 official
+            // base masters, `b3_lut_13_set_perk_rank_clamp`
+            // (`tools/capture/nvse/catalogs/wave4b_extenders.json`, #3679):
+            // `PROBE|b3_lut_13_set_perk_rank_clamp|r0=0,after9=1,after0=1`; no DLL or
+            // source consulted].
             if rank == 0 {
                 return Some(Ok(zero));
             }
             if a != FormId::PLAYER_REF {
                 let held = &mut g.extra.entry(a).or_default().perks;
-                if rank == 0 {
-                    held.remove(&p);
-                } else {
-                    held.insert(p, rank);
-                }
+                held.insert(p, rank);
                 g.sync_perk_abilities_of(a);
             } else if num(args, 2, 0.0) != 0.0 {
-                if rank == 0 {
-                    g.player.teammate_perks.remove(&p);
-                } else {
-                    g.player.teammate_perks.insert(p);
-                }
+                g.player.teammate_perks.insert(p);
             } else {
                 let before = g.player.perks.get(&p).copied().unwrap_or(0);
                 if rank > before {
                     while g.player.perks.get(&p).copied().unwrap_or(0) < rank {
                         crate::perks::gain_rank(g, p);
                     }
-                } else if rank == 0 {
-                    g.player.perks.remove(&p);
                 } else if rank < before {
                     g.player.perks.insert(p, rank);
                 }

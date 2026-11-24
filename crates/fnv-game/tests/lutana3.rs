@@ -200,17 +200,22 @@ fn perk_ranks_and_entries() {
     let mut g = game(&f);
     q(&mut g, "PlayerREF.SetPerkRank TestPerk 2");
     assert_eq!(n(&mut g, "PlayerREF.GetPerkRank TestPerk"), 2.0);
-    // Cut to the perk's 3 ranks; 0 takes it away.
+    // Cut to the perk's 3 ranks; 0 and negative leave the rank unchanged
+    // [observed: lu3 perkrank, b3_lut_13_set_perk_rank_clamp].
     q(&mut g, "PlayerREF.SetPerkRank TestPerk 9");
     assert_eq!(n(&mut g, "PlayerREF.GetPerkRank TestPerk"), 3.0);
     q(&mut g, "PlayerREF.SetPerkRank TestPerk 1");
     assert_eq!(n(&mut g, "PlayerREF.GetPerkRank TestPerk"), 1.0);
-    q(&mut g, "PlayerREF.SetPerkRank TestPerk 0");
-    // 0 changes nothing [observed: lu3 perkrank].
+    q(&mut g, "PlayerREF.SetPerkRank TestPerk 0 0");
     assert_eq!(n(&mut g, "PlayerREF.GetPerkRank TestPerk"), 1.0);
-    // An NPC holds it at that rank.
+    q(&mut g, "PlayerREF.SetPerkRank TestPerk -1 0");
+    assert_eq!(n(&mut g, "PlayerREF.GetPerkRank TestPerk"), 1.0);
+    // An NPC holds it at that rank; 0 leaves it unchanged.
     q(&mut g, "TestNpcRef.SetPerkRank TestPerk 2");
     assert_eq!(n(&mut g, "TestNpcRef.HasPerk TestPerk"), 1.0);
+    q(&mut g, "TestNpcRef.SetPerkRank TestPerk 0");
+    assert_eq!(n(&mut g, "TestNpcRef.HasPerk TestPerk"), 1.0);
+    assert_eq!(g.extra.get(&FormId(NPC_REF)).and_then(|e| e.perks.get(&FormId(PERK))), Some(&2));
     // The entries, changed for the session. Both are rank 0, priority 0: the ability
     // before the entry point, as Built to Last's [observed: L5.ext rerun, #2040].
     assert_eq!(n(&mut g, "GetNthPerkEntryForm TestPerk 0"), f64::from(SPELL_A));
