@@ -16,11 +16,16 @@ fn field(g: &Game, form: FormId, sub: &str, path: &str) -> Option<XVal> {
         return Some(v.clone());
     }
     // A clone reads its original's fields (TempCloneForm).
-    let form = g.unclone(form);
-    if let Some(v) = g.field_overrides.get(&(form, format!("{sub}/{path}"))) {
-        return Some(v.clone());
+    // Cloned PROJ records snapshot all active overrides at clone creation time
+    // [observed: w4g_02_tempcloneform_world_proj_csty], so untouched fields fall back
+    // directly to the authored record rather than inheriting post-clone source edits.
+    let orig = g.unclone(form);
+    if orig != form && g.data.sig(orig) != Some(*b"PROJ") {
+        if let Some(v) = g.field_overrides.get(&(orig, format!("{sub}/{path}"))) {
+            return Some(v.clone());
+        }
     }
-    Some(match g.data.record_field(form, sub, path)? {
+    Some(match g.data.record_field(orig, sub, path)? {
         Json::Number(n) => XVal::Num(record_float(n.as_f64()?)),
         Json::String(s) if s.starts_with("0x") => XVal::Ref(u32::from_str_radix(&s[2..], 16).ok()?),
         Json::String(s) => XVal::Str(s.clone()),
