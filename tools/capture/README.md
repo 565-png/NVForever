@@ -750,7 +750,7 @@ that tile. `--no-inherited` leaves them out.
 
 `tools/capture/nvse/` contains a strictly read-only clean-room black-box
 NVSE/extender console-only (`PrintToConsole`) probe script emitter, declarative
-JSON catalogs (Wave 1/2 parity probes and Waves 4A–4D — excluding all
+JSON catalogs (Wave 1/2 parity probes and Waves 4A–4E, 4G, and 4H — excluding all
 file-writing and `con_Save` probes), read-only log verifier (with offline 3-tier
 persistence log classifier), clean-room `[observed: ...]` citation formatter
 with an automated privacy gate, and offline stdlib `unittest` suite. Like §10,
