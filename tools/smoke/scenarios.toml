@@ -9546,10 +9546,10 @@ order = [[
 [[scenario]]
 name = "perk-khan-trick-stun"
 source = "owner 2026-10-24: Khan Trick forces its target's hit reaction (docs/spec-notes/perk-entry-points.md §11.4)"
-note = "perk-unarmed-moves' NCR trooper fist fight with the perk KhanTrick alone from 3 s; three power attacks to the right (Use held 1.5 s, the right key held from 0.05 s before to 0.75 s after, the swing starting about 0.5 s in, then aimed at the trooper again 1 s in) at 6.9, 9.9 and 12.9 s, the trooper put 90 units north each 0.9 s before: one that lands forces the reaction (with the key held 1.4 s the player strafed out of reach and both blows of a run missed) (a first try inside perk-unarmed-moves had its one blow lost to a 3 s stall, and the trooper killed by the fiend dogs about)"
+note = "perk-unarmed-moves' NCR trooper fist fight with the perk KhanTrick alone from 3 s; three power attacks to the right (Use held 1.5 s, the right key held from 0.05 s before to 0.75 s after, the swing starting about 0.5 s in, then aimed at the trooper again 1 s in) at 6.9, 9.9 and 12.9 s, the trooper put 90 units north each 0.9 s before: one that lands forces the reaction (with the key held 1.4 s the player strafed out of reach and both blows of a run missed) (a first try inside perk-unarmed-moves had its one blow lost to a 3 s stall, and the trooper killed by the fiend dogs about); the trooper's Health is set to 5000 at 4.5 s so the dogs cannot kill it before a blow lands (with the armour rules of #3220 they did, 2 runs of 2)"
 areas = ["combat", "perks", "melee"]
 paths = ["engine/nvf-play/src/combat.rs", "engine/nvforever/src/deaths.rs"]
-env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:perk:KhanTrick,4:combat:0x000F36F5:player,6:moveto:0x000F36F5:player:0:90:0,9:moveto:0x000F36F5:player:0:90:0,12:moveto:0x000F36F5:player:0:90:0", NVF_PLAY_TEST_MOVE = "6.85:0:1,7.65:0:0,9.85:0:1,10.65:0:0,12.85:0:1,13.65:0:0", NVF_PLAY_TEST_CONTROL = "3:weapon,6.8:aimnpc,6.9:fire,7.9:aimnpc,8.4:fire,9.8:aimnpc,9.9:fire,10.9:aimnpc,11.4:fire,12.8:aimnpc,12.9:fire,13.9:aimnpc,14.4:fire" }
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:perk:KhanTrick,4:combat:0x000F36F5:player,4.5:set_av:0x000F36F5:Health:5000,6:moveto:0x000F36F5:player:0:90:0,9:moveto:0x000F36F5:player:0:90:0,12:moveto:0x000F36F5:player:0:90:0", NVF_PLAY_TEST_MOVE = "6.85:0:1,7.65:0:0,9.85:0:1,10.65:0:0,12.85:0:1,13.65:0:0", NVF_PLAY_TEST_CONTROL = "3:weapon,6.8:aimnpc,6.9:fire,7.9:aimnpc,8.4:fire,9.8:aimnpc,9.9:fire,10.9:aimnpc,11.4:fire,12.8:aimnpc,12.9:fire,13.9:aimnpc,14.4:fire" }
 args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--actor-weapons", "none"]
 run_seconds = 20
 order = [[
@@ -10606,7 +10606,7 @@ forbid = [{ re = 'style weapon: .* takes up .*(Van Graff|001251CD)', label = "an
 
 [[scenario]]
 name = "energy-resist-hit"
-source = "ESM gap audit medium group 2 (docs/spec-notes/weapon-data-fields.md §3): a weapon's damage type (WEAP Resist) takes the target's resistance of that kind in place of DR"
+source = "ESM gap audit medium group 2 (docs/spec-notes/weapon-data-fields.md §3): a weapon's damage type (WEAP Resist) takes the target's resistance of that kind as well as DR (DR cutting such hits is the original's, docs/spec-notes/damage-armour.md §4, #3218)"
 note = "GSGeneralStore: Chet is given Energy Resistance 50 at the console; the player (GOD) shoots him with a laser pistol (00004335, Energy Resistance)"
 areas = ["combat"]
 paths = ["crates/fnv-combat/src/damage.rs", "engine/nvf-play/src/combat.rs"]
@@ -10614,7 +10614,7 @@ env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_T
 args = ["--cell", "GSGeneralStore", "--play", "--hour", "12", "--no-voice"]
 run_seconds = 24
 expect = [
-  { re = 'combat: \S+ takes WeapLaserPistol damage less 50 % \(Energy Resistance\) in place of DR', label = "the laser hit is cut by Chet's Energy Resistance" },
+  { re = 'combat: \S+ takes WeapLaserPistol damage less 50 % \(Energy Resistance\) as well as DR', label = "the laser hit is cut by Chet's Energy Resistance" },
 ]
 
 [[scenario]]
