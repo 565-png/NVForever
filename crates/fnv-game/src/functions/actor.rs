@@ -807,13 +807,18 @@ flag!(set_unconscious_flag, get_unconscious, unconscious);
 /// `SetUnconscious flag`. On a dead actor it brings it back first, with no get-up
 /// animation [documented: GECK wiki SetUnconscious notes, "Using this on dead actors will
 /// cause them to be resurrected, but will not cause them to play a "get up" animation"];
-/// that it then lies unconscious under a flag of 1 is [hypothesis].
+/// that it then lies unconscious under a flag of 1 is [hypothesis]. Unconscious, it
+/// detects no one from this call on (`Game::forget_detected_by`).
 pub fn set_unconscious(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let r = ctx.subject()?;
     if g.is_dead(r) {
         g.resurrect(r, false);
     }
-    set_unconscious_flag(g, ctx, a)
+    let done = set_unconscious_flag(g, ctx, a)?;
+    if g.extra.get(&r).is_some_and(|e| e.unconscious) {
+        g.forget_detected_by(r);
+    }
+    Ok(done)
 }
 flag!(set_player_teammate, get_player_teammate, teammate);
 
