@@ -47,7 +47,27 @@ impl Game<'_> {
     /// A generic form list: 0 race hairs (HNAM), 1 race eyes (ENAM), 5 actor base
     /// packages, 6 actor base spells, 7 leveled spells (none read), 10 NPC head parts,
     /// 13 a form list [documented: GenericGetForm's list codes]; a script's change first.
+    /// Returns `None` when `code` is unknown or `target`'s record type does not match the
+    /// list code [observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New
+    /// Vegas 1.4.0.525, xNVSE 6.4.9 with the 10 official base masters, clean-room script
+    /// probe `core_13_generic_add_form_split`: mismatched `NPC_` + code 1, `RACE` + code
+    /// 5, and `FLST` + code 1 return `-1` from `GenericAddForm` even at index 0 / -2 and
+    /// `00000000` from `GenericGetForm`/`GenericDeleteForm`/`GenericReplaceForm`; no DLL
+    /// or source consulted].
     pub fn generic_list(&self, code: i64, target: FormId) -> Option<Vec<FormId>> {
+        let sig = self.data.sig(self.unclone(target)).or_else(|| {
+            (target == FormId::PLAYER_BASE || target == FormId::PLAYER_REF).then_some(*b"NPC_")
+        })?;
+        let valid_target = match code {
+            0 | 1 => sig == *b"RACE",
+            5..=7 => matches!(&sig, b"NPC_" | b"CREA"),
+            10 => sig == *b"NPC_",
+            13 => sig == *b"FLST",
+            _ => false,
+        };
+        if !valid_target {
+            return None;
+        }
         if let Some(v) = self.other.generic.get(&(code, target)) {
             return Some(v.clone());
         }
@@ -140,9 +160,10 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         // replace give the form taken out [documented].
         "genericgetform" | "genericaddform" | "genericdeleteform" | "genericreplaceform" => {
             let code = num(args, 0, -1.0) as i64;
-            let Some(t) = form(args, 1) else { return Some(Ok(XVal::Ref(0))) };
+            let miss = || if name == "genericaddform" { XVal::Num(-1.0) } else { XVal::Ref(0) };
+            let Some(t) = form(args, 1) else { return Some(Ok(miss())) };
             let t = if matches!(code, 0 | 1 | 13) { t } else { base(g, t) };
-            let Some(mut list) = g.generic_list(code, t) else { return Some(Ok(XVal::Ref(0))) };
+            let Some(mut list) = g.generic_list(code, t) else { return Some(Ok(miss())) };
             let idx_at = if matches!(name, "genericaddform" | "genericreplaceform") { 3 } else { 2 };
             let i = num(args, idx_at, -1.0) as i64;
             let at = usize::try_from(i).ok().filter(|&i| i < list.len());
@@ -151,13 +172,21 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
                 "genericaddform" => {
                     let Some(f) = form(args, 2) else { return Some(Ok(zero)) };
                     // The wiki gives no result, but the game gives the index it went in at,
-                    // and for -2 the index of the last entry before it, as AddPackageAt -1
-                    // does [observed: nvse-eighth, Doc's 9 packages: index 0 gave 0, -2
-                    // gave 8 and the count became 10].
+                    // for -2 appends and returns the previous last index (n0 - 1), and for
+                    // an out-of-range past-end index (999) returns -1 without modifying the
+                    // list [observed: nvse-eighth; 2026-11-23, GSDocMitchellHouse
+                    // (0x00103DF9), Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9 with the 10
+                    // official base masters, probe `core_13_generic_add_form_split` across
+                    // RACE codes 0/1, NPC_ code 5, and FLST code 13; no DLL or source
+                    // consulted]. Exact boundary `i == n` and negative indices other than
+                    // `-2` remain [hypothesis].
                     let n = list.len();
-                    let (at, out) = match usize::try_from(i).ok().filter(|&i| i <= n) {
-                        Some(at) => (at, at as f64),
-                        _ => (n, n as f64 - 1.0),
+                    let (at, out) = if i == -2 {
+                        (n, n as f64 - 1.0)
+                    } else if let Some(at) = usize::try_from(i).ok().filter(|&i| i <= n) {
+                        (at, at as f64)
+                    } else {
+                        return Some(Ok(XVal::Num(-1.0)));
                     };
                     list.insert(at, f);
                     XVal::Num(out)

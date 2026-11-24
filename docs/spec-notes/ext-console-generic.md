@@ -66,9 +66,21 @@ generic.5.ref.0 and generic.5.base.0 both give Doc Mitchell's first package].
 
 - Get gives the form at the index, 0 past the end [documented].
 - Add puts the form in at the index; -2 adds at the end [documented]. The page gives no
-  result, but the game gives the index it went in at, and for -2 the index of the last
-  entry before it (Doc's 9 packages: index 0 gave 0, -2 gave 8, then 10 packages)
-  [observed: nvse-eighth]. Another index past the end adds at the end [hypothesis].
+  result, but the game gives the index it went in at, for -2 the index of the last entry
+  before it (`n0 - 1`), and for a past-end index (`999`) returns `-1` without modifying
+  the list [observed: nvse-eighth; 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`),
+  Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters, clean-room
+  script probe `core_13_generic_add_form_split` across valid `RACE` codes 0/1, `NPC_`
+  code 5, and `FLST` code 13: `0 -> 0`, `-2 -> n0 - 1`, `999 -> -1` with unchanged length;
+  no DLL or source consulted]. Exact boundary `index == len` (inserts at end) and negative
+  indices other than `-2` (returns `-1`) remain [hypothesis].
+- Target record types are validated against the list code (`0`/`1` `RACE`, `5`–`7`
+  `NPC_`/`CREA`, `10` `NPC_`, `13` `FLST`): on a mismatched target record type or unknown
+  list code, `GenericAddForm` returns `-1` even at valid index `0`/`-2` without mutating,
+  and `GenericGetForm`/`GenericDeleteForm`/`GenericReplaceForm` all return `00000000`
+  [observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`),
+  `core_13_generic_add_form_split` (`NPC_` + code 1, `RACE` + code 5, `FLST` + code 1);
+  `CREA` and codes 6/7/10 follow [documented: GenericGetForm's list codes]].
 - Delete takes out the form at the index and gives it [documented]; past the end, 0.
 - Replace puts the new form at the index and gives the old one [documented]
   [observed: generic.10.replace and its restore].

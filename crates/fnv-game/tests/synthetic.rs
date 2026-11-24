@@ -4478,6 +4478,19 @@ fn generic_form_lists_and_animation_lists_change_for_the_session() {
     assert_eq!(q(&mut g, "SetFunctionValue (GenericDeleteForm 7, PlayerREF, 1)"), glob);
     assert_eq!(q(&mut g, "SetFunctionValue (ar_Size (GetBaseSpellListLevSpells PlayerREF))"), XVal::Num(1.0), "the getter sees it");
     assert_eq!(q(&mut g, "SetFunctionValue (GenericGetForm 99, PlayerREF, 0)"), XVal::Ref(0), "no such list");
+    // Valid target past-end index 999 returns -1 without appending [observed: 2026-11-23,
+    // GSDocMitchellHouse (0x00103DF9), `core_13_generic_add_form_split`].
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 7, PlayerREF, TestAdd, 999)"), XVal::Num(-1.0), "valid target past-end index returns -1");
+    assert_eq!(q(&mut g, "SetFunctionValue (ar_Size (GetBaseSpellListLevSpells PlayerREF))"), XVal::Num(1.0), "past-end index does not append");
+    // Mismatched target record types and unknown list codes return -1 for Add and 0 for
+    // Get/Delete/Replace [observed: `core_13_generic_add_form_split`].
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 1, PlayerREF, TestAdd, 0)"), XVal::Num(-1.0), "mismatched target at index 0 returns -1");
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 1, PlayerREF, TestAdd, -2)"), XVal::Num(-1.0), "mismatched target at index -2 returns -1");
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 1, PlayerREF, TestAdd, 999)"), XVal::Num(-1.0), "mismatched target at index 999 returns -1");
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericGetForm 1, PlayerREF, 0)"), XVal::Ref(0), "mismatched Get returns 0");
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericDeleteForm 1, PlayerREF, 0)"), XVal::Ref(0), "mismatched Delete returns 0");
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericReplaceForm 1, PlayerREF, TestAdd, 0)"), XVal::Ref(0), "mismatched Replace returns 0");
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 99, PlayerREF, TestAdd, 0)"), XVal::Num(-1.0), "unknown list code returns -1");
 
     q(&mut g, "AddAnimation \"a.kf\" PlayerREF\nAddAnimation \"B.kf\" PlayerREF\nAddAnimation \"A.KF\" PlayerREF");
     let nth = |g: &mut fnv_game::Game, i: u32| g.run_query(&format!("Begin Function {{ }}\nSetFunctionValue (PlayerREF.GetNthAnimation {i})\nEnd\n"), ctx()).unwrap();
@@ -4486,6 +4499,65 @@ fn generic_form_lists_and_animation_lists_change_for_the_session() {
     assert_eq!(nth(&mut g, 1), XVal::Str(String::new()));
     q(&mut g, "PlayerREF.DelAnimations");
     assert_eq!(nth(&mut g, 0), XVal::Str(String::new()));
+}
+
+#[test]
+fn generic_form_lists_validate_target_type_and_past_end_index() {
+    // [observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas
+    // 1.4.0.525, xNVSE 6.4.9 with the 10 official base masters, clean-room script probe
+    // `core_13_generic_add_form_split`]:
+    // (a) Valid targets (RACE 0/1, NPC_ 5, FLST 13) accept index 0 (returns 0) and -2
+    //     (appends, returns n0 - 1), and reject past-end index 999 with -1 without mutating.
+    // (b) Mismatched target record types (NPC_+1, RACE+5, FLST+1) reject GenericAddForm
+    //     with -1 even at valid index 0/-2, and return 00000000 for Get/Delete/Replace.
+    use fnv_script::vm::XVal;
+    let race = record(b"RACE", 0, 0x0000_0810, &[sub(b"EDID", z("TestRace")), sub(b"HNAM", 0x0000_0811u32.to_le_bytes().to_vec()), sub(b"ENAM", 0x0000_0812u32.to_le_bytes().to_vec())]);
+    let hair = record(b"HAIR", 0, 0x0000_0811, &[sub(b"EDID", z("TestHair"))]);
+    let eyes = record(b"EYES", 0, 0x0000_0812, &[sub(b"EDID", z("TestEye"))]);
+    let pkg = record(b"PACK", 0, 0x0000_0813, &[sub(b"EDID", z("TestPkg"))]);
+    let npc = record(b"NPC_", 0, 0x0000_0814, &[sub(b"EDID", z("TestNpc")), sub(b"PKID", 0x0000_0813u32.to_le_bytes().to_vec())]);
+    let flst = record(b"FLST", 0, 0x0000_0815, &[sub(b"EDID", z("TestFlst")), sub(b"LNAM", 0x0000_0813u32.to_le_bytes().to_vec())]);
+    let bytes = [
+        tes4(),
+        top(b"HAIR", &hair),
+        top(b"EYES", &eyes),
+        top(b"RACE", &race),
+        top(b"PACK", &pkg),
+        top(b"NPC_", &npc),
+        top(b"FLST", &flst),
+    ]
+    .concat();
+    let plugins = vec![Plugin::parse(&bytes, "GenericLists.esm".into()).unwrap()];
+    let lo = LoadOrder::new(&plugins).unwrap();
+    let schema = schema();
+    let (table, j) = catalogue();
+    let forms = FormStore::build(&lo, &schema);
+    let refs = RefTable::build(&lo, &schema);
+    let data = GameData::build(&lo, &schema, table, &j, &refs);
+    let f = Fixture { data, forms, refs };
+    let mut g = game(&f);
+    let ctx = fnv_game::game::RunCtx::default;
+    let q = |g: &mut fnv_game::Game, body: &str| g.run_query(&format!("Begin Function {{ }}\n{body}\nEnd\n"), ctx()).unwrap();
+
+    // (a) Valid targets: RACE code 0 (Hair), RACE code 1 (Eyes), NPC_ code 5 (Packages), FLST code 13 (FormList).
+    for (code, target, item) in [(0, "TestRace", "TestHair"), (1, "TestRace", "TestEye"), (5, "TestNpc", "TestPkg"), (13, "TestFlst", "TestPkg")] {
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericAddForm {code}, {target}, {item}, 999)")), XVal::Num(-1.0), "code {code} on {target} rejects 999");
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericGetForm {code}, {target}, 1)")), XVal::Ref(0), "code {code} on {target} did not append on 999");
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericAddForm {code}, {target}, {item}, 0)")), XVal::Num(0.0), "code {code} on {target} inserts at 0");
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericAddForm {code}, {target}, {item}, -2)")), XVal::Num(1.0), "code {code} on {target} appends with -2 returning n0 - 1");
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericAddForm {code}, {target}, {item}, 999)")), XVal::Num(-1.0), "code {code} on {target} still rejects 999 at len 3");
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericGetForm {code}, {target}, 3)")), XVal::Ref(0), "code {code} on {target} len stayed 3");
+    }
+
+    // (b) Mismatched target record types: NPC_ + code 1, RACE + code 5, FLST + code 1.
+    for (code, target, item) in [(1, "TestNpc", "TestEye"), (5, "TestRace", "TestPkg"), (1, "TestFlst", "TestEye")] {
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericAddForm {code}, {target}, {item}, 0)")), XVal::Num(-1.0), "mismatched {target} + code {code} Add(0)");
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericAddForm {code}, {target}, {item}, -2)")), XVal::Num(-1.0), "mismatched {target} + code {code} Add(-2)");
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericAddForm {code}, {target}, {item}, 999)")), XVal::Num(-1.0), "mismatched {target} + code {code} Add(999)");
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericGetForm {code}, {target}, 0)")), XVal::Ref(0), "mismatched {target} + code {code} Get");
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericDeleteForm {code}, {target}, 0)")), XVal::Ref(0), "mismatched {target} + code {code} Delete");
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericReplaceForm {code}, {target}, {item}, 0)")), XVal::Ref(0), "mismatched {target} + code {code} Replace");
+    }
 }
 
 #[test]
