@@ -21,16 +21,21 @@ Part of #2387. The initial contract preceded the provisional implementation.
   discard `pcModel`, and the renderer publishes only `PlayerBody::third_rig`.
   This cannot distinguish identically named bones in two player rigs.
 - [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24,
-  `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters,
+  `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters, isolated clean-room
+  staging copy (read-only `PrintToConsole` probe; zero writes to game install or Saves),
   `w4d_43_nif_selector_and_ui_entities` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
-  #3679): in 1st-person camera, `Player.GetChildBlocks "Bip01 Head"` with omitted `pcModel`
-  returned `ar_Null` (`-1`), matching explicit `pcModel=2` (`1p=-1`) rather than explicit
-  `pcModel=1` (`3p=12`); no DLL or source consulted] When `pcModel` is omitted (or `0`) on
+  PR #3803 / #3802):
+  `PROBE|w4d_43_nif_selector_and_ui_entities|p1(1p=1,cb=-1/12/-1/-1)|p3(1p=0,cb=12/12/-1/-1)|ui(ret=64,f=0[&false],t=0,c=0)|idle(1,0,1)`;
+  zero DLL, PDB, or third-party source consulted] When `pcModel` is omitted (or `0`) on
   the player, JIP's `pcModel`-taking NIF commands follow the active 1st/3rd-person camera
-  (`Game::senses.first_person`, driven by `Game::set_first_person`). Non-`pcModel` mirror
-  callers (such as JohnnyGuitar/SUP unselected queries and `ModelHasBlock`) keep the
-  third-person mirror default when separate player models are published, and legacy
-  single-tree hosts continue using `ModelView::Reference`.
+  (`IsPC1stPerson=1` -> omitted `Player.GetChildBlocks "Bip01 Head"` returned `-1`,
+  matching `pcModel=2` `-1` rather than `pcModel=1` `12`; `IsPC1stPerson=0` -> omitted
+  `Player.GetChildBlocks "Bip01 Head"` returned `12`, matching `pcModel=1` `12`).
+  NVForever resolves this through `Game::senses.first_person` (driven by
+  `Game::set_first_person`). Non-`pcModel` mirror callers (such as JohnnyGuitar/SUP
+  unselected queries and `ModelHasBlock`) keep the third-person mirror default when
+  separate player models are published, and legacy single-tree hosts continue using
+  `ModelView::Reference`.
 - [hypothesis] A missing explicitly selected rig returns the existing missing-node
   value; it must not fall back to the other player rig. On ordinary references,
   the player-only selector is ignored and the ordinary reference tree is used.
