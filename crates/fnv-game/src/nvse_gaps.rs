@@ -1431,9 +1431,23 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             zero
         }
         // The explosion's form traits, 0 light … 6 image-space modifier as GetExplosion-
-        // TraitForm reads them; no form clears it [observed: gaps7]. Only EXPL forms (and
-        // their TempCloneForm clones) are accepted; typed slots reject wrong-type forms
-        // while keeping null/omitted clears [hypothesis].
+        // TraitForm reads them [observed: gaps7]. Only EXPL forms (and their TempCloneForm
+        // clones) are accepted [design]. Omitting the 3rd argument clears any slot 0..=6
+        // to 0, whereas passing an explicit null ref (`0`) is a no-op across all slots
+        // [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24,
+        // GSDocMitchellHouse (0x00103DF9), 10 official base masters,
+        // `w4h_02_explosion_slot4_reconcile` (`tools/capture/nvse/catalogs/wave4h_reconcile.json`,
+        // #3803): `PROBE|w4h_02_explosion_slot4_reconcile|esmPop4=0/223|s4(0=00000000,set=0000003B,null=0000003B,lit0(0)=0000003B,omit(1)=00000000)|s0(0=00014BFF,null=00014BFF,omit=00000000)|s5(0=001758E2,null=001758E2,omit=00000000)|s6(0=00019CED,null=00019CED,omit=00000000)`;
+        // hypothesis: slots 1, 2, 3 follow the same null-no-op / omitted-clears rule].
+        // For non-null replacement forms, typed slots clear to 0 on a wrong-type form
+        // [observed: `jip_24_expl_trait_form_type_check`
+        // (`tools/capture/nvse/catalogs/wave4a_extenders.json`):
+        // `PROBE|jip_24_expl_trait_form_type_check|s0:00014BFF->00000000(eq0=1,eqSt=0)|s4:00000000->00015169(eqSt=1)`;
+        // hypothesis: slots 1, 2, 3, 5, 6 follow the same clear-on-mismatch rule], while
+        // slot 4 (INAM) accepts any non-null form without type checking [observed:
+        // `w4d_27_expl_inam_placeable` (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679):
+        // `PROBE|w4d_27_expl_inam_placeable|f0=00000000|stat=0000003B|misc=0000000F|alch=00015169|fac=0001B2A4|clr=0001B2A4`;
+        // no DLL or source consulted].
         "setexplosiontraitform" => {
             let Some(f) = form(args, 0).filter(|&f| g.data.sig(g.unclone(f)) == Some(*b"EXPL")) else {
                 return Some(Ok(zero));
@@ -1448,13 +1462,18 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 6 => ("MNAM/", Some(b"IMAD")),
                 _ => return Some(Ok(zero)),
             };
-            let target = form(args, 2);
-            if let (Some(e), Some(sig)) = (target, want) {
-                if g.data.sig(g.unclone(e)) != Some(*sig) {
-                    return Some(Ok(zero));
+            let next = if args.len() < 3 {
+                0
+            } else if let Some(e) = form(args, 2) {
+                if want.is_none_or(|sig| g.data.sig(g.unclone(e)) == Some(*sig)) {
+                    e.0
+                } else {
+                    0
                 }
-            }
-            g.field_overrides.insert((f, key.into()), XVal::Ref(target.map_or(0, |e| e.0)));
+            } else {
+                return Some(Ok(zero));
+            };
+            g.field_overrides.insert((f, key.into()), XVal::Ref(next));
             zero
         }
         // EXPL DATA flags; returns 0 [observed: gaps7, 0 both ways]. Only EXPL forms (and
