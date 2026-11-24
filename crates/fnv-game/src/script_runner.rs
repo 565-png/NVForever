@@ -154,14 +154,20 @@ fn file_name(path: &str) -> &str {
 }
 
 impl<'a> Game<'a> {
-    /// Run the Script Runner files of `m` in prefix order (`Moment::prefixes`: `ln_`
-    /// before `gn_` on new game, `ln_` before `gl_` on load [observed:
-    /// `p2_script_runner_prefixes`]). Within each prefix, the folder's files run in the
-    /// order of their names [hypothesis: within-prefix order is not documented], then the
-    /// registered ones in registration order; a file registered while the Restart files
-    /// run, with the `gr_` prefix, runs after them [hypothesis]. A file that does not
-    /// compile is skipped and traced (`Skipped`), as are the errors of one that runs;
-    /// nothing here stops the game.
+    /// Run the Script Runner files of `m` in prefix order (`Moment::Restart` runs `gr_`
+    /// first at startup before `ln_`/`gn_`/`gl_`; `Moment::prefixes` runs `ln_` before
+    /// `gn_` on new game and `ln_` before `gl_` on load [observed:
+    /// `p2_script_runner_prefixes`; Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN
+    /// 57.30, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters,
+    /// `w4d_14_script_runner_order` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+    /// #3679): `n=7|ord=[gr_01A,gr_01b,gr_01,gr_02,ln_02,ln_01,gn_01]`; no DLL or source
+    /// consulted]). Within each prefix, original JIP LN follows filesystem directory
+    /// enumeration order (`ln_02` before `ln_01`), whereas NVForever sorts folder files
+    /// case-insensitively alphabetically for cross-platform determinism [design], then
+    /// runs registered files in registration order; a `gr_` file registered during
+    /// `Moment::Restart` runs after the folder's `gr_` files [hypothesis]. A file that
+    /// does not compile is skipped and traced (`Skipped`), as are the errors of one that
+    /// runs; nothing here stops the game.
     ///
     /// [`Moment::Exit`] is idempotent per [`Game`] instance and returns immediately with no
     /// work when no `gx_` files are discovered or registered [design].

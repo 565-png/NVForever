@@ -336,9 +336,15 @@ fn set_persistent_toggles_flag_and_reaches_all_consumers() {
     );
     assert_eq!(num(&mut g, "Ar_Size (GetFormRefs TestCrate)"), 2.0, "PersistCrateRef + persistent runtime ref");
 
-    // PlayerRef remains persistent even after SetPersistent 0.
-    q(&mut g, "player.SetPersistent 0");
+    // Wave 4D w4d_06_player_setpersistent_0 [observed]: Player.IsPersistent starts at 1,
+    // Player.SetPersistent 0 clears it to 0, and Player.SetPersistent 1 restores 1.
     assert_eq!(num(&mut g, "player.IsPersistent"), 1.0);
+    q(&mut g, "player.SetPersistent 0");
+    assert_eq!(num(&mut g, "player.IsPersistent"), 0.0);
+    assert_eq!(num(&mut g, "player.GetReferenceFlag 1024"), 0.0);
+    q(&mut g, "player.SetPersistent 1");
+    assert_eq!(num(&mut g, "player.IsPersistent"), 1.0);
+    assert_eq!(num(&mut g, "player.GetReferenceFlag 1024"), 1.0);
 }
 
 #[test]

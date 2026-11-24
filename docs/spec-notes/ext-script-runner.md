@@ -21,14 +21,18 @@ game yet (§5).
 - Only the folder's own files run unless registered: of the 203, 202 lie directly in the
   folder and one in a subfolder [observed], and a subfolder's file needs RegisterSRScript
   (§3) [documented: "must include at least one subfolder"].
-- The order of the files within one prefix is not documented: NVForever runs them in the
-  order of their names, any case [hypothesis]. Across prefixes at the same moment, `ln_`
-  runs before `gn_` on new game and before `gl_` on load [observed: Fallout: New Vegas
-  1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, clean-room
-  black-box script probe `p2_script_runner_prefixes` (`tools/capture/nvse/catalogs/persistence_matrix.json`,
-  #3678 / PR #3679): Boot 1 (startup -> new game -> save -> same-run load -> quit) ran
-  `gr_ -> ln_ -> gn_ -> ln_ -> gl_ -> gx_`, Boot 2 (startup -> cold load -> quit) ran
-  `gr_ -> ln_ -> gl_ -> gx_`, and unknown prefix `zz_` never ran; no DLL or source consulted].
+- Across prefixes, `gr_` executes first at game restart / main menu before `ln_` and
+  `gn_`/`gl_`, and `ln_` runs before `gn_` on new game and before `gl_` on load; within a
+  single prefix, original JIP LN executes files in filesystem/directory enumeration order
+  (`ln_02` ran before `ln_01`) [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
+  JIP LN 57.30 with the 10 official base masters, `p2_script_runner_prefixes`
+  (`tools/capture/nvse/catalogs/persistence_matrix.json`, #3678 / PR #3679: Boot 1 ran
+  `gr_ -> ln_ -> gn_ -> ln_ -> gl_ -> gx_`, Boot 2 ran `gr_ -> ln_ -> gl_ -> gx_`,
+  unknown prefix `zz_` never ran) and 2026-11-24 `GSDocMitchellHouse` (`0x00103DF9`),
+  `w4d_14_script_runner_order` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+  #3679): `n=7|ord=[gr_01A,gr_01b,gr_01,gr_02,ln_02,ln_01,gn_01]`; no DLL or source
+  consulted]. NVForever runs folder files within a single prefix in case-insensitive
+  alphabetical order for cross-platform determinism [design].
 - Text is UTF-8 when it is, else 8-bit text in the run's code page, as CompileScript reads
   its files.
 - The folder is read in NVForever's own layer first, then in Data (an MO2 run sees the

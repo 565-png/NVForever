@@ -7069,9 +7069,6 @@ impl<'a> Game<'a> {
         g.jip2.misc_stats = s.extra_misc_stats.iter().map(|(k, v)| (k.clone(), *v)).collect();
         g.restore_jip10(&s.jip10);
         for (&r, &on) in &s.persistent_overrides {
-            if r == FormId::PLAYER_REF {
-                continue;
-            }
             let cur = crate::nvse_other::record_flags_of(&g, r)
                 | if g.persistent(r) { fnv_sim::refs::FLAG_PERSISTENT } else { 0 };
             let next = if on {
