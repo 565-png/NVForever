@@ -55,8 +55,12 @@ slice 2 plays; CopyAnimationsToForm copies the entries too.
 GetAnimationAttributes, Get/SetGlobalAnimTime, the blend functions, SetAnimWeight,
 SetAnimAdditive, the text-key functions, CopyAnimationsToForm and the rest are built on
 the game side (`nvse_knvse.rs`, docs/spec-notes/ext-knvse.md). `AllowAttack` cooldown
-and flinch release is now consumed for the player in `nvf-play` (`combat.rs`) [design];
-the engine's per-actor player does not yet read the rest of this state.
+and flinch release is consumed for the player in `nvf-play` (`combat.rs`), and player
+playback consumes per-view script-sequence weights (`SetAnimWeight`), additive poses
+(`SetAnimAdditive`), blend transition durations/priorities/views/`timeSync` phase
+alignment (`CrossFadeAnims`, `BlendToAnim`, `BlendToAnimFromPose`), and clip metadata
+publication (`Game::set_sequence_info` from `anim_state.rs` and `script_sequences.rs`)
+[design].
 
 ## 5. The player, conditions and folders (2026-11-13)
 
@@ -101,6 +105,9 @@ the engine's per-actor player does not yet read the rest of this state.
   view starts it again when drawn (smoke `knvse-npc-sequences`). ActivateAnim's layered
   sequences play on `BlendPlayer::script_layers` with explicit sequence priority, weight,
   ease-in/ease-out, clock/seek, and additive reference poses [design].
+- **Player body clip reporting** (`nvforever` anim_state.rs, player_body.rs): the active
+  rig's main body clip is reported in `AnimState::clip` and its header published via
+  `Game::set_sequence_info` for both player and NPCs [design].
 - **Idles and `ForcePlayIdle` / `ForceStopIdle` POV** (`nvforever` idles.rs): kNVSE
   filename overrides apply to idle clips (`clip_path_for`) while leaving actors without
   overrides unchanged [hypothesis: idle overrides match the overridden file name as
@@ -112,6 +119,6 @@ the engine's per-actor player does not yet read the rest of this state.
   conditional SetActorAnimationPath gets `Game::anim_overrides_now` each frame, the world
   put back, so the replacement comes and goes with its condition; the others keep
   `Game::anim_overrides`. Standing (`mt`), crouched (`sneakmt`), limping (`hurtmt`),
-  swimming (`swim`), and alert (`h2h`) locomotion sets apply matching replacements and
-  restore their shared sets when cleared [design].
+  swimming (`swimmt` / `swim`), and alert (`h2h`) locomotion sets apply matching
+  replacements and restore their shared sets when cleared [design].
 - **Still not built:** NPCs' weapon-group overrides (attacks, reloads, aims, equips).

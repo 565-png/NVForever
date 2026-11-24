@@ -7,7 +7,7 @@
 //! `fnv_game::nvse_anim_folders`).
 
 use crate::limbs::ActorRig;
-use crate::locomotion::Locomotion;
+use crate::locomotion::{Locomotion, ALERT_STANCE, SNEAK_STANCE, SWIM_STANCES};
 use bevy::prelude::*;
 use fnv_sim::FormId;
 use nvf_assets::actor::{ActorCtx, ActorParts};
@@ -90,9 +90,9 @@ fn apply(mut script: Option<ResMut<ScriptState>>, sim: Option<ResMut<nvf_play::s
         }
         let (stand, n_stand) = shared.stand.with_replacements(&mut ctx, &rig.skel, &paths);
         let mut total = n_stand;
-        let replace_opt = |opt: &Option<Arc<crate::locomotion::ClipSet>>, stance: &str, ctx: &mut ActorCtx, total: &mut usize| -> Option<Arc<crate::locomotion::ClipSet>> {
+        let replace_opt = |opt: &Option<Arc<crate::locomotion::ClipSet>>, stances: &[&str], ctx: &mut ActorCtx, total: &mut usize| -> Option<Arc<crate::locomotion::ClipSet>> {
             let base = opt.as_ref()?;
-            let (set, n) = base.with_replacements_for_stance(ctx, &rig.skel, &paths, stance);
+            let (set, n) = base.with_replacements_for_stances(ctx, &rig.skel, &paths, stances);
             if n > 0 {
                 *total += n;
                 Some(Arc::new(set))
@@ -100,10 +100,10 @@ fn apply(mut script: Option<ResMut<ScriptState>>, sim: Option<ResMut<nvf_play::s
                 Some(base.clone())
             }
         };
-        let sneak = replace_opt(&shared.sneak, "sneakmt", &mut ctx, &mut total);
-        let hurt = replace_opt(&shared.hurt, "hurtmt", &mut ctx, &mut total);
-        let swim = replace_opt(&shared.swim, "swim", &mut ctx, &mut total);
-        let alert = replace_opt(&shared.alert, "h2h", &mut ctx, &mut total);
+        let sneak = replace_opt(&shared.sneak, &[SNEAK_STANCE], &mut ctx, &mut total);
+        let hurt = replace_opt(&shared.hurt, &["hurtmt"], &mut ctx, &mut total);
+        let swim = replace_opt(&shared.swim, &SWIM_STANCES, &mut ctx, &mut total);
+        let alert = replace_opt(&shared.alert, &[ALERT_STANCE], &mut ctx, &mut total);
         info!("anim paths: {:08X} plays {total} replaced move(s) from {} file(s)", rig.reference, paths.len());
         lo.replace_posture_sets(Arc::new(stand), sneak, hurt, swim, alert);
         applied.insert(rig.reference, (paths, shared));
