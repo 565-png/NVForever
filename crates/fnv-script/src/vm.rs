@@ -1507,13 +1507,15 @@ impl Vm<'_, '_> {
     /// (`eval s`: `1 -> 0` across `sv_Destruct`, `eval sEmp == 1`, `eval (!sEmp) == 0`,
     /// `eval (sEmp && 5) == 1`, `eval a1 == 1`, `eval a2 == 1`, `eval ar_Null == 0`,
     /// `eval (!a1) == 0`, `eval (!aNull) == 1`), and `w4d_03_eval_empty_str_lit`
-    /// (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679:
-    /// `lit0(cmp=1,val=0)|lit1(cmp=1,val=1)|con0Inline(cmp=0,val=-9)|c0=1,c1=1|v0=1,v1=1`);
-    /// no DLL or source consulted]: an initialised empty array and any allocated
-    /// `string_var` (even empty `""` or `sv_Construct "%z" s0`, because its string ID is
-    /// non-zero) evaluate truthy (`1`); `ar_Null`, an uninitialised or `sv_Destruct`-ed
-    /// `string_var`, and a bare empty string literal `""` evaluate `0`, while a non-empty
-    /// string literal `"abc"` evaluates `1`.
+    /// (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3802 / PR #3803, isolated
+    /// clean-room staging copy, read-only `PrintToConsole` probe; zero writes to game
+    /// install or Saves:
+    /// `PROBE|w4d_03_eval_empty_str_lit|lit0(cmp=1,val=0)|lit1(cmp=1,val=1)|con0Inline(cmp=0,val=-9)|c0=1,c1=1|v0=1,v1=1|saLit0(1:0)|saLit1(1:1)|saV0(1:1)`);
+    /// zero DLL, PDB, or third-party source consulted]: an initialised empty array and any
+    /// allocated `string_var` (even empty `""` or `sv_Construct "%z" s0`, because its string
+    /// ID is non-zero) evaluate truthy (`1`) under both `if eval` and standalone `eval`;
+    /// `ar_Null`, an uninitialised or `sv_Destruct`-ed `string_var`, and a bare empty string
+    /// literal `""` evaluate `0`, while a non-empty string literal `"abc"` evaluates `1`.
     fn xeval_truthy(&mut self, e: &XExpr) -> Result<(XVal, bool), VmError> {
         if let XExpr::Var { var, .. } = e {
             if self.host.var_kind(var) == VarKind::String {
@@ -3174,8 +3176,9 @@ impl Vm<'_, '_> {
             // `#3679` `core_24_string_var_destruct_zero` (`eval s`: `1 -> 0` across
             // `sv_Destruct`, `eval sEmp == 1`, `eval a1 == 1`, `eval a2 == 1`,
             // `eval ar_Null == 0`), `core_05_eval_empty_array_and_string_truth`, and
-            // `w4d_03_eval_empty_str_lit` (bare `""` -> `0`, `"abc"` -> `1`, allocated
-            // empty `string_var` -> `1`); hypothesis for non-var string-returning calls].
+            // `w4d_03_eval_empty_str_lit` (#3802 / PR #3803: `saLit0(1:0)|saLit1(1:1)|saV0(1:1)`,
+            // bare `""` -> `0`, `"abc"` -> `1`, allocated empty `string_var` -> `1`);
+            // hypothesis for non-var string-returning calls].
             // Numeric and ref values pass through unchanged [design: preserves `#2275`,
             // where Blue Moon's Script Runner files write
             // `AuxVarSetFlt "*x" (eval GetINIFloat_Cached "s:k" "f.ini" 1) 5`; note

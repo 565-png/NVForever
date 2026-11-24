@@ -743,8 +743,10 @@ fn eval_truthiness_for_arrays_and_strings() {
     // `core_24_eval_string_var` / `#3679` `core_24_string_var_destruct_zero`
     // (eval s: 1->0 across sv_Destruct, eval sEmp=1, eval (!sEmp)=0,
     // eval (sEmp && 5)=1, eval a1=1, eval a2=1, eval ar_Null=0, eval (!a1)=0,
-    // eval (!aNull)=1), and `w4d_03_eval_empty_str_lit` (bare `""` -> 0, `"abc"` -> 1,
-    // allocated empty `string_var` from `""` or `sv_Construct "%z" sEmp` -> 1)]:
+    // eval (!aNull)=1), and `w4d_03_eval_empty_str_lit` (#3802 / PR #3803:
+    // `PROBE|w4d_03_eval_empty_str_lit|lit0(cmp=1,val=0)|lit1(cmp=1,val=1)|con0Inline(cmp=0,val=-9)|c0=1,c1=1|v0=1,v1=1|saLit0(1:0)|saLit1(1:1)|saV0(1:1)`,
+    // covering both `if eval` and standalone `eval` on bare `""`, `"abc"`, and allocated
+    // empty `string_var`)]:
     // initialized empty arrays and allocated string_vars (even empty) evaluate truthy (1);
     // ar_Null, uninitialized or sv_Destruct-ed string_vars, and bare `""` literals
     // evaluate 0. Standalone `(eval ...)` coerces arrays (including array ID >= 2)
