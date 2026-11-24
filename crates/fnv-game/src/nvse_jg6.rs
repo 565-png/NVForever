@@ -314,16 +314,19 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         }
         // 0 full … 4 new … 7 waxing gibbous [documented: GetMoonPhase]: the days passed
         // over the climate's phase length (TNAM, low six bits), as the sky draws it
-        // (`fnv_world::sky::moon_phase`); indoors it still reports the active moon phase
-        // rather than 0 [observed: 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`),
-        // Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JohnnyGuitarNVSE 528 with the 10
-        // official base masters, clean-room script probe `w4c_b3_03_jg6_actor_world_misc`
-        // (`tools/capture/nvse/catalogs/wave4c_extenders.json`, #3678 / PR #3679):
-        // `furnP=00000000,furnD=001059B0,hdP=0,moon=1,ta=00000000,tresp=0`; no DLL or
-        // source consulted], resolved via `moon_climate` (current exterior climate, else
-        // `ForceClimate`, `SetCurrentClimate`, last exterior worldspace climate, or
-        // `DefaultClimate` `0x0000015F` / `NVDefaultClimate`; phase 0 when no climate is
-        // loaded) [design].
+        // (`fnv_world::sky::moon_phase`); indoors it reports a non-zero active moon phase
+        // (`moon=1`) rather than 0 [observed: 2026-11-24, `GSDocMitchellHouse`
+        // (`0x00103DF9`), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JohnnyGuitarNVSE 528
+        // with the 10 official base masters, clean-room script probe
+        // `w4c_b3_03_jg6_actor_world_misc` (`tools/capture/nvse/catalogs/wave4c_extenders.json`,
+        // #3678 / PR #3679): `furnP=00000000,furnD=001059B0,hdP=0,moon=1,ta=00000000,tresp=0`;
+        // no DLL or source consulted]. The exact indoor climate/phase-length derivation
+        // (e.g. `GameDaysPassed = 5.0` over `DefaultClimate` phase length 3) is
+        // [hypothesis] because `w4c_b3_03` does not print `GameDaysPassed` or
+        // `GetCurrentClimate`; NVForever resolves via `moon_climate` (current exterior
+        // climate, else `ForceClimate`, `SetCurrentClimate`, last exterior worldspace
+        // climate, or `DefaultClimate` `0x0000015F` / `NVDefaultClimate`; phase 0 when no
+        // climate is loaded) [design].
         "getmoonphase" => {
             let climate = moon_climate(g).map(|c| g.unclone(c));
             let len = match climate.and_then(|c| crate::nvse::record_value(g, c, "TNAM", "moons_phase_length")) {

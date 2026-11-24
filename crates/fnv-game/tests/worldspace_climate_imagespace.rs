@@ -358,10 +358,10 @@ fn get_moon_phase_indoors_uses_active_or_default_climate() {
     let f = fixture();
     let world = World::new(&f.forms, &f.refs, SimConfig::default());
     let mut g = Game::new(&f.data, world, GameConfig { strict: true, ..GameConfig::default() });
-    // Start directly indoors without ever visiting an exterior worldspace, with
-    // GameDaysPassed = 5.0 (matching FalloutNV.esm start in GSDocMitchellHouse) and
-    // DefaultClimate (0x0000015F, phase length 3): floor(5.0 / 3.0) % 8 = 1
-    // [observed: w4c_b3_03_jg6_actor_world_misc, moon=1 indoors].
+    // Start directly indoors without ever visiting an exterior worldspace:
+    // `w4c_b3_03_jg6_actor_world_misc` observed `moon=1` indoors, while the
+    // `GameDaysPassed = 5.0` / `DefaultClimate` (0x0000015F, phase length 3 ->
+    // floor(5.0 / 3.0) % 8 = 1) derivation is [hypothesis] / [design].
     g.world.set_global(FormId(GLOB_DAYS), 5.0).unwrap();
     enter(&mut g, ROOM);
     assert_eq!(g.current_climate(), None);
