@@ -1981,6 +1981,12 @@ pub struct Game<'a> {
     /// menus and loading screens, conversations included [hypothesis: as the lines of a
     /// conversation do; image-modifiers.md §3].
     pub image_modifiers: Vec<ActiveImageModifier>,
+    /// Extra stacked instance count per non-animatable IMAD form beyond the single entry
+    /// kept in [`Game::image_modifiers`] (capped at `MAX_IMOD_STACK - 1`), so repeated
+    /// non-animatable re-applies never grow `image_modifiers` without bound while
+    /// `remove_image_modifier` still fires `OnRemoveIMOD` once per stacked instance
+    /// [design]. Not saved.
+    image_modifier_extra_stacks: BTreeMap<FormId, u32>,
     /// ScriptEffectElapsedSeconds inside a ScriptEffectUpdate block (0 elsewhere).
     pub effect_elapsed: f64,
     pub(crate) depth: u32,
@@ -2798,6 +2804,7 @@ impl<'a> Game<'a> {
             syncing_effects: false,
             condition_check_due: 0.0,
             image_modifiers: Vec::new(),
+            image_modifier_extra_stacks: BTreeMap::new(),
             effect_elapsed: 0.0,
             depth: 0,
             runs_open: 0,
@@ -3109,11 +3116,17 @@ impl<'a> Game<'a> {
         let will_display = displayed == Some(true) && !d0;
         let d_after = displayed.unwrap_or(d0);
         let c_after_disp = if will_display { false } else { c0 };
-        // [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184]
-        // Both ShowOff:OnDisplayObjective and ShowOff:OnCompleteObjective fire PRE-update
-        // (`GetObjectiveDisplayed` / `GetObjectiveCompleted` still read `0` inside the
-        // callback), and ShowOff:OnCompleteObjective does not fire for hidden
-        // (undisplayed) objectives or completed quests.
+        // [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184,
+        // 2026-11-23, GSDocMitchellHouse (0x00103DF9), 10 official base masters, probes
+        // `w1_3656_objectives_unholster_imod` (`StartQuest 0x000E282D`,
+        // `SetObjectiveDisplayed`/`SetObjectiveCompleted` 20/30/50/5/999 +
+        // `CompleteAllObjectives` + `CompleteQuest`) and
+        // `b3_so_ex_06_on_display_complete_objective` (`SetObjectiveDisplayed 0x00104C1C 10
+        // 1` -> `dispInside=0`) in #3679] Both ShowOff:OnDisplayObjective and
+        // ShowOff:OnCompleteObjective fire PRE-update (`GetObjectiveDisplayed` /
+        // `GetObjectiveCompleted` still read `0` inside the callback), and
+        // ShowOff:OnCompleteObjective does not fire for hidden (undisplayed) objectives or
+        // completed quests.
         let will_complete = completed == Some(true) && !c_after_disp && d_after && !quest_completed;
         if will_display {
             self.showoff_on_display_objective(q, index);
@@ -6566,42 +6579,77 @@ impl<'a> Game<'a> {
 
     // ---- image space modifiers ---------------------------------------------------
 
-    /// ApplyImageSpaceModifier: the modifier starts playing, stacking another instance if
-    /// already active (`image-modifiers.md §3`). Dispatches xNVSE `OnApplyIMOD` PRE-update
-    /// with `(modifier)` and `on = None` when handled so `IsImageSpaceActive` reads `0` on
-    /// first apply and `1` when stacking onto an already-active modifier [documented: GECK
-    /// wiki NVSE Event Handling; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 10
-    /// official masters].
+    /// Safety cap on stacked instances tracked per IMAD form so a script re-applying an
+    /// IMAD in a loop cannot grow memory or `OnRemoveIMOD` loops without bound [design].
+    pub const MAX_IMOD_STACK: usize = 64;
+
+    /// ApplyImageSpaceModifier: the modifier starts playing, stacking another instance for
+    /// `OnRemoveIMOD` counting if already active (`image-modifiers.md §3`). Non-animatable
+    /// re-applies keep a single [`ActiveImageModifier`] entry and track extra stacked
+    /// instances in `image_modifier_extra_stacks` (capped at `MAX_IMOD_STACK - 1`), while
+    /// animatable re-applies keep up to `MAX_IMOD_STACK` independent timers and the
+    /// renderer draws one instance per form [design]. Dispatches xNVSE `OnApplyIMOD`
+    /// PRE-update with `(modifier)` and `on = None` when handled so `IsImageSpaceActive`
+    /// reads `0` on first apply and `1` when stacking onto an already-active modifier
+    /// [documented: GECK wiki NVSE Event Handling; observed: Fallout: New Vegas 1.4.0.525,
+    /// xNVSE 6.4.9, 2026-11-23, GSDocMitchellHouse (0x00103DF9), 10 official base
+    /// masters, probes `w1_3656_objectives_unholster_imod` (`imod GetHit`, `imod` twice +
+    /// `rimod` twice on `WhiteNonAnimated` `0x000C9AFA`) and
+    /// `b3_core_ex_06_on_apply_imod_event` (`ApplyImageSpaceModifier`/`RemoveImageSpaceModifier`
+    /// on `0x00144C41`) in #3679].
     pub fn apply_image_modifier(&mut self, modifier: FormId) {
         if self.handled("onapplyimod") {
             self.dispatch_event("OnApplyIMOD", vec![fnv_script::vm::XVal::Ref(modifier.0)], None);
         }
-        self.image_modifiers.push(ActiveImageModifier { modifier, elapsed: 0.0 });
+        let animatable = self.data.image_modifiers.get(&modifier).is_some_and(|d| d.animatable);
+        if animatable {
+            let active = self.image_modifiers.iter().filter(|m| m.modifier == modifier).count();
+            if active >= Self::MAX_IMOD_STACK {
+                if let Some(pos) = self.image_modifiers.iter().position(|m| m.modifier == modifier) {
+                    self.image_modifiers.remove(pos);
+                }
+            }
+            self.image_modifiers.push(ActiveImageModifier { modifier, elapsed: 0.0 });
+        } else if let Some(existing) = self.image_modifiers.iter_mut().find(|m| m.modifier == modifier) {
+            existing.elapsed = 0.0;
+            let extra = self.image_modifier_extra_stacks.entry(modifier).or_insert(0);
+            *extra = (*extra).saturating_add(1).min((Self::MAX_IMOD_STACK - 1) as u32);
+        } else {
+            self.image_modifiers.push(ActiveImageModifier { modifier, elapsed: 0.0 });
+        }
         self.emit(EventKind::ImageModifierApplied { modifier });
     }
 
     /// RemoveImageSpaceModifier: removes every active instance of `modifier`, returning
     /// whether any was active. Dispatches xNVSE `OnRemoveIMOD` PRE-removal with `(modifier)`
-    /// and `on = None` once per removed instance so `IsImageSpaceActive` reads `1` inside
-    /// each callback (twice when two stacked instances are removed) [documented: GECK wiki
-    /// NVSE Event Handling; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 10
-    /// official masters].
+    /// and `on = None` once per removed stacked instance so `IsImageSpaceActive` reads `1`
+    /// inside each callback (twice when two stacked instances are removed) [documented:
+    /// GECK wiki NVSE Event Handling; observed: Fallout: New Vegas 1.4.0.525 + xNVSE
+    /// 6.4.9, 2026-11-23, GSDocMitchellHouse (0x00103DF9), 10 official base masters,
+    /// probe `w1_3656_objectives_unholster_imod` (`imod` twice then `rimod` on
+    /// `WhiteNonAnimated` `0x000C9AFA` -> 2 `OnRemoveIMOD` callbacks with `IsActive=1`,
+    /// then 0 on inactive `rimod`) in #3679].
     pub fn remove_image_modifier(&mut self, modifier: FormId) -> bool {
-        let count = self.image_modifiers.iter().filter(|m| m.modifier == modifier).count();
-        if count == 0 {
+        let vec_count = self.image_modifiers.iter().filter(|m| m.modifier == modifier).count();
+        if vec_count == 0 {
+            self.image_modifier_extra_stacks.remove(&modifier);
             return false;
         }
+        let extra = self.image_modifier_extra_stacks.remove(&modifier).unwrap_or(0) as usize;
+        let total = vec_count.saturating_add(extra);
         let mut removed = false;
-        for _ in 0..count {
+        for i in 0..total {
             if !self.image_modifiers.iter().any(|m| m.modifier == modifier) {
                 break;
             }
             if self.handled("onremoveimod") {
                 self.dispatch_event("OnRemoveIMOD", vec![fnv_script::vm::XVal::Ref(modifier.0)], None);
             }
-            if let Some(pos) = self.image_modifiers.iter().position(|m| m.modifier == modifier) {
-                self.image_modifiers.remove(pos);
-                removed = true;
+            if i >= extra {
+                if let Some(pos) = self.image_modifiers.iter().position(|m| m.modifier == modifier) {
+                    self.image_modifiers.remove(pos);
+                    removed = true;
+                }
             }
         }
         if removed {
@@ -6620,8 +6668,10 @@ impl<'a> Game<'a> {
     /// FadeToBlackISFX (4 s), which no script removes; image-modifiers.md §3].
     /// Dispatches xNVSE `OnRemoveIMOD` PRE-removal when an active modifier expires so
     /// `IsImageSpaceActive` reads `1` inside the callback [observed: Fallout: New Vegas
-    /// 1.4.0.525 + xNVSE 6.4.9, 10 official masters: `GetHit` 0.4 s expiry fires
-    /// `OnRemoveIMOD` with `IsImageSpaceActive == 1`].
+    /// 1.4.0.525 + xNVSE 6.4.9, 2026-11-23, GSDocMitchellHouse (0x00103DF9), 10 official
+    /// base masters, probe `w1_3656_objectives_unholster_imod` (`imod GetHit` `0x00000162`
+    /// 0.4 s + ~1.5 s wait -> `OnRemoveIMOD` with `IsImageSpaceActive == 1`, then `0`)
+    /// in #3679].
     fn update_image_modifiers(&mut self, dt: f64) {
         let data = self.data;
         let mut expired = Vec::new();

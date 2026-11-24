@@ -267,9 +267,14 @@ impl Game<'_> {
     /// `ShowOff:OnDisplayObjective`, fired PRE-update when a quest objective transitions
     /// from hidden to displayed (`GetObjectiveDisplayed` still reads `0` inside the
     /// callback) [documented: GECK wiki ShowOff:OnDisplayObjective; observed: Fallout:
-    /// New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184, 10 official masters].
-    /// Arguments are `(quest, objective_index)`; calling reference is `None`. Free when
-    /// no handler is registered.
+    /// New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184, 2026-11-23,
+    /// GSDocMitchellHouse (0x00103DF9), 10 official base masters, probes
+    /// `w1_3656_objectives_unholster_imod` (`StartQuest 0x000E282D`,
+    /// `SetObjectiveDisplayed 20 1`/`20 1`/`20 0`/`20 1`/`999 1` + `CompleteQuest`) and
+    /// `b3_so_ex_06_on_display_complete_objective` (`SetObjectiveDisplayed 0x00104C1C 10
+    /// 1` -> `reg=1,hit=1,dispInside=0`) in #3679]. Arguments are `(quest,
+    /// objective_index)`; calling reference is `None`. Free when no handler is
+    /// registered.
     pub(crate) fn showoff_on_display_objective(&mut self, quest: FormId, index: i32) {
         if !self.handled(ON_DISPLAY_OBJECTIVE) {
             return;
@@ -285,9 +290,12 @@ impl Game<'_> {
     /// objective transitions from incomplete to completed (`GetObjectiveCompleted` still
     /// reads `0` inside the callback; hidden objectives and completed quests do not fire)
     /// [documented: GECK wiki ShowOff:OnCompleteObjective; observed: Fallout: New Vegas
-    /// 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184, 10 official masters]. Arguments
-    /// are `(quest, objective_index)`; calling reference is `None`. Free when no handler
-    /// is registered.
+    /// 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184, 2026-11-23, GSDocMitchellHouse
+    /// (0x00103DF9), 10 official base masters, probe `w1_3656_objectives_unholster_imod`
+    /// in #3679 (`StartQuest 0x000E282D`, `SetObjectiveCompleted` 20/30 hidden +
+    /// `SetObjectiveDisplayed 50 1`/`5 1` + `CompleteAllObjectives` firing 50 then 5 +
+    /// `CompleteQuest`)]. Arguments are `(quest, objective_index)`; calling reference is
+    /// `None`. Free when no handler is registered.
     pub(crate) fn showoff_on_complete_objective(&mut self, quest: FormId, index: i32) {
         if !self.handled(ON_COMPLETE_OBJECTIVE) {
             return;
@@ -322,11 +330,15 @@ impl Game<'_> {
 
     /// `ShowOff:OnWeaponUnholster`, fired at weapon draw start PRE-update so
     /// `IsWeaponOut` still reads `0` inside the callback [documented: GECK wiki
-    /// ShowOff:OnWeaponUnholster; observed: Fallout: New Vegas 1.4.0.525 + xNVSE
-    /// 6.4.9 + ShowOffNVSE Plugin 184, 10 official masters]. Calling reference
-    /// (`GetSelf` / `GetSelfAlt` / `0::`) is `actor`; single argument (`"first"` /
-    /// `1::`) is the actor's equipped or engine-held `WEAP` base form, or `0` when
-    /// unarmed. Free when no handler is registered.
+    /// ShowOff:OnWeaponUnholster; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
+    /// ShowOffNVSE Plugin 184, 2026-11-23, GSDocMitchellHouse (0x00103DF9), 10 official
+    /// base masters, probe `w1_3656_objectives_unholster_imod` in #3679
+    /// (`Player.SetWeaponOut 0` / `Player.SetWeaponOut 1` with `Weap10mmPistol`
+    /// `0x0000434F` -> `self=0x14, arg1=0x434F, IsWeaponOut=0`; unarmed
+    /// `Player.SetWeaponOut 1` -> `self=0x14, arg1=0, IsWeaponOut=0`)].
+    /// Calling reference (`GetSelf` / `GetSelfAlt` / `0::`) is `actor`; single argument
+    /// (`"first"` / `1::`) is the actor's equipped or engine-held `WEAP` base form, or
+    /// `0` when unarmed. Free when no handler is registered.
     pub(crate) fn showoff_on_weapon_unholster(&mut self, actor: FormId) {
         if !self.handled(ON_WEAPON_UNHOLSTER) {
             return;

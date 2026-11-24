@@ -816,7 +816,9 @@ impl Game<'_> {
     /// (`true`) without an earlier draw-start dispatch (`showoff_begin_unholster`),
     /// dispatches `ShowOff:OnWeaponUnholster` PRE-update so `IsWeaponOut` reads `0`
     /// inside the callback [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
-    /// ShowOffNVSE Plugin 184].
+    /// ShowOffNVSE Plugin 184, 2026-11-23, GSDocMitchellHouse (0x00103DF9), 10 official
+    /// base masters, probe `w1_3656_objectives_unholster_imod` (`Player.SetWeaponOut 0` /
+    /// `Player.SetWeaponOut 1` with `Weap10mmPistol` `0x0000434F` and unarmed) in #3679].
     pub fn set_weapon_out(&mut self, actor: FormId, out: bool) {
         self.senses.weapon_told.insert(actor, self.time);
         let was = self.extra.get(&actor).is_some_and(|e| e.weapon_out);

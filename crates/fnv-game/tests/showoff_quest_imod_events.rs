@@ -323,17 +323,18 @@ End) 1::OwnedHoldImad"#,
     assert_eq!(num(&mut g, "imod.apply.fade_first"), 0.0);
     assert_eq!(num(&mut g, "imod.apply.list"), 0.0);
 
-    // Re-applying an already active IMOD fires OnApplyIMOD with IsImageSpaceActive == 1 and STACKS a second instance.
+    // Re-applying an already active non-animatable IMOD fires OnApplyIMOD with IsImageSpaceActive == 1
+    // and keeps a single ActiveImageModifier entry while counting stacked instances for OnRemoveIMOD.
     query(&mut g, "ApplyImageSpaceModifier OwnedHoldImad");
     assert_eq!(num(&mut g, "imod.apply.calls"), 2.0);
     assert_eq!(num(&mut g, "imod.apply.active"), 1.0, "stacked re-apply sees IsImageSpaceActive == 1");
-    assert_eq!(g.image_modifiers.len(), 2, "re-applying active IMAD stacks a second instance");
+    assert_eq!(g.image_modifiers.len(), 1, "non-animatable re-apply keeps one active entry without unbounded growth");
 
-    // Snapshot restore with stacked active IMODs must not spuriously fire OnApplyIMOD.
+    // Snapshot restore with active IMOD must not spuriously fire OnApplyIMOD.
     let snap = g.snapshot();
     let restored = Game::restore(&f.data, World::new(&f.forms, &f.refs, Default::default()), GameConfig { strict: true, ..Default::default() }, &snap).unwrap();
     assert!(restored.image_modifier_active(FormId(IMAD_HOLD)));
-    assert_eq!(restored.image_modifiers.len(), 2);
+    assert_eq!(restored.image_modifiers.len(), 1);
     assert!(restored.events.is_empty());
 
     // Single RemoveImageSpaceModifier removes BOTH stacked instances and fires OnRemoveIMOD TWICE,
@@ -347,29 +348,58 @@ End) 1::OwnedHoldImad"#,
     assert_eq!(text(&mut g, "imod.remove.ev"), "OnRemoveIMOD");
     assert_eq!(num(&mut g, "imod.remove.hold"), 2.0);
 
+    // Repeated non-animatable re-applies stay bounded (single vec entry, capped at MAX_IMOD_STACK).
+    for _ in 0..80 {
+        query(&mut g, "ApplyImageSpaceModifier OwnedHoldImad");
+    }
+    assert_eq!(g.image_modifiers.len(), 1, "80 non-animatable re-applies must not grow image_modifiers");
+    let before_cap_rm = num(&mut g, "imod.remove.calls");
+    query(&mut g, "RemoveImageSpaceModifier OwnedHoldImad");
+    assert_eq!(
+        num(&mut g, "imod.remove.calls") - before_cap_rm,
+        Game::MAX_IMOD_STACK as f64,
+        "OnRemoveIMOD count is capped at MAX_IMOD_STACK"
+    );
+    assert_eq!(query(&mut g, "SetFunctionValue (IsImageSpaceActive OwnedHoldImad)"), XVal::Num(0.0));
+
     // Removing an inactive IMOD must not fire OnRemoveIMOD.
+    let before_inactive_rm = num(&mut g, "imod.remove.calls");
     query(&mut g, "RemoveImageSpaceModifier OwnedHoldImad\nRemoveImageSpaceModifier OwnedFadeImad");
-    assert_eq!(num(&mut g, "imod.remove.calls"), 2.0);
+    assert_eq!(num(&mut g, "imod.remove.calls"), before_inactive_rm);
 
     // Apply animatable FadeImad (0.5s): PRE-update IsActive == 0, matches "first"::OwnedFadeImad and 1::OwnedImadList.
+    let before_fade_apply = num(&mut g, "imod.apply.calls");
     query(&mut g, "ApplyImageSpaceModifier OwnedFadeImad");
-    assert_eq!(num(&mut g, "imod.apply.calls"), 3.0);
+    assert_eq!(num(&mut g, "imod.apply.calls"), before_fade_apply + 1.0);
     assert_eq!(num(&mut g, "imod.apply.active"), 0.0);
     assert_eq!(num(&mut g, "imod.apply.fade_first"), 1.0);
     assert_eq!(num(&mut g, "imod.apply.list"), 1.0);
-    assert_eq!(num(&mut g, "imod.remove.calls"), 2.0);
+    assert_eq!(num(&mut g, "imod.remove.calls"), before_inactive_rm);
 
     // Halfway through duration: still active, OnRemoveIMOD has not fired.
     g.frames(15);
-    assert_eq!(num(&mut g, "imod.remove.calls"), 2.0);
+    assert_eq!(num(&mut g, "imod.remove.calls"), before_inactive_rm);
 
     // Past duration (0.5s = 30 frames at 60Hz): natural expiry dispatches OnRemoveIMOD PRE-removal (IsActive == 1).
     g.frames(16);
-    assert_eq!(num(&mut g, "imod.remove.calls"), 3.0);
+    assert_eq!(num(&mut g, "imod.remove.calls"), before_inactive_rm + 1.0);
     assert_eq!(form(&mut g, "imod.remove.last"), FormId(IMAD_FADE));
     assert_eq!(num(&mut g, "imod.remove.active"), 1.0, "natural expiry OnRemoveIMOD sees IsImageSpaceActive == 1");
     assert_eq!(query(&mut g, "SetFunctionValue (IsImageSpaceActive OwnedFadeImad)"), XVal::Num(0.0));
-    assert_eq!(num(&mut g, "imod.remove.hold"), 2.0, "1::OwnedHoldImad filter must ignore FadeImad");
+    assert_eq!(num(&mut g, "imod.remove.hold"), 2.0 + Game::MAX_IMOD_STACK as f64, "1::OwnedHoldImad filter must ignore FadeImad");
+
+    // Animatable re-apply stacks independent expiry timers (capped at MAX_IMOD_STACK).
+    let before_anim_stack_rm = num(&mut g, "imod.remove.calls");
+    query(&mut g, "ApplyImageSpaceModifier OwnedFadeImad");
+    g.frames(15);
+    query(&mut g, "ApplyImageSpaceModifier OwnedFadeImad");
+    assert_eq!(g.image_modifiers.iter().filter(|m| m.modifier == FormId(IMAD_FADE)).count(), 2);
+    g.frames(16);
+    assert_eq!(num(&mut g, "imod.remove.calls"), before_anim_stack_rm + 1.0, "first animatable instance expires independently");
+    assert_eq!(query(&mut g, "SetFunctionValue (IsImageSpaceActive OwnedFadeImad)"), XVal::Num(1.0));
+    g.frames(16);
+    assert_eq!(num(&mut g, "imod.remove.calls"), before_anim_stack_rm + 2.0, "second animatable instance expires afterwards");
+    assert_eq!(query(&mut g, "SetFunctionValue (IsImageSpaceActive OwnedFadeImad)"), XVal::Num(0.0));
     no_errors(&g);
 
     // Invalid non-IMAD form fails ApplyImageSpaceModifier and must not fire OnApplyIMOD.
@@ -377,7 +407,7 @@ End) 1::OwnedHoldImad"#,
     let _ = g.run_query("Begin Function {}\nApplyImageSpaceModifier OwnedPistol\nEnd", Default::default());
     assert_eq!(num(&mut g, "imod.apply.calls"), before);
     // Keep `restored` live through the end.
-    assert_eq!(restored.image_modifiers.len(), 2);
+    assert_eq!(restored.image_modifiers.len(), 1);
 }
 
 #[test]

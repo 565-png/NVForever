@@ -278,40 +278,54 @@ RemoveAllItemsShowOff.
 - **`ShowOff:OnDisplayObjective`** [documented: GECK wiki,
   [Category:Event Handlers (ShowOff NVSE)](https://geckwiki.com/index.php?title=Category:Event_Handlers_%28ShowOff_NVSE%29),
   `ShowOff:OnDisplayObjective`; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
-  ShowOffNVSE Plugin 184, 10 official masters]: fires PRE-update when a quest objective
-  transitions from hidden to displayed, with calling reference `None` (`00000000`) and two
-  arguments `(quest, objective_index)` (`"first"` / `1::` filters the quest form;
-  `"second"` / `2::` filters the integer objective index). Inside the callback,
-  `GetObjectiveDisplayed` still reads `0` (PRE-update), and reads `1` after the call.
-  Hiding (`0`), repeating display on an already-displayed objective (`1 -> 1`), undefined
-  objective index (`999`), and completed/failed quests do not fire.
+  ShowOffNVSE Plugin 184, 2026-11-23, GSDocMitchellHouse (`0x00103DF9`), 10 official base
+  masters, clean-room script probes `w1_3656_objectives_unholster_imod` (`StartQuest
+  0x000E282D`, `SetObjectiveDisplayed 20 1`/`20 1`/`20 0`/`20 1`/`999 1` + `CompleteQuest`
+  + `SetObjectiveDisplayed 60 1`) and `b3_so_ex_06_on_display_complete_objective`
+  (`SetObjectiveDisplayed 0x00104C1C 10 1` -> `reg=1,hit=1,dispInside=0`) in #3679; no DLL
+  or source consulted]: fires PRE-update when a quest objective transitions from hidden to
+  displayed, with calling reference `None` (`00000000`) and two arguments `(quest,
+  objective_index)` (`"first"` / `1::` filters the quest form; `"second"` / `2::` filters
+  the integer objective index). Inside the callback, `GetObjectiveDisplayed` still reads
+  `0` (PRE-update), and reads `1` after the call. Hiding (`0`), repeating display on an
+  already-displayed objective (`1 -> 1`), undefined objective index (`999`), and
+  completed/failed quests do not fire.
 - **`ShowOff:OnCompleteObjective`** [documented: GECK wiki,
   [Category:Event Handlers (ShowOff NVSE)](https://geckwiki.com/index.php?title=Category:Event_Handlers_%28ShowOff_NVSE%29),
   `ShowOff:OnCompleteObjective`; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
-  ShowOffNVSE Plugin 184, 10 official masters]: fires PRE-update when a **currently
-  displayed** quest objective transitions from incomplete to completed, with calling
-  reference `None` (`00000000`) and two arguments `(quest, objective_index)`. Inside the
-  callback, `GetObjectiveCompleted` still reads `0` (PRE-update), and reads `1` after the
-  call. Completing a hidden (undisplayed) objective, repeating completion (`1 -> 1`),
-  un-completing (`1 -> 0`), undefined objective indices, and completed quests do not fire.
-  `CompleteAllObjectives` iterates objectives in **`QOBJ` record order** (e.g., `50` then
-  `5`, not ascending index order) and fires `ShowOff:OnCompleteObjective` only for
-  currently displayed incomplete objectives.
+  ShowOffNVSE Plugin 184, 2026-11-23, GSDocMitchellHouse (`0x00103DF9`), 10 official base
+  masters, clean-room script probe `w1_3656_objectives_unholster_imod` in #3679
+  (`StartQuest 0x000E282D`, `SetObjectiveCompleted` `20 1`/`20 1`/`20 0`/hidden `30 1`,
+  `SetObjectiveDisplayed 50 1` + `5 1` + `CompleteAllObjectives` firing `50` then `5`,
+  `CompleteQuest` + `SetObjectiveCompleted 60 1`); no DLL or source consulted]: fires
+  PRE-update when a **currently displayed** quest objective transitions from incomplete to
+  completed, with calling reference `None` (`00000000`) and two arguments `(quest,
+  objective_index)`. Inside the callback, `GetObjectiveCompleted` still reads `0`
+  (PRE-update), and reads `1` after the call. Completing a hidden (undisplayed) objective,
+  repeating completion (`1 -> 1`), un-completing (`1 -> 0`), undefined objective indices,
+  and completed quests do not fire. `CompleteAllObjectives` iterates objectives in
+  **`QOBJ` record order** (e.g., `50` then `5`, not ascending index order) and fires
+  `ShowOff:OnCompleteObjective` only for currently displayed incomplete objectives.
 - **`ShowOff:OnWeaponUnholster`** [documented: GECK wiki,
   [ShowOff:OnWeaponUnholster](https://geckwiki.com/index.php?title=ShowOff%3AOnWeaponUnholster);
-  observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184, 10
-  official masters]: added in ShowOff NVSE 1.80; fires at weapon draw START PRE-update so
-  `IsWeaponOut` still reads `0` inside the callback. Calling reference (`GetSelf` /
-  `GetSelfAlt` / `0::`) is the actor and the single argument (`"first"` / `1::`) is the
-  actor's equipped or engine-held `WEAP` base form (e.g. `0x434F` for 10mm Pistol), or
-  null form `0` when unarmed (NOT `Fists` `0x000001F4`). NVForever dispatches it at draw
-  start in `Game::set_anim_state` (on `AnimAction::Equip` while holstered) and scripted
-  `SetWeaponOut 1` (`nvse_hud.rs`), deduplicated via `ShowOffState::unholster_pending` so
-  interleaved per-frame `set_weapon_out(actor, false)` calls during the draw and draw
-  completion (`Game::set_weapon_out(actor, true)` / `hud_tick`) do not double-fire, while
-  genuine draw cancellations (`AnimAction::Unequip`, `Equip` ending on an earlier frame
-  without completing, `HolsterWeapon`, `SetWeaponOut 0`, or `forget_anim_state`) clear the
-  latch; when an actor transitions directly to `weapon_out = true` without a prior `Equip`
+  observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184,
+  2026-11-23, GSDocMitchellHouse (`0x00103DF9`), 10 official base masters, clean-room
+  script probe `w1_3656_objectives_unholster_imod` in #3679 (`Player.SetWeaponOut 0` /
+  `Player.SetWeaponOut 1` with `Weap10mmPistol` `0x0000434F` -> `self=0x14, arg1=0x434F,
+  IsWeaponOut=0`; `UnequipItem` + unarmed `Player.SetWeaponOut 1` -> `self=0x14, arg1=0,
+  IsWeaponOut=0`); no DLL or source consulted]: added in ShowOff NVSE 1.80; fires at
+  weapon draw START PRE-update so `IsWeaponOut` still reads `0` inside the callback.
+  Calling reference (`GetSelf` / `GetSelfAlt` / `0::`) is the actor and the single
+  argument (`"first"` / `1::`) is the actor's equipped or engine-held `WEAP` base form
+  (e.g. `0x434F` for 10mm Pistol), or null form `0` when unarmed (NOT `Fists`
+  `0x000001F4`). NVForever dispatches it at draw start in `Game::set_anim_state` (on
+  `AnimAction::Equip` while holstered) and scripted `SetWeaponOut 1` (`nvse_hud.rs`),
+  deduplicated via `ShowOffState::unholster_pending` so interleaved per-frame
+  `set_weapon_out(actor, false)` calls during the draw and draw completion
+  (`Game::set_weapon_out(actor, true)` / `hud_tick`) do not double-fire, while genuine
+  draw cancellations (`AnimAction::Unequip`, `Equip` ending on an earlier frame without
+  completing, `HolsterWeapon`, `SetWeaponOut 0`, or `forget_anim_state`) clear the latch;
+  when an actor transitions directly to `weapon_out = true` without a prior `Equip`
   action, `set_weapon_out` / `hud_tick` still dispatches PRE-update while `IsWeaponOut`
   reads `0` [design]. Save restore writes `extra` directly without firing a spurious
   unholster event [design].

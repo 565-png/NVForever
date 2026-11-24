@@ -130,9 +130,12 @@ pub fn set_quest_delay(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, Stri
 pub fn complete_all_objectives(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let q = quest(g, a, 0)?;
     // Iterate in QOBJ record order rather than ascending index order
-    // [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184, 10
-    // official masters: CompleteAllObjectives fires ShowOff:OnCompleteObjective only for
-    // currently displayed objectives in QOBJ record order (50 then 5, not 5 then 50)].
+    // [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184,
+    // 2026-11-23, GSDocMitchellHouse (0x00103DF9), 10 official base masters, probe
+    // `w1_3656_objectives_unholster_imod` in #3679 (`StartQuest 0x000E282D`,
+    // `SetObjectiveDisplayed 50 1`, `SetObjectiveDisplayed 5 1`, `CompleteAllObjectives`
+    // -> fires `ShowOff:OnCompleteObjective` only for displayed objectives in QOBJ record
+    // order: 50 then 5, not 5 then 50)].
     let def = &g.data.quests[&q];
     let ids: Vec<i32> = if def.objective_order.is_empty() {
         def.objectives.keys().copied().collect()

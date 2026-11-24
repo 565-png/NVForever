@@ -176,7 +176,11 @@ impl Game<'_> {
     /// Start a scripted draw or holster: IsWeaponOut changes [`WEAPON_FRAMES`] later.
     /// When starting an unholster immediately (`out && !ask_at_due`), dispatches
     /// `ShowOff:OnWeaponUnholster` at draw start while `IsWeaponOut` still reads `0`
-    /// [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184].
+    /// [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184,
+    /// 2026-11-23, GSDocMitchellHouse (0x00103DF9), 10 official base masters, probe
+    /// `w1_3656_objectives_unholster_imod` (`Player.SetWeaponOut 0` /
+    /// `Player.SetWeaponOut 1` armed with `Weap10mmPistol` `0x0000434F` and unarmed) in
+    /// #3679].
     fn weapon_change(&mut self, a: FormId, out: bool, ask_at_due: bool) {
         if out && !ask_at_due {
             self.showoff_begin_unholster(a);
