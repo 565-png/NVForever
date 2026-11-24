@@ -1,7 +1,8 @@
 //! The Anh NVSE plugin's functions on the game: armor rating, quest completion and
 //! encounter zones [documented: each page in the wiki export; docs/spec-notes/ext-anh.md].
-//! Zone level/min-level/owner round-trips are `[observed]` in Fallout: New Vegas 1.4.0.525
-//! + xNVSE 6.4.9 + AnhNVSE 131. Changes last for the session.
+//! Zone level/min-level/owner round-trips are `[observed]` on 2026-11-23 in
+//! `GSDocMitchellHouse` (`0x00103DF9`) with Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9,
+//! AnhNVSE 131, and the 10 official base masters. Changes last for the session.
 
 use crate::game::{Game, RunCtx};
 use fnv_script::vm::XVal;
@@ -65,9 +66,10 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let s = form(args, 0).and_then(|q| g.quests.get(&q));
             XVal::Num(f64::from(u8::from(s.is_some_and(|s| s.completed && !s.failed))))
         }
-        // [documented: GetZoneLevel, "the current level"; observed: Fallout: New Vegas
-        // 1.4.0.525 + xNVSE 6.4.9 + AnhNVSE 131, probe anh_07_zone_level_min_owner: 0 on
-        // unentered Vault11Zone].
+        // [documented: GetZoneLevel, "the current level"; observed: 2026-11-23,
+        // GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
+        // AnhNVSE 131 with the 10 official base masters, probe
+        // `anh_07_zone_level_min_owner`: 0 on unentered Vault11Zone (000E9081)].
         "getzonelevel" => XVal::Num(form(args, 0).and_then(|z| g.world.zone_level(z)).map_or(0.0, f64::from)),
         // [documented: GetZoneMinLevel; GetZoneMatchLevel, "Match PC Below Minimum Level";
         // GetZoneOwner].
@@ -75,15 +77,18 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "getzonematchlevel" => XVal::Num(form(args, 0).and_then(|z| g.zone(z)).map_or(0.0, |d| f64::from(u8::from(d.match_pc_below_min)))),
         "getzoneowner" => XVal::Ref(form(args, 0).and_then(|z| g.zone(z)).and_then(|d| d.owner).map_or(0, |o| o.0)),
         // `zone level` and `zone owner` [documented: SetZoneMinLevel; SetZoneOwner;
-        // observed: anh_07_zone_level_min_owner and anh_11_zone_owner_roundtrip read back
-        // via GetZoneMinLevel / GetZoneOwner]; session-only lifetime and keeping an
-        // already-entered zone's level remain [hypothesis].
+        // observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas
+        // 1.4.0.525 + xNVSE 6.4.9 + AnhNVSE 131 with the 10 official base masters,
+        // probes `anh_07_zone_level_min_owner` (0,6,12) and `anh_11_zone_owner_readback`
+        // (Vault11Zone 000E9081: 00000000 -> 000A46E7 -> 00104C6E -> 00104C6E; null
+        // owner argument leaves the existing owner unchanged)]; session-only lifetime
+        // and keeping an already-entered zone's level remain [hypothesis].
         "setzoneminlevel" | "setzoneowner" => {
             if let Some(z) = form(args, 0).filter(|z| g.world.forms.zones.contains_key(z)) {
                 if name == "setzoneminlevel" {
                     g.world.set_zone_min_level(z, num(args, 1).clamp(f64::from(i8::MIN), f64::from(i8::MAX)) as i8);
-                } else {
-                    g.other.zone_changes.entry(z).or_default().owner = Some(form(args, 1).unwrap_or(FormId(0)));
+                } else if let Some(owner) = form(args, 1) {
+                    g.other.zone_changes.entry(z).or_default().owner = Some(owner);
                 }
             }
             zero

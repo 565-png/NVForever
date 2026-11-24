@@ -1145,7 +1145,8 @@ end",
 
 #[test]
 fn anh_wave4_degrees_scancode_and_guards() {
-    // [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + AnhNVSE 131, Wave 4 probes
+    // [observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas
+    // 1.4.0.525 + xNVSE 6.4.9 + AnhNVSE 131 with the 10 official base masters, probes
     // anh_01..anh_05, anh_09, anh_10]: GetAngleQuadrant and QFromAxisAngleAlt take
     // degrees, ScancodeToChar returns uppercase letters and DirectInput key names, and
     // Ar_Max/Ar_Min/Ar_RangeMath return safe 0 [design] on empty/string arrays.
