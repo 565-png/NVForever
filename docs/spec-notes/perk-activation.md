@@ -81,7 +81,8 @@ Robot Compliance "Deactivate" (0x0100C88F, the same entry as Robotics Expert's).
   when the list opened.
 - **The X-13 robot test** (OldWorldBlues.esm, SCPT 0x01006DA6) watches `GetDetected Player`
   on its three robots until all three read GetUnconscious 1 or one detects the player, the
-  ones already shut down included [observed: the script's source]. An unconscious actor
+  ones already shut down included [observed: SCTX of OldWorldBlues.esm SCPT
+  0x01006DA6]. An unconscious actor
   (SetUnconscious) therefore detects no one, its pairs held in the Hidden band from the
   call on (`Game::forget_detected_by`, `Game::detect`) and measured as usual once it is
   awake [documented: GECK wiki SetUnconscious, unconscious actors "will not use

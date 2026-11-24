@@ -742,9 +742,10 @@ impl Game<'_> {
     /// [engineering choice: the note says only that it is not detected], sight
     /// (GetLineOfSight) as measured. So is an unconscious detector's (SetUnconscious),
     /// which detects no one: "Actors that are unconscious will not use AI behavior"
-    /// [documented: GECK wiki SetUnconscious; hypothesis: detecting is part of it; check
-    /// 282]. Old World Blues' X-13 test needs it: its script watches GetDetected on the
-    /// robots the player has shut down too (#3479).
+    /// [documented: GECK wiki SetUnconscious; hypothesis: detecting is part of it;
+    /// observer check 3479-robotics-expert-deactivate]. Old World Blues' X-13 test needs
+    /// it: its script watches GetDetected on the robots the player has shut down too
+    /// [observed: SCTX of OldWorldBlues.esm SCPT 0x01006DA6] (#3479).
     pub fn detect(&mut self, settings: &Settings, detector: FormId, target: FormId, s: &Situation) -> (Detection, Option<Band>) {
         let p = self.detection_pair(detector, target);
         let mut d = settings.evaluate(&p, s);
