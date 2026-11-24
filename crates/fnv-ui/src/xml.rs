@@ -256,9 +256,17 @@ fn take_trailing_non_operators(el: &mut Element) -> Vec<Node> {
 }
 
 /// Whether an open `<hotrect>` and closing `</rect>` (or `<rect>` and `</hotrect>`) form
-/// a mismatched rect-family container pair [hypothesis: vanilla `quest_added.xml` closes
-/// `<hotrect>` buttons inside an enclosing `<rect>` with `</rect>`, and closing the inner
-/// `<hotrect>` keeps the enclosing `<rect>` and `<menu>` intact; menu-xml.md §1.1].
+/// a mismatched rect-family container pair [observed: Fallout: New Vegas 1.4.0.525 +
+/// xNVSE 6.4.9 + UI Organizer 230 / vanilla XML parser, 2026-11-24, `GSDocMitchellHouse`
+/// (`0x00103DF9`), 10 official base masters, isolated clean-room staging copy (read-only
+/// `PrintToConsole` probe; zero writes to game install or Saves),
+/// `w4h_01_quest_added_button2_parent` (`tools/capture/nvse/catalogs/wave4h_reconcile.json`,
+/// #3802):
+/// `PROBE|w4h_01_quest_added_button2_parent|hotrect_rect(ld=1,b1=11,b2Main=22,b2B1=-999,b2Menu=-999)|rect_hotrect(ld=1,in=33,sibMain=44,sibIn=-999,sibMenu=-999)`;
+/// zero DLL, PDB, or third-party source consulted — closing `<hotrect>` with `</rect>`
+/// (as in vanilla `quest_added.xml`) closes the inner `<hotrect>` and keeps `Button2`
+/// parented under `MainRect`, and `<rect>` closed with `</hotrect>` behaves symmetrically;
+/// menu-xml.md §1.1].
 fn is_rect_pair(open: &str, close: &str) -> bool {
     (open.eq_ignore_ascii_case("hotrect") && close.eq_ignore_ascii_case("rect"))
         || (open.eq_ignore_ascii_case("rect") && close.eq_ignore_ascii_case("hotrect"))
@@ -266,12 +274,13 @@ fn is_rect_pair(open: &str, close: &str) -> bool {
 
 /// An end tag closes the innermost open element of the name it gives (and those opened
 /// inside it), treating `<hotrect>`/`</rect>` and `<rect>`/`</hotrect>` as matching
-/// rect-family containers so a typo'd `</rect>` on an inner `<hotrect>` does not pop out
+/// rect-family containers [observed: `w4h_01_quest_added_button2_parent`, #3802,
+/// menu-xml.md §1.1] so a typo'd `</rect>` on an inner `<hotrect>` does not pop out
 /// to an enclosing `<rect>`; when none of that name is open, it closes the innermost open
-/// element whatever its name; with nothing open it is dropped [hypothesis, from what works
-/// in the original: MCM runs with both `<_KeyInut>` … `</_KeyInput>` and a `<_target>`
-/// whose `<onlyif>` is never closed (ModListRect.xml), and vanilla `quest_added.xml`
-/// closes `<hotrect>` buttons inside `<rect>` with `</rect>`. Observer check: menu-xml.md §8].
+/// element whatever its name; with nothing open it is dropped [hypothesis for non-rect
+/// mismatches, from what works in the original: MCM runs with both `<_KeyInut>` …
+/// `</_KeyInput>` and a `<_target>` whose `<onlyif>` is never closed (ModListRect.xml).
+/// Observer check: menu-xml.md §8].
 fn close(stack: &mut Vec<Element>, name: &str, line: u32, warnings: &mut Vec<String>) {
     if stack.len() == 1 {
         warnings.push(format!("line {line}: </{name}> closes nothing open; dropped"));

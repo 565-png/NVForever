@@ -52,13 +52,21 @@ own rules are not known]:
 - an end tag closes the innermost open element of the name it gives, with the ones
   opened inside it, treating `<hotrect>`/`</rect>` and `<rect>`/`</hotrect>` as matching
   rect-family containers so a typo'd `</rect>` closing an inner `<hotrect>` (as in vanilla
-  `quest_added.xml` [observed: `Fallout - Misc.bsa`]) closes that `<hotrect>` rather than
-  popping an enclosing `<rect>` and leaving `<menu>` prematurely closed; when none of that
-  name is open it closes the innermost open element whatever its name (preserving traits
-  and operators with typo'd end tags such as Vanilla UI Plus `globals.xml`'s
+  `quest_added.xml` [observed: `Fallout - Misc.bsa`]) closes that `<hotrect>` and keeps
+  sibling tiles (e.g. `Button2`) parented under the enclosing `<rect>` rather than popping
+  the enclosing `<rect>` and leaving `<menu>` prematurely closed [observed: Fallout: New
+  Vegas 1.4.0.525 + xNVSE 6.4.9 + UI Organizer 230 / vanilla XML parser, 2026-11-24,
+  `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters, isolated clean-room
+  staging copy (synthetic prefab XML staged strictly inside the isolated copy and removed
+  after exit; read-only `PrintToConsole` probe; zero writes to game install or Saves),
+  `w4h_01_quest_added_button2_parent` (`tools/capture/nvse/catalogs/wave4h_reconcile.json`,
+  #3802): `PROBE|w4h_01_quest_added_button2_parent|hotrect_rect(ld=1,b1=11,b2Main=22,b2B1=-999,b2Menu=-999)|rect_hotrect(ld=1,in=33,sibMain=44,sibIn=-999,sibMenu=-999)`;
+  zero DLL, PDB, or third-party source consulted]; when none of that name is open it
+  closes the innermost open element whatever its name [hypothesis: preserving traits and
+  operators with typo'd end tags such as Vanilla UI Plus `globals.xml`'s
   `<_VUI+ScreenRatio>…</_VUI+ScreenHeight>`, `vats_menu.xml`'s `<add>…</suaddb>`, and Just
   Assorted Mods `jlm.xml`'s `<_JLMAction1..3>…</_JLMInteract1..3>` [observed: public XML
-  files; no third-party DLL or source code consulted]); with nothing open it is dropped.
+  files; no third-party DLL or source code consulted]]; with nothing open it is dropped.
   Both MCM spots need this pair of rules to come out as MCM evidently works in the
   original (one needs each rule);
 - [hypothesis] an attributeless non-empty start tag `<T>` that is neither a tile/template
