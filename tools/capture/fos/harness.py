@@ -10,14 +10,18 @@ Strict read-only guarantees for the Python tools (aligned with
   `fosprobe_trace.txt`).
 - NEVER copies record bytes out of `FalloutNV.esm` or generates `.esp` plugins.
 - All generated probe scripts (`gr_fosprobe.txt`, `fosprobe_loop.gek`,
-  `fosprobe_s_*.gek`, and `MANUAL_SETUP.txt`) are written strictly inside the
-  user-chosen `--out-dir` outside git, for manual one-time installation by the
-  user.
-- The generated probe scripts write zero files inside `<game-dir>` (console
-  logging uses `PrintToConsole` only); when manually installed and executed
-  inside `FalloutNV.exe`, `fosprobe_loop.gek` intentionally calls
-  `con_Save <step.name>` to create `.fos` save captures in the user-configured
-  `Saves` subfolder (e.g., `Documents\\My Games\\FalloutNV\\Saves\\fosprobe\\`).
+  `fosprobe_s_*.gek`, and `MANUAL_SETUP.txt`) and collected `.fos` copies are
+  written strictly inside the user-chosen `--out-dir` outside git, and
+  `assert_safe_out_dir` refuses any `--out-dir` that equals, sits inside, or
+  contains `--game-dir` / `--saves-dir` (checked on resolved real paths) or
+  sits inside a live FNV install / `FalloutNV\\Saves` directory tree.
+- Maintainer §10 exception (2026-11-24): the generated probe scripts write zero
+  files inside `<game-dir>` (console logging uses `PrintToConsole` only); when
+  manually installed and executed inside `FalloutNV.exe`, `fosprobe_loop.gek`
+  is explicitly granted an exception to `tools/capture/README.md` §10 to call
+  `con_Save <step.name>` and write `.fos` save captures into the isolated
+  `Saves\\fosprobe\\` subfolder (e.g.,
+  `Documents\\My Games\\FalloutNV\\Saves\\fosprobe\\`), cleaned up by hand.
 - Refuses to collide with an already-running `FalloutNV.exe` process.
 - Terminates ONLY its own spawned PID tree (`taskkill /PID <pid> /T /F` on
   Windows, `SIGTERM` on POSIX) — never kills unrelated instances.
@@ -45,6 +49,92 @@ STAGED_STEP_PREFIX = "fosprobe_s_"
 STAGED_LOOP_FILENAME = "fosprobe_loop.gek"
 STAGED_GR_FILENAME = "gr_fosprobe.txt"
 MANUAL_SETUP_FILENAME = "MANUAL_SETUP.txt"
+
+LIVE_INSTALL_SENTINELS = (
+    "FalloutNV.exe",
+    "nvse_loader.exe",
+    "Fallout.ini",
+    "FalloutPrefs.ini",
+    "plugins.txt",
+    "loadorder.txt",
+)
+
+
+class ReadOnlyBoundaryError(PermissionError):
+    """Raised when an operation attempts to write into a protected game or Saves directory."""
+
+
+def _norm_real(path: str | os.PathLike[str]) -> Path:
+    return Path(os.path.normcase(os.path.realpath(os.fspath(path))))
+
+
+def _is_same_or_child(candidate: Path, root: Path) -> bool:
+    try:
+        candidate.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def assert_safe_out_dir(
+    out_dir: str | os.PathLike[str],
+    *,
+    game_dir: str | os.PathLike[str] | None = None,
+    saves_dir: str | os.PathLike[str] | None = None,
+) -> Path:
+    """Verify `out_dir` does not overlap `--game-dir`, `--saves-dir`, or a live FNV install/Saves tree.
+
+    Mirrors `tools/capture/nvse/harness.py`: all comparisons use resolved real
+    paths (`os.path.realpath`) normalized for platform case rules so symlinks,
+    junctions, and `..` segments cannot bypass the boundary.
+    """
+    raw_out = Path(out_dir)
+    real_out = _norm_real(raw_out)
+
+    protected: list[tuple[str, str | os.PathLike[str]]] = []
+    eff_game = game_dir if game_dir is not None else os.environ.get("FNV_GAME_DIR")
+    eff_saves = (
+        saves_dir
+        if saves_dir is not None
+        else (os.environ.get("FNV_FOS_SAVES_DIR") or os.environ.get("FNV_SAVES_DIR"))
+    )
+    if eff_game:
+        protected.append(("--game-dir", eff_game))
+    if eff_saves:
+        protected.append(("--saves-dir", eff_saves))
+
+    for label, p in protected:
+        real_p = _norm_real(p)
+        if _is_same_or_child(real_out, real_p):
+            raise ReadOnlyBoundaryError(
+                f"Refusing to write inside or equal to protected {label}: {raw_out}"
+            )
+        if _is_same_or_child(real_p, real_out):
+            raise ReadOnlyBoundaryError(
+                f"Refusing to use an ancestor of protected {label} as --out-dir: {raw_out}"
+            )
+
+    # Defense in depth: refuse if out_dir or any ancestor sits inside a live FNV
+    # install, My Games\FalloutNV INI/config tree, or FalloutNV\Saves folder.
+    for ancestor in (real_out, *real_out.parents):
+        if ancestor.name.lower() == "saves" and ancestor.parent.name.lower() == "falloutnv":
+            raise ReadOnlyBoundaryError(
+                f"Refusing to write inside FalloutNV Saves folder ({ancestor}): {raw_out}"
+            )
+        if not ancestor.exists():
+            continue
+        for sentinel in LIVE_INSTALL_SENTINELS:
+            if (ancestor / sentinel).exists():
+                raise ReadOnlyBoundaryError(
+                    f"Refusing to write inside directory tree containing live game/config file "
+                    f"'{sentinel}' ({ancestor}): {raw_out}"
+                )
+        if (ancestor / "Data" / "FalloutNV.esm").exists():
+            raise ReadOnlyBoundaryError(
+                f"Refusing to write inside directory tree containing Data/FalloutNV.esm "
+                f"({ancestor}): {raw_out}"
+            )
+    return raw_out
 
 
 def default_is_fnv_running() -> bool:
@@ -99,9 +189,10 @@ def _manual_setup_guide(campaign: fos_campaigns.Campaign, stage_root: Path) -> s
             "",
             "One-time manual setup (the Python capture tools never write into the game",
             "folder or Documents\\My Games\\FalloutNV, and the staged scripts write zero",
-            "files inside <game-dir>; during a live run, fosprobe_loop.gek intentionally",
-            "calls `con_Save <step.name>` inside FalloutNV.exe to write `.fos` saves into",
-            "your configured Saves subfolder):",
+            "files inside <game-dir>; under the 2026-11-24 maintainer §10 exception to",
+            "tools/capture/README.md, fosprobe_loop.gek intentionally calls",
+            "`con_Save <step.name>` inside FalloutNV.exe to write `.fos` saves into",
+            "the isolated Saves\\fosprobe\\ subfolder):",
             "",
             "1. Ensure Fallout: New Vegas 1.4.0.525 (10 official base masters only) has",
             "   xNVSE 6.4.9+ and JIP LN NVSE installed.",
@@ -136,6 +227,8 @@ def stage_campaign_scripts(
     campaign: fos_campaigns.Campaign,
     *,
     interval: int | None = None,
+    game_dir: str | os.PathLike[str] | None = None,
+    saves_dir: str | os.PathLike[str] | None = None,
 ) -> tuple[Path, Path, Path]:
     """Write generated probe scripts strictly inside `out_dir` (never into `<game-dir>`).
 
@@ -145,9 +238,12 @@ def stage_campaign_scripts(
       - `<out-dir>/Data/NVSE/Plugins/Scripts/gr_fosprobe.txt`
       - `<out-dir>/MANUAL_SETUP.txt`
 
+    Refuses any `out_dir` overlapping `game_dir`, `saves_dir`, or a live FNV
+    install / `FalloutNV\\Saves` directory.
+
     Returns `(loop_path, gr_path, setup_guide_path)`.
     """
-    odir = Path(out_dir)
+    odir = assert_safe_out_dir(out_dir, game_dir=game_dir, saves_dir=saves_dir)
     scripts_dir = odir / "Data" / "NVSE" / "Plugins" / "Scripts"
     udf_dir = odir / "Data" / "NVSE" / "user_defined_functions"
     scripts_dir.mkdir(parents=True, exist_ok=True)
@@ -257,17 +353,19 @@ def collect_saves(
     out_dir: str | os.PathLike[str],
     *,
     campaign: fos_campaigns.Campaign | None = None,
+    game_dir: str | os.PathLike[str] | None = None,
 ) -> list[Path]:
     """Read-only copy of `.fos` files from `saves_dir` into `out_dir`.
 
-    Never creates, modifies, or deletes anything inside `saves_dir`.
+    Never creates, modifies, or deletes anything inside `saves_dir`, and refuses
+    any `out_dir` overlapping `saves_dir`, `game_dir`, or a live FNV install.
     When `campaign` is given, copies only `<step.name>.fos` files belonging to
     that campaign; otherwise copies all `*.fos` files found in `saves_dir`.
     """
+    odir = assert_safe_out_dir(out_dir, game_dir=game_dir, saves_dir=saves_dir)
     sdir = Path(saves_dir)
     if not sdir.is_dir():
         raise FileNotFoundError(f"Saves directory does not exist: {sdir}")
-    odir = Path(out_dir)
     odir.mkdir(parents=True, exist_ok=True)
 
     wanted: set[str] | None = (
@@ -304,9 +402,9 @@ def run_campaign(
     folders. The user must have performed the one-time manual setup from
     `stage_campaign_scripts` (`MANUAL_SETUP.txt`) beforehand.
     """
+    odir = assert_safe_out_dir(out_dir, game_dir=game_dir, saves_dir=saves_dir)
     gdir = Path(game_dir)
     sdir = Path(saves_dir)
-    odir = Path(out_dir)
 
     if not gdir.is_dir():
         raise FileNotFoundError(f"Game directory does not exist: {gdir}")
@@ -329,7 +427,7 @@ def run_campaign(
 
     odir.mkdir(parents=True, exist_ok=True)
     if dry_run:
-        return collect_saves(sdir, odir, campaign=campaign)
+        return collect_saves(sdir, odir, campaign=campaign, game_dir=gdir)
 
     wanted = {f"{step.name}.fos".lower() for step in campaign.steps}
     timeout = campaign.max_wait if max_wait is None else max_wait
@@ -364,7 +462,7 @@ def run_campaign(
         if proc is not None and proc.poll() is None:
             terminate_pid_tree(proc.pid)
 
-    copied = collect_saves(sdir, odir, campaign=campaign)
+    copied = collect_saves(sdir, odir, campaign=campaign, game_dir=gdir)
     print(f"=== Campaign '{campaign.name}' copied {len(copied)}/{len(campaign.steps)} .fos files ===")
     return copied
 
@@ -373,9 +471,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=(
             "Read-only clean-room `.fos` A/B save-pair capture harness. "
-            "The Python tools never write into --game-dir or Documents\\My Games\\FalloutNV; "
-            "when run in-game after manual setup, fosprobe_loop.gek calls `con_Save` to write "
-            "`.fos` captures into the user-configured Saves subfolder."
+            "The Python tools never write into --game-dir or Documents\\My Games\\FalloutNV "
+            "(and refuse any --out-dir overlapping --game-dir, --saves-dir, or a live install); "
+            "under the 2026-11-24 maintainer §10 exception to tools/capture/README.md, "
+            "fosprobe_loop.gek calls `con_Save` inside FalloutNV.exe to write `.fos` captures "
+            "into the isolated Saves\\fosprobe\\ subfolder."
         )
     )
     sub = ap.add_subparsers(dest="command", required=True)
@@ -392,6 +492,16 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("FNV_FOS_OUT_DIR"),
         help="Private output directory outside git for staged scripts (or env FNV_FOS_OUT_DIR).",
     )
+    p_stage.add_argument(
+        "--game-dir",
+        default=os.environ.get("FNV_GAME_DIR"),
+        help="Optional game directory to guard --out-dir against (or env FNV_GAME_DIR).",
+    )
+    p_stage.add_argument(
+        "--saves-dir",
+        default=os.environ.get("FNV_FOS_SAVES_DIR"),
+        help="Optional Saves directory to guard --out-dir against (or env FNV_FOS_SAVES_DIR).",
+    )
     p_stage.add_argument("--interval", type=int, default=None, help="Override script loop tick interval.")
 
     p_collect = sub.add_parser(
@@ -402,6 +512,11 @@ def main(argv: list[str] | None = None) -> int:
         "--campaign",
         default=None,
         help="Optional campaign name to filter only that campaign's `.fos` files.",
+    )
+    p_collect.add_argument(
+        "--game-dir",
+        default=os.environ.get("FNV_GAME_DIR"),
+        help="Optional game directory to guard --out-dir against (or env FNV_GAME_DIR).",
     )
     p_collect.add_argument(
         "--saves-dir",
@@ -471,6 +586,8 @@ def main(argv: list[str] | None = None) -> int:
             args.out_dir,
             fos_campaigns.CAMPAIGNS_BY_NAME[args.campaign],
             interval=args.interval,
+            game_dir=args.game_dir,
+            saves_dir=args.saves_dir,
         )
         print(f"Staged scripts into {Path(args.out_dir)}:")
         print(f"  {gr_path}")
@@ -486,7 +603,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.campaign not in fos_campaigns.CAMPAIGNS_BY_NAME:
                 ap.error(f"Unknown campaign {args.campaign!r}; run `harness.py list` to see names.")
             camp = fos_campaigns.CAMPAIGNS_BY_NAME[args.campaign]
-        copied = collect_saves(args.saves_dir, args.out_dir, campaign=camp)
+        copied = collect_saves(args.saves_dir, args.out_dir, campaign=camp, game_dir=args.game_dir)
         print(f"Copied {len(copied)} .fos file(s) read-only into {Path(args.out_dir)}.")
         return 0
 

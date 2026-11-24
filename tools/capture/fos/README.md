@@ -18,19 +18,25 @@ subfolder.
   state mutation. No disassembly, decompilation, binary string dumping, or
   third-party DLL inspection is used.
 - **Strictly read-only Python tools (`tools/capture/README.md` §10) + explicit
-  in-game `con_Save` scope:** No Python tool in `tools/capture/fos/`
-  (`harness.py`, `parser.py`, `verify.py`) ever writes, modifies, creates, or
-  deletes files in `<game-dir>`, `<game-dir>\Data\`, or
+  2026-11-24 §10 exception for `Saves\fosprobe\`:** No Python tool in
+  `tools/capture/fos/` (`harness.py`, `parser.py`, `verify.py`) ever writes,
+  modifies, creates, or deletes files in `<game-dir>`, `<game-dir>\Data\`, or
   `Documents\My Games\FalloutNV` (`Fallout.ini`, `FalloutPrefs.ini`,
   `FalloutCustom.ini`, `plugins.txt`, `loadorder.txt`, `Saves\`, or
   `fosprobe_trace.txt`). No tool copies bytes out of `FalloutNV.esm` or
   generates `.esp` plugins, and the generated probe scripts write zero files
   inside `<game-dir>` (`PrintToConsole` only). All Python tool outputs go
-  strictly into the user-chosen `--out-dir` outside git. When manually
-  installed and run in `FalloutNV.exe`, `fosprobe_loop.gek` intentionally calls
-  `con_Save <step.name>` to create the `.fos` save files under the user's
-  configured `Saves` subfolder (e.g., `Documents\My Games\FalloutNV\Saves\fosprobe\`),
-  which the user cleans up by hand after capture.
+  strictly into the user-chosen `--out-dir` outside git, and `harness.py`
+  enforces an `--out-dir` guard (`assert_safe_out_dir`, mirroring
+  `tools/capture/nvse/harness.py`) that refuses any `--out-dir` equal to,
+  inside, or an ancestor of `--game-dir` / `--saves-dir`, or inside a live FNV
+  install / `FalloutNV\Saves` directory tree. Under the **2026-11-24 maintainer
+  exception to `tools/capture/README.md` §10** granted for this harness, when
+  manually installed and run in `FalloutNV.exe`, `fosprobe_loop.gek`
+  intentionally calls `con_Save <step.name>` to create `.fos` save files in the
+  isolated `Saves\fosprobe\` subfolder (e.g.,
+  `Documents\My Games\FalloutNV\Saves\fosprobe\`), which the user cleans up by
+  hand after capture.
 - **Zero game data in git:** Never commit `.fos` saves, `.esm`/`.esp` plugins,
   screenshots, or raw dumps. Always point `--out-dir` and `--saves-dir` at a
   private directory outside the repository.

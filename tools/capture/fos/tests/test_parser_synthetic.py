@@ -19,14 +19,14 @@ import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 
-FOS_DIR = Path(__file__).resolve().parent.parent
-if str(FOS_DIR) not in sys.path:
-    sys.path.insert(0, str(FOS_DIR))
+CAPTURE_DIR = Path(__file__).resolve().parents[2]
+if str(CAPTURE_DIR) not in sys.path:
+    sys.path.insert(0, str(CAPTURE_DIR))
 
-import campaigns as fos_campaigns  # noqa: E402
-import harness as fos_harness  # noqa: E402
-import parser as fos_parser  # noqa: E402
-import verify as fos_verify  # noqa: E402
+from fos import campaigns as fos_campaigns  # noqa: E402
+from fos import harness as fos_harness  # noqa: E402
+from fos import parser as fos_parser  # noqa: E402
+from fos import verify as fos_verify  # noqa: E402
 
 BAR = b"|"
 
@@ -873,6 +873,100 @@ class TestHarnessReadOnlyStagingAndCollect(unittest.TestCase):
 
         with self.assertRaises(FileNotFoundError):
             fos_verify.verify_directory(Path(tempfile.gettempdir()) / "nonexistent_fos_dir_xyz")
+
+    def test_out_dir_guard_refuses_game_dir_saves_dir_and_sentinels(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            gdir = tdp / "game"
+            (gdir / "Data").mkdir(parents=True)
+            (gdir / "FalloutNV.exe").write_bytes(b"MZ-stub")
+            (gdir / "Data" / "FalloutNV.esm").write_bytes(b"TES4-stub")
+
+            my_games = tdp / "My Games" / "FalloutNV"
+            sdir = my_games / "Saves" / "fosprobe"
+            sdir.mkdir(parents=True)
+            (my_games / "Fallout.ini").write_bytes(b"[General]\r\nSLocalSavePath=Saves\\fosprobe\\\r\n")
+            (sdir / "p00_base.fos").write_bytes(b"FO3SAVEGAME-stub-0")
+
+            # Also a bare Saves tree without Fallout.ini to test path-name defense in depth.
+            bare_saves = tdp / "alt" / "FalloutNV" / "Saves" / "fosprobe"
+            bare_saves.mkdir(parents=True)
+
+            game_before = _snapshot_tree(gdir)
+            my_games_before = _snapshot_tree(my_games)
+            bare_before = _snapshot_tree(bare_saves)
+
+            # 1. Explicit game_dir / saves_dir equal, child, ancestor, and .. traversal.
+            bad_targets = [
+                gdir,
+                gdir / "Data" / "NVSE",
+                gdir / "sub" / ".." / "out",
+                sdir,
+                sdir / "nested",
+                my_games / "Saves",
+                tdp,  # ancestor of both gdir and sdir
+            ]
+            for bad in bad_targets:
+                with self.assertRaises(fos_harness.ReadOnlyBoundaryError, msg=f"stage {bad}"):
+                    fos_harness.stage_campaign_scripts(
+                        bad, fos_campaigns.RUN1_PLAYER, game_dir=gdir, saves_dir=sdir
+                    )
+                with self.assertRaises(fos_harness.ReadOnlyBoundaryError, msg=f"collect {bad}"):
+                    fos_harness.collect_saves(sdir, bad, campaign=fos_campaigns.RUN1_PLAYER, game_dir=gdir)
+                with self.assertRaises(fos_harness.ReadOnlyBoundaryError, msg=f"run {bad}"):
+                    fos_harness.run_campaign(
+                        campaign=fos_campaigns.RUN1_PLAYER,
+                        game_dir=gdir,
+                        saves_dir=sdir,
+                        out_dir=bad,
+                        dry_run=True,
+                    )
+
+            # 2. Defense in depth without passing game_dir / saves_dir flags (sentinels + FalloutNV/Saves).
+            with mock.patch.dict(os.environ, {}, clear=False):
+                for key in ("FNV_GAME_DIR", "FNV_FOS_SAVES_DIR", "FNV_SAVES_DIR"):
+                    os.environ.pop(key, None)
+                for sentinel_bad in (gdir / "stage_inside", my_games / "stage_inside", sdir / "out", bare_saves / "out"):
+                    with self.assertRaises(fos_harness.ReadOnlyBoundaryError, msg=f"sentinel {sentinel_bad}"):
+                        fos_harness.stage_campaign_scripts(sentinel_bad, fos_campaigns.RUN1_PLAYER)
+
+            # 3. Environment variables FNV_GAME_DIR / FNV_FOS_SAVES_DIR also protect stage().
+            plain_game = tdp / "plain_game"
+            plain_saves = tdp / "plain_saves"
+            plain_game.mkdir()
+            plain_saves.mkdir()
+            with mock.patch.dict(
+                os.environ,
+                {"FNV_GAME_DIR": str(plain_game), "FNV_FOS_SAVES_DIR": str(plain_saves)},
+                clear=False,
+            ):
+                with self.assertRaises(fos_harness.ReadOnlyBoundaryError):
+                    fos_harness.stage_campaign_scripts(plain_game / "out", fos_campaigns.RUN1_PLAYER)
+                with self.assertRaises(fos_harness.ReadOnlyBoundaryError):
+                    fos_harness.stage_campaign_scripts(plain_saves / "out", fos_campaigns.RUN1_PLAYER)
+
+            # 4. Zero mutations occurred inside any protected directory.
+            self.assertEqual(_snapshot_tree(gdir), game_before)
+            self.assertEqual(_snapshot_tree(my_games), my_games_before)
+            self.assertEqual(_snapshot_tree(bare_saves), bare_before)
+
+    def test_section10_fosprobe_exception_documented_in_harness_and_readmes(self) -> None:
+        capture_root = Path(__file__).resolve().parents[2]
+        top_readme = (capture_root / "README.md").read_text(encoding="utf-8")
+        fos_readme = (capture_root / "fos" / "README.md").read_text(encoding="utf-8")
+        harness_doc = fos_harness.__doc__ or ""
+        guide_text = fos_harness._manual_setup_guide(fos_campaigns.RUN1_PLAYER, Path("out"))
+        for label, text in (
+            ("tools/capture/README.md", top_readme),
+            ("tools/capture/fos/README.md", fos_readme),
+            ("tools/capture/fos/harness.py docstring", harness_doc),
+            ("tools/capture/fos/harness.py MANUAL_SETUP", guide_text),
+        ):
+            self.assertIn("2026-11-24", text, f"{label} must record the 2026-11-24 §10 exception")
+            self.assertIn("Saves\\fosprobe\\", text, f"{label} must name Saves\\fosprobe\\")
+            self.assertIn("§10", text, f"{label} must reference §10")
 
 
 if __name__ == "__main__":

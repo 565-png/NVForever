@@ -759,10 +759,13 @@ staging/collection tool, stdlib-only binary parser/differ, 16 pure-vanilla
 declarative Round 1–3 campaign definitions, read-only verifier (61 pure-vanilla
 + 7 optional manual-GECK-plugin assertions, 68 total), and offline synthetic
 test suite. Like §10, the Python tools never write into the game folder or
-`Documents\My Games\FalloutNV` and the staged scripts write nothing into the
-game folder; during live capture after one-time manual setup, `fosprobe_loop.gek`
-intentionally calls `con_Save <step.name>` inside `FalloutNV.exe` to write
-`.fos` saves into the user-configured `Saves\fosprobe\` subfolder. See
+`Documents\My Games\FalloutNV` (refusing any `--out-dir` inside or overlapping
+`--game-dir`, `--saves-dir`, or a live FNV install / `Saves` folder) and the
+staged scripts write nothing into the game folder. **Maintainer §10 exception
+(2026-11-24):** during live capture after one-time manual setup,
+`fosprobe_loop.gek` is explicitly permitted to call `con_Save <step.name>`
+inside `FalloutNV.exe` to write `.fos` saves into the isolated
+`Saves\fosprobe\` subfolder (cleaned up by hand afterward). See
 [`tools/capture/fos/README.md`](fos/README.md) for manual setup steps, usage,
 and clean-room rules.
 
