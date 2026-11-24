@@ -6256,6 +6256,23 @@ manual = "Compare flashlight_aimed_off.png and flashlight_aimed_on.png (1280x720
 # ------------------------------------------------------------------ sounds
 
 [[scenario]]
+name = "missile-launch-sounds"
+source = "#3444 (player report R-DWTU2458), docs/spec-notes/audio.md §15.6: Lonesome Road's second silo, the missile silent in flight: the sound key of Backward names a 2D SOUN with no radii (NVDLC04QSTMissileLaunchPt2), which the distance to the silo silenced"
+note = "The player stands at NVDLC04MissileLaunchViewMarkerREF, where the script moves them, 2,900 units from the silo; the launch quest is started at 8 s, as the launch control's script does. Forward follows about 1 s later, Backward 13 s after that. Needs LonesomeRoad.esm (the ten masters), as the other add-on scenarios need theirs: without it the run fails, it is not skipped."
+areas = ["audio", "object-anims", "lonesome-road"]
+paths = ["engine/nvf-play/src/sfx.rs", "engine/nvforever/src/object_anims.rs", "engine/nvforever/src/anim_sounds.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "8:start:NVDLC04MissileLaunchQuest" }
+args = ["--play", "--world", "NVDLC04Road02World", "--pos=27963,6159,19024", "--heading", "14", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 36
+order = [[
+  { re = 'playgroup: NVDLC04MissileLaunchREF passes the sound key NVDLC04QSTMissileLaunchPt1 of Forward', label = "Forward's sound key" },
+  { re = 'sfx: sound key NVDLC04QSTMissileLaunchPt1 starts: .*qst_missilelaunch_explode_pt1\.wav, .* gain (?P<n>[0-9.]+), 2D, .* (2[89]|30)\d\d units away', range = [0.3, 0.4], label = "it starts, 9.25 dB off" },
+  { re = 'playgroup: NVDLC04MissileLaunchREF passes the sound key NVDLC04QSTMissileLaunchPt2 of Backward', label = "Backward's sound key" },
+  { re = 'sfx: sound key NVDLC04QSTMissileLaunchPt2 starts: .*qst_missilelaunch_explode_pt2\.wav, .* gain (?P<n>[0-9.]+), 2D, .* (2[89]|30)\d\d units away', range = [0.95, 1.05], label = "the flight's sound starts whole, from 2,900 units" },
+]]
+forbid = [{ re = 'sfx: sound key NVDLC04QSTMissileLaunchPt\d (not heard|dropped)', label = "a launch sound is not heard" }]
+
+[[scenario]]
 name = "own-sounds-goodsprings"
 source = "ESM audit group 5 (docs/spec-notes/audio.md §15): placed objects' own sounds, water, projectiles, weapons' and magic effects' sounds in Goodsprings"
 areas = ["audio", "own-sounds"]
