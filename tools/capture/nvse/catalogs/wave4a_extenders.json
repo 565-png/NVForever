@@ -1990,7 +1990,11 @@
             "SetExplosionTraitForm rE 0 rSt",
             "ref f1 = GetExplosionTraitForm rE 0",
             "SetExplosionTraitForm rE 0 f0",
-            "PrintToConsole \"PROBE|jip_24_expl_trait_form_type_check|%g,%z,%z\" (f0 == f1) (GetFormIDString f0) (GetFormIDString f1)"
+            "ref s4_0 = GetExplosionTraitForm rE 4",
+            "SetExplosionTraitForm rE 4 rSt",
+            "ref s4_1 = GetExplosionTraitForm rE 4",
+            "SetExplosionTraitForm rE 4 s4_0",
+            "PrintToConsole \"PROBE|jip_24_expl_trait_form_type_check|s0:%i->%i(eq0=%g,eqSt=%g)|s4:%i->%i(eqSt=%g)\" f0 f1 (f1 == 0) (f1 == rSt) s4_0 s4_1 (s4_1 == rSt)"
           ]
         },
         {
