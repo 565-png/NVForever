@@ -169,12 +169,10 @@ impl Game<'_> {
 
     /// Snapshot `source`'s effective `WEAP CRDT critical_damage` onto its `TempCloneForm`
     /// `clone` at clone creation time so later edits to `source` do not leak into `clone`,
-    /// and edits to `clone` do not affect `source` [observed: Fallout: New Vegas
-    /// 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, 10 official base masters,
-    /// `GSDocMitchellHouse` (`0x00103DF9`), `w4f_02_set_weapon_crit_damage`: after
-    /// `SetWeaponCritDamage 77` on `Weap10mmPistol` (`0x0000434F`), `TempCloneForm` read
-    /// `77`, and a later `SetWeaponCritDamage 88` on the source left the clone at `77`;
-    /// zero DLL/PDB/source consulted].
+    /// and edits to `clone` do not affect `source` [hypothesis; design: `ext-last-core.md`
+    /// §7 — initial inheritance on `TempCloneForm` is observed in
+    /// `core_16_set_weapon_crit_damage_edge`, while post-clone isolation remains a
+    /// hypothesis].
     pub(crate) fn snapshot_weapon_crit_damage(&mut self, source: FormId, clone: FormId) {
         if self.data.sig(self.unclone(source)) != Some(*b"WEAP") {
             return;
