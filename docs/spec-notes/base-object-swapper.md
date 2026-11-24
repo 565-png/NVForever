@@ -85,15 +85,21 @@ third-party DLL runtime details remain `[hypothesis]`.
 
 ## 3. Precedence and multi-rule evaluation
 
-- `[hypothesis]` `[References]` rules take precedence over `[Forms]` rules for the same
-  placed reference: if any `[References]` rule fires for `ref_id`, its target is used;
-  otherwise `[Forms]` rules matching the authored base form are evaluated.
-- `[hypothesis]` Multiple rules targeting the same original form (for example variant
-  chains with independent `chanceS(pct)` rolls or later INI overrides) are evaluated in
-  file/line order using independent per-rule hash indices (`rule_index`), with the last
-  fired rule winning. If no probabilistic rule fires, the reference keeps its authored
-  base form. Exact native plugin PRNG / tie-breaking order has not been captured from the
-  third-party DLL and remains `[hypothesis]`.
+- `[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, 10 official base
+  masters, isolated clean-room staging, BaseObjectSwapper + synthetic
+  Data\BaseObjectSwapper\W4ETest_SWAP.ini, GSDocMitchellHouse (0x00103DF9), Wave 4E
+  black-box probe w4e_c09_bos_precedence_and_last_wins: refVsForm->0017B7A1;
+  multiForm(1st=00179B2C,2nd=0017B7A1)->0017B7A1; zero DLL/PDB/source consulted]`
+  `[References]` rules take precedence over `[Forms]` rules for the same placed reference
+  (on placed container `0x001062C6`, original base `0x000CCF91`, `[Forms]` -> `0x00179B2C`
+  and `[References]` -> `0x0017B7A1` resolved to `0x0017B7A1`).
+- `[observed: w4e_c09_bos_precedence_and_last_wins, same environment]` Multiple `[Forms]`
+  rules targeting the same original base resolve last-rule-wins (`0x0017B7A1` beat earlier
+  `0x00179B2C`). `[design]` NVForever evaluates rules in file/line order using independent
+  per-rule hash indices (`rule_index`), with the last fired rule winning; if no
+  probabilistic rule fires, the reference keeps its authored base form. Exact native
+  plugin PRNG / probabilistic roll tie-breaking order has not been captured and remains
+  `[hypothesis]`.
 
 ## 4. Shared consumer seam
 

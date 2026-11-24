@@ -34,6 +34,11 @@ Part of #2271.
   (`functions::refs::call_source`) and the console (`functions::console::set_default_open`).
   Explicit empty, unknown, or deleted receivers and non-numeric/wrong-arity
   arguments fail cleanly without mutating state.
+- [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, 10 official base
+  masters, isolated clean-room staging, JIP LN 57.30, GSDocMitchellHouse (0x00103DF9),
+  Wave 4E black-box probe `w4e_c15_door_default_open_air_killcam_speech`: `door=0->1->0`;
+  zero DLL/PDB/source consulted] `SetDefaultOpen` / `GetDefaultOpen` round-trips
+  `0 -> 1 -> 0` on unscripted placed door `0x001062AC`.
 - [hypothesis] Native GECK bytecode encoding for `SetDefaultOpen`, whether the
   original engine immediately toggles an already-loaded door/container's live
   visual open state on `SetDefaultOpen`, and original-game behavior on non-door /
