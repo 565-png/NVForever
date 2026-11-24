@@ -6093,6 +6093,13 @@ impl<'a> Game<'a> {
             if was_interior && placed.world_of(c).is_some() && !self.player.fast_travel.keep {
                 self.player.fast_travel.travel_disabled = false;
             }
+            if let Some(w) = placed.world_of(c) {
+                self.other.jg6.last_exterior_world = Some(w);
+            } else if self.other.jg6.last_exterior_world.is_none() {
+                if let Some(w) = self.loaded_cells.iter().find_map(|&l| placed.world_of(l)) {
+                    self.other.jg6.last_exterior_world = Some(w);
+                }
+            }
             let cells = self.cells_around(c);
             self.set_loaded(cells);
         }
