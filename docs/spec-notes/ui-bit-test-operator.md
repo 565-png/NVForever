@@ -10,7 +10,7 @@ expressions, not a script command with a similar name.
 and resolves literal, nested and referenced arguments in `Ui::eval_reading`.
 Traits use `f64` numbers. Unknown tags produce a warning and are ignored.
 
-[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, 10 official base masters, isolated clean-room staging, UI Organizer 230, GSDocMitchellHouse (0x00103DF9), Wave 4E black-box probe `w4e_c11_uio_neg_bt_sincos_pow`: `bt(0=1,1=0,2=1,neg=0)`; zero DLL/PDB/source consulted]
+[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + UI Organizer 230, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters, isolated clean-room staging copy (synthetic prefab XML staged strictly inside the isolated copy and removed after exit; read-only `PrintToConsole` probes; zero writes to game install or Saves), `w4e_c11_uio_neg_bt_sincos_pow` (`tools/capture/nvse/catalogs/wave4e_mods.json`, PR #3803 / #3802): `PROBE|w4e_c11_uio_neg_bt_sincos_pow|neg(-5,3,-5)|bt(0=1,1=0,2=1,neg=0)|sin30=0.5000|cos60=0.5000|pow23=8`, and `w4h_03_uio_ln_nonzero_start` (`tools/capture/nvse/catalogs/wave4h_reconcile.json`, PR #3803 / #3802): `PROBE|w4h_03_uio_ln_nonzero_start|ld=1|ln(5_e=5.0000,10_1=10.0000,e_0=2.7183,10_0=10.0000,5_10=5.0000)|unk(5_2=5.0000)|pow=25.00|neg=-3.00|bt=1.00|sin=0.5000|cos=0.5000`; zero DLL, PDB, or third-party source consulted]
 `<bt>`/`<BT>` is case-insensitive, tests the selected bit index of the current
 accumulator (for accumulator `5`: bit `0` returns `1`, bit `1` returns `0`, bit `2`
 returns `1`), and returns `0` for negative bit index `-1`.
