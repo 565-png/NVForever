@@ -41,6 +41,7 @@ const LIGH: u32 = 0x920;
 const NOTE2: u32 = 0x921;
 const ROOM: u32 = 0x930;
 const TERM_REF: u32 = 0x931;
+const LIGHT_REF: u32 = 0x932;
 
 fn le(v: u32) -> Vec<u8> {
     v.to_le_bytes().to_vec()
@@ -96,7 +97,8 @@ fn plugin_bytes() -> Vec<u8> {
     // LIGH DATA: time, radius 200, colour, flags, falloff, FOV, value, weight.
     let ligh = edid(b"LIGH", LIGH, "TestLight", &[sub(b"DATA", [le(0), le(200), vec![255, 255, 255, 0], le(0), f32b(1.0), f32b(90.0), le(0), f32b(0.0)].concat())]);
     let term_ref = edid(b"REFR", TERM_REF, "TestTerminalRef", &[sub(b"NAME", le(TERM)), sub(b"DATA", vec![0; 24])]);
-    let cell = [edid(b"CELL", ROOM, "TestRoom", &[sub(b"DATA", vec![1])]), group(ROOM.to_le_bytes(), 6, &group(ROOM.to_le_bytes(), 9, &term_ref))].concat();
+    let light_ref = edid(b"REFR", LIGHT_REF, "TestLightRef", &[sub(b"NAME", le(LIGH)), sub(b"DATA", vec![0; 24])]);
+    let cell = [edid(b"CELL", ROOM, "TestRoom", &[sub(b"DATA", vec![1])]), group(ROOM.to_le_bytes(), 6, &group(ROOM.to_le_bytes(), 9, &[term_ref, light_ref].concat()))].concat();
     let cells = top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &cell)));
     [
         tes4(),
@@ -292,6 +294,22 @@ AddRecipeInputForm TestRecipe ItemC 2");
     q(&mut g, "SetRecipeRequiredSkill TestRecipe -1");
     assert_eq!(n(&mut g, "GetRecipeRequiredSkill TestRecipe"), -1.0);
     assert_eq!(n(&mut g, "GetRecipeRequiredSkillLevel TestRecipe"), 45.0);
+    // Wave 4 jip_02_recipe_add_neg_count & jip_03_recipe_set_neg_count [observed]:
+    // negative counts are accepted by AddRecipeInputForm and stored verbatim by
+    // SetRecipeInputCount.
+    let before = forms(&mut g, "GetRecipeInputForms TestRecipe").len();
+    q(&mut g, "AddRecipeInputForm TestRecipe ItemC -1");
+    assert_eq!(forms(&mut g, "GetRecipeInputForms TestRecipe").len(), before + 1);
+    assert_eq!(n(&mut g, "GetRecipeInputCount TestRecipe ItemC"), -1.0);
+    q(&mut g, "SetRecipeInputCount TestRecipe ItemB -5");
+    assert_eq!(n(&mut g, "GetRecipeInputCount TestRecipe ItemB"), -5.0);
+    q(&mut g, "RemoveRecipeInputForm TestRecipe ItemC");
+    // Wave 4D w4d_15_recipe_unlisted_item [observed]: setting count on an unlisted item
+    // does not add it and leaves counts unchanged.
+    let before_unlisted = forms(&mut g, "GetRecipeInputForms TestRecipe").len();
+    q(&mut g, "SetRecipeInputCount TestRecipe ItemC 5");
+    assert_eq!(forms(&mut g, "GetRecipeInputForms TestRecipe").len(), before_unlisted);
+    assert_eq!(n(&mut g, "GetRecipeInputCount TestRecipe ItemC"), 0.0);
     // The recipe no longer takes ItemA.
     assert_eq!(forms(&mut g, "GetFormRecipes ItemA"), vec![RCPE2]);
 }
@@ -372,8 +390,13 @@ SetActivatorRadioStation 0 TestActivator");
     assert_eq!(n(&mut g, "GetLoadScreenType TestScreen"), f64::from(LSCT));
     q(&mut g, "SetLoadScreenType TestScreen TestType2");
     assert_eq!(n(&mut g, "GetLoadScreenType TestScreen"), f64::from(LSCT2));
-    // Lights.
+    // Lights: base LIGH returns DATA radius; placed Light ref without XRDS returns 0.0
+    // (does not fall back to base LIGH radius) [observed: Wave 4
+    // jip_06_radius_ref_fallback_base: base 200.000, placed ref 0.000].
     assert_eq!(n(&mut g, "GetRadius TestLight"), 200.0);
+    assert_eq!(n(&mut g, "TestLightRef.GetRadius"), 0.0);
+    q(&mut g, "TestLightRef.SetRadius 125");
+    assert_eq!(n(&mut g, "TestLightRef.GetRadius"), 125.0);
     q(&mut g, "PlayerREF.SetRadius 350 TestLight");
     assert_eq!(n(&mut g, "GetRadius TestLight"), 350.0);
     // Form flags, as GetFlagsLow reads them.
@@ -523,4 +546,60 @@ fn set_password_note_reaches_terminal_opening_prompt_player_has_key_and_session(
     assert_eq!(n(&mut same_run, "TestTerminalRef.PlayerHasKey"), 1.0);
     assert!(terminal::opens_by_password(&mut same_run, FormId(TERM_REF), FormId(TERM)));
     assert_eq!(terminal::opening(&mut same_run, FormId(TERM_REF), FormId(TERM), 0.0), Some(Opening::Menu));
+}
+
+/// Wave 4D `w4d_21_cell_water_height_ext` [observed]: interior XCLW reads directly,
+/// a loaded exterior cell without XCLW returns `f32::MAX` (NOT worldspace DNAM), and an
+/// unloaded exterior cell (even with explicit XCLW) returns `0.0`.
+#[test]
+fn cell_water_height_loaded_vs_unloaded_exterior_and_interior() {
+    const WRLD: u32 = 0x940;
+    const PCELL: u32 = 0x941;
+    const EXT_NO_XCLW: u32 = 0x942;
+    const EXT_WATER: u32 = 0x943;
+    const INT_ROOM: u32 = 0x944;
+
+    let npc_player = record(b"NPC_", 0, 0x7, &[sub(b"EDID", z("Player"))]);
+    // WRLD DNAM: default land height (-2048.0), default water height (-2300.0).
+    let wrld_rec = edid(b"WRLD", WRLD, "TestWorld", &[sub(b"DNAM", [f32b(-2048.0), f32b(-2300.0)].concat())]);
+    let pcell = edid(b"CELL", PCELL, "TestPersistent", &[sub(b"DATA", vec![0])]);
+    let ext_no_xclw = edid(b"CELL", EXT_NO_XCLW, "TestExtNoXclw", &[sub(b"DATA", vec![0]), sub(b"XCLC", [0i32.to_le_bytes(), 0i32.to_le_bytes(), 0i32.to_le_bytes()].concat())]);
+    let ext_water = edid(
+        b"CELL",
+        EXT_WATER,
+        "TestExtWater",
+        &[sub(b"DATA", vec![2]), sub(b"XCLC", [1i32.to_le_bytes(), 0i32.to_le_bytes(), 0i32.to_le_bytes()].concat()), sub(b"XCLW", f32b(3000.0))],
+    );
+    let block = group(0i32.to_le_bytes(), 4, &group(0i32.to_le_bytes(), 5, &[ext_no_xclw, ext_water].concat()));
+    let wrld_top = top(b"WRLD", &[wrld_rec, group(WRLD.to_le_bytes(), 1, &[pcell, block].concat())].concat());
+    let int_room = edid(b"CELL", INT_ROOM, "TestIntRoom", &[sub(b"DATA", vec![1]), sub(b"XCLW", f32b(-2147483648.0))]);
+    let cell_top = top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &int_room)));
+    let bytes = [tes4(), top(b"NPC_", &npc_player), wrld_top, cell_top].concat();
+
+    let plugins = vec![Plugin::parse(&bytes, "WaterHeight.esm".into()).unwrap()];
+    let lo = LoadOrder::new(&plugins).unwrap();
+    let schema = Schema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap();
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/script/functions.json");
+    let j: Json = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+    let table = FunctionTable::load(&p).unwrap();
+    let forms = FormStore::build(&lo, &schema);
+    let refs = RefTable::build(&lo, &schema);
+    let data = GameData::build(&lo, &schema, table, &j, &refs);
+    let world = World::new(&forms, &refs, SimConfig::default());
+    let mut g = Game::new(&data, world, GameConfig { strict: true, ..GameConfig::default() });
+
+    // Interior cell reads XCLW sentinel directly.
+    assert_eq!(n(&mut g, "GetCellWaterHeight TestIntRoom"), f64::from(-2147483648.0_f32));
+    // Unloaded exterior cells (with or without XCLW) return 0.
+    assert_eq!(n(&mut g, "GetCellWaterHeight TestExtNoXclw"), 0.0);
+    assert_eq!(n(&mut g, "GetCellWaterHeight TestExtWater"), 0.0);
+    // Loaded exterior cell without XCLW returns f32::MAX (not WRLD DNAM -2300.0).
+    g.loaded_cells.insert(FormId(EXT_NO_XCLW));
+    assert_eq!(n(&mut g, "GetCellWaterHeight TestExtNoXclw"), f64::from(f32::MAX));
+    // Loaded exterior cell with XCLW returns its XCLW (3000.0).
+    g.loaded_cells.insert(FormId(EXT_WATER));
+    assert_eq!(n(&mut g, "GetCellWaterHeight TestExtWater"), 3000.0);
+    // SetCellWaterHeight overrides the loaded exterior cell.
+    q(&mut g, "SetCellWaterHeight 1234.5 TestExtNoXclw");
+    assert_eq!(n(&mut g, "GetCellWaterHeight TestExtNoXclw"), 1234.5);
 }

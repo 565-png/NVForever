@@ -65,9 +65,15 @@ pub struct Jip9State {
     pub colour_sets: Vec<(u8, [u8; 3])>,
     /// The actor whose health bar the HUD shows, as the engine last told it.
     pub enemy_target: Option<FormId>,
-    /// ToggleImmortalMode's value as set, any number [observed: jip9 immortal.5 reads 5
-    /// back]; 1 health not below 1, 2 no health or limb damage, others off.
-    pub immortal: i64,
+    /// ToggleImmortalMode's value as set, stored as a `u8` byte (`-1` wraps to `255`)
+    /// [observed: jip9 immortal.5 reads 5 back; Fallout: New Vegas 1.4.0.525 + xNVSE
+    /// 6.4.9 + JIP LN 57.30, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10
+    /// official base masters, `w4d_18_immortal_mode_oob`
+    /// (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679):
+    /// `m0=0|neg(prev=0,cur=255)|m3(prev=255,cur=3,hp=200.0->190.0)|m99(prev=3,cur=99)|rest(prev=99,cur=0)`;
+    /// no DLL or source consulted]; 1 health not below 1, 2 no health or limb damage,
+    /// others off.
+    pub immortal: u8,
     /// SetInteractionDisabledType's form type codes.
     pub disabled_types: BTreeSet<i32>,
 }
@@ -181,10 +187,11 @@ impl Game<'_> {
     /// The player's immortal mode (ToggleImmortalMode): 0 off, 1 Health not below 1,
     /// 2 no Health or limb damage.
     pub fn immortal_mode(&self) -> u8 {
-        // Another value is kept and read back [observed: jip9 immortal.5]; it holds
-        // nothing [hypothesis: the page names 0-2 only].
+        // Another byte value is kept and read back and holds nothing [observed: jip9
+        // immortal.5; w4d_18_immortal_mode_oob: mode 3 lets DamageAV Health 10 drop
+        // HP 200.0->190.0].
         match self.other.jip9.immortal {
-            m @ (1 | 2) => m as u8,
+            m @ (1 | 2) => m,
             _ => 0,
         }
     }
@@ -390,14 +397,15 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         }
         // ---- the HUD's enemy health bar: its actor, else none [documented].
         "getenemyhealthtarget" => XVal::Ref(g.other.jip9.enemy_target.map_or(0, |f| f.0)),
-        // ---- the player's immortal mode: `[mode]` 0-2 [documented]; any value is kept
-        // and read back [observed: jip9 immortal.5]; the mode before it.
+        // ---- the player's immortal mode: `[mode]` 0-2 [documented]; stored as a u8
+        // byte (`-1` wraps to `255`, `3`/`99` read back verbatim) and returns the mode
+        // before it [observed: jip9 immortal.5; w4d_18_immortal_mode_oob].
         "toggleimmortalmode" => {
             let was = g.other.jip9.immortal;
             if let Some(m) = num(args, 0) {
-                g.other.jip9.immortal = m as i64;
+                g.other.jip9.immortal = m as i64 as u8;
             }
-            XVal::Num(was as f64)
+            XVal::Num(f64::from(was))
         }
         // ---- interaction by form type: `disable type` / `type` [documented]
         "setinteractiondisabledtype" => {

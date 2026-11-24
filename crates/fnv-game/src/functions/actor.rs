@@ -462,9 +462,14 @@ pub fn damage_actor_value(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, St
         return none();
     }
     let amount = a.num(1)?;
-    // God mode: a trap's script does not hurt the player ([`god_keeps_whole`]); no damage,
-    // so no health-damage or crippled-limb handlers either.
-    if amount > 0.0 && god_keeps_whole(g, r, code) {
+    // God mode (`god_keeps_whole`) and JIP `ToggleImmortalMode 2` (for Health) keep
+    // scripted `DamageActorValue` from hurting the player [observed: Fallout: New Vegas
+    // 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, probe jip_45_immortal_mode_damageav_bypass:
+    // ToggleImmortalMode 2 kept Health at 200.0 across Player.DamageAV Health 10].
+    if amount > 0.0
+        && (god_keeps_whole(g, r, code)
+            || (r == FormId::PLAYER_REF && g.immortal_mode() == 2 && code == crate::actor_values::HEALTH))
+    {
         return none();
     }
     let limb_before = if crate::actor_values::LIMB_CONDITIONS.contains(&code) { Some(actor_value(g, r, code)?) } else { None };

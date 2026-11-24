@@ -1507,13 +1507,13 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             }
             zero
         }
-        // `[multiplier]`: sets it, and returns it; left out, returns it unchanged
-        // [documented: SetArmorConditionPenalty]. 0-2: past 2 the formula's mult would go
-        // below zero at 0% condition [hypothesis: the page's formula,
-        // `1.0 - (0.5 - condition) * multiplier`].
-        // Both return the value before the call; the penalty takes any number (3 and -1),
-        // the share only 0-1 (2 and -1 set nothing) [observed: jip7 armor.condpenalty,
-        // armor.maxpercent; jip7b armor.*].
+        // `[multiplier]`: sets it and returns the value before the call; left out, returns
+        // it unchanged [documented: SetArmorConditionPenalty]. Any finite float (e.g. 5.0,
+        // 3.0, -1.0) is stored verbatim without clamping [observed: jip7 armor.condpenalty,
+        // jip7b armor.condpenalty.neg; Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN
+        // 57.30, probe jip_19_armor_cond_penalty_clamp: 1.000, 1.000, 5.000, 5.000, -1.000];
+        // the share (`SetDamageToArmorMaxPercent`) takes only 0-1 (2 and -1 set nothing)
+        // [observed: jip7 armor.maxpercent, jip7b armor.maxpercent.range].
         "setarmorconditionpenalty" => {
             let was = g.armor_condition_penalty();
             if let Some(m) = args.first().and_then(|v| v.num().ok()).filter(|m| m.is_finite()) {
