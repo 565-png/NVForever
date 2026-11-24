@@ -1022,6 +1022,36 @@ below cover them all.
   shadows off too.
 - Command-line switches: `--graphics`, `--graphics-only`
 - More: docs/design/terrain-shadows.md, docs/design/sun-visibility.md
+### `light-shadows`: ALC shadows
+
+- On the page: ALC (All Lights Cast): lamps, fires and spot lights cast shadows within the
+  shadow distance, so walls stop their light. Performance redraws less often. Costs frame
+  rate. Not in the original.
+- In full: ALC stands for All Lights Cast; the row was called Lamp shadows until 2026-11-19.
+  The INI key `light-shadows`, the switch `--light-shadows` and the log lines starting
+  `light shadows:` keep the old name, so saved settings, scripts and the smoke scenarios go
+  on working. Off (the default), Performance or Quality, as Sun shadows. Every drawn placed
+  light whose light reaches within the sun's shadow distance (the Shadow distance and
+  Longer sun shadows rows) casts, nearest first, up to 32 lights on Quality and 16 on
+  Performance; grass fires' lights and lights a script attached count among them. Muzzle
+  flashes and explosions cast too, apart from them: the nearest whose light reaches within
+  3,000 units (about 43 m) and into view, 2 at once on Quality and 1 on Performance, each
+  drawn in the frame it appears. A light's maps are drawn when it starts casting and then
+  kept; a part of them is drawn again only when something there moved more than about 6 cm,
+  appeared or vanished, all of them once the light itself moved about 11 cm. At most 3 lights redraw in a frame on Quality, 1 on Performance, nearer ones
+  every frame (every 2nd on Performance), farther ones every 2nd (every 4th), so a moving
+  thing's shadow from a lamp can lag a frame. The world and your body cast, the first-person arms
+  do not; what lies within 8 units of a light casts nothing from it, and lamp housings,
+  shades and bulbs cast none from their own light. Quality also gives the shadows soft edges (sharp
+  where a thing touches the surface, softer away from it) and, while TAA, FSR or DLSS is
+  on, small contact shadows where things touch. A point light's maps
+  are 512² with Shadow resolution 2048, 1024² with 4096. Under a loading screen every
+  casting light's maps are drawn before play, those in view first, within 3 seconds. The
+  flashlight casts as before.
+  The original's placed lights cast none [design].
+- A list kept in the INI by name (`Off`, `Performance`, `Quality`).
+- Command-line switches: `--light-shadows`
+- More: docs/design/graphics-enhanced.md §3.17
 - Registered in `engine/nvforever/src/settings.rs`
 
 ## Graphics › Lighting and Effects
@@ -1305,6 +1335,30 @@ stretches drift downstream. Vanilla leaves the switch off. Enhanced turns it on.
 - More: docs/design/graphics-enhanced.md §3.13
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `terrain-parallax`: Terrain parallax
+
+- On the page: On: ground textures a texture pack gives height maps for (textures\pbr\)
+  show depth near you, for some GPU time. Without such a pack nothing changes.
+- In full: [design, #3322] On: where a texture pack gives a landscape layer's texture a
+  height map (`_p` in its set under `textures\pbr\`, the format of
+  docs/spec-notes/pbr-materials.md), the ground near the camera shows that relief: one
+  march over the layers' heights, blended as the layers are, moves the texture coordinate
+  every ground texture is read at, fading out by 2048 units; each layer moves as far as its
+  own set's depth asks. The base texture of a quadrant and layers without a height map
+  count as flat. Not drawn while Terrain anti-tiling is on. The shadows, the depth prepass, the
+  collision, the mesh terrain blend and the distant landscape keep the plain surface, and
+  so do layers drawn on their own (GPUs without bindless textures; a texture repeat that
+  does not divide the cell). Needs Authored materials: in the game, as this run has it
+  (greyed until a restart when it was off at the start; still available after turning it
+  off for the next start); in the launcher, as saved. The original draws no relief on its
+  landscape [observed: the maintainer's run of observer check 268, 2026-11-22, by eye], so this
+  is an enhancement that acts only with an authored ground pack. Off by
+  default and in both presets until its cost is measured (the maintainer's call); switches
+  at once, no restart.
+- Command-line switches: `--graphics-only` (`--graphics-only terrain-parallax`)
+- More: docs/spec-notes/pbr-materials.md "Terrain layers: parallax"
+- Registered in `engine/nvforever/src/settings.rs`
+
 ### `mesh-terrain-blend`: Blend meshes into ground
 
 - On the page: On: softens where outdoor roads, rocks and cliffs meet the landscape, giving
@@ -1389,6 +1443,22 @@ stretches drift downstream. Vanilla leaves the switch off. Enhanced turns it on.
 - Command line: `--tree-distance` sets where the slider starts (40,000 units by default, at
   most `--lod-distance`; 0 draws no distant trees whatever the slider); `--lod-distance` sets
   the slider's end
+- Registered in `engine/nvforever/src/settings.rs`
+
+### `distant-lights`: Distant lights (experimental)
+
+- On the page: On: at night, lamps in the places beyond the loaded area show as small
+  glows, so towns can be seen from afar. They light nothing. Not in the original.
+- In full: On: the placed lights of the cells up to 12 cells away that are not loaded, and
+  the objects there that glow by themselves (lamps, glow cards, light beams, lit sign
+  panels, neon), are drawn as small soft glows in their own colour, at most 400 of them,
+  the nearest and brightest first, lights standing close together as one. They fade out
+  toward the edge of that reach and into the weather's fog, give way to the real lights as their cells load,
+  and fade away as the sun rises. A lamp that is switched off, or disabled by the game,
+  shows none. Sprites only: nothing is lit and no shadow is cast. Off in both presets; not
+  in the original. Outdoors only.
+- Command-line switches: `--graphics`, `--graphics-only`
+- More: docs/design/graphics-enhanced.md §3.22
 - Registered in `engine/nvforever/src/settings.rs`
 
 ## Graphics › World and Animation

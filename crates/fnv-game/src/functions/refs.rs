@@ -73,6 +73,10 @@ pub fn disable_ref(g: &mut Game, r: FormId, fade: bool) -> Result<Value, String>
         tracing::info!("script: Disable of the player ignored: the player stays enabled (doors.md §6)");
         return none();
     }
+    // A dead actor disabled forgets when it died (GetTimeDead).
+    if let Some(e) = g.extra.get_mut(&r) {
+        e.died_day = None;
+    }
     let held = g.script_looks.fading_out.contains_key(&r);
     if fade && held {
         return none();
@@ -303,13 +307,14 @@ pub fn get_in_worldspace(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, Str
 
 /// `ref.GetInZone zone`: 1 when the calling reference is in a cell attached to the
 /// encounter zone [documented: GECK wiki GetInZone, "Returns 1 if FredRef is currently in
-/// a cell attached to the ParadiseFallsZone"]: its current cell's zone (CELL XEZN, else
-/// the worldspace's; docs/spec-notes/encounter-zones.md §1) [hypothesis: a reference's
-/// own XEZN does not count; the wiki speaks of cells].
+/// a cell attached to the ParadiseFallsZone"]: its current cell's effective zone
+/// (`World::cell_zone_of`: session `SetCellEncounterZone`, else CELL XEZN, else
+/// `SetWorldspaceEncounterZone` / WRLD XEZN; docs/spec-notes/encounter-zones.md §1)
+/// [hypothesis: a reference's own XEZN does not count; the wiki speaks of cells].
 pub fn get_in_zone(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let r = ctx.subject()?;
     let zone = a.form(0)?;
-    yes(g.cell_of(r).and_then(|c| g.world.placed.cell_zone(c)) == Some(zone))
+    yes(g.cell_of(r).and_then(|c| g.world.cell_zone_of(c)) == Some(zone))
 }
 
 pub fn get_in_same_cell(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, String> {
