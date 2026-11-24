@@ -2082,8 +2082,8 @@ while a fresh world inherits none.
 [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, `GSDocMitchellHouse`
 (`0x00103DF9`), 10 official base masters, `w4d_42_vanilla_faction_class_kill_drop`
 (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679): `dropSz=-1` (`ar_Size (GetDroppedRefs)`
-on the player with no dropped weapons); no DLL or source consulted] When an actor has no
-associated dropped weapons, `GetDroppedRefs` returns `ar_Null` (`ar_Size == -1`), not an
+called without a reference when no dropped weapons exist); no DLL or source consulted] When no
+dropped weapons are associated, `GetDroppedRefs` returns `ar_Null` (`ar_Size == -1`), not an
 empty array (`0`).
 
 [hypothesis] Native ordering of multiple dropped refs and unusual unloaded/disabled-owner

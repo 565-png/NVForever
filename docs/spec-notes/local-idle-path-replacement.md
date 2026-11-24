@@ -46,7 +46,7 @@ explicit view-selection parity remain unqualified.
   `w4d_43_nif_selector_and_ui_entities` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
   #3679): on `IDLE` `0x00002FD2`, `rCl1 := TempCloneForm rIdle`,
   `rCl2 := TempCloneForm rCl1`, then `SetModelPath "...\\WriteOnBlackBoardB.kf" rCl1`
-  mutated `rCl1` without mutating `rCl2` or `rIdle` (`idleClone(cl1Eq=1,cl2Eq=0,origEq=1)`);
+  mutated `rCl1` without mutating `rCl2` or `rIdle` (`idle(1,0,1)`);
   no DLL or source consulted] Post-clone `MODL/` edits on a parent clone do not leak into
   an existing child clone or back into the original `IDLE`. [hypothesis] Pre-clone
   `MODL/` edit inheritance onto a newly created child clone and `SetIdleAnimPath`
