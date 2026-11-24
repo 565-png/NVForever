@@ -739,6 +739,85 @@ fn big_numbers_in_g_are_scientific() {
 }
 
 #[test]
+fn eval_truthiness_for_arrays_and_strings() {
+    // [observed: 2026-11-23 & 2026-11-24, GSDocMitchellHouse (0x00103DF9), Fallout: New
+    // Vegas 1.4.0.525, xNVSE 6.4.9 with the 10 official base masters, probes
+    // `core_05_eval_empty_array_and_string_truth` (1,0,1,1),
+    // `core_24_eval_string_var` / `#3679` `core_24_string_var_destruct_zero`
+    // (eval s: 1->0 across sv_Destruct, eval sEmp=1, eval (!sEmp)=0,
+    // eval (sEmp && 5)=1, eval a1=1, eval a2=1, eval ar_Null=0, eval (!a1)=0,
+    // eval (!aNull)=1), and `w4d_03_eval_empty_str_lit` (#3802 / PR #3803:
+    // `PROBE|w4d_03_eval_empty_str_lit|lit0(cmp=1,val=0)|lit1(cmp=1,val=1)|con0Inline(cmp=0,val=-9)|c0=1,c1=1|v0=1,v1=1|saLit0(1:0)|saLit1(1:1)|saV0(1:1)`,
+    // covering both `if eval` and standalone `eval` on bare `""`, `"abc"`, and allocated
+    // empty `string_var`)]:
+    // initialized empty arrays and allocated string_vars (even empty) evaluate truthy (1);
+    // ar_Null, uninitialized or sv_Destruct-ed string_vars, and bare `""` literals
+    // evaluate 0. Standalone `(eval ...)` coerces arrays (including array ID >= 2)
+    // and strings to 1/0 while preserving numeric passthrough (`eval 5 == 5`, #2275
+    // [design]).
+    let h = run(
+        "array_var aEmp\narray_var aTwo\narray_var aNul\nstring_var sUninit\nstring_var sEmp\nstring_var sNon\n\
+         int bAE\nint bAN\nint bSU\nint bSE\nint bSN\nint bBefore\nint bAfter\nint bNotEmp\nint bNotUninit\nint bAnd\n\
+         int bArrTwo\nint bArrNull\nint bNum\nint bEvalEmp\nint bNotArr\nint bNotArrNull\nint bIfEmpAnd\n\
+         string_var sConEmp\nint bLitEmpty\nint bLitNon\nint bEvalLitEmpty\nint bEvalLitNon\nint bConEmp\n\
+         begin GameMode\n\
+         let aEmp := ar_Construct \"array\"\n\
+         let aTwo := ar_Construct \"array\"\n\
+         let aNul := ar_Null\n\
+         let sEmp := \"\"\n\
+         let sNon := \"x\"\n\
+         let sConEmp := sv_Construct \"%z\" sEmp\n\
+         if eval aEmp\n  let bAE := 1\nendif\n\
+         if eval aNul\n  let bAN := 1\nendif\n\
+         if eval sUninit\n  let bSU := 1\nendif\n\
+         if eval sEmp\n  let bSE := 1\nendif\n\
+         if eval sNon\n  let bSN := 1\nendif\n\
+         if eval \"\"\n  let bLitEmpty := 1\nendif\n\
+         if eval \"abc\"\n  let bLitNon := 1\nendif\n\
+         let bEvalLitEmpty := eval \"\"\n\
+         let bEvalLitNon := eval \"abc\"\n\
+         if eval sConEmp\n  let bConEmp := 1\nendif\n\
+         let bBefore := eval sNon\n\
+         sv_Destruct sNon\n\
+         let bAfter := eval sNon\n\
+         let bNotEmp := !sEmp\n\
+         let bNotUninit := !sUninit\n\
+         let bAnd := (sEmp && 5) + (sUninit && 5)\n\
+         let bArrTwo := eval aTwo\n\
+         let bArrNull := eval aNul\n\
+         let bNum := eval 5\n\
+         let bEvalEmp := eval sEmp\n\
+         let bNotArr := eval (!aTwo)\n\
+         let bNotArrNull := eval (!aNul)\n\
+         if eval (sEmp && 5)\n  let bIfEmpAnd := 1\nendif\n\
+         end",
+    );
+    let get = |k: u16| h.0.get(&k).copied().unwrap_or(Value::ZERO);
+    assert_eq!(get(7), Value::Num(1.0), "initialized empty array is truthy");
+    assert_eq!(get(8), Value::Num(0.0), "ar_Null is falsy");
+    assert_eq!(get(9), Value::Num(0.0), "uninitialized string_var is falsy");
+    assert_eq!(get(10), Value::Num(1.0), "initialized empty string_var is truthy");
+    assert_eq!(get(11), Value::Num(1.0), "non-empty string_var is truthy");
+    assert_eq!(get(12), Value::Num(1.0), "eval sNon before sv_Destruct is 1");
+    assert_eq!(get(13), Value::Num(0.0), "eval sNon after sv_Destruct is 0");
+    assert_eq!(get(14), Value::Num(0.0), "!sEmp is 0");
+    assert_eq!(get(15), Value::Num(1.0), "!sUninit is 1");
+    assert_eq!(get(16), Value::Num(5.0), "sEmp && 5 == 5, sUninit && 5 == 0");
+    assert_eq!(get(17), Value::Num(1.0), "eval aTwo (array ID >= 2) coerces to 1, not raw array ID");
+    assert_eq!(get(18), Value::Num(0.0), "eval ar_Null coerces to 0");
+    assert_eq!(get(19), Value::Num(5.0), "eval 5 preserves numeric passthrough (#2275)");
+    assert_eq!(get(20), Value::Num(1.0), "eval sEmp (empty alive string_var) is 1");
+    assert_eq!(get(21), Value::Num(0.0), "eval (!aTwo) is 0");
+    assert_eq!(get(22), Value::Num(1.0), "eval (!aNul) is 1");
+    assert_eq!(get(23), Value::Num(1.0), "if eval (sEmp && 5) is truthy");
+    assert_eq!(get(25), Value::Num(0.0), "if eval \"\" bare empty string literal is falsy (w4d_03)");
+    assert_eq!(get(26), Value::Num(1.0), "if eval \"abc\" bare non-empty string literal is truthy (w4d_03)");
+    assert_eq!(get(27), Value::Num(0.0), "eval \"\" bare empty string literal coerces to 0 (w4d_03)");
+    assert_eq!(get(28), Value::Num(1.0), "eval \"abc\" bare non-empty string literal coerces to 1 (w4d_03)");
+    assert_eq!(get(29), Value::Num(1.0), "if eval sConEmp (sv_Construct empty string_var) is truthy (w4d_03)");
+}
+
+#[test]
 fn format_signs_and_huge_fields() {
     // %g writes -0 as 0 [hypothesis], %f keeps its sign [observed: "%.4f" of -0 reads
     // "-0.0000" in the original, #1919], + never doubles a minus, and a huge precision or
