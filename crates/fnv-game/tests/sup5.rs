@@ -65,7 +65,7 @@ fn folders() -> (PathBuf, PathBuf) {
         std::fs::create_dir_all(game.join("Data")).unwrap();
         std::fs::create_dir_all(&layer).unwrap();
         std::fs::write(game.join("nvac.log"), b"0123456789").unwrap();
-        std::fs::write(game.join("good.json"), br#"{"name":"Joe","level":7,"inv":[1,"two"],"pos":{"x":1.5}}"#).unwrap();
+        std::fs::write(game.join("good.json"), br#"{"name":"Joe","level":7,"inv":[1,"two"],"pos":{"x":1.5},"flag_t":true,"flag_f":false,"empty":null}"#).unwrap();
         std::fs::write(game.join("bad.json"), b"{ nope").unwrap();
         std::fs::write(game.join("notjson.txt"), b"{}").unwrap();
         set_roots(Roots { read: vec![game.join("Data")], write: Some(layer.clone()), ..Roots::default() });
@@ -178,17 +178,31 @@ fn json_files() {
     assert_eq!(n(&mut g, "JSONIsFileValid \"none.json\""), -4.0);
     assert_eq!(n(&mut g, "JSONIsFileValid \"../good.json\""), -5.0);
     assert_eq!(n(&mut g, "JSONIsFileValid \"notjson.txt\""), -6.0);
-    // A value in a list, a list as itself, an object as a map [hypothesis].
-    let one = s(&mut g, "\"\"\nlet aList := JSONGetValue \"good.json\" \"name\" 0\nlet sOut := sv_Construct \"%g %z\" (ar_Size aList) (aList[0])");
-    assert_eq!(one, "1 Joe");
-    let inv = s(&mut g, "\"\"\nlet aList := JSONGetValue \"good.json\" \"inv\" 1\nlet sOut := sv_Construct \"%g %g %z\" (ar_Size aList) (aList[0]) (aList[1])");
-    assert_eq!(inv, "2 1 two");
-    assert_eq!(n(&mut g, "(JSONGetValue \"good.json\" \"pos\" 0)[\"x\"]"), 1.5);
-    assert_eq!(n(&mut g, "(JSONGetValue \"good.json\" \"pos.x\" 0)[0]"), 1.5);
-    assert_eq!(n(&mut g, "ar_Size (JSONGetValue \"good.json\" \"nope\" 0)"), -1.0);
-    // A missing file: one empty text whatever the key [observed: sup5 json.name …].
-    let none = s(&mut g, "\"\"\nlet aList := JSONGetValue \"none.json\" \"name\" 0\nlet sOut := sv_Construct \"%g|%z\" (ar_Size aList) (aList[0])");
-    assert_eq!(none, "1|");
+    // Wave 4D w4d_37_sup_json_and_excel_edges [observed]: JSONGetValue always returns a
+    // tagged List `[type_code]` or `[type_code, scalar_value]` (-2 missing, 0 null,
+    // 1 object, 2 array, 3 string, 4 bool, 5 number).
+    let one = s(&mut g, "\"\"\nlet aList := JSONGetValue \"good.json\" \"name\" 0\nlet sOut := sv_Construct \"%g %g %z\" (ar_Size aList) (aList[0]) (aList[1])");
+    assert_eq!(one, "2 3 Joe");
+    let num_v = s(&mut g, "\"\"\nlet aList := JSONGetValue \"good.json\" \"level\" 0\nlet sOut := sv_Construct \"%g %g %g\" (ar_Size aList) (aList[0]) (aList[1])");
+    assert_eq!(num_v, "2 5 7");
+    let bool_t = s(&mut g, "\"\"\nlet aList := JSONGetValue \"good.json\" \"flag_t\" 0\nlet sOut := sv_Construct \"%g %g %g\" (ar_Size aList) (aList[0]) (aList[1])");
+    assert_eq!(bool_t, "2 4 1");
+    let bool_f = s(&mut g, "\"\"\nlet aList := JSONGetValue \"good.json\" \"flag_f\" 0\nlet sOut := sv_Construct \"%g %g %g\" (ar_Size aList) (aList[0]) (aList[1])");
+    assert_eq!(bool_f, "2 4 0");
+    let null_v = s(&mut g, "\"\"\nlet aList := JSONGetValue \"good.json\" \"empty\" 0\nlet sOut := sv_Construct \"%g %g\" (ar_Size aList) (aList[0])");
+    assert_eq!(null_v, "1 0");
+    let inv = s(&mut g, "\"\"\nlet aList := JSONGetValue \"good.json\" \"inv\" 1\nlet sOut := sv_Construct \"%g %g\" (ar_Size aList) (aList[0])");
+    assert_eq!(inv, "1 2");
+    let obj = s(&mut g, "\"\"\nlet aList := JSONGetValue \"good.json\" \"pos\" 0\nlet sOut := sv_Construct \"%g %g\" (ar_Size aList) (aList[0])");
+    assert_eq!(obj, "1 1");
+    let nested = s(&mut g, "\"\"\nlet aList := JSONGetValue \"good.json\" \"pos.x\" 0\nlet sOut := sv_Construct \"%g %g %g\" (ar_Size aList) (aList[0]) (aList[1])");
+    assert_eq!(nested, "2 5 1.5");
+    let miss = s(&mut g, "\"\"\nlet aList := JSONGetValue \"good.json\" \"nope\" 0\nlet sOut := sv_Construct \"%g %g\" (ar_Size aList) (aList[0])");
+    assert_eq!(miss, "1 -2");
+    // A missing file: 1-element list with negative file error code (-4) [observed: sup5
+    // json.name & sup_32_json_get_value_missing_file saw size 1 non-string element 0].
+    let none = s(&mut g, "\"\"\nlet aList := JSONGetValue \"none.json\" \"name\" 0\nlet sOut := sv_Construct \"%g|%g\" (ar_Size aList) (aList[0])");
+    assert_eq!(none, "1|-4");
 }
 
 #[test]
@@ -205,17 +219,20 @@ fn json_cache_utf8_bom_data_paths_and_showoff_cache_gating() {
     assert_eq!(n(&mut g, r#"JSONIsFileValid "data/config/SUP_UTF8.JSON""#), 1.0);
     assert_eq!(n(&mut g, r#"JSONCacheFile "Data\Config\sup_utf8.json" 1"#), 0.0);
     assert_eq!(n(&mut g, r#"JSONIsFileCached "data/config/sup_utf8.json""#), 1.0);
-    assert_eq!(s(&mut g, r#"(JSONGetValue "Data\Config\sup_utf8.json" "title" 1)[0]"#), "caf\u{e9}");
-    assert_eq!(n(&mut g, r#"(JSONGetValue "Data\Config\sup_utf8.json" "nested.items.1" 1)[0]"#), 20.0);
+    assert_eq!(n(&mut g, r#"(JSONGetValue "Data\Config\sup_utf8.json" "title" 1)[0]"#), 3.0);
+    assert_eq!(s(&mut g, r#"(JSONGetValue "Data\Config\sup_utf8.json" "title" 1)[1]"#), "caf\u{e9}");
+    assert_eq!(n(&mut g, r#"(JSONGetValue "Data\Config\sup_utf8.json" "nested.items.1" 1)[0]"#), 5.0);
+    assert_eq!(n(&mut g, r#"(JSONGetValue "Data\Config\sup_utf8.json" "nested.items.1" 1)[1]"#), 20.0);
 
     // Unified SUP JSON cache: cached writes via nvse_json are visible to JSONGetValue(iCached=1),
     // while uncached JSONGetValue(iCached=0) still reads disk.
     assert_eq!(n(&mut g, r#"JSONSetValueFloat "Data\Config\sup_utf8.json" "hp" 99 1"#), 1.0);
-    assert_eq!(n(&mut g, r#"(JSONGetValue "Data\Config\sup_utf8.json" "hp" 1)[0]"#), 99.0);
-    assert_eq!(n(&mut g, r#"ar_Size (JSONGetValue "Data\Config\sup_utf8.json" "hp" 0)"#), -1.0);
+    assert_eq!(n(&mut g, r#"(JSONGetValue "Data\Config\sup_utf8.json" "hp" 1)[0]"#), 5.0);
+    assert_eq!(n(&mut g, r#"(JSONGetValue "Data\Config\sup_utf8.json" "hp" 1)[1]"#), 99.0);
+    assert_eq!(n(&mut g, r#"(JSONGetValue "Data\Config\sup_utf8.json" "hp" 0)[0]"#), -2.0);
     // JSONCacheFileFromString feeds JSONGetValue(iCached=1) through the same cache.
     assert_eq!(n(&mut g, r#"JSONCacheFileFromString (JSONToString "Data\Config\sup_utf8.json") "mem.json""#), 0.0);
-    assert_eq!(n(&mut g, r#"(JSONGetValue "mem.json" "hp" 1)[0]"#), 99.0);
+    assert_eq!(n(&mut g, r#"(JSONGetValue "mem.json" "hp" 1)[1]"#), 99.0);
     assert_eq!(n(&mut g, r#"JSONCloseFile "mem.json" 1"#), 0.0);
     assert_eq!(n(&mut g, r#"JSONCloseFile "Data\Config\sup_utf8.json" 1"#), 0.0);
     assert_eq!(n(&mut g, r#"JSONIsFileCached "Data\Config\sup_utf8.json""#), 0.0);

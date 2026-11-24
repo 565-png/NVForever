@@ -101,25 +101,26 @@ fn form_text(g: &Game, s: &str) -> XVal {
     }
 }
 
-/// A JSON value as a script value: numbers, text, true/false as 1/0, null as 0, arrays as
-/// lists and objects as string maps [hypothesis: the article the page points to is not in
-/// the export].
-fn json_value(g: &mut Game, v: &serde_json::Value) -> XVal {
+/// Tagged list returned by `JSONGetValue`: element 0 is the type/status code (`-2`
+/// missing, `0` null, `1` object, `2` array, `3` string, `4` bool, `5` number), and
+/// ONLY scalar types (`3`/`4`/`5`) include element 1 with the value [observed: Fallout:
+/// New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855, 2026-11-24, `GSDocMitchellHouse`
+/// (`0x00103DF9`), 10 official base masters, `w4d_37_sup_json_and_excel_edges`
+/// (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679): `o=[1.0]`, `a=[2.0]`,
+/// `s=[3.0,"hi"]`, `b=[4.0,1.0]`, `f=[4.0,0.0]`, `n=[5.0,42.0]`, `z=[0.0]`,
+/// `missing=[-2.0]`; no DLL or source consulted].
+fn json_tagged_value(g: &mut Game, v: Option<&serde_json::Value>) -> XVal {
     use serde_json::Value as J;
-    match v {
-        J::Null => XVal::Num(0.0),
-        J::Bool(b) => XVal::Num(f64::from(u8::from(*b))),
-        J::Number(n) => XVal::Num(n.as_f64().unwrap_or(0.0)),
-        J::String(s) => XVal::Str(s.clone()),
-        J::Array(a) => {
-            let items = a.iter().map(|x| json_value(g, x)).collect();
-            list(g, items)
-        }
-        J::Object(o) => {
-            let entries = o.iter().map(|(k, x)| (XKey::Str(k.clone()), json_value(g, x))).collect();
-            XVal::Array(g.ext.new_array(ArrayKind::StringMap, entries))
-        }
-    }
+    let items = match v {
+        None => vec![XVal::Num(-2.0)],
+        Some(J::Null) => vec![XVal::Num(0.0)],
+        Some(J::Object(_)) => vec![XVal::Num(1.0)],
+        Some(J::Array(_)) => vec![XVal::Num(2.0)],
+        Some(J::String(s)) => vec![XVal::Num(3.0), XVal::Str(s.clone())],
+        Some(J::Bool(b)) => vec![XVal::Num(4.0), XVal::Num(f64::from(u8::from(*b)))],
+        Some(J::Number(n)) => vec![XVal::Num(5.0), XVal::Num(n.as_f64().unwrap_or(0.0))],
+    };
+    list(g, items)
 }
 
 /// The value under `key`: the key whole, else a path of keys and list indexes split at
@@ -297,34 +298,32 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // ---- JSON files under the game's folder ----
         // [documented: JSONIsFileValid's table] 1 valid, -3 … -6.
         "jsonisfilevalid" => XVal::Num(f64::from(json_file(g, &text(args, 0).unwrap_or_default()).map_or_else(|e| e, |_| 1))),
-        // `file key cached`: the key's value as an array [documented: JSONGetValue
-        // "JSONValue:array_var"]: an object or list as itself, any other value in a
-        // one-element list [hypothesis]. cached: the file read once and kept for later
-        // cached calls [hypothesis: the parameter's name]. A missing file gives a
-        // one-element list whatever the key [observed: sup5 json.name … json.missing,
-        // size 1, its element read as empty text by `%z`: ""]; a missing key in a file
-        // no array [hypothesis].
+        // `file key cached`: always returns a tagged List `[type_code]` or
+        // `[type_code, scalar_value]` (`-2` missing key, `0` null, `1` object, `2`
+        // array, `3` string, `4` bool `1.0`/`0.0`, `5` number) [documented: JSONGetValue
+        // "JSONValue:array_var"; observed: `w4d_37_sup_json_and_excel_edges`]; missing
+        // or invalid files return a 1-element list with the negative file error code
+        // (`-3..-6`) [observed: sup5 json.name … json.missing & `sup_32_json_get_value_missing_file`
+        // saw a 1-element list whose element 0 is non-string; hypothesis: negative
+        // `json_file` error code]. `cached` shares `Game::other.json.cache` [design].
         "jsongetvalue" => {
             let path = text(args, 0).unwrap_or_default();
             let key = text(args, 1).unwrap_or_default();
             let cached = num(args, 2, 0.0) != 0.0;
             let ck = crate::nvse_json::key_of(&path);
             let root = match g.other.json.cache.get(&ck).filter(|_| cached) {
-                Some(v) => Some(v.clone()),
-                None => json_file(g, &path).ok(),
+                Some(v) => Ok(v.clone()),
+                None => json_file(g, &path),
             };
-            let Some(root) = root else { return Some(Ok(list(g, vec![XVal::Str(String::new())]))) };
+            let root = match root {
+                Ok(r) => r,
+                Err(code) => return Some(Ok(list(g, vec![XVal::Num(f64::from(code))]))),
+            };
             if cached {
                 g.other.json.cache.entry(ck).or_insert_with(|| crate::nvse_json::sorted(root.clone()));
             }
-            match json_lookup(&root, &key).cloned() {
-                Some(v @ (serde_json::Value::Array(_) | serde_json::Value::Object(_))) => json_value(g, &v),
-                Some(v) => {
-                    let x = json_value(g, &v);
-                    list(g, vec![x])
-                }
-                None => zero,
-            }
+            let found = json_lookup(&root, &key).cloned();
+            json_tagged_value(g, found.as_ref())
         }
         // ---- file sizes and times, under the game's folder ----
         // [documented: GetFileSize, "relative to Fallout root folder", in bytes]; a

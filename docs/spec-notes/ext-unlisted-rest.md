@@ -163,7 +163,9 @@ never the game folder (`crate::mod_files`). Code: `crates/fnv-game/src/nvse_json
   `GSDocMitchellHouse` (`0x00103DF9`), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP
   NVSE 855 with the 10 official base masters, clean-room script probe
   `sup_31_json_get_value_array_shapes` (`JSONGetValueArray`): `3,1,2`; no DLL or source
-  consulted]. NVForever gives the array's elements, an object's pairs as a string map,
+  consulted]. (By contrast, `JSONGetValue` in `ext-sup5.md` §2 returns a tagged list
+  `[type_code]` / `[type_code, scalar_value]` as observed in `w4d_37_sup_json_and_excel_edges`.)
+  NVForever gives the array's elements, an object's pairs as a string map,
   and nothing for a scalar [hypothesis; open].
 - **The last flag of the readers and writers**: 0 is the file on disk, 1 the cached copy.
   With 0 the file is rewritten at once, indented by four spaces, and the cache keeps its

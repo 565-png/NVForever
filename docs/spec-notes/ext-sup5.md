@@ -42,7 +42,11 @@ a whole one too, text type 3 [observed: xl.read]. Sheets are numbered from 0, ro
 
 **The file** (`crate::xls`): a compound file [documented: MS-CFB, the header, the sector
 allocation table and its DIFAT sectors, the directory, the mini stream] holding a BIFF8
-workbook stream `Workbook` (`Book` for BIFF5) [documented: MS-XLS]. Read: the sheets
+workbook stream `Workbook` (`Book` for BIFF5) [documented: MS-XLS; observed: Fallout: New
+Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855, 2026-11-24, `GSDocMitchellHouse`
+(`0x00103DF9`), 10 official base masters, `w4d_37_sup_json_and_excel_edges`
+(`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679): OOXML `.xlsx` rejected with
+`-1`, confirming BIFF8 `.xls` only; no DLL or source consulted]. Read: the sheets
 (BOUNDSHEET), the shared strings (SST, with the CONTINUE rule for split characters) and
 the cells: NUMBER, RK, MULRK, LABELSST, LABEL, BOOLERR (a boolean as 1 or 0), FORMULA with
 its number, boolean or string (STRING) result. Charts and macro sheets are passed over.
@@ -63,7 +67,7 @@ with cycle detection, invalid sector shifts are rejected, and `Book::parse` retu
 | Function | NVForever |
 |---|---|
 | JSONIsFileValid `file` | 1 valid, -3 not valid JSON, -4 missing, -5 outside the game folder, -6 not `.json` [documented: the page's table]; a UTF-8 byte order mark passed over |
-| JSONGetValue `file key cached` | the key's value as an array: an object as a string map, a list as a list, any other value (number, text, true/false as 1/0, null as 0) in a one-element list; the key whole, else a path split at `.` or `/` with list indexes; no array for a missing key [hypothesis: the article the page points to is not in the export]. A missing file gives a one-element list whatever the key, its element empty text [observed: json.name … json.missing, size 1, `%z` printed it as nothing; observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855 with the 10 official base masters, clean-room script probe `sup_32_json_get_value_missing_file` (`JSONGetValue`): `1,4`; no DLL or source consulted]. `cached` shares the session JSON cache (`Game::other.json.cache`) with `JSONCacheFile` / `JSONSetValue*` / `JSONCloseFile` (`nvse_json.rs`) [design]. `Data\...` paths also resolve through NVForever's layer and VFS (`ModFiles::read_root_bytes`) [design] |
+| JSONGetValue `file key cached` | always returns a tagged `List` `[type_code]` or `[type_code, scalar_value]`: element 0 is the type/status code (`-2` missing key, `0` null, `1` object, `2` array, `3` string, `4` bool, `5` number), and ONLY scalar types (`3`/`4`/`5`) include element 1 with the value (`o=[1.0]`, `a=[2.0]`, `s=[3.0,"hi"]`, `b=[4.0,1.0]`, `f=[4.0,0.0]`, `n=[5.0,42.0]`, `z=[0.0]`, `missing=[-2.0]`) [documented: JSONGetValue "JSONValue:array_var"; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters, `w4d_37_sup_json_and_excel_edges` (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679); no DLL or source consulted]; the key whole, else a path split at `.` or `/` with list indexes [hypothesis]. A missing or invalid file gives a one-element list containing the negative file error code (`-3..-6`) [observed: sup5 json.name … json.missing, size 1, `%z` printed it as nothing; `sup_32_json_get_value_missing_file`: `1,4` confirming a 1-element list whose element 0 is non-string; hypothesis: exact negative error code]. `cached` shares the session JSON cache (`Game::other.json.cache`) with `JSONCacheFile` / `JSONSetValue*` / `JSONCloseFile` (`nvse_json.rs`) [design]. `Data\...` paths also resolve through NVForever's layer and VFS (`ModFiles::read_root_bytes`) [design] |
 
 ## 3. File sizes and times, the load-order dump
 
