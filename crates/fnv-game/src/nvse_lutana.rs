@@ -324,7 +324,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         "getrecipeinputcount" | "getrecipeoutputcount" => {
             let (Some(r), Some(item)) = (form(args, 0).and_then(|r| recipe(g, r)), form(args, 1)) else { return Some(Ok(zero)) };
             let entries = if name == "getrecipeinputcount" { &r.ingredients } else { &r.outputs };
-            XVal::Num(entries.iter().find(|e| e.0 == item).map_or(0.0, |e| f64::from(e.1 as i32)))
+            XVal::Num(entries.iter().find(|e| e.0 == item).map_or(0.0, |e| f64::from(e.1)))
         }
         // The actor value code; a recipe with no skill -1 [documented: the record's DATA].
         "getreciperequiredskill" => XVal::Num(form(args, 0).and_then(|r| recipe(g, r)).and_then(|r| r.skill).map_or(-1.0, |s| f64::from(s.0))),
@@ -361,7 +361,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // rcpe.addinput.existing; Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30,
         // probe jip_02_recipe_add_neg_count: count -1 adds the entry (1 -> 2)].
         "addrecipeinputform" | "addrecipeoutputform" => {
-            let (item, count) = (form(args, 1), num(args, 2).filter(|v| v.is_finite()).map(|v| v.trunc().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32 as u32));
+            let (item, count) = (form(args, 1), num(args, 2).filter(|v| v.is_finite()).map(|v| v.trunc().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32));
             if let (Some(item), Some(count)) = (item, count) {
                 if let Some(r) = form(args, 0).and_then(|r| recipe_mut(g, r)) {
                     let entries = if name == "addrecipeinputform" { &mut r.ingredients } else { &mut r.outputs };
@@ -396,7 +396,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, probe jip_03_recipe_set_neg_count: -5
         // stored verbatim (1 -> -5)]; an item not listed is not added [hypothesis].
         "setrecipeinputcount" | "setrecipeoutputcount" => {
-            let (item, count) = (form(args, 1), num(args, 2).filter(|v| v.is_finite()).map(|v| v.trunc().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32 as u32));
+            let (item, count) = (form(args, 1), num(args, 2).filter(|v| v.is_finite()).map(|v| v.trunc().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32));
             if let (Some(item), Some(count)) = (item, count) {
                 if let Some(r) = form(args, 0).and_then(|r| recipe_mut(g, r)) {
                     let entries = if name == "setrecipeinputcount" { &mut r.ingredients } else { &mut r.outputs };
