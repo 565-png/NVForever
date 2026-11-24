@@ -701,18 +701,22 @@ pub const FONT_FILES: [&str; 9] = [
     "textures\\fonts\\nvfont_test.fnt",
 ];
 
-/// VFS folder where mods ship extended font slot definitions (`*.txt`)
-/// [observed: MAPMO 10.6 public `Data\NVSE\Plugins\xfonts\MAPMO.txt` asset; no
-/// third-party DLL or source code consulted].
+/// VFS folder where mods ship extended font slot definitions (`*.txt`) for JIP LN NVSE
+/// [documented: JIP LN NVSE Plugin (`https://www.nexusmods.com/newvegas/mods/58277`,
+/// 50.80+, current 57.30) Nexus article "Installing extra UI fonts using JIP LN NVSE";
+/// observed: MAPMO v6.4 (`https://www.nexusmods.com/newvegas/mods/74365`) public
+/// `Data\NVSE\Plugins\xfonts\MAPMO.txt` asset; no third-party DLL or source code consulted].
 pub const XFONTS_DIR: &str = "nvse\\plugins\\xfonts\\";
 
 /// Parse `<slot>=<path>` entries from an `xfonts` text file into `out`.
 ///
 /// Only extended slots `10..=255` are accepted so vanilla INI slots `1..=9` (and the
 /// unloaded vanilla font `9` rule) are never overwritten by mod `xfonts` files
-/// [observed: MAPMO 10.6 `MAPMO.txt` maps slots `21` and `22` to
-/// `textures\fonts\mapmo_hud_caps_font.fnt` and `textures\fonts\mapmo_hud_caps_font2.fnt`;
-/// design: comment/quote/slash/`data\` normalization and `10..=255` guard].
+/// [documented: JIP LN NVSE 50.80+ `xfonts` format (`10..=31` in the 50.80 article,
+/// `10..=89` on GECK Wiki `SetFontFile`); observed: MAPMO v6.4 `MAPMO.txt` maps slots
+/// `21` and `22` to `textures\fonts\mapmo_hud_caps_font.fnt` and
+/// `textures\fonts\mapmo_hud_caps_font2.fnt`; design: comment/quote/slash/`data\`
+/// normalization and `10..=255` upper slot guard].
 pub fn parse_xfonts(text: &str, out: &mut BTreeMap<u8, String>) {
     for raw in text.lines() {
         let line = raw.trim_start_matches('\u{feff}').trim();
