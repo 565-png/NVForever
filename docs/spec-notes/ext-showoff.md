@@ -54,19 +54,23 @@ ran.
   (such as canceling an active reload and replacing it with the jam animation)
   [documented: ForceWeaponJamAnim].
 - Live probes `[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin
-  184, 2026-11-23, GSDocMitchellHouse (0x00103DF9), 10 official base masters, clean-room
-  script probes w1_3632_onfireweapon_and_forcejam and so_34_force_weapon_jam_revolver in
-  #3679; no DLL or source consulted]` confirmed:
-  - Drawn 10mm pistol (`Weap10mmPistol` `0x0000434F`, `jam_time = 1.4`) returns **`1`**;
-    immediately afterward, `GetAnimAction` reads **`9`** (not `13`), `IsAnimPlayingEx 4`
-    remains **`0`**, and calling `ForceWeaponJamAnim` again while already jamming returns
-    **`1`** (`w1_3632_onfireweapon_and_forcejam`: `Player.ForceWeaponJamAnim` with
-    holstered/drawn 10mm, Baseball Bat `0x0000421C`, and unarmed fists; `ForceJamAnim` is
-    the wiki-documented alias [documented: GECK wiki ForceWeaponJamAnim]).
+  184, 2026-11-23/24, GSDocMitchellHouse (0x00103DF9), 10 official base masters, clean-room
+  script probes w1_3632_onfireweapon_and_forcejam, so_34_force_weapon_jam_revolver, and
+  w4d_08_forcejam_melee_god_nonactor (tools/capture/nvse/catalogs/wave4d_extenders.json,
+  #3679); no DLL or source consulted]` confirmed:
+  - Drawn 10mm pistol (`Weap10mmPistol` `0x0000434F`, `jam_time = 1.4`) returns **`1`**
+    both normally and under `ToggleGodMode` (`w4d_08_forcejam_melee_god_nonactor`:
+    `tgm10mm(ret=1,act=9)`); immediately afterward, `GetAnimAction` reads **`9`** (not
+    `13`), `IsAnimPlayingEx 4` remains **`0`**, and calling `ForceWeaponJamAnim` again
+    while already jamming returns **`1`** (`w1_3632_onfireweapon_and_forcejam`:
+    `Player.ForceWeaponJamAnim` with holstered/drawn 10mm, Baseball Bat `0x0000421C`, and
+    unarmed fists; `ForceJamAnim` is the wiki-documented alias [documented: GECK wiki
+    ForceWeaponJamAnim]).
   - Drawn `.357 Magnum Revolver` (`WeapNV357Revolver` `0x0008F216`, `jam_time = 0.0`,
     `so_34_force_weapon_jam_revolver`: `AddItem` + `EquipItem` + draw `.357` vs `10mm`),
-    holstered 10mm pistol, drawn Baseball Bat (melee), and drawn Fists (unarmed) return
-    **`0`**.
+    holstered 10mm pistol, drawn Baseball Bat (melee, `w4d_08_forcejam_melee_god_nonactor`:
+    `melee(ret=0,act=0)`), drawn Fists (unarmed), and non-actor static references (door
+    `0x103E61`, `w4d_08_forcejam_melee_god_nonactor`: `door=0`) return **`0`**.
 - NVForever checks that the actor is alive, has its weapon drawn, and has an equipped gun
   (`DNAM/animation_type` in `3..=9`) with finite `DNAM/jam_time > 0` (`GetWeaponAnimJamTime`;
   honoring session overrides and `TempCloneForm` clones) [observed: FalloutNV.esm WEAP

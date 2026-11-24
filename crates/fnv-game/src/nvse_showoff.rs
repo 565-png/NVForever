@@ -427,14 +427,16 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         // returns 0) and GetWeaponAnimJamTime; observed: showoff1, 10mm pistol away = 0
         // and drawn = 1; observed: FalloutNV.esm WEAP DNAM Weap10mmPistol jam_time = 1.4
         // vs WeapNV357Revolver jam_time = 0.0; observed: Fallout: New Vegas 1.4.0.525,
-        // xNVSE 6.4.9, ShowOffNVSE Plugin 184, 2026-11-23, GSDocMitchellHouse
+        // xNVSE 6.4.9, ShowOffNVSE Plugin 184, 2026-11-23/24, GSDocMitchellHouse
         // (0x00103DF9), 10 official base masters, probes `w1_3632_onfireweapon_and_forcejam`
         // (`Player.ForceWeaponJamAnim` on Player 0x14: holstered 10mm `0x0000434F` = 0,
         // drawn 10mm = 1 with `GetAnimAction = 9`, `IsAnimPlayingEx 4 = 0`, repeat call
-        // while jamming = 1, drawn Baseball Bat `0x0000421C` = 0, drawn Fists = 0) and
+        // while jamming = 1, drawn Baseball Bat `0x0000421C` = 0, drawn Fists = 0),
         // `so_34_force_weapon_jam_revolver` (`AddItem`/`EquipItem` + draw `.357`
-        // `0x0008F216` -> 0 vs 10mm `0x0000434F` -> 1) in #3679; hypothesis:
-        // animation_type 3..=9 + DNAM/jam_time > 0 as the rules-side jam-animation check].
+        // `0x0008F216` -> 0 vs 10mm `0x0000434F` -> 1), and
+        // `w4d_08_forcejam_melee_god_nonactor` (`door=0|melee(ret=0,act=0)|tgm10mm(ret=1,act=9)`)
+        // in #3679; hypothesis: animation_type 3..=9 + DNAM/jam_time > 0 as the
+        // rules-side jam-animation check].
         // Queues the actor for `nvf_play::combat::fire` to trigger `Cycle::jam` and
         // `WeaponAnim::jams`.
         "forceweaponjamanim" | "forcejamanim" => {
