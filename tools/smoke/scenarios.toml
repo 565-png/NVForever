@@ -20512,6 +20512,22 @@ forbid = [
 ]
 
 [[scenario]]
+name = "primm-people-set-off"
+source = "issue #3670 (player report R-D3FBH2H4): outside Primm at dusk a sandboxing NCR trooper moved at walking pace on his idle (a slide) after a load; a person who set off while a fade into a standing clip (the idle, a turn) ran waited for its end. People set off at once, as creatures have since #1073"
+note = "by the report's place at 19:00 with every package on; before the fix PrimmNCRTrooper1 logged 'moves with no movement clip ... at 53 units/s, Idle playing' and four more people did, 95 actor frames in 90 s [observed 2026-11-23]"
+areas = ["animation", "ai"]
+paths = ["engine/nvforever/src/locomotion.rs", "crates/fnv-actor/src/locomotion.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOD = "1" }
+args = ["--play", "--world", "WastelandNV", "--pos=-60831,-48373,5804", "--heading", "0", "--hour", "19", "--no-voice", "--no-messages", "--npc-packages", "all"]
+run_seconds = 90
+expect = [
+  { re = 'actor moves without a clip: (?P<n>\d+) actor frames moving with no movement clip showing', range = [0, 0], label = "nobody moves on a standing clip" },
+]
+forbid = [
+  { re = 'actor moves with no movement clip: .*, Idle playing', label = "a person sliding on the idle" },
+]
+
+[[scenario]]
 name = "nellis-loyal-stays-reachable"
 source = "issue #2566: with Volare! failed (a Boomer elder killed), Loyal was put in NellisHangar1b, behind the B-29 hangar doors 001093DB/001093DC that stay disabled until the B-29 is up, and the quest marker looped between the hangar door and its inside"
 note = "SetStage VMS15 (000FF5DF) 116 at 8 s fails Volare!, which GetQuestCompleted reads as 1: Loyal's first package, NellisLoyalB29SandboxAIPackage (In cell NellisHangar1b), is valid and every other one of his is not. No path goes through a disabled load door (fnv_nav::NavGraph::disabled_doors, fnv_ai::Ai::apply_door_presence), so he sets it aside and stays in NellisHangar2, where the player starts; before the fix his walk went out through 00105488 and in through the disabled 001093DB"
