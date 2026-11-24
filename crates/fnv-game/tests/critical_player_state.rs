@@ -48,13 +48,20 @@ fn canonical_critical_damage_preserves_readback_and_reaches_the_combat_view() {
     let mut g = game(&f);
     assert_eq!(source(&mut g, "GetWeaponCritDamage OwnedCriticalWeapon"), XVal::Num(11.0));
     assert_eq!(g.weapon_critical_damage_override(WEAPON), None);
-    for value in [0.0, 37.0, 65535.0, 12.75, -1.0, 65536.0] {
+    for (value, expected) in [(0.0, 0.0), (37.0, 37.0), (65535.0, 65535.0), (12.75, 12.0), (-5.0, 65531.0), (-1.0, 65535.0), (65536.0, 0.0)] {
         query(&mut g, &format!("SetWeaponCritDamage {value} OwnedCriticalWeapon"));
-        assert_eq!(source(&mut g, "GetWeaponCritDamage OwnedCriticalWeapon"), XVal::Num(value), "accepted canonical source conversion stays unchanged");
-        assert_eq!(g.weapon_critical_damage_override(WEAPON), Some(value as u32));
+        assert_eq!(source(&mut g, "GetWeaponCritDamage OwnedCriticalWeapon"), XVal::Num(expected), "SetWeaponCritDamage {value} wraps into u16");
+        assert_eq!(g.weapon_critical_damage_override(WEAPON), Some(expected as u32));
         assert_eq!(source(&mut g, "GetWeaponCritDamage OwnedOtherWeapon"), XVal::Num(7.0));
         assert_eq!(g.weapon_critical_damage_override(OTHER), None);
     }
+    // TempCloneForm inherits live modified critical damage [observed: 2026-11-23,
+    // GSDocMitchellHouse (0x00103DF9), `core_16_set_weapon_crit_damage_edge`].
+    query(&mut g, "SetWeaponCritDamage 77 OwnedCriticalWeapon");
+    assert_eq!(
+        query(&mut g, "ref rCl\nlet rCl := TempCloneForm OwnedCriticalWeapon 0\nSetFunctionValue (GetWeaponCritDamage rCl)"),
+        XVal::Num(77.0),
+    );
     // Characterize the accepted generic setter's explicit empty argument fallback.
     // This remains unqualified for native parity and is deliberately not tightened.
     let own = "ref empty\nBegin Function {}\nSetWeaponCritDamage 19 empty\nEnd";
