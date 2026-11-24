@@ -178,8 +178,14 @@ immediately terminating it [observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103
 Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters, clean-room
 script probe `core_20_set_combat_disabled_stops_combat` (`StartCombat` -> `IsInCombat 1`
 -> `SetCombatDisabled 1` -> `GetCombatDisabled 1`, `IsInCombat 1`: `1,1,1`); no DLL or
-source consulted]. [hypothesis] While enabled it suppresses new combat entry and
-ally/provocation alarms (`awareness.rs`, `combat_group.rs`, `provocation.rs`).
+source consulted]. Calling `SetCombatDisabled 1` on a non-combat actor suppresses new
+combat entry via `StartCombat` (`IsInCombat` remains `0` same-tick and on subsequent
+ticks) [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24,
+`GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters,
+`w4d_07_setcombatdisabled_new_combat` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+#3679): `c0=0,cd(0->1->1),sameTick=0,nextTick=0`; no DLL or source consulted].
+[hypothesis] While enabled it also suppresses ally/provocation alarms (`awareness.rs`,
+`combat_group.rs`, `provocation.rs`).
 
 ## 10. Live `SetActorBaseFlagsLow` / `SetActorBaseFlagsHigh` consumers (`actor_values.rs`)
 
