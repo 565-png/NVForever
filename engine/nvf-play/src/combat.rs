@@ -6055,7 +6055,9 @@ fn fly(
             let d = damage::blast_hit(&c.rules, &c.tuning, raw, dt_v, dr, &ap, &tp);
             log_blast_perks(cause, target, &ap, &tp, &d);
             let dealt = d.dealt;
-            let info = blast_hit_info(cause, expl_ref, f64::from(x.damage));
+            // Wave 4D w4d_13_explosion_falloff_outdoor [observed]: GetHitBaseWeaponDamage
+            // includes explosion distance falloff (before difficulty scaling).
+            let info = blast_hit_info(cause, expl_ref, f64::from(raw));
             // The blast's object effect on those it catches (hit-effects.md §1).
             let items: Vec<FormId> = x.enchantment.into_iter().collect();
             // Its limb damage, on the torso and legs (crippled-limbs.md §5): from the damage

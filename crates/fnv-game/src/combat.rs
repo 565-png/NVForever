@@ -158,12 +158,16 @@ pub struct HitInfo {
     /// Explosion hit (`GetHitExtendedFlag 8`; `GetHit3DData` reports all zeros).
     pub explosion: bool,
     /// Weapon base damage after attacker skill and weapon condition, plus critical hit
-    /// damage on critical hits, or `EXPL` base damage on explosion hits
-    /// (`GetHitBaseWeaponDamage`, jip-hit-info.md §1, §6) [observed: 2026-11-23,
-    /// GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
-    /// JIP LN 57.30 (10 official base masters), #3678 / PR #3679 probe
-    /// `w1_3606_hit_3d_dir_and_base_damage`: 10mm non-crit `22`, `Player.SetAV CritChance 100`
-    /// crit `44`, `SetCritDam 200 r10mm` crit `222`, `GrenadeFragExplosion` `125`].
+    /// damage on critical hits, or distance-attenuated `EXPL` damage (before difficulty
+    /// scaling) on explosion hits (`GetHitBaseWeaponDamage`, jip-hit-info.md §1, §6)
+    /// [observed: 2026-11-23 & 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`) &
+    /// Goodsprings (`0x000DAEBB`), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN
+    /// 57.30 (10 official base masters), #3678 / PR #3679 probes
+    /// `w1_3606_hit_3d_dir_and_base_damage` (10mm non-crit `22`, crit `44`,
+    /// `SetCritDam 200` crit `222`, `GrenadeFragExplosion` at d=0 `125`) and
+    /// `w4d_13_explosion_falloff_outdoor` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+    /// #3679): `MineFragExplosion` base 100 at d=0 `bd=100.00, hd=150.00`, at d=160.7
+    /// `bd=82.03, hd=123.04`; no DLL or source consulted].
     pub base_weapon_damage: f64,
     /// Fatigue damage dealt by the hit (`GetHitFatigueDamage`, jip-hit-info.md §1).
     pub fatigue_damage: f64,

@@ -390,3 +390,51 @@ fn projectile_and_melee_hits_populate_jip_hit_projectile_base_damage_and_3d_data
     assert_eq!(target_get(&mut a, "Ar_Size (struck.GetHit3DData 0)"), XVal::Num(3.0));
     assert_eq!(target_get(&mut a, "Ar_Size (struck.GetHit3DData 2)"), XVal::Num(6.0));
 }
+
+#[test]
+fn explosion_falloff_reaches_get_hit_base_weapon_damage() {
+    // Wave 4D w4d_13_explosion_falloff_outdoor [observed]: GetHitBaseWeaponDamage on
+    // explosion hits includes distance attenuation (before difficulty scaling).
+    let mut a = app();
+    let expl_id = FormId(0x0000_0A99);
+    a.world_mut().resource_mut::<Combat>().forms.explosions.insert(
+        expl_id,
+        fnv_combat::data::ExplosionStats {
+            edid: Some("TestFalloffExpl".into()),
+            damage: 100.0,
+            radius: 400.0,
+            ..Default::default()
+        },
+    );
+    let target_get = |a: &mut App, expr: &str| {
+        query(a, &format!("ref struck\nlet struck := StringToRef \"{:08X}\"\nSetFunctionValue ({expr})", TARGET.0))
+    };
+
+    // 1. Point-blank blast at target center (0, 80, 50) -> full 100.0 base damage.
+    a.world_mut().resource_mut::<Combat>().boom.push((expl_id, [0.0, 80.0, 50.0], None, Some([0.0, 0.0, 1.0])));
+    let close_hits = tick(&mut a);
+    assert_eq!(close_hits.len(), 1, "point-blank blast must hit target");
+    assert_eq!(target_get(&mut a, "struck.GetHitExtendedFlag 8"), XVal::Num(1.0));
+    let XVal::Num(bd_close) = target_get(&mut a, "struck.GetHitBaseWeaponDamage") else {
+        panic!("close base damage must be numeric");
+    };
+    let XVal::Num(hd_close) = target_get(&mut a, "struck.GetHitHealthDamage") else {
+        panic!("close health damage must be numeric");
+    };
+    assert!((bd_close - 100.0).abs() < 1e-3, "point-blank blast GetHitBaseWeaponDamage must be 100.0, got {bd_close}");
+    assert!((hd_close - bd_close).abs() < 1e-3, "unarmored normal-difficulty health damage must match base ({hd_close} vs {bd_close})");
+
+    // 2. Distant blast at (0, 280, 50) (d ~ 200u within radius 400u) -> attenuated base damage (< 100.0).
+    a.world_mut().resource_mut::<Combat>().boom.push((expl_id, [0.0, 280.0, 50.0], None, Some([0.0, 0.0, 1.0])));
+    let far_hits = tick(&mut a);
+    assert_eq!(far_hits.len(), 1, "distant blast within radius must hit target");
+    assert_eq!(target_get(&mut a, "struck.GetHitExtendedFlag 8"), XVal::Num(1.0));
+    let XVal::Num(bd_far) = target_get(&mut a, "struck.GetHitBaseWeaponDamage") else {
+        panic!("distant base damage must be numeric");
+    };
+    let XVal::Num(hd_far) = target_get(&mut a, "struck.GetHitHealthDamage") else {
+        panic!("distant health damage must be numeric");
+    };
+    assert!(bd_far > 0.0 && bd_far < 99.0, "distant blast GetHitBaseWeaponDamage must include distance falloff (< 100), got {bd_far}");
+    assert!((hd_far - bd_far).abs() < 1e-3, "distant blast health damage must scale from attenuated base ({hd_far} vs {bd_far})");
+}

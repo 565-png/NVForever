@@ -121,12 +121,15 @@ record, which fnv-esm decodes; SetWeaponOnHitSetting changes it for the session.
   weapon hits (weapon damage after attacker skill and weapon condition, plus critical hit
   damage on critical hits — `22` non-crit, `44` = `22 + 22` crit with
   `Player.SetAV CritChance 100`, `222` = `22 + 200` crit after `SetCritDam 200 r10mm`) and
-  the `EXPL` record's base damage (`125.0` on `GrenadeFragExplosion`) on explosion hits
-  `[observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas 1.4.0.525 +
-  xNVSE 6.4.9 + JIP LN 57.30, 10 official base masters, #3678 / PR #3679 probe
-  w1_3606_hit_3d_dir_and_base_damage; no DLL or source consulted]`. `[hypothesis: whether
-  distant explosion falloff lowers GetHitBaseWeaponDamage below EXPL base damage has not
-  been probed yet; NVForever reports the EXPL base damage.]`
+  the distance-attenuated explosion blast damage before armour/difficulty scaling (`125.0`
+  at `d=0` on `GrenadeFragExplosion`; on `MineFragExplosion` base `100`, `100.00` at
+  `d=0.0` with `hd=150.00` and `82.03` at `d=160.7` with `hd=123.04`, exact `1.5x`
+  difficulty scaling) on explosion hits `[observed: 2026-11-23 & 2026-11-24,
+  GSDocMitchellHouse (0x00103DF9) & Goodsprings (0x000DAEBB), Fallout: New Vegas
+  1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 10 official base masters, #3678 / PR #3679
+  probes w1_3606_hit_3d_dir_and_base_damage and w4d_13_explosion_falloff_outdoor
+  (tools/capture/nvse/catalogs/wave4d_extenders.json): d0(d=0.0,bd=100.00,hd=150.00,fl8=1)
+  | d160.7(d=160.7,bd=82.03,hd=123.04,fl8=1); no DLL or source consulted]`.
 - `GetHitFatigueDamage`: returns fatigue damage dealt by the hit (from ammo `Fatigue Mod`
   effects or scripted `FakeHitEx` fatigue damage), or `0` when none.
 - `GetHit3DData`: type `0` returns `[x, y, z]` impact position, type `1` returns the unit
