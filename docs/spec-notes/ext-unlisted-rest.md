@@ -114,9 +114,20 @@ probe rows for the other matrix ones did not compile, in either version (a fault
 probe script). NVForever hands each `_OLD` command to the current one [hypothesis: the same
 for the rows not compared].
 
-IsJumping_BROKEN read 1 for the standing player [observed: rest1.old.isjumping], while the
-current IsJumping did not compile called on a reference. NVForever answers 1 [hypothesis:
-always, as the name says it is broken].
+`IsJumping_BROKEN` read `1` in the earlier `rest1.old.isjumping` run, while bare `IsJumping`
+does not compile (`Unquoted argument IsJumping`). Follow-up Wave 4C clean-room read-only
+console probes resolved its live predicate [observed: Fallout: New Vegas 1.4.0.525 +
+xNVSE 6.4.9 + JIP LN 57.30 + ShowOffNVSE 184, 2026-11-24, `GSDocMitchellHouse`
+(`0x00103DF9`) and `Goodsprings` (`0x000DAEBB`), 10 official base masters,
+`tools/capture/nvse/catalogs/wave4c_extenders.json` (#3679), no DLL or source consulted]:
+- `w4c_a01_isjumping_indoor`: `gnd(j=0,doc=0,air=0,z=7360.3)|mid(j=0,air=0,z=7360.3)|post(j=0,air=0,z=7360.3)`
+  — returns `0` for grounded `Player` and Doc Mitchell indoors.
+- `w4c_a13_isjumping_deep`: `in(gnd=0,fallJ=1,fallA=1,post=0)|out(cell=000DAEBB,gnd=0,gndA=0,jmpFallJ=1,jmpFallA=1,post=0)`
+  — returns `0` when grounded indoors and outdoors, flips to `1` while airborne/falling
+  (even via `SetPos Z + 120` without pressing Jump, matching `IsInAir`), and returns `0`
+  after landing.
+- `w4c_a01b_isjumping_bare`: `COMPILE_FAIL` (bare `IsJumping` is unregistered).
+NVForever delegates `IsJumping_BROKEN` to `IsInAir`.
 
 ## 5. Pure getters (batch 1)
 

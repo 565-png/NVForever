@@ -33,6 +33,10 @@ const NPC_REF: u32 = 0x310;
 const WEAP_PISTOL: u32 = 0x840;
 const WEAP_PISTOL_DONOR: u32 = 0x841;
 const WEAP_RIFLE: u32 = 0x842;
+const WEAP_LASER_PISTOL: u32 = 0x843;
+const WEAP_PLASMA_RIFLE: u32 = 0x844;
+const WEAP_FLAMER: u32 = 0x845;
+const WEAP_GRENADE: u32 = 0x846;
 const ARMO_VEST: u32 = 0x850;
 const ALCH_STIM: u32 = 0x860;
 const FLST_REPAIR: u32 = 0x870;
@@ -140,6 +144,10 @@ fn plugin_bytes() -> Vec<u8> {
         weap(WEAP_PISTOL, "TestPistol", 3, 0.5, 6, 50, Some(FLST_REPAIR)),
         weap(WEAP_PISTOL_DONOR, "TestPistolDonor", 3, 0.5, 4, 25, Some(FLST_REPAIR)),
         weap(WEAP_RIFLE, "TestRifle", 5, 0.25, 6, 50, None),
+        weap(WEAP_LASER_PISTOL, "TestLaserPistol", 4, 0.5, 6, 50, None),
+        weap(WEAP_PLASMA_RIFLE, "TestPlasmaRifle", 6, 0.25, 6, 50, None),
+        weap(WEAP_FLAMER, "TestFlamer", 8, 0.25, 6, 50, None),
+        weap(WEAP_GRENADE, "TestGrenade", 10, 0.5, 6, 50, None),
     ]
     .concat();
     let armors = armo(ARMO_VEST, "TestArmor");
@@ -540,14 +548,22 @@ fn get_calculated_actor_spread_covers_weapon_stance_limbs_perks_and_wobble() {
     let after_str_perk = num(&mut g, "player.GetCalculatedActorSpread");
     assert!((after_str_perk - 0.425).abs() < 1e-6, "after str-req perk = {after_str_perk}");
 
-    // Crippled arms on 1H pistol: left arm alone adds 0, right arm adds 0.2, both add 0.4.
+    // Crippled arms on 1H pistol: left arm alone adds 0, right arm adds 0.2 * skill_mult,
+    // both arms add 0.4 * skill_mult (2x right-arm delta) [observed: w4c_a06b_spread_settled].
     q(&mut g, "player.SetActorValue Strength 6\nplayer.SetActorValue Guns 35\nplayer.CrippleLimb 2");
     assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.225).abs() < 1e-6, "1H ignores left arm alone");
-    q(&mut g, "player.CrippleLimb 3");
+    q(&mut g, "player.RestoreActorValue LeftAttackCondition 100\nplayer.CrippleLimb 3");
+    assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.375).abs() < 1e-6, "1H right arm crippled adds 0.2 * 0.75");
+    q(&mut g, "player.CrippleLimb 2");
     // Both arms crippled on 1H: 0.75 * (0.2 + 0.1 + 0.4) = 0.525.
     assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.525).abs() < 1e-6, "1H both arms crippled");
+    // SetNoGunWobble 1 does NOT zero GetCalculatedActorSpread on 1H [observed: w4c_a06b_spread_settled].
+    q(&mut g, "player.SetNoGunWobble 1");
+    assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.525).abs() < 1e-6, "SetNoGunWobble 1 preserves 1H spread");
+    q(&mut g, "player.SetNoGunWobble 0");
 
-    // 2H rifle with both arms crippled adds 0.6: 0.75 * (0.2 + 0.1 + 0.6) = 0.675.
+    // 2H rifle with both arms crippled uses fCrippledArms2HSpreadPenalty (0.6):
+    // 0.75 * (0.2 + 0.1 + 0.6) = 0.675 [observed: w4d_09_spread_all_anim_types].
     q(&mut g, "player.AddItem TestRifle 1\nplayer.EquipItem TestRifle");
     assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.675).abs() < 1e-6, "2H both arms crippled");
 
@@ -555,9 +571,54 @@ fn get_calculated_actor_spread_covers_weapon_stance_limbs_perks_and_wobble() {
     q(&mut g, "player.AddPerk TestSpreadPerk");
     assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.3375).abs() < 1e-6, "spread perk halves result");
 
-    // SetNoGunWobble zeroes actor spread.
+    // SetNoGunWobble 1 does NOT zero GetCalculatedActorSpread on 2H either [observed: w4c_a06b_spread_settled].
     q(&mut g, "player.SetNoGunWobble 1");
-    assert_eq!(num(&mut g, "player.GetCalculatedActorSpread"), 0.0);
+    assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.3375).abs() < 1e-6, "SetNoGunWobble 1 preserves 2H spread");
+}
+
+#[test]
+fn get_calculated_actor_spread_crippled_arms_across_anim_types() {
+    // [observed: w4d_09_spread_all_anim_types (`wave4d_extenders.json`, #3802 / PR #3803)]:
+    // - 1H guns (anim 3, 4): right arm +0.2, left arm alone 0, both arms +0.4.
+    // - 2H ranged (anim 5, 6, 8): either single arm +0.4, both arms +0.6.
+    // - Thrown (anim 10): 0 for right, left, and both arms.
+    let f = fixture();
+    let mut g = game(&f);
+    q(&mut g, "player.SetActorValue Strength 6\nplayer.SetActorValue Guns 35");
+    // skill_mult = 0.75, base unaimed + standing = 0.3 -> baseline 0.225.
+    let cases = [
+        ("TestPistol", 0.375, 0.225, 0.525),      // anim 3 (1H): r=+0.2, l=0, b=+0.4
+        ("TestLaserPistol", 0.375, 0.225, 0.525), // anim 4 (1H): r=+0.2, l=0, b=+0.4
+        ("TestRifle", 0.525, 0.525, 0.675),       // anim 5 (2H): r=+0.4, l=+0.4, b=+0.6
+        ("TestPlasmaRifle", 0.525, 0.525, 0.675), // anim 6 (2H): r=+0.4, l=+0.4, b=+0.6
+        ("TestFlamer", 0.525, 0.525, 0.675),      // anim 8 (2H): r=+0.4, l=+0.4, b=+0.6
+        ("TestGrenade", 0.225, 0.225, 0.225),     // anim 10 (thrown): r=0, l=0, b=0
+    ];
+    for (weap_name, want_r, want_l, want_b) in cases {
+        q(
+            &mut g,
+            &format!(
+                "player.RestoreActorValue LeftAttackCondition 100\n\
+                 player.RestoreActorValue RightAttackCondition 100\n\
+                 player.AddItem {weap_name} 1\n\
+                 player.EquipItem {weap_name}"
+            ),
+        );
+        let base = num(&mut g, "player.GetCalculatedActorSpread");
+        assert!((base - 0.225).abs() < 1e-6, "{weap_name} baseline = {base}");
+
+        q(&mut g, "player.CrippleLimb 3"); // right arm
+        let r = num(&mut g, "player.GetCalculatedActorSpread");
+        assert!((r - want_r).abs() < 1e-6, "{weap_name} right arm = {r}, want {want_r}");
+
+        q(&mut g, "player.RestoreActorValue RightAttackCondition 100\nplayer.CrippleLimb 2"); // left arm only
+        let l = num(&mut g, "player.GetCalculatedActorSpread");
+        assert!((l - want_l).abs() < 1e-6, "{weap_name} left arm = {l}, want {want_l}");
+
+        q(&mut g, "player.CrippleLimb 3"); // both arms
+        let b = num(&mut g, "player.GetCalculatedActorSpread");
+        assert!((b - want_b).abs() < 1e-6, "{weap_name} both arms = {b}, want {want_b}");
+    }
 }
 
 #[test]
