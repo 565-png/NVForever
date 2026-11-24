@@ -737,14 +737,16 @@ fn big_numbers_in_g_are_scientific() {
 
 #[test]
 fn eval_truthiness_for_arrays_and_strings() {
-    // [observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas
-    // 1.4.0.525, xNVSE 6.4.9 with the 10 official base masters, probes
-    // `core_05_eval_empty_array_and_string_truth` (1,0,1,1) and
+    // [observed: 2026-11-23 & 2026-11-24, GSDocMitchellHouse (0x00103DF9), Fallout: New
+    // Vegas 1.4.0.525, xNVSE 6.4.9 with the 10 official base masters, probes
+    // `core_05_eval_empty_array_and_string_truth` (1,0,1,1),
     // `core_24_eval_string_var` / `#3679` `core_24_string_var_destruct_zero`
     // (eval s: 1->0 across sv_Destruct, eval sEmp=1, eval (!sEmp)=0,
     // eval (sEmp && 5)=1, eval a1=1, eval a2=1, eval ar_Null=0, eval (!a1)=0,
-    // eval (!aNull)=1)]: initialized empty arrays and initialized empty string_vars
-    // evaluate truthy (1); ar_Null and uninitialized or sv_Destruct-ed string_vars
+    // eval (!aNull)=1), and `w4d_03_eval_empty_str_lit` (bare `""` -> 0, `"abc"` -> 1,
+    // allocated empty `string_var` from `""` or `sv_Construct "%z" sEmp` -> 1)]:
+    // initialized empty arrays and allocated string_vars (even empty) evaluate truthy (1);
+    // ar_Null, uninitialized or sv_Destruct-ed string_vars, and bare `""` literals
     // evaluate 0. Standalone `(eval ...)` coerces arrays (including array ID >= 2)
     // and strings to 1/0 while preserving numeric passthrough (`eval 5 == 5`, #2275
     // [design]).
@@ -752,17 +754,24 @@ fn eval_truthiness_for_arrays_and_strings() {
         "array_var aEmp\narray_var aTwo\narray_var aNul\nstring_var sUninit\nstring_var sEmp\nstring_var sNon\n\
          int bAE\nint bAN\nint bSU\nint bSE\nint bSN\nint bBefore\nint bAfter\nint bNotEmp\nint bNotUninit\nint bAnd\n\
          int bArrTwo\nint bArrNull\nint bNum\nint bEvalEmp\nint bNotArr\nint bNotArrNull\nint bIfEmpAnd\n\
+         string_var sConEmp\nint bLitEmpty\nint bLitNon\nint bEvalLitEmpty\nint bEvalLitNon\nint bConEmp\n\
          begin GameMode\n\
          let aEmp := ar_Construct \"array\"\n\
          let aTwo := ar_Construct \"array\"\n\
          let aNul := ar_Null\n\
          let sEmp := \"\"\n\
          let sNon := \"x\"\n\
+         let sConEmp := sv_Construct \"%z\" sEmp\n\
          if eval aEmp\n  let bAE := 1\nendif\n\
          if eval aNul\n  let bAN := 1\nendif\n\
          if eval sUninit\n  let bSU := 1\nendif\n\
          if eval sEmp\n  let bSE := 1\nendif\n\
          if eval sNon\n  let bSN := 1\nendif\n\
+         if eval \"\"\n  let bLitEmpty := 1\nendif\n\
+         if eval \"abc\"\n  let bLitNon := 1\nendif\n\
+         let bEvalLitEmpty := eval \"\"\n\
+         let bEvalLitNon := eval \"abc\"\n\
+         if eval sConEmp\n  let bConEmp := 1\nendif\n\
          let bBefore := eval sNon\n\
          sv_Destruct sNon\n\
          let bAfter := eval sNon\n\
@@ -796,6 +805,11 @@ fn eval_truthiness_for_arrays_and_strings() {
     assert_eq!(get(21), Value::Num(0.0), "eval (!aTwo) is 0");
     assert_eq!(get(22), Value::Num(1.0), "eval (!aNul) is 1");
     assert_eq!(get(23), Value::Num(1.0), "if eval (sEmp && 5) is truthy");
+    assert_eq!(get(25), Value::Num(0.0), "if eval \"\" bare empty string literal is falsy (w4d_03)");
+    assert_eq!(get(26), Value::Num(1.0), "if eval \"abc\" bare non-empty string literal is truthy (w4d_03)");
+    assert_eq!(get(27), Value::Num(0.0), "eval \"\" bare empty string literal coerces to 0 (w4d_03)");
+    assert_eq!(get(28), Value::Num(1.0), "eval \"abc\" bare non-empty string literal coerces to 1 (w4d_03)");
+    assert_eq!(get(29), Value::Num(1.0), "if eval sConEmp (sv_Construct empty string_var) is truthy (w4d_03)");
 }
 
 #[test]

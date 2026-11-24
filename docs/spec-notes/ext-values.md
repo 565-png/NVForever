@@ -88,9 +88,15 @@ of an array; `#` of an empty string.
   clean-room script probes `core_05_eval_empty_array_and_string_truth` (`1,0,1,1`) and
   `core_24_eval_string_var` / `#3679` `core_24_string_var_destruct_zero`
   (`eval=1->0,len=5->-1`, `sEmp`: `b3=1,not=0,and5=1`, `a1=1,a2=1,null=0`; no DLL or
-  source consulted)]. NVForever extends this initialised-empty-array /
-  initialised-empty-string truthiness rule to `while`, `||`, uninitialised `string_var`,
-  and bare `""` string literals/temporaries [hypothesis]. For numeric inputs,
+  source consulted)]. By contrast, a bare empty string literal `if eval ""` evaluates
+  `0` (false) and a bare non-empty string literal `if eval "abc"` evaluates `1` (true),
+  whereas any allocated `string_var` (both `s0 = ""` and `let sc0 := sv_Construct "%z" s0`)
+  evaluates `1` because its string ID is non-zero [observed: Fallout: New Vegas 1.4.0.525
+  + xNVSE 6.4.9, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base
+  masters, `w4d_03_eval_empty_str_lit` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+  #3679): `lit0(cmp=1,val=0)|lit1(cmp=1,val=1)|con0Inline(cmp=0,val=-9)|c0=1,c1=1|v0=1,v1=1`;
+  no DLL or source consulted]. NVForever extends this truthiness rule to `while`, `||`,
+  uninitialised `string_var`, and non-var string temporaries [hypothesis]. For numeric inputs,
   `core_24_eval_string_var` observed standalone `eval 5 == 1`, `eval -3 == 1`,
   `eval 0 == 0` in xNVSE 6.4.9, while NVForever passes numeric and ref results of
   `(eval <expr>)` through unchanged [design: preserves `#2275`

@@ -1500,16 +1500,20 @@ impl Vm<'_, '_> {
 
     /// Evaluate an extended expression together with its truthiness.
     ///
-    /// [observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas
-    /// 1.4.0.525, xNVSE 6.4.9 with the 10 official base masters, clean-room script
-    /// probes `core_05_eval_empty_array_and_string_truth` (`1,0,1,1`) and
+    /// [observed: 2026-11-23 & 2026-11-24, GSDocMitchellHouse (0x00103DF9), Fallout: New
+    /// Vegas 1.4.0.525, xNVSE 6.4.9 with the 10 official base masters, clean-room script
+    /// probes `core_05_eval_empty_array_and_string_truth` (`1,0,1,1`),
     /// `core_24_eval_string_var` / `#3679` `core_24_string_var_destruct_zero`
     /// (`eval s`: `1 -> 0` across `sv_Destruct`, `eval sEmp == 1`, `eval (!sEmp) == 0`,
     /// `eval (sEmp && 5) == 1`, `eval a1 == 1`, `eval a2 == 1`, `eval ar_Null == 0`,
-    /// `eval (!a1) == 0`, `eval (!aNull) == 1`); no DLL or source consulted]: both an
-    /// initialised empty array and an initialised empty `string_var` (`""`) evaluate
-    /// truthy (`1`); only `ar_Null` and an uninitialised or `sv_Destruct`-ed
-    /// `string_var` evaluate `0`.
+    /// `eval (!a1) == 0`, `eval (!aNull) == 1`), and `w4d_03_eval_empty_str_lit`
+    /// (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679:
+    /// `lit0(cmp=1,val=0)|lit1(cmp=1,val=1)|con0Inline(cmp=0,val=-9)|c0=1,c1=1|v0=1,v1=1`);
+    /// no DLL or source consulted]: an initialised empty array and any allocated
+    /// `string_var` (even empty `""` or `sv_Construct "%z" s0`, because its string ID is
+    /// non-zero) evaluate truthy (`1`); `ar_Null`, an uninitialised or `sv_Destruct`-ed
+    /// `string_var`, and a bare empty string literal `""` evaluate `0`, while a non-empty
+    /// string literal `"abc"` evaluates `1`.
     fn xeval_truthy(&mut self, e: &XExpr) -> Result<(XVal, bool), VmError> {
         if let XExpr::Var { var, .. } = e {
             if self.host.var_kind(var) == VarKind::String {
@@ -1520,10 +1524,7 @@ impl Vm<'_, '_> {
             }
         }
         let v = self.xeval(e)?;
-        let truthy = match &v {
-            XVal::Str(_) => true,
-            other => other.truthy(),
-        };
+        let truthy = v.truthy();
         Ok((v, truthy))
     }
 
@@ -3167,14 +3168,16 @@ impl Vm<'_, '_> {
         };
         match name.to_ascii_lowercase().as_str() {
             // `(eval Expression)` inside an expression: coerces string and array results
-            // to `1.0`/`0.0` via `xeval_truthy` [observed: 2026-11-23, GSDocMitchellHouse
-            // (0x00103DF9), Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9 with the 10 official
-            // base masters, probes `core_24_eval_string_var` / `#3679`
-            // `core_24_string_var_destruct_zero` (`eval s`: `1 -> 0` across `sv_Destruct`,
-            // `eval sEmp == 1`, `eval a1 == 1`, `eval a2 == 1`, `eval ar_Null == 0`) and
-            // `core_05_eval_empty_array_and_string_truth`; hypothesis for bare `""` string
-            // literals/temporaries]. Numeric and ref values pass through unchanged [design:
-            // preserves `#2275`, where Blue Moon's Script Runner files write
+            // to `1.0`/`0.0` via `xeval_truthy` [observed: 2026-11-23 & 2026-11-24,
+            // GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9
+            // with the 10 official base masters, probes `core_24_eval_string_var` /
+            // `#3679` `core_24_string_var_destruct_zero` (`eval s`: `1 -> 0` across
+            // `sv_Destruct`, `eval sEmp == 1`, `eval a1 == 1`, `eval a2 == 1`,
+            // `eval ar_Null == 0`), `core_05_eval_empty_array_and_string_truth`, and
+            // `w4d_03_eval_empty_str_lit` (bare `""` -> `0`, `"abc"` -> `1`, allocated
+            // empty `string_var` -> `1`); hypothesis for non-var string-returning calls].
+            // Numeric and ref values pass through unchanged [design: preserves `#2275`,
+            // where Blue Moon's Script Runner files write
             // `AuxVarSetFlt "*x" (eval GetINIFloat_Cached "s:k" "f.ini" 1) 5`; note
             // `core_24_eval_string_var` observed standalone `eval 5 == 1`, `eval -3 == 1`,
             // `eval 0 == 0` in xNVSE 6.4.9].
