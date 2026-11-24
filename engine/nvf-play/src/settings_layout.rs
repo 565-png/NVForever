@@ -307,8 +307,8 @@ mod tests {
     /// Quick Loot rows; #2965's heat haze row; #2675's desert haze row; Sprint; #2671's terrain
     /// shadows row; #2981's authored materials row and its reflections row; #2701's
     /// full-detail scenery row; #3014's distant objects row; #2993's aerial perspective row;
-    /// #2995's night sky detail row; #3013's distant lights row), by the group it registers with.
-    const KNOWN: [(&str, &str); 148] = [
+    /// #2995's night sky detail row; #3013's distant lights row; #3322's terrain parallax row), by the group it registers with.
+    const KNOWN: [(&str, &str); 149] = [
         ("detached-camera", "Gameplay"),
         ("gore-shake", "Gameplay"),
         ("advanced-movement", "Gameplay"),
@@ -428,6 +428,7 @@ mod tests {
         ("authored-reflections", "Graphics"),
         ("terrain-height-blend", "Graphics"),
         ("terrain-anti-tiling", "Graphics"),
+        ("terrain-parallax", "Graphics"),
         ("mesh-terrain-blend", "Graphics"),
         ("full-detail", "Graphics"),
         ("distant-objects", "Graphics"),
@@ -567,7 +568,8 @@ mod tests {
         keep-fall-height-on-load no-marker-popup marker-shift-removes marker-removed-on-it clear-marker-within \
         place-marker-here-says repeat-activate-takes-only hi-res-npc-weapons empty-reload-swaps-ammo keep-chosen-ammo \
         objectives-on-arrival objectives-gap sleep-in-owned-beds power-armor-no-training \
-        sleep-misc-stat-requires-duration revive-on-cell-change no-self-explosion-non-hostiles grabbing-is-theft-min-value";
+        sleep-misc-stat-requires-duration revive-on-cell-change no-self-explosion-non-hostiles grabbing-is-theft-min-value \
+        sneak-run-ap-cost sneak-run-ap-endurance";
 
     /// [`TWEAK_ROWS`] as keys, under the Tweaks tab's group.
     fn tweak_rows() -> Vec<(&'static str, &'static str)> {
@@ -676,6 +678,8 @@ mod tests {
         assert_eq!(at("authored-materials"), "Graphics > Detail and Distance", "beside anisotropic filtering, the other texture row (#2981)");
         assert_eq!(at("authored-reflections"), "Graphics > Detail and Distance", "right after Authored materials (#2981 reflections)");
         assert_eq!(at("mesh-terrain-blend"), "Graphics > Detail and Distance", "beside the terrain rows (#2661)");
+        assert_eq!(at("terrain-parallax"), "Graphics > Detail and Distance", "after terrain anti-tiling (#3322)");
+        assert_eq!(nvf_settings_layout::needs("terrain-parallax").iter().map(|r| r.parent).collect::<Vec<_>>(), ["authored-materials"], "it draws the authored height maps");
         assert_eq!(at("cloud-shadows"), "Graphics > Shadows", "after Longer sun shadows (#2670)");
         assert_eq!(at("terrain-shadows"), "Graphics > Shadows", "after Cloud shadows (#2671)");
         assert_eq!(at("light-shadows"), "Graphics > Shadows", "after Terrain shadows (light_shadows.rs)");
@@ -758,8 +762,9 @@ mod tests {
     fn every_tweak_of_1892_has_its_group_and_category() {
         let tweaks = tweak_rows();
         // 564 less the console and screenshot keys, bindings since 2026-11-16 (Controls),
-        // plus Keep Chosen Ammo (#3305) and the four Stewie 9.45 sub-options (#3179).
-        assert_eq!(tweaks.len(), 567);
+        // plus Keep Chosen Ammo (#3305), the four Stewie 9.45 sub-options (#3179),
+        // and Running Costs AP sneak options (#3183).
+        assert_eq!(tweaks.len(), 569);
         let mut rows: Vec<(&'static str, &'static str)> = KNOWN.to_vec();
         rows.extend(&tweaks);
         let list = registry(&rows);

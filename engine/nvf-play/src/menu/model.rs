@@ -139,6 +139,9 @@ pub struct Row {
     /// A live explosive planted in this pocket (`Extra::live`): a row of its own, named
     /// with [`LIVE_NOTE`], that no command takes, moves or puts up (#1640).
     pub live: bool,
+    /// Resolved ySI sorting tag, icon texture path, and XML template when ySI is active
+    /// (`None` in vanilla sessions without ySI) [design: `docs/spec-notes/ysi-filename.md`].
+    pub ysi: Option<fnv_game::ui_ysi::YsiItemDisplay>,
 }
 
 /// What a live explosive's row says after its name (`fnv_game::pickpocket`, a grenade or
@@ -204,7 +207,7 @@ impl Row {
             FolderRow::Open(f) => f.name().to_string(),
             FolderRow::Back => BACK.to_string(),
         };
-        Row { item: FormId(0), at: None, name, count, weight: None, value: None, kind: None, equipped: false, quest: false, condition: None, icon: None, price: None, bartered: false, loaded: false, mods: 0, mods_value: 0, folder: Some(f), reference: None, live: false }
+        Row { item: FormId(0), at: None, name, count, weight: None, value: None, kind: None, equipped: false, quest: false, condition: None, icon: None, price: None, bartered: false, loaded: false, mods: 0, mods_value: 0, folder: Some(f), reference: None, live: false, ysi: None }
     }
 }
 
@@ -347,11 +350,36 @@ impl SortBy {
     }
 }
 
-/// The order rows are listed in: put-up rows first, then by name in byte order, then the
-/// best condition first.
+/// The order rows are listed in: put-up rows first, then (when any row carries a ySI
+/// sorting tag) by ySI tag byte order with untagged rows after tagged ones [hypothesis:
+/// `docs/spec-notes/ysi-filename.md`], then by name in byte order, then the best condition
+/// first. When no row carries a ySI tag the order is unchanged from vanilla.
 fn sort_rows(rows: &mut [Row]) {
-    let key = |r: &Row| (!r.bartered, r.name.as_bytes().to_vec(), r.item, std::cmp::Reverse(r.at.map(f32::to_bits)), r.mods);
-    rows.sort_by_cached_key(key);
+    let has_ysi = rows
+        .iter()
+        .any(|r| r.ysi.as_ref().and_then(|y| y.tag.as_deref()).is_some_and(|t| !t.is_empty()));
+    if has_ysi {
+        let key = |r: &Row| {
+            let tag = r
+                .ysi
+                .as_ref()
+                .and_then(|y| y.tag.as_deref())
+                .filter(|t| !t.is_empty());
+            (
+                !r.bartered,
+                tag.is_none(),
+                tag.unwrap_or("").as_bytes().to_vec(),
+                r.name.as_bytes().to_vec(),
+                r.item,
+                std::cmp::Reverse(r.at.map(f32::to_bits)),
+                r.mods,
+            )
+        };
+        rows.sort_by_cached_key(key);
+    } else {
+        let key = |r: &Row| (!r.bartered, r.name.as_bytes().to_vec(), r.item, std::cmp::Reverse(r.at.map(f32::to_bits)), r.mods);
+        rows.sort_by_cached_key(key);
+    }
 }
 
 /// The rows of `holder`'s inventory, sorted by name.
@@ -403,6 +431,7 @@ pub fn listing(world: &mut World<'_>, holder: FormId) -> Result<Listing, SimErro
             folder: None,
             reference: None,
             live: extra.live,
+            ysi: None,
         });
     }
     for r in &mut rows {
@@ -447,6 +476,7 @@ fn add_dropped_beside(world: &World<'_>, holder: FormId, l: &mut Listing) {
             folder: None,
             reference: Some(r),
             live: false,
+            ysi: None,
         };
         l.weight += f64::from(row.weight.unwrap_or(0.0)) * f64::from(row.count);
         l.value += (row.value.unwrap_or(0) + row.mods_value) as i64 * row.count as i64;
@@ -873,6 +903,9 @@ pub struct MenuModel {
     /// Show Equipped Ammo tweak (`ammo_mark_in_containers`).
     pub current_ammo: Option<FormId>,
     pub ammo_mark_in_containers: bool,
+    /// What the log last said of the Ammo tab's rows ([`MenuModel::refresh`]): said again
+    /// only when it changes.
+    ammo_told: String,
     pub title_case_categories: bool,
     /// The price of things worth nothing in a barter (the tweak; 0: as they are).
     pub free_item_price: f32,
@@ -1118,6 +1151,7 @@ impl MenuModel {
             usable_ammo: Vec::new(),
             current_ammo: None,
             ammo_mark_in_containers: false,
+            ammo_told: String::new(),
             title_case_categories: false,
             free_item_price: 0.0,
             barter_kind_mults: None,
@@ -1212,6 +1246,20 @@ impl MenuModel {
                         r.loaded = true;
                     }
                 }
+                // The Ammo tab's rows in the log, so a report about its marks can be read
+                // (#3442): how many, and which carries the loaded mark.
+                if self.mode == Mode::Inventory && self.category[side as usize] == Category::Ammo {
+                    let marked = match (l.rows.iter().find(|r| r.loaded), self.current_ammo) {
+                        (Some(r), _) => format!("{:?} ({}) carries the loaded mark", r.name, r.item),
+                        (None, Some(a)) => format!("none carries the loaded mark: the weapon loads {a}, which is not in the list"),
+                        (None, None) => "none carries the loaded mark: the weapon loads no ammo".to_string(),
+                    };
+                    let told = format!("menu: Ammo tab: {} rows, {marked}", l.rows.len());
+                    if told != self.ammo_told {
+                        bevy::log::info!("{told}");
+                        self.ammo_told = told;
+                    }
+                }
                 // The player's tweak: the list by value or weight, the most first, name
                 // order kept between equals [design: docs/design/tweaks.md].
                 if self.mode == Mode::Inventory {
@@ -1241,6 +1289,35 @@ impl MenuModel {
         }
         self.encumbrance = world.encumbrance(PLAYER).map_err(|e| e.to_string());
         Ok(())
+    }
+
+    /// Attach resolved ySI sorting tags and icon display metadata to all non-folder rows,
+    /// re-sorting each column's item rows while keeping folder rows (`Keyring`, `Caravan
+    /// Cards`, `Back`) pinned at the top and preserving bartered-first, usable-ammo-first,
+    /// `SortBy` (`Value`/`Weight`), and each column's selected row [design:
+    /// `docs/spec-notes/ysi-filename.md`].
+    pub fn apply_ysi(&mut self, mut resolve: impl FnMut(FormId) -> Option<fnv_game::ui_ysi::YsiItemDisplay>) {
+        let columns = self.columns();
+        for &side in columns {
+            let i = side as usize;
+            let keep = self.selected_row(side).map(|r| (r.units(), r.bartered, r.folder, r.live));
+            let rows = &mut self.lists[i].rows;
+            let folder_prefix = rows.iter().take_while(|r| r.folder.is_some()).count();
+            let items = &mut rows[folder_prefix..];
+            for r in items.iter_mut() {
+                r.ysi = resolve(r.item);
+            }
+            sort_rows(items);
+            if self.mode == Mode::Inventory && !self.usable_ammo.is_empty() {
+                items.sort_by_key(|r| !self.usable_ammo.contains(&r.item));
+            }
+            if self.mode == Mode::Inventory {
+                self.sort.apply(items);
+            }
+            let at = keep.and_then(|k| self.lists[i].rows.iter().position(|r| (r.units(), r.bartered, r.folder, r.live) == k));
+            self.selected[i] = at.unwrap_or(self.selected[i]).min(self.lists[i].rows.len().saturating_sub(1));
+            self.ensure_visible(side);
+        }
     }
 
     /// The barter lists: each side's own rows less what it put up, and what the other
@@ -1376,6 +1453,7 @@ impl MenuModel {
                                 folder: None,
                                 reference: None,
                                 live: false,
+                                ysi: None,
                             }),
                         }
                     }
@@ -1982,6 +2060,7 @@ pub fn report_progress_fixture(mode: Mode, step: usize) -> MenuModel {
             folder: None,
             reference: None,
             live: false,
+            ysi: None,
         })
         .collect();
     m.lists = [Listing { rows: rows.clone(), ..Default::default() }, Listing { rows, ..Default::default() }];

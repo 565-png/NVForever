@@ -1,5 +1,5 @@
 //! Synthetic integration tests for `ManOnFireNVSE.ini` actor fire-spread mechanics
-//! (`crates/fnv-game/src/man_on_fire.rs`, `docs/spec-notes/ext-small.md` §4). No game
+//! (`crates/fnv-game/src/man_on_fire.rs`, `docs/spec-notes/ext-small.md` §5). No game
 //! data is used and no process-wide file roots are mutated.
 
 use crate::common;

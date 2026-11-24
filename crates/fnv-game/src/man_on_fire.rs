@@ -1,5 +1,5 @@
 //! Clean-room support for `ManOnFireNVSE.ini` actor fire-spread mechanics
-//! (`docs/spec-notes/ext-small.md` §4).
+//! (`docs/spec-notes/ext-small.md` §5).
 //!
 //! Configuration is read lazily from `Data\Config\ManOnFireNVSE.ini` [documented:
 //! Man On Fire NVSE v1.0.1 (`https://www.nexusmods.com/newvegas/mods/94962`), shipped
