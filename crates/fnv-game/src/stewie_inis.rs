@@ -245,9 +245,6 @@ pub fn apply_modular_tweaks_to_game(overrides: &StewieIniMap, tweaks: &mut Tweak
     bool_tweak!("Tweaks", "bSkipSkillMenuIfNoPointsToAssign", skip_skill_page_without_points);
     bool_tweak!("Tweaks", "bFasterHackingTransition", faster_hacking_transition);
     bool_tweak!("Tweaks", "bMapRemembersPosition", remember_map_position);
-    // Moved into the game tweaks by #3523 (menu model reads `tweaks.game`).
-    bool_tweak!("Tweaks", "bSynchronizeContainerCategories", sync_categories);
-    bool_tweak!("Tweaks", "bBarterCheckActorBuySellFlags", vendor_lists_both);
     bool_tweak!("Tweaks", "bPickLocksWithoutSkill", pick_locks_without_skill);
     bool_tweak!("Tweaks", "bHackTerminalsWithoutSkill", hack_terminals_without_skill);
     bool_tweak!("Tweaks", "bNoLockFailedTerminals", no_terminal_lockout);
