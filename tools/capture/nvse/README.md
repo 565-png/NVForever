@@ -78,8 +78,8 @@ Probes in `catalogs/` target:
     write JSON and Markdown scoreboards.
   - `cite` — format copy-paste-ready clean-room `[observed: ...]` citations with
     the automated privacy gate.
-- `catalogs/` — 4 sanitized declarative console-only JSON catalogs (17 batches,
-  454 read-only probes total; all file-writing and `con_Save` probes excluded):
+- `catalogs/` — 5 sanitized declarative console-only JSON catalogs (21 batches,
+  497 read-only probes total; all file-writing and `con_Save` probes excluded):
   - `wave1_parity_probes.json` — Wave 1/2 parity probes covering xNVSE compound
     assignments & `dATan2`, JIP hit 3D direction/base damage/reticle limbs,
     ShowOff `OnFireWeapon` & `ForceWeaponJamAnim`, ShowOff objective/unholster
@@ -94,6 +94,10 @@ Probes in `catalogs/` target:
     follow-ups and remaining Bucket A & B extender sweep (5 batches, 100
     probes: `w4c_phase_a`, `w4c_b_jip_lutana`, `w4c_b_showoff_core`,
     `w4c_b_jg`, `w4c_b_sup_knvse_opt`).
+  - `wave4d_extenders.json` — Wave 4D read-only console-only open-PR and
+    merged-PR NVSE/extender/vanilla edge-case probes (4 batches, 43 probes:
+    `w4d_01_open_pr_quickwins`, `w4d_02_jip_lutana_edges`,
+    `w4d_03_jg_sup_anh_showoff_edges`, `w4d_04_xnvse_compiler_and_vanilla_cmds`).
 - `tests/test_nvse_harness.py` — offline stdlib `unittest` suite (no game
   install or captured logs required).
 

@@ -168,14 +168,15 @@ class TestCatalogValidation(unittest.TestCase):
                 "wave4a_extenders.json",
                 "wave4b_extenders.json",
                 "wave4c_extenders.json",
+                "wave4d_extenders.json",
             ],
         )
         self.assertFalse((nvse_harness.DEFAULT_CATALOG_DIR / "persistence_matrix.json").exists())
         errors, counts = nvse_harness.validate_catalogs(paths)
         self.assertEqual(errors, [], f"Catalog validation errors: {errors[:5]}")
-        self.assertEqual(counts["catalogs"], 4)
-        self.assertEqual(counts["probe_batches"], 17)
-        self.assertEqual(counts["probes"], 454)
+        self.assertEqual(counts["catalogs"], 5)
+        self.assertEqual(counts["probe_batches"], 21)
+        self.assertEqual(counts["probes"], 497)
         self.assertEqual(counts["persistence_items"], 0)
 
         # Verify Wave 1 parity probe IDs and corrected Wave 4A + T35 targeted probes are present verbatim.
@@ -196,6 +197,12 @@ class TestCatalogValidation(unittest.TestCase):
             "core_13_generic_add_form_split",
             "core_24_eval_string_var",
             "anh_11_zone_owner_readback",
+            "w4d_01_tagskills_chargen",
+            "w4d_02_has_action_ref_triggers",
+            "w4d_03_eval_empty_str_lit",
+            "w4d_04_generic_form_neg_idx",
+            "w4d_09_spread_all_anim_types",
+            "w4d_43_nif_selector_and_ui_entities",
         ):
             self.assertIn(req_id, probes_by_id)
 
@@ -358,6 +365,7 @@ class TestCatalogValidation(unittest.TestCase):
         self.assertIn("wave4a_extenders", out)
         self.assertIn("wave4b_extenders", out)
         self.assertIn("wave4c_extenders", out)
+        self.assertIn("wave4d_extenders", out)
         self.assertNotIn("persistence_matrix", out)
 
 
