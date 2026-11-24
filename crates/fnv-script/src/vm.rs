@@ -3200,10 +3200,18 @@ impl Vm<'_, '_> {
             // not built, #2275].
             "eval" => arg(self, 0),
             // [documented: ToString; ToNumber] (the hex and reportError arguments of
-            // ToNumber: D1).
+            // ToNumber: D1). List arrays and stringmaps format as "NULL" [observed:
+            // Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-23, `GSDocMitchellHouse`,
+            // `b3_core_05_tostring_array_map` (`wave4b_extenders.json`, #3679):
+            // `PROBE|b3_core_05_tostring_array_map|L=[NULL]|M=[NULL]|N=[42]`]. Applying
+            // "NULL" to all `XVal::Array(_)` variants in `ToString` while leaving `$`,
+            // `PrintVar`, `ArrayToString`, and `Ar_Dump` on `text_of` stays [hypothesis].
             "tostring" => {
                 let v = arg(self, 0)?;
-                Ok(XVal::Str(self.text_of(&v)?))
+                Ok(XVal::Str(match v {
+                    XVal::Array(_) => "NULL".to_string(),
+                    _ => self.text_of(&v)?,
+                }))
             }
             // With the hexadecimal flag the text is read as hex [documented: ToNumber;
             // observed: "1F" gives 31].
