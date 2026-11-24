@@ -888,6 +888,7 @@ pub fn spawn_creature_body(
                 // A creature sets off at once from a standing fade (actors.md §8.10), as
                 // every actor does (`Locomotion::new`, #3670).
                 lo.blend.set_off_at_once = true;
+                lo.set_off_across_sets = true;
                 lo.hurt = world.anims.clip_set_hurt(ctx, &c.skeleton, &skel, Body::Male, &set, false);
                 lo.swim = world.anims.swim_set(ctx, &c.skeleton, &skel, Body::Male, &set);
                 // Some creatures move otherwise when alert (`creature_pace.rs`), and limp
