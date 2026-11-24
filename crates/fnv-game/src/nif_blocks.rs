@@ -127,6 +127,12 @@ pub enum SceneEdit {
     Light { r: FormId, target: String, name: String, light: FormId, offset: [f32; 3] },
     /// One NiMaterialProperty value of a shape (`id` 0-8, as in [`SceneNode::material`]).
     Material { r: FormId, node: String, id: usize, v: f32 },
+    /// One NiAlphaProperty value of a shape (`item`: 0 flags, 1 threshold;
+    /// JohnnyGuitar's SetAlphaPropertyValue, `crate::nvse_jg_nif`).
+    AlphaProperty { r: FormId, node: String, item: usize, v: f32 },
+    /// One NiStencilProperty value of a shape (`item`: 0 flags, 1 reference, 2 mask;
+    /// JohnnyGuitar's SetStencilPropertyValue, `crate::nvse_jg_nif`).
+    StencilProperty { r: FormId, node: String, item: usize, v: f32 },
     /// A particle system's value by GetNiPSysModifierValue's IDs, 20 the spawn rate
     /// (`crate::nvse_jg_nif`).
     Particle { r: FormId, node: String, id: usize, v: f32 },
@@ -147,7 +153,8 @@ impl SceneEdit {
             Self::Translation { r, .. } | Self::Rotation { r, .. } | Self::Scale { r, .. }
             | Self::Flags { r, .. } | Self::ChildFlags { r, .. } | Self::Rename { r, .. }
             | Self::Remove { r, .. } | Self::Insert { r, .. } | Self::Attach { r, .. } | Self::Light { r, .. }
-            | Self::Material { r, .. } | Self::Particle { r, .. } => *r,
+            | Self::Material { r, .. } | Self::AlphaProperty { r, .. } | Self::StencilProperty { r, .. }
+            | Self::Particle { r, .. } => *r,
         }
     }
 }
@@ -220,6 +227,11 @@ impl SceneMirror {
         self.watched.iter().copied()
     }
 
+    /// Whether `r` is currently watched by scripts (O(1) fast-path check).
+    pub fn is_watched(&self, r: FormId) -> bool {
+        self.watched.contains(&r)
+    }
+
     /// The engine tells a watched reference's tree (parents before children).
     pub fn set_tree(&mut self, r: FormId, nodes: Vec<SceneNode>) {
         self.set_tree_for(r, ModelView::Reference, nodes);
@@ -263,7 +275,8 @@ impl SceneMirror {
         self.identified.insert((r, view), Some(model));
     }
 
-    /// A shape's alpha (`alpha`) or stencil property value for the session's reads,
+    /// A shape's alpha (`alpha`) or stencil property value for the session's reads and
+    /// for the engine to draw ([`SceneEdit::AlphaProperty`] / [`SceneEdit::StencilProperty`]),
     /// kept over the trees the engine tells next; false without the node or that
     /// property on it.
     pub fn set_prop(&mut self, r: FormId, node: &str, alpha: bool, item: usize, v: f32) -> bool {
@@ -275,7 +288,13 @@ impl SceneMirror {
         }
         let name = t[i].name.clone();
         self.prop_sets.retain(|(pr, pv, n, a, k, _)| !(*pr == r && *pv == view && n.eq_ignore_ascii_case(&name) && *a == alpha && *k == item));
-        self.prop_sets.push((r, view, name, alpha, item, v));
+        self.prop_sets.push((r, view, name.clone(), alpha, item, v));
+        let edit = if alpha {
+            SceneEdit::AlphaProperty { r, node: name, item, v }
+        } else {
+            SceneEdit::StencilProperty { r, node: name, item, v }
+        };
+        self.queue_for(ModelView::Reference, edit);
         true
     }
 
@@ -342,7 +361,8 @@ impl SceneMirror {
             SceneEdit::Translation { node, .. } | SceneEdit::Rotation { node, .. }
             | SceneEdit::Scale { node, .. } | SceneEdit::Flags { node, .. }
             | SceneEdit::ChildFlags { node, .. } | SceneEdit::Remove { node, .. }
-            | SceneEdit::Material { node, .. } | SceneEdit::Particle { node, .. } => node,
+            | SceneEdit::Material { node, .. } | SceneEdit::AlphaProperty { node, .. }
+            | SceneEdit::StencilProperty { node, .. } | SceneEdit::Particle { node, .. } => node,
             SceneEdit::ForModel { .. } => return SceneTarget::Missing,
         };
         let missing_node = model.map_or(SceneTarget::Missing, SceneTarget::Model);
@@ -968,7 +988,10 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
             // MODL. Its exact-name answer, even for an empty tree, is authoritative
             // (nif-player-model-selection.md, ModelHasBlock). Keep file fallback for
             // base forms and references awaiting their first publication.
-            let reference = f == FormId::PLAYER_REF || g.world.placed.get(f).is_some() || g.world.peek(f).is_some();
+            let reference = f == FormId::PLAYER_REF
+                || crate::nvse_jg_nif::is_camera_overlay_ref(f)
+                || g.world.placed.get(f).is_some()
+                || g.world.peek(f).is_some();
             let published = if reference { g.scene.tree(f).map(|nodes| !want.is_empty() && nodes.iter().any(|node| node.name == want)) } else { None };
             let found = published.unwrap_or_else(|| model_of(g, f).and_then(|m| crate::mod_files::read_data(&format!("meshes\\{m}"))).is_some_and(|bytes| crate::mod_files::nif_has_name(&bytes, &want)));
             XVal::Num(f64::from(u8::from(found)))

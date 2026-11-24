@@ -30,6 +30,7 @@ mod native_crash;
 mod exit_watch;
 #[cfg(target_os = "linux")]
 mod native_crash_unix;
+mod camera_overlay;
 mod nif_mirror;
 mod nif_attachments;
 mod extra_camera;
@@ -2654,9 +2655,9 @@ fn setup(mut commands: Commands, start: Res<StartPose>) {
         // Water reads the depth of what lies behind it (water.rs).
         bevy::core_pipeline::prepass::DepthPrepass,
         // The world, the water (which the reflection camera leaves out), the player's
-        // first-person arms and seen body, and the impact decals (which need this
-        // camera's prepass).
-        bevy::camera::visibility::RenderLayers::from_layers(&[0, reflection::WATER_LAYER, sky::ARMS_LAYER, sky::BODY_LAYER, decals::DECAL_LAYER]),
+        // first-person arms and seen body, the impact decals (which need this
+        // camera's prepass), and JohnnyGuitar PreIS 3D camera overlays.
+        bevy::camera::visibility::RenderLayers::from_layers(&[0, reflection::WATER_LAYER, sky::ARMS_LAYER, sky::BODY_LAYER, decals::DECAL_LAYER, camera_overlay::OVERLAY_PRE_IS_LAYER]),
     )).id();
     if start.play {
         commands.entity(cam).insert(nvf_play::PlayerCamera);

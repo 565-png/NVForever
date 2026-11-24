@@ -536,7 +536,7 @@ pub fn is_editor_marker(name: Option<&str>) -> bool {
 /// so GREATER moves the cutoff half a step above the threshold; other functions keep ≥.
 pub(crate) const BLEND_TEST_CUT: i64 = 64;
 
-pub(crate) fn alpha_mode(flags: i64, threshold: i64) -> AlphaMode {
+pub fn alpha_mode(flags: i64, threshold: i64) -> AlphaMode {
     let (src, dst) = ((flags >> 1) & 0xF, (flags >> 5) & 0xF);
     let (blend, test) = (flags & 1 != 0, flags & 0x200 != 0);
     let strict = (flags >> 10) & 7 == 4;
@@ -548,6 +548,18 @@ pub(crate) fn alpha_mode(flags: i64, threshold: i64) -> AlphaMode {
         (true, _, 1 | 4, _) => AlphaMode::Multiply,
         (true, ..) => AlphaMode::Blend,
         _ => AlphaMode::Opaque,
+    }
+}
+
+/// Double-sided flag and face culling from `NiStencilProperty` flags bits 10-11
+/// (`draw_mode`: 0/1 `DRAW_CCW`, 2 `DRAW_CW`, 3 `DRAW_BOTH`) [documented: nif.xml
+/// StencilDrawMode; design: Bevy's `StandardMaterial` does not expose per-material
+/// hardware stencil reference/mask state, so only the face-cull mode applies live].
+pub fn stencil_cull(flags: i64) -> (bool, Option<bevy::render::render_resource::Face>) {
+    match (flags >> 10) & 3 {
+        3 => (true, None),
+        2 => (false, Some(bevy::render::render_resource::Face::Front)),
+        _ => (false, Some(bevy::render::render_resource::Face::Back)),
     }
 }
 
@@ -2961,5 +2973,13 @@ mod bc5_material_tests {
         assert!(refused.base.normal_map_texture.is_none());
         assert!(refused.base.specular_texture.is_none());
         assert_eq!(refused.base.reflectance, 0.3);
+    }
+
+    #[test]
+    fn stencil_cull_maps_draw_mode_bits() {
+        assert_eq!(stencil_cull(0), (false, Some(bevy::render::render_resource::Face::Back)));
+        assert_eq!(stencil_cull(1 << 10), (false, Some(bevy::render::render_resource::Face::Back)));
+        assert_eq!(stencil_cull(2 << 10), (false, Some(bevy::render::render_resource::Face::Front)));
+        assert_eq!(stencil_cull(3 << 10), (true, None));
     }
 }
