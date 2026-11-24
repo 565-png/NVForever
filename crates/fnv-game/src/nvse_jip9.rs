@@ -356,12 +356,20 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             XVal::Num(f64::from(g.other.jip9.volumes[t]))
         }
         // `type [level]`: a level past 100 changes nothing [observed: jip9 volume.set,
-        // 30 then 150 reads 30], nor one below 0 [hypothesis: likewise]; left out, the
-        // default [observed: music back to 60].
+        // 30 then 150 reads 30]; a negative level or omitted level resets to the default
+        // [observed: jip9 volume.set, music back to 60; Fallout: New Vegas 1.4.0.525 +
+        // xNVSE 6.4.9 + JIP LN 57.30, 2026-11-23/24, GSDocMitchellHouse (0x00103DF9),
+        // 10 official base masters, `b3_jip9_02_game_volume_neg_and_default`
+        // (`tools/capture/nvse/catalogs/wave4b_extenders.json`, #3679):
+        // `PROBE|b3_jip9_02_game_volume_neg_and_default|defs=100,50,60,100,60,50|30=29,neg=100,over=100`
+        // and `w4c_a04_set_game_volume_gt100` (`tools/capture/nvse/catalogs/wave4c_extenders.json`, #3679):
+        // `PROBE|w4c_a04_set_game_volume_gt100|ch0(init=100,30=29,150=29,neg=100,101=29,rest=100)|ch4(init=60,30=29,150=29,neg=60,0=0,rest=60)`;
+        // no DLL or source consulted].
         "setgamevolume" => {
             if let Some(t) = num(args, 0).map(|t| t as i64).and_then(|t| usize::try_from(t).ok()).filter(|&t| t < 6) {
                 let v = match num(args, 1) {
                     None => Some(DEFAULT_VOLUMES[t]),
+                    Some(v) if v < 0.0 => Some(DEFAULT_VOLUMES[t]),
                     Some(v) => (0.0..=100.0).contains(&v).then_some(v as f32),
                 };
                 if let Some(v) = v {
