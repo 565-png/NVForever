@@ -25,7 +25,7 @@
 //! A target E otherwise does nothing to (a hostile actor, a creature with nothing to say:
 //! Robotics Expert's "Deactivate", #3479) has no default action: the last button closes
 //! the list instead ([`Game::open_activate_menu_only`]) [design; what the original shows:
-//! docs/handoff/observer-checks.md check 282].
+//! docs/handoff/observer-checks/3479-robotics-expert-deactivate.md].
 //!
 //! **Cannibal** (`victim.StartCannibal eater`): the eater is in the cannibalism
 //! animation for [`CANNIBAL_SECONDS`] (GetCannibal 1 at once) [documented: GetCannibal

@@ -19,6 +19,7 @@ mod crosshair_prompt_tests;
 mod crosshair_sleeper_tests;
 mod crosshair_water_tests;
 mod perk_choice_tests;
+mod reticle_limb_tests;
 
 const STIMPAK: u32 = 0x100;
 const KEY: u32 = 0x101;
