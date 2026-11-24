@@ -1095,7 +1095,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "setfullnamealt" => {
             let b = form(args, 1).or(subject).map(|f| base(g, f));
             if let Some(b) = b {
-                g.name_overrides.insert(b, text(args, 0));
+                g.name_overrides.remove(&b);
+                g.forms.names.remove(&b);
+                g.forms.saved_names.insert(b, text(args, 0));
             }
             zero
         }

@@ -82,7 +82,7 @@ fn cell_at(args: &[XVal], k: usize) -> Option<(u32, u32)> {
 /// A form's shown name (its base's FULL), as GetName.
 fn name_of(g: &Game, f: FormId) -> String {
     let b = crate::functions::base_of(g, f).filter(|&b| b != f).unwrap_or(f);
-    g.name_overrides.get(&b).or_else(|| g.data.full_names.get(&g.unclone(b))).cloned().unwrap_or_default()
+    g.name_overrides.get(&b).or_else(|| g.forms.saved_names.get(&b)).or_else(|| g.data.full_names.get(&g.unclone(b))).cloned().unwrap_or_default()
 }
 
 /// A cell's text as ExcelArrayFromFile gives it: `*Plugin.esm:hex` is that plugin's form

@@ -424,7 +424,7 @@ impl Game<'_> {
     /// (the victim is such a member and was not fighting someone else).
     pub fn evil_area_alert(&mut self, victim: FormId) -> bool {
         use crate::crime::faction_flags::{EVIL, TRACK_CRIME};
-        let flags = |g: &Game, f: FormId| g.data.faction_flags.get(&f).copied().unwrap_or(0);
+        let flags = |g: &Game, f: FormId| g.faction_flags(f);
         let evil: Vec<FormId> = factions_of(self, victim).into_iter().filter(|&f| flags(self, f) & EVIL != 0).collect();
         if evil.is_empty() || self.is_teammate(victim) {
             return false;

@@ -613,6 +613,10 @@ pub struct FormChanges {
     /// SetActorFullName: base → the message whose title is the new name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub names: BTreeMap<FormId, FormId>,
+    /// Savebaked base-form string name overrides (`SetFullNameAlt`, `.fos` `NPC_` bit 5 /
+    /// `TACT` bit 2), separate from session-only `SetName`/`LNSetName` (`Game::name_overrides`).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub saved_names: BTreeMap<FormId, String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub quest_items: BTreeMap<FormId, bool>,
     /// SetCellOwnership (None: the owner was cleared).
@@ -629,6 +633,10 @@ pub struct FormChanges {
     /// FACT XNAM's (`functions::fo3`).
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub faction_modifiers: BTreeMap<FormId, BTreeMap<FormId, i64>>,
+    /// Runtime FACT flag overrides (16-bit DATA flags: Hidden, Evil, Special Combat, Track
+    /// Crime, Allow Sell), overriding `GameData::faction_flags` (`Game::faction_flags`).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub faction_flags: BTreeMap<FormId, u16>,
     /// ResetInterior: interior cells reset at their next load (`crate::respawn`).
     #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty", default)]
     pub expired_cells: std::collections::BTreeSet<FormId>,
@@ -7500,7 +7508,7 @@ impl Host for Exec<'_, '_> {
             }
         }
         let g = &*self.game;
-        let named = |x: FormId| g.name_overrides.get(&x).or_else(|| g.data.full_names.get(&g.unclone(x))).cloned();
+        let named = |x: FormId| g.name_overrides.get(&x).or_else(|| g.forms.saved_names.get(&x)).or_else(|| g.data.full_names.get(&g.unclone(x))).cloned();
         named(f).or_else(|| crate::functions::base_of(g, f).and_then(named))
     }
 
