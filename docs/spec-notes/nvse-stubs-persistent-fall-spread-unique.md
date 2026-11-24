@@ -56,11 +56,12 @@ Part of #2272. Core-only implementations in `crates/fnv-game` replacing four
   spread from the equipped weapon's skill, Strength/skill requirements, and
   animation type (`DNAM` with live `field_overrides`), actor skill/Strength,
   stance (iron sights/aiming, walking/running, sneaking), crippled arms (1H vs
-  2H), `SetNoGunWobble`, and perk entry points (`MODIFY_WEAPON_STRENGTH_REQ`,
-  `MODIFY_AIMING_MOVE_SPEED`, `CALCULATE_GUN_SPREAD`), reading all 12 Gun Spread
+  2H), and perk entry points (`MODIFY_WEAPON_STRENGTH_REQ`,
+  `MODIFY_AIMING_MOVE_SPEED`, `CALCULATE_GUN_SPREAD`), reading the 12 Gun Spread
   Formula GMSTs from the load order with fallback defaults matching
   `crates/fnv-combat/src/tuning.rs` (`SETTINGS`, sourced from GECK wiki
-  `Gun Spread Formula (New Vegas)`):
+  `Gun Spread Formula (New Vegas)` — except `fCrippledArms2HSpreadPenalty`
+  defaults to `0.4` here to match `w4c_a06b_spread_settled` below):
   - `fUnaimedSpreadPenalty = 0.2` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
   - `fWalkingSpreadPenalty = 0.1` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
   - `fRunningSpreadPenalty = 0.2` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
@@ -68,11 +69,23 @@ Part of #2272. Core-only implementations in `crates/fnv-game` replacing four
   - `fCrippledArm1HSpreadPenalty = 0.2` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
   - `fCrippledArm2HSpreadPenalty = 0.4` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
   - `fCrippledArms1HSpreadPenalty = 0.4` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
-  - `fCrippledArms2HSpreadPenalty = 0.6` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
+  - `fCrippledArms2HSpreadPenalty = 0.4` `[observed: w4c_a06b_spread_settled below (2H both-arms crippled matches 1H both-arms crippled at +0.18500); load-order GMST still takes precedence when present]`
   - `fWeapStrengthReqPenalty = 0.025` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
   - `fWeapSkillReqPenalty = 0.01` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]` (note: the wiki page reports the original game applies `fWeapStrengthReqPenalty` to the skill shortfall as a bug; matching `fnv_combat::spread::actor_spread`, NVForever uses `fWeapSkillReqPenalty` `[design]`)
   - `fWobbleToSkillConversion = 0.5` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
   - `fMinGunSpreadValue = 0.01` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
+- [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 +
+  ShowOffNVSE 184, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official
+  base masters, clean-room read-only console probe `w4c_a06b_spread_settled`
+  (`tools/capture/nvse/catalogs/wave4c_extenders.json`, #3679; equip 10mm Pistol
+  `0x434F` and Varmint Rifle `0x7EA26`, settle draw recoil, cripple right arm
+  then both arms via `DamageAV`, toggle `SetNoGunWobble 1` / `0`); no DLL or
+  source consulted]:
+  `1h(norm=0.60925,nw=0.36175,back=0.14338,rc=0.23587,both=0.32838,cripNW=0.32838)|2h(crip=0.32838,cripNW=0.32838,norm=0.14338)`
+  — `SetNoGunWobble 1` does **not** zero `GetCalculatedActorSpread` (remains
+  `0.32838` on both 1H and 2H); after draw recoil settles (`0.14338`), 1H right-arm
+  cripple adds `+0.09250` (`0.23587`), 1H both-arms cripple adds `+0.18500`
+  (`0.32838`), and 2H both-arms cripple also adds `+0.18500` (`0.32838`).
 - [hypothesis] Items without a direct external source citation or original-game
   observation:
   1. **One-handed weapon animation types (`1 | 3 | 4 | 10..=13`)**: in
@@ -86,13 +99,12 @@ Part of #2272. Core-only implementations in `crates/fnv-game` replacing four
   2. **GMST fallback defaults when absent from masters**: per
      `crates/fnv-combat/src/tuning.rs` and `docs/spec-notes/combat-data.md` §3,
      falling back to the wiki GMST values when a load order omits those GMST
-     records is `[hypothesis]`.
-  3. **ShowOff `GetCalculatedActorSpread` output scope/units**: because
-     ShowOff's wiki page for `GetCalculatedActorSpread` is marked Incomplete,
-     returning the actor-spread component in spread units after `SetNoGunWobble`
-     and `CALCULATE_GUN_SPREAD` perks (excluding weapon `min_spread` and ammo
-     spread modifiers, and returning `0.0` when unarmed or called without a
-     subject) is `[hypothesis]` pending original-game capture.
+     records (and `0.4` for 2H both-arms fallback) is `[hypothesis]`.
+  3. **ShowOff `GetCalculatedActorSpread` remaining scope/units**: returning the
+     actor-spread component in spread units after `CALCULATE_GUN_SPREAD` perks
+     (excluding weapon `min_spread`, draw recoil bloom, and ammo spread
+     modifiers, and returning `0.0` when unarmed or called without a subject) is
+     `[hypothesis]` pending further original-game captures.
 
 ## 4. `IsItemUnique` / `ToggleItemUnique` (`crates/fnv-game/src/nvse_plugins.rs`, `nvse_gaps.rs`, `repair.rs`)
 

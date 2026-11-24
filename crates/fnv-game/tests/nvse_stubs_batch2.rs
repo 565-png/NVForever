@@ -489,24 +489,32 @@ fn get_calculated_actor_spread_covers_weapon_stance_limbs_perks_and_wobble() {
     let after_str_perk = num(&mut g, "player.GetCalculatedActorSpread");
     assert!((after_str_perk - 0.425).abs() < 1e-6, "after str-req perk = {after_str_perk}");
 
-    // Crippled arms on 1H pistol: left arm alone adds 0, right arm adds 0.2, both add 0.4.
+    // Crippled arms on 1H pistol: left arm alone adds 0, right arm adds 0.2 * skill_mult,
+    // both arms add 0.4 * skill_mult (2x right-arm delta) [observed: w4c_a06b_spread_settled].
     q(&mut g, "player.SetActorValue Strength 6\nplayer.SetActorValue Guns 35\nplayer.CrippleLimb 2");
     assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.225).abs() < 1e-6, "1H ignores left arm alone");
-    q(&mut g, "player.CrippleLimb 3");
+    q(&mut g, "player.RestoreActorValue LeftAttackCondition 100\nplayer.CrippleLimb 3");
+    assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.375).abs() < 1e-6, "1H right arm crippled adds 0.2 * 0.75");
+    q(&mut g, "player.CrippleLimb 2");
     // Both arms crippled on 1H: 0.75 * (0.2 + 0.1 + 0.4) = 0.525.
     assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.525).abs() < 1e-6, "1H both arms crippled");
-
-    // 2H rifle with both arms crippled adds 0.6: 0.75 * (0.2 + 0.1 + 0.6) = 0.675.
-    q(&mut g, "player.AddItem TestRifle 1\nplayer.EquipItem TestRifle");
-    assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.675).abs() < 1e-6, "2H both arms crippled");
-
-    // CALCULATE_GUN_SPREAD perk (×0.5) halves final spread: 0.3375.
-    q(&mut g, "player.AddPerk TestSpreadPerk");
-    assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.3375).abs() < 1e-6, "spread perk halves result");
-
-    // SetNoGunWobble zeroes actor spread.
+    // SetNoGunWobble 1 does NOT zero GetCalculatedActorSpread on 1H [observed: w4c_a06b_spread_settled].
     q(&mut g, "player.SetNoGunWobble 1");
-    assert_eq!(num(&mut g, "player.GetCalculatedActorSpread"), 0.0);
+    assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.525).abs() < 1e-6, "SetNoGunWobble 1 preserves 1H spread");
+    q(&mut g, "player.SetNoGunWobble 0");
+
+    // 2H rifle with both arms crippled matches 1H both-arms penalty (0.4): 0.75 * (0.2 + 0.1 + 0.4) = 0.525
+    // [observed: w4c_a06b_spread_settled].
+    q(&mut g, "player.AddItem TestRifle 1\nplayer.EquipItem TestRifle");
+    assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.525).abs() < 1e-6, "2H both arms crippled");
+
+    // CALCULATE_GUN_SPREAD perk (×0.5) halves final spread: 0.2625.
+    q(&mut g, "player.AddPerk TestSpreadPerk");
+    assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.2625).abs() < 1e-6, "spread perk halves result");
+
+    // SetNoGunWobble 1 does NOT zero GetCalculatedActorSpread on 2H either [observed: w4c_a06b_spread_settled].
+    q(&mut g, "player.SetNoGunWobble 1");
+    assert!((num(&mut g, "player.GetCalculatedActorSpread") - 0.2625).abs() < 1e-6, "SetNoGunWobble 1 preserves 2H spread");
 }
 
 #[test]
