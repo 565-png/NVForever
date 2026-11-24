@@ -34,24 +34,15 @@ later clear them with `SetPCToddler 0`, `SetPCYoung 0`, and `player.SetScale 1`.
   `nvforever::player_body` routes standing idle/move/turn clips through the
   toddler set when `PlayerToddler::active` is `true` and reports the loaded
   toddler walk clip's root speed to `PlayerToddler::clip_walk_speed`.
-- [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, 10 official base
-  masters, isolated clean-room staging, GSDocMitchellHouse (0x00103DF9), Wave 4E
-  black-box probe `w4e_14_toddler_young_scale_speed`:
-  `norm(sc=1.00,sp=100.0,z=7477.4)|tod(sc=1.00,sp=100.0,z=7477.4)|yng(sc=1.00,sp=100.0,z=7477.2)`;
-  zero DLL/PDB/source consulted]
-  Calling `SetPCToddler 1` or `SetPCYoung 1` in vanilla Fallout: New Vegas does not
-  mutate `Player.GetScale` (remains `1.00`), `Player.GetAV SpeedMult` (remains `100.0`),
-  or standing `Bip01 Head` world Z (`7477.4 -> 7477.4 / 7477.2`); any movement or camera
-  effect is internal state rather than actor-value or scale mutation.
-- [design] While `SetPCToddler 1` is active, `nvf_play::player::toddler_walks`
+- [hypothesis] While `SetPCToddler 1` is active, `nvf_play::player::toddler_walks`
   forces walking pace (`MoveIntent::walk = true`) and `nvf_play::sprint` blocks
   sprinting (`Blocked::Toddler`), and `nvf_play::player::effective_speeds` uses
   the toddler walk clip's root speed when loaded (else `MoveSpeeds::walk`),
   scaled by `StatSpeed` (`move_speed_mult * script_scale`). This prevents a
   scaled toddler (`SetScale 0.4`) from moving at adult run speed × 0.4
   (~138 units/s) and outrunning escorting NPCs; exact original-game toddler
-  ground speed and camera height remain `[hypothesis]` pending an original-game
-  motion capture.
+  ground speed and camera height remain hypothesis pending an original-game
+  observer capture.
 - [design] `nvf_play::combat::stat_speed` scales fallback `Player::eye_height`
   by `script_scale` (`EYE_HEIGHT * scale`) and `nvforever::player_body` applies
   `body.scale * script_scale` consistently to furniture-posed roots as well as

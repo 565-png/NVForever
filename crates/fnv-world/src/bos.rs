@@ -317,9 +317,9 @@ impl BosTable {
     /// Precedence:
     /// 1. When empty, returns `orig_base` immediately with zero lookups `[design]`.
     /// 2. `[References]` rules matching `ref_id` win over `[Forms]` rules
-    ///    `[observed: Wave 4E black-box probe w4e_c09_bos_precedence_and_last_wins, base-object-swapper.md §3]`.
+    ///    `[observed: w4e_c09_bos_precedence_and_last_wins (wave4e_mods.json, PR #3803 / #3802), base-object-swapper.md §3]`.
     /// 3. Multiple `[Forms]` rules matching `orig_base` resolve last-rule-wins in deterministic
-    ///    file/line order `[observed: w4e_c09_bos_precedence_and_last_wins, base-object-swapper.md §3]`
+    ///    file/line order `[observed: w4e_c09_bos_precedence_and_last_wins (wave4e_mods.json, PR #3803 / #3802), base-object-swapper.md §3]`
     ///    (exact native probabilistic PRNG tie-breaking remains `[hypothesis]`).
     #[inline]
     pub fn resolve(&self, ref_id: u32, orig_base: u32) -> u32 {

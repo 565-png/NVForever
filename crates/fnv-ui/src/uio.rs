@@ -9,18 +9,24 @@ use std::collections::HashSet;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Condition {
     True,
-    /// [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, 10 official base
-    /// masters, isolated clean-room staging, UI Organizer 230 + synthetic
-    /// `Data\uio\public\W4ETest.txt`, GSDocMitchellHouse (0x00103DF9), Wave 4E black-box probe
-    /// `w4e_c10_uio_230_conditions_and_3line`: `ok=1|3line=1|false/vui+/darn/darnui=-999`;
-    /// zero DLL/PDB/source consulted] Literal `false` condition (skips injection without warning).
+    /// [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + UI Organizer 230,
+    /// 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters, isolated
+    /// clean-room staging copy (synthetic `Data\uio\public\W4ETest.txt` and prefab XMLs
+    /// staged strictly inside the isolated copy and removed after exit; read-only
+    /// `PrintToConsole` probe; zero writes to game install or Saves),
+    /// `w4e_c10_uio_230_conditions_and_3line` (`tools/capture/nvse/catalogs/wave4e_mods.json`,
+    /// PR #3803 / #3802):
+    /// `PROBE|w4e_c10_uio_230_conditions_and_3line|ok=1|3line=1|false=-999|vuip=-999|darn=-999|darnui=-999`;
+    /// zero DLL, PDB, or third-party source consulted] Literal `false` condition (skips
+    /// injection without warning).
     False,
-    /// [observed: `w4e_c10_uio_230_conditions_and_3line`, same environment] Built-in UIO condition
-    /// for Vanilla UI Plus (`vui+`; evaluates false on vanilla install, `!vui+ && !darn` injects).
+    /// [observed: `w4e_c10_uio_230_conditions_and_3line` (`wave4e_mods.json`, PR #3803 / #3802),
+    /// same isolated staging run] Built-in UIO condition for Vanilla UI Plus (`vui+`; evaluates
+    /// false on vanilla install, `!vui+ && !darn` injects).
     VuiPlus,
-    /// [observed: `w4e_c10_uio_230_conditions_and_3line`, same environment] Built-in UIO condition
-    /// for DarNified UI (`darn` / `darnui`; both evaluate false on vanilla install, `!vui+ && !darn`
-    /// and `!darnui` inject).
+    /// [observed: `w4e_c10_uio_230_conditions_and_3line` (`wave4e_mods.json`, PR #3803 / #3802),
+    /// same isolated staging run] Built-in UIO condition for DarNified UI (`darn` / `darnui`;
+    /// both evaluate false on vanilla install, `!vui+ && !darn` and `!darnui` inject).
     DarnUi,
     Plugin(String),
     File(String),
@@ -207,11 +213,14 @@ impl Lists {
                 }
                 i += 1;
                 let condition = Condition::parse(condition)?;
-                // [observed: `w4e_c10_uio_230_conditions_and_3line` (UIO 230 injected a 3-line
-                // `!darnui` + trailing `true` public list entry cleanly; also seen in
-                // AimCollisionIndicator.txt, Colorful Icons Support - ySI.txt, ySIAssortedFixes.txt);
-                // zero DLL/PDB/source consulted] Consume at most one trailing `true` line while
-                // retaining line 2's condition (`[design]` for malformed 3rd-line recovery).
+                // [observed: `w4e_c10_uio_230_conditions_and_3line` (`wave4e_mods.json`,
+                // PR #3803 / #3802):
+                // `PROBE|w4e_c10_uio_230_conditions_and_3line|ok=1|3line=1|false=-999|vuip=-999|darn=-999|darnui=-999`
+                // — UIO 230 injected a 3-line `!darnui` + trailing `true` public list entry cleanly;
+                // also seen in AimCollisionIndicator.txt, Colorful Icons Support - ySI.txt,
+                // ySIAssortedFixes.txt; zero DLL, PDB, or third-party source consulted] Consume at
+                // most one trailing `true` line while retaining line 2's condition (`[design]` for
+                // malformed 3rd-line recovery).
                 if lines.get(i).is_some_and(|&(_, extra)| extra.eq_ignore_ascii_case("true")) {
                     i += 1;
                 }
