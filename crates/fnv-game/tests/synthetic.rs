@@ -4470,10 +4470,9 @@ fn generic_form_lists_and_animation_lists_change_for_the_session() {
     let q = |g: &mut fnv_game::Game, body: &str| g.run_query(&format!("Begin Function {{ }}\n{body}\nEnd\n"), ctx()).unwrap();
     let glob = XVal::Ref(0x0000_0901);
     let player = XVal::Ref(FormId::PLAYER_REF.0);
-    // On an empty list, -2 returns -1 without adding [observed: w4d_04_generic_form_neg_idx];
-    // index 0 inserts the first item, and a subsequent index 0 shifts it to index 1.
-    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 7, PlayerREF, TestAdd, -2)"), XVal::Num(-1.0), "empty list rejects -2");
-    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 7, PlayerREF, TestAdd, 0)"), XVal::Num(0.0));
+    // On an empty list, -2 appends and returns 0 [observed: w4d_04_generic_form_neg_idx,
+    // #3802 / PR #3803]; a subsequent index 0 inserts at front and shifts it to index 1.
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 7, PlayerREF, TestAdd, -2)"), XVal::Num(0.0), "empty list -2 appends returning 0");
     assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 7, PlayerREF, PlayerREF, 0)"), XVal::Num(0.0));
     assert_eq!(q(&mut g, "SetFunctionValue (GenericGetForm 7, PlayerREF, 0)"), player, "index 0 put first");
     assert_eq!(q(&mut g, "SetFunctionValue (GenericGetForm 7, PlayerREF, 1)"), glob);
@@ -4575,17 +4574,31 @@ fn generic_form_lists_validate_target_type_and_past_end_index() {
         assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericReplaceForm {code}, {target}, {item}, 0)")), XVal::Ref(0), "mismatched {target} + code {code} Replace");
     }
 
-    // (c) Negative indices on empty and non-empty FLST [observed: w4d_04_generic_form_neg_idx]:
-    // Empty FLST (n0=0): Add(-1/-2/-3/-10/oob) all return -1 without adding;
-    // Replace(-1/-2/-3/oob) and Delete(-1/-2/-3/oob) all return 0.
-    for idx in [-1, -2, -3, -10, 5] {
+    // (c) Negative indices on empty and non-empty FLST [observed: w4d_04_generic_form_neg_idx,
+    // #3802 / PR #3803: `emp(n0=0,d=0/0/0/0:0,r=0:0/0:1/0/0:1,a=-1/0:1/-1/-1/-1:1)`]:
+    // Empty FLST (n0=0): Delete(-1/-2/-3/oob) all return 0 leaving n=0;
+    // Replace(-1/-3/oob) return 0 leaving n=0, while Replace(-2) returns 0 AND appends (n: 0->1);
+    // Add(-1/-3/-10/oob) return -1 leaving n=0, while Add(-2) returns 0 AND appends (n: 0->1).
+    for idx in [-1, -2, -3, 99] {
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericDeleteForm 13, TestEmptyFlst, {idx})")), XVal::Ref(0), "empty FLST Delete({idx})");
+        assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestEmptyFlst)"), XVal::Num(0.0), "empty FLST count stayed 0 after Delete({idx})");
+    }
+    for idx in [-1, -3, 99] {
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericReplaceForm 13, TestEmptyFlst, TestPkg, {idx})")), XVal::Ref(0), "empty FLST Replace({idx})");
+        assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestEmptyFlst)"), XVal::Num(0.0), "empty FLST count stayed 0 after Replace({idx})");
+    }
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericReplaceForm 13, TestEmptyFlst, TestPkg, -2)"), XVal::Ref(0), "empty FLST Replace(-2) returns 0");
+    assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestEmptyFlst)"), XVal::Num(1.0), "empty FLST Replace(-2) appends (n: 0->1)");
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericGetForm 13, TestEmptyFlst, 0)"), XVal::Ref(0x0000_0813));
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericDeleteForm 13, TestEmptyFlst, 0)"), XVal::Ref(0x0000_0813));
+    assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestEmptyFlst)"), XVal::Num(0.0));
+    for idx in [-1, -3, -10, 5] {
         assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericAddForm 13, TestEmptyFlst, TestPkg, {idx})")), XVal::Num(-1.0), "empty FLST Add({idx})");
         assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestEmptyFlst)"), XVal::Num(0.0), "empty FLST count stayed 0 after Add({idx})");
     }
-    for idx in [-1, -2, -3, 99] {
-        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericReplaceForm 13, TestEmptyFlst, TestPkg, {idx})")), XVal::Ref(0), "empty FLST Replace({idx})");
-        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericDeleteForm 13, TestEmptyFlst, {idx})")), XVal::Ref(0), "empty FLST Delete({idx})");
-    }
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 13, TestEmptyFlst, TestPkg, -2)"), XVal::Num(0.0), "empty FLST Add(-2) returns 0");
+    assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestEmptyFlst)"), XVal::Num(1.0), "empty FLST Add(-2) appends (n: 0->1)");
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericGetForm 13, TestEmptyFlst, 0)"), XVal::Ref(0x0000_0813));
 
     // Non-empty FLST (TestMultiFlst = [TestHair 0x811, TestEye 0x812, TestPkg 0x813], n0=3):
     // Add: ONLY -2 appends (ret = n0 - 1 = 2, n = 4); -1/-3/-10/n+5 return -1.

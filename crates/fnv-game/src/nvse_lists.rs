@@ -48,12 +48,14 @@ impl Game<'_> {
     /// packages, 6 actor base spells, 7 leveled spells (none read), 10 NPC head parts,
     /// 13 a form list [documented: GenericGetForm's list codes]; a script's change first.
     /// Returns `None` when `code` is unknown or `target`'s record type does not match the
-    /// list code [observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New
-    /// Vegas 1.4.0.525, xNVSE 6.4.9 with the 10 official base masters, clean-room script
-    /// probe `core_13_generic_add_form_split`: mismatched `NPC_` + code 1, `RACE` + code
-    /// 5, and `FLST` + code 1 return `-1` from `GenericAddForm` even at index 0 / -2 and
-    /// `00000000` from `GenericGetForm`/`GenericDeleteForm`/`GenericReplaceForm`; no DLL
-    /// or source consulted].
+    /// list code [observed: 2026-11-23 & 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`),
+    /// Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters,
+    /// isolated clean-room staging copy (read-only `PrintToConsole` probe; zero writes to
+    /// game install or Saves), `core_13_generic_add_form_split` (`NPC_` + code 1, `RACE` +
+    /// code 5, `FLST` + code 1) and `w4d_04_generic_form_neg_idx`
+    /// (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3802 / PR #3803:
+    /// `flstC1(g=0,a=-1,r=0,d=0,n=36)` confirming FLST + code 1 rejects Get, Add, Replace,
+    /// and Delete without mutating); zero DLL, PDB, or third-party source consulted].
     pub fn generic_list(&self, code: i64, target: FormId) -> Option<Vec<FormId>> {
         let sig = self.data.sig(self.unclone(target)).or_else(|| {
             (target == FormId::PLAYER_BASE || target == FormId::PLAYER_REF).then_some(*b"NPC_")
@@ -172,21 +174,22 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
                 "genericgetform" => return Some(Ok(XVal::Ref(at.map_or(0, |i| list[i].0)))),
                 "genericaddform" => {
                     let Some(f) = form(args, 2) else { return Some(Ok(zero)) };
-                    // On an empty list (`n == 0`), `-2` returns `-1` without adding; on a
-                    // non-empty list, `-2` appends and returns the previous last index
-                    // (`n0 - 1`), `0..=n` inserts at `i` and returns `i`, and any other
-                    // negative (`-1`, `-3`, `-10`) or past-end (`> n`) index returns `-1`
-                    // without modifying the list [observed: nvse-eighth; 2026-11-23 &
-                    // 2026-11-24, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas
-                    // 1.4.0.525, xNVSE 6.4.9 with the 10 official base masters, probes
+                    // `-2` appends: on an empty list (`n == 0`) it appends and returns `0`
+                    // (`n: 0 -> 1`), and on a non-empty list it appends and returns the
+                    // previous last index (`n - 1`); `0..=n` inserts at `i` and returns
+                    // `i`; any other negative (`-1`, `-3`, `-10`) or past-end (`> n`) index
+                    // returns `-1` without modifying the list [observed: nvse-eighth;
+                    // 2026-11-23 & 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`),
+                    // Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base
+                    // masters, isolated clean-room staging copy (read-only `PrintToConsole`
+                    // probe; zero writes to game install or Saves),
                     // `core_13_generic_add_form_split` and `w4d_04_generic_form_neg_idx`
-                    // (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679); no DLL
-                    // or source consulted]. Exact boundary `i == n` remains [hypothesis].
+                    // (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3802 / PR #3803):
+                    // `PROBE|w4d_04_generic_form_neg_idx|emp(n0=0,d=0/0/0/0:0,r=0:0/0:1/0/0:1,a=-1/0:1/-1/-1/-1:1)|ne(n0=38,a=-1/37:39/-1/-1/-1:39,r=0/1/0/0,d=1:38/1:37/1:36/0:36)|flstC1(g=0,a=-1,r=0,d=0,n=36)`;
+                    // zero DLL, PDB, or third-party source consulted]. Exact boundary
+                    // `i == n` remains [hypothesis].
                     let (at, out) = if i == -2 {
-                        if n == 0 {
-                            return Some(Ok(XVal::Num(-1.0)));
-                        }
-                        (n, (n - 1) as f64)
+                        (n, n.saturating_sub(1) as f64)
                     } else if let Some(at) = usize::try_from(i).ok().filter(|&i| i <= n) {
                         (at, at as f64)
                     } else {
@@ -198,7 +201,7 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
                 "genericdeleteform" => {
                     // Any negative index (`-1`, `-2`, `-3`) removes index `0` (head of the
                     // list) when non-empty and returns `0` when empty; `0..n` removes `i`;
-                    // `>= n` returns `0` [observed: `w4d_04_generic_form_neg_idx`].
+                    // `>= n` returns `0` [observed: `w4d_04_generic_form_neg_idx`, #3802 / PR #3803].
                     let pos = if i < 0 { (n > 0).then_some(0) } else { at };
                     match pos {
                         Some(pos) => XVal::Ref(list.remove(pos).0),
@@ -207,12 +210,22 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
                 }
                 _ => {
                     // `GenericReplaceForm`: `-2` replaces the last entry when non-empty
-                    // (returns `0` when empty); `0..n` replaces `i`; other negatives (`-1`,
-                    // `-3`) and `>= n` return `0` [observed: `w4d_04_generic_form_neg_idx`].
-                    let pos = if i == -2 { n.checked_sub(1) } else { at };
-                    match (pos, form(args, 2)) {
-                        (Some(pos), Some(f)) => XVal::Ref(std::mem::replace(&mut list[pos], f).0),
-                        _ => return Some(Ok(XVal::Ref(0))),
+                    // (returning the previous last form), and on an empty list returns `0`
+                    // while appending the replacement form (`n: 0 -> 1`); `0..n` replaces
+                    // `i`; other negatives (`-1`, `-3`) and `>= n` return `0` without
+                    // mutating [observed: `w4d_04_generic_form_neg_idx`, #3802 / PR #3803].
+                    let Some(f) = form(args, 2) else { return Some(Ok(XVal::Ref(0))) };
+                    if i == -2 {
+                        if let Some(last) = list.last_mut() {
+                            XVal::Ref(std::mem::replace(last, f).0)
+                        } else {
+                            list.push(f);
+                            XVal::Ref(0)
+                        }
+                    } else if let Some(pos) = at {
+                        XVal::Ref(std::mem::replace(&mut list[pos], f).0)
+                    } else {
+                        return Some(Ok(XVal::Ref(0)));
                     }
                 }
             };

@@ -66,35 +66,39 @@ generic.5.ref.0 and generic.5.base.0 both give Doc Mitchell's first package].
 
 - Get gives the form at the index, 0 past the end [documented].
 - Add puts the form in at the index; -2 adds at the end [documented]. The page gives no
-  result, but the game gives the index it went in at, for -2 on a non-empty list appends
-  and returns the index of the last entry before it (`n0 - 1`), and returns `-1` without
-  modifying the list on an empty list (`n0 == 0`) with `-2`, on negative indices other
-  than `-2` (`-1`, `-3`, `-10`), or on past-end indices (`999`, `n + 5`) [observed:
-  nvse-eighth; 2026-11-23 & 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), Fallout: New
-  Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters, clean-room script
-  probes `core_13_generic_add_form_split` (`0 -> 0`, `-2 -> n0 - 1`, `999 -> -1`) and
-  `w4d_04_generic_form_neg_idx` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
-  #3679: `empty(n0=0|add(-1=-1:0,-2=-1:0,-3=-1:0,-10=-1:0,oob=-1:0)|rep(-1=00000000,-2=00000000,-3=00000000,oob=00000000)|del(-1=00000000:0,-2=00000000:0,-3=00000000:0,oob=00000000:0)) | nonempty(lst=05000944,n0=38|add(-1=-1:38,-2=37:39,-3=-1:39,-10=-1:39,oob=-1:39)|rep(-1=00000000,-2=00004326,-3=00000000,oob=00000000)|del(-1=05000AC3:38,-2=0500080F:37,-3=05000857:36,oob=00000000:36))`);
-  no DLL or source consulted]. Exact boundary `index == len` (inserts at end) remains
-  [hypothesis].
+  result, but the game gives the index it went in at: for `-2` on an empty list (`n0 == 0`)
+  it appends (`n: 0 -> 1`) and returns `0`, for `-2` on a non-empty list it appends and
+  returns the index of the last entry before it (`n0 - 1`), and on negative indices other
+  than `-2` (`-1`, `-3`, `-10`) or past-end indices (`999`, `n + 5`) it returns `-1`
+  without modifying the list [observed: nvse-eighth; 2026-11-23 & 2026-11-24,
+  `GSDocMitchellHouse` (`0x00103DF9`), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with
+  the 10 official base masters, isolated clean-room staging copy (read-only `PrintToConsole`
+  probe; zero writes to game install or Saves), `core_13_generic_add_form_split` (`0 -> 0`,
+  `-2 -> n0 - 1`, `999 -> -1`) and `w4d_04_generic_form_neg_idx`
+  (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3802 / PR #3803):
+  `PROBE|w4d_04_generic_form_neg_idx|emp(n0=0,d=0/0/0/0:0,r=0:0/0:1/0/0:1,a=-1/0:1/-1/-1/-1:1)|ne(n0=38,a=-1/37:39/-1/-1/-1:39,r=0/1/0/0,d=1:38/1:37/1:36/0:36)|flstC1(g=0,a=-1,r=0,d=0,n=36)`;
+  zero DLL, PDB, or third-party source consulted]. Exact boundary `index == len` (inserts
+  at end) remains [hypothesis].
 - Target record types are validated against the list code (`0`/`1` `RACE`, `5`–`7`
   `NPC_`/`CREA`, `10` `NPC_`, `13` `FLST`): on a mismatched target record type or unknown
   list code, `GenericAddForm` returns `-1` even at valid index `0`/`-2` without mutating,
   and `GenericGetForm`/`GenericDeleteForm`/`GenericReplaceForm` all return `00000000`
-  [observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`),
-  `core_13_generic_add_form_split` (`NPC_` + code 1, `RACE` + code 5, `FLST` + code 1);
-  `CREA` and codes 6/7/10 follow [documented: GenericGetForm's list codes]].
+  [observed: 2026-11-23 & 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`),
+  `core_13_generic_add_form_split` (`NPC_` + code 1, `RACE` + code 5, `FLST` + code 1)
+  and `w4d_04_generic_form_neg_idx` (#3802 / PR #3803: `flstC1(g=0,a=-1,r=0,d=0,n=36)`,
+  confirming FLST + code 1 rejection across Get, Add, Replace, and Delete); `CREA` and
+  codes 6/7/10 follow [documented: GenericGetForm's list codes] / [hypothesis]].
 - Delete takes out the form at the index and gives it [documented]; past the end (`>= len`)
   or on an empty list returns `0`, while any negative index (`-1`, `-2`, `-3`) removes
   index `0` (head of the list) on a non-empty list [observed:
-  `w4d_04_generic_form_neg_idx`, where sequential `-1`, `-2`, `-3` deleted the original
-  indices 0, 1, 2 of `05000944` (`05000AC3`, `0500080F`, `05000857`), reducing count
-  `39 -> 38 -> 37 -> 36`].
+  `w4d_04_generic_form_neg_idx` (#3802 / PR #3803): `emp(...,d=0/0/0/0:0,...)` and
+  `ne(...,d=1:38/1:37/1:36/0:36)` reducing count `39 -> 38 -> 37 -> 36`].
 - Replace puts the new form at the index and gives the old one [documented]
   [observed: generic.10.replace and its restore]; `-2` replaces the last entry on a
-  non-empty list and returns the previous last form (returning `0` on an empty list),
-  while `-1`, `-3`, and past-end indices return `0` without mutating [observed:
-  `w4d_04_generic_form_neg_idx`, `rep(-1=00000000,-2=00004326,-3=00000000,oob=00000000)`].
+  non-empty list (returning the previous last form) and on an empty list returns `0` while
+  appending the replacement form (`n: 0 -> 1`), whereas `-1`, `-3`, and past-end indices
+  return `0` without mutating [observed: `w4d_04_generic_form_neg_idx` (#3802 / PR #3803):
+  `emp(...,r=0:0/0:1/0/0:1,...)` and `ne(...,r=0/1/0/0,...)`].
 - The lists' own getters read the changed list: GetRaceHairs, GetRaceEyes (0, 1),
   GetBaseSpellListSpells (6), GetBaseSpellListLevSpells (7), GetHeadParts (10), and the
   AI's package list and ListGetNthForm for 5 and 13 [design].
