@@ -7,13 +7,16 @@ Strict read-only guarantees (aligned with `tools/capture/README.md` §10):
   `Fallout*.ini`, or any game Saves directory.
 - NEVER launches `FalloutNV.exe` or `nvse_loader.exe` automatically against a
   live install.
-- `emit` writes generated probe scripts and `MANUAL_SETUP.txt` strictly inside
-  an explicit `--out-dir` outside git, and refuses any `--out-dir` that equals,
-  sits inside, or contains `--game-dir` / `--saves-dir` (checked on resolved
-  real paths) or contains live game-install sentinels.
-- By default (`--output-mode console`), emitted probe scripts use
-  `PrintToConsole` so running them produces zero extra files inside the game
-  folder; `--output-mode file` is opt-in for isolated staging copies only.
+- `emit` writes generated console-only probe scripts and `MANUAL_SETUP.txt`
+  strictly inside an explicit `--out-dir` outside git, and refuses any
+  `--out-dir` that equals, sits inside, or contains `--game-dir` / `--saves-dir`
+  (checked on resolved real paths) or contains live game-install sentinels.
+- All emitted probe scripts log exclusively via `PrintToConsole` and are
+  validated to contain zero game-folder or Saves-folder file-writing commands
+  (no `WriteStringToFile`, `con_Save`, `WriteToJSON`, `SetINI*`,
+  `SaveCachedIniFile`, `ExcelWrite*`, `ExcelErase*`, `TextToQRCode`,
+  `DumpLoadOrder`, `ModLogPrint`, etc.). `emit` refuses persistence catalogs
+  because two-boot capture requires `con_Save` into the Saves folder.
 - `verify` and `cite` read captured `PROBE|<id>|<result>` and two-boot
   `P2|<BEFORE|SAMERUN|COLD>|<key>|<value>` logs strictly read-only, classify
   three-tier save/load persistence (`SAVED` / `SESSION_ONLY` /
@@ -113,8 +116,96 @@ _COMPILE_FAIL_RE = re.compile(
 )
 _P2_LINE_RE = re.compile(r"(?:^|[\s:\]])P2\|(BEFORE|SAMERUN|COLD)\|([a-zA-Z0-9_]+)\|(.*)$")
 _SR_LINE_RE = re.compile(r"(?:^|[\s:\]])SR\|(boot1|boot2)\|([a-zA-Z0-9_]+)$")
-_PRINT_TO_CONSOLE_PROBE_RE = re.compile(
-    r'^(\s*)PrintToConsole\s+"((?:PROBE|P2|SR)\|[^"]*)"(.*)$'
+
+# Game-folder and Saves-folder file-writing commands forbidden in committed
+# catalogs and emitted probe scripts (tools/capture/README.md §10).
+FORBIDDEN_WRITER_COMMANDS: tuple[str, ...] = (
+    # Console / save writers
+    "con_Save",
+    "con_SaveINI",
+    "con_SCOF",
+    "con_Screenshot",
+    "SaveGame",
+    "SaveINI",
+    "Autosave",
+    "DeleteSave",
+    "SetConsoleOutputFile",
+    "CaptureScreenshot",
+    "TakeScreenshot",
+    # General file / log / dump / QR writers
+    "WriteStringToFile",
+    "WriteArrayToFile",
+    "WriteToFile",
+    "WriteFile",
+    "WriteTextFile",
+    "WriteBinaryFile",
+    "AppendToFile",
+    "StringToFile",
+    "StringToTextFile",
+    "ArrayToFile",
+    "FileFromString",
+    "SaveToFile",
+    "DeleteFile",
+    "CopyFile",
+    "RenameFile",
+    "MoveFile",
+    "CreateFile",
+    "CreateDirectory",
+    "DeleteDirectory",
+    "RemoveDirectory",
+    "ModLogPrint",
+    "PrintToFile",
+    "LogToFile",
+    "SetLogFile",
+    "DebugPrintToFile",
+    "DumpLoadOrder",
+    "TextToQRCode",
+    # JSON writers
+    "WriteToJSON",
+    "WriteJSON",
+    "JSONWrite",
+    "JSONSave",
+    "JSONAppend",
+    "JSONRemove",
+    "JSONSetValue",
+    "JSONSetValueFloat",
+    "JSONSetValueString",
+    "JSONSetValueArray",
+    "JSONCreateFile",
+    # INI file writers / mutators (Data\Config or game folder)
+    "SetINIFloat",
+    "SetINIString",
+    "SetINISection",
+    "SetINIFloat_Cached",
+    "SetINIString_Cached",
+    "SetINISetting_Cached",
+    "SaveCachedIniFile",
+    "CloseFileSO",
+    "RemoveINIKey",
+    "RemoveINISection",
+    "RemoveINIKey_Cached",
+    "RemoveINISection_Cached",
+    "ClearINISection",
+    "WriteINIFloat",
+    "WriteINIString",
+    "WriteINISection",
+    "SetINIValue",
+    "SaveINIFile",
+    # SUP Excel file writers / mutators
+    "ExcelWriteFloat",
+    "ExcelWriteString",
+    "ExcelArrayToFile",
+    "ExcelEraseSheet",
+    "ExcelEraseCell",
+    "ExcelSetSheetName",
+    "ExcelWrite",
+    "ExcelSave",
+    "ExcelCreate",
+)
+
+_FORBIDDEN_WRITER_RE = re.compile(
+    r"\b(" + "|".join(re.escape(cmd) for cmd in FORBIDDEN_WRITER_COMMANDS) + r")\b",
+    re.IGNORECASE,
 )
 
 
@@ -282,6 +373,16 @@ def find_bare_editorids(script_lines: list[str]) -> list[str]:
     return hits
 
 
+def find_forbidden_writer_commands(script_lines: list[str]) -> list[str]:
+    """Return any forbidden game/Saves file-writing commands found in `script_lines`."""
+    hits: list[str] = []
+    for line in script_lines:
+        code = strip_script_strings_and_comments(line)
+        for m in _FORBIDDEN_WRITER_RE.finditer(code):
+            hits.append(m.group(1))
+    return hits
+
+
 def _detect_repo_root(start: Path | None = None) -> Path | None:
     cur = (start or Path(__file__).resolve()).resolve()
     if cur.is_file():
@@ -431,7 +532,35 @@ def validate_catalog_data(
                 all_probe_lines = list(lines)
                 followup = probe.get("followup_script_lines", [])
                 if followup:
-                    all_probe_lines.extend(followup)
+                    if not isinstance(followup, list) or not all(isinstance(ln, str) for ln in followup):
+                        errors.append(f"{p_prefix}: followup_script_lines must be a list of strings")
+                    else:
+                        all_probe_lines.extend(followup)
+                extra_steps = probe.get("extra_steps", [])
+                if extra_steps:
+                    if not isinstance(extra_steps, list):
+                        errors.append(f"{p_prefix}: extra_steps must be a list")
+                    else:
+                        seen_suffixes: set[str] = set()
+                        for s_idx, step in enumerate(extra_steps):
+                            if not isinstance(step, dict):
+                                errors.append(f"{p_prefix}.extra_steps[{s_idx}]: step must be an object")
+                                continue
+                            sfx = step.get("suffix")
+                            if not isinstance(sfx, str) or not _SAFE_ID_RE.match(sfx):
+                                errors.append(f"{p_prefix}.extra_steps[{s_idx}]: invalid suffix {sfx!r}")
+                            elif sfx in seen_suffixes:
+                                errors.append(f"{p_prefix}.extra_steps[{s_idx}]: duplicate suffix {sfx!r}")
+                            else:
+                                seen_suffixes.add(sfx)
+                            wt = step.get("wait_ticks", 0)
+                            if not isinstance(wt, int) or isinstance(wt, bool) or wt < 0:
+                                errors.append(f"{p_prefix}.extra_steps[{s_idx}]: wait_ticks must be a non-negative int")
+                            slines = step.get("script_lines")
+                            if not isinstance(slines, list) or not slines or not all(isinstance(ln, str) for ln in slines):
+                                errors.append(f"{p_prefix}.extra_steps[{s_idx}]: script_lines must be a non-empty list of strings")
+                            else:
+                                all_probe_lines.extend(slines)
                 helpers = probe.get("helper_scripts", {})
                 if isinstance(helpers, dict):
                     for hname, hlines in helpers.items():
@@ -440,11 +569,12 @@ def validate_catalog_data(
                         if isinstance(hlines, list):
                             all_probe_lines.extend(hlines)
 
-                for ln in all_probe_lines:
-                    if "WriteStringToFile" in strip_script_strings_and_comments(ln):
-                        errors.append(
-                            f"{p_prefix}: stored catalog scripts must not call WriteStringToFile (use PrintToConsole + fixtures)"
-                        )
+                writers = find_forbidden_writer_commands(all_probe_lines)
+                if writers:
+                    errors.append(
+                        f"{p_prefix}: forbidden game/Saves file-writing command(s) in script_lines: {sorted(set(writers))} "
+                        "(committed catalogs must be strictly read-only console probes)"
+                    )
                 bare = find_bare_editorids(all_probe_lines)
                 if bare:
                     errors.append(f"{p_prefix}: bare EditorID(s) in script_lines: {sorted(set(bare))}")
@@ -509,9 +639,11 @@ def validate_catalog_data(
             if not isinstance(lines, list) or not lines:
                 errors.append(f"{source_name}: missing {block_name}")
                 continue
-            for ln in lines:
-                if "WriteStringToFile" in strip_script_strings_and_comments(ln):
-                    errors.append(f"{source_name}.{block_name}: must not call WriteStringToFile")
+            writers = find_forbidden_writer_commands(lines)
+            if writers:
+                errors.append(
+                    f"{source_name}.{block_name}: forbidden game/Saves file-writing command(s): {sorted(set(writers))}"
+                )
             bare = find_bare_editorids(lines)
             if bare:
                 errors.append(f"{source_name}.{block_name}: bare EditorID(s): {sorted(set(bare))}")
@@ -570,20 +702,10 @@ def validate_catalogs(
     return errors, counts
 
 
-def _render_output_line(line: str, *, output_mode: str, log_name: str) -> str:
-    if output_mode == "console":
-        return line
-    m = _PRINT_TO_CONSOLE_PROBE_RE.match(line)
-    if not m:
-        return line
-    indent, fmt_body, rest = m.groups()
-    return f'{indent}WriteStringToFile "{log_name}" 1 "{fmt_body}%r"{rest}'
-
-
-def _render_udf(lines: list[str], *, output_mode: str, log_name: str, header: str = "begin Function {}") -> bytes:
+def _render_udf(lines: list[str], *, header: str = "begin Function {}") -> bytes:
     rendered = [header]
     for ln in lines:
-        rendered.append("  " + _render_output_line(ln, output_mode=output_mode, log_name=log_name))
+        rendered.append("  " + ln)
     rendered.append("end")
     return ("\r\n".join(rendered) + "\r\n").encode("ascii")
 
@@ -593,20 +715,22 @@ def _manual_setup_guide(
     catalog_id: str,
     stage_root: Path,
     probe_count: int,
-    output_mode: str,
-    log_name: str,
     required_plugins: list[str],
     fixture_paths: list[str],
-    is_persistence: bool,
 ) -> str:
     lines = [
-        f"Catalog: {catalog_id} ({probe_count} {'items' if is_persistence else 'probes'})",
-        f"Output mode: {output_mode}" + (f" (log file: {log_name})" if output_mode == "file" else " (PrintToConsole, zero files written in game dir)"),
+        f"Catalog: {catalog_id} ({probe_count} probes)",
+        "Output mode: PrintToConsole (console-only; emitted probe scripts write zero files to the game or Saves folder)",
         f"Staged directory: {stage_root}",
         "",
         "STRICT READ-ONLY GUARANTEE (tools/capture/README.md §10):",
-        "This tool NEVER writes into your Fallout: New Vegas install directory,",
-        "Data\\, NVSE\\, Fallout.ini, or Saves folder, and NEVER launches the game.",
+        "- This tool NEVER writes into your Fallout: New Vegas install directory,",
+        "  Data\\, NVSE\\, Fallout.ini, or Saves folder, and NEVER launches the game.",
+        "- All emitted probe scripts log strictly via PrintToConsole and contain zero",
+        "  file-writing or con_Save commands (validated before emission).",
+        "- Copying the staged scripts (and any optional read-only fixtures below) into",
+        "  an isolated staging copy is a manual one-time step performed by you; standard",
+        "  extender startup logs such as nvse.log are produced by the extenders themselves.",
         "",
         "One-time manual setup (performed by you in an isolated staging copy or backed-up install):",
         "1. Prepare Fallout: New Vegas 1.4.0.525 (English) with ONLY the 10 official base masters:",
@@ -614,42 +738,23 @@ def _manual_setup_guide(
         "2. Install xNVSE 6.4.9+ and the required public extender DLLs for your selected batch:",
         "   " + (", ".join(required_plugins) if required_plugins else "(xNVSE 6.4.9 + JIP LN NVSE)"),
         "3. Back up Documents\\My Games\\FalloutNV\\Fallout.ini and your Saves folder by hand.",
+        "4. Inspect the generated console-only scripts under Data\\NVSE\\ inside this staged folder,",
+        "   then copy them into <staging-FNV>\\Data\\NVSE\\ by hand:",
+        f"   - Data\\NVSE\\Plugins\\Scripts\\{STAGED_GR_FILENAME}",
+        f"   - Data\\NVSE\\user_defined_functions\\{STAGED_LOOP_FILENAME}",
+        f"   - Data\\NVSE\\user_defined_functions\\{STAGED_STEP_PREFIX}*.gek",
     ]
-    if is_persistence:
-        lines.extend(
-            [
-                "4. Two-boot persistence capture:",
-                "   a) Copy boot1/Data/NVSE/... into <staging-FNV>\\Data\\NVSE\\ by hand.",
-                "   b) Launch the game manually; Boot 1 mutates, logs P2|BEFORE|..., saves a",
-                "      temporary probe save, reloads it in the same process, logs P2|SAMERUN|...,",
-                "      and exits.",
-                "   c) Replace the staged scripts with boot2/Data/NVSE/... by hand and launch",
-                "      a fresh game process; Boot 2 cold-loads the probe save, logs P2|COLD|...,",
-                "      and exits.",
-                "   d) Optionally copy script_runner_prefixes/gr|gn|ln|gl|gx|zz scripts to",
-                "      observe Script Runner prefix execution order.",
-            ]
-        )
-    else:
-        lines.extend(
-            [
-                "4. Inspect the generated scripts under Data\\NVSE\\ inside this staged folder,",
-                "   then copy them into <staging-FNV>\\Data\\NVSE\\ by hand:",
-                f"   - Data\\NVSE\\Plugins\\Scripts\\{STAGED_GR_FILENAME}",
-                f"   - Data\\NVSE\\user_defined_functions\\{STAGED_LOOP_FILENAME}",
-                f"   - Data\\NVSE\\user_defined_functions\\{STAGED_STEP_PREFIX}*.gek",
-            ]
-        )
     if fixture_paths:
-        lines.append("   Optional isolated-staging fixtures (copy into <staging-FNV>\\ only for those probes):")
+        lines.append("   Optional read-only input fixtures (copy into <staging-FNV>\\ only if running those probes):")
         for fp in fixture_paths:
             lines.append(f"   - fixtures/{fp}")
     lines.extend(
         [
-            "5. Capture the console/probe log into a private directory outside git and run:",
+            "5. Run the game manually and capture console output into a private directory outside git,",
+            "   then verify read-only:",
             "   python tools/capture/nvse/harness.py verify --log-file <private-log>",
             "6. When finished, delete all copied gr_nvseprobe.txt / nvseprobe_*.gek files",
-            "   and any temporary probe saves by hand, and restore your Fallout.ini backup.",
+            "   and any staged input fixtures by hand, and restore your Fallout.ini backup.",
             "",
         ]
     )
@@ -664,21 +769,21 @@ def emit_catalog(
     saves_dir: str | os.PathLike[str] | None = None,
     batches: list[str] | None = None,
     probe_ids: list[str] | None = None,
-    output_mode: str = "console",
-    log_name: str = "nvseprobe_out.log",
     interval: int = 10,
     exclude_optional: bool = False,
     exclude_staging_only: bool = False,
 ) -> dict[str, Any]:
-    """Emit clean-room NVSE probe scripts and `MANUAL_SETUP.txt` strictly into `out_dir`."""
-    if output_mode not in ("console", "file"):
-        raise ValueError(f"Unsupported output_mode: {output_mode!r}")
-    if output_mode == "file" and not _SAFE_FILENAME_RE.match(log_name):
-        raise ValueError(f"Unsafe --log-name (must be a plain filename): {log_name!r}")
-
+    """Emit console-only clean-room NVSE probe scripts and `MANUAL_SETUP.txt` strictly into `out_dir`."""
     odir = assert_safe_out_dir(out_dir, game_dir=game_dir, saves_dir=saves_dir)
     data = load_catalog(catalog_path)
     schema = data.get("schema")
+
+    if schema == PERSISTENCE_CATALOG_SCHEMA:
+        raise ReadOnlyBoundaryError(
+            "Refusing to emit persistence catalog scripts because two-boot capture requires "
+            "con_Save into the Saves folder (tools/capture/README.md §10); use 'verify' and "
+            "'cite' strictly read-only on pre-captured logs."
+        )
 
     if schema == PROBE_CATALOG_SCHEMA:
         batch_filter = set(batches) if batches else None
@@ -704,15 +809,40 @@ def emit_catalog(
         if not selected:
             raise ValueError("No probes matched the requested filters.")
 
-        # Pre-validate all probe IDs, helper filenames, and fixture relative paths
-        # before creating directories or writing any files.
+        # Pre-validate all probe IDs, helper filenames, extra steps, fixture relative
+        # paths, and forbidden file-writing commands before creating any files.
         for probe in selected:
             pid = probe.get("id")
             if not isinstance(pid, str) or not _SAFE_ID_RE.match(pid):
                 raise ValueError(f"Unsafe probe id: {pid!r}")
-            for hname in probe.get("helper_scripts", {}):
+            all_lines = list(probe.get("script_lines", []))
+            followup = probe.get("followup_script_lines", [])
+            if followup:
+                all_lines.extend(followup)
+            seen_sfx: set[str] = set()
+            for step in probe.get("extra_steps", []):
+                sfx = step.get("suffix") if isinstance(step, dict) else None
+                if not isinstance(sfx, str) or not _SAFE_ID_RE.match(sfx) or sfx in seen_sfx:
+                    raise ValueError(f"Unsafe or duplicate extra_steps suffix for {pid}: {sfx!r}")
+                seen_sfx.add(sfx)
+                wt = step.get("wait_ticks", 0)
+                if not isinstance(wt, int) or isinstance(wt, bool) or wt < 0:
+                    raise ValueError(f"Invalid wait_ticks for {pid}.{sfx}: {wt!r}")
+                slines = step.get("script_lines")
+                if not isinstance(slines, list) or not slines:
+                    raise ValueError(f"Empty extra_steps script_lines for {pid}.{sfx}")
+                all_lines.extend(slines)
+            for hname, hlines in probe.get("helper_scripts", {}).items():
                 if not isinstance(hname, str) or not _SAFE_FILENAME_RE.match(hname):
                     raise ValueError(f"Unsafe helper script filename: {hname!r}")
+                if isinstance(hlines, list):
+                    all_lines.extend(hlines)
+            writers = find_forbidden_writer_commands(all_lines)
+            if writers:
+                raise ReadOnlyBoundaryError(
+                    f"Refusing to emit probe {pid!r} containing forbidden game/Saves file-writing "
+                    f"command(s): {sorted(set(writers))}"
+                )
             for fx in probe.get("fixtures", []):
                 _validate_safe_rel_posix_path(
                     fx.get("rel_path") if isinstance(fx, dict) else None,
@@ -736,28 +866,36 @@ def emit_catalog(
 
         emitted_scripts: list[Path] = []
         fixture_paths: list[str] = []
-        loop_steps: list[tuple[str, str]] = []
+        loop_steps: list[tuple[str, str, int]] = []
         for probe in selected:
             pid = probe["id"]
             fn = f"{STAGED_STEP_PREFIX}{pid}.gek"
             sp = _assert_child_dest(udf_dir / fn, odir, "probe script")
-            sp.write_bytes(_render_udf(probe["script_lines"], output_mode=output_mode, log_name=log_name))
+            sp.write_bytes(_render_udf(probe["script_lines"]))
             emitted_scripts.append(sp)
-            loop_steps.append((pid, fn))
+            init_wait = int(probe.get("wait_ticks_after", 0))
+            loop_steps.append((pid, fn, init_wait))
             for hname, hlines in probe.get("helper_scripts", {}).items():
                 hp = _assert_child_dest(udf_dir / hname, odir, "helper script")
                 has_header = bool(hlines and hlines[0].lower().startswith("begin function"))
                 header = hlines[0] if has_header else "begin Function {}"
                 body = hlines[1:] if has_header else hlines
-                hp.write_bytes(_render_udf(body, output_mode=output_mode, log_name=log_name, header=header))
+                hp.write_bytes(_render_udf(body, header=header))
                 emitted_scripts.append(hp)
             followup = probe.get("followup_script_lines")
             if followup:
                 ffn = f"{STAGED_STEP_PREFIX}{pid}_post.gek"
                 fsp = _assert_child_dest(udf_dir / ffn, odir, "followup script")
-                fsp.write_bytes(_render_udf(followup, output_mode=output_mode, log_name=log_name))
+                fsp.write_bytes(_render_udf(followup))
                 emitted_scripts.append(fsp)
-                loop_steps.append((f"{pid}_post", ffn))
+                loop_steps.append((f"{pid}_post", ffn, 0))
+            for step in probe.get("extra_steps", []):
+                sfx = step["suffix"]
+                efn = f"{STAGED_STEP_PREFIX}{pid}_{sfx}.gek"
+                esp = _assert_child_dest(udf_dir / efn, odir, "extra step script")
+                esp.write_bytes(_render_udf(step["script_lines"]))
+                emitted_scripts.append(esp)
+                loop_steps.append((f"{pid}_{sfx}", efn, int(step.get("wait_ticks", 0))))
             for fx in probe.get("fixtures", []):
                 rel = _validate_safe_rel_posix_path(fx["rel_path"], f"fixture for {pid}")
                 fdest = _assert_child_dest(odir / "fixtures" / rel, odir, "fixture file")
@@ -765,7 +903,7 @@ def emit_catalog(
                 fdest.write_text(fx["content"], encoding="utf-8", newline="\r\n")
                 fixture_paths.append(rel)
 
-        # Build main-loop runner UDF.
+        # Build main-loop runner UDF (strictly PrintToConsole).
         loop_lines = [
             'int st = Player.AuxVarGetFlt "*np_st"',
             "int mm = GetActiveMenuMode",
@@ -775,7 +913,7 @@ def emit_catalog(
             "    CenterOnCell GSDocMitchellHouse",
             "  endif",
             "  return",
-            "elseif mm != 0",
+            'elseif mm != 0 && (Player.AuxVarGetFlt "*np_keepmenu") == 0',
             "  CloseActiveMenu",
             '  ClickMenuButton "MessageMenu#1"',
             "  return",
@@ -792,12 +930,7 @@ def emit_catalog(
             "  EnablePlayerControls 1 1 1 1 1 1 1",
             '  Player.AuxVarSetFlt "*np_wt" 4',
         ]
-        for idx, (step_id, fn) in enumerate(loop_steps, 1):
-            fail_line = (
-                f'PrintToConsole "PROBE_COMPILE_FAIL|{step_id}"'
-                if output_mode == "console"
-                else f'WriteStringToFile "{log_name}" 1 "PROBE_COMPILE_FAIL|{step_id}%r"'
-            )
+        for idx, (step_id, fn, wait_after) in enumerate(loop_steps, 1):
             loop_lines.extend(
                 [
                     f"elseif ph == {idx}",
@@ -805,19 +938,16 @@ def emit_catalog(
                     "  if rFn",
                     "    Call rFn",
                     "  else",
-                    f"    {fail_line}",
+                    f'    PrintToConsole "PROBE_COMPILE_FAIL|{step_id}"',
                     "  endif",
                 ]
             )
-        done_line = (
-            'PrintToConsole "PROBE_DONE"'
-            if output_mode == "console"
-            else f'WriteStringToFile "{log_name}" 1 "PROBE_DONE%r"'
-        )
+            if wait_after > 0:
+                loop_lines.append(f'  Player.AuxVarSetFlt "*np_wt" {wait_after}')
         loop_lines.extend(
             [
                 f"elseif ph == {len(loop_steps) + 1}",
-                f"  {done_line}",
+                '  PrintToConsole "PROBE_DONE"',
                 "  con_QuitGame",
                 "endif",
             ]
@@ -827,16 +957,12 @@ def emit_catalog(
             ("begin Function {}\r\n" + "\r\n".join(f"  {ln}" for ln in loop_lines) + "\r\nend\r\n").encode("ascii")
         )
 
-        start_line = (
-            f'PrintToConsole "NVSEPROBE START {data["catalog_id"]}"'
-            if output_mode == "console"
-            else f'WriteStringToFile "{log_name}" 1 "=== NVSEPROBE START {data["catalog_id"]} ===%r"'
-        )
         gr_lines = [
-            start_line,
+            f'PrintToConsole "NVSEPROBE START {data["catalog_id"]}"',
             'Player.AuxVarSetFlt "*np_st" 0',
             'Player.AuxVarSetFlt "*np_ph" 0',
             'Player.AuxVarSetFlt "*np_wt" 0',
+            'Player.AuxVarSetFlt "*np_keepmenu" 0',
             f'SetGameMainLoopCallback (CompileScript "{STAGED_LOOP_FILENAME}") 1 {interval} 3',
         ]
         gr_path.write_bytes(("\r\n".join(gr_lines) + "\r\n").encode("ascii"))
@@ -847,11 +973,8 @@ def emit_catalog(
                 catalog_id=data["catalog_id"],
                 stage_root=odir,
                 probe_count=len(selected),
-                output_mode=output_mode,
-                log_name=log_name,
                 required_plugins=sorted(req_plugins),
                 fixture_paths=fixture_paths,
-                is_persistence=False,
             ),
             encoding="utf-8",
             newline="\n",
@@ -860,163 +983,11 @@ def emit_catalog(
             "catalog_id": data["catalog_id"],
             "out_dir": str(odir),
             "emitted_probes": len(selected),
-            "output_mode": output_mode,
+            "output_mode": "console",
             "gr_path": str(gr_path),
             "loop_path": str(loop_path),
             "setup_path": str(setup_path),
             "fixtures": fixture_paths,
-        }
-
-    if schema == PERSISTENCE_CATALOG_SCHEMA:
-        save_name = data.get("probe_save_name", "nvseprobe_p2")
-        if not isinstance(save_name, str) or not _SAFE_FILENAME_RE.match(save_name):
-            raise ValueError(f"Unsafe probe_save_name: {save_name!r}")
-
-        b1_scripts = odir / "boot1" / "Data" / "NVSE" / "Plugins" / "Scripts"
-        b1_udf = odir / "boot1" / "Data" / "NVSE" / "user_defined_functions"
-        b2_scripts = odir / "boot2" / "Data" / "NVSE" / "Plugins" / "Scripts"
-        b2_udf = odir / "boot2" / "Data" / "NVSE" / "user_defined_functions"
-        for d in (b1_scripts, b1_udf, b2_scripts, b2_udf):
-            _assert_child_dest(d, odir, "persistence staging dir")
-            d.mkdir(parents=True, exist_ok=True)
-
-        mutate_bytes = _render_udf(data["mutate_script_lines"], output_mode=output_mode, log_name=log_name)
-        readback_bytes = _render_udf(
-            data["readback_script_lines"],
-            output_mode=output_mode,
-            log_name=log_name,
-            header="begin Function { string_var svTag }",
-        )
-        postload_bytes = _render_udf(
-            [
-                'Call (CompileScript "nvseprobe_s_p2_readback.gek") "SAMERUN"',
-                'PrintToConsole "BOOT1_DONE"',
-                "con_QuitGame",
-            ],
-            output_mode=output_mode,
-            log_name=log_name,
-        )
-        coldpost_bytes = _render_udf(
-            [
-                'Call (CompileScript "nvseprobe_s_p2_readback.gek") "COLD"',
-                'PrintToConsole "BOOT2_DONE"',
-                "con_QuitGame",
-            ],
-            output_mode=output_mode,
-            log_name=log_name,
-        )
-        for udf_dir in (b1_udf, b2_udf):
-            _assert_child_dest(udf_dir / "nvseprobe_s_p2_readback.gek", odir, "readback script").write_bytes(readback_bytes)
-        _assert_child_dest(b1_udf / "nvseprobe_s_p2_mutate.gek", odir, "mutate script").write_bytes(mutate_bytes)
-        _assert_child_dest(b1_udf / "nvseprobe_s_p2_postload.gek", odir, "postload script").write_bytes(postload_bytes)
-        _assert_child_dest(b2_udf / "nvseprobe_s_p2_coldpost.gek", odir, "coldpost script").write_bytes(coldpost_bytes)
-        b1_loop = [
-            'int st = Player.AuxVarGetFlt "*np_st"',
-            "int mm = GetActiveMenuMode",
-            'Player.AuxVarSetFlt "*np_st" (st + 1)',
-            "if mm == 1013",
-            "  if st == 4",
-            "    CenterOnCell GSDocMitchellHouse",
-            "  endif",
-            "  return",
-            "elseif mm != 0",
-            "  CloseActiveMenu",
-            '  ClickMenuButton "MessageMenu#1"',
-            "  return",
-            "endif",
-            'int wt = Player.AuxVarGetFlt "*np_wt"',
-            "if wt > 0",
-            '  Player.AuxVarSetFlt "*np_wt" (wt - 1)',
-            "  return",
-            "endif",
-            'int ph = Player.AuxVarGetFlt "*np_ph"',
-            'Player.AuxVarSetFlt "*np_ph" (ph + 1)',
-            "if ph == 0",
-            "  EnablePlayerControls 1 1 1 1 1 1 1",
-            '  Player.AuxVarSetFlt "*np_wt" 4',
-            "elseif ph == 1",
-            '  Call (CompileScript "nvseprobe_s_p2_mutate.gek")',
-            f'  con_Save "{save_name}"',
-            '  Player.AuxVarSetFlt "*np_wt" 15',
-            "elseif ph == 2",
-            f'  con_LoadGame "{save_name}"',
-            '  Player.AuxVarSetFlt "*np_wt" 20',
-            "endif",
-        ]
-        b2_loop = [
-            'int st = Player.AuxVarGetFlt "*np_st"',
-            "int mm = GetActiveMenuMode",
-            'Player.AuxVarSetFlt "*np_st" (st + 1)',
-            "if mm == 1013",
-            "  if st == 4",
-            f'    con_LoadGame "{save_name}"',
-            "  endif",
-            "  return",
-            "endif",
-        ]
-        _assert_child_dest(b1_udf / STAGED_LOOP_FILENAME, odir, "boot1 loop script").write_bytes(
-            ("begin Function {}\r\n" + "\r\n".join(f"  {ln}" for ln in b1_loop) + "\r\nend\r\n").encode("ascii")
-        )
-        _assert_child_dest(b2_udf / STAGED_LOOP_FILENAME, odir, "boot2 loop script").write_bytes(
-            ("begin Function {}\r\n" + "\r\n".join(f"  {ln}" for ln in b2_loop) + "\r\nend\r\n").encode("ascii")
-        )
-        _assert_child_dest(b1_scripts / STAGED_GR_FILENAME, odir, "boot1 gr script").write_bytes(
-            (
-                'Player.AuxVarSetFlt "*np_st" 0\r\n'
-                'Player.AuxVarSetFlt "*np_ph" 0\r\n'
-                'Player.AuxVarSetFlt "*np_wt" 0\r\n'
-                f'SetGameMainLoopCallback (CompileScript "{STAGED_LOOP_FILENAME}") 1 {interval} 3\r\n'
-            ).encode("ascii")
-        )
-        _assert_child_dest(b1_scripts / "gl_nvseprobe_postload.txt", odir, "boot1 gl script").write_bytes(
-            b'Call (CompileScript "nvseprobe_s_p2_postload.gek")\r\n'
-        )
-        _assert_child_dest(b2_scripts / STAGED_GR_FILENAME, odir, "boot2 gr script").write_bytes(
-            (
-                'Player.AuxVarSetFlt "*np_st" 0\r\n'
-                f'SetGameMainLoopCallback (CompileScript "{STAGED_LOOP_FILENAME}") 1 {interval} 3\r\n'
-            ).encode("ascii")
-        )
-        _assert_child_dest(b2_scripts / "gl_nvseprobe_coldpost.txt", odir, "boot2 gl script").write_bytes(
-            b'Call (CompileScript "nvseprobe_s_p2_coldpost.gek")\r\n'
-        )
-
-        # Optional Script Runner prefix lifecycle observers (staged separately).
-        sr_dir = _assert_child_dest(odir / "script_runner_prefixes", odir, "script runner dir")
-        sr_dir.mkdir(parents=True, exist_ok=True)
-        for pfx in ("gr", "gn", "ln", "gl", "gx", "zz"):
-            line = _render_output_line(
-                f'PrintToConsole "SR|boot1|{pfx}_fired"',
-                output_mode=output_mode,
-                log_name=log_name,
-            )
-            _assert_child_dest(sr_dir / f"{pfx}_nvseprobe_sr.txt", odir, "script runner prefix script").write_bytes(
-                (line + "\r\n").encode("ascii")
-            )
-
-        setup_path = _assert_child_dest(odir / MANUAL_SETUP_FILENAME, odir, "setup guide")
-        setup_path.write_text(
-            _manual_setup_guide(
-                catalog_id=data["catalog_id"],
-                stage_root=odir,
-                probe_count=len(data["items"]),
-                output_mode=output_mode,
-                log_name=log_name,
-                required_plugins=sorted(data.get("extender_versions", {}).keys()),
-                fixture_paths=[],
-                is_persistence=True,
-            ),
-            encoding="utf-8",
-            newline="\n",
-        )
-        return {
-            "catalog_id": data["catalog_id"],
-            "out_dir": str(odir),
-            "emitted_probes": len(data["items"]),
-            "output_mode": output_mode,
-            "boot1_dir": str(odir / "boot1"),
-            "boot2_dir": str(odir / "boot2"),
-            "setup_path": str(setup_path),
         }
 
     raise ValueError(f"Unsupported catalog schema: {schema!r}")
@@ -1423,30 +1394,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p_val.add_argument("--catalog-dir", default=None, help="Directory of catalog JSON files.")
     p_val.add_argument("--repo-root", default=None, help="Repository root for verifying spec_file existence.")
 
-    p_emit = sub.add_parser("emit", help="Emit probe scripts + MANUAL_SETUP.txt strictly into --out-dir.")
+    p_emit = sub.add_parser("emit", help="Emit console-only probe scripts + MANUAL_SETUP.txt strictly into --out-dir.")
     p_emit.add_argument("--catalog", required=True, help="Catalog JSON file to emit.")
     p_emit.add_argument("--out-dir", required=True, help="Explicit output directory outside git and --game-dir.")
     p_emit.add_argument("--game-dir", default=None, help="Protected FNV install directory (read-only boundary check).")
     p_emit.add_argument("--saves-dir", default=None, help="Protected Saves directory (read-only boundary check).")
     p_emit.add_argument("--batch", action="append", default=None, help="Filter to specific batch ID(s).")
     p_emit.add_argument("--probe", action="append", default=None, help="Filter to specific probe ID(s).")
-    p_emit.add_argument(
-        "--output-mode",
-        choices=("console", "file"),
-        default="console",
-        help="Default 'console' emits PrintToConsole (zero writes in game dir); 'file' opts into WriteStringToFile for isolated staging.",
-    )
-    p_emit.add_argument(
-        "--log-name",
-        default="nvseprobe_out.log",
-        help="Plain filename used only with --output-mode file (default: nvseprobe_out.log).",
-    )
     p_emit.add_argument("--interval", type=int, default=10, help="Main-loop tick interval (default: 10).")
     p_emit.add_argument("--exclude-optional", action="store_true", help="Skip probes requiring optional extender DLLs.")
     p_emit.add_argument(
         "--exclude-staging-only",
         action="store_true",
-        help="Skip probes that require external fixtures or isolated file-write staging.",
+        help="Skip probes that require optional read-only input fixtures.",
     )
 
     p_ver = sub.add_parser("verify", help="Verify captured PROBE| and P2| logs read-only against catalogs.")
@@ -1563,8 +1523,6 @@ def main(argv: list[str] | None = None) -> int:
             saves_dir=args.saves_dir,
             batches=args.batch,
             probe_ids=args.probe,
-            output_mode=args.output_mode,
-            log_name=args.log_name,
             interval=args.interval,
             exclude_optional=args.exclude_optional,
             exclude_staging_only=args.exclude_staging_only,

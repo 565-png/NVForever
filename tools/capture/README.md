@@ -693,11 +693,13 @@ that tile. `--no-inherited` leaves them out.
 ## NVSE / extender black-box probe harness (`nvse/`)
 
 `tools/capture/nvse/` contains a strictly read-only clean-room black-box
-NVSE/extender probe script emitter, declarative JSON catalogs (Wave 4A, Wave 4B,
-and a two-boot 3-tier Save/Load persistence matrix), read-only log verifier,
-clean-room `[observed: ...]` citation formatter with an automated privacy gate,
-and offline stdlib `unittest` suite. Like §10, it never writes into `--game-dir`,
-`Data\`, `NVSE\`, `Fallout.ini`, or Saves, and never launches the game; see
+NVSE/extender console-only (`PrintToConsole`) probe script emitter, declarative
+JSON catalogs (Wave 1/2 parity probes, Wave 4A, and Wave 4B — excluding all
+file-writing and `con_Save` probes), read-only log verifier (with offline 3-tier
+persistence log classifier), clean-room `[observed: ...]` citation formatter
+with an automated privacy gate, and offline stdlib `unittest` suite. Like §10,
+neither the tool nor its emitted probe scripts write into `--game-dir`, `Data\`,
+`NVSE\`, `Fallout.ini`, or Saves, and the tool never launches the game; see
 [`tools/capture/nvse/README.md`](nvse/README.md) for manual staging steps and
 usage.
 

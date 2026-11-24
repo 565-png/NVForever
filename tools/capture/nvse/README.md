@@ -1,12 +1,12 @@
 # Clean-Room NVSE / Extender Black-Box Probe Harness
 
 This package provides a strictly read-only black-box NVSE/extender probe script
-emitter, declarative clean-room probe catalogs, read-only log verifier,
-three-tier save/load persistence classifier (`SAVED` / `SESSION_ONLY` /
-`CLEARED_ON_LOAD`), and clean-room `[observed: ...]` citation formatter for
-verifying *Fallout: New Vegas* script extender behavior without ever committing
-game assets, saves, logs, or private machine paths, and without ever writing
-into the game folder or `Documents\My Games\FalloutNV`.
+emitter, declarative console-only clean-room probe catalogs, read-only log
+verifier, offline three-tier save/load persistence classifier (`SAVED` /
+`SESSION_ONLY` / `CLEARED_ON_LOAD`), and clean-room `[observed: ...]` citation
+formatter for verifying *Fallout: New Vegas* script extender behavior without
+ever committing game assets, saves, logs, or private machine paths, and without
+writing into the game folder or `Documents\My Games\FalloutNV`.
 
 ## Clean-Room & Read-Only Charter (`tools/capture/README.md` §10)
 
@@ -26,11 +26,18 @@ into the game folder or `Documents\My Games\FalloutNV`.
   path that equals, sits inside, or contains `--game-dir` or `--saves-dir`, or
   that contains live game/config sentinels (`FalloutNV.exe`, `nvse_loader.exe`,
   `Data/FalloutNV.esm`, `Fallout.ini`, `plugins.txt`).
-- **Console-first script output:** By default (`--output-mode console`), emitted
-  scripts log `PROBE|<id>|<result>` and `P2|<phase>|<key>|<value>` via
-  `PrintToConsole` so running probes writes zero extra trace files into the game
-  folder. `--output-mode file --log-name <plain-name>` is opt-in strictly for
-  user-managed isolated staging copies.
+- **Console-only probe scripts (zero script-driven file writes):** Every emitted
+  probe script logs `PROBE|<id>|<result>` strictly via `PrintToConsole` (there
+  is no file-output mode). `validate` and `emit` reject all game-folder and
+  Saves-folder file-writing commands (`WriteStringToFile`, `WriteArrayToFile`,
+  `con_Save`, `WriteToJSON`, `SetINI*`, `RemoveINI*`, `SaveCachedIniFile`,
+  `CloseFileSO`, `ExcelWrite*`, `ExcelArrayToFile`, `ExcelErase*`,
+  `ExcelSetSheetName`, `TextToQRCode`, `DumpLoadOrder`, `ModLogPrint`, etc.).
+  Manual staging still requires copying the emitted scripts (and any optional
+  read-only input fixtures under `fixtures/`) into an isolated staging copy by
+  hand; when run, the probe scripts themselves perform zero file or save writes
+  (normal xNVSE/extender plugin startup logs such as `nvse.log` are produced by
+  the extenders themselves).
 - **Automated privacy leak gate:** `validate`, `verify`, and `cite` reject
   absolute Windows drive paths, POSIX `/home/` or `/Users/` paths, UNC paths,
   Windows profile markers, `.pdb` names, unredacted `.fos` / `.nvse` save
@@ -59,26 +66,30 @@ Probes in `catalogs/` target:
 - `harness.py` — stdlib-only CLI with five subcommands:
   - `list` — list catalogs, batches, probe counts, and required extenders.
   - `validate` — verify catalog schemas, global probe ID uniqueness, relative
-    `docs/spec-notes/` paths, zero bare EditorIDs, zero stored
-    `WriteStringToFile` calls, and zero privacy leaks.
-  - `emit` — render isolated `.gek` UDFs, loop runner, `gr_nvseprobe.txt`, any
-    declarative fixtures, and `MANUAL_SETUP.txt` strictly into `--out-dir`.
+    `docs/spec-notes/` paths, zero bare EditorIDs, zero forbidden game/Saves
+    file-writing commands, and zero privacy leaks.
+  - `emit` — render console-only (`PrintToConsole`) isolated `.gek` UDFs, loop
+    runner, `gr_nvseprobe.txt`, any declarative read-only input fixtures, and
+    `MANUAL_SETUP.txt` strictly into `--out-dir` (refuses persistence catalogs
+    because `con_Save` writes into the Saves folder).
   - `verify` — parse captured `PROBE|<id>|<result>`, `COMPILE_FAIL|<id>`,
     `P2|<BEFORE|SAMERUN|COLD>|<key>|<value>`, and `SR|<boot>|<event>` logs
-    strictly read-only; classify 3-tier save/load persistence; write JSON and
-    Markdown scoreboards.
+    strictly read-only; classify offline 3-tier save/load persistence logs;
+    write JSON and Markdown scoreboards.
   - `cite` — format copy-paste-ready clean-room `[observed: ...]` citations with
     the automated privacy gate.
-- `catalogs/` — sanitized declarative JSON catalogs:
-  - `wave4a_extenders.json` — Wave 4A extender hypothesis catalog across 6
-    families (`w4_showoff`, `w4_jip_lutana`, `w4_jg`, `w4_sup`, `w4_knvse_misc`,
-    `w4_itr_pp`).
-  - `wave4b_extenders.json` — Wave 4B remaining Bucket A & B extender catalog
-    across JIP/Lutana, ShowOff/Core/kNVSE/AnhNVSE/Stewie, JohnnyGuitar, and SUP.
-  - `persistence_matrix.json` — two-boot Save/Load persistence matrix (27
-    mutated state items classified into `SAVED`, `SESSION_ONLY`, or
-    `CLEARED_ON_LOAD`) plus Script Runner prefix lifecycle
-    (`gr_`/`ln_`/`gn_`/`gl_`/`gx_`/`zz_`).
+- `catalogs/` — sanitized declarative console-only JSON catalogs (all
+  file-writing and `con_Save` probes excluded):
+  - `wave1_parity_probes.json` — Wave 1/2 parity probes covering xNVSE compound
+    assignments & `dATan2`, JIP hit 3D direction/base damage/reticle limbs,
+    ShowOff `OnFireWeapon` & `ForceWeaponJamAnim`, ShowOff objective/unholster
+    & xNVSE `OnApplyIMOD`/`OnRemoveIMOD` events, and `SetCritDam` alias.
+  - `wave4a_extenders.json` — Wave 4A read-only extender hypothesis catalog
+    across 6 families (`w4_showoff`, `w4_jip_lutana`, `w4_jg`, `w4_sup`,
+    `w4_knvse_misc`, `w4_itr_pp`).
+  - `wave4b_extenders.json` — Wave 4B remaining read-only Bucket A & B extender
+    catalog across JIP/Lutana, ShowOff/Core/kNVSE/AnhNVSE/Stewie, JohnnyGuitar,
+    and SUP.
 - `tests/test_nvse_harness.py` — offline stdlib `unittest` suite (no game
   install or captured logs required).
 
@@ -95,17 +106,15 @@ Probes in `catalogs/` target:
      --out-dir "<private-dir>/nvse-stage/w4_showoff"
    ```
 3. Review the emitted scripts and `<private-dir>/nvse-stage/w4_showoff/MANUAL_SETUP.txt`,
-   then copy `Data\NVSE\...` into your staging game folder by hand and run the
-   game manually.
-4. For two-boot persistence verification (`persistence_matrix.json`):
-   - **Boot 1:** stage `boot1/Data/NVSE/...` by hand -> mutates state -> logs
-     `P2|BEFORE|...` -> `con_Save` -> `con_LoadGame` -> logs `P2|SAMERUN|...` ->
-     exits.
-   - **Boot 2:** stage `boot2/Data/NVSE/...` by hand -> fresh process ->
-     `con_LoadGame` -> logs `P2|COLD|...` -> exits.
-5. Remove all copied `gr_nvseprobe.txt`, `gl_nvseprobe_*.txt`, and
-   `nvseprobe_*.gek` files plus any temporary probe saves by hand, and restore
-   your INI backup.
+   then copy `Data\NVSE\...` (and any optional read-only input fixtures under
+   `fixtures/` if you opt in to fixture-backed read probes) into your isolated
+   staging game folder by hand and run the game manually.
+4. Capture the game console output into a private directory outside git (for
+   example via `nvf_capture` or console output capture) and run `verify`
+   read-only.
+5. Remove all copied `gr_nvseprobe.txt`, `nvseprobe_*.gek`, and any staged
+   read-only input fixtures from your staging copy by hand, and restore your
+   INI backup if needed.
 
 ## Usage
 
@@ -142,11 +151,12 @@ The following parameters are NVForever harness design choices `[design]` (not
 original-game behavior constraints):
 
 - `PROBE|<id>|<result>`, `P2|<BEFORE|SAMERUN|COLD>|<key>|<value>`, and
-  `SR|<boot>|<event>` log line formats and the 3-tier persistence classifier
-  labels (`SAVED`, `SESSION_ONLY`, `CLEARED_ON_LOAD`, `UNCHANGED`,
+  `SR|<boot>|<event>` log line formats and the offline 3-tier persistence
+  classifier labels (`SAVED`, `SESSION_ONLY`, `CLEARED_ON_LOAD`, `UNCHANGED`,
   `INCOMPLETE`, `ANOMALOUS`).
-- Default main-loop tick interval `10`, console-first output mode
-  (`PrintToConsole`), and staged filenames (`gr_nvseprobe.txt`,
-  `nvseprobe_loop.gek`, `nvseprobe_s_<id>.gek`, `MANUAL_SETUP.txt`).
-- Automated privacy leak gate patterns rejecting machine-specific paths,
-  unredacted save filenames, `.pdb` names, and control characters.
+- Default main-loop tick interval `10`, console-only output (`PrintToConsole`),
+  and staged filenames (`gr_nvseprobe.txt`, `nvseprobe_loop.gek`,
+  `nvseprobe_s_<id>.gek`, `MANUAL_SETUP.txt`).
+- Automated forbidden-writer validator list and privacy leak gate patterns
+  rejecting machine-specific paths, unredacted save filenames, `.pdb` names,
+  and control characters.

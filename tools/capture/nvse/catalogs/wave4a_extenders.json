@@ -29,7 +29,7 @@
   "batches": [
     {
       "id": "w4_showoff",
-      "title": "Wave 4 — ShowOff xNVSE",
+      "title": "Wave 4 \u2014 ShowOff xNVSE",
       "extender": "ShowOffNVSE 184",
       "required_plugins": [
         "jip_nvse.dll",
@@ -770,34 +770,6 @@
           ]
         },
         {
-          "id": "so_24_json_write_read_missing_pointer",
-          "bucket": "B",
-          "extender": "ShowOffNVSE 184",
-          "required_plugins": [
-            "jip_nvse.dll",
-            "ShowOffNVSE.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": false,
-          "mutates_state": true,
-          "requires_fixture": false,
-          "requires_isolated_staging": true,
-          "spec_file": "docs/spec-notes/ext-showoff.md",
-          "spec_line": 237,
-          "functions_tested": [
-            "WriteToJSON",
-            "ReadFromJSON"
-          ],
-          "claim": "WriteToJSON with nested JSON pointer creates missing intermediate objects; ReadFromJSON reads them back (cached & uncached).",
-          "expected": "WriteToJSON '/a/b/c' creates nested objects and ReadFromJSON returns 123",
-          "script_lines": [
-            "int w1 = WriteToJSON 123 \"nvseprobe_w4_test.json\" \"/a/b/c\" 0 1 1 0",
-            "float r1 = ReadFromJSON \"nvseprobe_w4_test.json\" \"/a/b/c\" 0 1",
-            "float r2 = ReadFromJSON \"nvseprobe_w4_test.json\" \"/a/b/c\" 0 0",
-            "PrintToConsole \"PROBE|so_24_json_write_read_missing_pointer|%g,%.3f,%.3f\" w1 r1 r2"
-          ]
-        },
-        {
           "id": "so_25_calculated_actor_spread_1h_crippled",
           "bucket": "B",
           "extender": "ShowOffNVSE 184",
@@ -913,37 +885,6 @@
             "int r1 = ClearShowoffSavedData 0 1",
             "int r2 = ClearShowoffSavedData 0 2",
             "PrintToConsole \"PROBE|so_28_clear_showoff_saved_data_timers|%g,%g\" r1 r2"
-          ]
-        },
-        {
-          "id": "so_29_has_ini_setting_cached",
-          "bucket": "B",
-          "extender": "ShowOffNVSE 184",
-          "required_plugins": [
-            "jip_nvse.dll",
-            "ShowOffNVSE.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": false,
-          "mutates_state": true,
-          "requires_fixture": false,
-          "requires_isolated_staging": true,
-          "spec_file": "docs/spec-notes/ext-showoff.md",
-          "spec_line": 235,
-          "functions_tested": [
-            "HasINISetting_Cached",
-            "ReloadIniCache",
-            "SaveCachedIniFile"
-          ],
-          "claim": "HasINISetting_Cached / ReloadIniCache / SaveCachedIniFile format & key lookup behavior.",
-          "expected": "0 before set, 1 after SetINIFloat_Cached; ReloadIniCache returns 0 for missing file",
-          "script_lines": [
-            "int h0 = HasINISetting_Cached \"General:fW4Test\" \"nvseprobe_w4_cfg.ini\"",
-            "int rlMiss = ReloadIniCache \"nvseprobe_w4_nonexistent.ini\"",
-            "SetINIFloat_Cached \"General:fW4Test\" 42.5 \"nvseprobe_w4_cfg.ini\"",
-            "int h1 = HasINISetting_Cached \"General:fW4Test\" \"nvseprobe_w4_cfg.ini\"",
-            "int sv = SaveCachedIniFile \"nvseprobe_w4_cfg.ini\"",
-            "PrintToConsole \"PROBE|so_29_has_ini_setting_cached|%g,%g,%g,%g\" h0 rlMiss h1 sv"
           ]
         },
         {
@@ -1115,22 +1056,50 @@
           "functions_tested": [
             "ForceWeaponJamAnim"
           ],
-          "claim": "ForceWeaponJamAnim returns 0 for .357 Revolver (no jam anim) vs 1 for 10mm Pistol when drawn.",
-          "expected": "revolver=0, pistol=1 (or check drawn state)",
+          "claim": "With weapons genuinely drawn (SetWeaponOut 1), ForceWeaponJamAnim returns 0 for .357 Revolver (0x8F216, no jam anim) vs 1 for 10mm Pistol (0x434F).",
+          "expected": "rev=0(out=1),gun=1(out=1)",
           "script_lines": [
-            "ref rRev = GetFormFromMod \"FalloutNV.esm\" \"8F216\"",
             "ref rGun = GetFormFromMod \"FalloutNV.esm\" \"434F\"",
-            "Player.AddItem rRev 1 1",
-            "Player.EquipItem rRev 0 1",
-            "int jRev = Player.ForceWeaponJamAnim",
-            "Player.UnequipItem rRev 0 1",
-            "Player.RemoveItem rRev 1 1",
+            "ref rAmmo = GetFormFromMod \"FalloutNV.esm\" \"4241\"",
             "Player.AddItem rGun 1 1",
+            "Player.AddItem rAmmo 20 1",
             "Player.EquipItem rGun 0 1",
-            "int jGun = Player.ForceWeaponJamAnim",
-            "Player.UnequipItem rGun 0 1",
-            "Player.RemoveItem rGun 1 1",
-            "PrintToConsole \"PROBE|so_34_force_weapon_jam_revolver|%g,%g\" jRev jGun"
+            "Player.SetWeaponOut 1"
+          ],
+          "wait_ticks_after": 6,
+          "extra_steps": [
+            {
+              "suffix": "jam_gun_equip_rev",
+              "wait_ticks": 6,
+              "script_lines": [
+                "int wOut = Player.IsWeaponOut",
+                "int jGun = Player.ForceWeaponJamAnim",
+                "Player.AuxVarSetFlt \"*w4b_jgun2\" jGun",
+                "Player.AuxVarSetFlt \"*w4b_jgun2_out\" wOut",
+                "ref rGun = GetFormFromMod \"FalloutNV.esm\" \"434F\"",
+                "ref rRev = GetFormFromMod \"FalloutNV.esm\" \"8F216\"",
+                "Player.UnequipItem rGun 0 1",
+                "Player.RemoveItem rGun 1 1",
+                "Player.AddItem rRev 1 1",
+                "Player.EquipItem rRev 0 1",
+                "Player.SetWeaponOut 1"
+              ]
+            },
+            {
+              "suffix": "jam_rev_report",
+              "wait_ticks": 0,
+              "script_lines": [
+                "int rOut = Player.IsWeaponOut",
+                "int jRev = Player.ForceWeaponJamAnim",
+                "int jGun = Player.AuxVarGetFlt \"*w4b_jgun2\"",
+                "int gOut = Player.AuxVarGetFlt \"*w4b_jgun2_out\"",
+                "PrintToConsole \"PROBE|so_34_force_weapon_jam_revolver|rev=%g(out=%g),gun=%g(out=%g)\" jRev rOut jGun gOut",
+                "ref rRev = GetFormFromMod \"FalloutNV.esm\" \"8F216\"",
+                "Player.UnequipItem rRev 0 1",
+                "Player.RemoveItem rRev 1 1",
+                "Player.SetWeaponOut 0"
+              ]
+            }
           ]
         },
         {
@@ -1314,7 +1283,7 @@
     },
     {
       "id": "w4_jip_lutana",
-      "title": "Wave 4 — JIP LN & Lutana",
+      "title": "Wave 4 \u2014 JIP LN & Lutana",
       "extender": "JIP LN 57.30",
       "required_plugins": [
         "jip_nvse.dll"
@@ -2440,15 +2409,43 @@
             "IsInCharGen",
             "SetInCharGen"
           ],
-          "claim": "IsInCharGen reflects SetInCharGen 1/0 and whether chargen menus affect it without SetInCharGen.",
-          "expected": "0 by default in GSDocMitchellHouse; 1 after SetInCharGen 1; 0 after SetInCharGen 0",
+          "claim": "IsInCharGen across SetInCharGen 1/0 (same frame & next tick) and while TraitMenu (1084) is open without SetInCharGen.",
+          "expected": "c0=0,c1_same=0,c2_next=0,c3_clr=0,traitMM=1084,cgInTrait=1",
           "script_lines": [
-            "int c0 = IsInCharGen",
+            "Player.AuxVarSetFlt \"*w4b_cg0\" (IsInCharGen)",
             "SetInCharGen 1",
-            "int c1 = IsInCharGen",
-            "SetInCharGen 0",
-            "int c2 = IsInCharGen",
-            "PrintToConsole \"PROBE|jip_39_is_in_chargen_without_flag|%g,%g,%g\" c0 c1 c2"
+            "Player.AuxVarSetFlt \"*w4b_cg1\" (IsInCharGen)"
+          ],
+          "wait_ticks_after": 4,
+          "extra_steps": [
+            {
+              "suffix": "open_trait",
+              "wait_ticks": 4,
+              "script_lines": [
+                "int cg2 = IsInCharGen",
+                "SetInCharGen 0",
+                "int cg3 = IsInCharGen",
+                "Player.AuxVarSetFlt \"*w4b_cg2\" cg2",
+                "Player.AuxVarSetFlt \"*w4b_cg3\" cg3",
+                "Player.AuxVarSetFlt \"*np_keepmenu\" 1",
+                "ShowTraitMenu"
+              ]
+            },
+            {
+              "suffix": "read_trait",
+              "wait_ticks": 0,
+              "script_lines": [
+                "int mm = GetActiveMenuMode",
+                "int cgM = IsInCharGen",
+                "int cg0 = Player.AuxVarGetFlt \"*w4b_cg0\"",
+                "int cg1 = Player.AuxVarGetFlt \"*w4b_cg1\"",
+                "int cg2 = Player.AuxVarGetFlt \"*w4b_cg2\"",
+                "int cg3 = Player.AuxVarGetFlt \"*w4b_cg3\"",
+                "PrintToConsole \"PROBE|jip_39_is_in_chargen_without_flag|c0=%g,c1_same=%g,c2_next=%g,c3_clr=%g,traitMM=%g,cgInTrait=%g\" cg0 cg1 cg2 cg3 mm cgM",
+                "Player.AuxVarSetFlt \"*np_keepmenu\" 0",
+                "CloseActiveMenu"
+              ]
+            }
           ]
         },
         {
@@ -2943,7 +2940,7 @@
     },
     {
       "id": "w4_jg",
-      "title": "Wave 4 — JohnnyGuitar NVSE",
+      "title": "Wave 4 \u2014 JohnnyGuitar NVSE",
       "extender": "JohnnyGuitarNVSE 528",
       "required_plugins": [
         "jip_nvse.dll",
@@ -3419,7 +3416,7 @@
           "functions_tested": [
             "GetRGBColor"
           ],
-          "claim": "GetRGBColor with channels outside 0-255 (e.g. 256, -1) — clamped, masked (& 0xFF), or raw arithmetic.",
+          "claim": "GetRGBColor with channels outside 0-255 (e.g. 256, -1) \u2014 clamped, masked (& 0xFF), or raw arithmetic.",
           "expected": "Observe GetRGBColor(256,0,0), GetRGBColor(0,256,0), GetRGBColor(-1,0,0)",
           "script_lines": [
             "PrintToConsole \"PROBE|jg_16_rgb_color_out_of_range|%g,%g,%g\" (GetRGBColor 256 0 0) (GetRGBColor 0 256 0) (GetRGBColor -1 0 0)"
@@ -4140,7 +4137,7 @@
             "HideItemBarterEx",
             "IsItemBarterHiddenEx"
           ],
-          "claim": "HideItemBarterEx + IsItemBarterHiddenEx readback (2026-11-08 probe returned 0 — re-verify with side/vendor args).",
+          "claim": "HideItemBarterEx + IsItemBarterHiddenEx readback (2026-11-08 probe returned 0 \u2014 re-verify with side/vendor args).",
           "expected": "Observe IsItemBarterHiddenEx after HideItemBarterEx on Caps & 10mm Pistol",
           "script_lines": [
             "ref rGun = GetFormFromMod \"FalloutNV.esm\" \"434F\"",
@@ -4157,7 +4154,7 @@
     },
     {
       "id": "w4_sup",
-      "title": "Wave 4 — SUP NVSE",
+      "title": "Wave 4 \u2014 SUP NVSE",
       "extender": "SUP NVSE 855",
       "required_plugins": [
         "jip_nvse.dll",
@@ -4517,106 +4514,6 @@
           ]
         },
         {
-          "id": "sup_13_excel_write_read_types_empty",
-          "bucket": "B",
-          "extender": "SUP NVSE 855",
-          "required_plugins": [
-            "jip_nvse.dll",
-            "supNVSE.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": false,
-          "mutates_state": true,
-          "requires_fixture": false,
-          "requires_isolated_staging": true,
-          "spec_file": "docs/spec-notes/ext-sup5.md",
-          "spec_line": 29,
-          "functions_tested": [
-            "ExcelWriteFloat",
-            "ExcelWriteString",
-            "ExcelReadFloat",
-            "ExcelReadString",
-            "ExcelGetCellValueType",
-            "ExcelGetRowCount",
-            "ExcelGetColCount"
-          ],
-          "claim": "ExcelWriteFloat whole number cell type (1 int vs 2 float); empty cell reads 0 and ''; empty sheet row/col count == 0.",
-          "expected": "type(5)=2, emptyFlt=0, emptyStrLen=0, missingSheetRows=-1",
-          "script_lines": [
-            "int w1 = ExcelWriteFloat \"nvseprobe_w4_xl\" 0 0 0 5",
-            "int w2 = ExcelWriteString \"nvseprobe_w4_xl\" 0 0 1 \"abc\"",
-            "int tNum = ExcelGetCellValueType \"nvseprobe_w4_xl\" 0 0 0",
-            "int tStr = ExcelGetCellValueType \"nvseprobe_w4_xl\" 0 0 1",
-            "int tEmp = ExcelGetCellValueType \"nvseprobe_w4_xl\" 0 3 3",
-            "float fEmp = ExcelReadFloat \"nvseprobe_w4_xl\" 0 3 3",
-            "string_var sEmp = ExcelReadString \"nvseprobe_w4_xl\" 0 3 3",
-            "int rMiss = ExcelGetRowCount \"nvseprobe_w4_xl\" 9",
-            "PrintToConsole \"PROBE|sup_13_excel_write_read_types_empty|%g,%g,%g,%g,%g,%.2f,%g,%g\" w1 w2 tNum tStr tEmp fEmp (sv_Length sEmp) rMiss"
-          ]
-        },
-        {
-          "id": "sup_14_excel_bounds_and_erase_sheet",
-          "bucket": "B",
-          "extender": "SUP NVSE 855",
-          "required_plugins": [
-            "jip_nvse.dll",
-            "supNVSE.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": false,
-          "mutates_state": true,
-          "requires_fixture": false,
-          "requires_isolated_staging": true,
-          "spec_file": "docs/spec-notes/ext-sup5.md",
-          "spec_line": 33,
-          "functions_tested": [
-            "ExcelWriteFloat",
-            "ExcelEraseSheet",
-            "ExcelGetCellValueType",
-            "ExcelGetRowCount"
-          ],
-          "claim": "ExcelEraseSheet cell type & row count after erasing sheet; missing sheet returns -1; row > 65535 returns -1.",
-          "expected": "Observe cell type after EraseSheet (resolves why row count stayed 1 in sup5!) and out-of-bounds write",
-          "script_lines": [
-            "ExcelWriteFloat \"nvseprobe_w4_xl2\" 0 0 0 9.5",
-            "int eOk = ExcelEraseSheet \"nvseprobe_w4_xl2\" 0",
-            "int tAfter = ExcelGetCellValueType \"nvseprobe_w4_xl2\" 0 0 0",
-            "int rAfter = ExcelGetRowCount \"nvseprobe_w4_xl2\" 0",
-            "int eMiss = ExcelEraseSheet \"nvseprobe_w4_xl2\" 7",
-            "int wOob = ExcelWriteFloat \"nvseprobe_w4_xl2\" 0 70000 0 1",
-            "PrintToConsole \"PROBE|sup_14_excel_bounds_and_erase_sheet|%g,%g,%g,%g,%g\" eOk tAfter rAfter eMiss wOob"
-          ]
-        },
-        {
-          "id": "sup_15_excel_set_sheet_name_ret",
-          "bucket": "B",
-          "extender": "SUP NVSE 855",
-          "required_plugins": [
-            "jip_nvse.dll",
-            "supNVSE.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": false,
-          "mutates_state": true,
-          "requires_fixture": false,
-          "requires_isolated_staging": true,
-          "spec_file": "docs/spec-notes/ext-sup5.md",
-          "spec_line": 34,
-          "functions_tested": [
-            "ExcelWriteFloat",
-            "ExcelSetSheetName"
-          ],
-          "claim": "ExcelSetSheetName return value on rename (1) vs missing sheet (-1) as numeric.",
-          "expected": "rename ret=1, readback='W4Sheet', missing sheet ret=-1",
-          "script_lines": [
-            "ExcelWriteFloat \"nvseprobe_w4_xl3\" 0 0 0 1",
-            "int rRen = ExcelSetSheetName \"nvseprobe_w4_xl3\" 0 \"W4Sheet\"",
-            "string_var sNm = ExcelSetSheetName \"nvseprobe_w4_xl3\" 0",
-            "int rMiss = ExcelSetSheetName \"nvseprobe_w4_xl3\" 5 \"NoSuch\"",
-            "PrintToConsole \"PROBE|sup_15_excel_set_sheet_name_ret|%g,%z,%g\" rRen sNm rMiss"
-          ]
-        },
-        {
           "id": "sup_16_excel_array_from_missing_file",
           "bucket": "A",
           "extender": "SUP NVSE 855",
@@ -4709,7 +4606,7 @@
           ]
         },
         {
-          "id": "sup_19_file_size_and_time_missing",
+          "id": "sup_19_getfiletime_keys",
           "bucket": "A",
           "extender": "SUP NVSE 855",
           "required_plugins": [
@@ -4728,19 +4625,54 @@
             "GetFileTime",
             "GetFileTimeSTR"
           ],
-          "claim": "GetFileSize==-1, GetFileTime==empty/null, GetFileTimeSTR=='' for missing file; GetFileTime element layout for Fallout_default.ini.",
-          "expected": "missingSize=-1, missingTimeSz=0/-1, missingStrLen=0; existing time has 6 elements [Y,M,D,h,m,s]",
+          "claim": "GetFileTime returns a 5-entry StringMap with keys Day/Hour/Minute/Month/Year and zero-padded String values (path is game-root-relative: Fallout_default.ini & Data\\FalloutNV.esm -> 5, bare FalloutNV.esm -> 0, missing -> 0); GetFileTimeSTR uses 4-digit year with two spaces and returns '' for missing file.",
+          "expected": "StringMap(5) keys Day/Hour/Minute/Month/Year with String values; relN=0, dataN=5; missing: sz=-1.0, n=0, strLen=0",
           "script_lines": [
-            "float szM = GetFileSize \"nvseprobe_w4_missing.bin\"",
-            "array_var tM = GetFileTime \"nvseprobe_w4_missing.bin\" 2",
-            "string_var sM = GetFileTimeSTR \"nvseprobe_w4_missing.bin\" 2 0",
-            "array_var tOk = GetFileTime \"Fallout_default.ini\" 2",
-            "int okSz = ar_Size tOk",
-            "float y = 0",
-            "if okSz >= 1",
-            "let y := tOk[0]",
-            "endif",
-            "PrintToConsole \"PROBE|sup_19_file_size_and_time_missing|%.1f,%g,%g|%g,%.0f\" szM (ar_Size tM) (sv_Length sM) okSz y"
+            "array_var aDef",
+            "array_var aEsmRel",
+            "array_var aEsm",
+            "array_var aBadReq",
+            "array_var aMiss",
+            "array_var aIter",
+            "string_var sAT",
+            "string_var sKT",
+            "string_var sVT",
+            "string_var sKey",
+            "string_var sVal",
+            "string_var sMissStr",
+            "string_var sStr0",
+            "string_var sStr1",
+            "string_var sBadStr",
+            "let sMissStr := GetFileTimeSTR \"nvseprobe_t35_missing.bin\" 2 0",
+            "int iMissStrLen = sv_Length sMissStr",
+            "float fMissSz = GetFileSize \"nvseprobe_t35_missing.bin\"",
+            "let aMiss := GetFileTime \"nvseprobe_t35_missing.bin\" 2",
+            "let aDef := GetFileTime \"Fallout_default.ini\" 2",
+            "let sAT := typeof (aDef)",
+            "PrintToConsole \"sup_19_def_hdr|type=%z,n=%g\" sAT (ar_Size aDef)",
+            "foreach aIter <- aDef",
+            "  let sKT := typeof (aIter[\"key\"])",
+            "  let sVT := typeof (aIter[\"value\"])",
+            "  let sKey := aIter[\"key\"]",
+            "  let sVal := aIter[\"value\"]",
+            "  PrintToConsole \"sup_19_def_kv|k=[%z](%z),v=[%z](%z)\" sKey sKT sVal sVT",
+            "loop",
+            "let aEsmRel := GetFileTime \"FalloutNV.esm\" 2",
+            "let aEsm := GetFileTime \"Data\\FalloutNV.esm\" 2",
+            "string_var sEsmT = typeof (aEsm)",
+            "PrintToConsole \"sup_19_esm_hdr|relN=%g,type=%z,dataN=%g\" (ar_Size aEsmRel) sEsmT (ar_Size aEsm)",
+            "foreach aIter <- aEsm",
+            "  let sKT := typeof (aIter[\"key\"])",
+            "  let sVT := typeof (aIter[\"value\"])",
+            "  let sKey := aIter[\"key\"]",
+            "  let sVal := aIter[\"value\"]",
+            "  PrintToConsole \"sup_19_esm_kv|k=[%z](%z),v=[%z](%z)\" sKey sKT sVal sVT",
+            "loop",
+            "let aBadReq := GetFileTime \"Fallout_default.ini\" 99",
+            "let sStr0 := GetFileTimeSTR \"Fallout_default.ini\" 2 0",
+            "let sStr1 := GetFileTimeSTR \"Fallout_default.ini\" 2 1",
+            "let sBadStr := GetFileTimeSTR \"Fallout_default.ini\" 99 0",
+            "PrintToConsole \"PROBE|sup_19_getfiletime_keys|def=%z(%g),relN=%g,esm=%z(%g),badReqN=%g,missSz=%.1f,missN=%g,missStrLen=%g,str0=[%z],str1=[%z],badStr=[%z]\" sAT (ar_Size aDef) (ar_Size aEsmRel) sEsmT (ar_Size aEsm) (ar_Size aBadReq) fMissSz (ar_Size aMiss) iMissStrLen sStr0 sStr1 sBadStr"
           ]
         },
         {
@@ -4961,94 +4893,6 @@
           ]
         },
         {
-          "id": "sup_28_excel_array_roundtrip_nested",
-          "bucket": "B",
-          "extender": "SUP NVSE 855",
-          "required_plugins": [
-            "jip_nvse.dll",
-            "supNVSE.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": false,
-          "mutates_state": true,
-          "requires_fixture": false,
-          "requires_isolated_staging": false,
-          "spec_file": "docs/spec-notes/ext-sup5.md",
-          "spec_line": 35,
-          "functions_tested": [
-            "ExcelArrayToFile",
-            "ExcelArrayFromFile"
-          ],
-          "claim": "ExcelArrayToFile skips nested arrays and writes forms as names; ExcelArrayFromFile skips empty cells.",
-          "expected": "Check column length and values after writing [10, nested, Player, 'hi']",
-          "script_lines": [
-            "array_var aSub = ar_List 1 2",
-            "array_var aW = ar_List 10 aSub Player \"hi\"",
-            "int wOk = ExcelArrayToFile \"nvseprobe_w4_xla\" 0 0 0 aW 0",
-            "array_var aR = ExcelArrayFromFile \"nvseprobe_w4_xla\" 0 0 0",
-            "PrintToConsole \"PROBE|sup_28_excel_array_roundtrip_nested|%g,%g\" wOk (ar_Size aR)"
-          ]
-        },
-        {
-          "id": "sup_29_excel_erase_cell_type",
-          "bucket": "B",
-          "extender": "SUP NVSE 855",
-          "required_plugins": [
-            "jip_nvse.dll",
-            "supNVSE.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": false,
-          "mutates_state": true,
-          "requires_fixture": false,
-          "requires_isolated_staging": true,
-          "spec_file": "docs/spec-notes/ext-sup5.md",
-          "spec_line": 33,
-          "functions_tested": [
-            "ExcelWriteFloat",
-            "ExcelEraseCell",
-            "ExcelGetCellValueType"
-          ],
-          "claim": "ExcelEraseCell empties one cell (type becomes 0) and returns 1; missing sheet returns -1.",
-          "expected": "erase=1, typeAfter=0, missingSheet=-1",
-          "script_lines": [
-            "ExcelWriteFloat \"nvseprobe_w4_xlc\" 0 0 0 12.5",
-            "int e1 = ExcelEraseCell \"nvseprobe_w4_xlc\" 0 0 0",
-            "int t1 = ExcelGetCellValueType \"nvseprobe_w4_xlc\" 0 0 0",
-            "int eMiss = ExcelEraseCell \"nvseprobe_w4_xlc\" 8 0 0",
-            "PrintToConsole \"PROBE|sup_29_excel_erase_cell_type|%g,%g,%g\" e1 t1 eMiss"
-          ]
-        },
-        {
-          "id": "sup_30_excel_col_count_empty",
-          "bucket": "B",
-          "extender": "SUP NVSE 855",
-          "required_plugins": [
-            "jip_nvse.dll",
-            "supNVSE.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": false,
-          "mutates_state": true,
-          "requires_fixture": false,
-          "requires_isolated_staging": true,
-          "spec_file": "docs/spec-notes/ext-sup5.md",
-          "spec_line": 32,
-          "functions_tested": [
-            "ExcelWriteFloat",
-            "ExcelGetColCount"
-          ],
-          "claim": "ExcelGetColCount returns lastUsedCol+1 on populated sheet and -1 on missing sheet/file.",
-          "expected": "colCount=2 after writing (0,1); missingSheet=-1; missingFile=-1",
-          "script_lines": [
-            "ExcelWriteFloat \"nvseprobe_w4_xld\" 0 0 1 7",
-            "int c1 = ExcelGetColCount \"nvseprobe_w4_xld\" 0",
-            "int cMs = ExcelGetColCount \"nvseprobe_w4_xld\" 6",
-            "int cMf = ExcelGetColCount \"nvseprobe_w4_no_file\" 0",
-            "PrintToConsole \"PROBE|sup_30_excel_col_count_empty|%g,%g,%g\" c1 cMs cMf"
-          ]
-        },
-        {
           "id": "sup_31_json_get_value_array_shapes",
           "bucket": "B",
           "extender": "SUP NVSE 855",
@@ -5138,33 +4982,6 @@
           ]
         },
         {
-          "id": "sup_34_text_to_qrcode_size",
-          "bucket": "B",
-          "extender": "SUP NVSE 855",
-          "required_plugins": [
-            "jip_nvse.dll",
-            "supNVSE.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": false,
-          "mutates_state": true,
-          "requires_fixture": false,
-          "requires_isolated_staging": false,
-          "spec_file": "docs/spec-notes/ext-sup5.md",
-          "spec_line": 87,
-          "functions_tested": [
-            "TextToQRCode",
-            "GetFileSize"
-          ],
-          "claim": "TextToQRCode creates <file>.png under game root and GetFileSize matches 268590 bytes for 'I love bacon'.",
-          "expected": "size == 268590 bytes",
-          "script_lines": [
-            "TextToQRCode \"nvseprobe_w4_qr\" \"I love bacon\" 0",
-            "float sz = GetFileSize \"nvseprobe_w4_qr.png\"",
-            "PrintToConsole \"PROBE|sup_34_text_to_qrcode_size|%.0f\" sz"
-          ]
-        },
-        {
           "id": "sup_35_nif_block_num_verticles",
           "bucket": "B",
           "extender": "SUP NVSE 855",
@@ -5224,7 +5041,7 @@
     },
     {
       "id": "w4_itr_pp",
-      "title": "Wave 4 — AnhNVSE (Installed) + Optional Extenders (ITR, ppNVSE, JIP PP LN, One111, NX, Stewie)",
+      "title": "Wave 4 \u2014 AnhNVSE (Installed) + Optional Extenders (ITR, ppNVSE, JIP PP LN, One111, NX, Stewie)",
       "extender": "AnhNVSE 131 / lStewieAl's Tweaks 1005",
       "required_plugins": [
         "jip_nvse.dll",
@@ -5280,10 +5097,11 @@
           "functions_tested": [
             "GetAngleQuadrant"
           ],
-          "claim": "GetAngleQuadrant boundary values at 0, pi/2, pi, 3*pi/2, and negative angles.",
-          "expected": "0->1, 1.5708->2, 3.1416->3, 4.7124->4, -0.5->4",
+          "claim": "GetAngleQuadrant takes DEGREES (0, 45, 90, 135, 180, 225, 270, 315, -45) plus radian-magnitude controls (1.5708, 3.1416, 4.7124, -0.5).",
+          "expected": "0=1,45=1,90=2,135=2,180=3,225=3,270=4,315=4,-45=4|rad=1,1,1,4",
           "script_lines": [
-            "PrintToConsole \"PROBE|anh_02_angle_quadrant_edges|%g,%g,%g,%g,%g\" (GetAngleQuadrant 0) (GetAngleQuadrant 1.5708) (GetAngleQuadrant 3.1416) (GetAngleQuadrant 4.7124) (GetAngleQuadrant -0.5)"
+            "string_var svRad = sv_Construct \"%g,%g,%g,%g\" (GetAngleQuadrant 1.5708) (GetAngleQuadrant 3.1416) (GetAngleQuadrant 4.7124) (GetAngleQuadrant -0.5)",
+            "PrintToConsole \"PROBE|anh_02_angle_quadrant_edges|0=%g,45=%g,90=%g,135=%g,180=%g,225=%g,270=%g,315=%g,-45=%g|rad=%z\" (GetAngleQuadrant 0) (GetAngleQuadrant 45) (GetAngleQuadrant 90) (GetAngleQuadrant 135) (GetAngleQuadrant 180) (GetAngleQuadrant 225) (GetAngleQuadrant 270) (GetAngleQuadrant 315) (GetAngleQuadrant -45) svRad"
           ]
         },
         {
@@ -5304,14 +5122,14 @@
           "functions_tested": [
             "ScancodeToChar"
           ],
-          "claim": "ScancodeToChar returns US keyboard lowercase char (code 18='e', 30='a') and '' for non-typing keys (code 1=Esc, 59=F1).",
-          "expected": "18='e', 30='a', len(1)=0, len(59)=0",
+          "claim": "ScancodeToChar returns actual key name strings for Esc (1), F1 (59), E (18), and A (30).",
+          "expected": "1=[Escape],59=[F1],18=[E],30=[A]",
           "script_lines": [
+            "string_var s1 = ScancodeToChar 1",
+            "string_var s59 = ScancodeToChar 59",
             "string_var s18 = ScancodeToChar 18",
             "string_var s30 = ScancodeToChar 30",
-            "string_var sEsc = ScancodeToChar 1",
-            "string_var sF1 = ScancodeToChar 59",
-            "PrintToConsole \"PROBE|anh_03_scancode_to_char_layout|%z,%z,%g,%g\" s18 s30 (sv_Length sEsc) (sv_Length sF1)"
+            "PrintToConsole \"PROBE|anh_03_scancode_to_char_layout|1=[%z],59=[%z],18=[%z],30=[%z]\" s1 s59 s18 s30"
           ]
         },
         {
@@ -5360,14 +5178,14 @@
             "QFromAxisAngleAlt",
             "QMultQuatVector3Alt"
           ],
-          "claim": "QFromAxisAngleAlt takes angle in radians (vs degrees); QMultQuatVector3Alt rotates vector3 and returns 3-element array.",
-          "expected": "90deg (1.570796 rad) around Z rotates [1,0,0] -> [0,1,0] (or [0,-1,0]), size=3",
+          "claim": "QFromAxisAngleAlt takes angle in DEGREES (90 around [0, 0, 1]) and QMultQuatVector3Alt rotates vector3 [1, 0, 0].",
+          "expected": "q=(0.707,0.000,0.000,0.707)|rot=(1.000,0.000,0.000)",
           "script_lines": [
             "array_var aAxis = ar_List 0 0 1",
-            "array_var aQ = QFromAxisAngleAlt aAxis 1.570796",
+            "array_var aQ = QFromAxisAngleAlt aAxis 90",
             "array_var aV = ar_List 1 0 0",
             "array_var aRot = QMultQuatVector3Alt aQ aV",
-            "PrintToConsole \"PROBE|anh_05_q_axis_angle_and_mult_vec3|%g,%.3f,%.3f|%g,%.3f,%.3f,%.3f\" (ar_Size aQ) (aQ[0]) (aQ[3]) (ar_Size aRot) (aRot[0]) (aRot[1]) (aRot[2])"
+            "PrintToConsole \"PROBE|anh_05_q_axis_angle_and_mult_vec3|q=(%.3f,%.3f,%.3f,%.3f)|rot=(%.3f,%.3f,%.3f)\" (aQ[0]) (aQ[1]) (aQ[2]) (aQ[3]) (aRot[0]) (aRot[1]) (aRot[2])"
           ]
         },
         {
@@ -5970,7 +5788,7 @@
           ]
         },
         {
-          "id": "anh_11_zone_owner_roundtrip",
+          "id": "anh_11_zone_owner_readback",
           "bucket": "A",
           "extender": "AnhNVSE 131 / lStewieAl's Tweaks 1005",
           "required_plugins": [
@@ -5985,15 +5803,25 @@
           "spec_file": "docs/spec-notes/ext-anh.md",
           "spec_line": 50,
           "functions_tested": [
-            "SetZoneOwner"
+            "SetZoneOwner",
+            "GetZoneOwner",
+            "GetZoneMinLevel"
           ],
-          "claim": "SetZoneOwner sets encounter zone owner for session and GetZoneOwner reads it back.",
-          "expected": "Setting NCR faction reads back NCR FormID; restored",
+          "claim": "SetZoneOwner updates Vault11Zone (0x000E9081) owner readback via GetZoneOwner (00000000 -> NCR 000A46E7 -> Goodsprings 00104C6E); SetZoneOwner with null form (0) leaves the previous owner unchanged.",
+          "expected": "zone=000E9081,min0=6,o0=00000000,setNCR=000A46E7(eq=1),setGS=00104C6E(eq=1),setNull=00104C6E(eq0=0)",
           "script_lines": [
             "ref rZ = GetFormFromMod \"FalloutNV.esm\" \"E9081\"",
-            "ref rFac = GetFormFromMod \"FalloutNV.esm\" \"A46E7\"",
-            "SetZoneOwner rZ rFac",
-            "PrintToConsole \"PROBE|anh_11_zone_owner_roundtrip|ok\""
+            "ref rNCR = GetFormFromMod \"FalloutNV.esm\" \"A46E7\"",
+            "ref rGS = GetFormFromMod \"FalloutNV.esm\" \"104C6E\"",
+            "ref rO0 = GetZoneOwner rZ",
+            "int iMin0 = GetZoneMinLevel rZ",
+            "SetZoneOwner rZ rNCR",
+            "ref rO1 = GetZoneOwner rZ",
+            "SetZoneOwner rZ rGS",
+            "ref rO2 = GetZoneOwner rZ",
+            "SetZoneOwner rZ rO0",
+            "ref rO3 = GetZoneOwner rZ",
+            "PrintToConsole \"PROBE|anh_11_zone_owner_readback|zone=%i,min0=%g,o0=%i,setNCR=%i(eq=%g),setGS=%i(eq=%g),setNull=%i(eq0=%g)\" rZ iMin0 rO0 rO1 (rO1 == rNCR) rO2 (rO2 == rGS) rO3 (rO3 == rO0)"
           ]
         },
         {
@@ -6286,7 +6114,7 @@
     },
     {
       "id": "w4_knvse_misc",
-      "title": "Wave 4 — kNVSE, xNVSE Core/Syntax/Events/Stubs & yUI/ySI",
+      "title": "Wave 4 \u2014 kNVSE, xNVSE Core/Syntax/Events/Stubs & yUI/ySI",
       "extender": "xNVSE 6.4.9 / kNVSE 37 / yUI 1.4d",
       "required_plugins": [
         "jip_nvse.dll",
@@ -6701,6 +6529,128 @@
           ]
         },
         {
+          "id": "core_13_generic_add_form_split",
+          "bucket": "A",
+          "extender": "xNVSE 6.4.9 core",
+          "required_plugins": [
+            "jip_nvse.dll"
+          ],
+          "optional_extender": false,
+          "requires_world": false,
+          "mutates_state": true,
+          "requires_fixture": false,
+          "requires_isolated_staging": false,
+          "spec_file": "docs/spec-notes/ext-console-generic.md",
+          "spec_line": 71,
+          "functions_tested": [
+            "GenericAddForm",
+            "GenericGetForm",
+            "GenericDeleteForm",
+            "GenericReplaceForm"
+          ],
+          "claim": "Splits Generic*Form target-type validation from out-of-range index behavior: valid targets (RACE codes 0/1, NPC_ code 5, FLST code 13) accept idx 0 and -2 but return -1 at idx 999 without mutating; mismatched target types (NPC_+code 1, RACE+code 5, FLST+code 1) return -1 on Add (even at idx 0 and -2) and 00000000 on Get/Delete/Replace.",
+          "expected": "valid idx 0->0, -2->n0-1, 999->-1; mismatched NPC_+c1 / RACE+c5 / FLST+c1 -> add=-1, get/del/rep=00000000",
+          "script_lines": [
+            "ref rRace = GetFormFromMod \"FalloutNV.esm\" \"19\"",
+            "ref rDoc = GetFormFromMod \"FalloutNV.esm\" \"104C0C\"",
+            "ref rStim = GetFormFromMod \"FalloutNV.esm\" \"15169\"",
+            "int nH0 = 0",
+            "while (GenericGetForm 0 rRace nH0) != 0",
+            "  let nH0 += 1",
+            "loop",
+            "ref rH0 = GenericGetForm 0 rRace 0",
+            "int iHAdd0 = GenericAddForm 0 rRace rH0 0",
+            "if iHAdd0 >= 0",
+            "  GenericDeleteForm 0 rRace iHAdd0",
+            "endif",
+            "int iHAdd999 = GenericAddForm 0 rRace rH0 999",
+            "int iHAddM2 = GenericAddForm 0 rRace rH0 -2",
+            "int nHAM2 = 0",
+            "while (GenericGetForm 0 rRace nHAM2) != 0",
+            "  let nHAM2 += 1",
+            "loop",
+            "if nHAM2 > nH0",
+            "  GenericDeleteForm 0 rRace (nHAM2 - 1)",
+            "endif",
+            "PrintToConsole \"core_13c_hair|n0=%g,add0=%g,add999=%g,addM2=%g(n=%g)\" nH0 iHAdd0 iHAdd999 iHAddM2 nHAM2",
+            "int nEye0 = 0",
+            "while (GenericGetForm 1 rRace nEye0) != 0",
+            "  let nEye0 += 1",
+            "loop",
+            "ref rEye0 = GenericGetForm 1 rRace 0",
+            "int iEyeAdd0 = GenericAddForm 1 rRace rEye0 0",
+            "ref rEyeDel0 = 0",
+            "if iEyeAdd0 >= 0",
+            "  let rEyeDel0 := GenericDeleteForm 1 rRace iEyeAdd0",
+            "endif",
+            "int iEyeAdd999 = GenericAddForm 1 rRace rEye0 999",
+            "int iEyeAddM2 = GenericAddForm 1 rRace rEye0 -2",
+            "int nEyeAM2 = 0",
+            "while (GenericGetForm 1 rRace nEyeAM2) != 0",
+            "  let nEyeAM2 += 1",
+            "loop",
+            "if nEyeAM2 > nEye0",
+            "  GenericDeleteForm 1 rRace (nEyeAM2 - 1)",
+            "endif",
+            "PrintToConsole \"core_13a_race|n0=%g,add0=%g(delEq=%g),add999=%g,addM2=%g(n=%g)\" nEye0 iEyeAdd0 (rEyeDel0 == rEye0) iEyeAdd999 iEyeAddM2 nEyeAM2",
+            "int nPkg0 = 0",
+            "while (GenericGetForm 5 rDoc nPkg0) != 0",
+            "  let nPkg0 += 1",
+            "loop",
+            "ref rPkg0 = GenericGetForm 5 rDoc 0",
+            "int iPkgAdd0 = GenericAddForm 5 rDoc rPkg0 0",
+            "if iPkgAdd0 >= 0",
+            "  GenericDeleteForm 5 rDoc iPkgAdd0",
+            "endif",
+            "int iPkgAdd999 = GenericAddForm 5 rDoc rPkg0 999",
+            "int iPkgAddM2 = GenericAddForm 5 rDoc rPkg0 -2",
+            "int nPkgAM2 = 0",
+            "while (GenericGetForm 5 rDoc nPkgAM2) != 0",
+            "  let nPkgAM2 += 1",
+            "loop",
+            "if nPkgAM2 > nPkg0",
+            "  GenericDeleteForm 5 rDoc (nPkgAM2 - 1)",
+            "endif",
+            "PrintToConsole \"core_13a_npc|n0=%g,add0=%g,add999=%g,addM2=%g(n=%g)\" nPkg0 iPkgAdd0 iPkgAdd999 iPkgAddM2 nPkgAM2",
+            "array_var aFlsts = GetLoadedTypeArray 85",
+            "ref rFlst = 0",
+            "int idx = 0",
+            "int nAll = ar_Size aFlsts",
+            "while idx < nAll",
+            "  ref rCand = aFlsts[idx]",
+            "  if (ListGetCount rCand) >= 2",
+            "    let rFlst := rCand",
+            "    break",
+            "  endif",
+            "  let idx += 1",
+            "loop",
+            "int nF0 = ListGetCount rFlst",
+            "int iFAdd0 = GenericAddForm 13 rFlst rStim 0",
+            "if (ListGetCount rFlst) > nF0",
+            "  GenericDeleteForm 13 rFlst 0",
+            "endif",
+            "int iFAdd999 = GenericAddForm 13 rFlst rStim 999",
+            "int iFAddM2 = GenericAddForm 13 rFlst rStim -2",
+            "int nFAM2 = ListGetCount rFlst",
+            "if nFAM2 > nF0",
+            "  GenericDeleteForm 13 rFlst (nFAM2 - 1)",
+            "endif",
+            "int iFMis = GenericAddForm 1 rFlst rStim 0",
+            "PrintToConsole \"core_13c_flst|n0=%g,add0=%g,add999=%g,addM2=%g(n=%g),misC1=%g\" nF0 iFAdd0 iFAdd999 iFAddM2 nFAM2 iFMis",
+            "ref rMisGet = GenericGetForm 1 rDoc 0",
+            "int iMisAdd0 = GenericAddForm 1 rDoc rEye0 0",
+            "int iMisAddM2 = GenericAddForm 1 rDoc rEye0 -2",
+            "ref rMisDel = GenericDeleteForm 1 rDoc 0",
+            "ref rMisRep = GenericReplaceForm 1 rDoc rEye0 0",
+            "ref rMisRGet = GenericGetForm 5 rRace 0",
+            "int iMisRAdd0 = GenericAddForm 5 rRace rPkg0 0",
+            "ref rMisRDel = GenericDeleteForm 5 rRace 0",
+            "ref rMisRRep = GenericReplaceForm 5 rRace rPkg0 0",
+            "PrintToConsole \"core_13b_mis|npcC1=(g=%i,a0=%g,aM2=%g,d=%i,r=%i)|raceC5=(g=%i,a0=%g,d=%i,r=%i)\" rMisGet iMisAdd0 iMisAddM2 rMisDel rMisRep rMisRGet iMisRAdd0 rMisRDel rMisRRep",
+            "PrintToConsole \"PROBE|core_13_generic_add_form_split|race=(%g,%g,%g),npc=(%g,%g,%g),flst=(%g,%g,%g,mis=%g),misNpcC1=%g,misRaceC5=%g\" iEyeAdd0 iEyeAdd999 iEyeAddM2 iPkgAdd0 iPkgAdd999 iPkgAddM2 iFAdd0 iFAdd999 iFAddM2 iFMis iMisAdd0 iMisRAdd0"
+          ]
+        },
+        {
           "id": "core_14_uifloat_inherited_exclude_root",
           "bucket": "A",
           "extender": "xNVSE 6.4.9 / kNVSE 37 / yUI 1.4d",
@@ -6913,42 +6863,6 @@
             "rDoc.SetCombatDisabled 0",
             "rDoc.StopCombat",
             "PrintToConsole \"PROBE|core_20_set_combat_disabled_stops_combat|%g,%g,%g\" ic1 cd ic2"
-          ]
-        },
-        {
-          "id": "core_21_cached_ini_quotes_stripping",
-          "bucket": "B",
-          "extender": "xNVSE 6.4.9 / kNVSE 37 / yUI 1.4d",
-          "required_plugins": [
-            "jip_nvse.dll",
-            "kNVSE.dll",
-            "ShowOffNVSE.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": false,
-          "mutates_state": true,
-          "requires_fixture": true,
-          "requires_isolated_staging": true,
-          "spec_file": "docs/spec-notes/cached-ini-quotes.md",
-          "spec_line": 5,
-          "functions_tested": [
-            "GetINIString_Cached",
-            "ReloadIniCache"
-          ],
-          "claim": "Cached INI string loading strips one matching outer double-quote pair without stripping unmatched/internal quotes.",
-          "expected": "quoted=\"hello\" -> hello; unmatched=\"hi -> \"hi",
-          "script_lines": [
-            "ReloadIniCache \"nvseprobe_w4_q.ini\"",
-            "string_var sQ = GetINIString_Cached \"General:sQ\" \"def\" \"nvseprobe_w4_q.ini\"",
-            "string_var sU = GetINIString_Cached \"General:sU\" \"def\" \"nvseprobe_w4_q.ini\"",
-            "string_var sE = GetINIString_Cached \"General:sE\" \"def\" \"nvseprobe_w4_q.ini\"",
-            "PrintToConsole \"PROBE|core_21_cached_ini_quotes_stripping|%z|%z|%g\" sQ sU (sv_Length sE)"
-          ],
-          "fixtures": [
-            {
-              "rel_path": "Data/Config/nvseprobe_w4_q.ini",
-              "content": "[General]\nsQ=\"hello\"\nsU=\"unmatched\nsE=\"\"\n"
-            }
           ]
         },
         {
@@ -7197,14 +7111,107 @@
           "functions_tested": [
             "sv_Destruct"
           ],
-          "claim": "string_var holds a non-zero numeric ID while alive and reads 0 after sv_Destruct.",
-          "expected": "idBefore > 0, idAfter == 0",
+          "claim": "eval on string_var returns 1 while alive and 0 after sv_Destruct (with sv_Length 5 -> -1).",
+          "expected": "eval=1->0,len=5->-1",
           "script_lines": [
             "string_var s = \"hello\"",
-            "int id1 = s",
+            "int b1 = eval s",
+            "int l1 = sv_Length s",
             "sv_Destruct s",
-            "int id2 = s",
-            "PrintToConsole \"PROBE|core_24_string_var_destruct_zero|%g,%g\" (id1 > 0) id2"
+            "int b2 = eval s",
+            "int l2 = sv_Length s",
+            "PrintToConsole \"PROBE|core_24_string_var_destruct_zero|eval=%g->%g,len=%g->%g\" b1 b2 l1 l2"
+          ]
+        },
+        {
+          "id": "core_24_eval_string_var",
+          "bucket": "A",
+          "extender": "xNVSE 6.4.9 core",
+          "required_plugins": [
+            "jip_nvse.dll"
+          ],
+          "optional_extender": false,
+          "requires_world": false,
+          "mutates_state": false,
+          "requires_fixture": false,
+          "requires_isolated_staging": false,
+          "spec_file": "docs/spec-notes/ext-values.md",
+          "spec_line": 43,
+          "functions_tested": [
+            "eval",
+            "sv_Destruct",
+            "ar_Construct",
+            "ar_Null"
+          ],
+          "claim": "Standalone eval truthiness across alive/destructed string_var, empty string_var sEmp (eval sEmp=1, eval !sEmp=0, eval (sEmp && 5)=1), empty vs ar_Null arrays, numbers (5/-3/0), bare if sEmp, and bare if !sEmp (COMPILE_FAIL).",
+          "expected": "alive=1->dead=0; sEmp=1, !sEmp=0, sEmp&&5=1; a1=1, a2=1, ar_Null=0; num 5=1, 0=0, -3=1; bareIfNot=0(COMPILE_FAIL); bareEmp=1, bareHi=1, bareDead=0",
+          "helper_scripts": {
+            "nvseprobe_s_core_24_bare_if_not.gek": [
+              "string_var sEmp = \"\"",
+              "int bBareNot = 0",
+              "if !sEmp",
+              "  let bBareNot := 1",
+              "endif",
+              "PrintToConsole \"core_24b_bare_if_not_semp|bareNotEmp=%g\" bBareNot"
+            ]
+          },
+          "script_lines": [
+            "string_var s = \"hello\"",
+            "int b1 = eval s",
+            "int l1 = sv_Length s",
+            "int bNotS1 = eval (!s)",
+            "int bS1And5 = eval (s && 5)",
+            "int ifEvalS1 = 0",
+            "if eval s",
+            "  let ifEvalS1 := 1",
+            "endif",
+            "sv_Destruct s",
+            "int b2 = eval s",
+            "int l2 = sv_Length s",
+            "int bNotS2 = eval (!s)",
+            "int bS2And5 = eval (s && 5)",
+            "int ifEvalS2 = 0",
+            "if eval s",
+            "  let ifEvalS2 := 1",
+            "endif",
+            "string_var sEmp = \"\"",
+            "int b3 = eval sEmp",
+            "int l3 = sv_Length sEmp",
+            "int bNotEmp = eval (!sEmp)",
+            "int bEmpAnd5 = eval (sEmp && 5)",
+            "int bBareEmp = 0",
+            "if sEmp",
+            "  let bBareEmp := 1",
+            "endif",
+            "string_var sHi = \"hi\"",
+            "int bBareHi = 0",
+            "if sHi",
+            "  let bBareHi := 1",
+            "endif",
+            "sv_Destruct sHi",
+            "int bBareDead = 0",
+            "if sHi",
+            "  let bBareDead := 1",
+            "endif",
+            "ref rBareNotFn = CompileScript \"nvseprobe_s_core_24_bare_if_not.gek\"",
+            "int bBareNotCompile = IsFormValid rBareNotFn",
+            "array_var a1 = ar_Construct \"array\"",
+            "array_var a2 = ar_Construct \"array\"",
+            "array_var aNonEmpty = ar_List 10",
+            "array_var aNull = ar_Null",
+            "int bA1 = eval a1",
+            "int bA2 = eval a2",
+            "int bANonEmpty = eval aNonEmpty",
+            "int bANull = eval aNull",
+            "int bANullLit = eval ar_Null",
+            "int bNotA1 = eval (!a1)",
+            "int bNotANull = eval (!aNull)",
+            "int bNum5 = eval 5",
+            "int bNum0 = eval 0",
+            "int bNumNeg = eval -3",
+            "PrintToConsole \"core_24_str|alive(b1=%g,l1=%g,not=%g,and5=%g,if=%g)|dead(b2=%g,l2=%g,not=%g,and5=%g,if=%g)\" b1 l1 bNotS1 bS1And5 ifEvalS1 b2 l2 bNotS2 bS2And5 ifEvalS2",
+            "PrintToConsole \"core_24_emp_arr|emp=(%g,l=%g,not=%g,and5=%g)|arr=(a1=%g,a2=%g,ne=%g,null=%g/%g,notA1=%g,notNull=%g)|num=(%g,%g,%g)\" b3 l3 bNotEmp bEmpAnd5 bA1 bA2 bANonEmpty bANull bANullLit bNotA1 bNotANull bNum5 bNum0 bNumNeg",
+            "PrintToConsole \"PROBE|core_24_eval_string_var|str=%g->%g,emp=%g(not=%g,and5=%g),arr=(%g,%g,%g),num=(%g,%g,%g),bare=(%g,%g,%g,notCmp=%g)\" b1 b2 b3 bNotEmp bEmpAnd5 bA1 bA2 bANull bNum5 bNumNeg bNum0 bBareEmp bBareHi bBareDead bBareNotCompile"
           ]
         },
         {

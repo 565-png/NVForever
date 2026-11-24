@@ -29,7 +29,7 @@
   "batches": [
     {
       "id": "w4b_jip_lutana",
-      "title": "Wave 4B — JIP LN 57.30 & Lutana",
+      "title": "Wave 4B \u2014 JIP LN 57.30 & Lutana",
       "extender": "JIP LN 57.30",
       "required_plugins": [
         "jip_nvse.dll"
@@ -162,30 +162,6 @@
               "rel_path": "nvseprobe_w4b3_bat.txt",
               "content": "Player.AuxVarSetFlt *b3_bat 99\n"
             }
-          ]
-        },
-        {
-          "id": "b3_jip10_05_modlogprint_no_plugin",
-          "bucket": "B",
-          "extender": "JIP LN 57.30",
-          "required_plugins": [
-            "jip_nvse.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": true,
-          "mutates_state": true,
-          "requires_fixture": false,
-          "requires_isolated_staging": false,
-          "spec_file": "docs/spec-notes/jip-scripts-10.md",
-          "spec_line": 69,
-          "functions_tested": [
-            "ModLogPrint"
-          ],
-          "claim": "ModLogPrint from runtime script (no plugin) executes cleanly without crashing.",
-          "expected": "Executes cleanly",
-          "script_lines": [
-            "ModLogPrint 1 \"W4B test line %g\" 42",
-            "  PrintToConsole \"PROBE|b3_jip10_05_modlogprint_no_plugin|ok\""
           ]
         },
         {
@@ -1257,37 +1233,6 @@
           ]
         },
         {
-          "id": "b3_lut_09_ini_section_remove_key",
-          "bucket": "B",
-          "extender": "JIP LN 57.30",
-          "required_plugins": [
-            "jip_nvse.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": true,
-          "mutates_state": true,
-          "requires_fixture": false,
-          "requires_isolated_staging": false,
-          "spec_file": "docs/spec-notes/ext-lutana.md",
-          "spec_line": 182,
-          "functions_tested": [
-            "SetINISection",
-            "RemoveINIKey",
-            "RemoveINISection"
-          ],
-          "claim": "SetINISection writes a map under Data\\Config; RemoveINIKey & RemoveINISection remove entries.",
-          "expected": "Write map -> read back -> RemoveINIKey -> RemoveINISection",
-          "script_lines": [
-            "array_var aSec = ar_Map \"fAlpha\"::12.5 \"sBeta\"::\"hi\"",
-            "SetINISection \"W4Sec\" aSec \"nvseprobe_w4b3_lut.ini\"",
-            "float f1 = GetINIFloat \"W4Sec:fAlpha\" \"nvseprobe_w4b3_lut.ini\"",
-            "int iRmK = RemoveINIKey \"W4Sec:fAlpha\" \"nvseprobe_w4b3_lut.ini\"",
-            "float f2 = GetINIFloat \"W4Sec:fAlpha\" \"nvseprobe_w4b3_lut.ini\"",
-            "int iRmS = RemoveINISection \"W4Sec\" \"nvseprobe_w4b3_lut.ini\"",
-            "  PrintToConsole \"PROBE|b3_lut_09_ini_section_remove_key|f1=%.1f,rmK=%g,f2=%.1f,rmS=%g\" f1 iRmK f2 iRmS"
-          ]
-        },
-        {
           "id": "b3_lut_10_anim_obj_idle_non_idle",
           "bucket": "B",
           "extender": "JIP LN 57.30",
@@ -1535,7 +1480,7 @@
     },
     {
       "id": "w4b_showoff",
-      "title": "Wave 4B — ShowOffNVSE 184",
+      "title": "Wave 4B \u2014 ShowOffNVSE 184",
       "extender": "ShowOffNVSE 184",
       "required_plugins": [
         "jip_nvse.dll",
@@ -1630,8 +1575,7 @@
           "spec_file": "docs/spec-notes/ext-showoff.md",
           "spec_line": 237,
           "functions_tested": [
-            "ReadFromJSON",
-            "WriteToJSON"
+            "ReadFromJSON"
           ],
           "claim": "ReadFromJSON on malformed JSON and missing JSON pointer behavior.",
           "expected": "Test TestExpr on bad JSON & missing pointer",
@@ -1833,43 +1777,6 @@
           ]
         },
         {
-          "id": "b3_so_09_cached_ini_funcs_indiv",
-          "bucket": "B",
-          "extender": "ShowOffNVSE 184",
-          "required_plugins": [
-            "jip_nvse.dll",
-            "ShowOffNVSE.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": true,
-          "mutates_state": true,
-          "requires_fixture": true,
-          "requires_isolated_staging": true,
-          "spec_file": "docs/spec-notes/ext-showoff.md",
-          "spec_line": 235,
-          "functions_tested": [
-            "HasINISetting_Cached",
-            "ReloadIniCache",
-            "SaveCachedIniFile"
-          ],
-          "claim": "HasINISetting_Cached / ReloadIniCache / SaveCachedIniFile individual behavior.",
-          "expected": "Test HasINISetting_Cached on file written to Data\\Config\\, ReloadIniCache, SaveCachedIniFile",
-          "script_lines": [
-            "int rl1 = ReloadIniCache \"nvseprobe_w4b3_so.ini\"",
-            "int h1 = HasINISetting_Cached \"Main:fNum\" \"nvseprobe_w4b3_so.ini\"",
-            "int hMiss = HasINISetting_Cached \"Main:fNoKey\" \"nvseprobe_w4b3_so.ini\"",
-            "int rl0 = ReloadIniCache \"nvseprobe_w4b3_missing.ini\"",
-            "SaveCachedIniFile \"nvseprobe_w4b3_so.ini\"",
-            "  PrintToConsole \"PROBE|b3_so_09_cached_ini_funcs_indiv|rl1=%g,h1=%g,hMiss=%g,rl0=%g\" rl1 h1 hMiss rl0"
-          ],
-          "fixtures": [
-            {
-              "rel_path": "Data/Config/nvseprobe_w4b3_so.ini",
-              "content": "[Main]\nfNum=12.5\n"
-            }
-          ]
-        },
-        {
           "id": "b3_so_ex_01_apply_easing_alt_edges",
           "bucket": "B",
           "extender": "ShowOffNVSE 184",
@@ -2050,7 +1957,7 @@
     },
     {
       "id": "w4b_jg",
-      "title": "Wave 4B — JohnnyGuitarNVSE 528",
+      "title": "Wave 4B \u2014 JohnnyGuitarNVSE 528",
       "extender": "JohnnyGuitarNVSE 528",
       "required_plugins": [
         "jip_nvse.dll",
@@ -2544,7 +2451,7 @@
     },
     {
       "id": "w4b_sup",
-      "title": "Wave 4B — SUP NVSE 855",
+      "title": "Wave 4B \u2014 SUP NVSE 855",
       "extender": "SUP NVSE 855",
       "required_plugins": [
         "jip_nvse.dll",
@@ -2799,84 +2706,6 @@
           ]
         },
         {
-          "id": "b3_sup5_02_excel_cross_type_and_array",
-          "bucket": "B",
-          "extender": "SUP NVSE 855",
-          "required_plugins": [
-            "jip_nvse.dll",
-            "supNVSE.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": true,
-          "mutates_state": true,
-          "requires_fixture": false,
-          "requires_isolated_staging": true,
-          "spec_file": "docs/spec-notes/ext-sup5.md",
-          "spec_line": 30,
-          "functions_tested": [
-            "ExcelWriteFloat",
-            "ExcelWriteString",
-            "ExcelReadFloat",
-            "ExcelReadString",
-            "ExcelArrayToFile",
-            "ExcelArrayFromFile",
-            "ExcelGetWorkSheetCount",
-            "ExcelGetRowCount",
-            "ExcelGetColCount"
-          ],
-          "claim": "Excel cross-type reads, ExcelArrayToFile with form/nested array, ExcelArrayFromFile with *FalloutNV.esm:F and missing file.",
-          "expected": "Verify exact return types and array roundtrip",
-          "script_lines": [
-            "ExcelWriteFloat \"nvseprobe_w4b3_xl\" 0 0 0 42.5",
-            "ExcelWriteString \"nvseprobe_w4b3_xl\" 0 0 1 \"textVal\"",
-            "float fOfStr = ExcelReadFloat \"nvseprobe_w4b3_xl\" 0 0 1",
-            "string_var svOfNum = ExcelReadString \"nvseprobe_w4b3_xl\" 0 0 0",
-            "int iWsc = ExcelGetWorkSheetCount \"nvseprobe_w4b3_xl\"",
-            "int iRc = ExcelGetRowCount \"nvseprobe_w4b3_xl\" 0",
-            "int iCc = ExcelGetColCount \"nvseprobe_w4b3_xl\" 0",
-            "array_var aInner = ar_List 99",
-            "array_var aIn = ar_List 10 \"abc\" aInner Player",
-            "int iAtf = ExcelArrayToFile \"nvseprobe_w4b3_xl\" 0 1 0 aIn 0",
-            "ExcelWriteString \"nvseprobe_w4b3_xl\" 0 0 3 \"*FalloutNV.esm:F\"",
-            "ExcelWriteString \"nvseprobe_w4b3_xl\" 0 1 3 \"*NoMod.esm:1\"",
-            "array_var aFrom = ExcelArrayFromFile \"nvseprobe_w4b3_xl\" 0 3 0",
-            "array_var aMiss = ExcelArrayFromFile \"nvseprobe_w4b3_nosuchxl\" 0 0 0",
-            "string_var svT0 = \"none\"",
-            "string_var svT1 = \"none\"",
-            "int iFSz = ar_Size aFrom",
-            "if iFSz >= 2",
-            "  let svT0 := typeof (aFrom[0])",
-            "  let svT1 := typeof (aFrom[1])",
-            "endif",
-            "  PrintToConsole \"PROBE|b3_sup5_02_excel_cross_type_and_array|fStr=%.1f,sNum=[%z],cnt=%g/%g/%g,atf=%g,fromSz=%g(%z,%z),missSz=%g\" fOfStr svOfNum iWsc iRc iCc iAtf iFSz svT0 svT1 (ar_Size aMiss)"
-          ]
-        },
-        {
-          "id": "b3_sup5_03_dump_load_order",
-          "bucket": "B",
-          "extender": "SUP NVSE 855",
-          "required_plugins": [
-            "jip_nvse.dll",
-            "supNVSE.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": true,
-          "mutates_state": true,
-          "requires_fixture": false,
-          "requires_isolated_staging": true,
-          "spec_file": "docs/spec-notes/ext-sup5.md",
-          "spec_line": 75,
-          "functions_tested": [
-            "DumpLoadOrder"
-          ],
-          "claim": "DumpLoadOrder writes load order lines into SUPNVSE.log.",
-          "expected": "Call DumpLoadOrder (Python inspects SUPNVSE.log after run)",
-          "script_lines": [
-            "DumpLoadOrder",
-            "  PrintToConsole \"PROBE|b3_sup5_03_dump_load_order|called\""
-          ]
-        },
-        {
           "id": "b3_sup7_01_hud_bar_lifecycle",
           "bucket": "B",
           "extender": "SUP NVSE 855",
@@ -2971,41 +2800,6 @@
           ]
         },
         {
-          "id": "b3_sup_ex_02_excel_empty_sheet_counts",
-          "bucket": "B",
-          "extender": "SUP NVSE 855",
-          "required_plugins": [
-            "jip_nvse.dll",
-            "supNVSE.dll"
-          ],
-          "optional_extender": false,
-          "requires_world": true,
-          "mutates_state": true,
-          "requires_fixture": false,
-          "requires_isolated_staging": true,
-          "spec_file": "docs/spec-notes/ext-sup5.md",
-          "spec_line": 32,
-          "functions_tested": [
-            "ExcelWriteFloat",
-            "ExcelGetRowCount",
-            "ExcelGetColCount",
-            "ExcelGetWorkSheetCount"
-          ],
-          "claim": "ExcelGetRowCount / ColCount on missing file (-1) and missing sheet (-1) vs empty created sheet (0).",
-          "expected": "Check missing file, missing sheet, and auto-created intermediate Sheet2 (sheet index 1 after writing sheet 2)",
-          "script_lines": [
-            "int rMF = ExcelGetRowCount \"nvseprobe_w4b3_nofile\" 0",
-            "int cMF = ExcelGetColCount \"nvseprobe_w4b3_nofile\" 0",
-            "int wMF = ExcelGetWorkSheetCount \"nvseprobe_w4b3_nofile\"",
-            "ExcelWriteFloat \"nvseprobe_w4b3_xl2\" 2 0 0 1",
-            "int wOk = ExcelGetWorkSheetCount \"nvseprobe_w4b3_xl2\"",
-            "int rEmp = ExcelGetRowCount \"nvseprobe_w4b3_xl2\" 1",
-            "int cEmp = ExcelGetColCount \"nvseprobe_w4b3_xl2\" 1",
-            "int rMS = ExcelGetRowCount \"nvseprobe_w4b3_xl2\" 9",
-            "  PrintToConsole \"PROBE|b3_sup_ex_02_excel_empty_sheet_counts|missF=%g/%g/%g|wsc=%g,empS1=%g/%g,missS=%g\" rMF cMF wMF wOk rEmp cEmp rMS"
-          ]
-        },
-        {
           "id": "b3_sup_ex_03_nif_interp_finish_str",
           "bucket": "B",
           "extender": "SUP NVSE 855",
@@ -3048,7 +2842,7 @@
     },
     {
       "id": "w4b_core_misc",
-      "title": "Wave 4B — xNVSE 6.4.9 Core, kNVSE 37, AnhNVSE 131 & Stewie 1005",
+      "title": "Wave 4B \u2014 xNVSE 6.4.9 Core, kNVSE 37, AnhNVSE 131 & Stewie 1005",
       "extender": "AnhNVSE 131",
       "required_plugins": [
         "jip_nvse.dll",
