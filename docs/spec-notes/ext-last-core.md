@@ -118,19 +118,22 @@ these paths (player and NPC melee, player and NPC projectiles) is inferred from
 the documented base-form change, not observed.
 
 [documented: `schemas/fnv/objects.json`, WEAP CRDT] The accepted data model holds
-critical damage in an unsigned 16-bit field. Negative integers wrap modulo 65536 into that
-unsigned 16-bit field [observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`), Fallout:
-New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters, clean-room script
-probe `core_16_set_weapon_crit_damage_edge`
+critical damage in an unsigned 16-bit field. Negative integers, fractional inputs, and
+values above `65535` truncate toward zero and wrap modulo `65536` into that unsigned
+16-bit field [observed: 2026-11-23 & 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`),
+Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters, clean-room
+script probes `core_16_set_weapon_crit_damage_edge`
 (`GetWeaponCritDamage`/`SetWeaponCritDamage`/`TempCloneForm` on `Weap10mmPistol`: initial
 `22.0`, after `SetWeaponCritDamage 77` a `TempCloneForm` clone read `77.0`, and
-`SetWeaponCritDamage -5` read back `65531.0`); no DLL or source consulted]. [design]
-`SetWeaponCritDamage` stores finite numeric inputs truncated toward zero and wrapped into
-`u16` (`0..=65535`, non-finite as `0`) so both script readback and combat consume the same
-unsigned 16-bit value. [hypothesis] Fractional and non-numeric conversion (beyond
-truncation toward zero) and values above `65535` remain uncaptured. The accepted generic
-setter's explicit invalid weapon-argument fallback remains unchanged pending behavioral
-evidence.
+`SetWeaponCritDamage -5` read back `65531.0`) and `w4c_b2_11_crit_dmg_bounds`
+(`tools/capture/nvse/catalogs/wave4c_extenders.json`, #3679:
+`c0=22,neg=65531,frac=12,over=4464,aliasOp=5259` — `12.7 -> 12` and `70000 -> 4464`); no
+DLL or source consulted]. [design] `SetWeaponCritDamage` stores finite numeric inputs
+truncated toward zero and wrapped into `u16` (`0..=65535`, non-finite as `0`) so both
+script readback and combat consume the same unsigned 16-bit value. [hypothesis]
+Non-numeric conversion and whether the original saves the change remain uncaptured. The
+accepted generic setter's explicit invalid weapon-argument fallback remains unchanged
+pending behavioral evidence.
 
 [hypothesis] The spelling `SetCritDam` is not established by the consulted public
 function documentation or accepted catalogue. Keep its registration open pending
