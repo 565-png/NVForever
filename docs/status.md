@@ -18,8 +18,8 @@ issues; [outstanding.md](outstanding.md) is a snapshot of 2026-10-25, not kept u
 - **Not started**: nothing of it is built (script functions that need it are stubs).
 - **Awaiting owner**: built with guessed values or a design choice the owner has to confirm;
   the open gameplay decisions are in [owner-review.md](owner-review.md), the guesses the
-  original game can settle in [observer-checks](handoff/observer-checks.md), and every
-  guess is still in its spec note.
+  original game can settle in [observer-checks](handoff/observer-checks.md) and
+  [its folder](handoff/observer-checks/README.md), and every guess is still in its spec note.
 
 Qualified private CPU host: [explicitly cleared cloned form-list JIP
 wildcards](spec-notes/jip-cloned-list-wildcard.md). Exact f30 original/candidate
@@ -292,7 +292,8 @@ See [actor-list-additions](spec-notes/actor-list-additions.md).
 ## 9. Open items needing the owner
 
 - Open gameplay decisions for the owner: [owner-review.md](owner-review.md); guesses the
-  observer can settle: [observer-checks](handoff/observer-checks.md); the full per-workstream
+  observer can settle: [observer-checks](handoff/observer-checks.md) and, the newer ones,
+  [observer-checks/](handoff/observer-checks/README.md); the full per-workstream
   log up to 2026-10-23: `git show 85dcaace:docs/owner-review.md`.
 - Known-failing smoke marks that need the owner's word: `combat-violet` (Violet aims down the
   sights at 1,600 units by design) and `combat-dogs` (fewer bites than expected, by the

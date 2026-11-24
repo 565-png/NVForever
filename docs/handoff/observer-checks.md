@@ -1,5 +1,10 @@
 # Observer checks: gameplay guesses the original game can settle
 
+**This file takes no new checks** (#3674). A new check is a file of its own in
+[observer-checks/](observer-checks/README.md), so that pull requests adding checks do not
+conflict here. The numbered checks below stay until they are settled, keep their numbers,
+and get their partial answers here.
+
 Guesses about how the original behaves that a capture can settle without the owner.
 The observer can run scripts, take screenshots, record video, and tap keys, so it can
 also drive menus. Sorted by how much of the game each check moves, most first.
@@ -3781,23 +3786,6 @@ already talking takes over at once, same topic or another; nothing is queued or 
      altogether, the Pip-Boy still on, does the music come back (ours: yes)? Last, with
      the Radio volume at 0 and a station playing: is the music still turned down (ours:
      no)?
-
-## Added 2026-11-21 (a suitcase lying on a bed, #3323)
-
-267. **Is a suitcase lying on a bed the crosshair's target, from every aim at it?** (P3;
-     #3323, simulation.md §5 crosshair activation.) A player reports the Suitcase
-     0x000AFA24 lying on BedQueenRight 0x000D72C7 in BisonSteve02 can be looted in the
-     original [reported: the player's issue, not captured]. Ours since #3323: a bed's
-     boxes are set aside when one of them wholly holds, along the ray, the box of
-     something the player can activate, entered before the first collision hit; otherwise
-     the nearest box or collision hit wins [design]. Stand beside that bed and sweep the
-     crosshair over the suitcase's lid, its side, its edge against the mattress, a corner
-     hanging over the bed's edge if there is one, and the bare mattress beside it. At each
-     aim write down the HUD prompt (Open Suitcase or the bed's) and what E does (the
-     suitcase's container menu or the bed's sleep/wait menu); log `GetCrosshairRef`
-     separately, as it may name another reference than the prompt. Record which aims give
-     the suitcase and which the bed, without reading a rule into them yet; compare with
-     ours afterwards (aim for aim in the same spot in NVForever).
 
 ## Added 2026-11-21 (relief on the landscape's texture layers, #3322)
 
