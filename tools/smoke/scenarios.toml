@@ -15250,8 +15250,8 @@ order = [[
 
 [[scenario]]
 name = "difficulty-custom"
-source = "#3569: the Difficulty list's Custom shows three sliders under it (Player Damage, NPC Damage, Kill XP, 50-300%, 100% until moved) that set the damage the player deals and takes and the XP for a kill (docs/spec-notes/difficulty.md §5)"
-note = "in Goodsprings with Easy Pete 300 units north (3 s); no home, so no INI: the sliders start at 100%. At 6 s the console asks Pete's kill XP at Normal. Pause 8-14: under Normal the three rows are hidden; Custom shows them at 100% (Normal's multipliers); then Player Damage 300% (part 1), NPC Damage 50% (part 0), Kill XP 200% (part 0.6). At 16 s his kill XP is asked again, at 18-19 s the hit aid's 10-point hits (the player takes 5, deals 30), at 21 s the player kills him"
+source = "#3569: the Difficulty list's Custom applies the three sliders under it, greyed under the five levels (#3570 review) (Player Damage, NPC Damage, Kill XP, 50-300%, 100% until moved) that set the damage the player deals and takes and the XP for a kill (docs/spec-notes/difficulty.md §5)"
+note = "in Goodsprings with Easy Pete 300 units north (3 s); no home, so no INI: the sliders start at 100%. At 6 s the console asks Pete's kill XP at Normal. Pause 8-14: under Normal the three rows are listed, greyed; Custom lets them apply at 100% (Normal's multipliers); then Player Damage 300% (part 1), NPC Damage 50% (part 0), Kill XP 200% (part 0.6). At 16 s his kill XP is asked again, at 18-19 s the hit aid's 10-point hits (the player takes 5, deals 30), at 21 s the player kills him"
 areas = ["combat", "settings"]
 paths = ["crates/fnv-game/src/difficulty.rs", "engine/nvf-play/src/difficulty.rs", "crates/nvf-settings-layout/src/lib.rs"]
 env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:EasyPeteRef:player:0:300:0", NVF_PLAY_TEST_CONSOLE = "6:eval EasyPeteRef.GetKillXP;6.3:close;16:eval EasyPeteRef.GetKillXP;GetGameDifficulty;16.3:close", NVF_PLAY_TEST_PAUSE = "8:14", NVF_PLAY_TEST_SETTINGS = "8.5:select:difficulty,9.5:difficulty=Custom,11:difficulty-player-damage=1.0,11.5:difficulty-npc-damage=0,12:difficulty-kill-xp=0.6", NVF_PLAY_TEST_PAUSE_MENU = "9:inspect,9.2:shot,10.5:inspect,12.5:inspect", NVF_PLAY_TEST_HIT = "18:player:10:by=EasyPeteRef,19:EasyPeteRef:10,21:EasyPeteRef:9999" }
@@ -15262,10 +15262,10 @@ expect = [
 ]
 order = [[
   { text = "console: EasyPeteRef.GetKillXP >> 10", label = "Pete's kill XP at Normal: 10 (observed 2026-11-22)" },
-  { re = 'pause menu: inspect: shown \[Gameplay > Game\], difficulty, hardcore,', label = "under Normal the Custom rows are hidden" },
+  { re = 'pause menu: inspect: shown \[Gameplay > Game\], difficulty, difficulty-player-damage, difficulty-npc-damage, difficulty-kill-xp, hardcore,', label = "under Normal the Custom rows are listed (greyed, not hidden)" },
   "settings: difficulty Custom",
   { text = "difficulty: Custom: damage by the player x1.00, to the player x1.00, kill XP x1.00", label = "each at 100% when Custom is first chosen (the rows show their getters' value, the same as these)" },
-  { re = 'pause menu: inspect: shown \[Gameplay > Game\], difficulty, difficulty-player-damage, difficulty-npc-damage, difficulty-kill-xp, hardcore,', label = "Custom shows its three rows under the list" },
+  { re = 'pause menu: inspect: shown \[Gameplay > Game\], difficulty, difficulty-player-damage, difficulty-npc-damage, difficulty-kill-xp, hardcore,', label = "Custom: its three rows under the list" },
   "settings: difficulty-player-damage 300%",
   "settings: difficulty-npc-damage 50%",
   "settings: difficulty-kill-xp 200%",
@@ -15279,17 +15279,18 @@ manual = "pause_settings.png (9.2 s, Difficulty chosen, Normal): the note under 
 
 [[scenario]]
 name = "difficulty-custom-unused"
-source = "#3569: the Custom sliders do nothing while one of the five levels is chosen (they are hidden then): the level's own numbers hold for the damage the player deals and takes and the kill XP (docs/spec-notes/difficulty.md §5)"
-note = "in Goodsprings with Easy Pete 300 units north (3 s); no home, so no INI. Pause 8-14: Custom, then Player Damage 300% (part 1), NPC Damage 50% (part 0), Kill XP 300% (part 1), then Very Hard; the rows hide again. At 16 s Pete's kill XP, at 17-18 s the hit aid's 10-point hits: Very Hard's numbers (takes 20, deals 5), not the sliders' (5, 30; kill XP 30). Pause 20-23: Normal; at 25 s kill XP, 26-27 s hits (10, 10), 29 s the player kills him: +10 XP"
+source = "#3569: the Custom sliders do nothing while one of the five levels is chosen (they are greyed then, #3570 review): the level's own numbers hold for the damage the player deals and takes and the kill XP (docs/spec-notes/difficulty.md §5)"
+note = "in Goodsprings with Easy Pete 300 units north (3 s); no home, so no INI. Pause 8-14: Custom, then Player Damage 300% (part 1), NPC Damage 50% (part 0), Kill XP 300% (part 1), then Very Hard; the rows stay listed, greyed, and the aid's edits on them at 12.5 and 13.5 s are refused. At 16 s Pete's kill XP, at 17-18 s the hit aid's 10-point hits: Very Hard's numbers (takes 20, deals 5), not the sliders' (5, 30; kill XP 30). Pause 20-23: Normal (an edit at 21.5 s refused again); at 25 s kill XP, 26-27 s hits (10, 10), 29 s the player kills him: +10 XP. Pause 30-33: Custom again brings back 300/50/300%, as set before the levels"
 areas = ["combat", "settings"]
 paths = ["crates/fnv-game/src/difficulty.rs", "engine/nvf-play/src/difficulty.rs", "crates/nvf-settings-layout/src/lib.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:EasyPeteRef:player:0:300:0", NVF_PLAY_TEST_CONSOLE = "16:eval EasyPeteRef.GetKillXP;16.3:close;25:eval EasyPeteRef.GetKillXP;25.3:close", NVF_PLAY_TEST_PAUSE = "8:14,20:23", NVF_PLAY_TEST_SETTINGS = "8.5:select:difficulty,9:difficulty=Custom,10:difficulty-player-damage=1.0,10.5:difficulty-npc-damage=0,11:difficulty-kill-xp=1.0,12:difficulty=Very Hard,21:difficulty=Normal", NVF_PLAY_TEST_PAUSE_MENU = "11.5:inspect,13:inspect,22:inspect", NVF_PLAY_TEST_HIT = "17:player:10:by=EasyPeteRef,18:EasyPeteRef:10,26:player:10:by=EasyPeteRef,27:EasyPeteRef:10,29:EasyPeteRef:9999" }
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:moveto:EasyPeteRef:player:0:300:0", NVF_PLAY_TEST_CONSOLE = "16:eval EasyPeteRef.GetKillXP;16.3:close;25:eval EasyPeteRef.GetKillXP;25.3:close", NVF_PLAY_TEST_PAUSE = "8:14,20:23,30:33", NVF_PLAY_TEST_SETTINGS = "8.5:select:difficulty,9:difficulty=Custom,10:difficulty-player-damage=1.0,10.5:difficulty-npc-damage=0,11:difficulty-kill-xp=1.0,12:difficulty=Very Hard,12.5:difficulty-player-damage=0.2,13.5:difficulty-npc-damage=0.2,21:difficulty=Normal,21.5:difficulty-kill-xp=0.2,31:difficulty=Custom", NVF_PLAY_TEST_PAUSE_MENU = "11.5:inspect,13:inspect,22:inspect", NVF_PLAY_TEST_HIT = "17:player:10:by=EasyPeteRef,18:EasyPeteRef:10,26:player:10:by=EasyPeteRef,27:EasyPeteRef:10,29:EasyPeteRef:9999" }
 args = ["--play", "--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--hour", "12", "--no-voice"]
-run_seconds = 32
+run_seconds = 35
 expect = [
   { re = 'test aid: 0x[0-9A-F]{8} hits 0x00000014 for 5: health', count = 0, label = "never NPC Damage 50%'s 5" },
   { re = 'test aid: the player hits 0x[0-9A-F]{8} for 30: health', count = 0, label = "never Player Damage 300%'s 30" },
   { text = "console: EasyPeteRef.GetKillXP >> 30", count = 0, label = "never Kill XP 300%'s 30" },
+  { re = 'settings: difficulty-(player-damage|npc-damage|kill-xp) 100%', count = 0, label = "a greyed slider takes no edit" },
 ]
 order = [[
   "settings: difficulty Custom",
@@ -15300,17 +15301,19 @@ order = [[
   { re = 'pause menu: inspect: shown \[Gameplay > Game\], difficulty, difficulty-player-damage, difficulty-npc-damage, difficulty-kill-xp, hardcore,', label = "shown under Custom" },
   "settings: difficulty Very Hard",
   { text = "difficulty: Very Hard (4): damage by the player x0.50, to the player x2.00, kill XP x1.00", label = "Very Hard's own numbers, not the sliders'" },
-  { re = 'pause menu: inspect: shown \[Gameplay > Game\], difficulty, hardcore,', label = "hidden again under Very Hard" },
+  { re = 'pause menu: inspect: shown \[Gameplay > Game\], difficulty, difficulty-player-damage, difficulty-npc-damage, difficulty-kill-xp, hardcore,', label = "still listed under Very Hard (greyed)" },
   { text = "console: EasyPeteRef.GetKillXP >> 10", label = "Very Hard: kill XP 10, not 30" },
   { re = 'test aid: 0x[0-9A-F]{8} hits 0x00000014 for 20: health', label = "Very Hard: takes 20 of 10, not 5" },
   { re = 'test aid: the player hits 0x[0-9A-F]{8} for 5: health', label = "Very Hard: deals 5 of 10, not 30" },
   "settings: difficulty Normal",
   { text = "difficulty: Normal (2): damage by the player x1.00, to the player x1.00, kill XP x1.00", label = "Normal's own numbers" },
-  { re = 'pause menu: inspect: shown \[Gameplay > Game\], difficulty, hardcore,', label = "hidden under Normal" },
+  { re = 'pause menu: inspect: shown \[Gameplay > Game\], difficulty, difficulty-player-damage, difficulty-npc-damage, difficulty-kill-xp, hardcore,', label = "listed under Normal (greyed)" },
   { text = "console: EasyPeteRef.GetKillXP >> 10", label = "Normal: kill XP 10" },
   { re = 'test aid: 0x[0-9A-F]{8} hits 0x00000014 for 10: health', label = "Normal: takes 10" },
   { re = 'test aid: the player hits 0x[0-9A-F]{8} for 10: health', label = "Normal: deals 10" },
   { text = "xp: +10 XP from a kill", label = "the kill earns Normal's XP, not 300%" },
+  "settings: difficulty Custom",
+  { text = "difficulty: Custom: damage by the player x3.00, to the player x0.50, kill XP x3.00", label = "Custom again: the sliders as set, the greyed rows took no edit" },
 ]]
 
 [[scenario]]

@@ -46,7 +46,6 @@ one is broken. Read §1–§4 for how the page works.
    (the GPU, missing files, a run's command line); the launcher cannot follow those. The
    rows hidden so far, where the owner asked: the upscaler's own rows (Upscaling Mode, DLSS
    Model, FSR Library, Anti-Aliasing), Generated Frames, the colour channels unless Custom,
-   the difficulty's Player Damage, NPC Damage and Kill XP unless Custom (#3569),
    the controller rows, and Advanced Movement's categories while its Global Toggle is off.
 7. **Words**: write the label in sentence case; the page shows it in Title Case in English,
    and so in another language until its file has a line for it (`pause::on_page`: the short words a, an, the, and, but, or, nor, for, so, yet, as,
@@ -168,7 +167,7 @@ The table names every row the registry can hold [documented: `settings_layout.rs
 right after the first), #2701's `full-detail` and #3014's `distant-objects` (Graphics › Detail
 and Distance, after `distant-lod`), #3013's `distant-lights` (Detail and Distance, the last
 row), #3569's `difficulty-player-damage`, `difficulty-npc-damage` and `difficulty-kill-xp`
-(Gameplay › Game, under `difficulty`, shown only with Custom) (`KNOWN` in
+(Gameplay › Game, under `difficulty`, greyed unless Custom) (`KNOWN` in
 `settings_layout.rs`); a test keeps
 it so (`settings_layout.rs`, `the_table_names_each_key_once_in_one_of_the_tabs`). The
 original puts the HUD and Pip-Boy colours and the crosshair in its Display category

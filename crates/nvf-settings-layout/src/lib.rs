@@ -1010,8 +1010,7 @@ pub const CONTROLLER_DEVICE: &str = "Controller";
 
 /// Rows shown only while a list row has one of the named choices: (the row, the list row,
 /// the choices by name) [design: the menu overhaul, owner 2026-11-15: the upscaler's own rows
-/// and Generated Frames are hidden, not greyed, while they cannot apply; #3569: the
-/// Custom difficulty's sliders]. While hidden, the
+/// and Generated Frames are hidden, not greyed, while they cannot apply]. While hidden, the
 /// list row stands for the row (the search, the Changed list). The game's page
 /// (`nvf_play::settings::Settings::hidden`) and the launcher both go by this table: a row
 /// hidden by another row's choice is written here, not in code, so the two stay one.
@@ -1021,18 +1020,20 @@ pub const SHOWN_WITH: &[(&str, &str, &[&str])] = &[
     ("fsr-library", "upscaler", &["FSR 3.1"]),
     ("anti-aliasing", "upscaler", &["Off"]),
     ("frame-generation-frames", "frame-generation", &["DLSS"]),
-    // The Custom difficulty's own three [design: #3569: "when player select this
-    // difficulty, 3 sliders will appear below the dropdown"].
-    ("difficulty-player-damage", "difficulty", &["Custom"]),
-    ("difficulty-npc-damage", "difficulty", &["Custom"]),
-    ("difficulty-kill-xp", "difficulty", &["Custom"]),
 ];
 
 /// Rows greyed unless a list row has one of the named choices: (the row, the list row, the
 /// choices by name, why) [design: the menu overhaul], as [`NEEDS`] for a row that needs a
 /// choice rather than a row switched on. The game's page
 /// (`nvf_play::settings::Settings::disabled_status`) and the launcher both go by it.
-pub const NEEDS_CHOICE: &[(&str, &str, &[&str], &str)] = &[("vats-slowdown", "vats-style", &["Classic"], "Classic V.A.T.S. only.")];
+pub const NEEDS_CHOICE: &[(&str, &str, &[&str], &str)] = &[
+    ("vats-slowdown", "vats-style", &["Classic"], "Classic V.A.T.S. only."),
+    // The Custom difficulty's own three, greyed under the five levels [design: #3570
+    // review, maintainer decision 2026-11-24: greyed, not hidden].
+    ("difficulty-player-damage", "difficulty", &["Custom"], "Custom difficulty only."),
+    ("difficulty-npc-damage", "difficulty", &["Custom"], "Custom difficulty only."),
+    ("difficulty-kill-xp", "difficulty", &["Custom"], "Custom difficulty only."),
+];
 
 /// What a row needs of another row to apply: `parent` on (a switch on, a list past its first
 /// choice) when `choices` is empty, else `parent` on one of `choices` (by name). `why` is

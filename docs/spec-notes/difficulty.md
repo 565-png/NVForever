@@ -95,8 +95,8 @@ the settings page row `difficulty` and the console's `SetGameDifficulty` /
 
 ## 5. Custom [design: #3569]
 
-- The list's sixth choice. While it is chosen, three sliders show under the list
-  (`nvf_settings_layout::SHOWN_WITH`; hidden otherwise, the launcher's page too):
+- The list's sixth choice. Three sliders under the list apply while it is chosen and are
+  greyed otherwise (`nvf_settings_layout::NEEDS_CHOICE`, the launcher's page too):
   - **Player Damage** (`difficulty-player-damage`): in place of `fDiffMultHPByPC` (§3.2).
   - **NPC Damage** (`difficulty-npc-damage`): in place of `fDiffMultHPToPC` (§3.3), so
     every source of damage to the player, as at the five levels; hits between NPCs and on

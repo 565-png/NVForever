@@ -8,8 +8,8 @@
 //! it set the damage the player deals, the damage the player takes and the XP for a kill,
 //! each 50-300% of Normal's in steps of 5% (100% until the player moves them), kept in the
 //! INI like every row (`difficulty-player-damage`, `difficulty-npc-damage`,
-//! `difficulty-kill-xp`) [design]. The sliders are hidden while another level is chosen
-//! (`nvf_settings_layout::SHOWN_WITH`).
+//! `difficulty-kill-xp`) [design]. The sliders are greyed while another level is chosen
+//! (`nvf_settings_layout::NEEDS_CHOICE`) and change nothing then.
 //!
 //! The list's note names every level's three multipliers ([`LEVELS_NOTE`]: the vanilla
 //! masters' numbers, which the launcher shows); in a game the page fills the same words with
@@ -225,6 +225,19 @@ mod tests {
         assert_eq!(percent(s.fit(part_of(1.0))), "100%");
         for m in [0.5, 1.0, 1.25, 2.0, 3.0] {
             assert_eq!(mult_of(s.fit(part_of(m))), m);
+        }
+    }
+
+    /// The shared rules that grey the three sliders (`settings_layout::NEEDS_CHOICE`) name
+    /// the list's Custom, and no rule hides them.
+    #[test]
+    fn the_sliders_are_greyed_unless_custom() {
+        let names: Vec<&str> = CHOICES.iter().map(|d| d.name()).collect();
+        for key in ["difficulty-player-damage", "difficulty-npc-damage", "difficulty-kill-xp"] {
+            let rules = crate::settings_layout::needs(key);
+            assert_eq!(rules.iter().map(|r| (r.parent, r.choices)).collect::<Vec<_>>(), [("difficulty", &["Custom"][..])], "{key}");
+            assert!(rules[0].choices.iter().all(|c| names.contains(c)), "{key}");
+            assert_eq!(crate::settings_layout::shown_with(key), None, "{key}: greyed, not hidden");
         }
     }
 

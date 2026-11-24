@@ -2155,13 +2155,10 @@ mod fsr_settings_tests {
     fn the_shared_rules_name_real_choices() {
         let upscalers: Vec<&str> = UPSCALERS.iter().map(|(n, _)| *n).collect();
         let frame_gen: Vec<&str> = crate::frame_gen::FrameGenKind::ALL.iter().map(|k| k.name()).collect();
-        // nvf-play difficulty.rs: the Custom level's sliders.
-        let difficulty: Vec<&str> = fnv_game::difficulty::CHOICES.iter().map(|d| d.name()).collect();
         for (row, parent, choices) in nvf_play::settings_layout::SHOWN_WITH {
             let names = match *parent {
                 UPSCALER_KEY => &upscalers,
                 FRAME_GENERATION_KEY => &frame_gen,
-                "difficulty" => &difficulty,
                 other => panic!("{row}: a rule on {other}; name its choices here"),
             };
             assert!(choices.iter().all(|c| names.contains(c)), "{row}: {choices:?} not all of {names:?}");

@@ -41,8 +41,8 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
   100/100/100%, Hard 75/150/100%, Very Hard 50/200/100%. (In a game the numbers are the load
   order's own: a plugin's `fDiffMult*` shows.)
 - In full: How hard the fights are: from Very Easy (the player's hits do double damage and
-  the player takes half) to Very Hard (half and double); Normal as they are. Custom shows
-  three sliders under the list, Player Damage, NPC Damage and Kill XP, that set each part
+  the player takes half) to Very Hard (half and double); Normal as they are. Custom lets
+  the three sliders under the list, Player Damage, NPC Damage and Kill XP, set each part
   yourself; scripts' GetGameDifficulty sees Custom as Normal (2). (console:
   SetGameDifficulty 0-4; a script's SetGameDifficulty is kept as the chosen level)
 - Shown as a list since the menu overhaul; an older slider number in the INI still loads as
@@ -53,7 +53,7 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
 
 - On the page: Custom difficulty: how much damage your hits do, from 50% to 300%.
 - In full: The damage the player's hits do to anyone, 50% to 300% in steps of 5% (100% until
-  moved). Shown only while Difficulty is Custom; kept as the slider's part
+  moved). Greyed unless Difficulty is Custom; kept as the slider's part
   (0.20 = 100%).
 - Registered in `engine/nvf-play/src/difficulty.rs`
 
@@ -63,14 +63,14 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
   and blasts), from 50% to 300%.
 - In full: The damage the player takes from every source (as the five levels scale it), 50%
   to 300% in steps of 5% (100% until moved). NPCs' hits on each other and on companions
-  are not scaled, as at every level. Shown only while Difficulty is Custom.
+  are not scaled, as at every level. Greyed unless Difficulty is Custom.
 - Registered in `engine/nvf-play/src/difficulty.rs`
 
 ### `difficulty-kill-xp`: Kill XP
 
 - On the page: Custom difficulty: how much XP a kill earns, from 50% to 300%.
 - In full: The XP the player earns for a kill, 50% to 300% in steps of 5% (100% until
-  moved); other XP (quests, locks, terminals) is not scaled. Shown only while
+  moved); other XP (quests, locks, terminals) is not scaled. Greyed unless
   Difficulty is Custom.
 - Registered in `engine/nvf-play/src/difficulty.rs`
 
