@@ -192,9 +192,13 @@ aSub aSub; aCopy = Ar_DeepCopy aOrig; let aCopy[0][0] := 99` left `aOrig[0][0] =
 with `STATUS_STACK_OVERFLOW` (`0xC00000FD`) [observed: 2026-11-24, `GSDocMitchellHouse`
 (`0x00103DF9`), fresh game, Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10
 official base masters, clean-room black-box script probe `w4d_10_ar_deepcopy_cycle`
-(`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679):
-`W4D10_PRE_DEEPCOPY|sz=1 -> FalloutNV.exe crashed with exit_rc=3221225725 (0xC00000FD STATUS_STACK_OVERFLOW)`;
-no DLL or source consulted]. [design] In NVForever, an array that holds itself is copied
+(`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679): the committed probe printed
+`PROBE|w4d_10_ar_deepcopy_cycle|pre_sz=1` to `ConsoleOut.txt` before `Ar_DeepCopy a`
+terminated the game without reaching `post_sz`; because #3679 only emits the probe script
+and never launches the game, `FalloutNV.exe` was launched manually to run the generated
+script and the Windows process exit code `3221225725` (`0xC00000FD`,
+`STATUS_STACK_OVERFLOW`) was read from the process's termination status; no DLL or source
+consulted]. [design] In NVForever, an array that holds itself is copied
 with the same shape, the entry leading back standing for the copy (#1089), avoiding the
 stack-overflow crash.
 
