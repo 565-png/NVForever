@@ -470,7 +470,10 @@ mod tests {
     #[test]
     fn setcritdam_alias_resolves_to_setweaponcritdamage() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/script/functions.json");
-        let table = FunctionTable::load(&path).expect("functions.json loads");
+        let text = std::fs::read_to_string(&path).expect("functions.json reads");
+        // Verify wiki-generated functions.json does not need SetCritDam: encodings.json alone resolves it.
+        assert!(!text.contains("\"SetCritDam\""), "SetCritDam alias belongs in encodings.json, not functions.json");
+        let table = FunctionTable::from_json(&text, ENCODINGS_JSON).expect("table loads");
 
         // Alias stays unnumbered (no FOSE opcode imported) and maps to canonical SetWeaponCritDamage.
         assert_eq!(table.by_name("setcritdam"), None);
