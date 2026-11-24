@@ -1103,6 +1103,8 @@ pub mod menus {
     /// The Pip-Boy's ITEMS page, the inventory [documented: GECK wiki GetSelectedItemRef,
     /// "Inventory Menu (1002)"; GetMenuItemListRefs, "1002 Pip-Boy Inventory Menu"].
     pub const INVENTORY: u16 = 1002;
+    /// The container menu [documented: GECK wiki GetMenuTargetRef, "1008 Container Menu"].
+    pub const CONTAINER: u16 = 1008;
     /// The Pip-Boy's STATS page [documented: GECK wiki GetSelectedItemRef, "Pipboy STATS
     /// Menu (1003) - Perk"].
     pub const STATS: u16 = 1003;

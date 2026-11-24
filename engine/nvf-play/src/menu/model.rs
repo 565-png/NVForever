@@ -859,6 +859,10 @@ pub struct MenuModel {
     /// The two columns change category together (the Matching Categories tweak, set
     /// by `crate::tweaks`).
     pub sync_categories: bool,
+    /// When `sync_categories` is on, keep an emptied non-All category selected instead of
+    /// switching both columns back to All (`bPreventSwitchWhenEmptyingCategory`, set by
+    /// `crate::tweaks`).
+    pub prevent_switch_when_emptying_category: bool,
     /// The player cannot offer items in a barter (the No Selling tweak, set by
     /// `crate::tweaks`).
     pub no_selling: bool,
@@ -1141,6 +1145,7 @@ impl MenuModel {
             lists: [Listing::default(), Listing::default()],
             category: [Category::All; 2],
             sync_categories: false,
+            prevent_switch_when_emptying_category: true,
             no_selling: false,
             vendor_lists_both: false,
             hide_misc_quest: false,
@@ -1667,6 +1672,7 @@ impl MenuModel {
                     self.status = None;
                     return out;
                 }
+                let had_rows = [Side::Container, Side::Player].map(|s| !self.lists[s as usize].rows.is_empty());
                 let r = self.act(world, cmd, &mut out);
                 self.amount = None;
                 self.status = Some(match r {
@@ -1676,6 +1682,29 @@ impl MenuModel {
                 if out.changed {
                     if let Err(e) = self.refresh(world) {
                         self.status = Some(format!("Cannot list the inventories: {e}"));
+                    } else if self.sync_categories
+                        && !self.prevent_switch_when_emptying_category
+                        && matches!(self.mode, Mode::Container(_) | Mode::Barter(_))
+                    {
+                        // When synchronized categories allow switching on empty
+                        // (`bPreventSwitchWhenEmptyingCategory = 0`), emptying a non-All
+                        // category returns both columns to All [design; Stewie's Tweaks
+                        // public INI `nvse_stewie_tweaks.ini`].
+                        let emptied = self.columns().iter().any(|&side| {
+                            let i = side as usize;
+                            self.category[i] != Category::All
+                                && had_rows[i]
+                                && self.lists[i].rows.is_empty()
+                                && self.search_hidden(side) == 0
+                        });
+                        if emptied {
+                            self.category = [Category::All; 2];
+                            self.selected = [0; 2];
+                            self.scroll = [0; 2];
+                            if let Err(e) = self.refresh(world) {
+                                self.status = Some(format!("Cannot list the inventories: {e}"));
+                            }
+                        }
                     }
                 }
             }

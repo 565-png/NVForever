@@ -529,7 +529,7 @@ unless the player binds them, so nothing changes until then.
 | Scope Delay (ms) | `bScopeVisibilityDelay` | `aim_zoom::zoom` counts the time at full zoom (`AimZoom::full_for`) and puts the scope up only after the slider's milliseconds; a reload already took the sights down |
 | No Pointer Over Message Boxes | `bHideCursorInMessageMenu` | `player::grab_cursor` hides the pointer (without capturing it) while `MessagePanel` has a box |
 | No Pointer in Conversations | `bHideCursorInDialog` | the same while `DialogueMenu` shows choices |
-| Level Up: Wheel Sets Skills | `bLevelUpScrollWheelSupport` | `levelup::input` turns the wheel into Raise / Lower of the chosen row on the skills page; the perks page still scrolls |
+| Level Up: Wheel Sets Skills | `bLevelUpScrollWheelSupport` | `levelup::input`, `chargen::input`, and `chargen::vigor` turn the wheel into Raise / Lower of the hovered or chosen stat on level-up skills, S.P.E.C.I.A.L. reallocation menus, and the Vigor Tester; the perks page still scrolls |
 | Compare Armor | `bCompareArmorStats` | `pipboy::items::info_of` adds the difference from the DT of the worn pieces sharing a biped slot, for armour not worn |
 | (already so) | `bSilentSneakPowerAttacks` | the player makes no sound of effort on any attack, so nothing to silence |
 | Detailed Stats | `bMoreDetailedStatsMenu` | `pipboy::stats::read` leaves the values uncapped and writes the mark as the signed difference from the permanent value (`Row::mark` is a `String` now) |
@@ -705,7 +705,7 @@ game's Data folder, read-only).
 | `bAutoUnlockTerminals` | done |  | 2 | Skip Easy Hacks (switch + margin slider; the XP option not built) |
 | `bAutoWeaponJamWhileFiring` | done |  |  | already so: every shot rolls the jam, mid-burst too |
 | `bBarterAffectsRepairCosts` | done |  | 3 | Barter Lowers Repair Costs (our rule: a percent off at Barter 100, in proportion below; no perk modifiers) |
-| `bBarterCheckActorBuySellFlags` | done |  | 2 | Merchants Keep to Their Lists (the ammo and perk options not built) |
+| `bBarterCheckActorBuySellFlags` | done |  | 2 | Merchants Keep to Their Lists (Stimpaks follow Stimpaks, ignoring Chems; the ammo and perk options not built) |
 | `bBillyGoatMode` | done |  | 3 | Steepest Walkable Slope (30-80 degrees; one angle for walking, jumping and auto-walk) |
 | `bCapSkillsBySPECIAL` | done |  | 5 | Skills Capped by S.P.E.C.I.A.L. (defaults ours: 50 + 5 per attribute point, cap 100) |
 | `bCharacterRadiation` | done |  | 1 | Character Radiation (with Sickness Too, its bAllowRadiationStages): every loaded living actor takes the rads of the markers and explosion zones where it stands, cut by its Rad Resistance; with the option the masters' radiation stages' effects follow its Rads. NVForever gives no actor but the player radiation otherwise, creatures included, so the switch covers creatures too |
@@ -742,7 +742,7 @@ game's Data folder, read-only).
 | `bHoldToHolsterMeleeWeapons` | done |  |  | already so: a tap reloads, holstering needs the hold, and melee drops the reload |
 | `bHostilesPrioritizePlayer` | done |  | 3 | Hostiles Prioritize Player with Chance at the Start, Chance Mid-Fight and Detection Needed; one roll for each companion a fighter would pick |
 | `bImprovedHacking` | done |  | 10 | eight Hacking switches/options (symbols do nothing, no repeat guesses, dud when attempts full, duds spare tried words, mark guesses as duds, keep matching characters, compact guess log, replenish bonus attempts); overscroll and print-speed options not built |
-| `bJumpingCostsAP` | done |  | 3 | Action Points per Jump (slider 0-50; the combat-only and jump-anyway options not built) |
+| `bJumpingCostsAP` | done |  | 3 | Action Points per Jump (slider 0-50, plus Only in Danger (`bCombatOnly` checking player in danger per 9.70) and Jump Without Enough AP (`bJumpWithoutEnoughAP`)) |
 | `bJumpSwimsUpwards` | done |  | 2 | Jump Swims Upwards (at the walking stroke speed; the sub-options not offered) |
 | `bJumpWhileOverencumbered` | done |  |  | already so: NVForever never refuses the jump when over-encumbered |
 | `bKeepFallHeightOnLoad` | done |  |  | Keep Fall Height on Load (the save keeps the player's fall top) |
@@ -806,7 +806,7 @@ game's Data folder, read-only).
 | `bRunSlowerInWater` | done |  | 1 | Wading Pace (slider; deeper water slows more) |
 | `bScalePlayerMeleeReach` | done |  | 3 | Melee Reach (multiplier slider; the min and max options not built) |
 | `bScaleWeaponVolume` | done |  | 2 | Your Weapon Volume and Others' Weapon Volume (shot sounds scaled, in percent) |
-| `bScopeHoldBreath` | done |  | 7 | Hold Breath Through a Scope (Shift; the weapon requirement and key options not built) |
+| `bScopeHoldBreath` | done |  | 7 | Hold Breath Through a Scope (Shift, plus optional Activate key (`bActivateHoldsBreath`); the weapon requirement and custom keycode options not built) |
 | `bSellStolenItems` | done |  |  | already so: barter never checks stolen items |
 | `bSemiAutoQueue` | done |  | 2 | Semi-Auto Shot Queue (slider, up to 0.5 s before the weapon is ready) |
 | `bSeparateAlcoholEffects` | done |  |  | already so: effects are kept per item, so different drinks stack |
@@ -1091,7 +1091,7 @@ game's Data folder, read-only).
 | `bHideCursorInDialog` | done | yes | 1 | No Pointer in Conversations |
 | `bImprovedRaceMenu` | done | yes | 3 | already so: the creator camera pans and zooms close |
 | `bInstantContinueButton` | done | yes |  | already so: Continue loads at once |
-| `bLevelUpScrollWheelSupport` | done | yes |  | Level Up: Wheel Sets Skills |
+| `bLevelUpScrollWheelSupport` | done | yes |  | Level Up: Wheel Sets Skills (also supports S.P.E.C.I.A.L. reallocation menus and Vigor Tester review/stat screens, including hovered +/- buttons and review numbers) |
 | `bLivingAnatomyShowDR` | done | yes | 1 | Living Anatomy Shows DR (the decimal and zero-hiding options not built) |
 | `bMapRemembersPosition` | done | yes | 1 | Map Remembers Its Place (in the session; the save-persistent option not built) |
 | `bNumberedComputerHotkeys` | done | yes | 1 | Number Keys on Terminals (1-9, 0 the tenth; the number prefix option not built) |
@@ -1102,7 +1102,7 @@ game's Data folder, read-only).
 | `bShowWeaponAmmoUseInMenus` | done | yes |  | Rounds per Shot |
 | `bSkipSkillMenuIfNoPointsToAssign` | done | yes |  | Perks First When No Points |
 | `bSortEquipableAmmo` | done | yes |  | Usable Ammo First |
-| `bSynchronizeContainerCategories` | done | yes | 1 | Matching Categories (also keeps the emptied category after transferring its last item, matching `bPreventSwitchWhenEmptyingCategory`) |
+| `bSynchronizeContainerCategories` | done | yes | 1 | Matching Categories, with Keep Emptied Category (`bPreventSwitchWhenEmptyingCategory`, default on under the disabled parent; off returns both synchronized columns to All when emptied) |
 | `bTakeAllInCompanionContainers` | done | yes |  | already so: Take All shows for companions |
 | `b12HourPipboyClock` | done |  |  | 12-Hour Pip-Boy Clock |
 | `b24HourSleepWaitClock` | done |  |  | already so: the wait clock is 24-hour |

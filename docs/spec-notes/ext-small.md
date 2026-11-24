@@ -84,6 +84,12 @@ added. [hypothesis] The original plugin matches names the same way; not observed
 | `bKeepPipboyLightOnCellChange:Tweaks` | `1` when bound; NVForever already keeps the Pip-Boy light on across cell changes ([tweaks](../design/tweaks.md)) |
 | `bWeightlessWornArmor:Tweaks` | `Tweaks::weightless_worn_armor`; worn armour weighs nothing in inventory totals and `GetCalculatedEquippedWeight` |
 | `bWeightlessWornPowerArmor:Tweaks` | `Tweaks::weightless_worn_power_armor`; worn power armour weighs nothing in inventory totals and `GetCalculatedEquippedWeight` |
+| `bSynchronizeContainerCategories:Tweaks` | `Tweaks::sync_categories`; synchronizes Container and Barter column categories |
+| `bPreventSwitchWhenEmptyingCategory:Synchronized Container Categories` | `Tweaks::prevent_switch_when_emptying_category`; retains the child choice (default `1` under disabled parent) and controls whether emptying a synchronized category stays on it or switches both columns to All |
+| `bBarterCheckActorBuySellFlags:Tweaks` | `Tweaks::vendor_lists_both`; holds the player's barter side to the merchant's service flags (Stimpaks follow Stimpaks, ignoring Chems) |
+| `bDontOpenDoorsAfterLockpick:Tweaks` | `Tweaks::no_door_after_pick`; picked doors stay shut after lockpicking |
+| `bNoSkipDialog:Tweaks` | `Tweaks::no_skip_dialogue`; clicking does not skip spoken dialogue lines |
+| `bRestoreLockedDoorSound:Tweaks` | `1` when bound; NVForever already plays `DRSLocked` when activating a refused lock ([tweaks](../design/tweaks.md)) |
 | `bArmorConditionLabel:Tweaks` | `Tweaks::armor_condition`; shows the worn body armour's condition bar on the HUD |
 
 [hypothesis] The ammo query retains the child choice while its parent is disabled,
