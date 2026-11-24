@@ -293,6 +293,11 @@ impl PlayClock {
         self.stopped
     }
 
+    /// This frame's real time while the virtual clock stands still (capped at 0.25 s).
+    pub fn frame_secs(&self) -> Option<f32> {
+        self.frame
+    }
+
     /// A clock whose frame stood still for `secs` of real time (tests).
     #[cfg(test)]
     pub(crate) fn frozen_frame(secs: f32) -> PlayClock {
@@ -839,6 +844,13 @@ impl Entry {
             Entry::Console => CONSOLE_LABEL,
             Entry::Mods => MODS_LABEL,
             Entry::Quit => "Quit",
+        }
+    }
+
+    fn label_with(self, console_label: &str) -> std::borrow::Cow<'static, str> {
+        match self {
+            Entry::Console if console_label != CONSOLE_LABEL => std::borrow::Cow::Owned(console_label.to_string()),
+            _ => std::borrow::Cow::Borrowed(self.label()),
         }
     }
 }
@@ -1435,7 +1447,7 @@ struct Drawn {
     notes: Vec<Option<String>>,
     status: String,
     /// The column's labels and whether each can be taken.
-    column: Vec<(&'static str, bool)>,
+    column: Vec<(std::borrow::Cow<'static, str>, bool)>,
     /// Under the main menu (its entries make the column; no pause screen).
     under_main: bool,
     /// The Mods page shows a mod's own window with its own Back (MCM's): ours is not
@@ -1445,6 +1457,9 @@ struct Drawn {
     thumb: Option<(usize, bool)>,
     /// The Controls tab's values, in `GAME_CONTROLS`' order, on the device in use.
     controls: Vec<String>,
+    /// Why each control's row is greyed now, in `GAME_CONTROLS`' order
+    /// (`crate::stance::binding_greyed`: Sprint with its switch off).
+    controls_greyed: Vec<Option<&'static str>>,
     /// The device in use: its name, and whether it is a controller.
     device: (&'static str, bool),
     automatic_input: bool,
@@ -1492,6 +1507,14 @@ struct Drawn {
 }
 
 impl Drawn {
+    /// Why Controls row `c` is greyed (Sprint's binding with its switch off);
+    /// `None`: it is not.
+    fn control_greyed(&self, c: ControlRow) -> Option<&'static str> {
+        let ControlRow::Binding(k, _) = c else { return None };
+        let at = crate::bindings::GAME_CONTROLS.iter().position(|(x, _, _)| *x == k)?;
+        self.controls_greyed.get(at).copied().flatten()
+    }
+
     /// Category `p`'s rows shown and whether it is open (unknown: none, open).
     fn heading(&self, p: crate::settings_layout::Placement) -> (usize, bool) {
         self.headings.iter().find(|h| h.0 == p).map_or((0, true), |h| (h.1, h.2))
@@ -1557,7 +1580,7 @@ struct Window {
 
 /// How many lines the settings page's window shows at once (headings count): as many as fit
 /// between the rows' top and a note of [`NOTE_LINES`] lines over [`note_bottom`], at least
-/// one; 13 with today's layout [design: #2377, the menu overhaul]. Worked out here only and carried as a value
+/// one; 11 with today's layout [design: #2377, the menu overhaul; observed: `pause menu: inspect: window 11 lines` at 1280x720, 2026-11-22, #3375]. Worked out here only and carried as a value
 /// ([`PauseView::lines`], [`Drawn::lines`]) to everything that draws, scrolls or points at
 /// the window, so a later layout can make it depend on the view.
 fn window_lines() -> usize {
@@ -2265,10 +2288,16 @@ fn row_line(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: 
                 }
                 let vw = crate::pad::button_width(&f.entry, &value, glyphs);
                 let parts = row_parts(x, ValueKind::Binding(vw));
-                sm_text(r, &f.entry, &fit_text(width, name, parts.label_room()), parts.label.0, BASE + 2.0, color(Shade::Bright));
+                // A greyed binding (Sprint with its switch off, `crate::stance`) is
+                // drawn dim like a greyed setting, its reason the state the aids read; why is
+                // the note's.
+                let greyed = d.control_greyed(c);
+                let shade = color(if greyed.is_some() { Shade::Dim } else { Shade::Bright });
+                sm_text(r, &f.entry, &fit_text(width, name, parts.label_room()), parts.label.0, BASE + 2.0, shade);
                 // The full words stay in the state the aids read; what is drawn is cut to the
                 // row (a button's picture is narrow and always fits).
-                r.spawn((SwitchState(id), Text::new(value.clone()), Node { display: Display::None, ..default() }));
+                let state = greyed.map_or_else(|| value.clone(), |why| tr(why).to_string());
+                r.spawn((SwitchState(id), Text::new(state), Node { display: Display::None, ..default() }));
                 let (shown, sw) = if vw > parts.text_room() + 0.01 {
                     let cut = fit_text(width, &value, parts.text_room());
                     let w = width(&cut);
@@ -2276,7 +2305,7 @@ fn row_line(root: &mut ChildSpawnerCommands, d: &Drawn, look: &PauseLook, list: 
                 } else {
                     (value.clone(), vw)
                 };
-                crate::pad::set_button(r, &f.entry, &shown, parts.text_x(sw), BASE + 2.0, color(Shade::Bright), glyphs);
+                crate::pad::set_button(r, &f.entry, &shown, parts.text_x(sw), BASE + 2.0, shade, glyphs);
             });
         }
         // The Tweaks tab's Category row: the group shown, in a list's box; Enter, Left and
@@ -2545,7 +2574,7 @@ impl RowX {
 /// at the end with [`CUT_MARK`]; only the mark, or nothing, where even that does not fit.
 /// What is cut is only what is drawn: the search, the log and the hidden texts the aids read
 /// keep the full words [design: #2377].
-fn fit_text(width_of: impl Fn(&str) -> f32, text: &str, room: f32) -> String {
+pub(crate) fn fit_text(width_of: impl Fn(&str) -> f32, text: &str, room: f32) -> String {
     let room = room + 0.01;
     if width_of(text) <= room {
         return text.to_string();
@@ -3023,6 +3052,9 @@ fn act_on_row(id: RowId, action: RowAction, settings: &Settings, view: &mut Paus
                 commands.queue(move |world: &mut World| crate::bindings::set_device(world, d));
                 sounds.write(flipped);
             }
+            // A greyed binding (Sprint with its switch off) cannot be rebound or
+            // cleared; why is in its note.
+            (ControlRow::Binding(..), Activate | Clear) if view.drawn.as_ref().and_then(|d| d.control_greyed(c)).is_some() => {}
             (ControlRow::Binding(k, _), Activate) => {
                 listening.0 = Some((k, controls.device));
                 let what = if controls.device == crate::bindings::InputDevice::Controller { "controller button" } else { "key" };
@@ -3844,7 +3876,17 @@ fn choose(
                     // A number: as the INI takes it (a row that was a slider, the overhaul).
                     Some((_, v)) if value.is_some() => {
                         let text = v.trim().to_string();
+                        let key = key.clone();
                         commands.queue(move |world: &mut World| {
+                            // A row greyed now takes no edit, as a click on it would not
+                            // (`settings::pick` refuses it). The number's way in below is the
+                            // INI's, which does not ask: without this the aid wrote
+                            // `anti-aliasing=0` through the lock FSR Native AA puts on the row,
+                            // and the saved 8x was gone when FSR was turned off (#3355).
+                            if let Some(why) = world.get_resource::<Settings>().and_then(|s| s.disabled_status(world, i)) {
+                                info!("test aid NVF_PLAY_TEST_SETTINGS: {key} is greyed now ({why}): not changed");
+                                return;
+                            }
                             let named = world.get_resource::<Settings>().and_then(|s| s.choices(i)).is_some_and(|c| (c.names)(world).contains(&text));
                             if named {
                                 crate::settings::pick(world, i, &text);
@@ -5105,7 +5147,10 @@ fn drawn_now(world: &mut World) -> Drawn {
         let now = world.get_resource::<Time<Real>>().map_or(0.0, |t| t.elapsed_secs_f64());
         (list.get(p.row).map_or("choice", |s| s.label), p.left(now), world.resource::<PauseView>().keep_selected)
     });
-    let main = world.get_resource::<crate::main_menu::MainMenu>().filter(|m| m.open).map(|m| m.column());
+    let main: Option<Vec<(std::borrow::Cow<'static, str>, bool)>> = world
+        .get_resource::<crate::main_menu::MainMenu>()
+        .filter(|m| m.open)
+        .map(|m| m.column().into_iter().map(|(l, ok)| (std::borrow::Cow::Borrowed(l), ok)).collect());
     let stand_ins: Vec<(RowId, Vec<String>)> = {
         let view = world.resource::<PauseView>();
         let ids = match view.scope {
@@ -5137,9 +5182,18 @@ fn drawn_now(world: &mut World) -> Drawn {
         status: world.resource::<PauseStatus>().line.clone(),
         under_main: main.is_some(),
         mod_window: page == Page::Mods && world.get_resource::<crate::tiles::mods::ModsPage>().is_some_and(|m| m.mcm_open),
-        column: main.unwrap_or_else(|| entries(world.get_resource::<ModsEntry>().is_some_and(|m| m.0), world.get_resource::<crate::tweaks::TweakSettings>().is_some_and(|t| t.help_is_console)).iter().map(|e| (e.label(), true)).collect()),
+        column: main.unwrap_or_else(|| {
+            let tweaks = world.get_resource::<crate::tweaks::TweakSettings>();
+            let console_on = tweaks.is_some_and(|t| t.help_is_console);
+            let console_label = tweaks.map_or(CONSOLE_LABEL, crate::tweaks::TweakSettings::console_label);
+            entries(world.get_resource::<ModsEntry>().is_some_and(|m| m.0), console_on)
+                .iter()
+                .map(|e| (e.label_with(console_label), true))
+                .collect()
+        }),
         thumb,
         controls: world.get_resource::<crate::bindings::Bindings>().map(|b| b.all().map(|(c, _)| b.text_on(c)).collect()).unwrap_or_default(),
+        controls_greyed: crate::bindings::GAME_CONTROLS.iter().map(|(c, _, _)| crate::stance::binding_greyed(world, *c)).collect(),
         device: world.get_resource::<crate::bindings::Bindings>().map_or(("Keyboard and Mouse", false), |b| (b.device.name(), b.device == crate::bindings::InputDevice::Controller)),
         automatic_input: world.get_resource::<crate::bindings::Bindings>().is_some_and(|b| b.automatic_input_switching),
         rumble: world.get_resource::<crate::bindings::Bindings>().is_some_and(|b| b.rumble),
@@ -5188,12 +5242,16 @@ fn stand_in_name(list: &[Setting], id: RowId) -> String {
 /// list ("Stands for: Jump (Controller)."), so a choice there is plain [design: #1953].
 fn note_of(list: &[Setting], id: RowId, d: &Drawn) -> String {
     let mut note = row_note(list, id, d);
-    // A greyed row: why, after its own note [design: the menu overhaul].
-    if let RowId::Setting(i) = id {
-        if let Some(why) = d.disabled.get(i).copied().flatten() {
-            let why = fnv_util::words::trf("Greyed out: {why}", &[("why", &tr(why))]);
-            note = if note.is_empty() { why } else { format!("{note} {why}") };
-        }
+    // A greyed row: why, after its own note [design: the menu overhaul]; a greyed binding
+    // the same way (`crate::stance::binding_greyed`).
+    let greyed = match id {
+        RowId::Setting(i) => d.disabled.get(i).copied().flatten(),
+        RowId::Control(c) => d.control_greyed(c),
+        _ => None,
+    };
+    if let Some(why) = greyed {
+        let why = fnv_util::words::trf("Greyed out: {why}", &[("why", &tr(why))]);
+        note = if note.is_empty() { why } else { format!("{note} {why}") };
     }
     match d.stand_ins.iter().find(|(by, _)| *by == id) {
         Some((_, names)) => {
@@ -5836,6 +5894,7 @@ mod tests {
             ("Light glow (HDR)", "Light Glow (HDR)"),
             ("V.A.T.S. time slowdown", "V.A.T.S. Time Slowdown"),
             ("Use Pip-Boy", "Use Pip-Boy"),
+            ("ALC shadows", "ALC Shadows"),
             ("Close In on the Speaker", "Close In on the Speaker"),
             ("Sky follows the game clock", "Sky Follows the Game Clock"),
             ("Aim lock-on", "Aim Lock-On"),
@@ -6642,7 +6701,7 @@ mod tests {
             list.saves.push((PathBuf::from(format!("{name}.nvfsave")), h));
         }
         app.insert_resource(list);
-        let drawn = Drawn { page: Page::Load { selected: 1 }, column: entries(false, false).iter().map(|e| (e.label(), true)).collect(), device: ("Keyboard and Mouse", false), rumble: true, sensitivity: 1.0, view_w: VIEW_W as u32, ..default() };
+        let drawn = Drawn { page: Page::Load { selected: 1 }, column: entries(false, false).iter().map(|e| (std::borrow::Cow::Borrowed(e.label()), true)).collect(), device: ("Keyboard and Mouse", false), rumble: true, sensitivity: 1.0, view_w: VIEW_W as u32, ..default() };
         app.world_mut().run_system_cached_with(|In(d): In<Drawn>, mut commands: Commands, list: Res<LoadList>, glyphs: Res<crate::pad::PadGlyphs>| spawn_page(&mut commands, &d, &PauseLook::plain(), &[], &list, &glyphs), drawn).unwrap();
         let world = app.world_mut();
         let mut rows = world.query::<(&PauseButton, &Boxed)>();
@@ -7052,5 +7111,43 @@ mod tests {
         app.update();
         assert!(texts(&mut app).contains(&("Large".to_string(), color(Shade::Dim))));
         assert_eq!(row_state(&mut app), "1920x1080");
+    }
+
+    #[test]
+    fn console_entry_uses_custom_label_or_default() {
+        let mut app = App::new();
+        app.add_plugins(PausePlugin);
+        app.insert_resource(crate::tweaks::TweakSettings {
+            help_is_console: true,
+            help_console_label: "Dev Console".to_string(),
+            ..Default::default()
+        });
+        let custom = drawn_now(app.world_mut());
+        assert!(custom.column.iter().any(|(l, ok)| l == "Dev Console" && *ok), "{:?}", custom.column);
+        assert!(!custom.column.iter().any(|(l, _)| l == CONSOLE_LABEL), "{:?}", custom.column);
+
+        app.world_mut().resource_mut::<crate::tweaks::TweakSettings>().help_console_label = "   ".to_string();
+        let fallback = drawn_now(app.world_mut());
+        assert!(fallback.column.iter().any(|(l, ok)| l == CONSOLE_LABEL && *ok), "{:?}", fallback.column);
+    }
+
+    #[test]
+    fn console_entry_reads_custom_label_from_nvforever_ini() {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvf-pause-console-label-{}-{stamp}", std::process::id()));
+        let path = dir.join("NVForever.ini");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "[Settings]\ntweak-help-is-console=1\ntweak-help-console-label=Command Prompt\n").unwrap();
+
+        let mut app = App::new();
+        app.add_plugins((crate::tweaks::TweaksPlugin, PausePlugin));
+        app.insert_resource(crate::settings::SettingsFile(Some(path.clone())));
+        crate::settings::apply_stored(app.world_mut());
+        app.world_mut().run_system_cached(crate::tweaks::read_help_console_label).unwrap();
+        let drawn = drawn_now(app.world_mut());
+        assert!(drawn.column.iter().any(|(l, ok)| l == "Command Prompt" && *ok), "{:?}", drawn.column);
+        assert!(!drawn.column.iter().any(|(l, _)| l == CONSOLE_LABEL), "{:?}", drawn.column);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

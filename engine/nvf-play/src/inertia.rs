@@ -20,7 +20,8 @@
 //!   over all of them ([`MovementInertia::advanced`]); under Gameplay, Movement Inertia (the
 //!   ground inertia here, the eased crouch, the take-off and landing dip and a hard
 //!   landing's weight), Weapon Handling (the slower draw, put-away and aim, the weapon's
-//!   weight in them) and Advanced Recoil; under Visual Only, Animation Smoothing here and
+//!   weight in them), Advanced Recoil, Sprint (its shared state and contract:
+//!   `crate::stance`); under Visual Only, Animation Smoothing here and
 //!   nvforever's Weapon Inertia and Camera Motion (`PlayerBody`) [design: the owner,
 //!   2026-11-15, "simplify the Advanced Movement menu ... add 2 categories"].
 //! - **Movement Weight** (a dropdown under the Global Toggle, [`MOVEMENT_WEIGHTS`]): 100 %
@@ -163,8 +164,8 @@ pub const CROUCH_UP_SECONDS: f32 = 1.1;
 /// along the settling curve (their own times are about 0.2 s, straight).
 pub const MOVE_FADE_SECONDS: f32 = 0.45;
 /// The first-person landing clip (the view dips and stands up again) takes this many times
-/// its own length, its place along the settling curve: the dip comes
-/// about as fast as the clip's own, the standing up after it slowly and to a soft end. A
+/// its own length, its place along [`land_curve`]: the dip comes at the clip's own pace
+/// from the landing frame on, the standing up after it slowly and to a soft end. A
 /// hop's landing (up to [`LANDING_SOFT_SPEED`]) takes the first, a hard one (from
 /// [`LANDING_HARD_SPEED`]) the second, smoothly between ([`land_stretch`]) [design: the
 /// owner's eighth playtest, 2026-11-14, "fall-scaled landing"].
@@ -216,6 +217,22 @@ pub fn land_stretch(fall_speed: f32) -> f32 {
     LAND_STRETCH + (HARD_LAND_STRETCH - LAND_STRETCH) * crate::ease::smoothstep(LANDING_SOFT_SPEED, LANDING_HARD_SPEED, fall_speed)
 }
 
+/// Where the first-person landing clip is (0–1 of its length) at `u`, 0–1 of the `stretch`
+/// times longer time it takes: `1 − (1 − u)^stretch`, which leaves its start at the clip's
+/// own pace and slows all the way to rest at its end. Along the settling curve, which
+/// leaves 0 at no speed, the clip's first frames (the impact: the view going down) played
+/// in slow motion and the dip came about 0.06 s late, quickest 0.2 s after the feet were
+/// down [design: the owner, 2026-11-17, "when holding W - moving forward and jumping, the
+/// landing animation has a lag/hitch"; the trace `movement-inertia-trace-run-jump`].
+pub fn land_curve(u: f32, stretch: f32) -> f32 {
+    1.0 - (1.0 - u.clamp(0.0, 1.0)).powf(stretch.max(1.0))
+}
+
+/// The `u` at which [`land_curve`] is `y`.
+pub fn land_curve_inv(y: f32, stretch: f32) -> f32 {
+    1.0 - (1.0 - y.clamp(0.0, 1.0)).powf(1.0 / stretch.max(1.0))
+}
+
 /// Landing compression: landings slower than the first fall speed (units/s) keep their
 /// speed, from the second on they lose [`LANDING_MOST_LOST`] of it, smoothly between.
 pub const LANDING_SOFT_SPEED: f32 = 350.0;
@@ -263,6 +280,8 @@ pub struct MovementInertia {
     /// and the attributes, and the weapon in hand's [`handling`] for the hand-back after a
     /// reload or an attack (1 with it off), kept by [`follow_weapon`].
     pub weapon_handling: bool,
+    /// Sprint ([`Self::sprint_on`]): the Sprint control runs faster for AP (`crate::stance`).
+    pub sprint: bool,
     pub handling: f32,
     /// Movement Weight, 0.25 to 1 ([`MOVEMENT_WEIGHTS`]): the share of the inertia's times.
     pub weight: f32,
@@ -295,7 +314,7 @@ impl Default for MovementInertia {
     /// What a new game gets: the Global Toggle and Advanced Recoil on, the rest off, so an app
     /// that only adds the resource (a test app, `crate::player::PlayerPlugin`) plays as shipped.
     fn default() -> Self {
-        MovementInertia { advanced: true, on: false, smooth: false, recoil: true, weapon_handling: false, handling: 1.0, weight: 1.0, weapon_weight: None, agility: 5.0, strength: 5.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None, last_placed: None }
+        MovementInertia { advanced: true, on: false, smooth: false, recoil: true, weapon_handling: false, sprint: false, handling: 1.0, weight: 1.0, weapon_weight: None, agility: 5.0, strength: 5.0, axes: [Spring::REST; 2], last_key: [0.0; 2], starting: None, gliding: None, reports: Vec::new(), ran: true, grounded: true, last_feet: None, last_placed: None }
     }
 }
 
@@ -341,6 +360,12 @@ impl MovementInertia {
     /// The view's kick eases in and partly settles back (Advanced Recoil).
     pub fn soft_recoil(&self) -> bool {
         self.advanced && self.recoil
+    }
+
+    /// The Sprint control acts: its key (the player's; none by default) runs faster for AP
+    /// (Sprint under the Global Toggle; `crate::stance`).
+    pub fn sprint_on(&self) -> bool {
+        self.advanced && self.sprint
     }
 
     /// Movement Weight as a share, 0.25 to 1.
@@ -567,18 +592,19 @@ impl MovementInertia {
 
 /// Log Advanced Movement's switches kept here at the start and whenever one changes (a smoke
 /// check of the defaults: the owner, 2026-11-16, every part off but Advanced Recoil).
-pub fn log_switches(inertia: Res<MovementInertia>, mut last: Local<Option<[bool; 5]>>) {
-    let now = [inertia.advanced, inertia.on, inertia.weapon_handling, inertia.recoil, inertia.smooth];
+pub fn log_switches(inertia: Res<MovementInertia>, mut last: Local<Option<[bool; 6]>>) {
+    let now = [inertia.advanced, inertia.on, inertia.weapon_handling, inertia.recoil, inertia.smooth, inertia.sprint];
     if *last != Some(now) {
         *last = Some(now);
         let s = |b: bool| if b { "on" } else { "off" };
         info!(
-            "advanced movement: Global Toggle {}, Movement Inertia {}, Weapon Handling {}, Advanced Recoil {}, Animation Smoothing {}",
+            "advanced movement: Global Toggle {}, Movement Inertia {}, Weapon Handling {}, Advanced Recoil {}, Animation Smoothing {}, Sprint {}",
             s(now[0]),
             s(now[1]),
             s(now[2]),
             s(now[3]),
-            s(now[4])
+            s(now[4]),
+            s(now[5])
         );
     }
 }
@@ -688,6 +714,16 @@ mod tests {
         assert!((heavy.aim_seconds(true) - AIM_IN_SECONDS * 1.35).abs() < 1e-5);
         let pistol = MovementInertia { weapon_weight: Some(3.0), ..MovementInertia::all_on() };
         assert!((pistol.aim_seconds(true) - AIM_IN_SECONDS).abs() < 1e-5 && (pistol.aim_seconds(false) - AIM_OUT_SECONDS).abs() < 1e-5, "a pistol keeps the tuned aim");
+    }
+
+    #[test]
+    fn sprint_is_off_by_default_and_needs_the_global_toggle() {
+        let m = MovementInertia::default();
+        assert!(!m.sprint && !m.sprint_on(), "off by default");
+        let on = MovementInertia { sprint: true, ..MovementInertia::default() };
+        assert!(on.sprint_on());
+        let off = MovementInertia { advanced: false, ..on };
+        assert!(!off.sprint_on() && off.sprint, "it keeps its own choice under the Global Toggle");
     }
 
     #[test]
@@ -851,6 +887,18 @@ mod tests {
         assert!(handling(7.0) > 1.0 && handling(7.0) < handling(15.0));
         assert_eq!(land_stretch(290.0), LAND_STRETCH, "a hop's landing as before");
         assert_eq!(land_stretch(2000.0), HARD_LAND_STRETCH);
+        // The landing clip starts at its own pace and comes to rest at its end.
+        for s in [1.2, LAND_STRETCH, HARD_LAND_STRETCH] {
+            let du = 1e-4;
+            let start = land_curve(du, s) / du / s;
+            assert!((start - 1.0).abs() < 1e-2, "stretch {s}: the clip starts at x{start} its own pace");
+            let end = (1.0 - land_curve(1.0 - du, s)) / du / s;
+            assert!(end < if s >= LAND_STRETCH { 0.01 } else { 0.2 }, "stretch {s}: it ends at x{end} its pace");
+            for k in 0..=20 {
+                let y = k as f32 / 20.0;
+                assert!((land_curve(land_curve_inv(y, s), s) - y).abs() < 1e-4);
+            }
+        }
         assert_eq!(hard_landing(291.0), 291.0, "a hop pushes as before");
         assert!((hard_landing(-1200.0) + 1200.0 * HARD_LANDING_GAIN).abs() < 1e-2);
         let m = MovementInertia { handling: 1.5, ..MovementInertia::all_on() };

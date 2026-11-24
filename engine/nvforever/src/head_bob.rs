@@ -45,6 +45,14 @@ const LAND_OMEGA: f32 = 4.0;
 pub const LAND_PEAK_PER_SPEED: f32 = 0.007;
 /// (5 until the eighth playtest's "fall-scaled landing".)
 const MAX_LAND: f32 = 9.0;
+/// While a landing's dip shows deeper than the first of these (units) the stride's
+/// footfalls fade, gone from the second, and they come back as the dip stands up again:
+/// the landing is the footfall [design: the owner, 2026-11-17, "when holding W - moving
+/// forward and jumping, the landing animation has a lag/hitch": the first footfall after a
+/// running landing (0.4 s on) dipped the view a second time before the landing's dip had
+/// stood up, a dip in two steps; the trace `movement-inertia-trace-run-jump`].
+const LAND_HUSH_FROM: f32 = 0.5;
+const LAND_HUSH_FULL: f32 = 2.0;
 /// The body's velocities are smoothed over this long (seconds) before their changes push
 /// the head (`nvf_play::ease::Pushed`): a take-off or a landing never jolts the view.
 const PUSH_SMOOTH_SECONDS: f32 = 0.12;
@@ -129,12 +137,20 @@ pub struct BobInput {
     pub kick: f32,
     /// A blow taken this frame (view frame: x right, y ahead, z up; 0: none).
     pub punch: Vec3,
+    /// Sprint (`crate::sprint_view`): the sprint's share (0–1), a larger bob, and how out
+    /// of breath a sprint left the player (0–1; 0 with Camera Motion off), which the
+    /// out-of-breath breathing below shows.
+    pub sprint: f32,
+    pub winded: f32,
 }
 
 /// The bob's state across frames.
 #[derive(Debug, Clone, Default)]
 pub struct HeadBob {
     amount: Spring,
+    /// How much of the bob's lowering (its middle: the dip goes down at each footfall and
+    /// back up, never above) shows: follows the ground speed, in the air too.
+    carry: Spring,
     /// How far down the sights and how far sneaking the shares are (0-1, on springs).
     sighted: Spring,
     crouched: Spring,
@@ -157,6 +173,8 @@ pub struct HeadBob {
     pub peak_breath: f32,
     /// How out of breath (0–1), and the most since the start (for the exit summary).
     exertion: f32,
+    /// How out of breath a sprint left the player (0–1; `BobInput::winded`).
+    winded: f32,
     pub peak_exertion: f32,
     /// The third-person pivot's two lags (head height above the feet).
     pivot: Option<(f32, f32)>,
@@ -177,21 +195,49 @@ impl HeadBob {
         let follow = |t: f32| if dt <= 0.0 { 0.0 } else { 1.0 - (-dt / t).exp() };
         self.gain += (f32::from(u8::from(i.on)) - self.gain) * follow(FOLLOW_SECONDS);
         self.land_gain += (f32::from(u8::from(i.landing)) - self.land_gain) * follow(FOLLOW_SECONDS);
-        let target = if i.airborne { 0.0 } else { (i.speed / FULL_SPEED).min(1.0) };
+        // Switched off, each fade ends at nothing, not a hair over it: the view is then where
+        // the clips put it exactly, as in the original.
+        if !i.on && self.gain < crate::view_sway::GAIN_FLOOR {
+            self.gain = 0.0;
+        }
+        if !i.landing && self.land_gain < crate::view_sway::GAIN_FLOOR {
+            self.land_gain = 0.0;
+        }
+        // In the air the footfalls stop but the body runs on: the bob's swing fades and its
+        // middle stays, so a running jump lands with the view where it was. With the whole
+        // bob gone in the air, the view rose by half the dip (2.6 units at a run) over the
+        // jump and sank again over half a second after the landing, on top of the landing
+        // dip [design: the owner, 2026-11-17, "when holding W - moving forward and jumping,
+        // the landing animation has a lag/hitch"; the trace `movement-inertia-trace-run-jump`].
+        let running = (i.speed / FULL_SPEED).min(1.0);
+        // A sprint bobs more (`crate::sprint_view`).
+        let target = if i.airborne { 0.0 } else { running * crate::sprint_view::head_bob_gain(i.sprint) };
         self.amount.step(target, omega_for(AMOUNT_SETTLE_SECONDS), dt);
+        self.carry.step(running, omega_for(AMOUNT_SETTLE_SECONDS), dt);
         // The calmer shares down the sights and sneaking come and go on springs.
         let stance = omega_for(crate::view_sway::STANCE_SHARE_SECONDS);
         self.sighted.step(f32::from(u8::from(i.sights)), stance, dt);
         self.crouched.step(f32::from(u8::from(i.sneaking)), stance, dt);
         let (sighted, crouched) = (self.sighted.value.clamp(0.0, 1.0), self.crouched.value.clamp(0.0, 1.0));
-        let share = self.gain * self.amount.value * (1.0 + (SIGHTS - 1.0) * sighted) * (1.0 + (SNEAK - 1.0) * crouched);
+        let calmed = self.gain * (1.0 + (SIGHTS - 1.0) * sighted) * (1.0 + (SNEAK - 1.0) * crouched);
+        // The footfalls hushed while a landing's dip shows (its last frame's).
+        let landing_dip = -soft(self.land.out.value, MAX_LAND) * self.land_gain;
+        let hush = 1.0 - nvf_play::ease::smoothstep(LAND_HUSH_FROM, LAND_HUSH_FULL, landing_dip);
+        let (share, carried) = (calmed * self.amount.value * hush, calmed * self.carry.value);
         let a = std::f32::consts::TAU * (i.phase - crate::view_sway::FOOTFALL_PHASE);
         // Down at each footfall (twice a cycle), across once a cycle, through the spring.
         let w = omega_for(BOB_SETTLE_SECONDS);
         self.bob[0].step(SWING * a.sin() * share, w, dt);
-        self.bob[1].step(-DIP * 0.5 * (1.0 + (2.0 * a).cos()) * share, w, dt);
+        self.bob[1].step(-DIP * 0.5 * (carried + (2.0 * a).cos() * share), w, dt);
+        if self.gain == 0.0 {
+            // Switched off and faded: the bob's springs end at rest, not a hair off it.
+            for s in &mut self.bob {
+                s.snap(0.0, crate::view_sway::GAIN_FLOOR, 10.0 * crate::view_sway::GAIN_FLOOR);
+            }
+        }
         let (swing, dip) = (self.bob[0].value, self.bob[1].value);
-        self.peak_dip = self.peak_dip.max(-dip);
+        // `+ 0.0` turns a snapped bob's -0.0 into 0.0, so the summary never prints "-0.00".
+        self.peak_dip = self.peak_dip.max(-dip) + 0.0;
         // The head's own weight, pushed by the body's acceleration (below).
         let took_off = i.vertical > 0.0 && self.last_vertical <= 0.0;
         // Only a take-off and a landing push the head: a free fall moves it with the body.
@@ -211,7 +257,10 @@ impl HeadBob {
             -dt / RECOVER_WALKING_SECONDS
         };
         self.exertion = (self.exertion + wind + if took_off { JUMP_BREATH } else { 0.0 }).clamp(0.0, 1.0);
-        self.peak_exertion = self.peak_exertion.max(self.exertion);
+        // A sprint's stop low on AP winds the player as running does (`crate::sprint_view`).
+        self.winded = i.winded.clamp(0.0, 1.0);
+        let exertion = self.exertion();
+        self.peak_exertion = self.peak_exertion.max(exertion);
         // A shot nudges the head back and a blow jolts it: the springs set moving.
         self.lag[0].out.rate += i.punch.x * PUNCH_SPEED;
         self.lag[1].out.rate += i.punch.y * PUNCH_SPEED - i.kick * SHOT_NUDGE;
@@ -235,12 +284,15 @@ impl HeadBob {
         let breath_target = if !i.breathing || i.airborne {
             0.0
         } else {
-            (if i.speed < STILL_SPEED { 1.0 } else { BREATH_MOVING.max(self.exertion) }) * if i.sights { 0.5 } else { 1.0 }
+            (if i.speed < STILL_SPEED { 1.0 } else { BREATH_MOVING.max(exertion) }) * if i.sights { 0.5 } else { 1.0 }
         };
         self.breath += (breath_target - self.breath) * follow(BREATH_FADE_SECONDS);
+        if !i.breathing && self.breath < crate::view_sway::GAIN_FLOOR {
+            self.breath = 0.0;
+        }
         // Out of breath: faster and deeper (the phase runs on, so a change of pace is smooth).
-        let pace = 1.0 + (crate::view_sway::EXERTED_PACE - 1.0) * self.exertion;
-        let size = self.breath * (1.0 + (crate::view_sway::EXERTED_SIZE - 1.0) * self.exertion);
+        let pace = (1.0 + (crate::view_sway::EXERTED_PACE - 1.0) * exertion) * crate::sprint_view::winded_pace(self.winded);
+        let size = self.breath * (1.0 + (crate::view_sway::EXERTED_SIZE - 1.0) * exertion) * crate::sprint_view::winded_size(self.winded);
         self.breath_phase = (self.breath_phase + dt * pace / BREATH_SECONDS).fract();
         let b = std::f32::consts::TAU * self.breath_phase;
         let rise = BREATH_RISE * b.sin() * size;
@@ -252,9 +304,9 @@ impl HeadBob {
         right * (swing + lag.x) + ahead * (lag.y + lean) + Vec3::Z * (dip + land + jolt + rise)
     }
 
-    /// How out of breath the player is (0–1).
+    /// How out of breath the player is (0–1): from running and jumping, or after a sprint.
     pub fn exertion(&self) -> f32 {
-        self.exertion
+        self.exertion.max(self.winded)
     }
 
     /// The third-person pivot's height above the feet this frame, from the head's.
@@ -303,7 +355,7 @@ mod tests {
     const DT: f32 = 1.0 / 60.0;
 
     fn input(speed: f32, phase: f32) -> BobInput {
-        BobInput { dt: DT, speed, phase, heading: 0.0, sights: false, sneaking: false, airborne: false, velocity: Vec2::ZERO, vertical: 0.0, out_of_breath: true, hard_landings: true, landing: true, on: true, breathing: false, kick: 0.0, punch: Vec3::ZERO }
+        BobInput { dt: DT, speed, phase, heading: 0.0, sights: false, sneaking: false, airborne: false, velocity: Vec2::ZERO, vertical: 0.0, out_of_breath: true, hard_landings: true, landing: true, on: true, breathing: false, kick: 0.0, punch: Vec3::ZERO, sprint: 0.0, winded: 0.0 }
     }
 
     #[test]
@@ -440,6 +492,54 @@ mod tests {
     }
 
     #[test]
+    fn a_running_jump_lands_the_view_where_it_was_carried() {
+        // Running, 0.6 s in the air and running on, at the stride's place where the footfall
+        // dip is at its middle, with no push from the take-off or the landing (the landing
+        // dip is its own test): the view neither rises in the air nor sinks after landing.
+        // With the whole bob let go in the air it rose by half the dip and sank back over
+        // half a second after the landing (the owner, 2026-11-17, "the landing animation has a
+        // lag/hitch").
+        let mid = crate::view_sway::FOOTFALL_PHASE + 0.125;
+        let mut b = HeadBob::default();
+        let mut z = 0.0;
+        for _ in 0..240 {
+            z = b.first_person(input(344.0, mid)).z;
+        }
+        let carried = z;
+        let air = (0..36).map(|_| b.first_person(BobInput { airborne: true, ..input(344.0, mid) }).z).fold(f32::MIN, f32::max);
+        let after = (0..60).map(|_| b.first_person(input(344.0, mid)).z).fold(f32::MIN, f32::max);
+        assert!(carried < -0.4 * DIP, "the bob's middle while running: {carried}");
+        assert!((air - carried).abs() < 0.05 && (after - carried).abs() < 0.05, "carried at {carried}; in the air up to {air}, after the landing up to {after}");
+    }
+
+    #[test]
+    fn a_running_landing_dips_the_view_in_one_step() {
+        // Running (a 0.72 s stride), a 0.6 s jump and running on, landing at each of eight
+        // places in the stride: from the landing to the dip's bottom the view goes down in
+        // one move, its speed rising and falling once. The first footfall after the landing
+        // dipped it a second time before (a dip in two steps, the owner's "hitch").
+        for k in 0..8 {
+            let mut b = HeadBob::default();
+            let mut phase = k as f32 / 8.0;
+            let mut step = |b: &mut HeadBob, airborne: bool, vertical: f32| {
+                phase = (phase + DT / 0.72).fract();
+                b.first_person(BobInput { airborne, vertical, ..input(344.0, phase) }).z
+            };
+            for _ in 0..300 {
+                step(&mut b, false, 0.0);
+            }
+            for f in 0..36 {
+                step(&mut b, true, 290.0 - 980.0 * f as f32 * DT);
+            }
+            let z: Vec<f32> = (0..48).map(|_| step(&mut b, false, 0.0)).collect();
+            let bottom = (0..z.len()).min_by(|&i, &j| z[i].total_cmp(&z[j])).unwrap_or(0);
+            let down: Vec<f32> = z[..=bottom].windows(2).map(|w| (w[0] - w[1]) / DT).collect();
+            let humps = down.windows(3).filter(|w| w[1] > w[0] && w[1] >= w[2] && w[1] > 1.0).count();
+            assert!(humps <= 1, "landing {k}/8 into the stride: the view went down in {humps} steps: {down:?}");
+        }
+    }
+
+    #[test]
     fn out_of_breath_off_keeps_the_breath_calm() {
         let mut b = HeadBob { exertion: 0.5, ..HeadBob::default() };
         for _ in 0..(6.0 / DT) as usize {
@@ -486,6 +586,48 @@ mod tests {
             o = b.first_person(BobInput { on: false, ..input(300.0, f as f32 / 72.0) });
         }
         assert!(o.length() < 0.01, "{o}");
+    }
+
+    /// Everything that moves the view at once: running with a stride, turning the corner,
+    /// breathing, a shot, a blow and a jump with its landing, frame `f` of a loop.
+    fn busy(f: usize, on: bool, landing: bool) -> BobInput {
+        let t = f as f32 * DT;
+        let jumping = f % 240 >= 200;
+        BobInput {
+            velocity: Vec2::new(150.0 * (t * 0.7).sin(), 300.0),
+            vertical: if jumping { 290.0 - 980.0 * (f % 240 - 200) as f32 * DT } else { 0.0 },
+            airborne: jumping,
+            kick: if f.is_multiple_of(50) { 1.0 } else { 0.0 },
+            punch: if f.is_multiple_of(170) { Vec3::new(0.3, -0.2, -1.0) } else { Vec3::ZERO },
+            breathing: on,
+            out_of_breath: on,
+            landing,
+            on,
+            ..input(320.0, (t / 0.72).fract())
+        }
+    }
+
+    #[test]
+    fn switched_off_the_view_is_exactly_the_clips() {
+        // Camera Motion and Movement Inertia's landing dip off from the start: nothing at all,
+        // whatever the body does (the original's view is the clips' camera node).
+        let mut b = HeadBob::default();
+        for f in 0..1200 {
+            assert_eq!(b.first_person(busy(f, false, false)), Vec3::ZERO, "frame {f}");
+        }
+        // On for a while, then off (the settings page part-way through a game): after the
+        // fade, nothing at all again, not a sliver left of the springs or the breath.
+        let mut b = HeadBob::default();
+        let mut most = 0.0f32;
+        for f in 0..1200 {
+            most = most.max(b.first_person(busy(f, true, true)).length());
+        }
+        assert!(most > 1.0, "it moved while on: {most}");
+        let off: Vec<Vec3> = (1200..3600).map(|f| b.first_person(busy(f, false, false))).collect();
+        let first_exact = off.iter().position(|o| *o == Vec3::ZERO).expect("it ends at nothing");
+        assert!((first_exact as f32 * DT) < 10.0, "it took {} s", first_exact as f32 * DT);
+        assert!(off[first_exact..].iter().all(|o| *o == Vec3::ZERO), "exactly nothing from then on");
+        assert!(first_exact > 0 && off[first_exact - 1].length() < 0.01, "the last of the fade is a sliver, not a jump: {}", off[first_exact - 1]);
     }
 
     #[test]

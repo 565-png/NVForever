@@ -2,6 +2,11 @@
 //! (docs/spec-notes/script-compiler.md). The parity over the shipped units is the lab
 //! scenario L5.script.compile.vanilla.
 
+#[path = "compile/inline_surplus_operands.rs"]
+mod inline_surplus_operands;
+#[path = "compile/extender_params.rs"]
+mod extender_params;
+
 use fnv_script::compile::{compile, Compiled, Env, FormInfo, Seed, PLAYER};
 use fnv_script::unit::RefSlot;
 use fnv_script::{decode, Arg, Expr, FunctionTable, Op, Program, Stmt, Token, VarDecl, VarType};
@@ -543,6 +548,37 @@ end");
     // rCallback 10`].
     assert_eq!(l[0], "(v1 Set= Call(v2 1 2 3))");
     assert_eq!(l[1], "(v1 Set= Call(v2 1 (2 Add 3)))");
+}
+
+#[test]
+fn a_joined_block_lambda_is_the_calls_first_argument() {
+    // Public issue #2985: the opener's `(` can be the only separator.
+    for opener in ["Call (begin function", "Call ( begin function", "Call(begin function"] {
+        let source = format!(
+            "int result\nint input\nbegin GameMode\n\
+             let result := {opener}{{input}}\nSetFunctionValue input\nend) 7\n\
+             {opener}{{input}}\nSetFunctionValue input\nend) 7\nend"
+        );
+        let (_, p) = build(&source);
+        let [Stmt::Let { expr: XExpr::Assign { value, .. } }, Stmt::Eval { expr: XExpr::Call { call: statement } }] = body(&p)
+        else {
+            panic!("{opener}: expected a let and a call statement, got {:?}", body(&p));
+        };
+        let XExpr::Call { call: assigned } = value.as_ref() else {
+            panic!("{opener}: expected a call on the right of let, got {value:?}");
+        };
+        for call in [assigned, statement] {
+            assert_eq!(call.func, FuncId::Name("Call".into()), "{opener}");
+            let [XExpr::Lambda { params, body, value: None, .. }, XExpr::Num { value, .. }] = call.args.as_slice() else {
+                panic!("{opener}: expected a block lambda and the trailing argument, got {:?}", call.args);
+            };
+            assert_eq!(*value, 7.0, "{opener}");
+            let [param] = params.as_slice() else { panic!("{opener}: expected one lambda parameter, got {params:?}") };
+            assert!(param.on.is_none() && matches!(param.var, VarSlot::Local { index: 2, .. }), "{opener}: {param:?}");
+            let [Stmt::Eval { expr }] = body.as_slice() else { panic!("{opener}: expected the lambda body, got {body:?}") };
+            assert_eq!(x(expr), "SetFunctionValue(v2)", "{opener}");
+        }
+    }
 }
 
 #[test]
@@ -1944,4 +1980,310 @@ fn a_declarations_value_declares_inline_in_a_lambda() {
         let c = fnv_script::compile::compile_mod_runtime(&src, &table(), &World);
         assert_eq!(c.errors().count(), 0, "{body}: {:?}", c.errors().collect::<Vec<_>>());
     }
+}
+
+/// `SetOnPlayGroupEventHandler` parameter index 3 resolves bare known `anim_group` keywords
+/// to `XExpr::Enum`, while leaving quoted strings (including names outside `encodings.json`),
+/// runtime `string_var`s, numeric codes, globals, dotted quest variables, and function calls
+/// as ordinary `ParamEnc::Value` expressions.
+#[test]
+fn set_on_play_group_event_handler_anim_group_arg_forms() {
+    let (_, p) = build(
+        "ref fnH\nstring_var sGrp\nbegin GameMode\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF Idle\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF Equip\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF \"Equip\"\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF \"TurnRight\"\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF sGrp\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF 0\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF 24\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF TestGlobal\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF TestQuest.bDone\n\
+         SetOnPlayGroupEventHandler fnH 1 PlayerREF GetAnimAction\n\
+         end\n",
+    );
+    let fourth_args: Vec<String> = body(&p)
+        .iter()
+        .map(|s| match s {
+            Stmt::Eval { expr } => match expr {
+                XExpr::Call { call } => x(&call.args[3]),
+                other => panic!("expected call, got {other:?}"),
+            },
+            other => panic!("expected eval stmt, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(fourth_args[0], "#0", "bare keyword Idle");
+    assert_eq!(fourth_args[1], "#24", "bare keyword Equip");
+    assert_eq!(fourth_args[2], "\"Equip\"", "quoted string must stay XExpr::Str for runtime normalization");
+    assert_eq!(fourth_args[3], "\"TurnRight\"", "unknown quoted string must compile as XExpr::Str");
+    assert_eq!(fourth_args[4], "v2", "string_var stays a variable reference");
+    assert_eq!(fourth_args[5], "0", "numeric 0");
+    assert_eq!(fourth_args[6], "24", "numeric 24");
+    assert!(fourth_args[7].starts_with('g'), "global variable must stay global var, got {}", fourth_args[7]);
+    assert_eq!(fourth_args[8], "v1", "dotted quest variable must compile as variable, not unknown enum");
+    assert!(fourth_args[9].contains('('), "zero-arg function call must compile as call, got {}", fourth_args[9]);
+}
+
+/// Compound bitwise, power, modulo, and shift assignments work in `let`, bare Let-macro,
+/// inline declaration, quest-variable, array-element, and NVSEScript forms, including
+/// nested calls shifted before bitwise-OR (`iINITemp |= (Floor (Clamp ...)) << 1`).
+#[test]
+fn compound_bitwise_and_shift_assignments_let_and_macro() {
+    let h = run(
+        "int a
+int b
+int c
+int d
+int e
+int f
+int g
+int iINITemp
+float fIn
+array_var ar
+begin GameMode
+a = 1
+a |= 4
+let a |= 8
+b = 15
+b &= 6
+let b &= 7
+c = 2
+c ^= 3
+let c ^= 2
+d = 1
+d <<= 3
+let d <<= 1
+e = 32
+e >>= 2
+let e >>= 1
+f = 17
+f %= 5
+int h |= 5
+ar = ar_List 1, 2
+ar[0] |= 4
+ar[1] <<= 2
+g = ar[0] + ar[1]
+fIn = 1.7
+iINITemp = 1
+iINITemp |= (Floor (GetMinOf (GetMaxOf fIn 0) 1)) << 1
+end",
+    );
+    assert_eq!(h.0[&1], Value::Num(13.0), "a: 1 | 4 | 8 = 13");
+    assert_eq!(h.0[&2], Value::Num(6.0), "b: 15 & 6 & 7 = 6");
+    assert_eq!(h.0[&3], Value::Num(64.0), "c: (2 ^ 3) ^ 2 = 64 [documented: NVSE ^ is power]");
+    assert_eq!(h.0[&4], Value::Num(16.0), "d: (1 << 3) << 1 = 16");
+    assert_eq!(h.0[&5], Value::Num(4.0), "e: (32 >> 2) >> 1 = 4");
+    assert_eq!(h.0[&6], Value::Num(2.0), "f: 17 % 5 = 2");
+    assert_eq!(h.0[&7], Value::Num(13.0), "g: (1 | 4) + (2 << 2) = 13");
+    assert_eq!(h.0[&8], Value::Num(3.0), "iINITemp: 1 | (Floor (GetMinOf (GetMaxOf 1.7 0) 1) << 1) = 3");
+    assert_eq!(h.0[&11], Value::Num(5.0), "inline decl int h |= 5");
+
+    // Dotted quest variable and mod-runtime nested Clamp/Floor/GetINIFloat_Cached pattern.
+    let src = "int iINITemp\nbegin GameMode\n\
+        TestQuest.bDone |= 2\n\
+        TestQuest.bDone &= 3\n\
+        TestQuest.bDone ^= 2\n\
+        TestQuest.bDone <<= 1\n\
+        TestQuest.bDone >>= 1\n\
+        iINITemp |= (Floor (Clamp (GetINIFloat_Cached \"Main:bVisible\" \"Widget.ini\" 1) 0 1)) << 1\n\
+        end\n";
+    let c = fnv_script::compile::compile_mod_runtime(src, &table(), &World);
+    assert_eq!(c.errors().count(), 0, "{:?}", c.errors().collect::<Vec<_>>());
+    let (_, p) = build(src);
+    let b = body(&p);
+    assert!(matches!(&b[0], Stmt::Let { expr: XExpr::Assign { op: XAssign::BitOr, .. } }));
+    assert!(matches!(&b[1], Stmt::Let { expr: XExpr::Assign { op: XAssign::BitAnd, .. } }));
+    assert!(matches!(&b[2], Stmt::Let { expr: XExpr::Assign { op: XAssign::Pow, .. } }));
+    assert!(matches!(&b[3], Stmt::Let { expr: XExpr::Assign { op: XAssign::Shl, .. } }));
+    assert!(matches!(&b[4], Stmt::Let { expr: XExpr::Assign { op: XAssign::Shr, .. } }));
+    assert!(matches!(&b[5], Stmt::Let { expr: XExpr::Assign { op: XAssign::BitOr, .. } }));
+
+    // NVSEScript compound shift assignments translate and execute cleanly.
+    let nvse_src = "name ShiftAssign;\nint a;\nint b;\nGameMode {\n  a = 1;\n  a <<= 3;\n  a |= 2;\n  b = 40;\n  b >>= 2;\n  b &= 7;\n}\n";
+    let h2 = run(nvse_src);
+    assert_eq!(h2.0[&1], Value::Num(10.0), "NVSEScript: (1 << 3) | 2 = 10");
+    assert_eq!(h2.0[&2], Value::Num(2.0), "NVSEScript: (40 >> 2) & 7 = 2");
+
+    // Decompiler symbols for compound shift assignments.
+    assert_eq!(fnv_script::decompile::xassign_symbol(XAssign::Shl), "<<=");
+    assert_eq!(fnv_script::decompile::xassign_symbol(XAssign::Shr), ">>=");
+}
+
+/// `dATan2(y, x)` returns exact degrees in [-180, 180] across all four quadrants and axis
+/// edges, with `(0, 0) -> 0.0`.
+#[test]
+fn datan2_covers_quadrants_and_axes() {
+    let h = run(
+        "float a0
+float a1
+float a2
+float a3
+float q1
+float q2
+float q3
+float q4
+float z
+begin GameMode
+let a0 := dATan2 0, 1
+let a1 := dATan2 1, 0
+let a2 := dATan2 0, -1
+let a3 := dATan2 -1, 0
+let q1 := dATan2 1, 1
+let q2 := dATan2 1, -1
+let q3 := dATan2 -1, -1
+let q4 := dATan2 -1, 1
+let z := dATan2 0, 0
+end",
+    );
+    for (k, want) in [
+        (1, 0.0),
+        (2, 90.0),
+        (3, 180.0),
+        (4, -90.0),
+        (5, 45.0),
+        (6, 135.0),
+        (7, -135.0),
+        (8, -45.0),
+        (9, 0.0),
+    ] {
+        assert!(matches!(h.0[&k], Value::Num(v) if (v - want).abs() < 1e-9), "var {k}: {:?} vs {want}", h.0[&k]);
+    }
+}
+
+#[test]
+fn aim_anim_group_names_have_documented_codes() {
+    // [documented: https://geckwiki.com/index.php?title=AnimGroups]: AimUp (18),
+    // AimDown (19), AimIS (20), AimISUp (21), AimISDown (22).
+    let t = table();
+    for (group, code) in [("AimUp", 18u16), ("AimDown", 19), ("AimIS", 20), ("AimISUp", 21), ("AimISDown", 22)] {
+        let play = compile(&format!("begin GameMode\nPlayGroup {group} 1\nend"), &t, &World, None);
+        assert_eq!(play.errors().count(), 0, "{group}: {:?}", play.diags);
+        assert!(play.bytes.windows(8).any(|w| w[..2] == 0x1013u16.to_le_bytes() && w[6..8] == code.to_le_bytes()), "{group}: {:02X?}", play.bytes);
+        let check = compile(&format!("begin GameMode\nif IsAnimPlaying {group}\nendif\nend"), &t, &World, None);
+        assert_eq!(check.errors().count(), 0, "{group}: {:?}", check.diags);
+        assert!(check.bytes.windows(8).any(|w| w[..2] == 0x1128u16.to_le_bytes() && w[6..8] == code.to_le_bytes()), "{group}: {:02X?}", check.bytes);
+        let (_, p) = build(&format!("ref fnH\nbegin GameMode\nSetOnPlayGroupEventHandler fnH 1 PlayerREF {group}\nend"));
+        let Stmt::Eval { expr: XExpr::Call { call } } = &body(&p)[0] else { panic!("{:?}", body(&p)[0]) };
+        assert_eq!(x(&call.args[3]), format!("#{code}"), "{group}");
+    }
+}
+
+#[test]
+fn plain_declaration_ignores_unseparated_trailing_words() {
+    // A plain declaration without `=` declares only its variable (and any comma-separated
+    // names); unseparated trailing words do not declare a function name as a local that
+    // shadows later calls.
+    let src = "SetEventHandlerAlt \"OwnedA\" (begin Function {}\n\
+               array_var aFirst ar_Construct \"array\"\n\
+               end)\n\
+               SetEventHandlerAlt \"OwnedB\" (begin Function {}\n\
+               array_var aSecond = ar_Construct array\n\
+               end)\n";
+    let c = fnv_script::compile::compile_mod_runtime(src, &table(), &World);
+    assert_eq!(c.errors().count(), 0, "{:?}", c.diags);
+    assert!(c.variables.iter().any(|v| v.name == "aFirst"), "{:?}", c.variables);
+    assert!(c.variables.iter().any(|v| v.name == "aSecond"), "{:?}", c.variables);
+    assert!(!c.variables.iter().any(|v| v.name.eq_ignore_ascii_case("ar_construct")), "{:?}", c.variables);
+    assert!(warnings(&c, "variable_named_like_a_function").is_empty(), "{:?}", c.diags);
+    // Comma-separated plain declarations still declare every named variable.
+    let (c, _) = build("short iA, iB, iC\nbegin GameMode\nset iA to 1\nset iB to 2\nset iC to 3\nend");
+    assert_eq!(c.variables.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["iA", "iB", "iC"]);
+}
+
+#[test]
+fn braced_argument_lists_pass_multiple_arguments() {
+    // Multiple space- or comma-separated arguments inside `{ ... }` (not followed by `=>`).
+    let (_, p) = mod_ok(
+        "ref fnH\nshort a\nshort b\nbegin Function {}\n\
+         SetFunctionValue (call fnH {a b})\n\
+         call fnH {a, b}\n\
+         call fnH {a + 1, b - 1}\n\
+         call fnH {a -1}\n\
+         call fnH {}\n\
+         end",
+    );
+    let b = body(&p);
+    assert_eq!(b.len(), 5, "{b:?}");
+    let Stmt::Eval { expr: XExpr::Call { call: sfv } } = &b[0] else { panic!("{:?}", b[0]) };
+    let XExpr::Call { call: nested } = &sfv.args[0] else { panic!("{:?}", sfv.args[0]) };
+    assert_eq!(nested.args.len(), 3, "fnH + 2 braced args: {:?}", nested.args);
+    let counts: Vec<usize> = b[1..].iter().map(|s| match s {
+        Stmt::Eval { expr: XExpr::Call { call } } => call.args.len(),
+        other => panic!("{other:?}"),
+    }).collect();
+    assert_eq!(counts, [3, 3, 3, 1]);
+    // Unclosed braced argument list still reports missing `}`.
+    let bad = compile("ref fnH\nshort a\nshort b\nbegin GameMode\ncall fnH {a b\nend", &table(), &World, None);
+    assert!(bad.errors().any(|d| d.kind == "syntax" && d.detail == "missing }"), "{:?}", bad.diags);
+    // Arrow lambda `{params} => expr` stays a lambda.
+    let (_, p) = build("short a\nshort b\nbegin GameMode\nCallWhen ({a, b} => a + b) ({} => 1)\nend");
+    let Stmt::Eval { expr: XExpr::Call { call } } = &body(&p)[0] else { panic!("{:?}", body(&p)[0]) };
+    assert!(matches!(call.args[0], XExpr::Lambda { .. }), "{:?}", call.args[0]);
+    // Unary `&` / `*` (leading, after comma without space, and space-separated) and nested
+    // arrow lambdas inside `{ ... }` keep compiling cleanly.
+    let (_, p) = mod_ok(
+        "ref fnH\nshort a\nshort x\narray_var b\nbegin GameMode\n\
+         call fnH {&a}\n\
+         call fnH {*b}\n\
+         call fnH {a,*b}\n\
+         call fnH {a *b}\n\
+         call fnH {a &b}\n\
+         call fnH {{x} => x + 1}\n\
+         call fnH {a, {x} => x + 1}\n\
+         end",
+    );
+    let b = body(&p);
+    assert_eq!(b.len(), 7, "{b:?}");
+    let arg_counts: Vec<usize> = b.iter().map(|s| match s {
+        Stmt::Eval { expr: XExpr::Call { call } } => call.args.len(),
+        other => panic!("{other:?}"),
+    }).collect();
+    assert_eq!(arg_counts, [2, 2, 3, 3, 3, 2, 3]);
+    let Stmt::Eval { expr: XExpr::Call { call: box_call } } = &b[0] else { panic!() };
+    assert!(matches!(box_call.args[1], XExpr::Unary { op: fnv_script::ir::XUnary::Box, .. }), "{:?}", box_call.args[1]);
+    let Stmt::Eval { expr: XExpr::Call { call: unbox_call } } = &b[1] else { panic!() };
+    assert!(matches!(unbox_call.args[1], XExpr::Unary { op: fnv_script::ir::XUnary::Unbox, .. }), "{:?}", unbox_call.args[1]);
+    let Stmt::Eval { expr: XExpr::Call { call: lam1 } } = &b[5] else { panic!() };
+    assert!(matches!(lam1.args[1], XExpr::Lambda { .. }), "{:?}", lam1.args[1]);
+    let Stmt::Eval { expr: XExpr::Call { call: lam2 } } = &b[6] else { panic!() };
+    assert!(matches!(lam2.args[2], XExpr::Lambda { .. }), "{:?}", lam2.args[2]);
+}
+
+#[test]
+fn inline_declarations_in_if_testexpr_and_typed_colon_equals() {
+    // `if TestExpr <type> <var> = <expr>` declares the local, strips its type word, and
+    // keeps the assignment inside `TestExpr` (no `assignment_to_a_value` warning).
+    let h = run(
+        "array_var aSrc\nint hit\nint miss\nint sized\nstring_var sOut\nfloat fInit\n\
+         begin GameMode\n\
+         let aSrc := ar_List 42, 99\n\
+         if TestExpr int iFirst = aSrc[0]\n\
+           let hit := iFirst\n\
+         endif\n\
+         if TestExpr int iMissing = aSrc[9]\n\
+           let miss := 1\n\
+         endif\n\
+         if (int iLen = ar_Size aSrc) == 2\n\
+           let sized := iLen\n\
+         endif\n\
+         eval 1 && let sOut := \"ok\"\n\
+         float fLocal := 3.5\n\
+         let fInit := fLocal\n\
+         end",
+    );
+    assert_eq!(h.0[&2], Value::Num(42.0), "hit");
+    assert_eq!(h.0.get(&3).copied().unwrap_or(Value::Num(0.0)), Value::Num(0.0), "miss");
+    assert_eq!(h.0[&4], Value::Num(2.0), "sized");
+    assert_eq!(h.text(5), "ok");
+    assert_eq!(h.0[&6], Value::Num(3.5), "fInit");
+    // Unparenthesized inline declaration inside a declaration initializer and known remote quest var.
+    let (c, _) = build(
+        "array_var aSrc\nbegin GameMode\n\
+         int ok = TestExpr int iElem = aSrc[0]\n\
+         Let TestQuest.bDone := ok\n\
+         end",
+    );
+    assert!(warnings(&c, "assignment_to_a_value").is_empty(), "{:?}", c.diags);
+    assert!(warnings(&c, "unknown_function").is_empty(), "{:?}", c.diags);
+    assert!(c.variables.iter().any(|v| v.name == "iElem"), "{:?}", c.variables);
 }

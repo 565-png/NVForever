@@ -38,7 +38,7 @@ The first three letters of the file name say when it runs [documented: RegisterS
 | `gr_` | 126 | game restart: once a run, before any save is in place | [documented: RegisterSRScript, "Game Restart ('gr_' prefix)"; InitExtraMiscStat, a plugin uses a MenuMode 4 block (the main menu) where an SR file uses gr_] |
 | `ln_` | 64 | a save loaded, and a new game | [hypothesis: the name; the files guard work they must do once a session with an aux variable flag, as code that runs at every load would] |
 | `gl_` | 7 | a save loaded | [hypothesis: the name; RegisterSRScript's example registers `gl_Option2.txt`] |
-| `gx_` | 4 | not run (§4) | [hypothesis: game exit; MCM Extender's file says "Saved cached INIs on game exit"] |
+| `gx_` | 4 | game exit: once on `AppExit` before teardown | [hypothesis: game exit; MCM Extender's file says "Saved cached INIs on game exit"; observed: 4 files in the 2026-11-03 list; no extender DLL/source read] |
 | `gn_` | 1 | a new game | [hypothesis: the name] |
 
 A file with another prefix (or none) never runs [hypothesis].
@@ -55,7 +55,17 @@ them behind the menu ran them for a game that never began (#1548) [decision; in 
 original no game exists behind its main menu, hypothesis]. The restart's files run after the restore
 because a restore takes the game's state, lambdas included, from the save: run before it,
 what a gr_ file made (handlers with lambdas) would be lost [decision; in the original the
-main menu comes before the load, hypothesis].
+main menu comes before the load, hypothesis]. On exit (`AppExit` in Bevy's `Last` schedule,
+ordered after `bevy::window::ExitSystems` so window-close exits are covered alongside
+Quit, `qqq`, keybind exit, and timed exits, and before `write_final` / process teardown),
+the engine calls `Game::run_exit_scripts` (`Moment::Exit`) once in the played world so
+`gx_` files (including any registered via `RegisterSRScript`) can flush cached INI or
+JSON writes synchronously to disk [design]. Repeated exit calls on the same `Game` are a
+no-op, and runs with no `gx_` files skip execution with zero overhead [design]. Because
+NVForever starts a fresh process on save load or return to the main menu (`handoff.rs`)
+and ends the old process with `AppExit`, `gx_` also runs as the handed-off process exits
+so in-memory cached writes are not lost [design; in the original game a load stays in the
+same process, hypothesis].
 
 ## 3. RegisterSRScript `filePath` (JIP 57.15)
 
@@ -68,9 +78,6 @@ main menu comes before the load, hypothesis].
 
 ## 4. What is not built
 
-- **`gx_` files** (game exit): the engine has no moment where scripts still run as the
-  game quits or returns to the main menu. Four files use it (MCM Extender saves its cached
-  INI files there).
 - **Mod index.** A Script Runner file has no plugin, so functions that act on the calling
   script's plugin find none [documented: PWriteFileAlt, "script runners have no relative
   mod index"]; NVForever names the unit `ScriptRunner\<file>`, which no plugin matches.
@@ -80,9 +87,10 @@ main menu comes before the load, hypothesis].
 
 ## 5. To check in the original game
 
-The prefixes other than `gr_`, the order of the files, whether `gr_` runs once per
-session or again after a load from the pause menu, and where `gl_`/`ln_` run relative to
-the LoadGame events (docs/handoff/observer-checks.md).
+The prefixes other than `gr_` (including whether `gx_` runs on exit to main menu or only
+process quit), the order of the files, whether `gr_` runs once per session or again after
+a load from the pause menu, and where `gl_`/`ln_` run relative to the LoadGame events
+(docs/handoff/observer-checks.md).
 
 ## 6. The files that do not compile yet
 
@@ -130,6 +138,15 @@ from source; tests in `crates/fnv-script/tests/compile.rs`):
   `(begin function` does (`CallWhen ( begin function {} … end) ({}=> …) (0b10100)`)
   [hypothesis: spaces between tokens do not matter; documented: Lambda shows
   `(begin function`].
+
+Successful compilation reports its returned warnings once, when the Script Runner
+first caches that unit [design: engine design choice for NVForever's own log; not a
+claim about the original extender]. The [compiler notes](script-compiler.md#inline-surplus-operands-in-mod-expressions)
+record the initial fixture failures and all nine corrected controls passing in
+Linux CI for `ae6c1110`. The Main integration at `abb5f67f` (hosted merge `22dc2e5`)
+passed all seven hosted checks with all nine controls passing once.
+The candidate preserves the documented function signature; it does not establish
+native parity or full installed-mod acceptance.
 
 Building the files found two compiler gaps that affect every script compiled from source,
 now fixed: a type word after `let` (`let int i := 10`, `let array_var a := …`) and in an

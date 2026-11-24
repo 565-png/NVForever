@@ -138,6 +138,27 @@ impl MoveSpeeds {
     }
 }
 
+/// `SetPCToddler` state mirrored from scripts each frame, plus the active toddler walk
+/// clip's measured root speed when a player body rig has loaded one
+/// (`nvforever::player_body`, `docs/spec-notes/pc-toddler-young.md`).
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub struct PlayerToddler {
+    pub active: bool,
+    /// Unscaled ground speed (units/s) of the loaded toddler forward walk clip, if any.
+    pub clip_walk_speed: Option<f32>,
+}
+
+/// Effective movement speeds after applying `SetPCToddler`: normal `base` when inactive,
+/// or walking at the toddler clip's root speed (falling back to `base.walk`) for both
+/// walk and run when active [hypothesis: `docs/spec-notes/pc-toddler-young.md`].
+pub fn effective_speeds(base: MoveSpeeds, toddler: PlayerToddler) -> MoveSpeeds {
+    if !toddler.active {
+        return base;
+    }
+    let walk = toddler.clip_walk_speed.filter(|s| s.is_finite() && *s > 0.0).unwrap_or(base.walk);
+    MoveSpeeds { walk, run: walk }
+}
+
 /// What the player asks for this frame.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
 pub struct MoveIntent {
@@ -365,12 +386,13 @@ impl Plugin for PlayerPlugin {
             .init_resource::<PerkSpeed>()
             .init_resource::<StatSpeed>()
             .init_resource::<ReloadPace>()
+            .init_resource::<PlayerToddler>()
             .init_resource::<Lunge>()
             .add_systems(Update, take_knockbacks.after(PlaySet::Input).before(PlaySet::Physics))
             .init_resource::<crate::control::DetachedCamera>()
             .add_systems(
                 Update,
-                (crate::control::enforce_locks, aiming_walks, encumbered_walks, flinch_holds_walk, dialogue_lead_walks, crate::control::detach_camera).chain().after(PlaySet::Input).before(PlaySet::Physics),
+                (crate::control::enforce_locks, aiming_walks, encumbered_walks, toddler_walks, flinch_holds_walk, dialogue_lead_walks, crate::control::detach_camera).chain().after(PlaySet::Input).before(PlaySet::Physics),
             )
             .add_systems(Update, crate::control::tell_scripts.after(PlaySet::Input).before(PlaySet::Scripts))
             .add_systems(Last, crate::control::report_locks)
@@ -384,6 +406,10 @@ impl Plugin for PlayerPlugin {
             )
             .add_systems(Update, crate::control::place_camera.in_set(PlaySet::Physics).after(log_status));
         app.init_resource::<crate::inertia::MovementInertia>().add_systems(Update, (crate::inertia::follow_weapon, crate::inertia::log_switches));
+        // Sprint's shared state and the bindings kept on its switch.
+        app.add_plugins(crate::stance::StancePlugin);
+        // Sprint (`crate::sprint`): between the frame's walk rules and the physics steps.
+        app.add_plugins(crate::sprint::SprintPlugin);
         // The Advanced Movement section's switches kept here (NVF Features; Weapon Inertia and
         // Camera Motion are nvforever's `settings.rs`): the Global Toggle, then Gameplay's and
         // Animation Smoothing [design: the owner, 2026-11-15, the menu's names and order].
@@ -421,6 +447,16 @@ impl Plugin for PlayerPlugin {
                 "--no-advanced-recoil",
                 |w| w.resource::<Inertia>().recoil,
                 |w, on| w.resource_mut::<Inertia>().recoil = on,
+            ),
+            // Sprint, off by default; its control (`crate::bindings`) is greyed while it is
+            // off, its shared state is `crate::stance`'s.
+            switch(
+                "sprint",
+                "Sprint",
+                SPRINT_NOTE,
+                "--sprint --no-sprint",
+                |w| w.resource::<Inertia>().sprint,
+                |w, on| w.resource_mut::<Inertia>().sprint = on,
             ),
             switch(
                 "animation-smoothing",
@@ -471,6 +507,9 @@ impl Plugin for PlayerPlugin {
         );
     }
 }
+
+/// The Sprint row's note (NVF Features › Advanced Movement › Gameplay).
+pub const SPRINT_NOTE: &str = "On: hold the Sprint key (set it in Controls) to run faster, spending AP every second; stopping low on AP leaves you out of breath. Off: as in the original.";
 
 /// The Movement Weight dropdown's choice, by its name or its number.
 fn movement_weight_pick(w: &mut World, name: &str) -> bool {
@@ -735,6 +774,23 @@ pub fn encumbered_walks(time: Res<Time>, sim: Option<ResMut<crate::sim::SimState
     }
 }
 
+/// While `SetPCToddler 1` is active (Fallout 3 / TTW childhood), mirror the flag into
+/// [`PlayerToddler`] and force walking pace so a toddler moves at toddler walk speed rather
+/// than running at adult run speed [hypothesis: `docs/spec-notes/pc-toddler-young.md`].
+pub fn toddler_walks(script: Option<Res<crate::script::ScriptState>>, mut toddler: ResMut<PlayerToddler>, mut intent: ResMut<MoveIntent>) {
+    let active = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.pc_toddler());
+    if active != toddler.active {
+        toddler.active = active;
+        if !active {
+            toddler.clip_walk_speed = None;
+        }
+        info!("toddler: {}", if active { "SetPCToddler on, moving at toddler walk pace" } else { "SetPCToddler off, normal movement again" });
+    }
+    if active && !intent.walk {
+        intent.walk = true;
+    }
+}
+
 /// While the player flinches from a staggering hit (`crate::combat`, crippled-limbs.md
 /// §3) they do not walk or jump: the hit's stagger holds them where they stand, as it
 /// holds NPCs and creatures (`nvforever` residents.rs) [design: owner's playtest list 7
@@ -821,8 +877,19 @@ impl Default for ReloadPace {
 }
 
 /// What slows or speeds the player's steps: crippled legs, a two-handed weapon's run, the
-/// Modify Run Speed perks, a reload, Speed Mult and body armour.
-type Paces<'w> = (Option<Res<'w, crate::combat::PlayerLimbs>>, Option<Res<'w, RunPace>>, Option<Res<'w, PerkSpeed>>, Option<Res<'w, ReloadPace>>, Option<Res<'w, StatSpeed>>);
+/// Modify Run Speed perks, a reload, Speed Mult and body armour, and `SetPCToddler`.
+type Paces<'w> = (
+    Option<Res<'w, crate::combat::PlayerLimbs>>,
+    Option<Res<'w, RunPace>>,
+    Option<Res<'w, PerkSpeed>>,
+    Option<Res<'w, ReloadPace>>,
+    Option<Res<'w, StatSpeed>>,
+    Option<Res<'w, PlayerToddler>>,
+    Sprinting<'w>,
+);
+
+/// Sprint's share and speed (`crate::sprint`): from the gait's speed to a multiple of the run's.
+type Sprinting<'w> = (Option<Res<'w, crate::stance::StanceMotion>>, Option<Res<'w, crate::sprint::SprintTuning>>);
 
 /// Turbo's clock for the player, and where the steps' cost is measured: `--log-frame-times`'
 /// counts and the physics rate's guard (`crate::phys_load::Meter`).
@@ -1340,7 +1407,7 @@ fn step(
     mut phys: ResMut<PhysState>,
     mut player: ResMut<Player>,
     mut status: ResMut<Status>,
-    (limbs, pace, perk_pace, reload_pace, stat_pace): Paces,
+    (limbs, pace, perk_pace, reload_pace, stat_pace, toddler, sprinting): Paces,
     (turbo, mut load, mut rate): Meters,
     (mut seat, mut landed): (ResMut<crate::furniture::PlayerSeat>, MessageWriter<crate::rumble::Landed>),
     (mut blocks, noclip, mut inertia): (Option<ResMut<crate::blocking::ActorBlocks>>, Res<NoClip>, ResMut<crate::inertia::MovementInertia>),
@@ -1374,7 +1441,7 @@ fn step(
         for _ in 0..n {
             let _tick = info_span!("phys::tick").entered();
             let began = meter.now();
-            let listed = step_npcs_alone(&mut p.world, &mut p.npcs, body, blocks.as_deref_mut(), falls.as_deref_mut(), &mut fell);
+            let listed = step_npcs_alone(&mut p.world, &mut p.npcs, &p.actor_block_radii, body, blocks.as_deref_mut(), falls.as_deref_mut(), &mut fell);
             p.world.step();
             meter.tick(began, p.npcs.len(), listed);
         }
@@ -1416,7 +1483,7 @@ fn step(
             // Not falling: no fall, landing or fall damage while it flies.
             c.grounded = true;
             c.ground_gap = Some(0.0);
-            let listed = step_npcs_alone(&mut p.world, &mut p.npcs, None, blocks.as_deref_mut(), falls.as_deref_mut(), &mut fell);
+            let listed = step_npcs_alone(&mut p.world, &mut p.npcs, &p.actor_block_radii, None, blocks.as_deref_mut(), falls.as_deref_mut(), &mut fell);
             p.world.step();
             meter.tick(began, p.npcs.len(), listed);
         }
@@ -1493,8 +1560,9 @@ fn step(
             *stroke_time = 0.0;
             // Crippled legs slow the player (combat C8) [design].
             let k = limbs.as_deref().map_or(1.0, crate::combat::PlayerLimbs::speed_mult);
-            // Running with a two-handed weapon drawn is slower (`RunPace`).
-            let k = if intent.walk { k } else { k * pace.as_deref().map_or(1.0, |p| p.0) };
+            // Running with a two-handed weapon drawn is slower (`RunPace`): on the run's speed
+            // only (below, with the gait).
+            let run_pace = pace.as_deref().map_or(1.0, |p| p.0);
             // The Modify Run Speed perks (Travel Light, Tunnel Runner, Implant M-5 …).
             let k = k * perk_pace.as_deref().map_or(1.0, |p| p.0);
             // Slower while reloading, when the setting is on (`crate::combat::reload_pace`).
@@ -1520,11 +1588,23 @@ fn step(
                 }
                 _ => k,
             };
-            let [x, y] = velocity(&intent, player.heading, *speeds);
-            let key = [x * k, y * k];
+            let move_speeds = effective_speeds(*speeds, toddler.as_deref().copied().unwrap_or_default());
+            let [x, y] = velocity(&intent, player.heading, move_speeds);
+            let gait = if intent.walk { k } else { k * run_pace };
+            let key = [x * gait, y * gait];
+            // Sprint: from the gait's velocity to a multiple of the run's, all of the paces
+            // above with it, by its eased share, walking or running (`crate::sprint`).
+            let sprint = sprinting.0.as_deref().zip(sprinting.1.as_deref()).map_or((0.0, 1.0), |(s, t)| (s.sprint_share, t.speed));
+            let key = if sprint.0 > 0.0 {
+                let [rx, ry] = velocity(&MoveIntent { walk: false, ..*intent }, player.heading, move_speeds);
+                let run = k * run_pace;
+                crate::sprint::sprint_velocity(key, [rx * run, ry * run], sprint.0, sprint.1)
+            } else {
+                key
+            };
             // On the ground the velocity speeds up and slows down (`crate::inertia`); in
             // the air the controller's own rules take the keys' velocity.
-            let [x, y] = if inertia.ground() && c.grounded { inertia.step(key, intent.walk, dt) } else { key };
+            let [x, y] = if inertia.ground() && c.grounded { inertia.step(key, intent.walk && sprint.0 < crate::sprint::RUN_GAIT_FROM, dt) } else { key };
             // An attack's clip carries the player (`Lunge`).
             if lunge.carrying && lunge.from.is_none() {
                 lunge.from = Some(c.feet);
@@ -1563,7 +1643,7 @@ fn step(
             let standing = go == [0.0, 0.0] && c.grounded && !c.swimming && b.player_held <= dt * 0.5;
             let placed = b.list.len();
             let mut all = std::mem::take(&mut b.list);
-            all.extend(p.npcs.values().map(|n| Block::character(n.ch.id, n.ch.feet, n.ch.params.radius, n.ch.params.height, false)));
+            all.extend(p.npcs.values().map(|n| Block::character(n.ch.id, n.ch.feet, crate::blocking::walking_radius(n.ch.params.radius, p.actor_block_radii.get(&n.ch.id).copied()), n.ch.params.height, false)));
             all.push(Block::character(PLAYER, c.feet, c.params.radius, c.params.height, standing));
             listed = Some(all.len());
             // First the walking actors: what they push is their owner's to move, but for
@@ -1572,10 +1652,11 @@ fn step(
             let mut stopped = false;
             for (v, n) in walking.iter_mut().zip(p.npcs.values()) {
                 let asked = *v;
+                let radius = crate::blocking::walking_radius(n.ch.params.radius, p.actor_block_radii.get(&n.ch.id).copied());
                 *v = if b.carried.contains(&n.ch.id) {
-                    crate::blocking::clip_pushing_nobody(n.ch.id, asked, n.ch.feet, n.ch.params.radius, n.ch.params.height, dt, &mut all)
+                    crate::blocking::clip_pushing_nobody(n.ch.id, asked, n.ch.feet, radius, n.ch.params.height, dt, &mut all)
                 } else {
-                    clip(n.ch.id, asked, n.ch.feet, n.ch.params.radius, n.ch.params.height, dt, &mut all, &mut pushes)
+                    clip(n.ch.id, asked, n.ch.feet, radius, n.ch.params.height, dt, &mut all, &mut pushes)
                 };
                 stopped |= *v != asked;
             }
@@ -1728,9 +1809,11 @@ fn move_npcs(
 /// a step of the player's; the player's block is where the furniture holds it, not pushed,
 /// or none when the player passes through everything. Returns the length of the step's
 /// block list (none without `ActorBlocks`), for `crate::phys_load`.
+#[allow(clippy::too_many_arguments)]
 fn step_npcs_alone(
     world: &mut fnv_phys::PhysWorld,
     npcs: &mut std::collections::BTreeMap<u32, crate::phys::NpcBody>,
+    actor_block_radii: &std::collections::HashMap<u32, f32>,
     player: Option<([f32; 3], f32, f32)>,
     blocks: Option<&mut crate::blocking::ActorBlocks>,
     falls: Option<&mut crate::falls::Falls>,
@@ -1746,7 +1829,7 @@ fn step_npcs_alone(
     if let Some(b) = blocks {
         let placed = b.list.len();
         let mut all = std::mem::take(&mut b.list);
-        all.extend(npcs.values().map(|n| Block::character(n.ch.id, n.ch.feet, n.ch.params.radius, n.ch.params.height, false)));
+        all.extend(npcs.values().map(|n| Block::character(n.ch.id, n.ch.feet, crate::blocking::walking_radius(n.ch.params.radius, actor_block_radii.get(&n.ch.id).copied()), n.ch.params.height, false)));
         if let Some((feet, radius, height)) = player {
             all.push(Block::character(PLAYER, feet, radius, height, false));
         }
@@ -1755,10 +1838,11 @@ fn step_npcs_alone(
         let mut stopped = false;
         for (v, n) in walking.iter_mut().zip(npcs.values()) {
             let asked = *v;
+            let radius = crate::blocking::walking_radius(n.ch.params.radius, actor_block_radii.get(&n.ch.id).copied());
             *v = if b.carried.contains(&n.ch.id) {
-                crate::blocking::clip_pushing_nobody(n.ch.id, asked, n.ch.feet, n.ch.params.radius, n.ch.params.height, dt, &mut all)
+                crate::blocking::clip_pushing_nobody(n.ch.id, asked, n.ch.feet, radius, n.ch.params.height, dt, &mut all)
             } else {
-                clip(n.ch.id, asked, n.ch.feet, n.ch.params.radius, n.ch.params.height, dt, &mut all, &mut pushes)
+                clip(n.ch.id, asked, n.ch.feet, radius, n.ch.params.height, dt, &mut all, &mut pushes)
             };
             stopped |= *v != asked;
         }
@@ -2095,5 +2179,33 @@ mod tests {
     #[test]
     fn interpolation() {
         assert_eq!(lerp3([0.0; 3], [2.0, 4.0, 6.0], 0.5), [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn toddler_effective_speeds_and_scaled_eye() {
+        let base = MoveSpeeds::OBSERVED;
+        // Inactive: exact passthrough (zero regression).
+        assert_eq!(effective_speeds(base, PlayerToddler::default()), base);
+        assert_eq!(effective_speeds(base, PlayerToddler { active: false, clip_walk_speed: Some(42.0) }), base);
+
+        // Active without a loaded toddler clip: walk speed caps both walk and run.
+        let fallback = effective_speeds(base, PlayerToddler { active: true, clip_walk_speed: None });
+        assert_eq!(fallback, MoveSpeeds { walk: base.walk, run: base.walk });
+        let run = MoveIntent { forward: 1.0, ..default() };
+        assert!((velocity(&run, 0.0, fallback)[1] - base.walk).abs() < 1e-3);
+
+        // Active with a loaded toddler clip root speed: uses the clip's speed.
+        let clip_driven = effective_speeds(base, PlayerToddler { active: true, clip_walk_speed: Some(62.5) });
+        assert_eq!(clip_driven, MoveSpeeds { walk: 62.5, run: 62.5 });
+        // At CG01 script scale 0.4, speed is 62.5 * 0.4 = 25 units/s (well below adult 138 units/s).
+        assert!((velocity(&run, 0.0, clip_driven)[1] * 0.4 - 25.0).abs() < 1e-3);
+
+        // Non-positive or non-finite clip speeds fall back safely to base.walk.
+        assert_eq!(effective_speeds(base, PlayerToddler { active: true, clip_walk_speed: Some(0.0) }).walk, base.walk);
+        assert_eq!(effective_speeds(base, PlayerToddler { active: true, clip_walk_speed: Some(f32::NAN) }).walk, base.walk);
+
+        // Fallback eye height scales cleanly with SetScale.
+        let p = Player { heading: 0.0, pitch: 0.0, eye_height: EYE_HEIGHT * 0.4, feet: [0.0, 0.0, 10.0], body_eye: None, body_view: None, placed: None };
+        assert!((p.eye()[2] - (10.0 + EYE_HEIGHT * 0.4)).abs() < 1e-3);
     }
 }

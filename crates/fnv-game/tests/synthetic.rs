@@ -586,6 +586,35 @@ fn the_quest_timer_runs_at_the_quest_delay_and_sets_the_complete_stage() {
     assert_eq!(g.var(InstKey::Quest { quest: q() }, 1), before);
 }
 
+/// #3465 (VMS49's helper quest): a quest that ran, stopped and is started again with a
+/// timer set runs the timer its full time: the first run's GetSecondsPassed is not the
+/// time the quest stood stopped.
+#[test]
+fn a_quest_started_again_runs_its_timer_from_the_start() {
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    g.set_stage(q(), 10);
+    g.frames(120);
+    assert!(g.quest_state(q()).stages_done.contains(&20), "the first timer ran out");
+    g.stop_quest(q());
+    // Ten seconds stopped.
+    g.frames(600);
+    // A timer of 1 s set, then the quest started (as the trigger script does).
+    let key = InstKey::Quest { quest: q() };
+    g.store(key, Some(FormId(QUEST_SCRIPT)), 1, Value::Num(1.0), "test", true);
+    g.store(key, Some(FormId(QUEST_SCRIPT)), 2, Value::Num(1.0), "test", true);
+    g.start_quest(q());
+    // Half a second on: the timer has not run out.
+    g.frames(30);
+    assert_eq!(g.var(key, 2), Value::Num(1.0), "still running: fTimer {:?}", g.var(key, 1));
+    let Value::Num(left) = g.var(key, 1) else { panic!() };
+    assert!(left > 0.3 && left <= 1.0, "{left}");
+    // And it runs out about a second later.
+    g.frames(90);
+    assert_eq!(g.var(key, 2), Value::Num(0.0), "ran out: fTimer {:?}", g.var(key, 1));
+}
+
 #[test]
 fn get_seconds_passed_counts_frames_in_a_trigger_script_without_game_mode() {
     // OnTrigger runs every frame the player is inside; with `Game::trigger_frame` before
@@ -683,9 +712,60 @@ fn quest_targets_are_marked_while_their_conditions_pass() {
     // The subject is the target: disabling it fails its own GetDisabled == 0.
     g.world.set_enabled(FormId(ACT_REF), false).unwrap();
     assert_eq!(shown(&mut g), vec![(0, true), (1, false), (2, false)]);
-    // A completed objective has no targets.
-    g.set_objective(q(), 10, None, Some(true));
+    // A completed objective has no targets. (Stage 20 completed the quest, and a
+    // completed quest's objectives no longer change, #2958: complete it as
+    // CompleteAllObjectives does.)
+    assert!(!g.set_objective(q(), 10, None, Some(true)));
+    assert_eq!(shown(&mut g), vec![(0, true), (1, false), (2, false)]);
+    g.set_objective_whatever(q(), 10, None, Some(true));
     assert!(g.check_quest_targets(q()).is_empty());
+}
+
+/// #2958 (layer5-captures.md §5.8): once a quest is completed or failed, SetStage still marks the
+/// stage and runs its entries but does not start the quest again, and
+/// SetObjectiveDisplayed / SetObjectiveCompleted do nothing, running or not. A quest
+/// stopped without being completed starts again on both.
+#[test]
+fn a_completed_quest_stays_stopped_and_its_objectives_no_longer_change() {
+    let f = fixture();
+    let objective = |g: &mut Game| g.quest(q()).objectives.get(&10).map_or((false, false), |o| (o.displayed, o.completed));
+    // Stopped, not completed: SetStage starts it, and so does displaying an objective.
+    let mut g = game(&f);
+    g.new_game();
+    g.set_stage(q(), 10);
+    g.stop_quest(q());
+    assert!(!g.quest_state(q()).running);
+    g.set_stage(q(), 30);
+    assert!(g.quest_state(q()).running);
+    g.stop_quest(q());
+    assert!(g.set_objective(q(), 10, Some(true), None));
+    assert!(g.quest_state(q()).running);
+    assert_eq!(objective(&mut g), (true, false));
+    // Completed (stage 20 has the Complete Quest flag) and stopped.
+    let mut g = game(&f);
+    g.new_game();
+    g.set_stage(q(), 20);
+    assert!(g.quest_state(q()).completed);
+    g.stop_quest(q());
+    let before = objective(&mut g);
+    g.world.set_global(FormId(GLOBAL), 0.0).unwrap();
+    assert!(g.set_stage(q(), 30));
+    assert!(g.quest_state(q()).stages_done.contains(&30), "the stage is marked done");
+    assert_eq!(g.world.global(FormId(GLOBAL)).unwrap(), 7.0, "and its entry ran");
+    assert!(!g.quest_state(q()).running, "but the quest is not started again");
+    // Its objectives no longer change, stopped or started again.
+    for running in [false, true] {
+        if running {
+            g.start_quest(q());
+            assert!(g.quest_state(q()).running);
+        }
+        assert!(!g.set_objective(q(), 10, Some(!before.0), None));
+        assert!(!g.set_objective(q(), 10, None, Some(!before.1)));
+        assert_eq!(objective(&mut g), before);
+    }
+    // CompleteAllObjectives' way still completes one.
+    assert!(g.set_objective_whatever(q(), 10, None, Some(true)));
+    assert!(objective(&mut g).1);
 }
 
 /// Displaying an objective already shown keeps its completed flag; showing a hidden one
@@ -1649,6 +1729,24 @@ fn the_runner_saves_and_loads_in_place() {
 }
 
 #[test]
+fn a_given_reference_starts_locked_or_unlocked() {
+    let f = fixture();
+    let run = |locked: bool| {
+        let input: fnv_game::runner::Input = serde_json::from_value(json!({
+            "format": "fnv.script.actions/1",
+            "given": [{"kind": "ref", "ref": "TestActivatorREF", "locked": locked}],
+            "actions": [{"op": "get_ref", "ref": "TestActivatorREF", "fields": ["locked"], "label": "given"}]
+        }))
+        .unwrap();
+        let out = fnv_game::runner::run(&f.data, &f.forms, &f.refs, &input).unwrap();
+        assert_eq!(out["given_errors"], json!([]));
+        out["observations"].as_array().unwrap().iter().find(|o| o["label"] == "given").unwrap()["locked"].clone()
+    };
+    assert_eq!(run(true), json!(true));
+    assert_eq!(run(false), json!(false));
+}
+
+#[test]
 fn the_runner_reads_and_writes_reference_variables_and_activates_with_the_flag() {
     let f = fixture();
     let input: fnv_game::runner::Input = serde_json::from_value(json!({
@@ -2276,7 +2374,7 @@ fn combat_hits_damage_health_kill_and_reward() {
     // An auto-calculated one: Base Health 10 + (Endurance 5 − 1) × 5 + (level 5 − 1) × 5,
     // the original's NCR troopers' 50 (npc-behaviour-compare.md §9).
     assert_eq!(g.max_health(FormId(NPC_AUTO_REF)), 50.0);
-    let by_player = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 1, critical: true, limb: None };
+    let by_player = HitInfo { attacker: Some(FormId::PLAYER_REF), location: 1, critical: true, ..HitInfo::default() };
     let r = g.hit(npc, 30.0, by_player);
     assert_eq!((r.dealt, r.health, r.died), (30.0, 25.0, false));
     assert_eq!(g.extra[&npc].last_hit.map(|h| (h.location, h.critical)), Some((1, true)));
@@ -2310,7 +2408,7 @@ fn a_hired_companions_kill_earns_the_player_xp() {
     use fnv_game::combat::HitInfo;
     let f = fixture();
     let (npc, mate) = (FormId(NPC_REF), FormId(NPC_AUTO_REF));
-    let by_mate = HitInfo { attacker: Some(mate), weapon: None, location: 1, critical: false, limb: None };
+    let by_mate = HitInfo { attacker: Some(mate), location: 1, ..HitInfo::default() };
     // Not hired: no XP.
     let mut g = game(&f);
     g.new_game();
@@ -2348,7 +2446,7 @@ fn only_the_hit_that_killed_is_the_killing_blow() {
         let ctx = Ctx { unit: "test".into(), opcode: op, on: Some(npc), self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
         g.call_function(&ctx, args).num()
     };
-    let wound = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 3, critical: true, limb: None };
+    let wound = HitInfo { attacker: Some(FormId::PLAYER_REF), location: 3, critical: true, ..HitInfo::default() };
 
     // A wound, then a KillActor with no cause: no hit killed.
     let mut g = game(&f);
@@ -2418,7 +2516,7 @@ fn a_players_death_earns_no_kill_credit() {
     let mut f = fixture();
     let def = ChallengeDef { form: chal, kind: kind::KILL_CATEGORY, threshold: 100, flags: 0, interval: 0, value1: 0, value2: 0, value3: 0, form1: None, form2: None, name: None, description: None };
     f.data.challenge_defs.insert(chal, def);
-    let by_player = HitInfo { attacker: Some(p), weapon: None, location: 0, critical: false, limb: None };
+    let by_player = HitInfo { attacker: Some(p), location: 0, ..HitInfo::default() };
     let credit = |g: &Game| (g.player.xp, g.misc_stat(PEOPLE_KILLED), g.misc_stat(TOTAL_THINGS_KILLED), g.player.challenges.get(&chal).map_or(0, |c| c.progress));
     let start = || {
         let mut g = game(&f);
@@ -2476,7 +2574,7 @@ fn dismembered_parts_are_kept_and_read_by_scripts() {
     };
     let nums = |v: &[f64]| v.iter().map(|&v| ArgValue::Value(Value::Num(v))).collect::<Vec<_>>();
     assert_eq!(call(&mut g, KILLING_BLOW_LIMB, &[]), -1.0);
-    let head = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 1, critical: false, limb: None };
+    let head = HitInfo { attacker: Some(FormId::PLAYER_REF), location: 1, ..HitInfo::default() };
     assert!(g.hit(npc, 500.0, head).died);
     assert_eq!(call(&mut g, KILLING_BLOW_LIMB, &[]), 1.0);
     // A hit on the corpse is not the killing blow.
@@ -2516,7 +2614,7 @@ fn a_hit_on_an_object_runs_its_hit_blocks() {
     g.new_game();
     let target = FormId(ACT_REF);
     let hits = |g: &Game| g.var(InstKey::Ref { reference: target }, 2).num();
-    let by_player = HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: -1, critical: false, limb: None };
+    let by_player = HitInfo { attacker: Some(FormId::PLAYER_REF), location: -1, ..HitInfo::default() };
     // Without a weapon: `OnHit player` only.
     assert!(g.hit_object(target, by_player));
     assert_eq!(hits(&g), 10.0);
@@ -2662,7 +2760,7 @@ fn limb_hits_lower_conditions_and_cripple() {
     let npc = FormId(NPC_REF);
     // Maximum health 55; a leg at 25 %: a pool of 13.75. Left Mobility Condition is code 29.
     let leg = LimbHit { condition: 29, health_percent: 25.0, damage: 0.0, points: false };
-    let hit = |damage: f64| HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 7, critical: false, limb: Some(LimbHit { damage, ..leg }) };
+    let hit = |damage: f64| HitInfo { attacker: Some(FormId::PLAYER_REF), location: 7, limb: Some(LimbHit { damage, ..leg }), ..HitInfo::default() };
     let r = g.hit(npc, 5.0, hit(2.75));
     assert_eq!((r.limb, r.crippled), (Some((29, 80.0)), false));
     assert!(!g.is_crippled(npc, 29));
@@ -2730,7 +2828,7 @@ fn limb_damage_in_points() {
     let f = fixture();
     let mut g = game(&f);
     g.new_game();
-    let leg = |damage: f64| HitInfo { attacker: None, weapon: None, location: -1, critical: false, limb: Some(LimbHit { condition: RIGHT_MOBILITY, health_percent: 0.0, damage, points: true }) };
+    let leg = |damage: f64| HitInfo { location: -1, limb: Some(LimbHit { condition: RIGHT_MOBILITY, health_percent: 0.0, damage, points: true }), ..HitInfo::default() };
     for target in [FormId(NPC_REF), FormId::PLAYER_REF] {
         let r = g.hit(target, 49.88, leg(24.94));
         assert_eq!(r.limb.map(|(c, v)| (c, (v * 100.0).round() / 100.0)), Some((RIGHT_MOBILITY, 75.06)));
@@ -2753,7 +2851,7 @@ fn crippled_limbs_slow_and_heal() {
     // fCombatPlayerLimbDamageMult's default: half for the player, all for others.
     assert_eq!(g.limb_damage(FormId::PLAYER_REF, 10.0), 5.0);
     assert_eq!(g.limb_damage(npc, 10.0), 10.0);
-    let hit = |condition: u16| HitInfo { attacker: Some(FormId::PLAYER_REF), weapon: None, location: 7, critical: false, limb: Some(LimbHit { condition, health_percent: 25.0, damage: 1000.0, points: false }) };
+    let hit = |condition: u16| HitInfo { attacker: Some(FormId::PLAYER_REF), location: 7, limb: Some(LimbHit { condition, health_percent: 25.0, damage: 1000.0, points: false }), ..HitInfo::default() };
     assert_eq!(g.leg_speed_mult(npc), 1.0);
     assert!(g.hit(npc, 1.0, hit(LEFT_MOBILITY)).crippled);
     assert_eq!(g.leg_speed_mult(npc), 0.85);
@@ -2811,6 +2909,40 @@ fn furniture_functions_answer_from_the_use_set_on_the_actor() {
     g.set_furniture_use(npc, None);
     assert_eq!(ask(&mut g, SLEEPING, npc, None), 0.0);
     assert_eq!(g.furniture_use(npc), None);
+}
+
+/// #2948: a teammate brought into another cell forgets the foes left in the one it came
+/// from and, with none left, leaves the fight; a foe in its new cell is kept.
+#[test]
+fn a_teammate_brought_along_leaves_the_foes_of_the_other_cell_behind() {
+    use fnv_game::awareness::{Awareness, State, Target};
+    use fnv_game::detection::Band;
+    let f = fixture();
+    let mut g = game(&f);
+    g.new_game();
+    let (npc, foe, near) = (FormId(NPC_REF), FormId(PATROL_REF), FormId(OTHER_REF));
+    let target = Target { band: Band::Hidden, value: 10.0, at: [0.0; 3], detected: Some(0.0), hidden_since: Some(0.0) };
+    let mut searching = Awareness { state: State::Alert, ..Default::default() };
+    searching.targets.insert(foe, target);
+    let put = |g: &mut fnv_game::game::Game, r: FormId, cell: u32| g.world.get(r).unwrap().cell = Some(FormId(cell));
+    put(&mut g, npc, OTHER_CELL);
+    put(&mut g, foe, CELL);
+    put(&mut g, near, OTHER_CELL);
+    // The foe is in the same cell: kept.
+    put(&mut g, foe, OTHER_CELL);
+    g.awareness.actors.insert(npc, searching.clone());
+    g.leave_foes_behind(npc);
+    assert_eq!(g.awareness.state(npc), State::Alert);
+    // Left behind in the other cell: forgotten, and the search is over.
+    put(&mut g, foe, CELL);
+    g.leave_foes_behind(npc);
+    assert_eq!(g.awareness.state(npc), State::Normal);
+    // One left behind, one in the new cell: only the first is forgotten.
+    searching.targets.insert(near, target);
+    g.awareness.actors.insert(npc, searching);
+    g.leave_foes_behind(npc);
+    let a = g.awareness.get(npc).expect("still searching for the near one");
+    assert!(a.targets.contains_key(&near) && !a.targets.contains_key(&foe), "{:?}", a.targets.keys());
 }
 
 #[test]
@@ -3495,6 +3627,34 @@ End
 }
 
 #[test]
+fn refresh_items_list_sets_one_shot_transient_request() {
+    use fnv_script::vm::XVal;
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let q = |g: &mut fnv_game::Game, body: &str| {
+        g.run_query(&format!("Begin Function {{ }}\n{body}\nEnd\n"), Default::default())
+    };
+    assert!(!g.refresh_items_list_pending());
+    assert!(!g.take_refresh_items_list());
+
+    // Calling RefreshItemsList returns 0 and latches a pending request; repeated calls coalesce.
+    assert_eq!(q(&mut g, "SetFunctionValue (RefreshItemsList)"), Ok(XVal::Num(0.0)));
+    assert!(g.refresh_items_list_pending());
+    assert_eq!(q(&mut g, "RefreshItemsList"), Ok(XVal::Num(0.0)));
+    assert!(g.refresh_items_list_pending());
+
+    // The request is transient (not carried across snapshot/restore).
+    let snap = g.snapshot();
+    let restored = Game::restore(&f.data, World::restore(&f.forms, &f.refs, &snap.sim).unwrap(), g.cfg, &snap).unwrap();
+    assert!(!restored.refresh_items_list_pending());
+
+    // Engine consumption is one-shot.
+    assert!(g.take_refresh_items_list());
+    assert!(!g.refresh_items_list_pending());
+    assert!(!g.take_refresh_items_list());
+}
+
+#[test]
 fn queries_run_function_scripts_and_keep_what_they_change() {
     // The runner's `query` action (Game::run_query): JIP's auxiliary variables set by one
     // query are read by the next, and the saved ones are in the snapshot.
@@ -3680,6 +3840,97 @@ fn answer_ok_boxes_leaves_a_box_with_a_choice_to_the_player() {
     g.run_source("MessageBoxEx \"A|Yes|No\"", Default::default()).expect("compiles");
     assert_eq!((g.menu, g.boxes.len()), (Some(menus::MESSAGE), 1));
     assert!(g.take_answered_boxes().is_empty());
+}
+
+/// The fixture with its message made a box without buttons (Message Box flag, no ITXT),
+/// as BMRhondaFixMsg (MESG 0x000E9551) is (#2925).
+fn ok_box_fixture(message_box: bool) -> Fixture {
+    let mut f = fixture();
+    let msg = f.data.messages.get_mut(&FormId(MESSAGE)).unwrap();
+    msg.buttons.clear();
+    msg.button_conditions.clear();
+    msg.message_box = message_box;
+    f
+}
+
+/// GetButtonPressed as the activator's script (the one that shows the message) calls it.
+fn activator_reads_button(g: &mut Game) -> Value {
+    let ctx = Ctx { unit: "test".into(), opcode: 0x101F, on: None, self_ref: None, action_ref: None, quest: None, inst: Some(InstKey::Ref { reference: FormId(ACT_REF) }), in_condition: false };
+    g.call_function(&ctx, &[])
+}
+
+/// #2925: the Broken Mr. Handy in Black Mountain waits for button 0 after a box with no
+/// buttons. The player's OK on such a box gives the script that showed it 0, once, then
+/// −1 [hypothesis: inferred from SCPT 0x000E9483]; before, the box had no `message_box`
+/// and GetButtonPressed read −1 for good.
+#[test]
+fn ok_on_a_message_box_without_buttons_gives_its_script_button_0_once() {
+    use fnv_game::game::menus;
+    let f = ok_box_fixture(true);
+    let mut g = game(&f);
+    g.new_game();
+    g.activate(FormId::PLAYER_REF, FormId(ACT_REF), ActMode::Hand).unwrap();
+    assert_eq!((g.menu, g.boxes.clone()), (Some(menus::MESSAGE), vec![FormId(MESSAGE)]));
+    assert_eq!(g.message_box.as_ref().map(|m| (m.buttons, m.pressed)), Some((0, None)));
+    assert_eq!(activator_reads_button(&mut g), Value::Num(-1.0), "not answered yet");
+    // The player's OK (`Game::close_menu`, as nvf-play closes an answered box).
+    assert_eq!(g.close_menu(), Some(menus::MESSAGE));
+    assert_eq!(g.menu, None);
+    assert_eq!(activator_reads_button(&mut g), Value::Num(0.0));
+    assert_eq!(activator_reads_button(&mut g), Value::Num(-1.0), "once");
+}
+
+/// A message without the Message Box flag and without buttons is a corner notification:
+/// no box waits, GetButtonPressed stays −1 (#2925).
+#[test]
+fn a_corner_message_gives_get_button_pressed_nothing() {
+    let f = ok_box_fixture(false);
+    let mut g = game(&f);
+    g.new_game();
+    g.activate(FormId::PLAYER_REF, FormId(ACT_REF), ActMode::Hand).unwrap();
+    assert_eq!((g.menu, g.boxes.len()), (None, 0));
+    assert!(g.message_box.is_none());
+    assert_eq!(activator_reads_button(&mut g), Value::Num(-1.0));
+}
+
+/// `--no-messages` (GameConfig::answer_ok_boxes) answers the same box with OK as it is
+/// shown: its script reads 0 once (#2925; before, −1).
+#[test]
+fn answer_ok_boxes_gives_a_box_without_buttons_button_0() {
+    let f = ok_box_fixture(true);
+    let mut g = game(&f);
+    g.cfg.answer_ok_boxes = true;
+    g.new_game();
+    g.activate(FormId::PLAYER_REF, FormId(ACT_REF), ActMode::Hand).unwrap();
+    assert_eq!((g.menu, g.boxes.len()), (None, 0), "the box never opened");
+    assert_eq!(g.take_answered_boxes(), vec![FormId(MESSAGE)]);
+    assert_eq!(activator_reads_button(&mut g), Value::Num(0.0));
+    assert_eq!(activator_reads_button(&mut g), Value::Num(-1.0));
+}
+
+/// A box without buttons shown behind a box with buttons that still waits does not take
+/// its place: the choice's button reaches its script [design, #2925].
+#[test]
+fn a_box_without_buttons_leaves_a_waiting_choice_its_button() {
+    use fnv_game::game::menus;
+    const INFO: u32 = 0x811;
+    let mut f = fixture();
+    let info = fnv_game::data::MessageDef { text: Some("Info".into()), message_box: true, ..Default::default() };
+    f.data.messages.insert(FormId(INFO), info);
+    let mut g = game(&f);
+    g.new_game();
+    // The activator's Yes / No box, then another script's box with OK alone behind it.
+    g.activate(FormId::PLAYER_REF, FormId(ACT_REF), ActMode::Hand).unwrap();
+    let quest = Ctx { unit: "test".into(), opcode: SHOW_MESSAGE, on: None, self_ref: None, action_ref: None, quest: None, inst: Some(InstKey::Quest { quest: q() }), in_condition: false };
+    g.call_function(&quest, &[ArgValue::Value(Value::Ref(INFO))]);
+    assert_eq!(g.boxes, vec![FormId(MESSAGE), FormId(INFO)]);
+    assert_eq!(g.message_box.as_ref().map(|m| m.message), Some(FormId(MESSAGE)), "the choice keeps the slot");
+    g.press_button(1).unwrap();
+    assert_eq!(activator_reads_button(&mut g), Value::Num(1.0));
+    // The box with OK alone is on screen now; its OK has nothing to answer.
+    assert_eq!((g.menu, g.boxes.clone()), (Some(menus::MESSAGE), vec![FormId(INFO)]));
+    g.close_menu();
+    assert_eq!(g.menu, None);
 }
 
 #[test]

@@ -271,3 +271,201 @@ One row per function E1–E3 cover, then one row per built-in event, from §2–
 | RuntimeScriptError | a script raises an extender error | error message | an int |
 | DeleteGame / RenameGame / RenameNewGame | a save is deleted / renamed (old full name / new full name) | file name | its length |
 | DeleteGameName / RenameGameName / RenameNewGameName | the same, relative names | relative file name | its length |
+
+
+## Activation-range crosshair acquisition
+
+[documented] [OnCrosshairOn](https://geckwiki.com/index.php/OnCrosshairOn)
+notifies a registered UDF when a new reference is under the crosshair within
+activation range. Its argument is that reference. The event supports a form or
+form-list filter and a colon-qualified form-type event name. This is separate
+from the JohnnyGuitar-specific crosshair registration API.
+
+[observed: original installed mod data] ySI Contextual Prompts registers a
+CompileScript callback for this event. Its callback chooses an image from the
+current reference and updates HUD root traits that an injected image reads.
+The original restart guard requires yUI 140 as one dependency. That requirement
+alone does not establish that every yUI feature is implemented or executed.
+
+[design] The existing activation ray and its activation distance remain the
+source of GetCrosshairRef, and the event is delivered through the existing
+registration/filter machinery.
+
+[hypothesis] A new nonempty reference produces one plain event and its
+corresponding type-qualified event. Repeating the same reference does not produce
+another acquisition; leaving to no target updates the getter without an On event;
+acquiring a reference after that gap produces a new event. The callback sees the
+new reference through GetCrosshairRef. None of this per-transition behaviour has
+been observed in the original game; the page only says a new reference raises it.
+
+[design] The existing JohnnyGuitar callback remains before getter publication. The
+newly added event runs before the normal Scripts set. Plain then type-qualified
+delivery is a mapped engine ordering; native relative ordering and timing are not
+measured [hypothesis].
+
+[design] No extra ray, per-frame target cache, replacement HUD, provider version
+change or original mod/configuration edit is introduced. With no relevant
+handlers, the new source-event path performs no type lookup or argument-vector
+allocation. Session registration, removal and load behavior remain those of the
+existing SetEventHandler implementation. Full original initialization, provider
+coverage, selected XML/layout and native timing remain separate acceptance work.
+GetCrosshairWater's existing unsupported result is not repaired by this event.
+
+[validation plan] One standalone core test owns the process-wide CompileScript
+file reader. Independently authored source and XML exercise real compilation,
+registration, injection, current-reference readback, resolved image filename and
+alpha, one acquisition per transition, form/list/type filters, existing Johnny
+order and removal. One engine library control uses the existing production
+activation ray against real collision, the registered source callback, injected
+image and actual draw pieces; it retains a nonempty title, repeated target,
+parent hiding, collision eviction and subsequent acquisition. The engine test's
+callback is an in-memory compiled lambda; the file-backed core path covers
+CompileScript without racing the engine suite's global file readers. All cases
+were unexecuted when first authored. Hosted `35677cf5` and `22b8138c`
+engine controls each passed once; their file-backed core controls failed at
+separate earlier boundaries. In a later qualified runtime-only check of
+`d27e4e0b`, file compilation, original callable admission, plain-event callback,
+current getter, Johnny ordering and exact decimal source-value readback passed.
+The first failure was the CONT type-qualified counter, not the plain callback.
+The associated compile controller remained unqualified after descendant cleanup;
+this does not invalidate or promote its separately admitted runtime result.
+
+[design] Type-qualified delivery uses the existing canonical source-VM form-type
+mapping, rather than the inventory-item subset. The source regression queries
+GetType for its actual CONT and DOOR targets, then checks distinct type listeners
+and a nonmatching armor listener. Existing base-reference lookup and callback
+ordering are retained; cloned or dynamically substituted base-type parity is not
+newly established. The new canonical-mapping successor and its two identical-
+fixture baselines require their own compile, strict-lint and execution results.
+The original absent-event baseline is distinct from the d27 typed-delivery
+baseline. No original-mod, native, GPU or popup-resolution acceptance is claimed.
+
+[design] Event filters retain their value kinds: numeric literals are numbers, not
+forms with the same integer value. The crosshair fixture supplies actual reference
+and form-list values, then reads the original registered filters through live
+GetEventHandlers arrays to verify both kind and exact FormID. Raw numeric literals
+remain nonmatching controls; no general filter coercion is added.
+
+[validation] Hosted 6a04897b passed file compilation, original callable, plain
+callback, getter/order/literal and typed CONT controls, then failed the form-filter
+counter. Its filter source supplied numeric literals. Later list/image/lifecycle
+controls were unreached. The engine control passed once (full engine 3422 passed,
+zero failed, three ignored; strict engine Clippy passed). The typed-filter fixture
+correction and its identical-fixture baseline are unexecuted at authoring. This
+changes fixture inputs and diagnostics only, preserving production policy.
+
+### Crosshair target loss (`OnCrosshairOff`)
+
+[documented: GECK wiki, [OnCrosshairOff](https://geckwiki.com/index.php/OnCrosshairOff)]
+`OnCrosshairOff` is the counterpart to `OnCrosshairOn`: it notifies a registered UDF
+when a reference within activation range leaves the player's crosshair, passing that
+reference as its single argument. Like `OnCrosshairOn`, it supports form/form-list
+filters and colon-qualified form-type event names (`OnCrosshairOff:<formType>`).
+
+[hypothesis] In `Game::set_crosshair_ref`, transitioning from `Some(prev)` to `None`
+dispatches plain `OnCrosshairOff` then `OnCrosshairOff:<formType>` for `prev` (with
+`GetCrosshairRef` already updated to `0`). Transitioning from `Some(prev)` to
+`Some(next)` with `prev != next` dispatches `OnCrosshairOff` (and its typed variant)
+for `prev` before `OnCrosshairOn` (and its typed variant) for `next`. Repeating the
+same target or staying on `None` emits nothing. Plain-before-typed ordering and
+`GetCrosshairRef` visibility inside `OnCrosshairOff` have not been measured in the
+original game.
+
+[design] When no `OnCrosshairOff` or `OnCrosshairOff:*` handler is registered,
+`Game::set_crosshair_ref` performs no type lookup or argument allocation, leaving
+unmodded gameplay unchanged. No third-party mod DLL or extender source code was
+consulted.
+
+## Named key and gamepad button events (`OnKeyDown`, `OnKeyUp`, `OnButtonDown`, `OnButtonUp`)
+
+[documented: GECK wiki, [OnKeyDown](https://geckwiki.com/index.php?title=OnKeyDown),
+[OnKeyUp](https://geckwiki.com/index.php?title=OnKeyUp)] `OnKeyDown` and `OnKeyUp`
+notify a `SetEventHandler`-registered UDF when a keyboard key or mouse button is
+pressed or released, passing the DirectX scancode (256 + n for mouse buttons) as one
+numeric argument. Registration accepts either the plain event name or a colon-qualified
+scancode (`"OnKeyDown:38"`, `"OnKeyUp:203"`).
+
+[documented: GECK wiki, [OnButtonDown](https://geckwiki.com/index.php?title=OnButtonDown),
+[OnButtonUp](https://geckwiki.com/index.php?title=OnButtonUp)] `OnButtonDown` and
+`OnButtonUp` notify a `SetEventHandler`-registered UDF when a gamepad button is pressed
+or released, passing the pressed or released XInput single-button code (`1` D-pad up,
+`2` D-pad down, `4` D-pad left, `8` D-pad right, `16` Start, `32` Back, `64`/`128`
+thumbsticks, `256`/`512` shoulders, `1024` guide, `4096` A, `8192` B, `16384` X,
+`32768` Y) as one numeric argument. A colon-qualified suffix (`"OnButtonDown:4"`,
+`"OnButtonDown:12288"`) accepts either a single button code or a combined decimal
+bitmask so one registration listens for any button bit in that mask.
+
+[design] `Game::jip_keys` (invoked from both `Game::tick` and `Game::page_tick`)
+advances held-key and held-button snapshots once per frame even without subscribers,
+matching `control_edges` ([control-input-events.md](control-input-events.md)). Key
+edges read `ScriptInput::held` and dispatch JIP's `keydown`/`keyup` alongside plain
+`"OnKeyDown"`/`"OnKeyUp"` and colon-qualified `"OnKeyDown:<code>"`/`"OnKeyUp:<code>"`.
+Button edges read `Pad::buttons | Pad::held_buttons` (matching `GetPressedButtons` /
+`IsButtonPressed`) and dispatch plain `"OnButtonDown"`/`"OnButtonUp"` followed by all
+colon-qualified `"OnButtonDown:<mask>"`/`"OnButtonUp:<mask>"` handlers whose decimal
+bitmask overlaps the changed single-button bit, ordered by priority descending and
+registration sequence ascending, with `GetCurrentEventName` returning each handler's
+registered event string.
+
+[hypothesis] Relative ordering between JIP `SetOnKeyDownEventHandler` /
+`SetOnKeyUpEventHandler`, plain `OnKeyDown`/`OnKeyUp`, colon-qualified
+`OnKeyDown:<code>`/`OnKeyUp:<code>`, control events, and `OnButtonDown`/`OnButtonUp`
+within the same frame is a mapped NVForever ordering not yet measured in the original
+game. Whether `DisableKey` suppresses named `OnKeyDown`/`OnKeyUp` or `DisableButton`
+suppresses `OnButtonDown`/`OnButtonUp`, whether `HoldButton` triggers `OnButtonDown`,
+and how native handles multi-button bitmask priority ties or plain `"OnButtonDown"`
+without a colon suffix have not been observed in original-game captures; NVForever
+delivers disabled-key and disabled-button transitions consistently with
+`SetOnKeyDownEventHandler` and `OnControlDown`.
+
+## Player grab events (`OnPlayerGrab`, `OnPlayerRelease`)
+
+[documented: GECK wiki, OnPlayerGrab, OnPlayerRelease] `OnPlayerGrab` and
+`OnPlayerRelease` notify a `SetEventHandler`-registered UDF when the player picks up
+(Control Code 27 / hold Activate) or releases (drops/throws) a grabbed world reference,
+passing the grabbed or released reference as one reference argument. Registration accepts
+the plain event name, `"first"::` form/base/form-list filters, `SetEventHandlerAlt`
+indexed filters (`0::`/`1::`), and colon-qualified form-type names
+(`"OnPlayerGrab:<type>"`, `"OnPlayerRelease:<type>"`).
+
+[design] `Game::set_player_grab` (`crates/fnv-game/src/functions/senses.rs`, called by
+`engine/nvf-play/src/grab.rs` on every grab start and release path: manual release, throw,
+caught/out-of-range drop, menu/VATS/furniture/state exit, simulation absence or body
+removal, and physics teardown) short-circuits on unchanged state so grab/release events
+are symmetric with zero double-fire. With no matching `OnPlayerGrab` or `OnPlayerRelease`
+handlers registered, the dispatch helper performs no form-type lookup or allocation and
+leaves unmodded vanilla behavior unchanged.
+
+[hypothesis] `Game::set_player_grab` updates `senses.grabbed` before dispatching (so
+`IsPlayerGrabbedRef` and `GetPlayerGrabbedRef` report the new grab state inside callbacks),
+runs the reference's `OnRelease` / `OnGrab` blocks before the named extender handlers,
+sets `this = grabbedRef` alongside `arg0 = grabbedRef`, and delivers plain then
+colon-qualified `:formType` events using the canonical `form_type_code` mapping. Relative
+block-vs-handler ordering, exact calling reference, and whether `GetPlayerGrabbedRef`
+still reports the released ref inside `OnPlayerRelease` have not been measured in
+original-game captures.
+
+## Image space modifier events (`OnApplyIMOD`, `OnRemoveIMOD`)
+
+[documented: GECK wiki, [NVSE Event Handling](https://geckwiki.com/index.php?title=NVSE_Event_Handling)]
+`OnApplyIMOD` and `OnRemoveIMOD` are built-in xNVSE events (already listed in
+`nvse_handler_lists::KNOWN`) triggered when an image space modifier (`IMAD`) is applied
+to or removed from the screen.
+
+[hypothesis] NVForever dispatches `OnApplyIMOD` from `Game::apply_image_modifier` (after
+updating `Game::image_modifiers` so `IsImageSpaceActive` reads `1` inside the callback)
+and `OnRemoveIMOD` from `Game::remove_image_modifier` (only when the modifier was active)
+and `Game::update_image_modifiers` (when an animatable modifier's duration expires, with
+`IsImageSpaceActive` already reading `0`). Both pass the `IMAD` form as the single first
+argument (`vec![XVal::Ref(modifier.0)]`, matched by `"first"::` in `SetEventHandler` and
+`1::` in `SetEventHandlerAlt`) with `on = None` (an `IMAD` is a base form, not a placed
+reference). Re-applying an already active modifier dispatches `OnApplyIMOD` again;
+applying an invalid non-`IMAD` form or removing an inactive modifier does not dispatch;
+restoring a snapshot assigns `Game::image_modifiers` directly without firing
+`OnApplyIMOD`. Exact argument count (1 vs 2 with trailing 0), re-apply dispatch, and
+whether natural duration expiry dispatches `OnRemoveIMOD` have not been measured in
+original-game captures.
+
+[design] Both dispatch sites check `Game::handled("onapplyimod")` /
+`Game::handled("onremoveimod")` before allocating an argument vector, leaving unmodded
+vanilla gameplay unchanged. No extender DLL, PDB, or C++ source code was consulted.

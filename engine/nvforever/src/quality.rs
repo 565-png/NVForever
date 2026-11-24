@@ -137,12 +137,31 @@ pub const UNUSED: [(&str, &str); 32] = [
     ("Water", "bForceHighDetailReflections"),
 ];
 
-/// A preset as rows: its name and each mapped row's value, as `Setting::value` gives it
-/// (a switch 1 or 0, a slider its part).
+/// NVForever's own rows a preset sets beside the files' keys: (preset, row, the choice it
+/// takes) [design, #2864]. Smooth terrain is not in the original, so no preset file names
+/// it; on an integrated GPU (Intel N150, 1920x1080, the Low preset's rows, Goodsprings at
+/// noon) 4 x 4 costs 9 ms of a 73 ms frame and 2 x 2 3 ms [observed: #2864], so the two
+/// lower presets turn it off and the two upper ones keep the default. The row applies at
+/// the next start (`nvf_play::smooth_terrain`), and so does a preset's change to it.
+pub const OWN: [(&str, &str, &str); 4] = [
+    ("Low", nvf_play::smooth_terrain::KEY, "Off"),
+    ("Medium", nvf_play::smooth_terrain::KEY, "Off"),
+    ("High", nvf_play::smooth_terrain::KEY, "4 x 4"),
+    ("Very High", nvf_play::smooth_terrain::KEY, "4 x 4"),
+];
+
+/// A preset as rows: its name, each mapped row's value, as `Setting::value` gives it
+/// (a switch 1 or 0, a slider its part), and the choices of NVForever's own rows ([`OWN`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct QualityPreset {
     pub label: &'static str,
     pub rows: Vec<(&'static str, f32)>,
+    pub choices: Vec<(&'static str, &'static str)>,
+}
+
+/// [`OWN`]'s rows for the preset named `label`.
+pub fn own_choices(label: &str) -> Vec<(&'static str, &'static str)> {
+    OWN.iter().filter(|(p, _, _)| *p == label).map(|(_, row, choice)| (*row, *choice)).collect()
 }
 
 /// The presets offered this run (those whose file was read), in [`PRESETS`]' order, and
@@ -256,7 +275,7 @@ pub fn build(files: &[(&'static str, String)]) -> (Vec<QualityPreset>, Vec<Strin
             if rows.is_empty() {
                 problems.push(format!("{label}: none of the keys that set a row is in it (not an INI of the presets, or an encoding not read); it sets no row"));
             }
-            QualityPreset { label, rows }
+            QualityPreset { label, rows, choices: own_choices(label) }
         })
         .collect();
     (presets, problems)
@@ -297,14 +316,47 @@ fn holds(world: &World, settings: &Settings, key: &str, target: f32) -> Option<b
     })
 }
 
+/// Whether list row `key` shows the choice `name` now; `None` when the row is not
+/// registered this run.
+fn holds_choice(world: &World, settings: &Settings, key: &str, name: &str) -> Option<bool> {
+    let c = settings.choices(settings.index(key)?)?;
+    Some((c.chosen)(world) == name)
+}
+
+/// Whether `preset` leaves row `key` greyed: one of the rows it needs to be on
+/// (`nvf_play::settings_layout::NEEDS`: Shadow Filtering and Shadow Distance need Sun
+/// Shadows) is a row of the preset that the preset turns off. A row counts as on as the
+/// page counts it (`Settings::disabled_status`): a switch on, a list past its first choice.
+fn greyed_by(world: &World, settings: &Settings, preset: &QualityPreset, key: &str) -> bool {
+    nvf_play::settings_layout::NEEDS.iter().filter(|(child, _, _)| *child == key).any(|(_, parent, _)| {
+        preset.rows.iter().filter(|(k, _)| k == parent).any(|(_, v)| {
+            let Some(i) = settings.index(parent) else { return false };
+            match settings.choices(i) {
+                Some(c) => choice_index(*v, (c.names)(world).len()) == 0,
+                None => *v < 0.5,
+            }
+        })
+    })
+}
+
 /// What the Quality row reads: the first preset whose rows (those registered) all hold its
-/// values, else [`CUSTOM`]. A preset none of whose rows is registered matches nothing.
+/// values, its own rows' choices ([`OWN`]) included, else [`CUSTOM`]. A preset none of
+/// whose rows is registered matches nothing.
+///
+/// A row the preset itself leaves greyed is not asked ([`greyed_by`]) [design, #3357]: with
+/// Sun Shadows already off, taking a preset that keeps them off cannot set Shadow Filtering
+/// or Shadow Distance (a greyed row takes no edit), so whatever they held before stayed and
+/// the row read Custom straight after Low was taken [observed: smoke
+/// `quality-main-menu-measure`, which passed once and failed on every run after, as its
+/// first run leaves Sun Shadows off in its home]. What a greyed row holds draws nothing;
+/// the next preset that turns its parent on sets it ([`pick_quality`]'s second pass).
 pub fn quality_reading(world: &World) -> &'static str {
     let (Some(settings), Some(p)) = (world.get_resource::<Settings>(), world.get_resource::<QualityPresets>()) else { return CUSTOM };
     p.presets
         .iter()
         .find(|preset| {
-            let held: Vec<bool> = preset.rows.iter().filter_map(|(k, v)| holds(world, settings, k, *v)).collect();
+            let mut held: Vec<bool> = preset.rows.iter().filter(|(k, _)| !greyed_by(world, settings, preset, k)).filter_map(|(k, v)| holds(world, settings, k, *v)).collect();
+            held.extend(preset.choices.iter().filter_map(|(k, name)| holds_choice(world, settings, k, name)));
             !held.is_empty() && held.iter().all(|h| *h)
         })
         .map_or(CUSTOM, |preset| preset.label)
@@ -352,6 +404,14 @@ pub fn pick_quality(world: &mut World, name: &str) -> bool {
             if pass == 0 {
                 set += 1;
             }
+        }
+    }
+    // NVForever's own rows ([`OWN`]): each takes its choice as a pick on the page would.
+    for (key, name) in &preset.choices {
+        let Some(i) = world.resource::<Settings>().index(key) else { continue };
+        set += 1;
+        if settings::pick(world, i, name) && *key == nvf_play::smooth_terrain::KEY {
+            info!("quality presets: {}: Smooth terrain {name}, from the next start", preset.label);
         }
     }
     info!("quality presets: {} from {}: {set} row(s) set", preset.label, dir.display());
@@ -439,7 +499,7 @@ pub fn register(app: &mut App, group: &'static str) {
             key: QUALITY_KEY,
             group,
             label: "Quality preset",
-            note: "Sets the rows the original's quality presets cover to the game folder's low.ini to VeryHigh.ini. Custom: those rows match none of them.",
+            note: "Sets the rows the original's quality presets cover to the game folder's low.ini to VeryHigh.ini, and Smooth terrain (Off at Low and Medium). Custom: those rows match none of them.",
             switches: "",
             get: |_| false,
             set: |_, _| {},
@@ -467,7 +527,7 @@ mod tests {
         all.dedup();
         assert_eq!((n, all.len()), (41, 41));
         let effects = enhanced_keys();
-        assert_eq!(effects, ["ambient-occlusion", "fine-shadows", "bloom", "sharpen", "anisotropic", "light-shafts", "water-reflections"]);
+        assert_eq!(effects, ["ambient-occlusion", "fine-shadows", "bloom", "sharpen", "anisotropic", "light-shafts", "water-reflections", "water-effects"]);
         for m in MAPPED {
             assert!(!effects.contains(&m.row), "{} is an enhanced effect", m.row);
             let (mut a, mut b) = (Graphics::preset(Look::Enhanced), Graphics::preset(Look::Vanilla));
@@ -587,10 +647,35 @@ mod tests {
         Setting::slider(key, "Graphics", key, "", Slider { get, set, min: 0.1, step: 0.05, shown: None })
     }
 
-    /// The mapped rows at today's defaults (all on, Smooth, every distance 100%) with the
-    /// Quality row over made-up presets.
+    /// The test's Smooth terrain row: a list of the row's own names.
+    #[derive(Resource)]
+    struct Smooth(&'static str);
+
+    const SMOOTH_NAMES: [&str; 4] = ["Off", "2 x 2", "4 x 4", "4 x 4 near"];
+
+    fn pick_smooth(w: &mut World, name: &str) -> bool {
+        let Some(n) = SMOOTH_NAMES.iter().find(|n| **n == name) else { return false };
+        w.resource_mut::<Smooth>().0 = n;
+        true
+    }
+
+    /// The mapped rows at today's defaults (all on, Smooth, every distance 100%, Smooth
+    /// terrain 4 x 4) with the Quality row over made-up presets.
     fn app(files: &[(&'static str, &str)]) -> App {
         let mut app = App::new();
+        app.insert_resource(Smooth("4 x 4"));
+        add_choice_list(
+            &mut app,
+            Setting { key: nvf_play::smooth_terrain::KEY, group: "Graphics", label: "s", note: "", switches: "", get: |_| false, set: |_, _| {}, slider: None },
+            ChoiceList {
+                names: |_| SMOOTH_NAMES.iter().map(|n| n.to_string()).collect(),
+                chosen: |w| w.resource::<Smooth>().0.to_string(),
+                pick: pick_smooth,
+                save: |w| w.resource::<Smooth>().0.to_string(),
+                load: pick_smooth,
+                ask_keep: false,
+            },
+        );
         app.insert_resource(Rows { shadows: true, glow: true, mirror: true, filter: 0.5, parts: [1.0; 5] });
         add_setting(&mut app, switch("sun-shadows", |w| w.resource::<Rows>().shadows, |w, on| w.resource_mut::<Rows>().shadows = on));
         add_setting(&mut app, switch("glow", |w| w.resource::<Rows>().glow, |w, on| w.resource_mut::<Rows>().glow = on));
@@ -633,6 +718,24 @@ mod tests {
         assert!(!settings::pick(w, row, CUSTOM), "Custom is read, not taken");
         settings::set_slider(w, obj, 0.25);
         assert_eq!(quality_reading(w), "Low");
+        // #3357: Low leaves Sun Shadows off, which greys Shadow Filtering and Shadow
+        // Distance; what those hold then (left from before, as a greyed row takes no edit)
+        // does not make the row read Custom, and Low can be taken again over it.
+        w.resource_mut::<Rows>().filter = 0.5;
+        w.resource_mut::<Rows>().parts[3] = 0.75;
+        assert_eq!(quality_reading(w), "Low", "greyed rows are not asked");
+        assert!(!settings::pick(w, row, "Low"), "it is the choice already");
+        // With Sun Shadows on they are asked again.
+        w.resource_mut::<Rows>().shadows = true;
+        assert_eq!(quality_reading(w), CUSTOM);
+        // A preset that turns Sun Shadows on sets them (the second pass), from that state too.
+        w.resource_mut::<Rows>().shadows = false;
+        assert!(settings::pick(w, row, "Very High"));
+        let r = w.resource::<Rows>();
+        assert_eq!((r.shadows, r.filter, r.parts[3]), (true, 0.5, 1.0));
+        assert_eq!(quality_reading(w), "Very High");
+        assert!(settings::pick(w, row, "Low"));
+        assert_eq!(quality_reading(w), "Low");
         // A row no preset covers changes nothing.
         let sun = w.resource::<Settings>().index("sun-shadows").unwrap();
         settings::flip(w, sun);
@@ -642,6 +745,64 @@ mod tests {
         assert_eq!(w.resource::<Rows>().parts, [1.0; 5]);
         assert_eq!(quality_reading(w), "Very High");
         assert!(!settings::pick(w, row, "Medium"), "a preset without its file is not offered");
+    }
+
+    /// #2248: a preset sets its nine rows and writes `NVForever.ini` once, not once per row
+    /// (each write cost ~27 ms on the main thread in the measured run).
+    #[test]
+    fn a_preset_writes_the_ini_once() {
+        let dir = std::env::temp_dir().join(format!("nvf-quality-writes-{}", std::process::id()));
+        let path = dir.join("NVForever.ini");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut app = app(&[("Low", LOW), ("Very High", HIGH)]);
+        app.insert_resource(settings::SettingsFile(Some(path.clone()))).init_resource::<settings::StoreAttempts>();
+        let w = app.world_mut();
+        let writes = |w: &World| w.resource::<settings::StoreAttempts>().0.load(std::sync::atomic::Ordering::Relaxed);
+        let row = w.resource::<Settings>().index(QUALITY_KEY).unwrap();
+        assert!(settings::pick(w, row, "Low"));
+        assert_eq!(writes(w), 1, "one write for the preset and every row it set");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("quality=Low") && text.contains("sun-shadows=0") && text.contains("object-distance=0.25"), "{text}");
+        let obj = w.resource::<Settings>().index("object-distance").unwrap();
+        settings::set_slider(w, obj, 0.5);
+        assert_eq!(writes(w), 2, "a row alone: one write");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// #2864: the presets set Smooth terrain, a row of NVForever's own that no preset file
+    /// names: Off at Low and Medium, 4 x 4 at High and Very High; changed by hand, Custom.
+    #[test]
+    fn the_presets_set_smooth_terrain() {
+        // The table: every preset names the row once, with a choice the row offers.
+        for (preset, _) in PRESETS {
+            let own = own_choices(preset);
+            assert_eq!(own.len(), 1, "{preset}");
+            assert_eq!(own[0].0, nvf_play::smooth_terrain::KEY);
+            assert!(SMOOTH_NAMES.contains(&own[0].1), "{preset}: {}", own[0].1);
+        }
+        let choice = |p: &str| own_choices(p)[0].1;
+        assert_eq!((choice("Low"), choice("Medium"), choice("High"), choice("Very High")), ("Off", "Off", "4 x 4", "4 x 4"));
+        for n in SMOOTH_NAMES {
+            assert!(nvf_play::smooth_terrain::Smoothing::parse(&n.replace(' ', "").replace("4x4near", "4x4-near").to_ascii_lowercase()).is_some(), "{n} is one of the row's levels");
+        }
+        // On the page.
+        let mut app = app(&[("Low", LOW), ("Very High", HIGH)]);
+        let w = app.world_mut();
+        let row = w.resource::<Settings>().index(QUALITY_KEY).unwrap();
+        assert_eq!(quality_reading(w), "Very High");
+        assert!(settings::pick(w, row, "Low"));
+        assert_eq!(w.resource::<Smooth>().0, "Off");
+        assert_eq!(quality_reading(w), "Low");
+        // The row changed by hand: Custom; back: Low; the fullest preset brings 4 x 4 back.
+        let smooth = w.resource::<Settings>().index(nvf_play::smooth_terrain::KEY).unwrap();
+        assert!(settings::pick(w, smooth, "2 x 2"));
+        assert_eq!(quality_reading(w), CUSTOM);
+        assert!(settings::pick(w, smooth, "Off"));
+        assert_eq!(quality_reading(w), "Low");
+        assert!(settings::pick(w, row, "Very High"));
+        assert_eq!(w.resource::<Smooth>().0, "4 x 4");
+        assert_eq!(quality_reading(w), "Very High");
     }
 
     #[test]

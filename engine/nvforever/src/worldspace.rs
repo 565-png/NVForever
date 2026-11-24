@@ -13,11 +13,13 @@
 //! - Water: distant water planes and their per-cell surfaces are dropped (they hold the
 //!   old worldspace's default water height and water type).
 //!
-//! Each worldspace's own records are used. A child worldspace (WRLD `WNAM`) may take data
-//! from its parent by its `PNAM` flags [documented: xEdit names, schemas/fnv/world.json];
-//! every child worldspace in the ten masters sets only "Use Map Data" and has its own
-//! climate, water, image space and land [observed: `fnvtool world list`, `esm decode`],
-//! so taking the parent's is not implemented beyond what the start already does.
+//! A child worldspace (WRLD `WNAM`) takes data from its parent by its `PNAM` flags
+//! [documented: xEdit names, schemas/fnv/world.json]. The world index follows them for
+//! land, default heights, water type and climate (`fnv_world::WorldIndex::take_parent_data`,
+//! #2345; world.md §2.1), the distant LOD's files are the parent's with Use LOD Data
+//! (`WorldIndex::lod_world`), and the image space falls back to the parent's. Every child
+//! in the ten New Vegas masters sets only "Use Map Data"; Tale of Two Wastelands' Megaton,
+//! Oasis, Paradise Falls and the DC roof worlds set more.
 
 use crate::lod::{GenState, LodState};
 use crate::sky::{self, CloudLayer, MoonDisc, SkyDome, SkyState, Stars, Sun};
@@ -37,13 +39,15 @@ fn carry_sky(from: &SkyState, s: &mut SkyState) {
     s.shadows = from.shadows;
     s.shadow_distance = from.shadow_distance;
     s.shadow_reach = from.shadow_reach;
-    s.shadow_cascades = from.shadow_cascades;
+    s.shadow_layout = from.shadow_layout;
     s.grade = from.grade;
     s.time_scale = from.time_scale;
     s.clock_running = from.clock_running;
     s.days_passed = from.days_passed;
     s.clock_seen = from.clock_seen;
     s.fog_override = from.fog_override;
+    s.weather_fog_overrides = from.weather_fog_overrides.clone();
+    s.weather_visual_overrides = from.weather_visual_overrides.clone();
     s.script_wind = from.script_wind;
     s.moon_textures = from.moon_textures.clone();
 }
@@ -58,6 +62,9 @@ pub(crate) fn carry_climate_sky(from: &SkyState, s: &mut SkyState, global_value:
         }
     }
     carry_sky(from, s);
+    if from.world_image_space_id.is_some() && from.world_image_space_id == s.world_image_space_id {
+        s.image_space = from.image_space;
+    }
     s.carry_region_placement(from);
 }
 
@@ -90,6 +97,16 @@ pub fn script_sky(
         let weather = sky.weather.edid.clone();
         match SkyState::with_climate(&world, c, args.weather.as_deref(), weather.as_deref(), sky.hour, sky.rng) {
             Ok(mut s) => {
+                // Preserve live SetWorldspaceImagespace / exterior SetCellImageSpace across
+                // same-worldspace climate rebuilds before carry_climate_sky runs.
+                let active_space = sky
+                    .world_image_space_id
+                    .filter(|&id| Some(id) != s.world_image_space_id)
+                    .or_else(|| crate::world::effective_worldspace_image_space_id(&world, Some(g)));
+                if active_space != s.world_image_space_id {
+                    s.world_image_space_id = active_space;
+                    s.image_space = active_space.and_then(|id| crate::world::effective_image_space(&world, Some(g), id));
+                }
                 carry_climate_sky(&sky, &mut s, |id| sim.world.global(fnv_sim::FormId(id)).ok());
                 info!("sky: climate {:08X} -> {c:08X}{}: {}", sky.climate.form_id, if wanted.is_some() { " (a script's)" } else { "" }, s.describe());
                 *sky = s;

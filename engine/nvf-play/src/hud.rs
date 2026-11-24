@@ -111,6 +111,10 @@ const LINE_Y: f32 = 66.0;
 const LEFT_UPRIGHT: f32 = 17.0;
 const RIGHT_UPRIGHT: f32 = 369.0;
 const DIVIDER: f32 = 207.0;
+/// How far in from the view's right edge the right bracket's end upright stands, its outer
+/// side (the upright about 2 units wide): the line other pieces keep inside on the right
+/// (`crate::quick_loot`) [design, #2933: step 10].
+pub(crate) const RIGHT_EDGE_IN: f32 = MARGIN_X + AP_PANEL.x - RIGHT_UPRIGHT - 2.0;
 /// The small corner marks on the long line: where a full bar ends on the left piece and
 /// starts on the right one.
 const LEFT_MARK: f32 = 320.0;
@@ -139,7 +143,7 @@ const ENEMY_MIDDLE: f32 = ENEMY_BRACKET_AT.x + (ENEMY_MARKS.0 + ENEMY_MARKS.1) /
 /// picture to the end of the last one's, leaving out the empty room after the last letter
 /// that `Line::width` counts (and the room before the first) [design: #1826].
 fn centred_x(font: &Font, line: &fnv_font::Line, middle: f32) -> f32 {
-    let drawn = line.glyphs.iter().map(|p| (p, font.glyph(p.code))).filter(|(_, g)| g.drawn());
+    let drawn = line.glyphs.iter().map(|p| (p, font.bitmap_glyph(p))).filter(|(_, g)| g.drawn());
     let (left, right) = drawn.fold((f32::INFINITY, f32::NEG_INFINITY), |(l, r), (p, g)| (l.min(p.x + g.before), r.max(p.x + g.before + g.width)));
     if left > right {
         // Nothing drawn (stand-in font, spaces): its set width.
@@ -569,7 +573,7 @@ fn gather(
         now.heading = control.as_deref().map_or(p.heading, |c| c.view_heading(p.heading)).to_degrees();
     }
     // The player's tweak: the body armour's condition [design: docs/design/tweaks.md].
-    now.armor = combat.as_ref().filter(|_| tweaks.as_ref().is_some_and(|t| t.armor_condition)).and_then(|c| c.hud_armor(&mut sim));
+    now.armor = combat.as_ref().filter(|_| tweaks.as_ref().is_some_and(|t| t.game.armor_condition)).and_then(|c| c.hud_armor(&mut sim));
     if let Some(c) = &combat {
         now.weapon = c.hud_weapon(&sim);
         if let Some(v) = &vats {
@@ -763,6 +767,7 @@ fn place_name(
     mut face_: Local<Option<Face>>,
     (mut shown, mut region): (Local<(Option<String>, Option<String>)>, Local<(Option<fnv_sim::FormId>, Option<String>)>),
     text: Query<Entity, With<PlaceNameText>>,
+    mut font_revision: Local<u32>,
 ) {
     let _hud = crate::interface::hud_units();
     let Ok(e) = text.single() else { return };
@@ -771,7 +776,8 @@ fn place_name(
         let (st, loc, player) = (markers.as_deref()?, location.as_deref().filter(|l| l.interior.is_none())?, player.as_deref()?);
         let heading = control.as_deref().map_or(player.heading, |c| c.view_heading(player.heading)).to_degrees();
         let range = crate::compass::place_range();
-        let list = st.named_markers_of(loc.world);
+        let game = script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game);
+        let list = st.named_markers_of(loc.world, game);
         let list = list.iter().filter(|m| sim.present(m.0)).map(|m| ([m.1[0], m.1[1]], m.2, m.3));
         place_ahead(list, [player.feet[0], player.feet[1]], heading, range, t.marker_name_angle, t.marker_name_hide_unfound, t.marker_name_units)
     })();
@@ -787,7 +793,9 @@ fn place_name(
         region.1.clone()
     })();
     let now = (region_words, words);
-    if *shown == now {
+    let revision = crate::cjk_font::revision();
+    let font_changed = std::mem::replace(&mut *font_revision, revision) != revision;
+    if *shown == now && !font_changed {
         return;
     }
     if now.0 != shown.0 {
@@ -1288,13 +1296,7 @@ fn pips(
             Bar::Enemy => None,
         };
         if let Some(red) = red {
-            let colour = if red { crime_colour() } else { amber(METER_BRIGHTNESS) };
-            if let Some(i) = image.as_mut().filter(|i| i.color != colour) {
-                i.color = colour;
-            }
-            if let Some(b) = fill.as_mut().filter(|b| b.0 != colour) {
-                b.0 = colour;
-            }
+            set_tick_colour(image.as_deref_mut(), fill.as_deref_mut(), if red { crime_colour() } else { amber(METER_BRIGHTNESS) });
         }
         let on = match pip.bar {
             Bar::Health => pip.index < lit(view.health, PIPS),
@@ -1337,6 +1339,27 @@ fn set_tick_alpha(image: Option<impl DerefMut<Target = ImageNode>>, fill: Option
         (None, Some(mut fill)) => {
             if fill.0.alpha() != alpha {
                 fill.0 = fill.0.with_alpha(alpha);
+            }
+        }
+        (None, None) => {}
+    }
+}
+
+/// A health or action points tick's colour (amber, or red under the low-bar tweak): on
+/// its picture when it has one, else on its fill (the stand-in block), as
+/// [`set_tick_alpha`]. Painting a pictured tick's transparent background too made a solid
+/// block that hid `hud_tick_mark.dds`'s fade towards the top [observed: owner's
+/// screenshot 2026-11-18, #2951; from #1892 on].
+fn set_tick_colour(image: Option<&mut ImageNode>, fill: Option<&mut BackgroundColor>, colour: Color) {
+    match (image, fill) {
+        (Some(image), _) => {
+            if image.color != colour {
+                image.color = colour;
+            }
+        }
+        (None, Some(fill)) => {
+            if fill.0 != colour {
+                fill.0 = colour;
             }
         }
         (None, None) => {}
@@ -1597,6 +1620,23 @@ mod tests {
             let mut block = BackgroundColor(Color::WHITE);
             set_tick_alpha(None::<&mut ImageNode>, Some(&mut block), alpha);
             assert_eq!(block.0.alpha(), alpha);
+        }
+    }
+
+    /// The health and action points ticks' colour, amber or the low-bar red, goes on the
+    /// picture and leaves a pictured tick's background clear, so the picture's fade shows
+    /// (#2951); a stand-in block takes it on its fill.
+    #[test]
+    fn a_meter_tick_keeps_its_background_clear_so_its_picture_fades() {
+        for colour in [amber(METER_BRIGHTNESS), crime_colour()] {
+            let mut image = ImageNode::default();
+            let mut fill = BackgroundColor(Color::NONE);
+            set_tick_colour(Some(&mut image), Some(&mut fill), colour);
+            assert_eq!(image.color, colour);
+            assert_eq!(fill.0, Color::NONE);
+            let mut block = BackgroundColor(Color::WHITE);
+            set_tick_colour(None, Some(&mut block), colour);
+            assert_eq!(block.0, colour);
         }
     }
 

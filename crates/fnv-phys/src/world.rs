@@ -15,7 +15,7 @@ use rapier3d::math::{Pose, Vector};
 use rapier3d::parry::query::ShapeCastOptions;
 use rapier3d::parry::shape::TypedCompositeShape;
 use rapier3d::prelude::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 /// World parameters. The defaults are engineering choices or [hypothesis] values to be
@@ -52,6 +52,20 @@ impl Default for PhysParams {
 /// landscape shape) rather than a raised surface is [hypothesis]; queries still report
 /// the bare surface.
 pub const TERRAIN_SHELL: f32 = 3.5;
+
+/// The speed (game units a second) of a placed dynamic body's farthest point under which
+/// it may fall asleep, after rapier's half second: references' dynamic bodies, not
+/// ragdolls, gore, characters or bodies the wind blows. Three times rapier's own
+/// (0.1 m/s, 7 units/s) [design, #2663; documented: rapier3d 0.36.1
+/// `RigidBodyActivation::update_energy`]. rapier solves the contacts of one pair whose
+/// normals lie within about 5° with one normal [documented: rapier3d 0.36.1
+/// `contact_clustering.rs`, `COS_MERGE_ANGLE`], so clutter lying across two terrain
+/// triangles that meet at a small angle (LAND's 8-unit steps over 128 units make 3.6°)
+/// rocked between two tilts at 10-27 units/s and never slept [observed: issue #2663;
+/// also the set-up of test `placed_clutter_on_creased_ground_falls_asleep` with rapier's
+/// default threshold, 3-8 of 256 drops awake]. It changes only when such a
+/// body may sleep, not how it moves awake (physics.md §5.5).
+pub const PLACED_SLEEP_SPEED: f32 = 21.0;
 
 /// `NVF_PHYS_INDOOR_PREDICTION=0` (a test aid for comparing, read once): the contact
 /// prediction distance stays raised by [`TERRAIN_SHELL`] with no terrain too, as before
@@ -510,6 +524,10 @@ impl PhysWorld {
         }
         #[cfg(feature = "solver-timers")]
         w.physics_pipeline.counters.enable();
+        // Bootstrap rapier's persistent islands on the empty world so `update_queries_for`'s
+        // zero-dt refresh never races with a deferred first-step bootstrap (which would mark
+        // `pending_sleep` bodies' islands sleeping while they are still in `awake_island`).
+        w.step();
         PhysWorld {
             params,
             w,
@@ -637,6 +655,13 @@ impl PhysWorld {
             if o.motion == Motion::Dynamic {
                 self.set_mass(body, o.material.mass);
                 self.heavy_unpushed(body);
+            }
+            if o.motion == Motion::Dynamic && !blown {
+                // Sleeps under `PLACED_SLEEP_SPEED`. rapier counts a step as still while
+                // half the farthest point's displacement is under its threshold times the
+                // step [documented: rapier3d 0.36.1 `RigidBodyActivation::update_energy`,
+                // `relative_pose_drift`], so the threshold is half the speed.
+                self.w.bodies[body].activation_mut().normalized_linear_threshold = PLACED_SLEEP_SPEED * self.k * 0.5;
             }
             if hold {
                 self.pending_sleep.push(body);
@@ -961,6 +986,21 @@ impl PhysWorld {
         Some(arr3(self.w.bodies.get(b)?.center_of_mass() / self.k))
     }
 
+    /// The middle of a reference's colliders' bounding box, game units: where a shot at
+    /// it meets its shape, which can lie well off the reference's own origin (a thin
+    /// wall ~97 units off the camera target's origin, Classic Inspiration's photo
+    /// targets [observed]). `None` without colliders.
+    pub fn ref_collision_middle(&self, form_id: u32) -> Option<[f32; 3]> {
+        let k = self.k;
+        let colliders = self.refs.get(&form_id)?.iter().filter_map(|&b| self.w.bodies.get(b)).flat_map(|b| b.colliders().iter().copied());
+        let (lo, hi) = colliders.filter_map(|c| self.w.colliders.get(c).map(|c| c.compute_aabb())).fold((None::<[f32; 3]>, None::<[f32; 3]>), |(lo, hi), a| {
+            let (m, x) = ([a.mins.x, a.mins.y, a.mins.z], [a.maxs.x, a.maxs.y, a.maxs.z]);
+            (Some(lo.map_or(m, |l| [l[0].min(m[0]), l[1].min(m[1]), l[2].min(m[2])])), Some(hi.map_or(x, |h| [h[0].max(x[0]), h[1].max(x[1]), h[2].max(x[2])])))
+        });
+        let (lo, hi) = (lo?, hi?);
+        Some([(lo[0] + hi[0]) / 2.0 / k, (lo[1] + hi[1]) / 2.0 / k, (lo[2] + hi[2]) / 2.0 / k])
+    }
+
     /// The Havok material code of a reference's first collider that has one (a convex
     /// collider's, or a triangle mesh's first triangle's); `None` without one.
     pub fn ref_material(&self, form_id: u32) -> Option<u32> {
@@ -1130,60 +1170,78 @@ impl PhysWorld {
             self.count_refresh(by);
             // Standalone hit volumes written since the last refresh (`crate::actors`).
             self.flush_hit_volumes();
+            let pending_sleep = !self.pending_sleep.is_empty();
+            let awake_before: HashSet<RigidBodyHandle> = if pending_sleep {
+                self.w
+                    .bodies
+                    .iter()
+                    .filter(|(_, b)| b.is_enabled() && !b.is_fixed() && !b.is_sleeping())
+                    .map(|(h, _)| h)
+                    .collect()
+            } else {
+                HashSet::new()
+            };
             {
-                // The collision-only broad- and narrow-phase update.
+                // Zero-dt physics step: registers bodies/changes with islands and updates
+                // broad- and narrow-phase contacts without advancing time or forces.
                 let _span = tracing::info_span!("phys::refresh_detect").entered();
                 self.detect();
             }
-            // The repairs after it: bodies added since the last step, bodies added asleep,
-            // bodies struck since the last step.
             let _repair = tracing::info_span!("phys::refresh_repair").entered();
-            // rapier 0.36's collision-only pipeline consumes the change flags of bodies
-            // inserted since the last step without registering them with the island
-            // manager, so they would never move [observed: a dynamic box added, queried
-            // and stepped stays put; test `bodies_added_then_queried_still_simulate`].
-            // Flag them changed again so the next step registers them.
-            for &h in &self.new_bodies {
-                if let Some(b) = self.w.bodies.get_mut(h) {
-                    let p = *b.position();
-                    // The rearm must not erase a move queued by apply_move: rapier's
-                    // set_position also replaces next_position, before the real step.
-                    let next = b.is_kinematic().then(|| *b.next_position());
-                    b.set_position(p, false);
-                    if let Some(next) = next {
-                        b.set_next_kinematic_position(next);
+            // A body added asleep wakes when its first contacts are found: rapier wakes
+            // both sides of every contact that starts [rapier 0.36.1, `NarrowPhase`'s
+            // pair transitions], so clutter placed on a shelf, touching it or its
+            // neighbours, woke at once and was pushed about. Its contacts have been found
+            // and linked into the persistent islands now; put it (and any previously
+            // sleeping partner woken only by it) back to sleep so the next step's
+            // `update_islands` moves the island to a sleeping chunk before the solver runs
+            // [observed: test `clutter_added_asleep_on_a_shelf_it_overlaps_stays_asleep`].
+            // If its island also holds any body that was awake before `detect()`, leave
+            // the whole island awake so struck/woken bodies keep their impulse.
+            if pending_sleep {
+                let pending_set: HashSet<RigidBodyHandle> = self.pending_sleep.drain(..).collect();
+                let mut awake_islands: HashSet<u32> = HashSet::new();
+                for h in self.w.islands.active_bodies() {
+                    if awake_before.contains(&h) {
+                        if let Some(id) = self.w.islands.persistent_island_of(&self.w.bodies, h) {
+                            awake_islands.insert(id);
+                        }
+                    }
+                }
+                let mut sleep_islands: HashSet<u32> = HashSet::new();
+                for &h in &pending_set {
+                    if let Some(id) = self.w.islands.persistent_island_of(&self.w.bodies, h) {
+                        if !awake_islands.contains(&id) {
+                            sleep_islands.insert(id);
+                        }
+                    }
+                }
+                if !sleep_islands.is_empty() {
+                    let to_sleep: Vec<RigidBodyHandle> = self
+                        .w
+                        .islands
+                        .active_bodies()
+                        .filter(|&h| {
+                            self.w
+                                .islands
+                                .persistent_island_of(&self.w.bodies, h)
+                                .is_some_and(|id| sleep_islands.contains(&id))
+                        })
+                        .collect();
+                    for h in to_sleep {
+                        if let Some(b) = self.w.bodies.get_mut(h) {
+                            b.sleep();
+                        }
                     }
                 }
             }
-            // A body added asleep wakes when its first contacts are found: rapier wakes
-            // both sides of every contact that starts [rapier 0.36.0, `NarrowPhase`'s
-            // pair transitions], so clutter placed on a shelf, touching it or its
-            // neighbours, woke at once and was pushed about. Its contacts have been found
-            // now; put it back to sleep, so it rests until something new touches it
-            // [observed: test `clutter_added_asleep_on_a_shelf_it_overlaps_stays_asleep`].
-            for h in self.pending_sleep.drain(..) {
-                if let Some(b) = self.w.bodies.get_mut(h) {
-                    b.sleep();
-                }
-            }
-            // The same loses the wake-up of a sleeping body struck since the last step:
-            // it counts as awake, keeps its new velocity and never moves [observed: test
-            // `a_sleeping_body_struck_then_queried_still_moves`]. Put it to sleep and
-            // wake it with its velocity again, so the next step sees it wake.
-            for &h in &self.struck {
-                if let Some(b) = self.w.bodies.get_mut(h) {
-                    let (v, spin) = (b.linvel(), b.angvel());
-                    b.sleep();
-                    b.set_linvel(v, true);
-                    b.set_angvel(spin, true);
-                }
-            }
-            // Any other change the detection took from rapier's islands: a sleeping corpse
-            // struck (`push_ragdoll`) was left awake in its sleeping set, and later
-            // crashed rapier (`crate::islands`).
+            // Any remaining island inconsistency (`crate::islands`).
             let repaired = self.repair_islands();
             self.refresh_stats.repair_islands += repaired as u64;
             self.dirty = false;
+            if !self.w.quarantine().is_empty() {
+                self.handle_quarantine();
+            }
         }
     }
 
