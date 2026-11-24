@@ -220,13 +220,26 @@ impl ClipSet {
     /// H2HIdle, did not change Idle]. Paths are under meshes. Also returns how many moves
     /// were replaced.
     pub fn with_replacements(&self, ctx: &mut impl ClipSource, skel: &PreparedSkeleton, paths: &[String]) -> (ClipSet, usize) {
+        self.with_replacements_for_stances(ctx, skel, paths, &[STANCE])
+    }
+
+    /// As [`Self::with_replacements`], matching files whose stem is any prefix in `stances`
+    /// followed by the move group (e.g. `SNEAK_STANCE`, `"hurtmt"`, `SWIM_STANCES`,
+    /// `ALERT_STANCE`) [hypothesis: replacement file stems match the stance prefix they override].
+    pub fn with_replacements_for_stances(&self, ctx: &mut impl ClipSource, skel: &PreparedSkeleton, paths: &[String], stances: &[&str]) -> (ClipSet, usize) {
         let mut set = self.clone();
         let mut n = 0;
+        let stances: Vec<String> = stances.iter().map(|s| s.to_ascii_lowercase()).collect();
         for p in paths {
             let p = p.replace('/', "\\");
             let stem = p.rsplit('\\').next().unwrap_or("").to_ascii_lowercase();
-            let stem = stem.strip_suffix(".kf").unwrap_or(&stem).to_string();
-            let Some(m) = Move::ALL.into_iter().find(|m| stem == format!("{STANCE}{}", m.group().to_ascii_lowercase())) else { continue };
+            let stem = stem.strip_suffix(".kf").unwrap_or(&stem);
+            let Some(m) = Move::ALL.into_iter().find(|m| {
+                let group = m.group().to_ascii_lowercase();
+                stances.iter().any(|stance| stem == format!("{stance}{group}"))
+            }) else {
+                continue;
+            };
             let path = format!("meshes\\{p}");
             let Some(clip) = ctx.clip(&path) else { continue };
             let info = ClipInfo::from_parts(clip.start, clip.stop, &clip.text_keys, clip.accum_track());
@@ -569,9 +582,21 @@ impl Locomotion {
         self.stand.clone()
     }
 
-    /// Take `set` as the standing set and play from it now if it is the one in use.
-    pub fn replace_stand(&mut self, set: Arc<ClipSet>) {
-        self.stand = set;
+    /// Replace standing and optional posture sets (`sneak`, `hurt`, `swim`, `alert`)
+    /// together (kNVSE overrides on NPCs, `anim_paths.rs`) and switch to the active one.
+    pub fn replace_posture_sets(
+        &mut self,
+        stand: Arc<ClipSet>,
+        sneak: Option<Arc<ClipSet>>,
+        hurt: Option<Arc<ClipSet>>,
+        swim: Option<Arc<ClipSet>>,
+        alert: Option<Arc<ClipSet>>,
+    ) {
+        self.stand = stand;
+        self.sneak = sneak;
+        self.hurt = hurt;
+        self.swim = swim;
+        self.alert = alert;
         self.switch_set(self.posture_set());
     }
 
@@ -2255,5 +2280,61 @@ mod tests {
         let (mut lo2, mut wt2) = (Locomotion::new(set(), 0.0), WalkTest { base: Transform::IDENTITY, speed: 85.26, t: 0.0 });
         simulate(&mut wt2, &mut lo2, 1.0);
         assert_eq!(lo.blend, lo2.blend);
+    }
+
+    #[test]
+    fn swim_stance_replacements_match_both_swimmt_and_swim_prefixes() {
+        struct MockClips {
+            clips: std::collections::HashMap<String, Arc<nvf_assets::anim_play::Clip>>,
+        }
+        impl ClipSource for MockClips {
+            fn data(&self) -> &nvf_assets::data::GameData {
+                unreachable!("with_replacements_for_stances only calls clip()")
+            }
+            fn clip(&mut self, path: &str) -> Option<Arc<nvf_assets::anim_play::Clip>> {
+                self.clips.get(&path.to_ascii_lowercase()).cloned()
+            }
+        }
+        let dummy_clip = |name: &str| {
+            Arc::new(nvf_assets::anim_play::Clip {
+                name: name.into(),
+                start: 0.0,
+                stop: 1.0,
+                frequency: 1.0,
+                cycle_type: 0,
+                tracks: vec![],
+                priorities: vec![],
+                skipped: 0,
+                accum_root: None,
+                text_keys: vec![],
+                visibility: vec![],
+                emitters: vec![],
+                materials: vec![],
+                free: vec![],
+                free_visibility: vec![],
+                lights: vec![],
+            })
+        };
+        let mut src = MockClips {
+            clips: std::collections::HashMap::from([
+                ("meshes\\custom\\swimmtforward.kf".into(), dummy_clip("SwimMTForward")),
+                ("meshes\\custom\\swimidle.kf".into(), dummy_clip("SwimIdle")),
+                ("meshes\\custom\\mtforward.kf".into(), dummy_clip("Forward")),
+                ("meshes\\custom\\sneakmtidle.kf".into(), dummy_clip("SneakIdle")),
+            ]),
+        };
+        let skel = PreparedSkeleton::default();
+        let base = ClipSet::default();
+        let paths = vec![
+            "custom\\swimmtforward.kf".into(),
+            "custom/swimidle.kf".into(),
+            "custom\\mtforward.kf".into(),
+            "custom\\sneakmtidle.kf".into(),
+        ];
+        let (replaced, count) = base.with_replacements_for_stances(&mut src, &skel, &paths, &SWIM_STANCES);
+        assert_eq!(count, 2);
+        assert_eq!(replaced.clips[&Move::Forward].path, "meshes\\custom\\swimmtforward.kf");
+        assert_eq!(replaced.clips[&Move::Idle].path, "meshes\\custom\\swimidle.kf");
+        assert!(!replaced.clips.contains_key(&Move::Backward));
     }
 }
