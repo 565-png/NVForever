@@ -82,11 +82,12 @@ keeps the row as `On;peak=1000;paper=200` (`peak=0`: the screen's own).
 Two full-screen pictures over the settings page (`hdr_calibrate.rs`), as most games calibrate
 HDR. Left and Right move the value, Enter goes on, Backspace back, Esc puts both values back.
 
-1. **Peak brightness**: a white field at the peak being set, the game's title on it at
-   10,000 nits. Raised until the title just disappears, the field is as bright as the screen
+1. **Peak brightness**: a white field at the peak being set, the NVForever logo (the word
+   "NVForever") on it at
+   10,000 nits. Raised until the logo just disappears, the field is as bright as the screen
    goes.
-2. **Brightness**: a black field, the title in dark grey (3 % of paper white). Raised until
-   the title can just be seen. It sets paper white and the HUD's white together.
+2. **Brightness**: a black field, the logo in dark grey (3 % of paper white). Raised until
+   the logo can just be seen. It sets paper white and the HUD's white together.
 
 The pictures are interface nodes in scRGB; the window blit scales them by the HUD's white,
 so a value v shows at v x paper white. Without an HDR surface a corner message says so and

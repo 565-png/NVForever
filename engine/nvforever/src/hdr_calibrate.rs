@@ -3,11 +3,11 @@
 //! (`nvf_play::pause::FormOver`: the page under it takes no key or click), as most games
 //! calibrate HDR [design: PR #3348 review]:
 //!
-//! 1. **Peak brightness**: a white field at the peak being set, with the game's title on it
-//!    in white at 10,000 nits. Raise the peak until the title just disappears: the field is
+//! 1. **Peak brightness**: a white field at the peak being set, with the NVForever logo on it
+//!    in white at 10,000 nits. Raise the peak until the logo just disappears: the field is
 //!    then as bright as the screen goes, and light brighter than that is never asked for.
-//! 2. **Brightness**: a black field with the title in dark grey (3 % of paper white). Raise
-//!    the brightness until the title can just be seen. It sets paper white, how bright the
+//! 2. **Brightness**: a black field with the logo in dark grey (3 % of paper white). Raise
+//!    the brightness until the logo can just be seen. It sets paper white, how bright the
 //!    picture's white and the HUD look.
 //!
 //! Left and Right (the D-pad) move the value, Enter goes on (Done on the second), Backspace
@@ -33,14 +33,14 @@ use std::sync::atomic::Ordering::Relaxed;
 #[derive(Resource)]
 pub struct Asked;
 
-/// The title's brightness on the peak picture, nits: above any screen's peak [design].
+/// The logo's brightness on the peak picture, nits: above any screen's peak [design].
 const LOGO_PEAK_NITS: f32 = 10_000.0;
-/// The title's brightness on the black picture, a part of paper white [design].
+/// The logo's brightness on the black picture, a part of paper white [design].
 const LOGO_DARK: f32 = 0.03;
 /// One press's step, nits: the peak and the brightness [design].
 const PEAK_STEP: u32 = 50;
 const PAPER_STEP: u32 = 10;
-/// The title's box, interface units (the view is 960 high) [design].
+/// The logo's box, interface units (the view is 960 high) [design].
 const LOGO_WIDTH: f32 = 560.0;
 const LOGO_HEIGHT: f32 = 180.0;
 
@@ -291,12 +291,12 @@ fn draw(mut commands: Commands, mut c: ResMut<Calibration>, roots: Query<Entity,
     };
     let full = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), flex_direction: FlexDirection::Column, justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() };
     commands.spawn((CalibrationRoot, full, BackgroundColor(field), GlobalZIndex(nvf_play::pause::FORM_Z))).with_children(|root| {
-        // The logo: the game's title in a frame, all at the logo's brightness.
+        // The logo: the word NVForever in a frame, all at the logo's brightness.
         root.spawn((
             Node { width: u(LOGO_WIDTH), height: u(LOGO_HEIGHT), border: UiRect::all(u(10.0)), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() },
             BorderColor::all(logo),
         ))
-        .with_children(|l| text(l, &faces.entry, "NEW VEGAS", logo));
+        .with_children(|l| text(l, &faces.entry, "NVForever", logo));
         // The words and buttons on a dark strip at the foot, away from the field.
         root.spawn((
             Node { position_type: PositionType::Absolute, bottom: u(40.0), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: u(8.0), padding: UiRect::all(u(16.0)), ..default() },

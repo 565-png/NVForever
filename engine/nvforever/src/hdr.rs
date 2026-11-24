@@ -1,5 +1,5 @@
-//! HDR output on an HDR screen (docs/design/hdr-output.md): the Display page's HDR rows (on at
-//! the next start; the calibration rows live), or `NVF_HDR=1` for a run.
+//! HDR output on an HDR screen (docs/design/hdr-output.md): the Display page's HDR rows (switched
+//! live, with no restart; the calibration rows too), or `NVF_HDR=1` for a run.
 //!
 //! - The window's surface is `Rgba16Float`, which wgpu's `SurfaceColorSpace::Auto` makes
 //!   scRGB (vendored bevy_render `view/window/mod.rs`).
@@ -28,9 +28,9 @@ use bevy::render::{RenderApp, RenderStartup};
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 
-/// The row's choice (the INI keeps it; it takes effect at the next start).
+/// The row's choice (the INI keeps it; it takes effect at once, and at the start).
 static WANTED: AtomicBool = AtomicBool::new(false);
-/// The first frame has run: the window's surface is made, later choices wait for a restart.
+/// The first frame has run: the window's surface is made, so a choice now is a live switch.
 static STARTED: AtomicBool = AtomicBool::new(false);
 /// Peak brightness in nits (the row's slider); 0 takes the screen's own (`AUTO_PEAK`).
 static PEAK_NITS: AtomicU32 = AtomicU32::new(0);

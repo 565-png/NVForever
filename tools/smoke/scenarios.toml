@@ -2420,6 +2420,17 @@ order = [[
 forbid = [{ text = "Caught rendering error", label = "a rendering (validation) error while the HDR view's parts come and go" }]
 
 [[scenario]]
+name = "hdr-sdr-fallback"
+source = "docs/design/hdr-output.md: HDR asked for (NVF_HDR=1) on a surface with no Rgba16Float (this machine's offers none) stays SDR: the window says so, the corner text and log line say the screen offers no HDR, and no HDR surface is made"
+areas = ["renderer", "graphics", "settings"]
+paths = ["engine/nvforever/src/hdr.rs", "engine/nvforever/src/hdr_calibrate.rs", "engine/nvforever/src/hdr_expand.wesl", "engine/vendor/bevy_render/src/view/window/**", "engine/vendor/bevy_core_pipeline/src/blit/**", "engine/vendor/bevy_core_pipeline/src/upscaling/**"]
+env = { NVF_HDR = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 12
+expect = ["hdr: this surface offers no Rgba16Float; staying SDR", "hdr: HDR asked for, but this screen offers no HDR (Windows HDR off?)"]
+forbid = ["hdr: window surface Rgba16Float (scRGB)", "hdr: output on (scRGB)", "Caught rendering error"]
+
+[[scenario]]
 name = "distant-lights"
 source = "[design, #3013] docs/design/graphics-enhanced.md §3.22 Distant lights at night (engine/nvforever/src/distant_lights.rs, distant_lights.wesl): started with --graphics-only distant-lights at Goodsprings 22:00, the distant lights come on once, list the cells in reach with their light references and glow statics, draw glows, and the glows' pipeline compiles and is ready (pipeline_gate.rs `distant lights pipeline <n> ready`, with NVF_PLAY_TEST_PIPELINE_LOG); the exit summary counts cells, lights, glow statics and glows drawn, without a rendering, validation or pipeline error. Whether towns glow where they should is checked in pictures by hand"
 areas = ["renderer", "graphics"]
