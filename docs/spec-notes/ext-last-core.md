@@ -129,12 +129,21 @@ these paths (player and NPC melee, player and NPC projectiles) is inferred from
 the documented base-form change, not observed.
 
 [documented: `schemas/fnv/objects.json`, WEAP CRDT] The accepted data model holds
-critical damage in an unsigned 16-bit field. [design] Preserve the accepted setter's
-numeric conversion and source readback; combat consumes the numeric override in
-its existing unsigned 32-bit damage domain (fractional values truncate and values
-outside that domain saturate). [hypothesis] Native fractional, negative,
-out-of-range and nonnumeric conversion needs a game probe. These cases are not
-qualified for native parity. The accepted generic setter's explicit invalid
+critical damage in an unsigned 16-bit field. Negative integers and values above `65535`
+wrap modulo `65536` into that unsigned 16-bit field [observed: 2026-11-23 & 2026-11-24,
+`GSDocMitchellHouse` (`0x00103DF9`), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the
+10 official base masters, clean-room script probes `core_16_set_weapon_crit_damage_edge`
+(`tools/capture/nvse/catalogs/wave4a_extenders.json`, #3679: `22.0,77.0,65531.0` on
+`Weap10mmPistol` — initial `22.0`, after `SetWeaponCritDamage 77` a `TempCloneForm`
+clone read `77.0`, and `SetWeaponCritDamage -5` read back `65531.0`) and
+`w4c_b2_11_crit_dmg_bounds` (`tools/capture/nvse/catalogs/wave4c_extenders.json`, #3679:
+`c0=22,neg=65531,frac=12,over=4464,aliasOp=5259` — `-5 -> 65531` and `70000 -> 4464`); no
+DLL or source consulted]. [hypothesis] Fractional truncation (`12.7 -> 12`) remains a
+hypothesis because `w4c_b2_11_crit_dmg_bounds` stored the fractional readback in an `int`
+variable rather than a `float`. [design] `SetWeaponCritDamage` stores finite numeric
+inputs truncated toward zero and wrapped into `u16` (`0..=65535`, non-finite as `0`) so
+both script readback and combat consume the same unsigned 16-bit value. [hypothesis]
+Non-numeric conversion remains uncaptured. The accepted generic setter's explicit invalid
 weapon-argument fallback remains unchanged pending behavioral evidence.
 
 [observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`), Fallout: New Vegas
@@ -154,12 +163,19 @@ wiki-generated `schemas/script/functions.json` is left untouched. [hypothesis]
 Native wire/opcode encoding remains uncaptured; this note does not import FOSE
 opcode numbers into New Vegas.
 
-[design] Overrides retain this module's existing session lifetime: save/load
-resets them, and a weapon clone without its own override reads its source
-weapon's. [hypothesis] Whether the original saves the change, and whether a
-temporary clone inherits it, need separate
-captures. Core source execution, engine hit calculation, native captures and real
-installed-mod acceptance are separate validation states.
+[hypothesis] `SetWeaponCritDamage` edits are session-only (not saved in `.fos` or `.nvse`
+cosaves), persist across same-process save loads, revert to the ESM value on a fresh
+process restart, and stay isolated on a `TempCloneForm` clone after clone creation so
+later edits to the source weapon do not leak into the clone (initial inheritance on
+`TempCloneForm` is observed in `core_16_set_weapon_crit_damage_edge` above, while
+subsequent source-edit isolation and same-run save/reload persistence await a committed
+reproducible observation or manual save/load write-up). [design] Loaded base-form
+`CRDT/critical_damage` overrides carry across same-run loads via `Game::take_session` /
+`Game::put_session` (excluded from `GameSnapshot` and excluding transient `TempCloneForm`
+clones), and `TempCloneForm` snapshots the source weapon's effective
+`CRDT/critical_damage` onto the clone (`Game::snapshot_weapon_crit_damage`) for
+bi-directional isolation. Core source execution, engine hit calculation, native captures
+and real installed-mod acceptance are separate validation states.
 
 ## 8. Player swimming and Hardcore achievement eligibility
 
