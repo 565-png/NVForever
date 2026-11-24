@@ -184,6 +184,12 @@ const AIRBORNE_LAND: f32 = 0.35;
 /// controller's step height, the drop it walks down without leaving the ground; the
 /// original's rule is not documented (physics.md §6.4.2)].
 const FALL_GAP: f32 = 24.0;
+/// A landing counts (its log line, its clip, the view's dip) only after the body fell
+/// faster than this in the flight, units/s: on a car wreck's roof a player was logged
+/// "landed at 0 units/s" after time off the ground with no fall at all (player report
+/// R-BRQX496D, #3611), and the landing clip and dip that followed bobbed the view
+/// [engineering choice: real landings in that report were 144 to 442 units/s].
+const LAND_MIN_FALL: f32 = 30.0;
 /// Turning on the spot faster than this (radians per second) plays a turn clip
 /// [engineering choice].
 const TURN_RATE: f32 = 1.0;
@@ -3537,7 +3543,10 @@ fn drive_body(
     m.airborne = if grounded || swimming { 0.0 } else { m.airborne + dt };
     let was_falling = m.falling;
     m.falling = m.airborne > 0.0 && (m.falling || (m.airborne >= AIRBORNE_LOOP && ground_gap.is_none_or(|g| g > FALL_GAP)));
-    let landing = was_falling && airborne_before >= AIRBORNE_LAND && m.airborne == 0.0;
+    let landing = was_falling && airborne_before >= AIRBORNE_LAND && m.airborne == 0.0 && m.fall_speed > LAND_MIN_FALL;
+    if was_falling && airborne_before >= AIRBORNE_LAND && m.airborne == 0.0 && !landing {
+        info!("player view: down again after {airborne_before:.2}s off the ground without a fall ({:.0} units/s): no landing", m.fall_speed);
+    }
     if m.airborne > 0.0 {
         m.fall_speed = m.fall_speed.max(-vertical);
     } else {

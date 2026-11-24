@@ -20463,6 +20463,22 @@ forbid = [
 ]
 
 [[scenario]]
+name = "car-wreck-jumps"
+source = "issue #3611 (player report R-BRQX496D): running and jumping on the Primm car wrecks bobbed the view, and one landing was logged at 0 units/s; a jump caught on a wreck near the top of its arc comes down with almost no fall, and that is no landing (no clip, no view dip) [engineering choice: LAND_MIN_FALL, 30 units/s]"
+note = "the player starts on the Car01HulkBodyStatic at (-59371, -52907) by the report's place, runs over the wrecks jumping every 1.5 s, then sideways and back; on 2026-11-23 one jump came down after 0.42 s at 7 units/s and the real landings were 144 to 362 units/s, as in the report"
+areas = ["movement", "animation"]
+paths = ["engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_MOVE = "8:1:0,30:0:0,31:0:1,40:0:0,41:-1:0,55:0:0", NVF_PLAY_TEST_CONTROL = "9:jump,10.5:jump,12:jump,13.5:jump,15:jump,16.5:jump,18:jump,19.5:jump,21:jump,22.5:jump,24:jump,25.5:jump,27:jump,32:jump,34:jump,36:jump,38:jump,42:jump,44:jump,46:jump,48:jump,50:jump" }
+args = ["--play", "--world", "WastelandNV", "--pos=-59371,-52907,5990", "--heading", "0", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 58
+expect = [
+  { re = 'player view: landed at (?P<n>\d+) units/s', range = [30, 100000], label = "the jumps land" },
+]
+forbid = [
+  { re = 'player view: landed at ([0-9]|[12][0-9]) units/s', label = "a landing with almost no fall (the report's 0 units/s)" },
+]
+
+[[scenario]]
 name = "seated-holstered-rifle"
 source = "issue #3612 (player report R-DNBYBM6D): seated with a Caravan Shotgun holstered, the gun stood up through the player's head; the seat clips have no Weapon track and the player's body dropped the holster clip's, so the Weapon node went back to its bind transform (its place under the right hand) under the holster bone"
 note = "the Caravan Shotgun (000CD53A, 2hr: holstered on Bip01 Spine2) equipped and holstered, the player sits on Doc Mitchell's couch (00103E55) as in doc-chair-player-seated, the view then put in third person; the frame seated_rifle.png is for a look by eye"
