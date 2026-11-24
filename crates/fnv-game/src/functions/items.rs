@@ -283,12 +283,20 @@ impl Game<'_> {
     }
 }
 
-/// The weapon an actor has equipped, if any.
+/// The weapon an actor has equipped, if any (including `TempCloneForm` weapons).
 pub fn equipped_weapon(g: &mut Game, actor: FormId) -> Option<FormId> {
     let forms = g.world.forms;
+    let clones = &g.clones;
     let s = g.world.get(actor).ok()?;
     let inv = s.inventory.as_ref()?;
-    inv.equipped().into_iter().find(|&i| forms.item(i).is_some_and(|it| it.kind == ItemKind::Weapon))
+    inv.equipped().into_iter().find(|&i| {
+        let mut orig = i;
+        for _ in 0..16 {
+            let Some(&p) = clones.get(&orig) else { break };
+            orig = p;
+        }
+        forms.item(orig).is_some_and(|it| it.kind == ItemKind::Weapon)
+    })
 }
 
 /// Inventory form types by the codes RemoveAllTypedItems takes. 40 is the weapons
