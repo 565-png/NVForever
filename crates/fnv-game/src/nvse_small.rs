@@ -703,10 +703,11 @@ fn json_form(v: &serde_json::Value) -> Option<FormId> {
 
 impl Game<'_> {
     /// An exterior cell's `XCLR` region FormIDs: the winning plugin's list by default
-    /// (vanilla behavior), or the deduplicated load-order union across overriding plugins
-    /// when `Data\NVSE\Plugins\hNVSE.ini` enables `bMergeRegionLists=1`.
+    /// (vanilla behavior), or the deduplicated overriding-plugin-first union across
+    /// overriding plugins when `Data\NVSE\Plugins\hNVSE.ini` enabled
+    /// `[Main] bMergeRegionLists=1` at load time.
     pub(crate) fn cell_regions(&self, cell: FormId) -> Vec<FormId> {
-        if self.mod_files.hnvse_merge_region_lists() {
+        if self.data.hnvse_merge_region_lists {
             if let Some(merged) = self.data.merged_cell_regions.get(&cell) {
                 return merged.clone();
             }

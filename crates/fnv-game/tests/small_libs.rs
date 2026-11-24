@@ -997,9 +997,17 @@ fn hnvse_merge_region_lists_unions_overridden_cell_regions_when_enabled() {
     let table = FunctionTable::load(&p).unwrap();
     let forms = FormStore::build(&lo, &schema);
     let refs = RefTable::build(&lo, &schema);
-    let data = GameData::build(&lo, &schema, table, &j, &refs);
-    let mut g = Game::new(&data, World::new(&forms, &refs, SimConfig::default()), GameConfig { strict: true, ..GameConfig::default() });
-    g.new_game();
+    let mut data = GameData::build(&lo, &schema, table, &j, &refs);
+    // Absent hNVSE.ini: GameData::build must NOT walk overridden CELLs at startup.
+    assert!(!data.hnvse_merge_region_lists);
+    assert!(data.merged_cell_regions.is_empty());
+
+    // [General] bMergeRegionLists=1 and [Main] bMergeRegionLists=0 are both ignored / disabled
+    // (observed in hNVSE 120: only [Main] is read) and leave merged_cell_regions empty.
+    assert!(!data.load_hnvse_region_merge(&lo, &schema, Some(b"[General]\nbMergeRegionLists=1\n")));
+    assert!(!data.load_hnvse_region_merge(&lo, &schema, Some(b"[Main]\nbMergeRegionLists=0\n")));
+    assert!(!data.hnvse_merge_region_lists);
+    assert!(data.merged_cell_regions.is_empty());
 
     let regions_of = |g: &mut Game, edid: &str| -> Vec<u32> {
         let len = match q(g, &format!("array_var a\nlet a := GetCellRegions {edid}\nSetFunctionValue (ar_Size a)")) {
@@ -1014,24 +1022,44 @@ fn hnvse_merge_region_lists_unions_overridden_cell_regions_when_enabled() {
             .collect()
     };
 
-    // Absent hNVSE.ini: vanilla last-writer-wins (Lighting.esp only; no master map region).
-    assert_eq!(regions_of(&mut g, "ExtCell").len(), 1);
-    assert_eq!(fnv_game::nvse_jg5::player_region_name(&g), None);
-    assert_eq!(q(&mut g, "SetFunctionValue (player.GetLocationName)"), XVal::Str("Merge World".into()));
+    {
+        let mut g = Game::new(&data, World::new(&forms, &refs, SimConfig::default()), GameConfig { strict: true, ..GameConfig::default() });
+        g.new_game();
 
-    // Explicit bMergeRegionLists=0: vanilla behavior unchanged.
-    assert!(g.mod_files.write_bytes("NVSE/Plugins/hNVSE.ini", b"[Main]\nbMergeRegionLists=0\n"));
-    assert_eq!(regions_of(&mut g, "ExtCell").len(), 1);
-    assert_eq!(fnv_game::nvse_jg5::player_region_name(&g), None);
+        // Disabled at load: vanilla last-writer-wins (Lighting.esp only; no master map region).
+        let vanilla = regions_of(&mut g, "ExtCell");
+        assert_eq!(vanilla.len(), 1);
+        assert!(!vanilla.contains(&REG_MASTER_MAP));
+        assert_eq!(fnv_game::nvse_jg5::player_region_name(&g), None);
+        assert_eq!(q(&mut g, "SetFunctionValue (player.GetLocationName)"), XVal::Str("Merge World".into()));
 
-    // bMergeRegionLists=1: deduplicated load-order union across all three plugins.
-    assert!(g.mod_files.write_bytes("NVSE/Plugins/hNVSE.ini", b"[Main]\nbMergeRegionLists = 1\n"));
+        // Writing hNVSE.ini from a script mid-session does NOT re-read the switch, so
+        // the script side and the world side always agree on the load-time setting.
+        assert!(g.mod_files.write_bytes("NVSE/Plugins/hNVSE.ini", b"[Main]\nbMergeRegionLists=1\n"));
+        assert_eq!(regions_of(&mut g, "ExtCell"), vanilla);
+        assert_eq!(fnv_game::nvse_jg5::player_region_name(&g), None);
+    }
+
+    // [Main] bMergeRegionLists=1 at load: computes merged_cell_regions in
+    // overriding-plugin-first deduplicated order (observed in hNVSE 120).
+    assert!(data.load_hnvse_region_merge(&lo, &schema, Some(b"[Main]\nbMergeRegionLists = 1\n")));
+    assert!(data.hnvse_merge_region_lists);
+    assert!(!data.merged_cell_regions.is_empty());
+
+    let mut g_merged = Game::new(&data, World::new(&forms, &refs, SimConfig::default()), GameConfig { strict: true, ..GameConfig::default() });
+    g_merged.new_game();
     assert_eq!(
-        regions_of(&mut g, "ExtCell"),
-        vec![REG_MASTER_MAP, REG_MASTER_AUDIO, 0x0100_0840, 0x0200_0850]
+        regions_of(&mut g_merged, "ExtCell"),
+        vec![0x0200_0850, 0x0100_0840, REG_MASTER_AUDIO, REG_MASTER_MAP]
     );
-    assert_eq!(fnv_game::nvse_jg5::player_region_name(&g).as_deref(), Some("Master Valley"));
-    assert_eq!(q(&mut g, "SetFunctionValue (player.GetLocationName)"), XVal::Str("Master Valley".into()));
+    assert_eq!(fnv_game::nvse_jg5::player_region_name(&g_merged).as_deref(), Some("Master Valley"));
+    assert_eq!(q(&mut g_merged, "SetFunctionValue (player.GetLocationName)"), XVal::Str("Master Valley".into()));
     // Interior cells still return empty.
-    assert!(regions_of(&mut g, "IntCell").is_empty());
+    assert!(regions_of(&mut g_merged, "IntCell").is_empty());
+    // Writing bMergeRegionLists=0 from a script mid-session does NOT toggle the load-time switch.
+    assert!(g_merged.mod_files.write_bytes("NVSE/Plugins/hNVSE.ini", b"[Main]\nbMergeRegionLists=0\n"));
+    assert_eq!(
+        regions_of(&mut g_merged, "ExtCell"),
+        vec![0x0200_0850, 0x0100_0840, REG_MASTER_AUDIO, REG_MASTER_MAP]
+    );
 }

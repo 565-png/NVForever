@@ -392,27 +392,30 @@ pub fn cell_audio(lo: &LoadOrder, schema: &Schema, cell: u32) -> CellAudio {
 /// `https://www.nexusmods.com/newvegas/mods/85748`, authors DuncanWasHere & A User)
 /// public changelog and shipped `Data\NVSE\Plugins\hNVSE.ini` comments (`[Main]`
 /// `bMergeRegionLists = 1`); DLL/PDB/source not consulted]
-/// [hypothesis: also accepts `[General]` or top-level keys before any section header,
-/// ASCII case-insensitive, stripping `;`/`#` comments; any non-zero integer or `"true"`
-/// enables merging, and `[Main]` takes precedence over `[General]`/top-level].
+/// [observed: FalloutNV 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 + hNVSE 120 on exterior
+/// cell `188TradingPost` (`0x000DDF1C`) with a single-record override ESP: `[Main]`
+/// `bMergeRegionLists = 1` enables merging, whereas `[General]` `bMergeRegionLists = 1`
+/// is ignored and leaves vanilla last-writer-wins]
+/// [design: ASCII case-insensitive `[Main]` section and key matching, UTF-8 BOM and
+/// `;`/`#` comment stripping, non-zero integer or `"true"` enables merging].
 ///
-/// Returns `false` when the key is absent, `0`, or unparseable (vanilla unchanged).
+/// Returns `false` when `[Main] bMergeRegionLists` is absent, `0`, or unparseable
+/// (vanilla unchanged).
 pub fn parse_hnvse_merge_region_lists(text: &str) -> bool {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let mut section = String::new();
+    let mut in_main = false;
     let mut main_val: Option<bool> = None;
-    let mut fallback_val: Option<bool> = None;
     for line in text.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix('[') {
-            section = rest.split(']').next().unwrap_or("").trim().to_ascii_lowercase();
+            let section = rest.split(']').next().unwrap_or("").trim();
+            in_main = section.eq_ignore_ascii_case("main");
             continue;
         }
-        let is_main = section == "main";
-        if !is_main && section != "general" && !section.is_empty() {
+        if !in_main {
             continue;
         }
         let Some((k, v)) = trimmed.split_once('=') else { continue };
@@ -428,14 +431,10 @@ pub fn parse_hnvse_merge_region_lists(text: &str) -> bool {
             val.parse::<i64>().ok().map(|n| n != 0)
         };
         if let Some(flag) = parsed {
-            if is_main {
-                main_val = Some(flag);
-            } else {
-                fallback_val = Some(flag);
-            }
+            main_val = Some(flag);
         }
     }
-    main_val.or(fallback_val).unwrap_or(false)
+    main_val.unwrap_or(false)
 }
 
 /// CELL `XCLR`: the regions an exterior cell is in (winning plugin only; vanilla rule).
@@ -447,19 +446,22 @@ pub fn cell_regions(lo: &LoadOrder, schema: &Schema, cell: u32) -> Vec<u32> {
 }
 
 /// CELL `XCLR`: the regions an exterior cell is in, optionally unioning `XCLR` across
-/// overriding plugins when `merge` is `true` (`hNVSE.ini` `bMergeRegionLists=1`).
+/// overriding plugins when `merge` is `true` (`hNVSE.ini` `[Main] bMergeRegionLists=1`).
 ///
 /// When `merge` is `false`, behaves identically to [`cell_regions`] (vanilla last-writer-wins).
-/// When `merge` is `true` on an exterior `CELL`, walks every non-deleted definition of
-/// `cell` in load order (earliest plugin to winning override), maps each `XCLR` FormID
+/// When `merge` is `true` on an exterior `CELL`, walks non-deleted definitions of `cell`
+/// from the winning override back to the earliest defining plugin, maps each `XCLR` FormID
 /// through [`global`], and returns the deduplicated union keeping first occurrence
 /// [documented: hNVSE 1.2 (Nexus Mods ID 85748,
 /// `https://www.nexusmods.com/newvegas/mods/85748`) public changelog and shipped
 /// `Data\NVSE\Plugins\hNVSE.ini` comments ("Force-merges cell region lists (XCLR
 /// subrecord in xEdit) during loading"); DLL/PDB/source not consulted]
-/// [hypothesis: load-order union preserving per-record `XCLR` order and deduplicating on
-/// first occurrence]
-/// [design: skipping interior `CELL` records (`DATA` bit 0 set) and deleted overrides].
+/// [observed: FalloutNV 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 + hNVSE 120 on exterior
+/// cell `188TradingPost` (`0x000DDF1C`) with a single-record override ESP: overriding
+/// plugin's regions appear first, followed by base master's remaining non-duplicate
+/// regions]
+/// [design: preserving NVForever's per-record `XCLR` order within each plugin and skipping
+/// interior `CELL` records (`DATA` bit 0 set) and deleted overrides].
 pub fn cell_regions_merged(lo: &LoadOrder, schema: &Schema, cell: u32, merge: bool) -> Vec<u32> {
     if !merge {
         return cell_regions(lo, schema, cell);
@@ -479,7 +481,7 @@ pub fn cell_regions_merged(lo: &LoadOrder, schema: &Schema, cell: u32, merge: bo
         return cell_regions(lo, schema, cell);
     }
     let mut out = Vec::new();
-    for def in defs {
+    for def in defs.iter().rev() {
         let pi = def.plugin as usize;
         let r = lo.records[pi][def.ordinal as usize];
         if &r.header.sig != b"CELL" || r.header.flags & ref_flags::DELETED != 0 {
@@ -706,10 +708,11 @@ mod tests {
         assert!(!parse_hnvse_merge_region_lists(""));
         assert!(!parse_hnvse_merge_region_lists("[Main]\nbMergeRegionLists=0\n"));
         assert!(parse_hnvse_merge_region_lists("[Main]\nbMergeRegionLists = 1 ; enable\n"));
-        assert!(parse_hnvse_merge_region_lists("\u{feff}[General]\nbmergeregionlists=1\n"));
-        assert!(parse_hnvse_merge_region_lists("bMergeRegionLists=true\n"));
+        assert!(parse_hnvse_merge_region_lists("\u{feff}[main]\nbmergeregionlists=true\n"));
+        // Observed in hNVSE 120: [General] and top-level keys outside [Main] are ignored.
+        assert!(!parse_hnvse_merge_region_lists("\u{feff}[General]\nbmergeregionlists=1\n"));
+        assert!(!parse_hnvse_merge_region_lists("bMergeRegionLists=true\n"));
         assert!(!parse_hnvse_merge_region_lists("[Other]\nbMergeRegionLists=1\n"));
-        // [Main] wins over [General] when both are present.
         assert!(!parse_hnvse_merge_region_lists("[General]\nbMergeRegionLists=1\n[Main]\nbMergeRegionLists=0\n"));
         assert!(parse_hnvse_merge_region_lists("[General]\nbMergeRegionLists=0\n[Main]\nbMergeRegionLists=1\n"));
     }
@@ -780,7 +783,8 @@ mod tests {
         // Vanilla (merge = false): last writer (plugin 2) wins alone.
         assert_eq!(cell_regions(&lo, &schema, CELL), vec![0x0200_0820]);
         assert_eq!(cell_regions_merged(&lo, &schema, CELL, false), vec![0x0200_0820]);
-        // hNVSE bMergeRegionLists=1 (merge = true): load-order union, remapped & deduplicated.
-        assert_eq!(cell_regions_merged(&lo, &schema, CELL, true), vec![REG_BASE_A, REG_BASE_B, 0x0100_0810, 0x0200_0820]);
+        // hNVSE [Main] bMergeRegionLists=1 (merge = true): overriding plugin first,
+        // followed by earlier plugins' remaining non-duplicate regions.
+        assert_eq!(cell_regions_merged(&lo, &schema, CELL, true), vec![0x0200_0820, 0x0100_0810, REG_BASE_B, REG_BASE_A]);
     }
 }
