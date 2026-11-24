@@ -459,8 +459,11 @@ impl Vm<'_, '_> {
             }
             // The current or last hit of the actor it is called on (task J7,
             // jip-hit-info.md §1): 0, no form, or ar_Null (Ar_Size -1) without a hit or on
-            // invalid GetHit3DData dataType [observed: Fallout: New Vegas 1.4.0.525 + xNVSE
-            // 6.4.9 + JIP LN 57.30].
+            // invalid GetHit3DData dataType [observed: 2026-11-23, GSDocMitchellHouse
+            // (0x00103DF9), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 (10
+            // official base masters), #3678 / PR #3679 probe
+            // `w1_3606_hit_3d_dir_and_base_damage`: `Ar_Size (rDoc.GetHit3DData 0/1/2/9)`
+            // pre-hit returns `-1`].
             "gethitattacker" | "gethitweapon" | "gethitprojectile" | "gethithealthdamage" | "gethitlimbdamage" | "gethitfatiguedamage" | "gethitbaseweapondamage" | "gethitextendedflag" | "gethit3ddata" => {
                 let who = match &c.on {
                     Some(e) => self.xeval(e)?.value()?.as_form(),

@@ -203,9 +203,11 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         },
         // Body part location (0..=14) of the actor under the crosshair within optional
         // maxRange, else -1 [documented: GetReticleTargetLimb; observed: hud1 reads -1
-        // with no actor; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN
-        // 57.30 reticle sweep on standing NPC reads 1 (Head), 0 (Torso), 10 (Right Leg),
-        // and -1 on empty space / non-actor statics / above-head miss].
+        // with no actor; observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout:
+        // New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 (10 official base masters),
+        // #3678 / PR #3679 probe `w1_3606_hit_3d_dir_and_base_damage`: pitching Player
+        // Angle X across restrained Doc Mitchell reads 1 (Head), 0 (Torso), 10 (Right
+        // Leg), and -1 on empty space / non-actor statics / above-head miss].
         "getreticletargetlimb" => {
             let range = num(args, 0, 0.0);
             let limb = g

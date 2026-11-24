@@ -134,12 +134,17 @@ pub struct JipHit {
     /// 7 sneak attack, 8 explosion hit (bit n = flag n).
     pub flags: u16,
     /// World-space 3D impact point (`GetHit3DData 0` and first 3 elements of type 2);
-    /// `[0.0; 3]` for an explosion hit [observed: Fallout: New Vegas 1.4.0.525 + xNVSE
-    /// 6.4.9 + JIP LN 57.30].
+    /// `[0.0; 3]` for an explosion hit [observed: 2026-11-23, GSDocMitchellHouse
+    /// (0x00103DF9), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 (10
+    /// official base masters), #3678 / PR #3679 probe `w1_3606_hit_3d_dir_and_base_damage`:
+    /// `GrenadeFragExplosion` placed via `PlaceAtMe`].
     pub hit_pos: Option<[f32; 3]>,
     /// Unit 3D incoming travel direction vector `(nx, ny, nz)` (`GetHit3DData 1` and last
-    /// 3 elements of type 2); `[0.0; 3]` for an explosion hit [observed: Fallout: New
-    /// Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30].
+    /// 3 elements of type 2); `[0.0; 3]` for an explosion hit [observed: 2026-11-23,
+    /// GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
+    /// JIP LN 57.30 (10 official base masters), #3678 / PR #3679 probe
+    /// `w1_3606_hit_3d_dir_and_base_damage`: South->North `+Y`, East->West `-X`, and
+    /// `GrenadeFragExplosion`].
     pub hit_dir: Option<[f32; 3]>,
 }
 

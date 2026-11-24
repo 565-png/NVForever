@@ -5014,6 +5014,8 @@ fn melee(
                 sneak_attack: a.sneaking,
                 base_weapon_damage: f64::from(d.base + d.crit_bonus),
                 hit_pos: Some(hit.point),
+                // [design] Player melee hits record the player's unit look direction for
+                // `GetHit3DData 1` (unprobed for melee swings in the original; jip-hit-info.md §6).
                 hit_dir: fnv_game::combat::unit_hit_dir(player.look_dir()),
                 limb,
                 ..HitInfo::default()

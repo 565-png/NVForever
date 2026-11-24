@@ -159,16 +159,21 @@ pub struct HitInfo {
     pub explosion: bool,
     /// Weapon base damage after attacker skill and weapon condition, plus critical hit
     /// damage on critical hits, or `EXPL` base damage on explosion hits
-    /// (`GetHitBaseWeaponDamage`, jip-hit-info.md §1, §6) [observed: Fallout: New Vegas
-    /// 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30].
+    /// (`GetHitBaseWeaponDamage`, jip-hit-info.md §1, §6) [observed: 2026-11-23,
+    /// GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
+    /// JIP LN 57.30 (10 official base masters), #3678 / PR #3679 probe
+    /// `w1_3606_hit_3d_dir_and_base_damage`: 10mm non-crit `22`, `Player.SetAV CritChance 100`
+    /// crit `44`, `SetCritDam 200 r10mm` crit `222`, `GrenadeFragExplosion` `125`].
     pub base_weapon_damage: f64,
     /// Fatigue damage dealt by the hit (`GetHitFatigueDamage`, jip-hit-info.md §1).
     pub fatigue_damage: f64,
     /// World-space 3D impact point (`GetHit3DData 0` and elements 0..3 of `GetHit3DData 2`).
     pub hit_pos: Option<[f32; 3]>,
     /// Unit 3D incoming hit travel direction vector `[nx, ny, nz]` (`||v|| == 1.0`,
-    /// `GetHit3DData 1` and elements 3..6 of `GetHit3DData 2`) [observed: Fallout: New
-    /// Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30].
+    /// `GetHit3DData 1` and elements 3..6 of `GetHit3DData 2`) [observed: 2026-11-23,
+    /// GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
+    /// JIP LN 57.30 (10 official base masters), #3678 / PR #3679 probe
+    /// `w1_3606_hit_3d_dir_and_base_damage`: South->North `+Y` and East->West `-X` 10mm shots].
     pub hit_dir: Option<[f32; 3]>,
     /// The body part's limb damage, when the hit is on a part with a condition.
     pub limb: Option<LimbHit>,
@@ -180,8 +185,10 @@ fn finite_vec3(v: [f32; 3]) -> Option<[f32; 3]> {
 
 /// Normalize a game-space incoming hit travel direction (`+X` east, `+Y` north, `+Z` up)
 /// to a unit 3D vector `[nx, ny, nz]` (`||v|| == 1.0`) for `GetHit3DData 1` and elements
-/// `3..6` of `GetHit3DData 2` [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
-/// JIP LN 57.30 runtime combat probe, 10 official masters]. Returns `None` for non-finite
+/// `3..6` of `GetHit3DData 2` [observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9),
+/// Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 (10 official base masters),
+/// #3678 / PR #3679 probe `w1_3606_hit_3d_dir_and_base_damage`: South->North `+Y` and
+/// East->West `-X` 10mm shots on restrained Doc Mitchell]. Returns `None` for non-finite
 /// or zero-length vectors.
 pub fn unit_hit_dir(dir: [f32; 3]) -> Option<[f32; 3]> {
     let dir = finite_vec3(dir)?;
