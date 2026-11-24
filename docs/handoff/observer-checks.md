@@ -4110,6 +4110,20 @@ capture setup, so every part of a check that needs an interior is still open.
        confirmed: the crosshair read no reference at 150 units. These positions are
        meaningful because the same reading followed the grabbed nettles above.
 
+## Added 2026-11-23 (enemies left behind in another cell, #3390)
+
+281. **How long does an enemy left in an unloaded cell stay in combat with the player?**
+     (P2: #3390; alert.md §2.) Ours [design]: it is hidden 1 s after it was last measured,
+     Lost at 15 s without detecting the player (fCombatDetectionLostTime), Normal once
+     hidden for 30 s (fCombatTargetLostRemoveTime), since nothing searches there. In the
+     original, have an interior enemy (the Broc Flower cave's rats) fight the player, read
+     its `IsInCombat`, `GetCombatTarget` and `GetCurrentAIProcedure` and the player's
+     `IsInCombat` once a second, leave by the load door and go on reading for 5 minutes,
+     sneaking now and then to see the sneak word. Say when each ends, whether the enemy
+     follows through the door, and whether it fights on at once when the player goes back
+     in after 20 s and after 2 minutes. Then the same outdoors: outrun an enemy until its
+     cell unloads.
+
 ## Added 2026-11-23 (the GOODBYE topic without the Goodbye flag, #3477)
 
 283. **Does a GOODBYE line without the Goodbye flag end the conversation?** (P2; #3477,

@@ -88,6 +88,8 @@ the bullet and note the ruling in the spec it links to.
    - [design, #2010] A Lost search with no completed share for 300 s gives up, even
      with shares still pending; each completed share renews that safety deadline.
      A different bound changes how long unavailable navigation/AI holds combat.
+     Out of the loaded area nobody searches: it gives up once its target has been
+     hidden for 30 s (#3390).
      ([alert section 2](design/alert.md))
    - Fire only with the target within 30° ahead, turning at 240°/s.
    - Creatures start blows on the run from up to 200 units beyond reach (minimum

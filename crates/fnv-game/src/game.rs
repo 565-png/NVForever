@@ -2210,6 +2210,12 @@ pub struct GameSnapshot {
     /// (actor, target) pairs StartCombat made hostile until StopCombat.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub forced_combat: BTreeSet<(FormId, FormId)>,
+    /// Those of `forced_combat` whose target has not been measured since StartCombat
+    /// (`Awareness::scripted`), written, empty too, whenever there are forced pairs: so
+    /// `None` beside forced pairs is a save made before this field
+    /// (`Game::restore_scripted_combat`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scripted_combat: Option<BTreeSet<(FormId, FormId)>>,
     /// ppNVSE's form instances [documented: CreateFormInstance, "tied to the users save
     /// game"] (`crate::nvse_pp`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -7263,9 +7269,13 @@ impl<'a> Game<'a> {
             say_to_unsaid: self.say_to_unsaid.clone(),
             queued_ref_events: self.queued_ref_events.clone(),
             door_open_seen: self.door_open_seen.iter().filter(|&(&r, &seen)| self.world.peek(r).is_some_and(|s| s.open != seen)).map(|(&r, &seen)| (r, seen)).collect(),
-            awareness: self.awareness.actors.iter().filter(|(_, a)| a.state.in_combat() || !a.targets.is_empty() || !a.alarms.is_empty() || a.fighting.is_some()).map(|(&r, a)| (r, a.clone())).collect(),
+            awareness: self.awareness.actors.iter().filter(|(_, a)| a.state.in_combat() || !a.targets.is_empty() || !a.alarms.is_empty() || a.fighting.is_some()).map(|(&r, a)| {
+                // `scripted` is kept as `scripted_combat` below.
+                (r, crate::awareness::Awareness { scripted: BTreeSet::new(), ..a.clone() })
+            }).collect(),
             fighting: Some(self.fighting.clone()),
             forced_combat: self.awareness.forced.clone(),
+            scripted_combat: (!self.awareness.forced.is_empty()).then(|| self.scripted_combat()),
             form_instances: self.pp.instances.iter().map(|(k, v)| (*k, v.clone())).collect(),
             object_groups: self.anims.asked_all().clone(),
             extra_misc_stats: self.jip2.misc_stats.iter().map(|(k, v)| (k.clone(), *v)).collect(),
@@ -7372,6 +7382,7 @@ impl<'a> Game<'a> {
         g.restore_jip10(&s.jip10);
         g.awareness.actors = s.awareness.clone();
         g.awareness.forced = s.forced_combat.clone();
+        g.restore_scripted_combat(s.scripted_combat.as_ref());
         // A save from before `fighting` was saved cannot say which starts had run: everyone
         // in Combat or Lost counts as started, Alert (no fight yet) does not [design:
         // docs/design/save-load.md §3.2]. A start still due in such a save does not run.
