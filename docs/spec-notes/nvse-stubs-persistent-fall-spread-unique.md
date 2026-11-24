@@ -75,23 +75,36 @@ Part of #2272. Core-only implementations in `crates/fnv-game` replacing four
   - `fMinGunSpreadValue = 0.01` `[documented: Gun Spread Formula (New Vegas); crates/fnv-combat/src/tuning.rs]`
 - [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 +
   ShowOffNVSE 184, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official
-  base masters, clean-room read-only console probes in `#3679`; no DLL or
-  source consulted]:
-  - `w4c_a06b_spread_settled` (`tools/capture/nvse/catalogs/wave4c_extenders.json`):
+  base masters, isolated clean-room staging copy (read-only `PrintToConsole`
+  probes; zero writes to game install or Saves), `#3679` and companion PR
+  `#3803` (`#3802`); zero DLL, PDB, or third-party source consulted]:
+  - `w4c_a06b_spread_settled` (`tools/capture/nvse/catalogs/wave4c_extenders.json`,
+    `#3679`):
     `1h(norm=0.60925,nw=0.36175,back=0.14338,rc=0.23587,both=0.32838,cripNW=0.32838)|2h(crip=0.32838,cripNW=0.32838,norm=0.14338)`
     — `SetNoGunWobble 1` does **not** zero `GetCalculatedActorSpread` (remains
-    `0.32838` on both 1H and 2H).
-  - `w4d_09_spread_all_anim_types` (`tools/capture/nvse/catalogs/wave4d_extenders.json`):
-    `t3_10mm:anim=3,n=0.29200,r=0.23587,l=0.14338,b=0.32838 | t4_lasp:anim=4,n=0.13875,r=0.23125,l=0.13875,b=0.32375 | t5_hunt:anim=5,n=0.16881,r=0.35381,l=0.35381,b=0.44631 | t6_plas:anim=6,n=0.14338,r=0.32838,l=0.32838,b=0.42088 | t8_flam:anim=8,n=0.18038,r=0.36538,l=0.36538,b=0.45788 | t10_grn:anim=10,n=0.45038,r=0.44663,l=0.44663,b=0.44663`
-    — across settled spread readings:
+    `0.32838` on both 1H and 2H). In `w4c_a06b`, the 1H `norm=0.60925` vs
+    `nw=0.36175` vs `back=0.14338` readings were taken while the weapon-draw
+    spread transient was still decaying (`imm=0.81475 -> settled 0.14338`), not
+    an effect of `SetNoGunWobble`; settled `t3nw(0.1434,0.1434)` below confirms
+    `n == nw == 0.14338`.
+  - `w4d_09_spread_all_anim_types` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+    `#3802` / PR `#3803`, waited 12 ticks after `SetWeaponOut 1` so every weapon
+    settled before sampling):
+    `PROBE|w4d_09_spread_all_anim_types|t3(0.1434,0.2359,0.1434,0.3284)|t4(0.1388,0.2313,0.1388,0.3238)|t5(0.1688,0.3538,0.3538,0.4463)|t6(0.1434,0.3284,0.3284,0.4209)|t8(0.1804,0.3654,0.3654,0.4579)|t10(0.4504,0.4459,0.4504,0.4459)|t3nw(0.1434,0.1434)`
+    — across settled spread readings (explaining the earlier unsettled run where
+    `t3` uncrippled was still decaying from `0.81475` down to `0.14338`):
     1. **1H guns (`anim 3` 10mm Pistol, `anim 4` Laser Pistol):** right arm
-       adds `+0.09250` (`0.2`), left arm alone adds `+0.00000`, both arms add
-       `+0.18500` (`0.4`).
+       adds `+0.0925` (`0.2 * skill_mult`), left arm alone adds `+0.0000`, both
+       arms add `+0.1850` (`0.4 * skill_mult`).
     2. **2H weapons (`anim 5` Hunting Rifle, `anim 6` Plasma Rifle, `anim 8`
-       Flamer):** either single arm (`r` or `l`) adds `+0.18500` (`0.4`), and
-       both arms add `+0.27750` (`0.6` = `fCrippledArms2HSpreadPenalty`).
+       Flamer):** either single arm (`r` or `l`) adds `+0.1850`
+       (`0.4 * skill_mult`), and both arms add `+0.2775`
+       (`0.6 * skill_mult`, matching `fCrippledArms2HSpreadPenalty = 0.6`).
     3. **Thrown (`anim 10` Frag Grenade `0x4330`):** zero crippled-arm spread
-       penalty (`+0.00000` for right, left, and both arms).
+       penalty (`0.4504` / `0.4459` / `0.4504` / `0.4459`, `±0.0045` idle sway).
+    4. **Settled `SetNoGunWobble` check (`t3nw(0.1434,0.1434)`):** `n == nw ==
+       0.1434`, confirming `SetNoGunWobble 1` leaves `GetCalculatedActorSpread`
+       unchanged once weapon-draw bloom has settled.
 - [hypothesis] Items without a direct external source citation or original-game
   observation:
   1. **Unprobed weapon animation types (`0..=2`, `7`, `9`, `11..=13`)**:

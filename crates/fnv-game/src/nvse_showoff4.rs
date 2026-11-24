@@ -49,10 +49,15 @@ impl Game<'_> {
     /// [documented: GECK wiki Gun Spread Formula (New Vegas), Perk Entry Points;
     /// observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 +
     /// ShowOffNVSE 184, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official
-    /// base masters, `w4c_a06b_spread_settled` (`SetNoGunWobble 1` leaves spread
-    /// unchanged on both 1H and 2H) and `w4d_09_spread_all_anim_types` (1H guns anim
-    /// 3/4: right +0.2, left 0, both +0.4; 2H weapons anim 5/6/8: either single arm
-    /// +0.4, both arms +0.6; thrown anim 10: 0 for right/left/both); hypothesis:
+    /// base masters, isolated clean-room staging copy (read-only `PrintToConsole` probe;
+    /// zero writes to game install or Saves), `w4c_a06b_spread_settled` (`#3679`) and
+    /// settled 6-type `w4d_09_spread_all_anim_types`
+    /// (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3802 / PR #3803):
+    /// `PROBE|w4d_09_spread_all_anim_types|t3(0.1434,0.2359,0.1434,0.3284)|t4(0.1388,0.2313,0.1388,0.3238)|t5(0.1688,0.3538,0.3538,0.4463)|t6(0.1434,0.3284,0.3284,0.4209)|t8(0.1804,0.3654,0.3654,0.4579)|t10(0.4504,0.4459,0.4504,0.4459)|t3nw(0.1434,0.1434)`
+    /// (`t3nw(0.1434,0.1434)` confirms `SetNoGunWobble 1` leaves settled spread
+    /// unchanged; 1H guns anim 3/4: right +0.2, left 0, both +0.4; 2H weapons anim
+    /// 5/6/8: either single arm +0.4, both arms +0.6; thrown anim 10: 0 for
+    /// right/left/both); zero DLL, PDB, or third-party source consulted; hypothesis:
     /// unprobed anim types 0..=2, 7, 9, 11..=13 and actor-spread component after
     /// `CALCULATE_GUN_SPREAD` perks, excluding weapon `min_spread` and ammo spread mods].
     pub fn calculated_actor_spread(&mut self, actor: FormId) -> f64 {
@@ -82,7 +87,7 @@ impl Game<'_> {
         let left_arm = self.is_crippled(actor, crate::combat::LEFT_ARM);
         let right_arm = self.is_crippled(actor, crate::combat::RIGHT_ARM);
         // Crippled-arm spread penalty by `WEAP.DNAM.animation_type`
-        // [observed: `w4d_09_spread_all_anim_types` in `wave4d_extenders.json` (#3679)]:
+        // [observed: `w4d_09_spread_all_anim_types` in `wave4d_extenders.json` (#3802 / PR #3803)]:
         // - 1H guns (anim 3, 4): right arm +0.2, left arm alone 0, both arms +0.4.
         // - 2H ranged (anim 5, 6, 8 observed; 7, 9 grouped as [hypothesis]): either single
         //   arm +0.4, both arms +0.6 (`fCrippledArms2HSpreadPenalty`).

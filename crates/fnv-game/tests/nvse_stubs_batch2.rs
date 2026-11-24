@@ -527,7 +527,7 @@ fn get_calculated_actor_spread_covers_weapon_stance_limbs_perks_and_wobble() {
 
 #[test]
 fn get_calculated_actor_spread_crippled_arms_across_anim_types() {
-    // [observed: w4d_09_spread_all_anim_types (`wave4d_extenders.json`, #3679)]:
+    // [observed: w4d_09_spread_all_anim_types (`wave4d_extenders.json`, #3802 / PR #3803)]:
     // - 1H guns (anim 3, 4): right arm +0.2, left arm alone 0, both arms +0.4.
     // - 2H ranged (anim 5, 6, 8): either single arm +0.4, both arms +0.6.
     // - Thrown (anim 10): 0 for right, left, and both arms.
