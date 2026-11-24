@@ -348,3 +348,42 @@ texture, texture middles decoded from each font's `.dds`)]
 5 `Fixedsys_Comp_uniform_width`, 6 `Glow_Monofonto_VL_dialogs`,
 7 `Baked-in_Monofonto_Large`, 8 `Glow_Futura_Caps_Large`, 9 `NVFont_Test`.
 NVForever uses these defaults; it does not read the player's own INI for them yet.
+
+### 4.1 Extended font slots (`xfonts`) and out-of-range XML font IDs
+
+- **Observed mod assets** [observed: MAPMO 10.6 public
+  `Data\NVSE\Plugins\xfonts\MAPMO.txt`, `textures\fonts\mapmo_hud_caps_font{,2}.{fnt,Tex}`,
+  `menus\prefabs\mapmo\{globals,caps_counter}.xml`, JAM/VUI+ HUD XML files, and
+  `menus\stew_menu.xml`; no third-party DLL or source code was consulted]:
+  - `NVSE\Plugins\xfonts\MAPMO.txt` defines extended slots above the vanilla `1..=9`
+    table as `<slot>=<path>` lines (`21=textures\fonts\mapmo_hud_caps_font.fnt` and
+    `22=textures\fonts\mapmo_hud_caps_font2.fnt`). Both `.fnt` files are standard
+    14 632-byte `.fnt` files (`line_h = 76.7`, `ntex = 1`) paired with RGBA8 `.Tex`
+    atlases without sibling `.dds` files (§2.2).
+  - Mod XML files also author `<font>0</font>` (for example MAPMO's initial
+    `<font><copy src="globals()" trait="_MAPMOHUDCapsFont"/></font>` before scripts
+    assign slot `21` or `22`, and JAM/VUI+ text tiles) and extended IDs such as
+    `<font>42</font>` (`menus\stew_menu.xml`) even when no `xfonts` file registers
+    that slot.
+- **Discovery and slot table** [design]: `interface::load_xfonts` scans
+  `nvse\plugins\xfonts\*.txt` through the VFS in case-insensitive sorted path order so
+  loose `Data`, MO2 layered profiles, and archives behave identically. `interface::parse_xfonts`
+  ignores blank lines and `;`, `#`, `//` comments, accepts only extended slots `10..=255`
+  (never overriding vanilla INI slots `1..=9` or the unloaded vanilla font `9` rule), and
+  normalizes paths to lowercase backslashes (trimming quotes and any leading `\` or
+  `data\`). When no `xfonts\*.txt` files are present, the map is empty and unmodded
+  vanilla font loading is unchanged.
+- **XML font ID resolution and fallback** [design; hypothesis: exact original-game
+  fallback when an extended font ID is unregistered or `0` is not directly captured]:
+  `tiles::draw::resolve_font_number` keeps vanilla `1..=9` as written (preserving
+  unloaded font `9` as the stand-in), selects `10..=255` when registered in the loaded
+  `xfonts` map, and maps `0`, negative/non-finite values, and unregistered extended IDs
+  (such as `<font>42</font>` when no `xfonts` entry registers `42`) to font `1` without
+  panicking or routing to unloaded font `9`. Both tile rendering/measurement (`FontKit`,
+  `pieces_with_fonts`, `whole_pieces`) and `GetStringUIDimensions`
+  (`MenuFiles::install_measure` -> `string_measure_with_fonts`) share this resolver.
+- **Baseline and line pitch for extended slots** [design]: `tiles::draw::text_base_for`
+  retains `text_base(1..=9)` unchanged for vanilla fonts and computes an ascent-based
+  baseline (`max(max_ascent_0x20_0x7e, font.size * 0.75)`, matching `interface::line_base`)
+  for slots `>= 10` so taller extended fonts (such as MAPMO's 76.7-unit fonts) do not
+  clip above their tile top. `line_pitch` uses `font.size` for slots `>= 10`.
