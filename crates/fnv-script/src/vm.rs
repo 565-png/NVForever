@@ -173,6 +173,12 @@ pub trait Host {
     /// `on` is already evaluated; implementations must not evaluate the call again.
     /// Other hosts keep the default no-op and the original error contract.
     fn no_reference_call(&mut self, _name: &str, _on: Option<Value>, _call: &XCall) {}
+    /// Whether an extender/source call with an explicit null receiver (`0`) still
+    /// dispatches to [`Host::ext_call`] instead of aborting with
+    /// [`VmError::NoReference`]. Defaults to `false`.
+    fn allows_null_receiver(&self, _name: &str) -> bool {
+        false
+    }
 
     /// The statement whose run caused the skips reported since the last call: the
     /// innermost that holds them (for the mod log, which names the line).
@@ -3489,8 +3495,11 @@ impl Vm<'_, '_> {
             None => None,
         };
         // Called on no reference, the function fails and stops the script [observed:
-        // nvse-inv foreach.read.after, "script call failed"].
-        if on.is_some_and(|v| v.as_form().is_none()) {
+        // nvse-inv foreach.read.after, "script call failed"], unless the host admits an
+        // explicit null receiver (`0`) for that global command (for example player-source
+        // commands [observed: w4g_06_player_cmds_explicit_receiver]).
+        let explicit_null = matches!(on, Some(Value::Ref(0))) || matches!(on, Some(Value::Num(x)) if x == 0.0);
+        if on.is_some_and(|v| v.as_form().is_none()) && !(explicit_null && self.host.allows_null_receiver(lname)) {
             self.host.no_reference_call(lname, on, c);
             return Err(VmError::NoReference(lname.to_string()));
         }

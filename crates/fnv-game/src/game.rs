@@ -8070,6 +8070,10 @@ impl Host for Exec<'_, '_> {
         Some(self.game.add_var_place(p))
     }
 
+    fn allows_null_receiver(&self, name: &str) -> bool {
+        functions::player_source::handles(name)
+    }
+
     fn ext_call(&mut self, name: &str, on: Option<Value>, args: &[fnv_script::vm::XVal]) -> Option<Result<fnv_script::vm::XVal, String>> {
         if crate::ysi_filename::handles(name, args) {
             return Some(crate::ysi_filename::call(self.game, on, args));
