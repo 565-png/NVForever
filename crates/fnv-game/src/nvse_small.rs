@@ -727,8 +727,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             if let Some(value) = g.loaded_stewie_inventory_value(key, section) {
                 return Some(Ok(XVal::Num(value)));
             }
-            let ini = g.mod_files.read_text("NVSE\\Plugins\\nvse_stewie_tweaks.ini");
-            match ini.and_then(|t| crate::mod_files::ini_get(&t, &section.trim().to_ascii_lowercase(), key.trim())) {
+            match crate::stewie_inis::query_value(&g.mod_files, key, section) {
                 Some(v) => v.parse::<f64>().map(XVal::Num).unwrap_or(XVal::Str(v.trim_matches('"').to_string())),
                 None => zero,
             }

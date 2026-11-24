@@ -1,7 +1,10 @@
 # Tweaks
 
 The settings page's **Tweaks** tab: optional changes to how the game plays or what it
-shows, each off (or at "no change") unless the player sets it. The owner asked for
+shows, each off (or at "no change") in unmodded vanilla unless the player sets it (or,
+by maintainer decision 2026-11-24 / #3535, a mod-shipped modular override under
+`Data\NVSE\Plugins\Tweaks\INIs\*.ini` sets it at startup beneath `NVForever.ini`; see
+[stewie-modular-inis.md](../spec-notes/stewie-modular-inis.md)). The owner asked for
 the features of Stewie's Tweaks, a script-extender plugin for the original, as engine
 settings (2026-11-08, #1891).
 
@@ -44,6 +47,13 @@ settings (2026-11-08, #1891).
 - Each tweak is a row of the Tweaks tab, kept in `NVForever.ini` `[Settings]` under a
   `tweak-…` key (`crate::settings`). A switch is `switch!`; a multiplier is a slider
   from x0 to x2 in tenths, x1 in the middle.
+- **Mod-shipped modular INI overrides (maintainer decision 2026-11-24, #3535):**
+  `TweaksPlugin` applies recognized overrides from `Data\NVSE\Plugins\Tweaks\INIs\*.ini`
+  to `TweakSettings` in `PostStartup` before `crate::settings::apply_stored` reads
+  `NVForever.ini`, so explicit player choices saved in `NVForever.ini` always win while
+  unmentioned tweaks take the modular INI values. The base `nvse_stewie_tweaks.ini`
+  still does not set NVForever-owned options, and vanilla defaults are unchanged when
+  no modular INI files are installed ([stewie-modular-inis.md](../spec-notes/stewie-modular-inis.md)).
 - A tweak's options (the plugin's sub-settings) are added as rows of their own only
   when they change what the tweak does in a way a player would choose; the first batch
   keeps each tweak to one row and says in the catalogue which options are not built.
@@ -673,9 +683,13 @@ tweak asks ("already so").
 
 ## Next
 
-The "to do" rows, the ones Viva New Vegas turns on first. Not yet: reading a player's
-own `nvse_stewie_tweaks.ini` as the starting values (it would need the INI read from the
-game's Data folder, read-only).
+The "to do" rows, the ones Viva New Vegas turns on first. Not yet: importing a player's
+base `nvse_stewie_tweaks.ini` as starting values for NVForever-owned options (the base
+file remains fallback-only for `StewieGetValue` / unbound queries). By maintainer
+decision (2026-11-24, #3535), mod-shipped modular override folders
+(`Data\NVSE\Plugins\Tweaks\INIs\*.ini` and `Data\NVSE\Plugins\Tweaks\GameSettings\*.ini`)
+may override NVForever tweak settings and load-order GMSTs at startup beneath
+`NVForever.ini` ([stewie-modular-inis.md](../spec-notes/stewie-modular-inis.md)).
 
 ## Catalogue
 

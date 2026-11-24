@@ -1205,6 +1205,7 @@ impl Plugin for TweaksPlugin {
         app.init_resource::<TweakSettings>()
             .init_resource::<ItemPlaces>()
             .add_systems(Startup, read_help_console_label)
+            .add_systems(PostStartup, apply_modular_stewie_inis.before(crate::settings::apply_stored))
             .add_systems(Update, remember_item_places.after(crate::menu::MenuSystems))
             .add_systems(Update, sync.in_set(crate::PlaySet::Input))
             .add_systems(Update, (keys, drop_weapon, radio_volume_keys, last_weapon, hold_breath, repeat_activate, toggle_sight, place_marker_here, clear_near_marker, hide_hud_key, skip_radio_song, toggle_device).in_set(crate::PlaySet::Input))
@@ -2971,6 +2972,220 @@ pub fn healing_barred(rt: &mut crate::script::Runtime, sim: &mut crate::sim::Sim
     gains.iter().any(|&(av, amount)| amount > 0.0 && (av == fnv_game::actor_values::HEALTH || fnv_game::actor_values::LIMB_CONDITIONS.contains(&av)))
 }
 
+/// Apply recognized modular Stewie Tweaks overrides (`Data\NVSE\Plugins\Tweaks\INIs\*.ini`)
+/// onto `TweakSettings` (both `settings.game` and engine-side fields) [design:
+/// docs/spec-notes/stewie-modular-inis.md]. Runs in `PostStartup` before
+/// `crate::settings::apply_stored`, so explicit player choices in `NVForever.ini` win
+/// over mod-shipped modular INI defaults.
+pub fn apply_modular_overrides_to_settings(overrides: &fnv_game::stewie_inis::StewieIniMap, settings: &mut TweakSettings) -> usize {
+    if overrides.is_empty() {
+        return 0;
+    }
+    let mut applied = fnv_game::stewie_inis::apply_modular_tweaks_to_game(overrides, &mut settings.game);
+    macro_rules! bool_tweak {
+        ($key:expr, $field:ident) => {
+            if let Some(v) = overrides.get_bool("Tweaks", $key) {
+                settings.$field = v;
+                applied += 1;
+            }
+        };
+    }
+
+    bool_tweak!("bNoKarmaMessages", no_karma_messages);
+    bool_tweak!("bNoXPMessages", no_xp_messages);
+    bool_tweak!("bNoQuestFailedPopup", no_quest_failed_popup);
+    bool_tweak!("bNoLocationPopup", no_location_popup);
+    bool_tweak!("bRemoveQuestObjectiveAddedText", no_objective_popup);
+    bool_tweak!("bDisableFastTravel", disable_fast_travel);
+    bool_tweak!("bMidairFastTravel", midair_fast_travel);
+    bool_tweak!("bFastTravelWithEnemiesNearby", fast_travel_enemies_nearby);
+    bool_tweak!("bFastTravelOverencumbered", fast_travel_overencumbered);
+    bool_tweak!("bNoRedCrosshairOnEnemies", no_red_crosshair);
+    bool_tweak!("bHideEnemyMarkers", hide_enemy_markers);
+    bool_tweak!("bDisableCombatMusic", no_combat_music);
+    bool_tweak!("bDisableLoadingScreenTips", no_loading_tips);
+    bool_tweak!("bNoReputationMessages", no_reputation_messages);
+    bool_tweak!("bDisableExplosionInFaceIMOD", no_explosion_blur);
+    bool_tweak!("bRemoveSneakLabel", no_sneak_label);
+    bool_tweak!("bVatsExitKey", kill_cam_exit_key);
+    bool_tweak!("bNumberedComputerHotkeys", numbered_terminal_keys);
+    bool_tweak!("bDeselectHotkeys", deselect_hotkeys);
+    bool_tweak!("bNonSelectablePlayerInConsole", console_skips_player);
+    bool_tweak!("bPipboyLightAndHolsteringIgnoreTimescale", holster_real_time);
+    bool_tweak!("bPowerArmorPreventsScreenBlood", power_armor_no_screen_blood);
+    bool_tweak!("bHideRedCrosshairOnDistantInvisibleTargets", no_red_crosshair_on_cloaked);
+    bool_tweak!("bGodmodePreventsLegCrippleSound", god_mode_quiet_landing);
+    bool_tweak!("bCompressDuplicateConsoleMessages", console_compress_repeats);
+    bool_tweak!("bConsolePrintsIncludeTimestamp", console_timestamps);
+    bool_tweak!("bLivingAnatomyShowDR", living_anatomy_dr);
+    bool_tweak!("bSynchronizeContainerCategories", sync_categories);
+    bool_tweak!("bNoFastTravelTimeChange", no_travel_time);
+    bool_tweak!("bNoFastTravelIfLegsCrippled", no_travel_crippled_leg);
+    bool_tweak!("bDisableSellingItems", no_selling);
+    bool_tweak!("bAimingSpeed", no_aiming_slowdown);
+    bool_tweak!("bRepeatJumping", repeat_jumping);
+    bool_tweak!("bHoldCrouchToSneak", hold_to_sneak);
+    bool_tweak!("bAddInventoryDropItemHotkey", drop_key);
+    bool_tweak!("bAimingUnholstersWeapons", aiming_draws_weapon);
+    bool_tweak!("bBarterCheckActorBuySellFlags", vendor_lists_both);
+    bool_tweak!("bNoPlayerStaggerAnims", no_player_stagger);
+    bool_tweak!("bPreventReloadWeaponUnholstering", ready_does_not_draw);
+    bool_tweak!("bReloadingPreventsWeaponHotkeys", no_hotkeys_while_reloading);
+    bool_tweak!("bMinigamesPlayXPSoundAtMaxLevel", xp_sound_at_cap);
+    bool_tweak!("bHoldWaitKeyToShowMenu", hold_to_wait);
+    bool_tweak!("bDisableWeaponFOV", no_sight_zoom);
+    bool_tweak!("bHideMiscQuestItems", hide_misc_quest);
+    bool_tweak!("bClickingActiveTabTogglesSorting", tab_click_sorts);
+    bool_tweak!("bHotkeyHolstersWeaponIfEquipped", hotkey_toggles_in_hand);
+    bool_tweak!("bDisableInteriorFog", no_interior_fog);
+    bool_tweak!("bNoCompassPipsIfNotInDanger", compass_pips_in_danger_only);
+    bool_tweak!("bHostilesUseNeutralColorOnCompass", neutral_foes_on_compass);
+    bool_tweak!("bShowSneakLabelWhileStanding", sneak_label_standing);
+    bool_tweak!("bNoXPBarInCombat", no_xp_meter_in_combat);
+    bool_tweak!("bDisableHUDCrippledLimbIndicator", no_limb_indicator);
+    bool_tweak!("bSkipDeathcamHotkey", skip_death_cam);
+    bool_tweak!("bReplaceHelpWithConsole", help_is_console);
+    bool_tweak!("bHeatbeatSoundsFade", heartbeat_fade);
+    bool_tweak!("bTerminalFadeTime", terminal_fade);
+    bool_tweak!("bContainersShowEquippedAmmo", containers_show_ammo);
+    bool_tweak!("bDescriptiveMarkerAddedMessage", descriptive_marker_added);
+    bool_tweak!("bDisableGrenadeIndicator", no_grenade_indicator);
+    bool_tweak!("bHideGrenadeIndicatorForNoDamageExplosions", grenade_indicator_skip_harmless);
+    bool_tweak!("bExplodingDestructibleIndicator", grenade_indicator_destructibles);
+    bool_tweak!("bContainerTakeAllDoesntCloseMenu", take_all_stays);
+    bool_tweak!("bTakeAllConfirmation", take_all_confirm);
+    bool_tweak!("bRepairAllConfirmation", repair_all_confirm);
+    bool_tweak!("bHideEquippedItemsInBarter", hide_equipped_barter);
+    bool_tweak!("bHideEquippedItemsInContainers", hide_equipped_containers);
+    bool_tweak!("bNoCapitaliseContainerCategories", title_case_categories);
+    bool_tweak!("bDisableInventoryRightClickDrop", no_right_click_drop);
+    bool_tweak!("bPreventNoFastTravelMessage", quiet_undiscovered);
+    bool_tweak!("bOnlyChangeCameraHeightIfPOVKeyHeld", camera_wheel_needs_pov);
+    bool_tweak!("bNoHotkeyEquipSounds", quiet_hotkeys);
+    bool_tweak!("bDisableWeaponHotkeys", no_weapon_hotkeys);
+    bool_tweak!("bOpenPipboyToInventoryByDefault", pipboy_opens_items);
+    bool_tweak!("bHideCrosshairWhileReloading", hide_crosshair_reloading);
+    bool_tweak!("bInvertCameraX", invert_x);
+    bool_tweak!("bShowNearestUndiscoveredLocation", nearest_unfound_on_compass);
+    bool_tweak!("bLocationDiscoveredCornerMessage", discovered_in_corner);
+    bool_tweak!("bInvertContainerTitleScrollwheelDirection", invert_title_wheel);
+    bool_tweak!("bAutoContinueGame", auto_continue);
+    bool_tweak!("bMainMenuContinueIcon", continue_shows_save);
+    bool_tweak!("bQuestTextVisibleInMenus", quest_text_in_menus);
+    bool_tweak!("bDetectedByWhom", detected_by_whom);
+    bool_tweak!("bKeyRepeatAcceleration", key_repeat_accel);
+    bool_tweak!("bHUDFatigueIndicator", hud_fatigue);
+    bool_tweak!("bToggleControllerIfAttackPressed", toggle_device);
+    bool_tweak!("bScaleExplosionShake", scale_explosion_shake);
+    bool_tweak!("bMorePreciseRadMeter", precise_rad_meter);
+    bool_tweak!("bShowDoorsOnCompass", compass_doors);
+    bool_tweak!("bHideAmmoLabel", hide_ammo_label);
+    bool_tweak!("bUseCustomBarterPriceMultipliers", barter_by_kind);
+    bool_tweak!("bAllowDuplicateControlBinds", duplicate_binds);
+    bool_tweak!("bTogglePOVWhenHolsteringWeapon", pov_follows_weapon);
+    bool_tweak!("bContainerEncumbranceIndicator", warn_encumbrance);
+    bool_tweak!("bHapticPipboy", pipboy_buzz);
+    bool_tweak!("bPowerAttackIfBlocking", power_attack_if_blocking);
+    bool_tweak!("bVATSHipFire", vats_hip_fire);
+    bool_tweak!("bNoPipBoyInCombat", no_pipboy_in_combat);
+    bool_tweak!("bNoEquippedWeaponMovementPenalty", no_weapon_move_penalty);
+    bool_tweak!("bUnequipBrokenArmor", unequip_broken_armor);
+    bool_tweak!("bHideCrosshairInFirstPerson", hide_crosshair_first);
+    bool_tweak!("bHideCrosshairInThirdPerson", hide_crosshair_third);
+    bool_tweak!("bBlackJackTotalDisplay", blackjack_total);
+    bool_tweak!("bSlotsAutoSpinHotkey", slots_hold_to_spin);
+    bool_tweak!("bTalkWhileSneakingIfShiftIsHeld", shift_talks_sneaking);
+    bool_tweak!("bTabClosesTerminals", tab_closes_terminals);
+    bool_tweak!("bTabBackInStartMenu", tab_back_in_pause);
+    bool_tweak!("bEnteringVATSDoesntUnholsterWeapon", vats_keeps_holstered);
+    bool_tweak!("bNoHUDHotkeyPopup", no_hotkey_wheel);
+    bool_tweak!("bMoveAmmoTypeLabel", ammo_label_under);
+    bool_tweak!("bRaceMenuAllowFemaleFacialHair", female_facial_hair);
+    bool_tweak!("bContainerMenuStoreAllHotkey", store_all);
+    bool_tweak!("bStartMenuQuickLoad", quick_load_in_menus);
+    bool_tweak!("bPickLocksEvenWithKey", pick_locks_with_key);
+    bool_tweak!("bRightClickChangesToPreviousContainerCategory", right_click_previous_category);
+    bool_tweak!("bShowBarterTotalWhenOverSellLimit", full_barter_total);
+    bool_tweak!("bCompassFadeLeftSide", compass_fade_left);
+    bool_tweak!("bDisableControllerDeadzones", custom_dead_zones);
+    bool_tweak!("bControllerTriggerDeadzones", custom_trigger_dead_zones);
+    bool_tweak!("bMoreResponsiveControllerAiming", responsive_stick);
+    bool_tweak!("bFasterControllerPOVRotate", faster_pad_orbit);
+    bool_tweak!("bVanityCamReturnsToFirstPerson", vanity_returns_first);
+    bool_tweak!("bRememberConsoleHistory", remember_console_history);
+    bool_tweak!("bUseConsoleOutputFile", console_output_file);
+    bool_tweak!("bConsoleTextShadow", console_text_shadow);
+    bool_tweak!("bClickToExitLoadScreens", click_to_exit_loading);
+    bool_tweak!("bBarterShowCapsChange", barter_caps_change);
+    bool_tweak!("bJumpSwimsUpwards", jump_swims_up);
+    bool_tweak!("bFirstPersonVATS", first_person_vats);
+    bool_tweak!("bKeepCrosshairWhenAiming", crosshair_when_aiming);
+    bool_tweak!("bMoveDuringVATSPlayback", move_during_kill_cam);
+    bool_tweak!("bBetterPickupPrompt", stack_figures);
+    bool_tweak!("bTurnFurtherWhileSeated", seated_wide);
+    bool_tweak!("bNoTurningAnim", no_turn_clip);
+    bool_tweak!("bRemoveLandingAnim", no_land_clip);
+    bool_tweak!("bHideInvisibleUndiscoveredLocations", hide_unmapped_places);
+    bool_tweak!("bSkipVigorTesterSpecialPages", vigor_review_first);
+    bool_tweak!("bHideCursorInMessageMenu", no_pointer_in_message_box);
+    bool_tweak!("bHideCursorInDialog", no_pointer_in_dialogue);
+    bool_tweak!("bLevelUpScrollWheelSupport", levelup_wheel);
+    bool_tweak!("bActivatingDoesntStandUp", seat_keeps_on_activate);
+    bool_tweak!("bNoExteriorLoadScreens", plain_going_out);
+    bool_tweak!("bHideHotkeyedItemsInContainers", hide_hotkeyed_containers);
+    bool_tweak!("bHideHotkeyedItemsInBarter", hide_hotkeyed_barter);
+    bool_tweak!("bHideHotkeyedItemsInRepairLists", hide_hotkeyed_repair);
+    bool_tweak!("bAddSetHomeCommand", console_homes);
+    bool_tweak!("bShiftScreenshotHidesMenus", shift_screenshot_hides);
+    bool_tweak!("bOverencumberedTweak", run_overencumbered);
+    bool_tweak!("bScopeHoldBreath", hold_breath);
+    bool_tweak!("bAdjustableScopeZoom", scope_wheel_zoom);
+    bool_tweak!("bMousewheelScrollsWeaponHotkeys", wheel_cycles_hotkeys);
+    bool_tweak!("bWeaponCycleUpDownHotkeys", dpad_cycles_hotkeys);
+    bool_tweak!("bAllowKeyboardAndMouseWithControllerConnected", keys_with_pad);
+    bool_tweak!("bDoubleTapReloadToChangeAmmoType", double_tap_ammo);
+    bool_tweak!("bImprovedWeather", improved_weather);
+    bool_tweak!("bVATSStopFollowingDeadTargets", vats_stop_following_dead);
+    bool_tweak!("bAddNightVisionToggle", night_vision_toggle);
+    bool_tweak!("bUseHitLocationInCinematicKillcams", kill_cam_hit_location);
+    bool_tweak!("bCompassNPCDistanceBasedAlpha", compass_pips_fade);
+    bool_tweak!("bCompassLocationDistanceBasedAlpha", compass_places_fade);
+    bool_tweak!("bArmorSoundsPlayIn3D", armor_sounds_3d);
+    bool_tweak!("bEncumbranceIncludesGrabbedItems", grabbed_weighs);
+    bool_tweak!("bSortEquipableAmmo", usable_ammo_first);
+    bool_tweak!("bBetterFlycam", better_flycam);
+    bool_tweak!("bForceHiResWeaponModels", hi_res_npc_weapons);
+    bool_tweak!("bShowQuestObjectivesOnCellChange", objectives_on_arrival);
+    bool_tweak!("bKeepFallHeightOnLoad", keep_fall_height_on_load);
+    bool_tweak!("bRememberPipboyScrollPositions", remember_item_places);
+    bool_tweak!("bHUDMarkerNameIndicator", hud_marker_name);
+    bool_tweak!("bHUDShowRegionNames", hud_region_names);
+    bool_tweak!("bMoveDuringOpenPipboyAnim", move_during_pipboy_raise);
+    bool_tweak!("bDisableRegionBordersKeepMessage", region_borders_message_only);
+    bool_tweak!("bTerminalGreyReadNotes", grey_read_notes);
+    bool_tweak!("bCompassQuestHeightIndicator", compass_quest_height);
+    bool_tweak!("bPlacedMarkerHeightIndicator", compass_marker_height);
+
+    if let Some(style) = overrides.get_i32("Tweaks", "iDateFormat").filter(|&s| s >= 0) {
+        let max = crate::wait::model::DATE_STYLES.len() - 1;
+        settings.date_style = (style as usize).min(max);
+        applied += 1;
+    }
+
+    applied
+}
+
+/// Startup system: load `Data\NVSE\Plugins\Tweaks\INIs\*.ini` into `TweakSettings` before
+/// `crate::settings::apply_stored` applies explicit `NVForever.ini` choices.
+fn apply_modular_stewie_inis(mut tweaks: ResMut<TweakSettings>) {
+    let (files, overrides) = fnv_game::stewie_inis::load_modular_inis_from_data();
+    if files == 0 {
+        return;
+    }
+    let applied = apply_modular_overrides_to_settings(&overrides, &mut tweaks);
+    info!("tweaks: applied {applied} override(s) from {files} modular Stewie INI file(s)");
+}
+
 /// Hand the game's part to the running game when it differs, and log the change.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::type_complexity)]
@@ -3285,5 +3500,116 @@ mod tests {
         assert_eq!(none.world().resource::<TweakSettings>().console_label(), "Console");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn modular_stewie_inis_apply_sorted_overrides_and_nvforever_ini_wins() {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("nvf-play-modular-stewie-{}-{stamp}", std::process::id()));
+        let data = root.join("Data");
+        let inis = data.join("NVSE/Plugins/Tweaks/INIs");
+        std::fs::create_dir_all(&inis).unwrap();
+
+        // Absent/empty check first on a clean root with no modular INIs.
+        let empty_root = root.join("EmptyData");
+        std::fs::create_dir_all(&empty_root).unwrap();
+        let (empty_files, empty_map) = fnv_game::stewie_inis::load_modular_inis_from_roots(&[empty_root]);
+        assert_eq!(empty_files, 0);
+        let mut unchanged = TweakSettings::default();
+        assert_eq!(apply_modular_overrides_to_settings(&empty_map, &mut unchanged), 0);
+        assert_eq!(unchanged, TweakSettings::default());
+
+        // Two sorted modular INIs: 20_second.ini overrides 10_first.ini.
+        std::fs::write(
+            inis.join("10_first.ini"),
+            "; first modular override\n\
+             [Tweaks]\n\
+             bTabBackInStartMenu = 1\n\
+             bNoKarmaMessages = 1\n\
+             bCritChanceIgnoresFireRate = 1\n\
+             bMenuSearch = 1\n\
+             iDateFormat = 2\n\
+             [Critical Hits]\n\
+             fCriticalDamageMult = 1.5\n",
+        )
+        .unwrap();
+        std::fs::write(
+            inis.join("20_second.INI"),
+            "[tweaks]\n\
+             bTabBackInStartMenu = 0 ; second file wins\n\
+             bUnknownFutureKey = 1\n\
+             [Critical Hits]\n\
+             fCriticalDamageMult = 2.0\n",
+        )
+        .unwrap();
+
+        let (files, overrides) = fnv_game::stewie_inis::load_modular_inis_from_roots(std::slice::from_ref(&data));
+        assert_eq!(files, 2);
+
+        let nvf_ini = root.join("NVForever.ini");
+        std::fs::write(&nvf_ini, "[Settings]\ntweak-no-karma-messages=0\ntweak-crit-damage-scale=0.25\n").unwrap();
+
+        let mut app = App::new();
+        app.add_plugins(TweaksPlugin);
+        app.insert_resource(crate::settings::SettingsFile(Some(nvf_ini)));
+        {
+            let mut settings = app.world_mut().resource_mut::<TweakSettings>();
+            apply_modular_overrides_to_settings(&overrides, &mut settings);
+            assert!(!settings.tab_back_in_pause, "20_second.INI disabled bTabBackInStartMenu");
+            assert!(settings.no_karma_messages);
+            assert!(settings.game.crit_ignores_fire_rate);
+            assert!(settings.game.menu_search);
+            assert_eq!(settings.date_style, 2);
+            assert_eq!(settings.game.crit_damage_scale, 2.0);
+        }
+        // Explicit NVForever.ini preferences override modular INI defaults while
+        // unmentioned modular keys remain intact.
+        crate::settings::apply_stored(app.world_mut());
+        let final_settings = app.world().resource::<TweakSettings>();
+        assert!(!final_settings.no_karma_messages, "explicit NVForever.ini off wins");
+        assert_eq!(final_settings.game.crit_damage_scale, 0.5, "explicit NVForever.ini slider 0.25 -> x0.5 wins");
+        assert!(final_settings.game.crit_ignores_fire_rate, "unmentioned modular key stays enabled");
+        assert!(final_settings.game.menu_search, "unmentioned modular key stays enabled");
+        assert_eq!(final_settings.date_style, 2);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sim_state_loads_modular_game_settings_into_form_store_and_world() {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("nvf-play-modular-gmst-{}-{stamp}", std::process::id()));
+        let gmst_dir = root.join("Data/nvse/plugins/tweaks/gamesettings");
+        std::fs::create_dir_all(&gmst_dir).unwrap();
+        std::fs::write(
+            gmst_dir.join("01_base.ini"),
+            "; headerless GMST overrides\n\
+             fSyntheticFloat = 12.5\n\
+             iSyntheticInt = 7\n\
+             sSyntheticText = \"First\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            gmst_dir.join("02_override.INI"),
+            "[GameSettings]\n\
+             iSyntheticInt = 42 ; later file overrides\n\
+             sSyntheticText = \"Second;Value\"\n\
+             fUnknownGmst = 99.0\n",
+        )
+        .unwrap();
+
+        let mut forms = fnv_sim::FormStore::default();
+        forms.settings.insert("fsyntheticfloat".into(), fnv_sim::settings::Setting::Float(1.0));
+        forms.settings.insert("isyntheticint".into(), fnv_sim::settings::Setting::Int(1));
+        forms.settings.insert("ssynthetictext".into(), fnv_sim::settings::Setting::Str("Initial".into()));
+        let (files, applied) = fnv_game::stewie_inis::apply_modular_game_settings_to_forms_from_roots(&mut forms, &[root.join("Data")]);
+        assert_eq!(files, 2);
+        assert_eq!(applied, 3);
+        assert_eq!(forms.setting_f32("fSyntheticFloat"), Some(12.5));
+        assert_eq!(forms.setting_f32("iSyntheticInt"), Some(42.0));
+        assert_eq!(forms.settings.get("ssynthetictext"), Some(&fnv_sim::settings::Setting::Str("Second;Value".into())));
+        assert!(!forms.settings.contains_key("funknowngmst"));
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
