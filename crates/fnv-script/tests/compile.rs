@@ -2136,7 +2136,9 @@ fn unsupported_shift_assign_and_bare_pow_macro_are_rejected() {
 }
 
 /// `dATan2(y, x)` returns exact degrees in [-180, 180] across all four quadrants and axis
-/// edges, with `(0, 0) -> 0.0` [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9].
+/// edges, with `(0, 0) -> 0.0` [observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9),
+/// Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 (10 official base masters), #3678 / PR #3679
+/// probe `w1_3495_compound_assign_and_datan2`].
 #[test]
 fn datan2_covers_quadrants_and_axes() {
     let h = run(

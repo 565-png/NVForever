@@ -305,10 +305,14 @@ impl XTok {
 }
 
 /// Operators of the extender's expressions, longest first [documented: NVSE Expressions;
-/// observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 runtime script probe confirms
-/// `<<=` and `>>=` do not exist (bare forms fail to precompile; `let x <<= y` / `let x >>= y`
-/// log `Error: Too many operators.` and fall back to plain RHS assignment); design: NVForever
-/// rejects `let x <<= y` / `let x >>= y` at compile time rather than assigning the RHS].
+/// observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas 1.4.0.525 +
+/// xNVSE 6.4.9 (10 official base masters), #3678 / PR #3679 probes
+/// `b3_syn_01_shift_compound_assign` (`let iA <<= 4; let iB >>= 2` -> `Error: Too many
+/// operators.`, RHS fallback `4, 2`) and `w1_3495_compound_assign_and_datan2` (`CompileScript`
+/// probes: bare `x <<= 2`/`x >>= 2` fail to precompile; `let x <<= 2`/`let x >>= 2` log
+/// `Error: Too many operators.` and assign RHS `2`; binary `3 << 2 = 12`, `20 >> 2 = 5`);
+/// design: NVForever rejects `let x <<= y` / `let x >>= y` at compile time rather than
+/// assigning the RHS].
 const XOPS: [&str; 33] = [
     "<-", "=>", ":=", "+=", "-=", "*=", "/=", "^=", "|=", "&=", "%=", "::", "->", "<<", ">>", "==", "!=", "<=", ">=", "&&", "||", ":", "|",
     "&", "+", "-", "*", "/", "%", "^", "<", ">", "=",
