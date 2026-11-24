@@ -24,10 +24,14 @@ integer arithmetic: unpacked channels equal their independent input values, and
 packing equals `red * 65536 + green * 256 + blue`. No implementation, clamp,
 conversion, validation or rejection policy is selected by these fixtures.
 
-[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, 10 official base
-masters, isolated clean-room staging, UI Organizer 230, GSDocMitchellHouse (0x00103DF9),
-Wave 4E black-box probe `w4e_10_mcm_rgb_negative_frac_shift`: `rgb=(255,128,64)|land(-1&255=255,3.7&255=4)|shl(-5<<2=-20,3.7<<1=8,1<<32=0)|shr(-8>>1=-4)`;
-zero DLL/PDB/source consulted]
+[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + UI Organizer 230, 2026-11-24,
+`GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters, isolated clean-room staging
+copy (synthetic prefab XML staged strictly inside the isolated copy and removed after exit;
+read-only `PrintToConsole` probe; zero writes to game install or Saves),
+`w4e_10_mcm_rgb_negative_frac_shift` (`tools/capture/nvse/catalogs/wave4e_mods.json`,
+PR #3803 / #3802):
+`PROBE|w4e_10_mcm_rgb_negative_frac_shift|rgb=255,128,64|land(neg=255,frac=4)|shl(neg=-20,frac=8,s32=0)|shr(neg=-4)`;
+zero DLL, PDB, or third-party source consulted]
 In original Fallout: New Vegas + UIO 230, `<land>`, `<shl>`, and `<shr>` do not
 restrict inputs to nonnegative whole numbers:
 - Negative operands use signed 32-bit two's-complement arithmetic (`-1 land 255 = 255`,

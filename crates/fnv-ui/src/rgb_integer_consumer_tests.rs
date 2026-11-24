@@ -215,7 +215,9 @@ fn mapped_integer_domain_keeps_unsupported_values_and_retains_existing_operators
 
 #[test]
 fn observed_signed_32bit_rounding_and_shift_overflow_parity() {
-    // [observed: Wave 4E black-box probe `w4e_10_mcm_rgb_negative_frac_shift`]
+    // [observed: `w4e_10_mcm_rgb_negative_frac_shift` (`tools/capture/nvse/catalogs/wave4e_mods.json`,
+    // PR #3803 / #3802):
+    // `PROBE|w4e_10_mcm_rgb_negative_frac_shift|rgb=255,128,64|land(neg=255,frac=4)|shl(neg=-20,frac=8,s32=0)|shr(neg=-4)`]
     // Verifies signed 32-bit two's-complement arithmetic, nearest-integer rounding,
     // and shift counts >= 32 returning 0 across literal and live-referenced traits.
     let src = MemSource::default().with(

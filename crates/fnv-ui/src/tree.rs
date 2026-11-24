@@ -1967,10 +1967,14 @@ fn finite_extra(value: f64) -> Value {
 }
 
 /// Signed 32-bit integer bitwise/shift operators (`mcm-rgb-integer-consumers.md`).
-/// [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, 10 official base
-/// masters, isolated clean-room staging, UI Organizer 230, GSDocMitchellHouse (0x00103DF9),
-/// Wave 4E black-box probe `w4e_10_mcm_rgb_negative_frac_shift`: `rgb=(255,128,64)|land(-1&255=255,3.7&255=4)|shl(-5<<2=-20,3.7<<1=8,1<<32=0)|shr(-8>>1=-4)`;
-/// zero DLL/PDB/source consulted]
+/// [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + UI Organizer 230, 2026-11-24,
+/// `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters, isolated clean-room
+/// staging copy (synthetic prefab XML staged strictly inside the isolated copy and removed
+/// after exit; read-only `PrintToConsole` probe; zero writes to game install or Saves),
+/// `w4e_10_mcm_rgb_negative_frac_shift` (`tools/capture/nvse/catalogs/wave4e_mods.json`,
+/// PR #3803 / #3802):
+/// `PROBE|w4e_10_mcm_rgb_negative_frac_shift|rgb=255,128,64|land(neg=255,frac=4)|shl(neg=-20,frac=8,s32=0)|shr(neg=-4)`;
+/// zero DLL, PDB, or third-party source consulted]
 /// Finite operands are rounded to nearest `i32` (`.5` half-away-from-zero tie-breaking
 /// `[design]`). Non-numeric, nonfinite, out-of-`i32`-range operands and negative shift counts
 /// leave `acc` unchanged `[design]`. Shift counts `>= 32` yield `0` (`shl` `[observed]`;
