@@ -368,10 +368,10 @@ pub struct FosPlayer {
     pub place: Option<Place>,
     /// Strength … Luck from the player's base form (NPC_ 0x7, change flag 2).
     pub special: Option<[u8; 7]>,
-    /// Player sex from `NPC_ 0x7` change flag 24 (`u8 female |`, `Player.SexChange`) [observed:
-    /// vanilla 1.4.0.525 A/B save pairs] or change flag 1 (ACBS bit 0 = female) [hypothesis].
+    /// Player sex from `NPC_ 0x7` change flag 24 (`u8 female |`, `Player.SexChange`) or
+    /// change flag 1 (24-byte ACBS bit 0 = female) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub female: Option<bool>,
-    /// True when [`FosPlayer::female`] was set from observed `NPC_ 0x7` change flag 24.
+    /// True when [`FosPlayer::female`] was set from `NPC_ 0x7` change flag 24.
     pub female_from_bit24: bool,
     /// Spells/abilities listed on `NPC_ 0x7` change flag 4 (first ref list) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub spells: Vec<Option<u32>>,
@@ -392,7 +392,8 @@ pub struct FosPlayer {
     pub av_base: Vec<(u32, f32)>,
     /// The third array of actor-value entries by code (§6.4), non-zero entries
     /// [observed: vanilla 1.4.0.525 A/B save pairs: current damage deltas (negative for AP 12
-    /// and limb conditions 25–31); positive AV3 growing meters remain [hypothesis]].
+    /// and limb conditions 25–31) and natural positive growing meters (RadiationRads 54 from
+    /// WaterUnpurified and Hardcore Dehydration 73 from alcohol)].
     pub av_damage: Vec<(u32, f32)>,
     /// The 232nd float immediately after the 3×77 actor-value arrays (§6.4), when non-zero
     /// [observed: vanilla 1.4.0.525 A/B save pairs: player Health damage delta, negative when injured].
@@ -433,8 +434,9 @@ pub struct FosPlayer {
 }
 
 /// Global table 1 type 10: Pip-Boy radio playback state (§5.1, §6.3) [observed: vanilla 1.4.0.525
-/// A/B save pairs for the second `vsval`-counted active-station list (`ref3 | u32 playback_ms | ...`);
-/// first-list fallback remains [hypothesis]].
+/// A/B save pairs for List 1 world-radio speakers (`ref3 | u8 | u8 | u8 | u8 |`) and List 2 active
+/// broadcast stations (`ref3 | u32 playback_ms | u32 | u8 | u8 | u32 | vsval n_listeners |
+/// n_listeners * (ref3 |) | u8 has_conv | ...`); opening-header fallback remains [hypothesis]].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FosRadioState {
     pub on: bool,
@@ -459,26 +461,26 @@ pub struct FosEncounterZone {
 }
 
 /// A cell's saved detach time, flags, owner, and fog-of-war presence (`CELL`, kind 7;
-/// §6.2) [hypothesis].
+/// §6.2) [observed: vanilla 1.4.0.525 A/B save pairs for bits 1, 3, 29, 30, and 31].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FosCell {
     pub form: u32,
-    /// Game hours passed at detach (change flag 30) [hypothesis].
+    /// Game hours passed at detach (change flag 30) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub detach_hours: Option<u32>,
-    /// Cell flags byte (change flag 1) [hypothesis].
+    /// Cell flags byte (change flag 1) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub cell_flags: Option<u8>,
-    /// Cell owner form (change flag 3) [hypothesis].
+    /// Cell owner form (change flag 3, serialized after bit-31 fog) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub owner: Option<Option<u32>>,
-    /// Whether local-map fog-of-war data is present (change flag 31) [hypothesis].
+    /// Whether local-map fog-of-war data is present (change flag 31) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub has_fog: bool,
 }
 
 /// A saved lock on a placed door or container (`REFR` extra data `0x2A`, bit 12; §6.2)
-/// [hypothesis].
+/// [observed: vanilla 1.4.0.525 A/B save pairs].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FosLock {
     pub level: u8,
-    /// Bit 0 (`0x01`) = locked [hypothesis].
+    /// Bit 0 (`0x01`) = locked [observed: vanilla 1.4.0.525 A/B save pairs].
     pub flags: u8,
     pub key: Option<u32>,
     pub num_tries: u32,
@@ -492,7 +494,7 @@ impl FosLock {
 }
 
 /// Script variable instance decoded from extra data `0x0D` (`ref3` script + vars)
-/// [hypothesis].
+/// [observed: vanilla 1.4.0.525 A/B save pairs on non-created `REFR`, `ACHR`, and inventory items].
 #[derive(Debug, Clone, PartialEq)]
 pub struct FosScriptVars {
     pub script: Option<u32>,
@@ -500,12 +502,13 @@ pub struct FosScriptVars {
 }
 
 /// A saved terminal state on a placed `TERM` reference (`REFR` extra data `0x50`:
-/// `u8 flags | u8 lock_level |`; §6.2) [hypothesis].
+/// `u8 flags | u8 lock_level |`; §6.2) [observed: vanilla 1.4.0.525 A/B save pairs for bit 0
+/// locked-out, `0xFE` script-unlock, and `0x02..=0x05` lock levels; bit 7 hacked `[hypothesis]`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FosTerminalState {
-    /// Bit 7 (`0x80`) = hacked/unlocked; bit 0 (`0x01`) = locked out [hypothesis].
+    /// Bit 0 (`0x01`) = locked out [observed]; bit 7 (`0x80`) = hacked/unlocked [hypothesis].
     pub flags: u8,
-    /// `0xFE` = unlocked, `0xFF` = unchanged/key-required, `0..=0xFC` = lock level [hypothesis].
+    /// `0xFE` = script-unlocked [observed], `0xFF` = unchanged, `0..=0x05` = lock level [observed].
     pub lock_level: u8,
 }
 
@@ -545,17 +548,19 @@ pub struct FosRefExtras {
 }
 
 /// Decoded per-actor state for a non-player, non-created `ACHR`/`ACRE` record (§6.2, §6.5)
-/// [observed: vanilla 1.4.0.525 A/B save pairs for bit-0 dead, bit-4 scale, `0x5E`/`0x5F`/`0x89`,
-/// inventory, `current_package`, High-Process AVs, and bit-23 `ModAV`; bit-3 cell-change,
-/// `0x0D` vars, Mid/Low-Process `1..=3`, `tok[18]` package sub-blocks, and bit-20-only AVs
-/// remain [hypothesis]].
+/// [observed: vanilla 1.4.0.525 A/B save pairs for bit-0 dead, bit-2 Havok, bit-3 cell-change,
+/// bit-4 scale, `0x0D`/`0x5E`/`0x5F`/`0x89`, inventory, `current_package`, `process_level 0..=3`
+/// with `tok[18]` (`0x00`/`0x10`/`0xFF`/`0x0C`/`0x0D`/`0x0E` and no-package `0x00`), bit-21 damage,
+/// bit-20 active-effect/worn-gear AV1 modifiers, bit-22 `SetAV` base overrides, and bit-23
+/// `ModAV`/`ForceAV` permanent modifiers].
 #[derive(Debug, Clone, PartialEq)]
 pub struct FosActorChange {
     pub form: u32,
     pub kind: u8,
     pub flags: u32,
     pub place: Option<Place>,
-    /// True when bit 3 (`0x08`) cell-change suffix was present in the placement prefix [hypothesis].
+    /// True when bit 3 (`0x08`) 7-byte cell-change suffix was present in the placement prefix
+    /// [observed: vanilla 1.4.0.525 A/B save pairs].
     pub cell_changed: bool,
     pub process_level: u8,
     pub form_flags: Option<u32>,
@@ -573,17 +578,18 @@ pub struct FosActorChange {
     /// [observed: vanilla 1.4.0.525 A/B save pairs].
     pub current_package: Option<u32>,
     /// Sparse actor-value damage/current deltas from process block (`process_level <= 3`, bit 21)
-    /// [observed: High-Process `process_level == 0` in vanilla 1.4.0.525 A/B save pairs;
-    /// Mid/Low-Process `1..=3`, non-zero `tok[18]`, and no-package records `[hypothesis]`].
+    /// [observed: vanilla 1.4.0.525 A/B save pairs].
     pub av_damage: Vec<(u8, f32)>,
-    /// Sparse permanent actor-value modifiers from process block (`process_level <= 3`, bit 20)
-    /// and bit-23 `ModAV` list [observed: High-Process and bit-23 `ModAV` in vanilla 1.4.0.525
-    /// A/B save pairs; Mid/Low-Process `1..=3`, non-zero `tok[18]`, no-package, and bit-20-only
-    /// records `[hypothesis]`].
+    /// Sparse active-effect / ability / worn-gear AV1 modifiers from process block
+    /// (`process_level <= 3`, bit 20; NOT applied as permanent modifiers to avoid double-counting
+    /// NPC abilities and worn gear) [observed: vanilla 1.4.0.525 A/B save pairs].
+    pub av_active_modifiers: Vec<(u8, f32)>,
+    /// Sparse `SetAV` base actor-value overrides from change flag bit 22 (`0x0040_0000`, serialized
+    /// immediately before `FF FF | FF FF | 00 | 01 01 00 00 |`) [observed: vanilla 1.4.0.525 A/B save pairs].
+    pub av_base_overrides: Vec<(u8, f32)>,
+    /// Sparse `ModAV`/`ForceAV` permanent actor-value modifiers from change flag bit 23 (`0x0080_0000`,
+    /// serialized immediately before bit 22 / anchor) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub av_permanent: Vec<(u8, f32)>,
-    /// True when process-block AVs were decoded via a `[hypothesis]` path (`process_level 1..=3`,
-    /// no-package `tok[18]` flag, non-zero `tok[18]` package sub-block, or bit-20-only record).
-    pub av_process_hypothesis: bool,
 }
 
 /// Created placed actor (`ACHR`/`ACRE`, form ID `0xFFxxxxxx`) decoded from its 32-byte
@@ -606,15 +612,18 @@ pub struct FosCreatedActor {
     pub inventory: Option<Vec<FosItem>>,
     pub current_package: Option<u32>,
     pub av_damage: Vec<(u8, f32)>,
+    /// Active-effect / ability / worn-gear AV1 modifiers from bit 20 (not applied to `av_permanent`).
+    pub av_active_modifiers: Vec<(u8, f32)>,
+    /// `SetAV` base overrides from bit 22.
+    pub av_base_overrides: Vec<(u8, f32)>,
+    /// `ModAV`/`ForceAV` permanent modifiers from bit 23.
     pub av_permanent: Vec<(u8, f32)>,
-    /// True when process-block AVs were decoded via a `[hypothesis]` path (`process_level 1..=3`,
-    /// no-package `tok[18]` flag, non-zero `tok[18]` package sub-block, or bit-20-only record).
-    pub av_process_hypothesis: bool,
 }
 
 /// Non-player base actor record changes (`NPC_` kind 10 excluding `0x7`, `CREA` kind 11;
-/// §6.2, §6.3) [observed: vanilla 1.4.0.525 A/B save pairs for bit 1 Essential, bit 4 spells,
-/// bit 2 SPECIAL, and bit 5 name; bit 1 female, bit 3 AI, and bit 9 skills `[hypothesis]`].
+/// §6.2, §6.3) [observed: vanilla 1.4.0.525 A/B save pairs for bit 1 Essential & Female, bit 4
+/// spells, bit 2 SPECIAL, bit 5 name, and bit 24 `SexChange`; bit 3 AI and bit 9 skills remain
+/// `[hypothesis]`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FosActorBaseChange {
     pub form: u32,
@@ -623,7 +632,8 @@ pub struct FosActorBaseChange {
     /// Bit 1 (`0x02`) of the 24-byte base stats flags word (change flag 1: Essential)
     /// [observed: vanilla 1.4.0.525 A/B save pairs].
     pub essential: Option<bool>,
-    /// Bit 0 (`0x01`) of the 24-byte base stats flags word (change flag 1) [hypothesis: Female].
+    /// Female flag from change flag 24 (`u8 female |`, `SexChange`) or bit 0 (`0x01`) of the
+    /// 24-byte base stats flags word (change flag 1) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub female: Option<bool>,
     /// Spells/abilities from change flag 4 (first list) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub spells: Vec<Option<u32>>,
@@ -632,12 +642,13 @@ pub struct FosActorBaseChange {
 }
 
 /// Talking activator base record changes (`TACT`, kind 13; §6.3) [observed: vanilla 1.4.0.525
-/// A/B save pairs for bit 2 name and bit 23 talking actor; bit 0 form flags `[hypothesis]`].
+/// A/B save pairs for bit 0 form flags, bit 2 name, and bit 23 talking actor].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FosTalkingActivator {
     pub form: u32,
     pub flags: u32,
-    /// Record header form flags from change flag 0 [hypothesis].
+    /// Record header form flags from change flag 0 (`0x400` = Quest Item)
+    /// [observed: vanilla 1.4.0.525 A/B save pairs].
     pub form_flags: Option<u32>,
     /// Base display name from change flag 2 [observed: vanilla 1.4.0.525 A/B save pairs].
     pub name: Option<String>,
@@ -1038,13 +1049,16 @@ impl Fos {
         Ok(Some(FosWeather { current, second }))
     }
 
-    /// Global table 1 type 10: Pip-Boy radio playback state (§5.1, §6.3).
+    /// Global table 1 type 10: Pip-Boy radio and world-radio playback state (§5.1, §6.3).
     ///
-    /// After the opening `u32 | u8 | string | vsval n1 | n1 * (ref3 |)` header, the immediately
-    /// following `vsval`-counted list holds the active Pip-Boy radio station entry
-    /// (`ref3 station | u32 playback_ms | u32 | u8 | u8 | u32 | u8 | u8 |`) [observed: vanilla
-    /// 1.4.0.525 A/B save pairs]. When the second list is absent or empty, falls back to the
-    /// opening `u8 on` byte and first list [hypothesis].
+    /// After the opening `u32 | u8 | string |`, List 1 holds world-radio speakers in the current
+    /// cell (`vsval n1 | n1 * (ref3 speaker | u8 | u8 | u8 | u8 |)`), immediately followed by
+    /// List 2 active broadcast stations (`vsval n2 | n2 * (ref3 station | u32 playback_ms | u32 |
+    /// u8 | u8 | u32 | vsval n_listeners | n_listeners * (ref3 |) | u8 has_conv | ...)`)
+    /// [observed: vanilla 1.4.0.525 A/B save pairs across 318 saves including Prospector Saloon,
+    /// Primm, Hoover Dam, and Gomorrah world radios]. Stations with `n_listeners > 0` are bound to
+    /// world speakers, whereas a Pip-Boy station has `n_listeners == 0`; when List 2 is absent and
+    /// `on_byte != 0`, falls back to the opening `u8 on` byte and first list [hypothesis].
     pub fn radio_state(&self) -> Result<Option<FosRadioState>, FosError> {
         let Some(d) = self.global(10) else { return Ok(None) };
         if d.len() < 8 {
@@ -1059,39 +1073,96 @@ impl Fos {
             return err(format!("unexpected radio state flag {on_byte}"));
         }
         let song = c.string_field(true)?;
-        let n1 = c.vsval()?;
+        let n1 = c.vsval()? as usize;
         c.bar()?;
+        if n1 > 256 {
+            return err("radio world-speaker count out of range");
+        }
         let mut list1_station = None;
         for i in 0..n1 {
             let r = self.reference(c.ref3()?).ok().flatten();
             c.bar()?;
+            for _ in 0..4 {
+                c.u8()?;
+                c.bar()?;
+            }
             if i == 0 {
                 list1_station = r;
             }
         }
         if !c.at_end() {
-            let n2 = c.vsval()?;
+            let n2 = c.vsval()? as usize;
             c.bar()?;
-            if n2 > 0 {
+            if n2 > 64 {
+                return err("radio active-station count out of range");
+            }
+            let mut pipboy_station: Option<(Option<u32>, u32)> = None;
+            for _ in 0..n2 {
                 let station = self.reference(c.ref3()?).ok().flatten();
                 c.bar()?;
                 let playback_ms = c.u32()?;
                 c.bar()?;
-                // Verify the remaining fields of the 27-byte active-station entry when present.
-                if !c.at_end() {
-                    c.u32()?;
-                    c.bar()?;
-                    c.u8()?;
-                    c.bar()?;
-                    c.u8()?;
-                    c.bar()?;
-                    c.u32()?;
-                    c.bar()?;
-                    c.u8()?;
-                    c.bar()?;
-                    c.u8()?;
+                c.u32()?;
+                c.bar()?;
+                c.u8()?;
+                c.bar()?;
+                c.u8()?;
+                c.bar()?;
+                c.u32()?;
+                c.bar()?;
+                let n_listeners = c.vsval()? as usize;
+                c.bar()?;
+                if n_listeners > 256 {
+                    return err("radio listener count out of range");
+                }
+                for _ in 0..n_listeners {
+                    c.ref3()?;
                     c.bar()?;
                 }
+                let has_conv = c.u8()?;
+                c.bar()?;
+                if has_conv > 1 {
+                    return err(format!("unexpected radio conversation flag {has_conv}"));
+                }
+                if has_conv != 0 {
+                    let n_conv = c.vsval()? as usize;
+                    c.bar()?;
+                    if n_conv > 64 {
+                        return err("radio conversation count out of range");
+                    }
+                    for _ in 0..n_conv {
+                        let n_lines = c.vsval()? as usize;
+                        c.bar()?;
+                        if n_lines > 64 {
+                            return err("radio conversation line count out of range");
+                        }
+                        for _ in 0..n_lines {
+                            let _subtitle = c.string_field(true)?;
+                            let _voice_path = c.string_field(true)?;
+                            c.u32()?;
+                            c.bar()?;
+                            c.u32()?;
+                            c.bar()?;
+                            c.u8()?;
+                            c.bar()?;
+                            for _ in 0..3 {
+                                c.ref3()?;
+                                c.bar()?;
+                            }
+                            let _extra_s1 = c.string_field(true)?;
+                            for _ in 0..4 {
+                                c.ref3()?;
+                                c.bar()?;
+                            }
+                            let _extra_s2 = c.string_field(true)?;
+                        }
+                    }
+                }
+                if n_listeners == 0 && pipboy_station.is_none() {
+                    pipboy_station = Some((station, playback_ms));
+                }
+            }
+            if let Some((station, playback_ms)) = pipboy_station {
                 return Ok(Some(FosRadioState {
                     on: true,
                     song,
@@ -1156,7 +1227,7 @@ impl Fos {
     /// Cells changed in play (`CELL`, kind 7: optional bit 29 4-byte exterior header,
     /// bit 30 `u32 |` detach hours, bit 1 `u8 |` flags, bit 31 local-map fog, and bit 3
     /// `ref3 |` owner serialized AFTER bit-31 fog; §6.2) [observed: vanilla 1.4.0.525 A/B
-    /// save pairs for bits 1, 3, 30, 31; bit 29 remains [hypothesis]].
+    /// save pairs].
     pub fn cells(&self) -> Vec<Result<FosCell, FosError>> {
         const KNOWN_BITS: u32 = (1 << 1) | (1 << 3) | (1 << 29) | (1 << 30) | (1 << 31);
         self.records(TYPE_CELL)
@@ -1558,10 +1629,9 @@ impl Fos {
             .collect()
     }
 
-    /// Parse the unified bit-1/2/3 placement + bit-3 cell-change suffix + bit-2 Havok/ragdoll
+    /// Parse the unified bit-1/2/3 placement + bit-3 7-byte cell-change suffix + bit-2 Havok/ragdoll
     /// prefix shared by non-created `REFR`, `ACHR`, `ACRE`, and `PGRE` records (§6.2, §6.5)
-    /// [observed: vanilla 1.4.0.525 A/B save pairs for bits 1 & 2; bit-3 cell-change suffix
-    /// `[hypothesis]`]. Returns `(place, cell_changed)`.
+    /// [observed: vanilla 1.4.0.525 A/B save pairs]. Returns `(place, cell_changed)`.
     fn parse_ref_prefix(&self, f: &ChangedForm, c: &mut Cur<'_>) -> Result<(Option<Place>, bool), FosError> {
         if f.flags & 0b1110 == 0 {
             return Ok((None, false));
@@ -1573,7 +1643,8 @@ impl Fos {
         }
         let cell_changed = f.has(3);
         if cell_changed {
-            // Bit-3 cell-change suffix before the bar: cell_ref3 + i16 grid_x + i16 grid_y [hypothesis].
+            // Bit-3 7-byte cell-change suffix before '|': orig_cell_ref3 + i16 grid_x + i16 grid_y
+            // [observed: vanilla 1.4.0.525 A/B save pairs across REFR, ACHR, ACRE, and PGRE].
             c.take(7)?;
         }
         c.bar()?;
@@ -1654,7 +1725,8 @@ impl Fos {
     }
 
     /// Parse an extra-data `0x0D` script-variable instance (`ref3 | vsval nv | nv * (u32 |
-    /// ref3/f64 |) | vsval 0 | u8 init_flag |`) [hypothesis].
+    /// ref3/f64 |) | vsval 0 | u8 init_flag |`) [observed: vanilla 1.4.0.525 A/B save pairs
+    /// across non-created `REFR`, `ACHR`, and inventory items].
     fn parse_script_extra(&self, c: &mut Cur<'_>) -> Result<FosScriptVars, FosError> {
         let script = self.reference(c.ref3()?).ok().flatten();
         c.bar()?;
@@ -1960,19 +2032,18 @@ impl Fos {
     /// Fail-soft parser for the post-inventory actor process block: extracts the universal
     /// 18-token header's `current_package` (`tok[17]`, byte offset `+53`) and, when
     /// `process_level <= 3`, parses `tok[18]` (byte offset `+57`: actor-state flag byte when
-    /// `current_package` is null, or package-state tag `0x00`/`0xFF`/`0x0C`/`0x0D`/`0x0E`
+    /// `current_package` is null, or package-state tag `0x00`/`0x10`/`0xFF`/`0x0C`/`0x0D`/`0x0E`
     /// followed by the 5-token active-package block when non-null; unknown tags fail closed
     /// `[design]`), the 15-token middle block, and the sparse AV damage (change flag bit 21)
-    /// and permanent modifier (change flag bit 20) lists (§6.2) [observed: High-Process
-    /// vanilla 1.4.0.525 A/B save pairs; Mid/Low-Process, `0x0C`/`0x0D`/`0x0E`, and
-    /// bit-20-only records `[hypothesis]`].
+    /// and active-effect / worn-gear AV1 modifier (change flag bit 20) lists (§6.2)
+    /// [observed: vanilla 1.4.0.525 A/B save pairs across process levels `0..=3`].
     #[allow(clippy::type_complexity)]
     fn parse_actor_process_block(
         &self,
         mut c: Cur<'_>,
         process_level: u8,
         flags: u32,
-    ) -> Option<(Option<u32>, Vec<(u8, f32)>, Vec<(u8, f32)>, bool)> {
+    ) -> Option<(Option<u32>, Vec<(u8, f32)>, Vec<(u8, f32)>)> {
         for _ in 0..8 {
             c.u8().ok()?;
             c.bar().ok()?;
@@ -1999,24 +2070,23 @@ impl Fos {
         c.bar().ok()?;
 
         let mut av_damage = Vec::new();
-        let mut av_permanent = Vec::new();
-        let mut av_process_hypothesis = false;
+        let mut av_active_modifiers = Vec::new();
         let has_b20 = flags & (1 << 20) != 0;
         let has_b21 = flags & (1 << 21) != 0;
         let legacy_high = process_level == 0 && current_package.is_some() && !has_b20 && !has_b21;
         let want_dmg = process_level <= 3 && (has_b21 || legacy_high);
-        let want_perm = process_level <= 3 && (has_b20 || legacy_high);
-        if want_dmg || want_perm {
+        let want_active = process_level <= 3 && (has_b20 || legacy_high);
+        if want_dmg || want_active {
             let mut hc = c;
-            let parsed_avs = (|| -> Result<(Vec<(u8, f32)>, Vec<(u8, f32)>, bool), FosError> {
+            let parsed_avs = (|| -> Result<(Vec<(u8, f32)>, Vec<(u8, f32)>), FosError> {
                 let tok18 = hc.u8()?;
                 hc.bar()?;
-                let is_hyp =
-                    process_level > 0 || current_package.is_none() || tok18 != 0 || (has_b20 && !has_b21);
                 if current_package.is_some() {
-                    // Package-state sub-block tagged by `tok18` (§6.2) [hypothesis].
+                    // Package-state sub-block tagged by `tok18` (§6.2) [observed: vanilla 1.4.0.525
+                    // A/B save pairs across 9,400+ actors for 0x00/0x10/0xFF/0x0C/0x0D/0x0E;
+                    // unknown tags fail closed [design]].
                     match tok18 {
-                        0x00 | 0xFF => {}
+                        0x00 | 0x10 | 0xFF => {}
                         0x0E => {
                             for _ in 0..3 {
                                 hc.u32()?;
@@ -2139,36 +2209,35 @@ impl Fos {
                         dmg.push((code, val));
                     }
                 }
-                let mut perm = Vec::new();
-                if want_perm {
+                let mut active = Vec::new();
+                if want_active {
                     hc.u32()?;
                     hc.bar()?;
                     let n2 = hc.vsval()? as usize;
                     hc.bar()?;
                     if n2 > AV_COUNT {
-                        return err("actor av_permanent count out of range");
+                        return err("actor av_active_modifiers count out of range");
                     }
-                    perm.reserve(n2);
+                    active.reserve(n2);
                     for _ in 0..n2 {
                         let code = hc.u8()?;
                         hc.bar()?;
                         if usize::from(code) >= AV_COUNT {
-                            return err("actor av_permanent code out of range");
+                            return err("actor av_active_modifiers code out of range");
                         }
                         let val = hc.f32()?;
                         hc.bar()?;
-                        perm.push((code, val));
+                        active.push((code, val));
                     }
                 }
-                Ok((dmg, perm, is_hyp))
+                Ok((dmg, active))
             })();
-            if let Ok((d, p, is_hyp)) = parsed_avs {
-                av_process_hypothesis = is_hyp && (!d.is_empty() || !p.is_empty());
+            if let Ok((d, a)) = parsed_avs {
                 av_damage = d;
-                av_permanent = p;
+                av_active_modifiers = a;
             }
         }
-        Some((current_package, av_damage, av_permanent, av_process_hypothesis))
+        Some((current_package, av_damage, av_active_modifiers))
     }
 
     /// Shared actor body parser used by both non-created [`Fos::actor_changes`] and created
@@ -2191,7 +2260,8 @@ impl Fos {
             Option<u32>,
             Vec<(u8, f32)>,
             Vec<(u8, f32)>,
-            bool,
+            Vec<(u8, f32)>,
+            Vec<(u8, f32)>,
         ),
         FosError,
     > {
@@ -2356,21 +2426,32 @@ impl Fos {
         } else {
             None
         };
-        let (current_package, av_damage, mut av_permanent, av_process_hypothesis) =
+        let (current_package, av_damage, av_active_modifiers) =
             if extras_ok && inv_ok && !c.at_end() {
                 self.parse_actor_process_block(c.clone(), process_level, f.flags).unwrap_or_default()
             } else {
-                (None, Vec::new(), Vec::new(), false)
+                (None, Vec::new(), Vec::new())
             };
-        // Non-player ACHR `ModAV` permanent modifiers are stored under bit 23 (`0x0080_0000`)
-        // immediately before `FF FF | FF FF | 00 | 01 01 00 00 |` [observed: vanilla 1.4.0.525
-        // A/B save pairs].
-        if extras_ok && inv_ok && f.has(23) && c.p < f.data.len() {
-            for (code, val) in Self::parse_player_base_av_overrides(&f.data[c.p..]) {
-                if let Some(existing) = av_permanent.iter_mut().find(|(c_id, _)| *c_id == code) {
-                    existing.1 += val;
-                } else {
-                    av_permanent.push((code, val));
+        // Non-player ACHR/ACRE bit-22 (`SetAV` base overrides) sits immediately before
+        // `FF FF | FF FF | 00 | 01 01 00 00 |`, and bit-23 (`ModAV`/`ForceAV` permanent
+        // modifiers) sits immediately before bit 22 (or before the sentinel when bit 22 is
+        // absent) [observed: vanilla 1.4.0.525 A/B save pairs].
+        let mut av_base_overrides = Vec::new();
+        let mut av_permanent = Vec::new();
+        if extras_ok && inv_ok && (f.has(22) || f.has(23)) && c.p < f.data.len() {
+            let tail = &f.data[c.p..];
+            if let Some(anc) = Self::find_av_anchor(tail) {
+                let mut end = anc;
+                if f.has(22) {
+                    if let Some((hdr_start, list)) = Self::parse_av_list_ending_at(tail, end) {
+                        av_base_overrides = list;
+                        end = hdr_start;
+                    }
+                }
+                if f.has(23) {
+                    if let Some((_hdr_start, list)) = Self::parse_av_list_ending_at(tail, end) {
+                        av_permanent = list;
+                    }
                 }
             }
         }
@@ -2385,8 +2466,9 @@ impl Fos {
             inventory,
             current_package,
             av_damage,
+            av_active_modifiers,
+            av_base_overrides,
             av_permanent,
-            av_process_hypothesis,
         ))
     }
 
@@ -2394,13 +2476,10 @@ impl Fos {
     /// (including bit-2 ragdoll and bit-3 cell-change prefixes): place, process level, form
     /// flags (`FORM_DEAD` etc.), scale, actor extra data (`0x0D` script vars, `0x5E` faction
     /// ranks, `0x5F` dismembered limbs, `0x89` ash pile), inventory (bits 5/27), and process
-    /// block (`current_package`, `process_level <= 3` sparse AV damage & permanent modifiers,
-    /// plus bit-23 `ModAV`) (§6.2, §6.5) [observed: vanilla 1.4.0.525 A/B save pairs for
-    /// bit-2 Havok, `FORM_DEAD`, scale, `0x5E`/`0x5F`/`0x89`, inventory, `current_package`,
-    /// High-Process AVs, and bit-23 `ModAV`; bit-3 cell-change, `0x0D` vars, Mid/Low-Process
-    /// `1..=3`, `tok[18]` package sub-blocks, and bit-20-only AVs `[hypothesis]`]. Records
-    /// with unknown extra types fail soft after extracting any prefix fields already verified
-    /// by `|`.
+    /// block (`current_package`, `process_level <= 3` sparse bit-21 AV damage & bit-20 AV1
+    /// active modifiers, plus bit-22 `SetAV` base overrides and bit-23 `ModAV` permanent
+    /// modifiers) (§6.2, §6.5) [observed: vanilla 1.4.0.525 A/B save pairs]. Records with
+    /// unknown extra types fail soft after extracting any prefix fields already verified by `|`.
     pub fn actor_changes(&self) -> Vec<FosActorChange> {
         self.changed
             .iter()
@@ -2427,8 +2506,9 @@ impl Fos {
             inventory,
             current_package,
             av_damage,
+            av_active_modifiers,
+            av_base_overrides,
             av_permanent,
-            av_process_hypothesis,
         ) = self.parse_actor_body(f, &mut c)?;
         Ok(FosActorChange {
             form: f.form,
@@ -2446,8 +2526,9 @@ impl Fos {
             inventory,
             current_package,
             av_damage,
+            av_active_modifiers,
+            av_base_overrides,
             av_permanent,
-            av_process_hypothesis,
         })
     }
 
@@ -2498,12 +2579,13 @@ impl Fos {
                     inventory,
                     current_package,
                     av_damage,
+                    av_active_modifiers,
+                    av_base_overrides,
                     av_permanent,
-                    av_process_hypothesis,
                 ) = if havok_ok {
                     match self.parse_actor_body(f, &mut body_c) {
-                        Ok((pl, ff, sc, sv, fac, lg, ap, inv, pkg, avd, avp, av_hyp)) => {
-                            (Some(pl), ff, sc, sv, fac, lg, ap, inv, pkg, avd, avp, av_hyp)
+                        Ok((pl, ff, sc, sv, fac, lg, ap, inv, pkg, avd, ava, avb, avp)) => {
+                            (Some(pl), ff, sc, sv, fac, lg, ap, inv, pkg, avd, ava, avb, avp)
                         }
                         Err(_) => (
                             None,
@@ -2517,7 +2599,8 @@ impl Fos {
                             None,
                             Vec::new(),
                             Vec::new(),
-                            false,
+                            Vec::new(),
+                            Vec::new(),
                         ),
                     }
                 } else {
@@ -2533,7 +2616,8 @@ impl Fos {
                         None,
                         Vec::new(),
                         Vec::new(),
-                        false,
+                        Vec::new(),
+                        Vec::new(),
                     )
                 };
                 Ok(FosCreatedActor {
@@ -2553,8 +2637,9 @@ impl Fos {
                     inventory,
                     current_package,
                     av_damage,
+                    av_active_modifiers,
+                    av_base_overrides,
                     av_permanent,
-                    av_process_hypothesis,
                 })
             })
             .map(|r| r.map_err(|e: FosError| FosError(format!("created actor: {e}"))))
@@ -2562,12 +2647,12 @@ impl Fos {
     }
 
     /// Non-player base actor changes (`NPC_` excluding `0x7`, and `CREA`): bit 1 (24-byte
-    /// base stats block -> `essential` bit 1 [observed], `female` bit 0 [hypothesis]), bit 4
-    /// (two spell lists [observed]), bit 2 (7-byte SPECIAL [observed]), bit 3 (20-byte AI
-    /// [hypothesis]), bit 9 (28-byte skills [hypothesis]), bit 5 (name [observed]) (§6.2,
-    /// §6.3) [observed: vanilla 1.4.0.525 A/B save pairs].
+    /// base stats block -> `essential` bit 1 & `female` bit 0 [observed]), bit 4 (two spell
+    /// lists [observed]), bit 2 (7-byte SPECIAL [observed]), bit 3 (20-byte AI [hypothesis]),
+    /// bit 9 (28-byte skills [hypothesis]), bit 5 (name [observed]), bit 24 (`SexChange`
+    /// `u8 female |` [observed]) (§6.2, §6.3) [observed: vanilla 1.4.0.525 A/B save pairs].
     pub fn actor_base_changes(&self) -> Vec<Result<FosActorBaseChange, FosError>> {
-        const KNOWN_BITS: u32 = (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 9);
+        const KNOWN_BITS: u32 = (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 9) | (1 << 24);
         self.changed
             .iter()
             .filter(|f| {
@@ -2619,6 +2704,11 @@ impl Fos {
                 if f.has(5) {
                     name = Some(c.string_field(true)?);
                 }
+                if f.has(24) {
+                    let sex = c.u8()?;
+                    c.bar()?;
+                    female = Some(sex != 0);
+                }
                 if !c.at_end() {
                     return err("bytes left after actor base record");
                 }
@@ -2636,9 +2726,9 @@ impl Fos {
             .collect()
     }
 
-    /// Talking activator base record changes (`TACT`, kind 13): bit 0 (`u32 form_flags |`
-    /// [hypothesis]), bit 2 (name string [observed]), bit 23 (`ref3 talking_actor |`
-    /// [observed]) (§6.3) [observed: vanilla 1.4.0.525 A/B save pairs].
+    /// Talking activator base record changes (`TACT`, kind 13): bit 0 (`u32 form_flags |`),
+    /// bit 2 (name string), bit 23 (`ref3 talking_actor |`) (§6.3) [observed: vanilla 1.4.0.525
+    /// A/B save pairs].
     pub fn talking_activators(&self) -> Vec<Result<FosTalkingActivator, FosError>> {
         const KNOWN_BITS: u32 = (1 << 0) | (1 << 2) | (1 << 23);
         self.records(TYPE_TACT)
@@ -2931,18 +3021,20 @@ impl Fos {
         (tok70 != u32::MAX).then_some(tok76)
     }
 
-    /// Extract the bit-22 base-AV override list (`vsval n | n * (u8 av_code | f32 val |)`)
-    /// immediately preceding the `FF FF | FF FF | 00 | 01 01 00 00 |` boundary in the player
-    /// record's post-inventory tail (§6.4) [observed: vanilla 1.4.0.525 A/B save pairs].
-    /// Accepts all valid AV codes `< 77` (not only skills `32..=45`) so non-skill `SetAV`
-    /// overrides (e.g. `Player.SetAV Luck 9`) do not discard the block.
-    fn parse_player_base_av_overrides(tail: &[u8]) -> Vec<(u8, f32)> {
+    /// Locate the `FF FF | FF FF | 00 | 01 01 00 00 |` boundary anchor that immediately follows
+    /// sparse actor-value lists (bit 22 `SetAV` and/or bit 23 `ModAV`) in actor post-inventory
+    /// tails (§6.2, §6.4) [observed: vanilla 1.4.0.525 A/B save pairs].
+    fn find_av_anchor(tail: &[u8]) -> Option<usize> {
         const ANCHOR: &[u8] = b"\xFF\xFF\x7C\xFF\xFF\x7C\x00\x7C\x01\x01\x00\x00\x7C";
-        let Some(anc) = tail.windows(ANCHOR.len()).position(|w| w == ANCHOR) else {
-            return Vec::new();
-        };
+        tail.windows(ANCHOR.len()).position(|w| w == ANCHOR)
+    }
+
+    /// Decode a `vsval(k) | k * (u8 av_code | f32 val |)` sparse AV list ending exactly at `end`,
+    /// returning `(header_start_offset, entries)` so callers can peel consecutive bit-22 and
+    /// bit-23 lists backwards from the sentinel anchor [observed: vanilla 1.4.0.525 A/B save pairs].
+    fn parse_av_list_ending_at(tail: &[u8], end: usize) -> Option<(usize, Vec<(u8, f32)>)> {
         for k in (1..=AV_COUNT).rev() {
-            let Some(st) = anc.checked_sub(k * 7) else { continue };
+            let Some(st) = end.checked_sub(k * 7) else { continue };
             let Some(hdr_start) = Self::match_vsval_header(tail, st, k) else {
                 continue;
             };
@@ -2968,10 +3060,22 @@ impl Fos {
                 out.push((code, val));
             }
             if ok {
-                return out;
+                return Some((hdr_start, out));
             }
         }
-        Vec::new()
+        None
+    }
+
+    /// Extract the bit-22 base-AV override list (`vsval n | n * (u8 av_code | f32 val |)`)
+    /// immediately preceding the `FF FF | FF FF | 00 | 01 01 00 00 |` boundary in the player
+    /// record's post-inventory tail (§6.4) [observed: vanilla 1.4.0.525 A/B save pairs].
+    /// Accepts all valid AV codes `< 77` (not only skills `32..=45`) so non-skill `SetAV`
+    /// overrides (e.g. `Player.SetAV Luck 9`) do not discard the block.
+    fn parse_player_base_av_overrides(tail: &[u8]) -> Vec<(u8, f32)> {
+        let Some(anc) = Self::find_av_anchor(tail) else {
+            return Vec::new();
+        };
+        Self::parse_av_list_ending_at(tail, anc).map(|(_, list)| list).unwrap_or_default()
     }
 
     /// Extract acquired note form IDs (`vsval n | n * (ref3 |)`) from the player `ACHR 0x14`
@@ -4356,9 +4460,26 @@ mod tests {
     #[test]
     fn reads_v2_actors_ref_extras_eczn_cells_and_radio() {
         let mut f = Fos::parse(&save()).unwrap();
-        // Global table 1 type 10 (Pip-Boy radio)
+        // Global table 1 type 10 (Pip-Boy radio header fallback with List 1 speaker entry)
         let mut t10 = Build { b: Vec::new() };
-        t10.u32(1).bar().u8(1).bar().s("data\\sound\\songs\\track.mp3").bar().vs(1).bar().r(8).bar();
+        t10.u32(1)
+            .bar()
+            .u8(1)
+            .bar()
+            .s("data\\sound\\songs\\track.mp3")
+            .bar()
+            .vs(1)
+            .bar()
+            .r(8)
+            .bar()
+            .u8(1)
+            .bar()
+            .u8(0)
+            .bar()
+            .u8(6)
+            .bar()
+            .u8(0)
+            .bar();
         f.globals_data.push((10, t10.b));
 
         // Non-player ACHR: bit 0 (FORM_DEAD), bit 4 (scale 1.15), bit 31 (0x0D script vars + 0x5E factions),
@@ -4969,7 +5090,8 @@ mod tests {
         assert_eq!(actors[0].script_vars.as_ref().unwrap().vars, [(1, VarValue::Num(2.0))]);
         assert_eq!(actors[0].current_package, Some(0x6000));
         assert_eq!(actors[0].av_damage, [(16, -25.0), (54, 80.0)]);
-        assert_eq!(actors[0].av_permanent, [(13, 50.0)]);
+        assert_eq!(actors[0].av_active_modifiers, [(13, 50.0)]);
+        assert!(actors[0].av_permanent.is_empty());
 
         // Verify ref_extras extracted terminal, destructible stage, and "Close" animation
         let refs = f.ref_extras();
@@ -5186,7 +5308,7 @@ mod tests {
         ac.u8(0).bar();
         ac.vs(1).bar().u8(16).bar().f32(-15.0).bar(); // bit 21 av_damage: Health -15
         ac.u32(0).bar();
-        ac.vs(1).bar().u8(37).bar().f32(25.0).bar(); // bit 20 av_permanent: Medicine 25
+        ac.vs(1).bar().u8(37).bar().f32(25.0).bar(); // bit 20 av_active_modifiers (AV1): TrainingMedicine +25
         // BUG #6: Bit 23 (`0x0080_0000`) ModAV Strength +4.0 right before anchor
         ac.r(0).bar().r(0).bar().r(0).bar();
         ac.vs(1).bar().u8(5).bar().f32(4.0).bar();
@@ -5201,7 +5323,9 @@ mod tests {
         let a = actors.iter().find(|x| x.form == 0x0010_4C0F).expect("actor parsed");
         assert_eq!(a.scale, Some(1.35));
         assert_eq!(a.av_damage, [(16, -15.0)]);
-        assert_eq!(a.av_permanent, [(37, 25.0), (5, 4.0)]);
+        // BUG #16: bit 20 is AV1 active-effect/ability modifier, kept out of av_permanent!
+        assert_eq!(a.av_active_modifiers, [(37, 25.0)]);
+        assert_eq!(a.av_permanent, [(5, 4.0)]);
     }
 
     #[test]
@@ -5389,11 +5513,13 @@ mod tests {
         assert_eq!(actors[0].form, 0x0008_0001);
         assert_eq!(actors[0].current_package, Some(0x6000));
         assert_eq!(actors[0].av_damage, [(16, -30.0), (54, 45.0)]);
+        assert!(actors[0].av_active_modifiers.is_empty());
         assert!(actors[0].av_permanent.is_empty());
         assert_eq!(actors[1].form, 0x0008_0002);
         assert_eq!(actors[1].current_package, None);
         assert_eq!(actors[1].av_damage, [(16, -12.0)]);
-        assert_eq!(actors[1].av_permanent, [(18, 20.0)]);
+        assert_eq!(actors[1].av_active_modifiers, [(18, 20.0)]);
+        assert!(actors[1].av_permanent.is_empty());
     }
 
     #[test]
@@ -5591,16 +5717,15 @@ mod tests {
         let actors = f.actor_changes();
         assert_eq!(actors.len(), 4);
         assert_eq!(actors[0].av_damage, [(16, -42.5)]);
+        assert!(actors[0].av_active_modifiers.is_empty());
         assert!(actors[0].av_permanent.is_empty());
-        assert!(actors[0].av_process_hypothesis);
         assert!(actors[1].av_damage.is_empty());
-        assert_eq!(actors[1].av_permanent, [(18, 33.0)]);
-        assert!(actors[1].av_process_hypothesis);
+        assert_eq!(actors[1].av_active_modifiers, [(18, 33.0)]);
+        assert!(actors[1].av_permanent.is_empty());
         assert_eq!(actors[2].av_damage, [(26, -60.0)]);
-        assert!(actors[2].av_process_hypothesis);
         assert_eq!(actors[3].av_damage, [(16, -19.0)]);
-        assert_eq!(actors[3].av_permanent, [(13, 25.0)]);
-        assert!(actors[3].av_process_hypothesis);
+        assert_eq!(actors[3].av_active_modifiers, [(13, 25.0)]);
+        assert!(actors[3].av_permanent.is_empty());
 
         // Extra 0x56 destructible_health alone (without 0x5B or FORM_DESTROYED) must be kept by ref_extras().
         let mut d56 = Build { b: Vec::new() };
@@ -5635,9 +5760,9 @@ mod tests {
             b.u8(tok18).bar();
         };
 
-        // 1. Unknown tok18 tag (0x10) with non-null package -> fail closed on AVs
+        // 1. Unknown tok18 tag (0x7F) with non-null package -> fail closed on AVs
         let mut unk = Build { b: Vec::new() };
-        push_hdr(&mut unk, 3, 0x10);
+        push_hdr(&mut unk, 3, 0x7F);
         unk.u32(0).bar();
         f.changed.push(ChangedForm {
             form: 0x0009_0010,
@@ -5678,7 +5803,118 @@ mod tests {
         for ac in &actors {
             assert_eq!(ac.current_package, Some(0x6000));
             assert!(ac.av_damage.is_empty());
+            assert!(ac.av_active_modifiers.is_empty());
             assert!(ac.av_permanent.is_empty());
         }
+    }
+
+    #[test]
+    fn regression_bugs_14_to_18_radio_world_speakers_actor_av_bits_sexchange_and_tok18_0x10() {
+        let mut f = Fos::parse(&save()).unwrap();
+        // 9 = PACK, 10 = world radio speaker REFR (0x107D73), 11 = vCountryRadio (0x16B74C),
+        // 12 = RadioNewVegas (0x14DF03)
+        f.form_ids.extend([0x6000u32, 0x0010_7D73, 0x0016_B74C, 0x0014_DF03]);
+        f.changed.clear();
+
+        // BUG #14 (case A): Saloon world radio ONLY (List 1 = 1 speaker with 4 u8 bytes, List 2 = 1 station
+        // with n_listeners = 1 and has_conv = 1 voice path). Must parse cleanly with radio.on == false!
+        let push_world_station = |b: &mut Build| {
+            b.r(11).bar().u32(1263).bar().u32(168_746).bar().u8(0x64).bar().u8(0x64).bar().u32(59).bar();
+            b.vs(1).bar().r(10).bar(); // 1 world speaker listener
+            b.u8(1).bar(); // has_conv = 1
+            b.vs(1).bar().vs(1).bar(); // 1 conversation, 1 line
+            b.s("  ").bar().s("Data\\Sound\\Voice\\FalloutNV.esm\\track.ogg").bar();
+            b.u32(0).bar().u32(50).bar().u8(1).bar();
+            b.r(0).bar().r(0).bar().r(10).bar();
+            b.s("");
+            b.r(10).bar().r(10).bar().r(10).bar().r(11).bar();
+            b.s("");
+        };
+        let mut r_world = Build { b: Vec::new() };
+        r_world.u32(0).bar().u8(0).bar().s("");
+        r_world.vs(1).bar().r(10).bar().u8(1).bar().u8(0).bar().u8(6).bar().u8(0).bar();
+        r_world.vs(1).bar();
+        push_world_station(&mut r_world);
+        r_world.r(0).bar().r(0).bar().vs(0).bar();
+        f.globals_data.retain(|(t, _)| *t != 10);
+        f.globals_data.push((10, r_world.b));
+        let st_world = f.radio_state().unwrap().expect("world-radio-only Global 10 parsed");
+        assert!(!st_world.on);
+        assert_eq!(st_world.station, None);
+        assert_eq!(st_world.playback_ms, None);
+        assert!(st_world.from_active_list);
+
+        // BUG #14 (case B): World radio FIRST + Pip-Boy RadioNewVegas SECOND in List 2:
+        // must skip world station's full conversation block and select Pip-Boy station (n_listeners == 0)!
+        let mut r_both = Build { b: Vec::new() };
+        r_both.u32(0).bar().u8(0).bar().s("");
+        r_both.vs(1).bar().r(10).bar().u8(1).bar().u8(0).bar().u8(6).bar().u8(0).bar();
+        r_both.vs(2).bar();
+        push_world_station(&mut r_both);
+        r_both.r(12).bar().u32(18_852).bar().u32(1).bar().u8(0x64).bar().u8(0x64).bar().u32(51).bar();
+        r_both.vs(0).bar().u8(0).bar(); // Pip-Boy station: n_listeners = 0, has_conv = 0
+        r_both.r(0).bar().r(0).bar().vs(0).bar();
+        f.globals_data.retain(|(t, _)| *t != 10);
+        f.globals_data.push((10, r_both.b));
+        let st_both = f.radio_state().unwrap().expect("world+pipboy Global 10 parsed");
+        assert!(st_both.on);
+        assert_eq!(st_both.station, Some(0x0014_DF03));
+        assert_eq!(st_both.playback_ms, Some(18_852));
+        assert!(st_both.from_active_list);
+
+        // BUG #15 & BUG #16: Non-player ACHR with bit 20 (AV1 TrainingMedicine +25), bit 21 (Health -15),
+        // bit 23 (ModAV Charisma +3, Luck +5), AND bit 22 (SetAV Medicine 80, Barter 75) before sentinel.
+        // Plus BUG #18: Low-Process tok[18] = 0x10 (0 extra sub-block bytes).
+        let mut a = Build { b: Vec::new() };
+        a.u8(3).bar().vs(0).bar();
+        for _ in 0..8 {
+            a.u8(0).bar();
+        }
+        a.f32(0.0).bar().f32(0.0).bar().u8(0).bar().u8(0).bar();
+        a.r(0).bar().r(0).bar().u32(0).bar().f32(0.0).bar().u32(0).bar();
+        a.r(9).bar(); // current_package = 0x6000
+        a.u8(0x10).bar(); // BUG #18: tok[18] = 0x10 (0 extra bytes!)
+        // 5-token active package block + 15-token middle block
+        a.f32(0.0).bar().f32(0.0).bar().f32(0.0).bar().r(0).bar().u8(0).bar();
+        a.f32(0.0).bar().r(0).bar().f32(0.0).bar().f32(0.0).bar().f32(0.0).bar();
+        a.u8(0).bar().u16(0).bar().f32(0.0).bar().f32(0.0).bar();
+        for _ in 0..5 {
+            a.r(0).bar();
+        }
+        a.u8(0).bar();
+        a.vs(1).bar().u8(16).bar().f32(-15.0).bar(); // bit 21 av_damage
+        a.u32(0).bar().vs(1).bar().u8(37).bar().f32(25.0).bar(); // bit 20 av_active_modifiers (AV1)
+        a.r(0).bar().r(0).bar().r(0).bar();
+        // bit 23 ModAV (first): Charisma (8) +3.0, Luck (11) +5.0
+        a.vs(2).bar().u8(8).bar().f32(3.0).bar().u8(11).bar().f32(5.0).bar();
+        // bit 22 SetAV (second, immediately before sentinel): Medicine (37) = 80.0, Barter (32) = 75.0
+        a.vs(2).bar().u8(37).bar().f32(80.0).bar().u8(32).bar().f32(75.0).bar();
+        a.b.extend_from_slice(b"\xFF\xFF\x7C\xFF\xFF\x7C\x00\x7C\x01\x01\x00\x00\x7C");
+        f.changed.push(ChangedForm {
+            form: 0x0010_4C6D,
+            flags: (1 << 18) | (1 << 20) | (1 << 21) | (1 << 22) | (1 << 23),
+            kind: TYPE_ACHR,
+            data: a.b,
+        });
+
+        // BUG #17: Non-player NPC_ bit 24 (SexChange: 01 7c)
+        f.changed.push(ChangedForm {
+            form: 0x0010_4C0C,
+            flags: 1 << 24,
+            kind: TYPE_NPC,
+            data: vec![0x01, BAR],
+        });
+
+        let actors = f.actor_changes();
+        assert_eq!(actors.len(), 1);
+        assert_eq!(actors[0].av_damage, [(16, -15.0)]);
+        assert_eq!(actors[0].av_active_modifiers, [(37, 25.0)]);
+        assert_eq!(actors[0].av_base_overrides, [(37, 80.0), (32, 75.0)]);
+        assert_eq!(actors[0].av_permanent, [(8, 3.0), (11, 5.0)]);
+
+        let bases: Vec<_> = f.actor_base_changes().into_iter().map(Result::unwrap).collect();
+        assert_eq!(bases.len(), 1);
+        assert_eq!(bases[0].form, 0x0010_4C0C);
+        assert_eq!(bases[0].female, Some(true));
     }
 }

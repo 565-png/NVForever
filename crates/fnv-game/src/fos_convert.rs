@@ -506,8 +506,9 @@ pub fn convert_fos(
     }
 
     // 3c. Pre-place created 0xFF REFR and ACHR/ACRE records so their dynamic FormIds are
-    // available in `created_map` for quest/actor/reference 0xFF script ref variables (keeping
-    // created_refs before created_actors preserves dynamic FormId allocation order; [hypothesis]).
+    // available in `created_map` for quest/actor/reference 0xFF script ref variables (original
+    // game allocates a single monotonic 0xFF counter [observed]; placing created_refs before
+    // created_actors in `created_map` is an internal remapping order [design]).
     let mut handled_created_refs: BTreeSet<u32> = BTreeSet::new();
     let mut created_map: BTreeMap<u32, FormId> = BTreeMap::new();
     for cr_res in fos.created_refs() {
@@ -552,6 +553,7 @@ pub fn convert_fos(
 
     let mut handled_created_actors: BTreeSet<u32> = BTreeSet::new();
     let mut placed_created_actors: Vec<(FormId, FosCreatedActor)> = Vec::new();
+    let mut created_actor_bases: Vec<(FormId, FormId)> = Vec::new();
     for ca_res in fos.created_actors() {
         let Ok(ca) = ca_res else {
             inc_skip("created_actor", "32-byte header not understood");
@@ -590,6 +592,7 @@ pub fn convert_fos(
         handled_created_actors.insert(ca.form);
         created_map.insert(ca.form, placed_id);
         inc_ok("created_actors");
+        created_actor_bases.push((placed_id, base_id));
         placed_created_actors.push((placed_id, ca));
     }
 
@@ -719,9 +722,6 @@ pub fn convert_fos(
             if let Some(female) = p.female {
                 g.player.female = Some(female);
                 inc_ok("player_sex");
-                if !p.female_from_bit24 {
-                    inc_hyp("player_sex (NPC_ bit 1 ACBS) [hypothesis]");
-                }
             }
             for raw_sp in &p.spells {
                 match raw_sp.ok_or("not in save form ID array").and_then(&map_id) {
@@ -854,8 +854,9 @@ pub fn convert_fos(
                 if sync_carry_needed {
                     crate::functions::actor::sync_carry(&mut g, FormId::PLAYER_REF, CARRY_WEIGHT);
                 }
-                // AV3: current damage deltas (negative for AP/limbs/etc.) [observed] and any
-                // positive growing rads/needs fallback [hypothesis].
+                // AV3: current damage deltas (negative for AP/limbs/etc.) and natural positive
+                // growing rads/needs meters (RadiationRads 54 & Hardcore 73-75) [observed: vanilla
+                // 1.4.0.525 A/B save pairs].
                 for &(code, val) in &p.av_damage {
                     if !val.is_finite() {
                         inc_skip("player_av_damage", "non-finite value");
@@ -872,10 +873,8 @@ pub fn convert_fos(
                                 .or_insert(0.0) += f64::from(val);
                             if code_u16 == RAD_LEVEL {
                                 inc_ok("player_rads");
-                                inc_hyp("player_rads (AV3 code 54) [hypothesis]");
                             } else {
                                 inc_ok("player_hardcore_needs");
-                                inc_hyp("player_hardcore_needs (AV3 codes 73-75) [hypothesis]");
                             }
                         }
                     } else if val < 0.0 {
@@ -1176,9 +1175,6 @@ pub fn convert_fos(
                                 st.pos = pos;
                                 st.rot = rot;
                                 inc_ok("reference_places");
-                                if r.cell_changed {
-                                    inc_hyp("reference_places (bit-3 cell-change suffix) [hypothesis]");
-                                }
                             }
                         } else {
                             inc_skip("reference_place", "cell or worldspace not present in load order");
@@ -1278,10 +1274,8 @@ pub fn convert_fos(
                 &map_id,
                 &created_map,
                 "actor_script_vars",
-                "actor_script_vars (actor extra 0x0D) [hypothesis]",
                 "actor_script_var",
                 &mut inc_ok,
-                &mut inc_hyp,
                 &mut inc_skip,
             ) {
                 applied_any = true;
@@ -1317,10 +1311,9 @@ pub fn convert_fos(
             &mut g,
             rid,
             &ac.av_damage,
+            &ac.av_base_overrides,
             &ac.av_permanent,
-            ac.av_process_hypothesis,
             &mut inc_ok,
-            &mut inc_hyp,
             &mut inc_skip,
         ) {
             applied_any = true;
@@ -1390,7 +1383,6 @@ pub fn convert_fos(
                 }
                 if tm.lock_level == 0xFE {
                     g.terminals.script_locks.insert(rid, crate::terminal::ScriptLock { locked: false, level: -1 });
-                    inc_hyp("terminals (extra 0x50 0xFE script-unlock) [hypothesis]");
                     wrote_term = true;
                 } else if tm.lock_level < 0xFD {
                     g.terminals
@@ -1510,10 +1502,8 @@ pub fn convert_fos(
                 &map_id,
                 &created_map,
                 "ref_script_vars",
-                "ref_script_vars (REFR extra 0x0D) [hypothesis]",
                 "ref_script_var",
                 &mut inc_ok,
-                &mut inc_hyp,
                 &mut inc_skip,
             ) {
                 applied_any = true;
@@ -1627,10 +1617,8 @@ pub fn convert_fos(
                 &map_id,
                 &created_map,
                 "actor_script_vars",
-                "actor_script_vars (actor extra 0x0D) [hypothesis]",
                 "actor_script_var",
                 &mut inc_ok,
-                &mut inc_hyp,
                 &mut inc_skip,
             );
         }
@@ -1660,10 +1648,9 @@ pub fn convert_fos(
             &mut g,
             placed_id,
             &ca.av_damage,
+            &ca.av_base_overrides,
             &ca.av_permanent,
-            ca.av_process_hypothesis,
             &mut inc_ok,
-            &mut inc_hyp,
             &mut inc_skip,
         );
     }
@@ -1719,9 +1706,6 @@ pub fn convert_fos(
                         st.pos = pos;
                         st.rot = rot;
                         inc_ok("pgre_places");
-                        if pr.cell_changed {
-                            inc_hyp("pgre_places (bit-3 cell-change suffix) [hypothesis]");
-                        }
                         applied_any = true;
                     }
                 }
@@ -2026,7 +2010,8 @@ pub fn convert_fos(
         }
     }
 
-    // 14d. Non-player actor base changes (NPC_ excluding 0x7, CREA: bit 1 Essential, bit 5 name; [observed]).
+    // 14d. Non-player actor base changes (NPC_ excluding 0x7, CREA: bit 1 Essential/Female,
+    // bit 5 name, bit 24 SexChange; [observed]).
     let mut handled_actor_bases: BTreeSet<u32> = BTreeSet::new();
     for abres in fos.actor_base_changes() {
         let Ok(ab) = abres else {
@@ -2050,6 +2035,33 @@ pub fn convert_fos(
                 g.forms.saved_names.insert(bid, name.clone());
                 inc_ok("actor_base_names");
                 applied_any = true;
+            }
+        }
+        if let Some(female) = ab.female {
+            if data.sig(bid).as_ref() == Some(b"NPC_") {
+                let explicit_sex_change = ab.flags & (1 << 24) != 0;
+                let differs_from_authored = data.actors.get(&bid).is_some_and(|a| a.female != female);
+                if explicit_sex_change || differs_from_authored {
+                    let mut applied_sex = false;
+                    for (&rid, placed) in &refs.refs {
+                        if placed.base == bid {
+                            g.extra.entry(rid).or_default().female = Some(female);
+                            applied_sex = true;
+                        }
+                    }
+                    for &(placed_id, base_id) in &created_actor_bases {
+                        if base_id == bid {
+                            g.extra.entry(placed_id).or_default().female = Some(female);
+                            applied_sex = true;
+                        }
+                    }
+                    if applied_sex {
+                        inc_ok("actor_base_sex");
+                        applied_any = true;
+                    } else if explicit_sex_change {
+                        applied_any = true;
+                    }
+                }
             }
         }
         if applied_any {
@@ -2622,10 +2634,8 @@ fn apply_ref_script_vars(
     map_id: &impl Fn(u32) -> Result<FormId, &'static str>,
     created_map: &BTreeMap<u32, FormId>,
     ok_key: &str,
-    hyp_key: &str,
     skip_key: &str,
     inc_ok: &mut impl FnMut(&str),
-    inc_hyp: &mut impl FnMut(&str),
     inc_skip: &mut impl FnMut(&str, &str),
 ) -> bool {
     let script_id = sv
@@ -2659,7 +2669,6 @@ fn apply_ref_script_vars(
                 if x.is_finite() {
                     g.store(InstKey::Ref { reference: rid }, Some(sid), i, Value::Num(*x), "fos_convert", false);
                     inc_ok(ok_key);
-                    inc_hyp(hyp_key);
                     applied_any = true;
                 } else {
                     inc_skip(skip_key, "non-finite value");
@@ -2668,7 +2677,6 @@ fn apply_ref_script_vars(
             VarValue::Ref(None) => {
                 g.store(InstKey::Ref { reference: rid }, Some(sid), i, Value::Ref(0), "fos_convert", false);
                 inc_ok(ok_key);
-                inc_hyp(hyp_key);
                 applied_any = true;
             }
             VarValue::Ref(Some(raw_r)) => {
@@ -2681,7 +2689,6 @@ fn apply_ref_script_vars(
                     Ok(r) => {
                         g.store(InstKey::Ref { reference: rid }, Some(sid), i, Value::Ref(r.0), "fos_convert", false);
                         inc_ok(ok_key);
-                        inc_hyp(hyp_key);
                         if *raw_r >> 24 == 0xFF {
                             inc_ok("created_ref_script_vars");
                         }
@@ -2831,10 +2838,9 @@ fn apply_actor_avs(
     g: &mut Game<'_>,
     rid: FormId,
     av_damage: &[(u8, f32)],
+    av_base_overrides: &[(u8, f32)],
     av_permanent: &[(u8, f32)],
-    av_process_hypothesis: bool,
     inc_ok: &mut impl FnMut(&str),
-    inc_hyp: &mut impl FnMut(&str),
     inc_skip: &mut impl FnMut(&str, &str),
 ) -> bool {
     let mut applied_any = false;
@@ -2851,17 +2857,23 @@ fn apply_actor_avs(
             if val > 0.0 {
                 g.extra.entry(rid).or_default().actor_values.insert(code_u16, f64::from(val));
                 inc_ok("actor_av_damage");
-                if av_process_hypothesis {
-                    inc_hyp("actor_avs (multi-process / tok[18] / bit-20-only) [hypothesis]");
-                }
                 applied_any = true;
             }
         } else if val < 0.0 {
             g.extra.entry(rid).or_default().av_damage.insert(code_u16, f64::from(-val));
             inc_ok("actor_av_damage");
-            if av_process_hypothesis {
-                inc_hyp("actor_avs (multi-process / tok[18] / bit-20-only) [hypothesis]");
-            }
+            applied_any = true;
+        }
+    }
+    for &(code, val) in av_base_overrides {
+        if !val.is_finite() {
+            inc_skip("actor_av_base_override", "non-finite value");
+            continue;
+        }
+        let code_u16 = u16::from(code);
+        if code_u16 < 77 {
+            g.extra.entry(rid).or_default().actor_values.insert(code_u16, f64::from(val));
+            inc_ok("actor_av_base_overrides");
             applied_any = true;
         }
     }
@@ -2874,9 +2886,6 @@ fn apply_actor_avs(
         if code_u16 < 77 && val != 0.0 {
             g.extra.entry(rid).or_default().av_permanent.insert(code_u16, f64::from(val));
             inc_ok("actor_av_permanent");
-            if av_process_hypothesis {
-                inc_hyp("actor_avs (multi-process / tok[18] / bit-20-only) [hypothesis]");
-            }
             applied_any = true;
         }
     }

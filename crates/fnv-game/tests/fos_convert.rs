@@ -2822,12 +2822,16 @@ fn v3_havok_terminals_destructibles_limbs_ash_packages_avs_created_actors_pgre_t
     prop.vs(13).bar().s_field("Forward", true);
     push_record(&mut b, 13, (1 << 4) | (1 << 28), TYPE_REFR, &prop.b);
 
-    // 9. Created 0xFF ACHR (r(14)): 32-byte header placing NPC_BASE (r(15)) + High-Process package & AVs.
+    // 9. Created 0xFF ACHR (r(14)): 32-byte header placing NPC_BASE (r(15)) + High-Process package & AVs
+    //    + bit-23 ModAV Fatigue +15.0 (bit-20 AV1 active modifier is kept out of av_permanent per BUG #16).
     let mut c_achr = Build { b: Vec::new() };
     c_achr.r(1).f32(40.0).f32(50.0).f32(60.0).f32(0.0).f32(0.0).f32(0.25).u8(1).r(15).bar();
     c_achr.u8(0).bar().u32(FORM_TALKED_TO_PC).bar().f32(1.1).bar();
-    push_high_process_block(&mut c_achr, 5, &[(16, -12.0)], &[(18, 15.0)]);
-    push_record(&mut b, 14, (1 << 0) | (1 << 1) | (1 << 4), TYPE_ACHR, &c_achr.b);
+    push_high_process_block(&mut c_achr, 5, &[(16, -12.0)], &[(37, 25.0)]);
+    c_achr.r(0).bar().r(0).bar().r(0).bar();
+    c_achr.vs(1).bar().u8(18).bar().f32(15.0).bar();
+    c_achr.b.extend_from_slice(b"\xFF\xFF\x7C\xFF\xFF\x7C\x00\x7C\x01\x01\x00\x00\x7C");
+    push_record(&mut b, 14, (1 << 0) | (1 << 1) | (1 << 4) | (1 << 23), TYPE_ACHR, &c_achr.b);
 
     // 10. Created 0xFF ACRE (r(16)): 32-byte header placing CREA_BASE (r(17)) + dead flag.
     let mut c_acre = Build { b: Vec::new() };
@@ -2939,10 +2943,8 @@ fn v3_havok_terminals_destructibles_limbs_ash_packages_avs_created_actors_pgre_t
     assert_eq!(converted.report.converted.get("tact_names"), Some(&1));
     assert!(!converted.report.hypothesis_fields.contains_key("actor_base_names (NPC_/CREA bit 5) [hypothesis]"));
     assert!(!converted.report.hypothesis_fields.contains_key("tact_names (TACT bit 2) [hypothesis]"));
-    assert_eq!(
-        converted.report.hypothesis_fields.get("reference_places (bit-3 cell-change suffix) [hypothesis]"),
-        Some(&1)
-    );
+    assert!(!converted.report.hypothesis_fields.contains_key("reference_places (bit-3 cell-change suffix) [hypothesis]"));
+    assert!(!converted.report.hypothesis_fields.contains_key("actor_script_vars (actor extra 0x0D) [hypothesis]"));
     assert_eq!(
         converted.report.hypothesis_fields.get("terminals (extra 0x50 bit-7 hacked) [hypothesis]"),
         Some(&1)
@@ -2959,7 +2961,7 @@ fn v3_havok_terminals_destructibles_limbs_ash_packages_avs_created_actors_pgre_t
     let restored_world = World::restore(&f.forms, &f.refs, &body.game.sim).unwrap();
     let restored = Game::restore(&f.data, restored_world, GameConfig::default(), &body.game).unwrap();
 
-    // Companion with Havok + bit-3 cell change + 0x0D init_flag=1 + 0x2E flags=0x10 + package + AVs + BUG #6 bit-23 ModAV
+    // Companion with Havok + bit-3 cell change + 0x0D init_flag=1 + 0x2E flags=0x10 + package + AVs + BUG #6/#16
     let comp_st = restored.world.peek(FormId(COMPANION_REF)).unwrap();
     assert_eq!(comp_st.pos, [10.0, 20.0, 30.0]);
     let comp_ex = restored.extra.get(&FormId(COMPANION_REF)).unwrap();
@@ -2968,8 +2970,9 @@ fn v3_havok_terminals_destructibles_limbs_ash_packages_avs_created_actors_pgre_t
     assert_eq!(comp_ex.av_damage.get(&16), Some(&25.0));
     assert_eq!(comp_ex.actor_values.get(&54), Some(&140.0));
     assert_eq!(comp_ex.av_permanent.get(&5), Some(&4.0));
-    assert_eq!(comp_ex.av_permanent.get(&18), Some(&33.0));
-    assert_eq!(comp_ex.av_permanent.get(&41), Some(&10.0));
+    // BUG #16: bit-20 AV1 active modifiers (18, 41) must NOT be double-counted into av_permanent!
+    assert!(!comp_ex.av_permanent.contains_key(&18));
+    assert!(!comp_ex.av_permanent.contains_key(&41));
     let comp_inst = restored.instances.get(&InstKey::Ref { reference: FormId(COMPANION_REF) }).unwrap();
     assert_eq!(comp_inst.vars.get(&1), Some(&Value::Num(1.0)));
 
@@ -3072,11 +3075,14 @@ fn v3_non_finite_floats_in_actor_avs_and_created_actors_are_sanitized() {
     let g1 = b.len();
     let cf = b.len();
 
-    // 1. Companion ACHR (r(2)): High-Process with NaN av_damage and Inf av_permanent.
+    // 1. Companion ACHR (r(2)): High-Process with NaN av_damage, Inf bit-20 AV1, and Inf bit-23 ModAV.
     let mut comp = Build { b: Vec::new() };
     comp.u8(0).bar().vs(0).bar();
     push_high_process_block(&mut comp, 3, &[(16, f32::NAN)], &[(18, f32::INFINITY)]);
-    push_record(&mut b, 2, 1 << 18, TYPE_ACHR, &comp.b);
+    comp.r(0).bar().r(0).bar().r(0).bar();
+    comp.vs(1).bar().u8(5).bar().f32(f32::INFINITY).bar();
+    comp.b.extend_from_slice(b"\xFF\xFF\x7C\xFF\xFF\x7C\x00\x7C\x01\x01\x00\x00\x7C");
+    push_record(&mut b, 2, (1 << 18) | (1 << 23), TYPE_ACHR, &comp.b);
 
     // 2. Created ACHR (r(4)): NaN scale + -Inf av_damage.
     let mut c_achr = Build { b: Vec::new() };
@@ -3110,7 +3116,6 @@ fn v3_non_finite_floats_in_actor_avs_and_created_actors_are_sanitized() {
     };
     let converted = convert_fos(&fos, &f.data, &f.forms, &f.refs, &opts).unwrap();
     assert_eq!(converted.report.skipped.get("actor_av_damage: non-finite value"), Some(&2));
-    assert_eq!(converted.report.skipped.get("actor_av_permanent: non-finite value"), Some(&1));
     assert_eq!(converted.report.skipped.get("actor_scale: non-finite value"), Some(&1));
 
     let dir = std::env::temp_dir().join(format!("nvf-fos-convert-v3-nan-{}", std::process::id()));
@@ -3285,11 +3290,15 @@ fn v4_hotkeys_chosen_ammo_active_effects_mid_low_avs_created_ref_vars_and_factio
     push_multi_process_block(&mut comp, 11, Some(&[(16, -30.0), (54, 55.0)]), None);
     push_record(&mut b, 9, (1 << 18) | (1 << 21), TYPE_ACHR, &comp.b);
 
-    // 3. Low-Process NPC_REF (pl=3, bit 18 + bits 20+21, no package): av_damage Health=-15, av_permanent Fatigue=22
+    // 3. Low-Process NPC_REF (pl=3, bit 18 + bits 20+21+23, no package): av_damage Health=-15,
+    //    bit-20 AV1 Medicine=+25 (must NOT double-count), bit-23 ModAV Fatigue=+22.
     let mut npc = Build { b: Vec::new() };
     npc.u8(3).bar().vs(0).bar();
-    push_multi_process_block(&mut npc, 0, Some(&[(16, -15.0)]), Some(&[(18, 22.0)]));
-    push_record(&mut b, 10, (1 << 18) | (1 << 20) | (1 << 21), TYPE_ACHR, &npc.b);
+    push_multi_process_block(&mut npc, 0, Some(&[(16, -15.0)]), Some(&[(37, 25.0)]));
+    npc.r(0).bar().r(0).bar().r(0).bar();
+    npc.vs(1).bar().u8(18).bar().f32(22.0).bar();
+    npc.b.extend_from_slice(b"\xFF\xFF\x7C\xFF\xFF\x7C\x00\x7C\x01\x01\x00\x00\x7C");
+    push_record(&mut b, 10, (1 << 18) | (1 << 20) | (1 << 21) | (1 << 23), TYPE_ACHR, &npc.b);
 
     // 4. Created 0xFF00_0301 REFR (ASH_BASE) + Created 0xFF00_0302 ACHR (NPC_BASE)
     let mut c_ref = Build { b: Vec::new() };
@@ -3355,10 +3364,7 @@ fn v4_hotkeys_chosen_ammo_active_effects_mid_low_avs_created_ref_vars_and_factio
     assert!(!converted.report.hypothesis_fields.contains_key("player_active_effects (ACHR tail) [hypothesis]"));
     assert!(!converted.report.hypothesis_fields.contains_key("faction_flags (FACT bit 1) [hypothesis]"));
     assert_eq!(converted.report.hypothesis_fields.get("player_chosen_ammo (extra 0x6E) [hypothesis]"), Some(&2));
-    assert_eq!(
-        converted.report.hypothesis_fields.get("actor_avs (multi-process / tok[18] / bit-20-only) [hypothesis]"),
-        Some(&4)
-    );
+    assert!(!converted.report.hypothesis_fields.contains_key("actor_avs (multi-process / tok[18] / bit-20-only) [hypothesis]"));
     assert!(!converted.report.hypothesis_fields.contains_key("created_ref_script_vars (0xFF remapped) [hypothesis]"));
 
     let dir = std::env::temp_dir().join(format!("nvf-fos-convert-v4-{}", std::process::id()));
@@ -3658,7 +3664,8 @@ fn v5_unequipped_magazines_saved_base_names_tok18_subblocks_and_bit20_only_round
     comp.vs(1).bar().u8(16).bar().f32(-45.0).bar();
     push_record(&mut b, 7, (1 << 18) | (1 << 21), TYPE_ACHR, &comp.b);
 
-    // 5. NPC_REF (pl=1, tok18=0x0D with 1 ref, bit 20 ONLY): Fatigue permanent = +28.0
+    // 5. NPC_REF (pl=1, tok18=0x0D with 1 ref, bit 20 AV1 + bit 23 ModAV):
+    //    bit 20 Medicine +25 must NOT double-count; bit 23 ModAV Fatigue +28 IS restored!
     let mut npc = Build { b: Vec::new() };
     push_actor_hdr(&mut npc, 1, 10, 0x0D);
     for _ in 0..3 {
@@ -3667,8 +3674,11 @@ fn v5_unequipped_magazines_saved_base_names_tok18_subblocks_and_bit20_only_round
     npc.u8(1).bar().u8(0).bar().u32(0).bar().r(0).bar();
     npc.vs(1).bar().r(1).bar();
     push_actor_mid(&mut npc, true);
-    npc.u32(0).bar().vs(1).bar().u8(18).bar().f32(28.0).bar();
-    push_record(&mut b, 8, (1 << 18) | (1 << 20), TYPE_ACHR, &npc.b);
+    npc.u32(0).bar().vs(1).bar().u8(37).bar().f32(25.0).bar();
+    npc.r(0).bar().r(0).bar().r(0).bar();
+    npc.vs(1).bar().u8(18).bar().f32(28.0).bar();
+    npc.b.extend_from_slice(b"\xFF\xFF\x7C\xFF\xFF\x7C\x00\x7C\x01\x01\x00\x00\x7C");
+    push_record(&mut b, 8, (1 << 18) | (1 << 20) | (1 << 23), TYPE_ACHR, &npc.b);
 
     // 6. DEAD_NPC_REF (pl=3, tok18=0x80 with no package, bit 21): Health damage = -99.0
     let mut dead = Build { b: Vec::new() };
@@ -3708,10 +3718,7 @@ fn v5_unequipped_magazines_saved_base_names_tok18_subblocks_and_bit20_only_round
     assert!(!converted.report.hypothesis_fields.contains_key("tact_names (TACT bit 2) [hypothesis]"));
     assert_eq!(converted.report.converted.get("actor_av_damage"), Some(&2));
     assert_eq!(converted.report.converted.get("actor_av_permanent"), Some(&1));
-    assert_eq!(
-        converted.report.hypothesis_fields.get("actor_avs (multi-process / tok[18] / bit-20-only) [hypothesis]"),
-        Some(&3)
-    );
+    assert!(!converted.report.hypothesis_fields.contains_key("actor_avs (multi-process / tok[18] / bit-20-only) [hypothesis]"));
 
     let dir = std::env::temp_dir().join(format!("nvf-fos-convert-v5-{}", std::process::id()));
     let out = dir.join("v5_full.nvfsave");
@@ -3741,9 +3748,11 @@ fn v5_unequipped_magazines_saved_base_names_tok18_subblocks_and_bit20_only_round
     assert_eq!(restored.script_name(FormId(NPC_BASE)), Some("Renamed Scout"));
     assert_eq!(restored.script_name(FormId(TACT_BASE)), Some("Bunker Intercom"));
 
-    // Multi-process tok18 0x0C, 0x0D (bit-20-only), and 0x80 (no package) actor AVs restored
+    // Multi-process tok18 0x0C, 0x0D (bit-20 AV1 excluded + bit-23 ModAV kept), and 0x80 (no package) actor AVs restored
     assert_eq!(restored.extra.get(&FormId(COMPANION_REF)).unwrap().av_damage.get(&16), Some(&45.0));
-    assert_eq!(restored.extra.get(&FormId(NPC_REF)).unwrap().av_permanent.get(&18), Some(&28.0));
+    let npc_ex = restored.extra.get(&FormId(NPC_REF)).unwrap();
+    assert_eq!(npc_ex.av_permanent.get(&18), Some(&28.0));
+    assert!(!npc_ex.av_permanent.contains_key(&37));
     assert_eq!(restored.extra.get(&FormId(DEAD_NPC_REF)).unwrap().av_damage.get(&16), Some(&99.0));
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -3958,13 +3967,11 @@ fn v5_destructible_intermediate_stage_0x56_hp_and_hypothesis_field_tracking() {
     assert_eq!(converted.report.converted.get("destructibles"), Some(&2));
     assert_eq!(converted.report.converted.get("terminals"), Some(&1));
     assert_eq!(converted.report.converted.get("pgre_places"), Some(&1));
-    assert_eq!(
-        converted.report.hypothesis_fields.get("terminals (extra 0x50 0xFE script-unlock) [hypothesis]"),
-        Some(&1)
-    );
-    assert_eq!(
-        converted.report.hypothesis_fields.get("pgre_places (bit-3 cell-change suffix) [hypothesis]"),
-        Some(&1)
+    // Both terminal 0x50 0xFE script-unlock and PGRE bit-3 cell-change suffix are now [observed]!
+    assert!(
+        converted.report.hypothesis_fields.is_empty(),
+        "unexpected hypothesis_fields: {:?}",
+        converted.report.hypothesis_fields
     );
 
     let world = World::restore(&f.forms, &f.refs, &converted.body.game.sim).unwrap();
@@ -3985,4 +3992,194 @@ fn v5_destructible_intermediate_stage_0x56_hp_and_hypothesis_field_tracking() {
         restored.terminals.script_locks.get(&FormId(TERM_REF)),
         Some(&fnv_game::terminal::ScriptLock { locked: false, level: -1 })
     );
+}
+
+#[test]
+fn regression_bugs_14_to_18_round_trip_cleanly() {
+    let f = fixture();
+    let fids = [
+        ROOM_ID,       // 1
+        PLAYER_REF,    // 2
+        RADIO_REF,     // 3: Pip-Boy station
+        PROP_REF,      // 4: World radio speaker REFR
+        DOOR_REF,      // 5: World radio broadcast station
+        COMPANION_REF, // 6: NPC with bit-20 AV1 + bit-21 damage + bit-22 SetAV + bit-23 ModAV + tok[18]=0x10
+        NPC_REF,       // 7: Untouched NPC with bit-20 AV1 ONLY (must NOT write av_permanent!)
+        NPC_BASE,      // 8: Non-player NPC_ with bit-24 SexChange (01 7c)
+        PACK_ID,       // 9: AI package
+    ];
+
+    let mut h = Build { b: Vec::new() };
+    h.u32(0x30).bar();
+    h.b.extend([0u8; 64]);
+    h.bar()
+        .u32(0)
+        .bar()
+        .u32(0)
+        .bar()
+        .u32(70)
+        .bar()
+        .s_field("CourierBugs14_18", true)
+        .s_field("Drifter", true)
+        .u32(10)
+        .bar()
+        .s_field("OwnTestRoom", true)
+        .s_field("005.00.00", false);
+
+    let mut b = b"FO3SAVEGAME".to_vec();
+    b.extend((h.b.len() as u32).to_le_bytes());
+    b.extend(&h.b);
+    let mut pl = Build { b: Vec::new() };
+    pl.u8(1).bar().s_field("FalloutNV.esm", true);
+    b.push(27);
+    b.extend((pl.b.len() as u32).to_le_bytes());
+    b.extend(&pl.b);
+    let table_at = b.len();
+    b.extend([0u8; 32 + 78]);
+
+    // BUG #14: Global[10] with List 1 world radio speaker (4 u8 trailing bytes) + List 2 world station (with
+    // voice conversation block) AND Pip-Boy station (n_listeners == 0).
+    let g1 = b.len();
+    let mut t10 = Build { b: Vec::new() };
+    t10.u32(0).bar().u8(0).bar().s_field("", true);
+    t10.vs(1).bar().r(4).bar().u8(1).bar().u8(0).bar().u8(6).bar().u8(0).bar();
+    t10.vs(2).bar();
+    // Station 0: World radio (n_listeners = 1, has_conv = 1)
+    t10.r(5).bar().u32(2794).bar().u32(168_746).bar().u8(0x64).bar().u8(0x64).bar().u32(59).bar();
+    t10.vs(1).bar().r(4).bar().u8(1).bar();
+    t10.vs(1).bar().vs(1).bar();
+    t10.s_field("  ", true).s_field("Data\\Sound\\Voice\\FalloutNV.esm\\track.ogg", true);
+    t10.u32(0).bar().u32(50).bar().u8(1).bar();
+    t10.r(0).bar().r(0).bar().r(4).bar().s_field("", true);
+    t10.r(4).bar().r(4).bar().r(4).bar().r(5).bar().s_field("", true);
+    // Station 1: Pip-Boy radio (n_listeners = 0, has_conv = 0)
+    t10.r(3).bar().u32(18_852).bar().u32(1).bar().u8(0x64).bar().u8(0x64).bar().u32(51).bar();
+    t10.vs(0).bar().u8(0).bar();
+    t10.r(0).bar().r(0).bar().vs(0).bar();
+    b.extend(10u32.to_le_bytes());
+    b.extend((t10.b.len() as u32).to_le_bytes());
+    b.extend(&t10.b);
+
+    let cf = b.len();
+
+    let push_tok18_proc = |out: &mut Build, pl_lvl: u8, pkg_idx: u32, tok18: u8| {
+        out.u8(pl_lvl).bar().vs(0).bar();
+        for _ in 0..8 {
+            out.u8(0).bar();
+        }
+        out.f32(0.0).bar().f32(0.0).bar().u8(0).bar().u8(0).bar();
+        out.r(0).bar().r(0).bar().u32(0).bar().f32(0.0).bar().u32(0).bar();
+        out.r(pkg_idx).bar().u8(tok18).bar();
+        out.f32(0.0).bar().f32(0.0).bar().f32(0.0).bar().r(0).bar().u8(0).bar();
+        out.f32(0.0).bar().r(0).bar().f32(0.0).bar().f32(0.0).bar().f32(0.0).bar();
+        out.u8(0).bar().u16(0).bar().f32(0.0).bar().f32(0.0).bar();
+        for _ in 0..5 {
+            out.r(0).bar();
+        }
+        out.u8(0).bar();
+    };
+
+    // 1. COMPANION_REF (r(6)): Low-Process tok[18] = 0x10 (BUG #18) + bit-21 damage + bit-20 AV1 (BUG #16)
+    //    + bit-23 ModAV + bit-22 SetAV simultaneously (BUG #15).
+    let mut comp = Build { b: Vec::new() };
+    push_tok18_proc(&mut comp, 3, 9, 0x10);
+    comp.vs(1).bar().u8(16).bar().f32(-15.0).bar(); // bit 21 av_damage
+    comp.u32(0).bar().vs(1).bar().u8(37).bar().f32(25.0).bar(); // bit 20 AV1 (must NOT land in av_permanent!)
+    comp.r(0).bar().r(0).bar().r(0).bar();
+    // bit 23 ModAV: Charisma (8) +3.0, Luck (11) +5.0
+    comp.vs(2).bar().u8(8).bar().f32(3.0).bar().u8(11).bar().f32(5.0).bar();
+    // bit 22 SetAV: Medicine (37) = 80.0, Barter (32) = 75.0
+    comp.vs(2).bar().u8(37).bar().f32(80.0).bar().u8(32).bar().f32(75.0).bar();
+    comp.b.extend_from_slice(b"\xFF\xFF\x7C\xFF\xFF\x7C\x00\x7C\x01\x01\x00\x00\x7C");
+    push_record(
+        &mut b,
+        6,
+        (1 << 18) | (1 << 20) | (1 << 21) | (1 << 22) | (1 << 23),
+        TYPE_ACHR,
+        &comp.b,
+    );
+
+    // 2. Untouched NPC_REF (r(7)): bit-20 AV1 ONLY (TrainingMedicine +25) -> MUST NOT write av_permanent!
+    let mut doc = Build { b: Vec::new() };
+    push_tok18_proc(&mut doc, 0, 9, 0xFF);
+    doc.u32(0).bar().vs(1).bar().u8(37).bar().f32(25.0).bar();
+    push_record(&mut b, 7, (1 << 18) | (1 << 20), TYPE_ACHR, &doc.b);
+
+    // 3. BUG #17: Non-player NPC_BASE (r(8)): bit 24 SexChange (`01 7c`) -> female = true on NPC_REF!
+    push_record(&mut b, 8, 1 << 24, TYPE_NPC, &[0x01, BAR]);
+
+    // 4. Minimal PLAYER_REF (r(2)) so player_inventory is present and skipped is strictly empty.
+    let mut pr = Build { b: Vec::new() };
+    pr.r(1).f32(1.0).f32(2.0).f32(3.0).f32(0.0).f32(0.0).f32(0.0).bar();
+    for _ in 0..232 {
+        pr.f32(0.0).bar();
+    }
+    pr.u8(0).bar().vs(0).bar().vs(0).bar();
+    push_record(&mut b, 2, (1 << 1) | (1 << 5) | (1 << 31), TYPE_ACHR, &pr.b);
+
+    let g2 = b.len();
+    b.extend(1000u32.to_le_bytes());
+    b.extend(0u32.to_le_bytes());
+    let fid = b.len();
+    b.extend((fids.len() as u32).to_le_bytes());
+    for fid_val in fids {
+        b.extend(fid_val.to_le_bytes());
+    }
+    b.extend(0u32.to_le_bytes());
+    let tail = b.len();
+    b.extend([5, 0, 0, 0, 0, 0, 0, 0, BAR]);
+    let table = [fid, tail, g1, cf, g2, 1, 1, 4].map(|v| v as u32);
+    for (i, v) in table.iter().enumerate() {
+        b[table_at + 4 * i..table_at + 4 * i + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
+    let fos = Fos::parse(&b).unwrap();
+    let inspect = inspect_fos(&fos, false);
+    assert!(inspect.parse_errors.is_empty(), "parse_errors: {:?}", inspect.parse_errors);
+    assert_eq!(inspect.decoded_counts.get("radio_on"), Some(&1));
+    assert_eq!(inspect.decoded_counts.get("actor_base_changes"), Some(&1));
+
+    let opts = ConvertOptions {
+        kind: SaveKind::Manual,
+        plugins: vec![PluginEntry { name: "FalloutNV.esm".into(), size: 1234 }],
+        include_thumbnail: false,
+        cosave_present: false,
+    };
+    let converted = convert_fos(&fos, &f.data, &f.forms, &f.refs, &opts).unwrap();
+    assert!(
+        converted.report.hypothesis_fields.is_empty(),
+        "unexpected hypothesis_fields: {:?}",
+        converted.report.hypothesis_fields
+    );
+    assert!(
+        converted.report.skipped.is_empty(),
+        "unexpected skipped: {:?}",
+        converted.report.skipped
+    );
+    assert_eq!(converted.report.converted.get("actor_av_base_overrides"), Some(&2));
+    assert_eq!(converted.report.converted.get("actor_av_permanent"), Some(&2));
+    assert_eq!(converted.report.converted.get("actor_base_sex"), Some(&1));
+
+    let world = World::restore(&f.forms, &f.refs, &converted.body.game.sim).unwrap();
+    let restored = Game::restore(&f.data, world, GameConfig::default(), &converted.body.game).unwrap();
+
+    // BUG #14: Pip-Boy radio selected cleanly despite world radio with conversation block preceding it.
+    assert!(restored.radio.pipboy.on);
+    assert_eq!(restored.radio.pipboy.station, Some(FormId(RADIO_REF)));
+
+    // BUG #15, #16, #18: Companion has tok[18]=0x10 damage, separated SetAV & ModAV, and NO bit-20 double-count!
+    let comp_ex = restored.extra.get(&FormId(COMPANION_REF)).unwrap();
+    assert_eq!(comp_ex.av_damage.get(&16), Some(&15.0));
+    assert_eq!(comp_ex.actor_values.get(&37), Some(&80.0));
+    assert_eq!(comp_ex.actor_values.get(&32), Some(&75.0));
+    assert_eq!(comp_ex.av_permanent.get(&8), Some(&3.0));
+    assert_eq!(comp_ex.av_permanent.get(&11), Some(&5.0));
+    assert!(!comp_ex.av_permanent.contains_key(&37));
+    assert!(!comp_ex.av_permanent.contains_key(&32));
+
+    // BUG #16 & #17: Untouched NPC_REF has NO av_permanent from bit-20 AV1 AND IS female from NPC_BASE bit-24 SexChange!
+    let npc_ex = restored.extra.get(&FormId(NPC_REF)).unwrap();
+    assert!(npc_ex.av_permanent.is_empty());
+    assert_eq!(npc_ex.female, Some(true));
+    assert!(restored.actor_female(FormId(NPC_REF)));
 }
