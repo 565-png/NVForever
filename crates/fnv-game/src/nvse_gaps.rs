@@ -1110,12 +1110,11 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // packages still work); reset on every save load [documented: GECK wiki
         // SetCombatDisabled]. Returns 0 either way [observed: gaps2]; GetCombatDisabled
         // reads it [observed: gaps3]. Enabling SetCombatDisabled 1 on an actor already
-        // in combat does not immediately stop its active combat [observed: 2026-11-23,
-        // GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9
-        // with the 10 official base masters, clean-room script probe
-        // `core_20_set_combat_disabled_stops_combat`: `StartCombat -> IsInCombat 1 ->
-        // SetCombatDisabled 1 -> GetCombatDisabled 1, IsInCombat 1` (`1,1,1`); no DLL or
-        // source consulted].
+        // in combat does not immediately stop active combat in the same frame [observed:
+        // 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas 1.4.0.525,
+        // xNVSE 6.4.9 with the 10 official base masters, clean-room script probe
+        // `core_20_set_combat_disabled_stops_combat` (#3679): `1,1,1`; no DLL or source
+        // consulted; hypothesis: stays in combat on subsequent frames after that frame].
         "setcombatdisabled" => {
             if let Some(r) = subject {
                 if num(args, 0, 0.0) != 0.0 {

@@ -173,17 +173,22 @@ still attack it, and `UseWeapon` / `Use Weapon` packages are unaffected), and th
 state resets on every saved-game load (kept out of both `GameSnapshot` and
 `Game::Session`). `SetCombatDisabled` returns 0 [observed: gaps2] and
 `GetCombatDisabled` reads the flag [observed: gaps3]. Enabling `SetCombatDisabled 1` on an
-actor already in combat leaves active combat running (`IsInCombat == 1`) rather than
-immediately terminating it [observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`),
+actor already in combat does not immediately clear `IsInCombat` in the same frame
+(`IsInCombat == 1`) [observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`),
 Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters, clean-room
-script probe `core_20_set_combat_disabled_stops_combat` (`StartCombat` -> `IsInCombat 1`
+script probe `core_20_set_combat_disabled_stops_combat`
+(`tools/capture/nvse/catalogs/wave4a_extenders.json`, #3679: `StartCombat` -> `IsInCombat 1`
 -> `SetCombatDisabled 1` -> `GetCombatDisabled 1`, `IsInCombat 1`: `1,1,1`); no DLL or
-source consulted]. Calling `SetCombatDisabled 1` on a non-combat actor suppresses new
-combat entry via `StartCombat` (`IsInCombat` remains `0` same-tick and on subsequent
-ticks) [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24,
-`GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters,
-`w4d_07_setcombatdisabled_new_combat` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
-#3679): `c0=0,cd(0->1->1),sameTick=0,nextTick=0`; no DLL or source consulted].
+source consulted]. [hypothesis] Whether an already-in-combat actor stays in combat after
+that frame (on subsequent ticks) rather than dropping out of combat later is uncaptured
+because `core_20_set_combat_disabled_stops_combat` reads `IsInCombat` in the same frame;
+NVForever keeps active combat running until it ends normally. Calling `SetCombatDisabled 1`
+on a non-combat actor suppresses new combat entry via `StartCombat` (`IsInCombat` remains
+`0` same-tick and on subsequent ticks) [observed: Fallout: New Vegas 1.4.0.525 + xNVSE
+6.4.9 + JIP LN 57.30, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base
+masters, `w4d_07_setcombatdisabled_new_combat`
+(`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679):
+`c0=0,cd(0->1->1),sameTick=0,nextTick=0`; no DLL or source consulted].
 [hypothesis] While enabled it also suppresses ally/provocation alarms (`awareness.rs`,
 `combat_group.rs`, `provocation.rs`).
 

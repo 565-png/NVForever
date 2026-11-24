@@ -2162,9 +2162,10 @@ fn set_combat_disabled_blocks_combat_entry_allows_being_attacked_and_resets_on_l
     g.start_combat(bandit, player);
     assert_eq!(g.awareness.state(bandit), State::Combat);
 
-    // SetCombatDisabled 1 does NOT terminate active combat [observed: 2026-11-23,
-    // GSDocMitchellHouse (0x00103DF9), `core_20_set_combat_disabled_stops_combat`], and
-    // once combat ends it blocks all combat re-entry.
+    // SetCombatDisabled 1 does NOT immediately terminate active combat in the same frame
+    // [observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9),
+    // `core_20_set_combat_disabled_stops_combat`; hypothesis: stays in combat after that
+    // frame], and once combat ends it blocks all combat re-entry.
     run_on(&mut g, bandit, "SetCombatDisabled 1");
     assert_eq!(eval_on(&mut g, bandit, "GetCombatDisabled"), 1.0);
     assert_eq!(g.awareness.state(bandit), State::Combat);
