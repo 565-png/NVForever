@@ -2539,11 +2539,15 @@ const NO_FUNCTION_BLOCK: &str = " has no Function block";
 /// Internal callable regions. Loaded records can also occupy these numbers: allocation
 /// skips them and dispatch uses actual ownership (callable-identity.md).
 /// Ids of foreach's temporary inventory references (B5), in
-/// `[TEMP_REF_BASE, CAMERA_OVERLAY_BASE)`.
+/// `[TEMP_REF_BASE, BULLET_SNAP_SOUND_BASE)`.
 pub const TEMP_REF_BASE: u32 = 0xFE40_0000;
+/// Audio-only synthetic `SOUN` FormIDs reserved for BulletSnap pass-by folders
+/// (`nvf_play::bullet_snap`), carved out in `[BULLET_SNAP_SOUND_BASE, CAMERA_OVERLAY_BASE)`
+/// above temporary inventory references and below camera overlay references [design].
+pub const BULLET_SNAP_SOUND_BASE: u32 = 0xFE7E_0000;
 /// Fixed engine-owned runtime references (such as JohnnyGuitar's camera overlay
-/// references), carved out in `[CAMERA_OVERLAY_BASE, LAMBDA_BASE)` above temporary
-/// inventory references and below lambdas [design].
+/// references), carved out in `[CAMERA_OVERLAY_BASE, LAMBDA_BASE)` above
+/// [`BULLET_SNAP_SOUND_BASE`] and below lambdas [design].
 pub const CAMERA_OVERLAY_BASE: u32 = 0xFE7F_0000;
 /// Ids of the scripts CompileScript made from text files, below the temporary
 /// references' [decision, as the lambdas'].
@@ -4083,13 +4087,14 @@ impl<'a> Game<'a> {
     }
 
     /// A temporary inventory reference for one kind of item in a container (B5).
-    /// Bounded strictly below [`CAMERA_OVERLAY_BASE`] so temporary inventory references
-    /// can never collide with reserved camera overlay references.
+    /// Bounded strictly below [`BULLET_SNAP_SOUND_BASE`] (and therefore below
+    /// [`CAMERA_OVERLAY_BASE`]) so temporary inventory references can never collide with
+    /// reserved audio-only BulletSnap `SOUN` IDs or camera overlay references.
     pub(crate) fn temp_ref(&mut self, container: FormId, item: FormId) -> FormId {
         if let Some(i) = self.temp_refs.iter().position(|&(c, x)| c == container && x == item) {
             return FormId(TEMP_REF_BASE + i as u32);
         }
-        let max = (CAMERA_OVERLAY_BASE - TEMP_REF_BASE) as usize;
+        let max = (BULLET_SNAP_SOUND_BASE - TEMP_REF_BASE) as usize;
         assert!(self.temp_refs.len() < max, "temporary inventory references exhausted");
         self.temp_refs.push((container, item));
         FormId(TEMP_REF_BASE + self.temp_refs.len() as u32 - 1)
@@ -4097,7 +4102,7 @@ impl<'a> Game<'a> {
 
     /// The container and item of a live temporary inventory reference.
     pub fn temp_item(&self, r: FormId) -> Option<(FormId, FormId)> {
-        let i = r.0.checked_sub(TEMP_REF_BASE).filter(|_| r.0 < CAMERA_OVERLAY_BASE)?;
+        let i = r.0.checked_sub(TEMP_REF_BASE).filter(|_| r.0 < BULLET_SNAP_SOUND_BASE)?;
         self.temp_refs.get(i as usize).copied()
     }
 
