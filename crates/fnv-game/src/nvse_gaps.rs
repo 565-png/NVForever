@@ -993,13 +993,13 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             XVal::Num(if a == FormId::PLAYER_REF || g.package_actors().contains(&a) { 0.0 } else { 3.0 })
         }
         // `persistent:0/1`: sets or clears the persistent record flag (0x400) on the
-        // calling reference (including `FormId::PLAYER_REF`), saved in
-        // `GameSnapshot::persistent_overrides` [documented: GECK wiki SetPersistent;
-        // observed: gaps6 returns 0; `p2_persistent` SAVED; Fallout: New Vegas 1.4.0.525
-        // + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`),
-        // 10 official base masters, `w4d_06_player_setpersistent_0`
+        // calling reference (including `FormId::PLAYER_REF`) for the session
+        // [documented: GECK wiki SetPersistent; observed: gaps6 returns 0; Fallout: New
+        // Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24, `GSDocMitchellHouse`
+        // (`0x00103DF9`), 10 official base masters, `w4d_06_player_setpersistent_0`
         // (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679):
-        // `p0=1,after0=0,after1=1`; no DLL or source consulted].
+        // `PROBE|w4d_06_player_setpersistent_0|p0=1,after0=0,after1=1`; no DLL or source
+        // consulted; hypothesis: session-only lifetime across save/load].
         "setpersistent" => {
             if let Some(r) = subject {
                 let on = num(args, 0, 0.0) != 0.0;

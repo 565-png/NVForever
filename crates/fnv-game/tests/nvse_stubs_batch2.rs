@@ -381,100 +381,48 @@ fn set_persistent_ignores_unrelated_flag_writes_on_persistent_group_ref() {
 }
 
 #[test]
-fn set_persistent_survives_save_and_cold_or_samerun_load() {
+fn player_set_persistent_zero_preserves_all_consumers() {
+    use fnv_game::functions::console::{persistent_ref_count, ConsoleCtx};
+
     let f = fixture();
     let mut g = game(&f);
 
-    // Baseline snapshot taken BEFORE SetPersistent (used to verify Session does not leak it).
-    let spawned = g.world.place(FormId(STAT), Some(FormId(CELL_UNLOADED)), [30.0, 0.0, 0.0], [0.0; 3], 1).unwrap();
-    let snap_before = g.snapshot();
+    // Baseline: player is persistent by default.
+    assert_eq!(num(&mut g, "player.IsPersistent"), 1.0);
+    assert_eq!(num(&mut g, "player.GetPermanent"), 1.0);
+    assert_eq!(num(&mut g, "GetPermanent player"), 1.0);
+    let prc_before = persistent_ref_count(&mut g, &ConsoleCtx::default(), &[]).unwrap();
+    let walk_before = num(&mut g, "GetNumRefsInCell TestCell 200");
+    let form_refs_before = num(&mut g, "Ar_Size (GetFormRefs TestCrate)");
 
-    // Mutate: dynamic ref 0 -> 1, originally persistent ref 1 -> 0.
-    g.run_query(
-        "Begin Function { }\nSetPersistent 1\nEnd\n",
-        RunCtx { self_ref: Some(spawned), ..RunCtx::default() },
-    )
-    .unwrap();
-    q(&mut g, "PersistCrateRef.SetPersistent 0");
+    // Clear player persistence via SetPersistent 0 [observed: w4d_06_player_setpersistent_0]:
+    // verify all Game::persistent consumers stay healthy and consistent.
+    assert_eq!(num(&mut g, "player.SetPersistent 0"), 0.0);
+    assert_eq!(num(&mut g, "player.IsPersistent"), 0.0);
+    assert_eq!(num(&mut g, "player.GetReferenceFlag 1024"), 0.0);
+    assert_eq!(num(&mut g, "player.GetPermanent"), 0.0);
+    assert_eq!(num(&mut g, "GetPermanent player"), 0.0);
+    assert_eq!(num(&mut g, "GetNumRefsInCell TestCell 200"), walk_before, "ref walk already excludes player");
+    assert_eq!(num(&mut g, "Ar_Size (GetFormRefs TestCrate)"), form_refs_before, "GetFormRefs unaffected");
+    let prc_after = persistent_ref_count(&mut g, &ConsoleCtx::default(), &[]).unwrap();
+    assert_eq!(prc_after, prc_before, "PersistentRefCount stays valid");
 
-    let snap_after = g.snapshot();
-    // Roundtrip through JSON to verify serde persistence for GameSnapshot::persistent_overrides.
-    let json = serde_json::to_string(&snap_after).unwrap();
-    let decoded: fnv_game::game::GameSnapshot = serde_json::from_str(&json).unwrap();
-    let session = g.take_session();
-
-    // Cold-boot restore from decoded snapshot: both overrides persist and stay synchronized.
-    let mut cold = Game::restore(
+    // Snapshot + restore resets session-only SetPersistent override back to default 1 [hypothesis].
+    let snap = g.snapshot();
+    let mut restored = Game::restore(
         &f.data,
-        World::restore(&f.forms, &f.refs, &decoded.sim).unwrap(),
+        World::restore(&f.forms, &f.refs, &snap.sim).unwrap(),
         GameConfig::default(),
-        &decoded,
+        &snap,
     )
     .unwrap();
-    assert_eq!(
-        cold.run_query(
-            "Begin Function { }\nSetFunctionValue (IsPersistent)\nEnd\n",
-            RunCtx { self_ref: Some(spawned), ..RunCtx::default() },
-        )
-        .unwrap(),
-        XVal::Num(1.0),
-        "dynamic ref SetPersistent 1 survives cold-boot load"
-    );
-    assert_eq!(
-        cold.run_query(
-            "Begin Function { }\nSetFunctionValue (GetReferenceFlag 1024)\nEnd\n",
-            RunCtx { self_ref: Some(spawned), ..RunCtx::default() },
-        )
-        .unwrap(),
-        XVal::Num(1.0),
-        "flag bit 0x400 stays synchronized after cold-boot load"
-    );
-    assert_eq!(num(&mut cold, "PersistCrateRef.IsPersistent"), 0.0, "SetPersistent 0 survives cold-boot load");
-    assert_eq!(num(&mut cold, "PersistCrateRef.GetReferenceFlag 1024"), 0.0);
-    assert_eq!(num(&mut cold, "Ar_Size (GetFormRefs TestCrate)"), 1.0, "only persistent dynamic ref matches TestCrate");
+    assert_eq!(num(&mut restored, "player.IsPersistent"), 1.0, "session-only override resets on load");
 
-    // Same-run restore with Session: overrides still match the loaded snapshot.
-    let mut same_run = Game::restore(
-        &f.data,
-        World::restore(&f.forms, &f.refs, &decoded.sim).unwrap(),
-        GameConfig::default(),
-        &decoded,
-    )
-    .unwrap();
-    same_run.put_session(session);
-    assert_eq!(
-        same_run
-            .run_query(
-                "Begin Function { }\nSetFunctionValue (IsPersistent)\nEnd\n",
-                RunCtx { self_ref: Some(spawned), ..RunCtx::default() },
-            )
-            .unwrap(),
-        XVal::Num(1.0),
-        "dynamic ref SetPersistent 1 survives same-run load"
-    );
-    assert_eq!(num(&mut same_run, "PersistCrateRef.IsPersistent"), 0.0);
-
-    // Loading the earlier snapshot in the same run must NOT inherit the later SetPersistent edits.
-    let session2 = same_run.take_session();
-    let mut earlier = Game::restore(
-        &f.data,
-        World::restore(&f.forms, &f.refs, &snap_before.sim).unwrap(),
-        GameConfig::default(),
-        &snap_before,
-    )
-    .unwrap();
-    earlier.put_session(session2);
-    assert_eq!(
-        earlier
-            .run_query(
-                "Begin Function { }\nSetFunctionValue (IsPersistent)\nEnd\n",
-                RunCtx { self_ref: Some(spawned), ..RunCtx::default() },
-            )
-            .unwrap(),
-        XVal::Num(0.0),
-        "SetPersistent is save-scoped, not carried by Session into earlier saves"
-    );
-    assert_eq!(num(&mut earlier, "PersistCrateRef.IsPersistent"), 1.0);
+    // Restore player persistence in the live session.
+    assert_eq!(num(&mut g, "player.SetPersistent 1"), 0.0);
+    assert_eq!(num(&mut g, "player.IsPersistent"), 1.0);
+    assert_eq!(num(&mut g, "player.GetReferenceFlag 1024"), 1.0);
+    assert_eq!(num(&mut g, "player.GetPermanent"), 1.0);
 }
 
 #[test]

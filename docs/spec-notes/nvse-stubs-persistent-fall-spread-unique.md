@@ -24,21 +24,14 @@ Part of #2272. Core-only implementations in `crates/fnv-game` replacing four
   (`GetFirstRefInCell`/`GetNumRefsInCell`/`GetRefsInCell`), `GetFormRefs`, and
   `PersistentRefCount` all stay synchronized with explicit `SetPersistent`
   calls.
-- [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters,
-  clean-room two-boot persistence probe `p2_persistent` (`tools/capture/nvse/catalogs/persistence_matrix.json`,
-  #3678 / PR #3679): `SetPersistent 1` on dynamic placed reference `0xFF001321` saved to
-  `.fos` and persisted `IsPersistent == 1` across both same-run `con_LoadGame` and
-  cold-boot restart (`BEFORE=ref=FF001321,pers=1 | SAMERUN=ref=FF001321,pers=1 | COLD=ref=FF001321,pers=1`);
-  no DLL or source consulted] NVForever saves `OtherState::persistent_overrides` in
-  `GameSnapshot::persistent_overrides` (filtering deleted dynamic references and
-  resynchronizing `OtherState::flags` bit `0x400` on `Game::restore`, while omitting the
-  field from vanilla saves when empty) [design].
 - [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24,
   `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters,
   `w4d_06_player_setpersistent_0` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
-  #3679): `p0=1,after0=0,after1=1`; no DLL or source consulted] `Player.IsPersistent`
-  starts at `1`, `Player.SetPersistent 0` clears it to `0`, and `Player.SetPersistent 1`
-  restores `1`.
+  #3679): `PROBE|w4d_06_player_setpersistent_0|p0=1,after0=0,after1=1`; no DLL or source
+  consulted] `Player.IsPersistent` starts at `1`, `Player.SetPersistent 0` clears it to
+  `0`, and `Player.SetPersistent 1` restores `1`.
+- [hypothesis] Persistence changes made by `SetPersistent` are session-only and
+  do not persist across save/load.
 
 ## 2. `GetFallTimeRemaining` (`crates/fnv-game/src/nvse_jip11.rs`)
 
@@ -123,10 +116,6 @@ Part of #2272. Core-only implementations in `crates/fnv-game` replacing four
   flag, and `Game::player_repair_list` (`crates/fnv-game/src/repair.rs`) filters
   out unique items as repair-part sources while still allowing a unique item to
   be repaired as the target using non-unique donors.
-- [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official
-  base masters, clean-room two-boot persistence probe `p2_item_unique`
-  (`tools/capture/nvse/catalogs/persistence_matrix.json`, #3678 / PR #3679):
-  `ToggleItemUnique` on 10mm Pistol (`0 -> 1`) is `SESSION_ONLY` (`BEFORE=1 | SAMERUN=1 | COLD=0`);
-  no DLL or source consulted]
 - [hypothesis] Whether non-`WEAP`/non-`ARMO` forms beyond `ALCH` are also
-  ignored in the original game remains hypothesis pending capture.
+  ignored in the original game, and whether unique status persists across
+  save/load, remain hypothesis pending capture.

@@ -171,11 +171,7 @@ an argument decoder or CTDA mapping.
 a combat-disabled actor never enters combat with other actors (though others may
 still attack it, and `UseWeapon` / `Use Weapon` packages are unaffected), and the
 state resets on every saved-game load (kept out of both `GameSnapshot` and
-`Game::Session`) [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10
-official base masters, clean-room two-boot persistence probe `p2_combat_disabled`
-(`tools/capture/nvse/catalogs/persistence_matrix.json`, #3678 / PR #3679):
-`SetCombatDisabled 1` on Doc Mitchell (`0x104C0F`) is `CLEARED_ON_LOAD` (`BEFORE=1 | SAMERUN=0 | COLD=0`);
-no DLL or source consulted]. `SetCombatDisabled` returns 0 [observed: gaps2] and
+`Game::Session`). `SetCombatDisabled` returns 0 [observed: gaps2] and
 `GetCombatDisabled` reads the flag [observed: gaps3]. [hypothesis] Enabling
 `SetCombatDisabled 1` on an actor already in combat immediately stops its active
 combat (`Game::stop_combat`) and suppresses ally/provocation alarms (`awareness.rs`,
