@@ -4470,7 +4470,11 @@ fn generic_form_lists_and_animation_lists_change_for_the_session() {
     let q = |g: &mut fnv_game::Game, body: &str| g.run_query(&format!("Begin Function {{ }}\n{body}\nEnd\n"), ctx()).unwrap();
     let glob = XVal::Ref(0x0000_0901);
     let player = XVal::Ref(FormId::PLAYER_REF.0);
-    q(&mut g, "GenericAddForm 7, PlayerREF, TestAdd, -2\nGenericAddForm 7, PlayerREF, PlayerREF, 0");
+    // On an empty list, -2 returns -1 without adding [observed: w4d_04_generic_form_neg_idx];
+    // index 0 inserts the first item, and a subsequent index 0 shifts it to index 1.
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 7, PlayerREF, TestAdd, -2)"), XVal::Num(-1.0), "empty list rejects -2");
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 7, PlayerREF, TestAdd, 0)"), XVal::Num(0.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 7, PlayerREF, PlayerREF, 0)"), XVal::Num(0.0));
     assert_eq!(q(&mut g, "SetFunctionValue (GenericGetForm 7, PlayerREF, 0)"), player, "index 0 put first");
     assert_eq!(q(&mut g, "SetFunctionValue (GenericGetForm 7, PlayerREF, 1)"), glob);
     assert_eq!(q(&mut g, "SetFunctionValue (GenericGetForm 7, PlayerREF, 2)"), XVal::Ref(0), "outside the list");
@@ -4517,6 +4521,18 @@ fn generic_form_lists_validate_target_type_and_past_end_index() {
     let pkg = record(b"PACK", 0, 0x0000_0813, &[sub(b"EDID", z("TestPkg"))]);
     let npc = record(b"NPC_", 0, 0x0000_0814, &[sub(b"EDID", z("TestNpc")), sub(b"PKID", 0x0000_0813u32.to_le_bytes().to_vec())]);
     let flst = record(b"FLST", 0, 0x0000_0815, &[sub(b"EDID", z("TestFlst")), sub(b"LNAM", 0x0000_0813u32.to_le_bytes().to_vec())]);
+    let flst_empty = record(b"FLST", 0, 0x0000_0816, &[sub(b"EDID", z("TestEmptyFlst"))]);
+    let flst_multi = record(
+        b"FLST",
+        0,
+        0x0000_0817,
+        &[
+            sub(b"EDID", z("TestMultiFlst")),
+            sub(b"LNAM", 0x0000_0811u32.to_le_bytes().to_vec()),
+            sub(b"LNAM", 0x0000_0812u32.to_le_bytes().to_vec()),
+            sub(b"LNAM", 0x0000_0813u32.to_le_bytes().to_vec()),
+        ],
+    );
     let bytes = [
         tes4(),
         top(b"HAIR", &hair),
@@ -4524,7 +4540,7 @@ fn generic_form_lists_validate_target_type_and_past_end_index() {
         top(b"RACE", &race),
         top(b"PACK", &pkg),
         top(b"NPC_", &npc),
-        top(b"FLST", &flst),
+        top(b"FLST", &[flst, flst_empty, flst_multi].concat()),
     ]
     .concat();
     let plugins = vec![Plugin::parse(&bytes, "GenericLists.esm".into()).unwrap()];
@@ -4558,6 +4574,47 @@ fn generic_form_lists_validate_target_type_and_past_end_index() {
         assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericDeleteForm {code}, {target}, 0)")), XVal::Ref(0), "mismatched {target} + code {code} Delete");
         assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericReplaceForm {code}, {target}, {item}, 0)")), XVal::Ref(0), "mismatched {target} + code {code} Replace");
     }
+
+    // (c) Negative indices on empty and non-empty FLST [observed: w4d_04_generic_form_neg_idx]:
+    // Empty FLST (n0=0): Add(-1/-2/-3/-10/oob) all return -1 without adding;
+    // Replace(-1/-2/-3/oob) and Delete(-1/-2/-3/oob) all return 0.
+    for idx in [-1, -2, -3, -10, 5] {
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericAddForm 13, TestEmptyFlst, TestPkg, {idx})")), XVal::Num(-1.0), "empty FLST Add({idx})");
+        assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestEmptyFlst)"), XVal::Num(0.0), "empty FLST count stayed 0 after Add({idx})");
+    }
+    for idx in [-1, -2, -3, 99] {
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericReplaceForm 13, TestEmptyFlst, TestPkg, {idx})")), XVal::Ref(0), "empty FLST Replace({idx})");
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericDeleteForm 13, TestEmptyFlst, {idx})")), XVal::Ref(0), "empty FLST Delete({idx})");
+    }
+
+    // Non-empty FLST (TestMultiFlst = [TestHair 0x811, TestEye 0x812, TestPkg 0x813], n0=3):
+    // Add: ONLY -2 appends (ret = n0 - 1 = 2, n = 4); -1/-3/-10/n+5 return -1.
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 13, TestMultiFlst, TestRace, -1)"), XVal::Num(-1.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestMultiFlst)"), XVal::Num(3.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 13, TestMultiFlst, TestRace, -2)"), XVal::Num(2.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestMultiFlst)"), XVal::Num(4.0));
+    for idx in [-3, -10, 9] {
+        assert_eq!(q(&mut g, &format!("SetFunctionValue (GenericAddForm 13, TestMultiFlst, TestRace, {idx})")), XVal::Num(-1.0), "non-empty FLST Add({idx})");
+        assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestMultiFlst)"), XVal::Num(4.0));
+    }
+    // Replace: ONLY -2 replaces last entry (TestRace 0x810 -> TestNpc 0x814, returning 0x810);
+    // -1/-3/999 return 0 without mutating.
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericReplaceForm 13, TestMultiFlst, TestNpc, -1)"), XVal::Ref(0));
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericReplaceForm 13, TestMultiFlst, TestNpc, -2)"), XVal::Ref(0x0000_0810));
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericGetForm 13, TestMultiFlst, 3)"), XVal::Ref(0x0000_0814));
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericReplaceForm 13, TestMultiFlst, TestNpc, -3)"), XVal::Ref(0));
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericReplaceForm 13, TestMultiFlst, TestNpc, 999)"), XVal::Ref(0));
+    // Delete: -1, -2, -3 ALL remove index 0 sequentially (0x811, 0x812, 0x813; n: 4->3->2->1);
+    // OOB 999 returns 0 without mutating.
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericDeleteForm 13, TestMultiFlst, -1)"), XVal::Ref(0x0000_0811));
+    assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestMultiFlst)"), XVal::Num(3.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericDeleteForm 13, TestMultiFlst, -2)"), XVal::Ref(0x0000_0812));
+    assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestMultiFlst)"), XVal::Num(2.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericDeleteForm 13, TestMultiFlst, -3)"), XVal::Ref(0x0000_0813));
+    assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestMultiFlst)"), XVal::Num(1.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericGetForm 13, TestMultiFlst, 0)"), XVal::Ref(0x0000_0814));
+    assert_eq!(q(&mut g, "SetFunctionValue (GenericDeleteForm 13, TestMultiFlst, 999)"), XVal::Ref(0));
+    assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestMultiFlst)"), XVal::Num(1.0));
 }
 
 #[test]
