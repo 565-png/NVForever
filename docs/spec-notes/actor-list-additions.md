@@ -12,14 +12,18 @@ actor-list counts are one. Existing list selection rules still apply.
 Source: [LeveledCreature](https://geckwiki.com/index.php?title=LeveledCreature).
 
 [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, `GSDocMitchellHouse`
-(`0x00103DF9`), 10 official base masters, `w4d_41_vanilla_player_and_lists`
-(`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679): `lvli(n0=4,l0=5,l1=6,l65k=7,l70k=8)`;
-no DLL or source consulted] For leveled item lists (`AddItemToLeveledList`), the original game
-accepts level `0` and level `70000` (as well as `1` and `65535`), growing `GetNumLevItems` on
-`0x00000AA1` from `4` to `8` rather than rejecting levels outside `1..=65535`. NVForever's
-`AddItemToLeveledList` accepts level `0` and wraps integral levels into the 16-bit `LVLO` level
-field (`(level as i64) as u16`, `70000 -> 4464`; non-finite -> `0`) [hypothesis: exact stored
-`GetNthLevItemLevel` readback for `0` and `70000` was not read by `w4d_41`].
+(`0x00103DF9`), 10 official base masters, isolated clean-room staging copy (read-only
+`PrintToConsole` probe; zero writes to game install or Saves),
+`w4d_41_vanilla_player_and_lists` (`tools/capture/nvse/catalogs/wave4d_extenders.json`, PR #3803 / #3802):
+`PROBE|w4d_41_vanilla_player_and_lists|xp(0->25)|modAttr(5->7)|lvli(n0=4,l0=5:0,l1=6:1,l65k=7:-1,l70k=8:4464)|pkg(doc=14,pl=0)|rmMerch=ok`;
+zero DLL, PDB, or third-party source consulted] For leveled item lists
+(`AddItemToLeveledList`), the original game accepts level `0` and levels above `65535` (such
+as `70000`), growing `GetNumLevItems` on `0x00000AA1` from `4` to `8`, and `GetNthLevItemLevel`
+readback confirms level `0` is stored verbatim as `0`, level `1` as `1`, level `65535` as
+`0xFFFF` (read back as `-1`), and level `70000` wraps modulo 65536 (`u16`) to `4464`.
+NVForever's `AddItemToLeveledList` converts finite levels via `(level as i64) as u16`;
+non-finite inputs map to `0` [design], and `count` below `1` remains clamped to `1`
+[hypothesis].
 
 [hypothesis] For actor lists (`AddNPCToLeveledList` / `AddCreatureToLeveledList`, not directly
 probed by `w4d_41`), NVForever currently accepts integral levels `1` through `65535` and ignores

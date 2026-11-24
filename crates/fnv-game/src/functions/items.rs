@@ -504,15 +504,18 @@ pub fn set_quest_object(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, Str
 /// Blues]: 1 gives items at 1 % as the page reads [observed: capture `leveled_list_health`,
 /// 2026-10-18: Vance's 9mm SMG drawn from a list entry added at 50 had 375 of 750 health,
 /// at 1 had 7.5].
-/// Level `0` and levels above `65535` (e.g. `70000`) are accepted rather than rejected
-/// [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, `GSDocMitchellHouse`
-/// (`0x00103DF9`), 10 official base masters, `w4d_41_vanilla_player_and_lists`
-/// (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679): `GetNumLevItems` on
-/// `0x00000AA1` grew `4->5->6->7->8` for levels `0`, `1`, `65535`, `70000`; no DLL or
-/// source consulted]. Integral levels convert into the 16-bit `LVLO` level field by
-/// low-16-bit wrap (`(raw_level as i64) as u16`, e.g. `0 -> 0`, `70000 -> 4464`), with
-/// non-finite values yielding `0` [hypothesis: `w4d_41` verified entry acceptance via
-/// `GetNumLevItems`, not `GetNthLevItemLevel` readback; count below 1 stays clamped to 1].
+/// Level `0` is stored verbatim and integral levels convert into the 16-bit `LVLO` level
+/// field by low-16-bit wrap (`(raw_level as i64) as u16`, e.g. `0 -> 0`, `1 -> 1`,
+/// `65535 -> 0xFFFF`, `70000 -> 4464`) [observed: Fallout: New Vegas 1.4.0.525 + xNVSE
+/// 6.4.9, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters,
+/// isolated clean-room staging copy (read-only `PrintToConsole` probe; zero writes to game
+/// install or Saves), `w4d_41_vanilla_player_and_lists`
+/// (`tools/capture/nvse/catalogs/wave4d_extenders.json`, PR #3803 / #3802):
+/// `PROBE|w4d_41_vanilla_player_and_lists|xp(0->25)|modAttr(5->7)|lvli(n0=4,l0=5:0,l1=6:1,l65k=7:-1,l70k=8:4464)|pkg(doc=14,pl=0)|rmMerch=ok`;
+/// zero DLL, PDB, or third-party source consulted — `GetNumLevItems` on `0x00000AA1` grew
+/// `4->5->6->7->8` and `GetNthLevItemLevel` read back `0`, `1`, `-1` (`0xFFFF`), and
+/// `4464`]. Non-finite levels yield `0` [design]; count below `1` stays clamped to `1`
+/// [hypothesis].
 pub fn add_item_to_leveled_list(g: &mut Game, _ctx: &Ctx, a: &Args) -> Result<Value, String> {
     let list = a.form(0)?;
     let item = a.form(1)?;
