@@ -467,7 +467,7 @@ impl Game<'_> {
         crate::functions::factions_of(self, a)
             .into_iter()
             .filter(|f| theirs.contains(f))
-            .find(|f| self.data.faction_flags.get(f).is_some_and(|fl| fl & crate::crime::faction_flags::SPECIAL_COMBAT != 0))
+            .find(|&f| self.faction_flags(f) & crate::crime::faction_flags::SPECIAL_COMBAT != 0)
     }
 
     /// `actor` stops fleeing and fights again.

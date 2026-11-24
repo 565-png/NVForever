@@ -2836,10 +2836,26 @@ fn equip_sync_step(c: &mut Combat, sim: &mut SimState, anim: &mut WeaponAnim, ke
         cy.magazine = n.min(cy.clip_size).min(carried);
     }
     // A save's magazine for this weapon (`crate::save`), no more than is carried.
+    let mut restored_mag = false;
     if let (Some((sw, n)), Some(cy)) = (c.load_magazine, c.cycle.as_mut()) {
         if sw == id.0 {
             cy.magazine = n.min(carried);
             c.load_magazine = None;
+            restored_mag = true;
+        }
+    }
+    // An unequipped weapon's saved loaded round count (`fnv_sim::inventory::Extra::magazine`):
+    // restored once on equip when no `load_magazine` or mod-keep override took precedence, then
+    // cleared so vanilla unequip/re-equip behavior stays unchanged.
+    if !restored_mag && kept.is_none() && !no_ammo {
+        if let (Some(n), Some(cy)) = (
+            sim.world.peek(FormId::PLAYER_REF).and_then(|s| s.inventory.as_ref()).and_then(|i| i.equipped_magazine(id)),
+            c.cycle.as_mut(),
+        ) {
+            cy.magazine = n.min(carried);
+            if let Ok(inv) = sim.world.inventory_mut(FormId::PLAYER_REF) {
+                inv.map_equipped(id, |e| fnv_sim::inventory::Extra { magazine: None, ..e });
+            }
         }
     }
     anim.attack = w.attack_anim.clone();
@@ -8140,6 +8156,37 @@ mod tests {
             assert_eq!(app.world().resource::<Combat>().flinch_until, 0.0);
             assert_eq!(app.world().resource::<WeaponAnim>().swing, None);
             assert!(app.world_mut().resource_mut::<ScriptState>().rt.as_mut().unwrap().game.take_allow_attack().is_empty());
+        }
+
+        #[test]
+        fn saved_extra_magazine_restores_once_on_equip_and_leaves_vanilla_unchanged() {
+            let (mut sim, mut combat) = make_sim_and_combat();
+            let mut anim = WeaponAnim::default();
+
+            // Replace plain PISTOL with a unit carrying Extra::magazine = Some(4) (clip_size = 12).
+            sim.world.remove_item(FormId::PLAYER_REF, PISTOL, 1).unwrap();
+            sim.world
+                .add_item_extra(
+                    FormId::PLAYER_REF,
+                    PISTOL,
+                    1,
+                    fnv_sim::inventory::Extra { magazine: Some(4), ..Default::default() },
+                )
+                .unwrap();
+
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.magazine_for_save(), Some((PISTOL.0, 4)));
+            // Cleared on equip so re-equipping later behaves as vanilla full-clip.
+            assert_eq!(
+                sim.world.peek(FormId::PLAYER_REF).and_then(|s| s.inventory.as_ref()).and_then(|i| i.equipped_magazine(PISTOL)),
+                None
+            );
+            sim.world.equip(FormId::PLAYER_REF, KNIFE).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.magazine_for_save(), Some((PISTOL.0, 12)));
         }
     }
 }

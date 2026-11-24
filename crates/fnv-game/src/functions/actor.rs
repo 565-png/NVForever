@@ -915,17 +915,23 @@ pub fn set_actor_full_name(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, S
     let r = ctx.subject()?;
     let m = a.form(0)?;
     let b = base_of(g, r).unwrap_or(r);
+    g.forms.saved_names.remove(&b);
     g.forms.names.insert(b, m);
     none()
 }
 
 impl<'a> Game<'a> {
-    /// The name SetActorFullName gave a base form: the title (FULL), not the text, of the
-    /// message it named [documented: GECK wiki SetActorFullName summary]. `None` when no
-    /// script renamed the base, or the message has no title.
-    pub fn script_name(&self, base: FormId) -> Option<&'a str> {
+    /// The name `SetActorFullName` or a converted `.fos` save gave a base form
+    /// (`FormChanges::saved_names`, else the title (FULL) of the message in
+    /// `FormChanges::names`) [documented: GECK wiki SetActorFullName summary].
+    /// `None` when no saved rename exists.
+    pub fn script_name(&self, base: FormId) -> Option<&str> {
         let data: &'a crate::data::GameData = self.data;
-        self.forms.names.get(&base).and_then(|m| data.messages.get(m)).and_then(|d| d.title.as_deref())
+        self.forms
+            .saved_names
+            .get(&base)
+            .map(String::as_str)
+            .or_else(|| self.forms.names.get(&base).and_then(|m| data.messages.get(m)).and_then(|d| d.title.as_deref()))
     }
 }
 

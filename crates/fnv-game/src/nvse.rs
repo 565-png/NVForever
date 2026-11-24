@@ -1101,7 +1101,7 @@ fn attack_animation_index(code: i64) -> f64 {
 /// GetName's name of a form (module notes at its arm): the base's full name, as set
 /// names change it; "<no name>" for a static without one; empty otherwise.
 pub(crate) fn shown_name(g: &Game, f: FormId) -> String {
-    let named = |x: FormId| g.name_overrides.get(&x).or_else(|| g.data.full_names.get(&g.unclone(x))).cloned();
+    let named = |x: FormId| g.name_overrides.get(&x).or_else(|| g.forms.saved_names.get(&x)).or_else(|| g.data.full_names.get(&g.unclone(x))).cloned();
     let b = crate::functions::base_of(g, f).filter(|&b| b != f).unwrap_or(f);
     named(b).or_else(|| (g.data.sig(b) == Some(*b"STAT")).then(|| "<no name>".to_string())).unwrap_or_default()
 }

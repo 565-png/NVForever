@@ -865,6 +865,7 @@ impl<'a> World<'a> {
                 equipped: false,
                 mods: 0,
                 live: false,
+                magazine: None,
             },
             actor_values: BTreeMap::new(),
             last_restock: None,
