@@ -574,12 +574,6 @@ impl Game<'_> {
             if self.allies_stay_out(c.actor, about) {
                 continue;
             }
-            // An actor that only fights `about` because it is assisting another NPC
-            // (`Why::Assist { victim }` with `victim != PLAYER_REF`) does not relay the
-            // alarm to its own allies when it later enters Combat [design, #3459].
-            if self.assisted_npc_fight(c.actor, about) {
-                continue;
-            }
             let at = c.at.or_else(|| near.get(&about).copied()).unwrap_or(from);
             let starter = self.first_starter(about);
             let starter_at = hearers.get(&starter).copied().unwrap_or(at);
@@ -618,6 +612,15 @@ impl Game<'_> {
                 // The foe's first starter, unless that is this receiver or its comrade; the
                 // foe it was called about stays `foe`, for its grudges.
                 let foe = about;
+                // Narrowed to the #3459 HELIOS One cross-faction creature bridge
+                // (`CrDogNCRAggressive` -> `CrDogNCRFollow` -> `HeliosExtLvlNCRTrooperGun`):
+                // a creature fighting only under an assist grudge for another creature
+                // does not relay that alarm to a third-party receiver that is not a comrade
+                // of the original creature [design, #3459]. Normal NPC assist relays and
+                // same-pack creature relays are unchanged.
+                if self.cross_faction_creature_assist_relay(c.actor, foe, receiver) {
+                    continue;
+                }
                 let (about, at) = if receiver == starter || self.comrades(receiver, starter) { (about, at) } else { (starter, starter_at) };
                 let relation = self.reaction_to(receiver, c.actor);
                 let assistance = actor_value(self, receiver, crate::actor_values::ASSISTANCE).unwrap_or(0.0) as i64;

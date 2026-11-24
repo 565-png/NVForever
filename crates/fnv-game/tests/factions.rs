@@ -2289,57 +2289,70 @@ fn neutral_bystanders_outside_aggro_radius_stay_out_when_enemy_attacks_player() 
 
 #[test]
 fn shared_faction_bridge_does_not_relay_assist_fight_to_neutral_third_party_faction() {
-    // #3459: HELIOS One topology — `hound` (HOUNDS, Enemy of player) alarms `bridge`
-    // (in both HOUNDS and RATS, Neutral to player, Aggressive, Helps Allies), while
-    // `trooper` (RATS only, Neutral to both hound and player, Helps Allies) stands nearby.
-    // `bridge` takes up `hound`'s fight against the player (one hop, matching #2927),
-    // but when `bridge` enters Combat against the player (or the player's teammate),
+    // #3459: HELIOS One topology — `hound` (CREA in HOUNDS, Enemy of player) alarms
+    // `bridge` (CREA in both HOUNDS and RATS, Neutral to player, Aggressive, Helps Allies),
+    // while `trooper` (NPC in RATS only, Neutral to both hound and player, Helps Allies)
+    // stands nearby. `bridge` takes up `hound`'s fight against the player (one hop, matching
+    // #2927), but when `bridge` enters Combat against the player (or the player's teammate),
     // neither `raise_alarms` nor `call_allies` relays that assist fight to `trooper`.
+    // Meanwhile, a same-pack creature comrade (`pack_mate`, also in HOUNDS) and normal human
+    // NPC assist relays (OWN_REF assisting BANDIT_REF) still relay normally.
     use fnv_game::awareness::Change;
     let mut f = fixture();
     f.data.faction_reactions.entry(FormId(HOUNDS)).or_default().push((FormId(HOUNDS), 2));
     let mut g = game(&f);
-    let (hound, bridge, trooper, mate, player) = (FormId(HOUND_REF), FormId(OWN_REF), FormId(HELPER_REF), FormId(LOAFER_REF), FormId::PLAYER_REF);
-    only_near(&mut g, &[HOUND_REF, OWN_REF, HELPER_REF, LOAFER_REF]);
-    // `hound` is in HOUNDS + RAIDERS (Enemy of player, Neutral to RATS), matching
-    // CrDogNCRAggressive; `bridge` is in HOUNDS + RATS (Ally of hound, Ally of trooper,
-    // Neutral to player, Aggressive, Brave, Helps Friends and Allies), matching CrDogNCRFollow.
+    let (hound, bridge, pack_mate, trooper, mate, player) = (FormId(HOUND_REF), FormId(LURKER_REF), FormId(COWARD_REF), FormId(HELPER_REF), FormId(LOAFER_REF), FormId::PLAYER_REF);
+    only_near(&mut g, &[HOUND_REF, LURKER_REF, COWARD_REF, HELPER_REF, LOAFER_REF]);
+    // `hound` is a CREA in HOUNDS + RAIDERS (Enemy of player, Neutral to RATS), matching
+    // CrDogNCRAggressive; `bridge` (LURKER_REF) is a CREA in HOUNDS + RATS (Ally of hound,
+    // Ally of trooper, Neutral to player, Aggressive, Brave, Helps Friends and Allies),
+    // matching CrDogNCRFollow; `pack_mate` (COWARD_REF) is a CREA in HOUNDS placed out of
+    // hound's alarm range so it only hears `bridge`.
     const SET_AV: u16 = 0x100F;
     call(&mut g, ADD_TO_FACTION, HOUND_REF, &[form(RAIDERS), num(0.0)]);
-    call(&mut g, ADD_TO_FACTION, OWN_REF, &[form(HOUNDS), num(0.0)]);
-    call(&mut g, SET_AV, OWN_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
-    call(&mut g, SET_AV, OWN_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(3.0))]);
-    call(&mut g, SET_AV, OWN_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(2.0))]);
+    call(&mut g, ADD_TO_FACTION, LURKER_REF, &[form(HOUNDS), num(0.0)]);
+    call(&mut g, SET_AV, LURKER_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
+    call(&mut g, SET_AV, LURKER_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(3.0))]);
+    call(&mut g, SET_AV, LURKER_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(2.0))]);
+    call(&mut g, ADD_TO_FACTION, COWARD_REF, &[form(HOUNDS), num(0.0)]);
+    call(&mut g, SET_AV, COWARD_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
+    call(&mut g, SET_AV, COWARD_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(3.0))]);
+    call(&mut g, SET_AV, COWARD_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(2.0))]);
     call(&mut g, SET_AV, HELPER_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
     call(&mut g, SET_AV, HELPER_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(4.0))]);
     call(&mut g, SET_AV, HELPER_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(2.0))]);
     g.extra.entry(mate).or_default().teammate = true;
     g.world.get(hound).unwrap().pos = [0.0, 0.0, 0.0];
-    g.world.get(bridge).unwrap().pos = [1000.0, 0.0, 0.0];
-    g.world.get(trooper).unwrap().pos = [1200.0, 0.0, 0.0];
-    g.world.get(player).unwrap().pos = [600.0, 0.0, 0.0];
-    g.world.get(mate).unwrap().pos = [650.0, 0.0, 0.0];
+    g.world.get(bridge).unwrap().pos = [6000.0, 0.0, 0.0];
+    g.world.get(pack_mate).unwrap().pos = [10000.0, 0.0, 0.0];
+    g.world.get(trooper).unwrap().pos = [6200.0, 0.0, 0.0];
+    g.world.get(player).unwrap().pos = [5600.0, 0.0, 0.0];
+    g.world.get(mate).unwrap().pos = [5650.0, 0.0, 0.0];
 
-    assert!(!g.would_attack(bridge, player) && !g.would_attack(trooper, player));
+    assert!(!g.would_attack(bridge, player) && !g.would_attack(trooper, player) && !g.would_attack(pack_mate, player));
     assert!(!g.would_attack(trooper, hound));
 
-    // Step 1: hound notices the player and alarms its HOUNDS ally `bridge`, not `trooper`.
+    // Step 1: hound enters Combat against the player and alarms its HOUNDS ally `bridge`
+    // (within ALARM_RADIUS), not `trooper` (Neutral) and not `pack_mate` (out of hound's
+    // 9,216-unit alarm radius).
+    let seen = Detection { value: 85.0, band: Band::Detected, ..Default::default() };
     let near: std::collections::BTreeMap<FormId, [f32; 3]> =
-        [(hound, [0.0, 0.0, 0.0]), (bridge, [1000.0, 0.0, 0.0]), (trooper, [1200.0, 0.0, 0.0]), (player, [600.0, 0.0, 0.0]), (mate, [650.0, 0.0, 0.0])].into_iter().collect();
-    let now = g.time;
-    g.awareness.changes.push(Change { actor: hound, from: State::Normal, to: State::Alert, time: now, about: Some(player), cause: Some(Cause::Noticed), at: Some([600.0, 0.0, 0.0]), value: Some(-10.0) });
+        [(hound, [0.0, 0.0, 0.0]), (bridge, [6000.0, 0.0, 0.0]), (pack_mate, [10000.0, 0.0, 0.0]), (trooper, [6200.0, 0.0, 0.0]), (player, [5600.0, 0.0, 0.0]), (mate, [5650.0, 0.0, 0.0])].into_iter().collect();
+    g.observe_threat(hound, player, &seen, [5600.0, 0.0, 0.0]);
+    g.settle_awareness();
+    assert_eq!(g.awareness.state(hound), State::Combat);
     assert_eq!(g.raise_alarms(&near), 1, "hound alarms bridge (shared HOUNDS)");
     assert!(g.would_attack(bridge, player));
     assert!(!g.would_attack(trooper, player), "trooper is Neutral to hound and must not be alarmed");
+    assert!(!g.would_attack(pack_mate, player), "pack_mate is beyond hound's alarm radius");
 
     // Step 2: bridge later detects the player and enters Combat (`Alert -> Combat`, cause None).
-    let seen = Detection { value: 85.0, band: Band::Detected, ..Default::default() };
     g.awareness.changes.clear();
     g.settle_awareness();
     assert_eq!(g.awareness.state(bridge), State::Alert);
     g.awareness.changes.clear();
-    g.observe_threat(bridge, player, &seen, [600.0, 0.0, 0.0]);
-    g.observe_threat(bridge, mate, &seen, [650.0, 0.0, 0.0]);
+    g.observe_threat(bridge, player, &seen, [5600.0, 0.0, 0.0]);
+    g.observe_threat(bridge, mate, &seen, [5650.0, 0.0, 0.0]);
     g.settle_awareness();
     assert_eq!(g.awareness.state(bridge), State::Combat);
 
@@ -2350,8 +2363,10 @@ fn shared_faction_bridge_does_not_relay_assist_fight_to_neutral_third_party_fact
     let why_mate = g.hostility_text(bridge, mate).expect("bridge hostile to teammate");
     assert!(why_mate.contains("helps") && why_mate.contains("against the player"), "unexpected teammate hostility text: {why_mate}");
 
-    // Step 3: bridge must NOT relay the alarm to its RATS ally `trooper`.
-    assert_eq!(g.raise_alarms(&near), 0, "assisted bridge must not relay alarm to neutral third-party faction");
+    // Step 3: bridge relays to same-pack `pack_mate` (comrade of `hound`), but must NOT
+    // relay the alarm across factions to its RATS ally `trooper` (Neutral to `hound`).
+    assert_eq!(g.raise_alarms(&near), 1, "bridge relays to same-pack comrade only, not neutral third-party faction");
+    assert!(g.would_attack(pack_mate, player), "same-pack creature comrade still receives relay");
     assert!(!g.would_attack(trooper, player));
     assert!(!g.would_attack(trooper, mate));
 
@@ -2363,14 +2378,14 @@ fn shared_faction_bridge_does_not_relay_assist_fight_to_neutral_third_party_fact
     assert!(!g.would_attack(trooper, player));
     assert!(!g.would_attack(trooper, mate));
 
-    // Control: if the player directly assaults a calm `bridge` (`Why::Assault`), `bridge`
+    // Control 1: if the player directly assaults a calm `bridge` (`Why::Assault`), `bridge`
     // DOES alarm `trooper` and its hostility text says "(it was attacked)".
     let mut g2 = game(&f);
-    only_near(&mut g2, &[OWN_REF, HELPER_REF]);
-    call(&mut g2, ADD_TO_FACTION, OWN_REF, &[form(HOUNDS), num(0.0)]);
-    call(&mut g2, SET_AV, OWN_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
-    call(&mut g2, SET_AV, OWN_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(3.0))]);
-    call(&mut g2, SET_AV, OWN_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(2.0))]);
+    only_near(&mut g2, &[LURKER_REF, HELPER_REF]);
+    call(&mut g2, ADD_TO_FACTION, LURKER_REF, &[form(HOUNDS), num(0.0)]);
+    call(&mut g2, SET_AV, LURKER_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
+    call(&mut g2, SET_AV, LURKER_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(3.0))]);
+    call(&mut g2, SET_AV, LURKER_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(2.0))]);
     call(&mut g2, SET_AV, HELPER_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
     call(&mut g2, SET_AV, HELPER_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(4.0))]);
     call(&mut g2, SET_AV, HELPER_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(2.0))]);
@@ -2384,6 +2399,34 @@ fn shared_faction_bridge_does_not_relay_assist_fight_to_neutral_third_party_fact
     assert!(g2.raise_alarms(&near2) >= 1, "directly assaulted bridge alarms its RATS ally");
     assert!(g2.awareness.get(trooper).is_some_and(|a| a.alarms.iter().any(|x| x.owner == player && x.cause == Cause::Ally)));
     assert!(g2.would_attack(trooper, player));
+
+    // Control 2: normal human NPC assist relays are completely unaffected (not narrowed out).
+    let mut g3 = game(&f);
+    let (raider_npc, bridge_npc) = (FormId(BANDIT_REF), FormId(OWN_REF));
+    only_near(&mut g3, &[BANDIT_REF, OWN_REF, HELPER_REF]);
+    call(&mut g3, ADD_TO_FACTION, OWN_REF, &[form(RAIDERS), num(0.0)]);
+    call(&mut g3, SET_AV, OWN_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
+    call(&mut g3, SET_AV, OWN_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(3.0))]);
+    call(&mut g3, SET_AV, OWN_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(2.0))]);
+    call(&mut g3, SET_AV, HELPER_REF, &[ArgValue::Enum(av::AGGRESSION), ArgValue::Value(Value::Num(1.0))]);
+    call(&mut g3, SET_AV, HELPER_REF, &[ArgValue::Enum(av::CONFIDENCE), ArgValue::Value(Value::Num(4.0))]);
+    call(&mut g3, SET_AV, HELPER_REF, &[ArgValue::Enum(av::ASSISTANCE), ArgValue::Value(Value::Num(2.0))]);
+    g3.world.get(raider_npc).unwrap().pos = [0.0, 0.0, 0.0];
+    g3.world.get(bridge_npc).unwrap().pos = [1000.0, 0.0, 0.0];
+    g3.world.get(trooper).unwrap().pos = [1200.0, 0.0, 0.0];
+    g3.world.get(player).unwrap().pos = [600.0, 0.0, 0.0];
+    let near3: std::collections::BTreeMap<FormId, [f32; 3]> =
+        [(raider_npc, [0.0, 0.0, 0.0]), (bridge_npc, [1000.0, 0.0, 0.0]), (trooper, [1200.0, 0.0, 0.0]), (player, [600.0, 0.0, 0.0])].into_iter().collect();
+    g3.awareness.changes.push(Change { actor: raider_npc, from: State::Normal, to: State::Alert, time: g3.time, about: Some(player), cause: Some(Cause::Noticed), at: Some([600.0, 0.0, 0.0]), value: Some(-10.0) });
+    assert_eq!(g3.raise_alarms(&near3), 1, "raider NPC alarms bridge NPC");
+    g3.awareness.changes.clear();
+    g3.settle_awareness();
+    g3.awareness.changes.clear();
+    g3.observe_threat(bridge_npc, player, &seen, [600.0, 0.0, 0.0]);
+    g3.settle_awareness();
+    assert_eq!(g3.awareness.state(bridge_npc), State::Combat);
+    assert!(g3.raise_alarms(&near3) >= 1, "human NPC assist relay remains unaffected");
+    assert!(g3.would_attack(trooper, player));
 }
 
 #[test]

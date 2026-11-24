@@ -105,13 +105,7 @@ the drawn actor), actor-values.md (Stats and AI Data from templates).
   "will be attacked by Very Aggressive actors"; Friends and Allies cannot attack each
   other. Aggression codes: 0 Unaggressive, 1 Aggressive, 2 Very Aggressive, 3 Frenzied
   [documented: xEdit].
-- Ours bounds the Neutral rule by the aggro radius [observed: Fallout: New Vegas 1.4.0.525
-  + xNVSE 6.4.9, 2026-11-24, 10 official base masters, isolated clean-room staging, HELIOS
-  One exterior (`0x000CDEFD`), Wave 4E black-box probe `w4e_c08_helios_dogs_peaceful_at_rest`:
-  with neutral NCR reputation, all 3 `CrDogNCRAggressive` guard dogs (`0x000A695F`,
-  `0x000A695E`, `0x000A6944`) and all 6 loaded NCR Troopers remain peaceful (`IsInCombat=0`)
-  at rest — dogs do not attack neutral NCR troopers across the yard; zero DLL/PDB/source
-  consulted; #2547; design: using the actor's aggro radius as the cutoff; observer checks
+- Ours bounds the Neutral rule by the aggro radius [hypothesis, #2547; observer checks
   144 and 163]: a Very Aggressive actor whose AI data turns on Aggro Radius Behavior
   (and whose package allows it) attacks a Neutral actor it detects only inside its
   aggro radius; a fight once begun with that target, a hit (a grudge) and an Enemy are

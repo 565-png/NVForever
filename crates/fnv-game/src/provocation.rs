@@ -556,15 +556,6 @@ impl Game<'_> {
         let mut attacks: HashMap<(FormId, FormId), bool> = HashMap::new();
         for (victim, mut foes) in fights {
             foes.retain(|&(foe, _)| !self.allies_stay_out(victim, foe));
-            // Do not chain assistance through a helper that is only fighting `foe` to
-            // assist another NPC (`Why::Assist { victim: orig }` with `orig != PLAYER_REF`):
-            // otherwise a shared-faction bridge (such as CrDogNCRFollow between
-            // DogFaction and NCR) pulls a neutral third-party faction into a fight it has
-            // no stake in [design, #3459]. Watchers that would help `orig` directly still
-            // do so on `orig`'s own fight.
-            if victim != FormId::PLAYER_REF {
-                foes.retain(|&(foe, _)| !self.assisted_npc_fight(victim, foe));
-            }
             if foes.is_empty() {
                 continue;
             }
@@ -601,6 +592,13 @@ impl Game<'_> {
                 }
                 for &(attacker, at) in &foes {
                     if attacker == helper || self.provocations.holds(helper, attacker) {
+                        continue;
+                    }
+                    // Narrowed to the #3459 HELIOS One cross-faction creature bridge:
+                    // a creature fighting only under an assist grudge for another creature
+                    // does not pull a third-party watcher that is not a comrade of the
+                    // original creature into the fight [design, #3459].
+                    if victim != FormId::PLAYER_REF && self.cross_faction_creature_assist_relay(victim, attacker, helper) {
                         continue;
                     }
                     let would = match attacks.get(&(helper, attacker)) {
@@ -715,17 +713,31 @@ impl Game<'_> {
 }
 
 impl Game<'_> {
-    /// Whether `actor` only fights `foe` because it is assisting another NPC
-    /// (`Why::Assist { victim }` with `victim != PLAYER_REF`), including when `foe` is
-    /// the player's teammate and `actor` only fights the player under that assist grudge
-    /// [design, #3459]. A script-forced fight (`StartCombat`) still counts as `actor`'s
-    /// own fight.
-    pub(crate) fn assisted_npc_fight(&self, actor: FormId, foe: FormId) -> bool {
-        let key = if self.is_teammate(foe) && !self.provocations.holds(actor, foe) { FormId::PLAYER_REF } else { foe };
-        if self.awareness.forced.contains(&(actor, key)) {
+    /// Whether `receiver` should stay out of a second-hop assist relay from `sender`
+    /// fighting `foe` [design, #3459]: narrowed to the HELIOS One cross-faction creature
+    /// bridge (`CrDogNCRAggressive` -> `CrDogNCRFollow` -> `HeliosExtLvlNCRTrooperGun`).
+    ///
+    /// Returns true only when `sender` fights `foe` (or the player, when `foe` is the
+    /// player's teammate) solely under `Why::Assist { victim: orig }` (`orig != PLAYER_REF`,
+    /// not `Assault` or `StartCombat`), both `sender` and `orig` are creatures (`CREA`),
+    /// and `receiver` is not a comrade of `orig`. Normal NPC assist relays, same-pack
+    /// creature relays, one-hop direct assists, and direct assaults on `sender` are
+    /// unaffected.
+    pub(crate) fn cross_faction_creature_assist_relay(&self, sender: FormId, foe: FormId, receiver: FormId) -> bool {
+        let key = if self.is_teammate(foe) && !self.provocations.holds(sender, foe) { FormId::PLAYER_REF } else { foe };
+        if self.awareness.forced.contains(&(sender, key)) {
             return false;
         }
-        self.provocations.grudges.get(&(actor, key)).is_some_and(|g| matches!(g.why, Why::Assist { victim } if victim != FormId::PLAYER_REF))
+        let Some(Why::Assist { victim: orig }) = self.provocations.grudges.get(&(sender, key)).map(|g| g.why) else {
+            return false;
+        };
+        if orig == FormId::PLAYER_REF {
+            return false;
+        }
+        if crate::nvse_nx::is_creature(self, sender) != Some(true) || crate::nvse_nx::is_creature(self, orig) != Some(true) {
+            return false;
+        }
+        !self.comrades(receiver, orig)
     }
 
     /// Actors that detect an attacker which would attack them too join the fight against

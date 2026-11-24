@@ -27,17 +27,19 @@ town's side.
   measures only drawn actors]. Who among them answers is unchanged (combat-ai.md §12.3:
   its own kind, or an ally or friend whose Assistance helps the sender; never against its
   own ally or friend; a coward stays out).
-- **No transitive relay through an assisting helper** [design, #3459]: an actor that only
-  fights a foe through an assist grudge for another NPC (`Why::Assist { victim }` with
-  `victim != PLAYER_REF`, including when the foe is the player's teammate and the grudge
-  is against the player) neither re-broadcasts an alarm when it later enters `Combat`
-  (`Game::raise_alarms`) nor recruits its own third-party allies through
-  `Game::call_allies`. This keeps the "an alarm passed on by an ally is not passed on
-  again" invariant intact across `Alert → Combat` and stops a shared-faction bridge
-  (`CrDogNCRFollow`, in both `DogFaction` and `ArmorNCRFactionNV`/`VNCRSnifferFaction`)
-  from turning a neutral faction (NCR troopers) hostile when `CrDogNCRAggressive` attacks
-  the player. Direct assistance (one hop, such as Gibson's dogs helping mole rats, §4)
-  and direct assaults (`Why::Assault`) are unchanged.
+- **No cross-faction creature assist bridge** [design, #3459]: narrowed to the HELIOS One
+  topology (`CrDogNCRAggressive` -> `CrDogNCRFollow` -> `HeliosExtLvlNCRTrooperGun`), a
+  creature (`CREA`) that only fights a foe through an assist grudge for another creature
+  (`Why::Assist { victim: orig }` with `orig != PLAYER_REF`, including when the foe is the
+  player's teammate and the grudge is against the player) does not relay that alarm
+  (`Game::raise_alarms`) or recruit via `Game::call_allies` to a third-party receiver that
+  is not a comrade of `orig` (`!Game::comrades(receiver, orig)`). This stops a shared-faction
+  creature bridge (`CrDogNCRFollow`, in both `DogFaction` and
+  `ArmorNCRFactionNV`/`VNCRSnifferFaction`) from turning a neutral faction (NCR troopers)
+  hostile when `CrDogNCRAggressive` attacks the player, while leaving normal NPC assist
+  relays, same-pack creature relays (where `receiver` is a comrade of `orig`), one-hop
+  direct assistance (such as Gibson's dogs helping mole rats, §4), and direct assaults
+  (`Why::Assault`) unchanged.
 
 ## 2. Joiners fight the first of the foes to start
 
