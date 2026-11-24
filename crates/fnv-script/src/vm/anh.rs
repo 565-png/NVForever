@@ -29,20 +29,29 @@ fn unit<const N: usize>(v: [f64; N]) -> [f64; N] {
 }
 
 /// DirectInput keyboard scan code to key name for `ScancodeToChar`: uppercase letters
-/// and full key names (`1 => "Escape"`, `18 => "E"`, `30 => "A"`, `59 => "F1"`)
-/// [observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas 1.4.0.525,
-/// xNVSE 6.4.9, AnhNVSE 131 with the 10 official base masters, probe
-/// `anh_03_scancode_to_char_layout`; other keyboard codes 2..=220 reuse `KEY_NAMES`
-/// and unmapped codes return "" [hypothesis]].
+/// and full key names (`1 => "Escape"`, `2 => "1"`, `14 => "Backspace"`, `15 => "Tab"`,
+/// `18 => "E"`, `28 => "Enter"`, `30 => "A"`, `57 => "Spacebar"`, `59 => "F1"`,
+/// `87 => "F11"`, `88 => "F12"`, `200 => "Up Arrow"`), while unmapped codes (`0`, `220`,
+/// `221`, `255`, `-1`) return 1-byte `"\x1d"` (`0x1D` ASCII GS) [observed: 2026-11-23 &
+/// 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), Fallout: New Vegas 1.4.0.525, xNVSE
+/// 6.4.9, AnhNVSE 131 with the 10 official base masters, `anh_03_scancode_to_char_layout`
+/// and `w4d_29_anh_scancode_table_and_zone` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+/// #3679): `unmap(0:len=1/ord=-1,220:len=1/ord=-1,255:len=1/ord=-1)|map(2=1,14=Backspace,15=Tab,28=Enter,57=Spacebar,87=F11,88=F12,200=Up Arrow) | raw_unmap_byte=0x1D(GS)`;
+/// no DLL or source consulted; other unprobed keyboard scan codes reuse `KEY_NAMES`
+/// [hypothesis]].
 fn scancode_name(code: i64) -> &'static str {
-    if code == 1 {
-        return "Escape";
+    match code {
+        1 => return "Escape",
+        57 => return "Spacebar",
+        200 => return "Up Arrow",
+        220 => return "\x1d",
+        _ => {}
     }
-    let Ok(c) = u16::try_from(code) else { return "" };
+    let Ok(c) = u16::try_from(code) else { return "\x1d" };
     if c >= 255 {
-        return "";
+        return "\x1d";
     }
-    crate::keys::KEY_NAMES.iter().find(|(k, _)| *k == c).map_or("", |(_, name)| *name)
+    crate::keys::KEY_NAMES.iter().find(|(k, _)| *k == c).map_or("\x1d", |(_, name)| *name)
 }
 
 impl Vm<'_, '_> {
@@ -166,11 +175,14 @@ impl Vm<'_, '_> {
                 let (a, b) = (quat(self, 0)?, quat(self, 1)?);
                 return self.number_list(&qmul(a, b)).map(Some);
             }
-            // Returns a 3-element vector3 and rotates v by q·v·q⁻¹ [hypothesis: both the
-            // exact 3-element array length and rotation convention; probe
-            // `anh_05_q_axis_angle_and_mult_vec3` (2026-11-23, GSDocMitchellHouse
-            // 0x00103DF9) indexed aRot[0..2] without printing ar_Size and observed
-            // `rot=(1.000,0.000,0.000)` for `q=(0.707,0.000,0.000,0.707)` on [1,0,0]].
+            // Returns a 3-element vector3 [observed: 2026-11-24, `GSDocMitchellHouse`
+            // (`0x00103DF9`), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + AnhNVSE 131
+            // with the 10 official base masters, `w4c_a09a_anh_quat_vec` &
+            // `w4c_a09b_anh_quat_shift` (`tools/capture/nvse/catalogs/wave4c_extenders.json`,
+            // #3679): `rX(3)=(1,0,0), rY=(0,0,-1), rZ=(0,1,0)`; `QNormalizeAlt`/`QMultQuatQuatAlt`/
+            // `QMultQuatVector3Alt` in AnhNVSE 131 read inputs as `[x,y,z,w]` while writing
+            // `[w,x,y,z]`; no DLL or source consulted]. NVForever keeps consistent documented
+            // `[w,x,y,z]` quaternion math (`q·v·q⁻¹`) [design].
             "qmultquatvector3alt" => {
                 let (q, v) = (unit(quat(self, 0)?), v3(self, 1)?);
                 let conj = [q[0], -q[1], -q[2], -q[3]];
@@ -228,11 +240,9 @@ impl Vm<'_, '_> {
                     XVal::Str(if n == "sv_padstart" { fill + &s } else { s + &fill })
                 }
             }
-            // [documented: ScancodeToChar; observed: 2026-11-23, GSDocMitchellHouse
-            // (0x00103DF9), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + AnhNVSE 131
-            // with the 10 official base masters, probe `anh_03_scancode_to_char_layout`:
-            // 1="Escape", 59="F1", 18="E", 30="A"; other keyboard codes / "" fallback
-            // [hypothesis]].
+            // [documented: ScancodeToChar; observed: `anh_03_scancode_to_char_layout`
+            // and `w4d_29_anh_scancode_table_and_zone` (see `scancode_name`); unprobed
+            // intermediate keyboard codes reuse `KEY_NAMES` [hypothesis]].
             "scancodetochar" => XVal::Str(scancode_name(num(0) as i64).to_string()),
             // `array`: the array as a text [documented: ArrayToString, "Returns the
             // specified array variable as a string"]; the form is PrintVar's (elements in

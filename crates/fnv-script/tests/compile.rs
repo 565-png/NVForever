@@ -1181,6 +1181,11 @@ string_var kE
 string_var kA
 string_var kNone
 string_var kMouse
+string_var kSpace
+string_var kUp
+string_var k220
+string_var kZero
+string_var kNeg
 array_var aAxis
 array_var aQ
 array_var aEmpty
@@ -1230,6 +1235,11 @@ let kE := ScancodeToChar 18
 let kA := ScancodeToChar 30
 let kNone := ScancodeToChar 999
 let kMouse := ScancodeToChar 256
+let kSpace := ScancodeToChar 57
+let kUp := ScancodeToChar 200
+let k220 := ScancodeToChar 220
+let kZero := ScancodeToChar 0
+let kNeg := ScancodeToChar -1
 end",
     );
     assert_eq!(h.0[&1], Value::Num(1.0), "0 deg -> Q1");
@@ -1255,8 +1265,13 @@ end",
     assert_eq!(h.text(26), "F1");
     assert_eq!(h.text(27), "E");
     assert_eq!(h.text(28), "A");
-    assert_eq!(h.text(29), "");
-    assert_eq!(h.text(30), "");
+    assert_eq!(h.text(29), "\x1d");
+    assert_eq!(h.text(30), "\x1d");
+    assert_eq!(h.text(31), "Spacebar");
+    assert_eq!(h.text(32), "Up Arrow");
+    assert_eq!(h.text(33), "\x1d");
+    assert_eq!(h.text(34), "\x1d");
+    assert_eq!(h.text(35), "\x1d");
 }
 
 #[test]

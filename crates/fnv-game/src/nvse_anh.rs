@@ -77,12 +77,15 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "getzonematchlevel" => XVal::Num(form(args, 0).and_then(|z| g.zone(z)).map_or(0.0, |d| f64::from(u8::from(d.match_pc_below_min)))),
         "getzoneowner" => XVal::Ref(form(args, 0).and_then(|z| g.zone(z)).and_then(|d| d.owner).map_or(0, |o| o.0)),
         // `zone level` and `zone owner` [documented: SetZoneMinLevel; SetZoneOwner;
-        // observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas
-        // 1.4.0.525 + xNVSE 6.4.9 + AnhNVSE 131 with the 10 official base masters,
-        // probes `anh_07_zone_level_min_owner` (0,6,12) and `anh_11_zone_owner_readback`
-        // (Vault11Zone 000E9081: 00000000 -> 000A46E7 -> 00104C6E -> 00104C6E; null
-        // owner argument leaves the existing owner unchanged)]; session-only lifetime
-        // and keeping an already-entered zone's level remain [hypothesis].
+        // observed: 2026-11-23 & 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`),
+        // Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + AnhNVSE 131 with the 10 official
+        // base masters, probes `anh_07_zone_level_min_owner` (0,6,12),
+        // `anh_11_zone_owner_readback` (Vault11Zone 000E9081: 00000000 -> 000A46E7 ->
+        // 00104C6E -> 00104C6E; null owner argument leaves the existing owner unchanged),
+        // and `w4d_29_anh_scancode_table_and_zone` (`zone(lvl:0->0,docZ=00000000)`:
+        // `GetZoneLevel` on unentered `0xE9081` stays 0 after `SetZoneMinLevel 15`); no
+        // DLL or source consulted]; session-only lifetime and keeping an already-entered
+        // zone's level remain [hypothesis].
         "setzoneminlevel" | "setzoneowner" => {
             if let Some(z) = form(args, 0).filter(|z| g.world.forms.zones.contains_key(z)) {
                 if name == "setzoneminlevel" {
