@@ -395,11 +395,15 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
     let v = match name {
         // ---- magic items ----
         // A new entry at the top, or appended (1), of an ingestible's, object effect's or
-        // actor effect's list; returns the 0-based inserted index (`n0` when appended, 0
-        // when prepended [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN
-        // 57.30, probe jip_48_addneweffect_duplicate_return: n0=4, ret=4, n1=5; hypothesis:
-        // 0 when prepended]), or -1 when not added [documented]; for the session
-        // [hypothesis: the page says nothing of saving].
+        // actor effect's list; returns the 0-based inserted index (`n0` = `n1 - 1`) when
+        // appended, the new effect count (`n1`) when prepended (the entry itself is still
+        // placed at index 0), or -1 when not added [documented; observed: Fallout: New
+        // Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24, GSDocMitchellHouse
+        // (0x00103DF9), 10 official base masters, `jip_48_addneweffect_duplicate_return`
+        // and `w4d_16_add_new_effect_edges` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+        // #3679): n0=4 -> prepend ret=5, n=5, e0=00066EB8, e1=0000014E; duplicate append
+        // ret=5, n=6, last=00066EB8; non-MGEF ret=-1, n=6; no DLL or source consulted];
+        // for the session [hypothesis: the page says nothing of saving].
         "addneweffect" => {
             let (Some(item), Some(mgef), Some(dur), Some(mag)) = (form(args, 0), form(args, 1), num(args, 2), num(args, 3)) else { return Some(Ok(XVal::Num(-1.0))) };
             let kind_ok = g.data.sig(item).is_some_and(|s| MAGIC_ITEMS.contains(&&s));
@@ -415,7 +419,7 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
                 XVal::Num(g.effect_count(item).saturating_sub(1) as f64)
             } else {
                 entry.0.push(e);
-                XVal::Num(0.0)
+                XVal::Num(g.effect_count(item) as f64)
             }
         }
         // Any effect of the list's items on the actor [documented], as IsSpellTarget.

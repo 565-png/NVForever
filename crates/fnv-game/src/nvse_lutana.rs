@@ -391,10 +391,13 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             }
             zero
         }
-        // `recipe item count`: the first entry's count, 0 or negative stored verbatim
-        // [observed: lutana1 rcpe.setincount.0, rcpe.setoutcount.0; Fallout: New Vegas
-        // 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, probe jip_03_recipe_set_neg_count: -5
-        // stored verbatim (1 -> -5)]; an item not listed is not added [hypothesis].
+        // `recipe item count`: the first entry's count, 0 or negative stored verbatim;
+        // an item not listed is not added [observed: lutana1 rcpe.setincount.0,
+        // rcpe.setoutcount.0; Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN
+        // 57.30, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base
+        // masters, `jip_03_recipe_set_neg_count` (-5 stored verbatim: 1 -> -5) and
+        // `w4d_15_recipe_unlisted_item` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+        // #3679): `in(n:1->1,c:0->0)|out(n:1->1,c:0->0)`; no DLL or source consulted].
         "setrecipeinputcount" | "setrecipeoutputcount" => {
             let (item, count) = (form(args, 1), num(args, 2).filter(|v| v.is_finite()).map(|v| v.trunc().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32));
             if let (Some(item), Some(count)) = (item, count) {
@@ -455,8 +458,12 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             zero
         }
         // `[actorBase]`: the AI data's aggro radius [documented: LNGetAggroRadius], the
-        // calling reference's when no base is given; the NPC record's, as the services
-        // [hypothesis: the same AI data as lutana1 actor.setservice.tender2].
+        // calling reference's when no base is given; round-trips on the NPC record
+        // [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30,
+        // 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters,
+        // `w4c_b6_02_service_flag_aggro` (`tools/capture/nvse/catalogs/wave4c_extenders.json`,
+        // #3679): `sf(1->1)|aggro(0->555)`; no DLL or source consulted; hypothesis:
+        // template isolation matches lutana1 actor.setservice.tender2].
         "lngetaggroradius" => {
             let Some(rec) = form(args, 0).or(subject).and_then(|f| ai_record(g, f)) else { return Some(Ok(zero)) };
             XVal::Num(f64::from(aggro_of(g, rec)))
@@ -501,13 +508,26 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
         // [documented: GetWorldspaceParentWorldspace] WRLD WNAM.
         "getworldspaceparentworldspace" | "getworldparentworld" => reff(form(args, 0).and_then(|w| record_ref(g, w, "WNAM"))),
         "getcellwaterform" => reff(cell_arg(g, args, 0).and_then(|c| cell_water(g, c))),
-        // `[cell]`: CELL XCLW, SetCellWaterHeight's first; an exterior cell without one its
-        // worldspace's default water height (DNAM) [hypothesis]; else 0.
+        // `[cell]`: CELL XCLW (SetCellWaterHeight's first). An unloaded exterior cell
+        // returns 0; a loaded exterior cell without XCLW returns `f32::MAX` (3.40282e+38,
+        // NOT the worldspace DNAM default water height); an interior cell returns its
+        // XCLW (e.g. -2147483648 when marked "no height") or 0 [observed: lutana1
+        // cell.waterheight.startcell, cell.waterheight.doccell; Fallout: New Vegas
+        // 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24, Goodsprings (`0x000DAEBB`),
+        // 10 official base masters, `w4d_21_cell_water_height_ext`
+        // (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679):
+        // `in=-2.14748e+09|gs(000DAEBB)=3.40282e+38,cur=3.40282e+38|golfUnl=0`;
+        // no DLL or source consulted].
         "getcellwaterheight" => {
             let Some(c) = cell_arg(g, args, 0) else { return Some(Ok(zero)) };
-            let own = record_num(g, c, "XCLW", "");
-            let world = || g.world.placed.cell_world.get(&c).and_then(|&w| record_num(g, w, "DNAM", "default_water_height"));
-            XVal::Num(own.or_else(world).unwrap_or(0.0))
+            if g.world.placed.cell_world.contains_key(&c) {
+                let loaded = g.buffered_cells().contains(&c) || g.cell_of(FormId::PLAYER_REF) == Some(c);
+                if !loaded {
+                    return Some(Ok(zero));
+                }
+                return Some(Ok(XVal::Num(record_num(g, c, "XCLW", "").unwrap_or(f64::from(f32::MAX)))));
+            }
+            XVal::Num(record_num(g, c, "XCLW", "").unwrap_or(0.0))
         }
         // `height [cell]`: for the session, read by GetCellWaterHeight; the water drawn
         // keeps the record's height (ext-lutana.md, follow-ups).

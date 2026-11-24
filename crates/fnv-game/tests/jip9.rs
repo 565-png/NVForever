@@ -241,10 +241,19 @@ fn immortal_mode_keeps_the_player_alive() {
     let mut g = game(&f);
     q(&mut g, "player.SetActorValue Health 100");
     let health = |g: &mut Game| n(g, "player.GetActorValue Health");
-    // The mode before the call; 5 is kept and read back, and holds nothing [observed:
-    // jip9 immortal.5 0 0 5 0; hypothesis: no effect].
+    // The mode before the call; stored as a u8 byte (-1 wraps to 255, 3/5/99 read back
+    // verbatim) and values outside 1..=2 hold nothing [observed: jip9 immortal.5;
+    // w4d_18_immortal_mode_oob: m0=0|neg(prev=0,cur=255)|m3(prev=255,cur=3,hp=200->190)|m99(prev=3,cur=99)].
     assert_eq!(n(&mut g, "ToggleImmortalMode"), 0.0);
-    assert_eq!(n(&mut g, "ToggleImmortalMode 5"), 0.0);
+    assert_eq!(n(&mut g, "ToggleImmortalMode -1"), 0.0);
+    assert_eq!((n(&mut g, "ToggleImmortalMode"), f64::from(g.immortal_mode())), (255.0, 0.0));
+    assert_eq!(n(&mut g, "ToggleImmortalMode 3"), 255.0);
+    assert_eq!((n(&mut g, "ToggleImmortalMode"), f64::from(g.immortal_mode())), (3.0, 0.0));
+    q(&mut g, "player.DamageAV Health 10");
+    assert_eq!(health(&mut g), 90.0, "mode 3 holds nothing");
+    q(&mut g, "player.RestoreAV Health 10");
+    assert_eq!(n(&mut g, "ToggleImmortalMode 99"), 3.0);
+    assert_eq!(n(&mut g, "ToggleImmortalMode 5"), 99.0);
     assert_eq!((n(&mut g, "ToggleImmortalMode"), f64::from(g.immortal_mode())), (5.0, 0.0));
     assert_eq!(n(&mut g, "ToggleImmortalMode 2"), 5.0);
     let r = g.hit(FormId::PLAYER_REF, 30.0, HitInfo { location: -1, ..HitInfo::default() });

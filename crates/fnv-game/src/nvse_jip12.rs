@@ -727,11 +727,14 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             zero
         }
         // ---- the world ----
-        // The modifiers on the screen, once each, in the order applied [documented;
-        // hypothesis: the order].
+        // The active modifiers on the screen in application order without deduplication
+        // [documented; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN
+        // 57.30, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base
+        // masters, `w4d_24_active_imods_order` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+        // #3679): `same(n=3,0=00054E13,1=001736A8,2=00054E13) | next(n=3,0=00054E13,1=001736A8,2=00054E13)`;
+        // no DLL or source consulted].
         "getactiveimods" => {
-            let mut seen = BTreeSet::new();
-            let mods: Vec<XVal> = g.image_modifiers.iter().filter(|m| seen.insert(m.modifier)).map(|m| XVal::Ref(m.modifier.0)).collect();
+            let mods: Vec<XVal> = g.image_modifiers.iter().map(|m| XVal::Ref(m.modifier.0)).collect();
             list(g, mods)
         }
         // Interiors (1) or exteriors (0) [documented].

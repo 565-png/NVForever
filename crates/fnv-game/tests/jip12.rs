@@ -262,10 +262,15 @@ fn cells_light_and_settings() {
     q(&mut g, "SetInternalMarker TestMarker 0");
     assert!(!g.internal_marker(FormId(MARKER)));
 
-    // Image space modifiers on.
+    // Image space modifiers on: preserves application order without deduplication
+    // [observed: w4d_24_active_imods_order: [00054E13, 001736A8, 00054E13]].
     assert_eq!(ids(&mut g, "GetActiveIMODs"), "none");
     g.apply_image_modifier(FormId(IMAD));
     assert_eq!(ids(&mut g, "GetActiveIMODs"), format!("{IMAD:08X}"));
+    const IMAD2: u32 = 0x943;
+    g.image_modifiers.push(fnv_game::game::ActiveImageModifier { modifier: FormId(IMAD2), elapsed: 0.0 });
+    g.image_modifiers.push(fnv_game::game::ActiveImageModifier { modifier: FormId(IMAD), elapsed: 0.0 });
+    assert_eq!(ids(&mut g, "GetActiveIMODs"), format!("{IMAD:08X} {IMAD2:08X} {IMAD:08X}"));
 }
 
 #[test]
