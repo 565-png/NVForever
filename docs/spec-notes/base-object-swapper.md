@@ -85,27 +85,15 @@ third-party DLL runtime details remain `[hypothesis]`.
 
 ## 3. Precedence and multi-rule evaluation
 
-- `[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + BaseObjectSwapper, 2026-11-24,
-  GSDocMitchellHouse (0x00103DF9), 10 official base masters, isolated clean-room staging
-  copy (synthetic Data\BaseObjectSwapper\W4ETest_SWAP.ini and W4ETest_Multi_SWAP.ini
-  staged strictly inside the isolated copy and removed after exit; read-only
-  PrintToConsole probe; zero writes to game install or Saves),
-  w4e_c09_bos_precedence_and_last_wins (tools/capture/nvse/catalogs/wave4e_mods.json,
-  PR #3803 / #3802):
-  PROBE|w4e_c09_bos_precedence_and_last_wins|orig=000CCF91|swapForm=00179B2C|swapRef=0017B7A1|got=0017B7A1;
-  zero DLL, PDB, or third-party source consulted]`
-  `[References]` rules take precedence over `[Forms]` rules for the same placed reference
-  (on placed container `0x001062C6`, original base `0x000CCF91`, `[Forms]` -> `0x00179B2C`
-  and `[References]` -> `0x0017B7A1` resolved to `0x0017B7A1`).
-- `[observed: w4e_c09_bos_precedence_and_last_wins (wave4e_mods.json, PR #3803 / #3802),
-  same isolated staging run with W4ETest_Multi_SWAP.ini:
-  PROBE|w4e_c09_bos_precedence_and_last_wins|orig=000CCF91|swapForm=00179B2C|swapRef=0017B7A1|got=0017B7A1]`
-  Multiple `[Forms]` rules targeting the same original base resolve last-rule-wins
-  (`0x0017B7A1` beat earlier `0x00179B2C`). `[design]` NVForever evaluates rules in
+- `[hypothesis]` `[References]` rules take precedence over `[Forms]` rules for the same
+  placed reference: if any `[References]` rule fires for `ref_id`, its target is used;
+  otherwise `[Forms]` rules matching the authored base form are evaluated.
+- `[hypothesis]` Multiple rules targeting the same original form (for example variant
+  chains with independent `chanceS(pct)` rolls or later INI overrides) are evaluated in
   file/line order using independent per-rule hash indices (`rule_index`), with the last
-  fired rule winning; if no probabilistic rule fires, the reference keeps its authored
-  base form. Exact native plugin PRNG / probabilistic roll tie-breaking order has not
-  been captured and remains `[hypothesis]`.
+  fired rule winning. If no probabilistic rule fires, the reference keeps its authored
+  base form. Exact native plugin PRNG / tie-breaking order has not been captured from the
+  third-party DLL and remains `[hypothesis]`.
 
 ## 4. Shared consumer seam
 
