@@ -110,15 +110,20 @@ pub fn chances(part: &BodyPart, b: &Blow, s: &Settings) -> (f32, f32) {
         return (0.0, 0.0);
     }
     // Narrowed to a single-part, non-severable Torso flagged Explodable + Absolute
-    // (BPND bit 6, xEdit "To Hit Chance - Absolute") — matching crows (`NVraven02` in
-    // #3435) and also covering `NVTumbleweed` (`0x163CF3`, not shown in #3435
-    // [hypothesis]) — using its explosion chance directly without requiring Bloody Mess
-    // while still honoring the weapon's On Hit gate below [hypothesis: #3435;
-    // docs/spec-notes/dismemberment.md §4.2]. With Bloody Mess, this branch uses
-    // `max(explodable_chance_percent, torso_odds)` [hypothesis / design] so Bloody Mess
-    // never lowers the chance below `explodable_chance_percent`. Multi-part creatures and
-    // non-torso Absolute parts stay on the measured §4.1 odds until observed in the
-    // original.
+    // (BPND bit 6, xEdit "To Hit Chance - Absolute") — matching BOTH crows (`NVraven02` /
+    // `NVCrRaven 0x140DB0`) and `NVTumbleweed` (`0x163CF3` / `NVCRTumbleweed 0x16938D`) —
+    // using its explosion chance directly without requiring Bloody Mess [observed: Fallout:
+    // New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, 10 official base masters, isolated
+    // clean-room staging, Goodsprings (`0x000CDF51`), Wave 4E black-box probe
+    // `w4e_c07_crows_tumbleweed_bptd_explode`: both `NVCrRaven` (`0x140DB0`) and
+    // `NVCRTumbleweed` (`0x16938D`) explode their torso (`IsLimbGone 0 == 1`) without
+    // Bloody Mess on `KillActor Player 0 0` and explosion death, while non-hit
+    // `DamageAV Health 500` kills `NVCrRaven` without exploding (`lg0=0`), and both explode
+    // with Bloody Mess (`lg0=1`); zero DLL/PDB/source consulted; docs/spec-notes/dismemberment.md
+    // §4.2]. Honoring the weapon's `No Dismember/Explode` On Hit gate and taking
+    // `max(explodable_chance_percent, torso_odds)` when `explodable_chance_percent < 100`
+    // under Bloody Mess remain `[hypothesis / design]`. Multi-part creatures and non-torso
+    // Absolute parts stay on the measured §4.1 odds until observed in the original.
     let sole_absolute_torso = !severable && explodable && b.sole_part && part.location() == 0 && part.explodable_absolute();
     let mut gone = if b.bloody_mess {
         if severable {
@@ -311,8 +316,9 @@ mod tests {
             assert_eq!(chances(&crow_torso, &b, &s), (0.0, 0.0), "{on_hit:?}");
             assert_eq!(decide(&crow_torso, &b, &s, 0.0), None);
         }
-        // With Bloody Mess, No Dismember/Explode uses half odds, Dismember Only explodes,
-        // and odds take max(explodable_chance_percent, torso_odds) [hypothesis / design].
+        // With Bloody Mess, both NVCrRaven and NVCRTumbleweed explode (`w4e_c07`);
+        // No Dismember/Explode half-odds and `max(explodable_chance_percent, torso_odds)`
+        // for `< 100 %` parts remain [hypothesis / design].
         let mut bm_neither = Blow { on_hit: OnHit::Neither, crippled: true, overkill: 12.0, max_health: 6.0, bloody_mess: true, corpse: false, sole_part: true };
         assert_eq!(chances(&crow_torso, &bm_neither, &s), (50.0, 0.0));
         bm_neither.on_hit = OnHit::DismemberOnly;
