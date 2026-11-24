@@ -50,8 +50,10 @@ impl Game<'_> {
     /// observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 +
     /// ShowOffNVSE 184, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official
     /// base masters, `w4c_a06b_spread_settled` (`SetNoGunWobble 1` leaves spread
-    /// unchanged on both 1H and 2H; 1H right-arm adds +0.09250, 1H both-arms and 2H
-    /// both-arms both add +0.18500); hypothesis: returns actor-spread component after
+    /// unchanged on both 1H and 2H) and `w4d_09_spread_all_anim_types` (1H guns anim
+    /// 3/4: right +0.2, left 0, both +0.4; 2H weapons anim 5/6/8: either single arm
+    /// +0.4, both arms +0.6; thrown anim 10: 0 for right/left/both); hypothesis:
+    /// unprobed anim types 0..=2, 7, 9, 11..=13 and actor-spread component after
     /// `CALCULATE_GUN_SPREAD` perks, excluding weapon `min_spread` and ammo spread mods].
     pub fn calculated_actor_spread(&mut self, actor: FormId) -> f64 {
         let Some(w) = crate::functions::items::equipped_weapon(self, actor) else {
@@ -79,18 +81,25 @@ impl Game<'_> {
 
         let left_arm = self.is_crippled(actor, crate::combat::LEFT_ARM);
         let right_arm = self.is_crippled(actor, crate::combat::RIGHT_ARM);
-        // Mirrors `fnv_combat::spread::one_handed` over `schemas/fnv/objects.json`
-        // `WEAP.DNAM.animation_type` `(1 Hand)` enum entries (1, 3, 4, 10..=13);
-        // Gun Spread Formula (New Vegas) explicitly names type 4 [hypothesis: 1, 3, 10..=13].
-        // Default 2H both-arms fallback is `0.4` (matching 1H both-arms `0.32838` / `+0.18500`
-        // observed in `w4c_a06b_spread_settled`) while still reading `fCrippledArms2HSpreadPenalty`.
+        // Crippled-arm spread penalty by `WEAP.DNAM.animation_type`
+        // [observed: `w4d_09_spread_all_anim_types` in `wave4d_extenders.json` (#3679)]:
+        // - 1H guns (anim 3, 4): right arm +0.2, left arm alone 0, both arms +0.4.
+        // - 2H ranged (anim 5, 6, 8 observed; 7, 9 grouped as [hypothesis]): either single
+        //   arm +0.4, both arms +0.6 (`fCrippledArms2HSpreadPenalty`).
+        // - Thrown/grenade/mine/melee/unarmed (anim 10 observed +0.0; 0..=2 and 11..=13
+        //   grouped as [hypothesis]): 0.0 for right, left, and both arms.
         let anim = field(self, "animation_type") as i64;
-        let one_handed = matches!(anim, 1 | 3 | 4 | 10..=13);
-        let arms = match (one_handed, left_arm && right_arm) {
-            (true, true) => setting(self, "fCrippledArms1HSpreadPenalty", 0.4),
-            (true, false) if right_arm => setting(self, "fCrippledArm1HSpreadPenalty", 0.2),
-            (false, true) => setting(self, "fCrippledArms2HSpreadPenalty", 0.4),
-            (false, false) if left_arm || right_arm => setting(self, "fCrippledArm2HSpreadPenalty", 0.4),
+        let arms = match anim {
+            3 | 4 => match (left_arm, right_arm) {
+                (true, true) => setting(self, "fCrippledArms1HSpreadPenalty", 0.4),
+                (_, true) => setting(self, "fCrippledArm1HSpreadPenalty", 0.2),
+                _ => 0.0,
+            },
+            5..=9 => match (left_arm, right_arm) {
+                (true, true) => setting(self, "fCrippledArms2HSpreadPenalty", 0.6),
+                (true, false) | (false, true) => setting(self, "fCrippledArm2HSpreadPenalty", 0.4),
+                (false, false) => 0.0,
+            },
             _ => 0.0,
         };
 
