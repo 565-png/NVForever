@@ -659,14 +659,21 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             }
             zero
         }
-        // `ref.PlayerHasKey`: a door's or container's lock key carried [documented:
-        // PlayerHasKey]; a load door with no lock of its own reads the other side's
-        // [hypothesis: as GetLockLevel]. Terminals' password notes are NOT treated as keys
-        // [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30,
-        // `b3_lut_06_player_has_key_terminal_note`: even after AddNote on terminal
-        // 0x13253C's password note 0x133107, PlayerHasKey returned 0].
+        // `ref.PlayerHasKey`: a door's or container's lock key carried, or a placed
+        // terminal reference's password note filed/carried [documented: PlayerHasKey;
+        // observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24,
+        // `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters,
+        // `w4d_25_lsct_rgb_nan_and_password_key` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+        // #3679): `doorKey(0->1)|termNote(0->0) | placedTerm(termRef=FF001318|before=0,afterNote=1)`
+        // — a placed `TERM` reference returns 1 once its password note is held, whereas a
+        // base `TERM` form returns 0 (`b3_lut_06_player_has_key_terminal_note`); no DLL
+        // or source consulted]; a load door with no lock of its own reads the other side's
+        // [hypothesis: as GetLockLevel].
         "playerhaskey" => {
             let Some(r) = subject else { return Some(Ok(zero)) };
+            if (g.world.placed.get(r).is_some() || g.world.peek(r).is_some()) && is_terminal(g, r) {
+                return Some(Ok(yes(crate::terminal::has_password(g, base(g, r)))));
+            }
             let key = g.world.lock_of(r).and_then(|l| l.key);
             yes(key.is_some_and(|k| g.world.item_count(FormId::PLAYER_REF, k).is_ok_and(|n| n > 0)))
         }

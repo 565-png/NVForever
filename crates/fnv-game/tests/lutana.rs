@@ -451,11 +451,11 @@ SetFunctionValue s") {
     panic!("the clock turned a minute on every try");
 }
 
-/// Session `SetPasswordNote` overrides must reach `GetPasswordNote` and
-/// `terminal::has_password` (`still_locked`, `opening`, `opens_by_password`), ignore
-/// non-terminals, reset on fresh-run restore, and survive same-run `put_session` (#2272),
-/// while `PlayerHasKey` does not treat a terminal password note as a lock key
-/// [observed: b3_lut_06_player_has_key_terminal_note].
+/// Session `SetPasswordNote` overrides must reach `GetPasswordNote`, `PlayerHasKey` on
+/// placed `TERM` references, and `terminal::has_password` (`still_locked`, `opening`,
+/// `opens_by_password`), ignore non-terminals, reset on fresh-run restore, and survive
+/// same-run `put_session` (#2272), while base `TERM` forms return `0` from `PlayerHasKey`
+/// [observed: b3_lut_06_player_has_key_terminal_note, w4d_25_lsct_rgb_nan_and_password_key].
 #[test]
 fn set_password_note_reaches_terminal_opening_prompt_player_has_key_and_session() {
     use fnv_game::hacking::{Difficulty, Refusal};
@@ -471,13 +471,16 @@ fn set_password_note_reaches_terminal_opening_prompt_player_has_key_and_session(
     q(&mut g, "SetPasswordNote TestNote ItemA");
     assert_eq!(n(&mut g, "GetPasswordNote ItemA"), 0.0, "non-TERM form must stay 0");
     assert_eq!(n(&mut g, "TestTerminalRef.PlayerHasKey"), 0.0);
+    assert_eq!(n(&mut g, "TestTerminal.PlayerHasKey"), 0.0);
     assert!(!terminal::opens_by_password(&mut g, FormId(TERM_REF), FormId(TERM)));
     assert_eq!(terminal::still_locked(&mut g, FormId(TERM_REF), FormId(TERM)), Some(Difficulty::Hard));
     assert_eq!(terminal::opening(&mut g, FormId(TERM_REF), FormId(TERM), 0.0), Some(Opening::Refused(Refusal::Science { needed: 75.0 })));
 
-    // 2. Filing the authored note unlocks the terminal without hacking, while PlayerHasKey stays 0.
+    // 2. Filing the authored note unlocks the terminal and flips placed TERM PlayerHasKey 0 -> 1,
+    // while calling PlayerHasKey on the base TERM form still returns 0.
     q(&mut g, "AddNoteNS TestNote");
-    assert_eq!(n(&mut g, "TestTerminalRef.PlayerHasKey"), 0.0);
+    assert_eq!(n(&mut g, "TestTerminalRef.PlayerHasKey"), 1.0);
+    assert_eq!(n(&mut g, "TestTerminal.PlayerHasKey"), 0.0);
     assert!(terminal::opens_by_password(&mut g, FormId(TERM_REF), FormId(TERM)));
     assert_eq!(terminal::still_locked(&mut g, FormId(TERM_REF), FormId(TERM)), None);
 
@@ -504,7 +507,7 @@ fn set_password_note_reaches_terminal_opening_prompt_player_has_key_and_session(
     let mut fresh = Game::restore(&f.data, fresh_world, GameConfig::default(), &snap).unwrap();
     fresh.tweaks.terminal_password_prompt = true;
     assert_eq!(n(&mut fresh, "GetPasswordNote TestTerminal"), f64::from(NOTE));
-    assert_eq!(n(&mut fresh, "TestTerminalRef.PlayerHasKey"), 0.0);
+    assert_eq!(n(&mut fresh, "TestTerminalRef.PlayerHasKey"), 1.0);
     assert!(terminal::opens_by_password(&mut fresh, FormId(TERM_REF), FormId(TERM)));
     assert_eq!(terminal::still_locked(&mut fresh, FormId(TERM_REF), FormId(TERM)), None);
 
@@ -520,9 +523,10 @@ fn set_password_note_reaches_terminal_opening_prompt_player_has_key_and_session(
     assert_eq!(n(&mut same_run, "TestTerminalRef.PlayerHasKey"), 0.0);
     assert!(!terminal::opens_by_password(&mut same_run, FormId(TERM_REF), FormId(TERM)));
     assert_eq!(terminal::still_locked(&mut same_run, FormId(TERM_REF), FormId(TERM)), Some(Difficulty::Hard));
-    // Filing TestNote2 now opens the terminal straight to its menu without hacking (PlayerHasKey stays 0).
+    // Filing TestNote2 now opens the terminal straight to its menu without hacking and flips PlayerHasKey to 1.
     q(&mut same_run, "AddNoteNS TestNote2");
-    assert_eq!(n(&mut same_run, "TestTerminalRef.PlayerHasKey"), 0.0);
+    assert_eq!(n(&mut same_run, "TestTerminalRef.PlayerHasKey"), 1.0);
+    assert_eq!(n(&mut same_run, "TestTerminal.PlayerHasKey"), 0.0);
     assert!(terminal::opens_by_password(&mut same_run, FormId(TERM_REF), FormId(TERM)));
     assert_eq!(terminal::opening(&mut same_run, FormId(TERM_REF), FormId(TERM), 0.0), Some(Opening::Menu));
 }
