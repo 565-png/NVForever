@@ -364,6 +364,18 @@
               "ref rArcade = BuildRef 0 1533307",
               "rNull.SetClass rArcade",
               "Player.AuxVarSetFlt \"*w4g05_s0_ok\" 1"
+            ],
+            "w4g_05_sc_nonclas2.gek": [
+              "ref rDoc = BuildRef 0 1068047",
+              "ref rStim = BuildRef 0 86377",
+              "rDoc.SetClass rStim",
+              "Player.AuxVarSetFlt \"*w4g05_sn2_ok\" 1"
+            ],
+            "w4g_05_sc_nullclas.gek": [
+              "ref rDoc = BuildRef 0 1068047",
+              "ref rNull = 0",
+              "rDoc.SetClass rNull",
+              "Player.AuxVarSetFlt \"*w4g05_snc_ok\" 1"
             ]
           },
           "script_lines": [
@@ -376,6 +388,8 @@
             "Player.AuxVarSetFlt \"*w4g05_sd_ok\" 0",
             "Player.AuxVarSetFlt \"*w4g05_sn_ok\" 0",
             "Player.AuxVarSetFlt \"*w4g05_s0_ok\" 0",
+            "Player.AuxVarSetFlt \"*w4g05_sn2_ok\" 0",
+            "Player.AuxVarSetFlt \"*w4g05_snc_ok\" 0",
             "Call (CompileScript \"w4g_05_det_door.gek\")",
             "Call (CompileScript \"w4g_05_det_null.gek\")",
             "Call (CompileScript \"w4g_05_sc_door.gek\")",
@@ -390,6 +404,19 @@
             "int snOk = Player.AuxVarGetFlt \"*w4g05_sn_ok\"",
             "int s0Ok = Player.AuxVarGetFlt \"*w4g05_s0_ok\"",
             "PrintToConsole \"PROBE|w4g_05_isactordetected_and_setclass_invalid|invalid(detDoor=%g:%g,detNull=%g:%g|scDoor=%g,scNonClas=%g,docCls=%i->%i,scNull=%g)\" ddOk ddV dnOk dnV sdOk snOk cls0 cls1 s0Ok",
+            "ref f1 = CompileScript \"w4g_05_sc_nonclas2.gek\"",
+            "if f1",
+            "  Call f1",
+            "endif",
+            "ref c1 = rDoc.GetClass",
+            "ref f2 = CompileScript \"w4g_05_sc_nullclas.gek\"",
+            "if f2",
+            "  Call f2",
+            "endif",
+            "ref c2 = rDoc.GetClass",
+            "int ok1 = Player.AuxVarGetFlt \"*w4g05_sn2_ok\"",
+            "int ok2 = Player.AuxVarGetFlt \"*w4g05_snc_ok\"",
+            "PrintToConsole \"PROBE|w4g_05_isactordetected_and_setclass_invalid|setclassArg(nonClas:cmp=%g,ok=%g,cls=%i->%i|nullClas:cmp=%g,ok=%g,cls=%i)\" (eval f1) ok1 cls0 c1 (eval f2) ok2 c2",
             "Player.MoveTo rDoc 0 80 0",
             "ref rDocBase = BuildRef 0 1068044",
             "ref rA1 = rDoc.PlaceAtMe rDocBase 1 80 0",
@@ -406,13 +433,21 @@
                 "array_var aDet0 = Player.GetDetectingActors",
                 "int nDet0 = ar_Size aDet0",
                 "int pIsDet0 = Player.IsActorDetected",
+                "int dIsDet0 = rDoc.IsActorDetected",
+                "int a1IsDet0 = rA1.IsActorDetected",
                 "int dDetP = rDoc.GetDetected Player",
                 "int a1DetP = rA1.GetDetected Player",
+                "int dDetA1 = rDoc.GetDetected rA1",
+                "int a1DetD = rA1.GetDetected rDoc",
+                "int pDetD = Player.GetDetected rDoc",
                 "rA1.KillActor Player",
+                "rDoc.KillActor Player",
                 "array_var aDetS = Player.GetDetectingActors",
                 "int nDetS = ar_Size aDetS",
                 "int pIsDetS = Player.IsActorDetected",
-                "PrintToConsole \"PROBE|w4g_05_isactordetected_and_setclass_invalid|detLive(nDet=%g,p=%g,dP=%g,a1P=%g|killSame:nDet=%g,p=%g)\" nDet0 pIsDet0 dDetP a1DetP nDetS pIsDetS"
+                "int dIsDetS = rDoc.IsActorDetected",
+                "int a1IsDetS = rA1.IsActorDetected",
+                "PrintToConsole \"PROBE|w4g_05_isactordetected_and_setclass_invalid|detLive(nDet=%g,p=%g,d=%g,a1=%g|gd:dP=%g,a1P=%g,dA1=%g,a1D=%g,pD=%g|killSame:nDet=%g,p=%g,d=%g,a1=%g)\" nDet0 pIsDet0 dIsDet0 a1IsDet0 dDetP a1DetP dDetA1 a1DetD pDetD nDetS pIsDetS dIsDetS a1IsDetS"
               ]
             },
             {
@@ -420,12 +455,15 @@
               "wait_ticks": 0,
               "script_lines": [
                 "ref rA1 = Player.AuxVarGetRef \"*w4g05_a1\"",
+                "ref rDoc = BuildRef 0 1068047",
                 "array_var aDetN = Player.GetDetectingActors",
                 "int nDetN = ar_Size aDetN",
                 "int pIsDetN = Player.IsActorDetected",
+                "int dIsDetN = rDoc.IsActorDetected",
+                "int a1IsDetN = rA1.IsActorDetected",
                 "rA1.Disable 0",
                 "rA1.MarkForDelete",
-                "PrintToConsole \"PROBE|w4g_05_isactordetected_and_setclass_invalid|detNext(nDet=%g,p=%g)\" nDetN pIsDetN"
+                "PrintToConsole \"PROBE|w4g_05_isactordetected_and_setclass_invalid|detNext(nDet=%g,p=%g,d=%g,a1=%g)\" nDetN pIsDetN dIsDetN a1IsDetN"
               ]
             }
           ]
