@@ -89,10 +89,12 @@ generic.5.ref.0 and generic.5.base.0 both give Doc Mitchell's first package].
   confirming FLST + code 1 rejection across Get, Add, Replace, and Delete); `CREA` and
   codes 6/7/10 follow [documented: GenericGetForm's list codes] / [hypothesis]].
 - Delete takes out the form at the index and gives it [documented]; past the end (`>= len`)
-  or on an empty list returns `0`, while any negative index (`-1`, `-2`, `-3`) removes
-  index `0` (head of the list) on a non-empty list [observed:
-  `w4d_04_generic_form_neg_idx` (#3802 / PR #3803): `emp(...,d=0/0/0/0:0,...)` and
-  `ne(...,d=1:38/1:37/1:36/0:36)` reducing count `39 -> 38 -> 37 -> 36`].
+  or on an empty list returns `0`, while negative indices (`-1`, `-2`, `-3`) on a
+  non-empty list each remove an entry (returning a non-zero form and decrementing the
+  count `39 -> 38 -> 37 -> 36`) [observed: `w4d_04_generic_form_neg_idx` (#3802 / PR
+  #3803): `emp(...,d=0/0/0/0:0,...)` and `ne(...,d=1:38/1:37/1:36/0:36)`]. Removing
+  index `0` (head of the list) for negative indices is [hypothesis] (`w4d_04` checks
+  non-zero return and decremented counts, not which position was removed).
 - Replace puts the new form at the index and gives the old one [documented]
   [observed: generic.10.replace and its restore]; `-2` replaces the last entry on a
   non-empty list (returning the previous last form) and on an empty list returns `0` while

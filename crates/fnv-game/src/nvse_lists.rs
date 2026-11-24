@@ -199,9 +199,14 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
                     XVal::Num(out)
                 }
                 "genericdeleteform" => {
-                    // Any negative index (`-1`, `-2`, `-3`) removes index `0` (head of the
-                    // list) when non-empty and returns `0` when empty; `0..n` removes `i`;
-                    // `>= n` returns `0` [observed: `w4d_04_generic_form_neg_idx`, #3802 / PR #3803].
+                    // On a non-empty list, negative indices (`-1`, `-2`, `-3`) each remove
+                    // an entry (returning a non-zero form and decrementing count
+                    // `39 -> 38 -> 37 -> 36`), and return `0` on an empty list; `0..n`
+                    // removes `i`; `>= n` returns `0` [observed: `w4d_04_generic_form_neg_idx`,
+                    // #3802 / PR #3803: `emp(...,d=0/0/0/0:0,...)` and
+                    // `ne(...,d=1:38/1:37/1:36/0:36)`]. Removing index `0` (head of the list)
+                    // for negative indices is [hypothesis] (`w4d_04` checks non-zero return
+                    // and decremented counts, not which position was removed).
                     let pos = if i < 0 { (n > 0).then_some(0) } else { at };
                     match pos {
                         Some(pos) => XVal::Ref(list.remove(pos).0),

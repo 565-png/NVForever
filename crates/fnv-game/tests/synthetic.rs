@@ -4617,8 +4617,9 @@ fn generic_form_lists_validate_target_type_and_past_end_index() {
     assert_eq!(q(&mut g, "SetFunctionValue (GenericGetForm 13, TestMultiFlst, 3)"), XVal::Ref(0x0000_0814));
     assert_eq!(q(&mut g, "SetFunctionValue (GenericReplaceForm 13, TestMultiFlst, TestNpc, -3)"), XVal::Ref(0));
     assert_eq!(q(&mut g, "SetFunctionValue (GenericReplaceForm 13, TestMultiFlst, TestNpc, 999)"), XVal::Ref(0));
-    // Delete: -1, -2, -3 ALL remove index 0 sequentially (0x811, 0x812, 0x813; n: 4->3->2->1);
-    // OOB 999 returns 0 without mutating.
+    // Delete: -1, -2, -3 each remove an entry on a non-empty list (returning non-zero and
+    // decrementing count 4->3->2->1; [observed: w4d_04_generic_form_neg_idx]); removing
+    // index 0 (head of the list: 0x811, 0x812, 0x813) is [hypothesis]. OOB 999 returns 0.
     assert_eq!(q(&mut g, "SetFunctionValue (GenericDeleteForm 13, TestMultiFlst, -1)"), XVal::Ref(0x0000_0811));
     assert_eq!(q(&mut g, "SetFunctionValue (ListGetCount TestMultiFlst)"), XVal::Num(3.0));
     assert_eq!(q(&mut g, "SetFunctionValue (GenericDeleteForm 13, TestMultiFlst, -2)"), XVal::Ref(0x0000_0812));
