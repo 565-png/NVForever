@@ -164,7 +164,7 @@ never the game folder (`crate::mod_files`). Code: `crates/fnv-game/src/nvse_json
   NVSE 855 with the 10 official base masters, clean-room script probe
   `sup_31_json_get_value_array_shapes` (`JSONGetValueArray`): `3,1,2`; no DLL or source
   consulted]. (By contrast, `JSONGetValue` in `ext-sup5.md` §2 returns a tagged list
-  `[type_code]` / `[type_code, scalar_value]` as observed in `w4d_37_sup_json_and_excel_edges`.)
+  `[type_code]` / `[type_code, scalar_value]` as observed in `w4d_37_sup_json_and_excel_edges`, #3802 / PR #3803.)
   NVForever gives the array's elements, an object's pairs as a string map,
   and nothing for a scalar [hypothesis; open].
 - **The last flag of the readers and writers**: 0 is the file on disk, 1 the cached copy.
@@ -240,11 +240,11 @@ original's answer and changes nothing.
   saved"]. ScriptedNVR2's Script Runner file calls it 1,436 times at the game restart.
 - **GetCasinoDeckTexture** `casino index` (JohnnyGuitar): the deck's back texture, the
   casino's ICO2 entries in order (`terminals\NV_PlayingCards\DeckB\cardB_Back.dds` for the
-  Atomic Wrangler) [observed: rest4.casinodeck.0]. **SetCasinoDeckTexture** was not probed:
+  Atomic Wrangler) [observed: rest4.casinodeck.0; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JohnnyGuitarNVSE 528 with the 10 official base masters, clean-room script probe jg_37_casino_deck_and_switch_node (GetCasinoDeckTexture/GetSwitchNodeIndex): terminals\NV_PlayingCards\DeckB\cardB_Back.dds,0; no DLL or source consulted]. **SetCasinoDeckTexture** was not probed:
   NVForever answers 1, as JohnnyGuitar's other setters did, and changes nothing, so
   GetCasinoDeckTexture keeps reading the casino's own deck [hypothesis].
 - **GetSwitchNodeIndex** `node [flag]` (JohnnyGuitar): 0 for Doc's `Bip01 Head`, not a
-  switch node [observed: rest4.switchnode]. NVForever answers 0 [hypothesis: the index of
+  switch node [observed: rest4.switchnode; observed: jg_37_casino_deck_and_switch_node: 0]. NVForever answers 0 [hypothesis: the index of
   a switch node's shown child, 0 for any other node].
 
 **Constant answers** (each [observed] for the inputs probed; their meaning is open):

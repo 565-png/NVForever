@@ -105,10 +105,11 @@ fn form_text(g: &Game, s: &str) -> XVal {
 /// missing, `0` null, `1` object, `2` array, `3` string, `4` bool, `5` number), and
 /// ONLY scalar types (`3`/`4`/`5`) include element 1 with the value [observed: Fallout:
 /// New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855, 2026-11-24, `GSDocMitchellHouse`
-/// (`0x00103DF9`), 10 official base masters, `w4d_37_sup_json_and_excel_edges`
-/// (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679): `o=[1.0]`, `a=[2.0]`,
-/// `s=[3.0,"hi"]`, `b=[4.0,1.0]`, `f=[4.0,0.0]`, `n=[5.0,42.0]`, `z=[0.0]`,
-/// `missing=[-2.0]`; no DLL or source consulted].
+/// (`0x00103DF9`), 10 official base masters, isolated clean-room staging copy (read-only
+/// `PrintToConsole` probe; zero writes to game install or Saves),
+/// `w4d_37_sup_json_and_excel_edges` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+/// #3802): `PROBE|w4d_37_sup_json_and_excel_edges|o=1(1),a=1(2),s=2(3,[hi]),b=2(4,1),f=2(4,0),n=2(5,42.0),z=1(0),m=1(-2)|xlsx=-1`;
+/// zero DLL, PDB, or third-party source consulted].
 fn json_tagged_value(g: &mut Game, v: Option<&serde_json::Value>) -> XVal {
     use serde_json::Value as J;
     let items = match v {
@@ -207,21 +208,14 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
         }
         // `file sheet row col` / `file sheet`: the cell emptied, the sheet's cells all
-        // emptied (the sheet and its row/column extent kept) [documented: ExcelEraseCell;
-        // ExcelEraseSheet, "Will erase all cells in Sheet"; observed: 2026-11-23,
-        // GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9,
-        // SUP NVSE 855 with the 10 official base masters, isolated-staging probe
-        // `sup_14_excel_bounds_and_erase_sheet` (excluded from #3679's read-only catalog
-        // under tools/capture/README.md §10): cell (0,0) type becomes 0 while
-        // ExcelGetRowCount stays 1; no DLL or source consulted]; 1 done, -1 for a
-        // missing file [documented] or sheet [observed: sup_14].
+        // emptied (the sheet kept) [documented: ExcelEraseCell; ExcelEraseSheet, "Will
+        // erase all cells in Sheet"]; 1 done, -1 for a missing file [documented] or sheet
+        // [hypothesis].
         "excelerasecell" | "excelerasesheet" => {
             let Some(path) = xls_path(args) else { return Some(Ok(minus)) };
             let Ok(mut b) = load_book(g, &path) else { return Some(Ok(minus)) };
             let Some(s) = index(args, 1).and_then(|i| b.sheets.get_mut(i)) else { return Some(Ok(minus)) };
             if name == "excelerasesheet" {
-                s.min_rows = s.rows();
-                s.min_cols = s.cols();
                 s.cells.clear();
             } else if let Some(at) = cell_at(args, 2) {
                 s.cells.remove(&at);

@@ -179,7 +179,8 @@ fn the_lockpick_menu_and_the_throw() {
     assert_eq!(n(&mut g, "GetLockPickMenuValue 0"), -1.0);
     assert_eq!(n(&mut g, "GetLockPickMenuValue 3"), -1.0);
     // Request 1 returns the lock tier enum (0 Very Easy..4 Very Hard), not raw 0/25/50/75/100;
-    // out-of-range request 3 returns 0.0 while open [observed: w4e_12_sup_lockpick_menu_value_tiers].
+    // out-of-range request 3 returns 0.0 while open [observed: w4h_11_sup_lockpick_menu_tiers
+    // and w4e_12_sup_lockpick_menu_value_tiers, #3802].
     for (raw_level, expected_tier) in [(0.0, 0.0), (1.0, 1.0), (25.0, 1.0), (50.0, 2.0), (75.0, 3.0), (100.0, 4.0)] {
         g.sup.lockpick = Some(LockpickView { angle: 90.0, level: raw_level, skill: 40.0, health: 1.0 });
         assert_eq!(n(&mut g, "GetLockPickMenuValue 1"), expected_tier, "raw lock level {raw_level}");

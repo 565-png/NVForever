@@ -408,17 +408,19 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "getpctrait" => zero,
         // ---- the lockpick menu ----
         // `request`: 0 the pin's angle (NVForever's 0..180 degrees [design]; original SUP
-        // NVSE 855 returned 952.47 in `w4e_12_sup_lockpick_menu_value_tiers`), 1 the lock
-        // tier enum (0 Very Easy/0, 1 Easy/1..=25, 2 Average/26..=50, 3 Hard/51..=75,
-        // 4 Very Hard/76..=100), 2 the Lockpick skill, other requests 0.0 while open; -1
-        // with the menu shut [documented: GetLockPickMenuValue; observed: Fallout: New
-        // Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855, 2026-11-23/24,
-        // `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters,
-        // `sup_20_lockpick_and_bobbypin_closed` (`-1.00,-1.00,-1.00,-1.00` shut) and
-        // `w4e_12_sup_lockpick_menu_value_tiers` (live `LockPickMenu` `1014`:
-        // `lock50(mm=1014):v0_pin=952.47|v1_lvl=2.00|v2_skill=100.00|v3=0.00 | tiers:
-        // lock1->1.00, lock25->1.00, lock50->2.00, lock75->3.00, lock100->4.00`); no DLL
-        // or source consulted].
+        // NVSE 855 returned 0.89 in `w4h_11_sup_lockpick_menu_tiers` and 952.47 in
+        // `w4e_12_sup_lockpick_menu_value_tiers`), 1 the lock tier enum (0 Very Easy/0,
+        // 1 Easy/1..=25, 2 Average/26..=50, 3 Hard/51..=75, 4 Very Hard/76..=100), 2 the
+        // Lockpick skill, other requests 0.0 while open; -1 with the menu shut
+        // [documented: GetLockPickMenuValue; observed: Fallout: New Vegas 1.4.0.525 +
+        // xNVSE 6.4.9 + SUP NVSE 855, 2026-11-23/24, `GSDocMitchellHouse` (`0x00103DF9`),
+        // 10 official base masters, isolated clean-room staging copy (read-only
+        // `PrintToConsole` probe; zero writes to game install or Saves),
+        // `sup_20_lockpick_and_bobbypin_closed`, `w4e_12_sup_lockpick_menu_value_tiers`
+        // (`tools/capture/nvse/catalogs/wave4e_mods.json`, #3802), and
+        // `w4h_11_sup_lockpick_menu_tiers` (`tools/capture/nvse/catalogs/wave4h_reconcile.json`,
+        // #3802): `PROBE|w4h_11_sup_lockpick_menu_tiers|shut(-1.0,-1.0,-1.0,-1.0,-1.0)|open50(mm=1014,0.89,2.0,100.0,0.0,0.0)|tiers(1=1.0,25=1.0,50=2.0,75=3.0,100=4.0)`;
+        // zero DLL, PDB, or third-party source consulted].
         "getlockpickmenuvalue" => XVal::Num(match (g.sup.lockpick, num(args, 0, -1.0) as i32) {
             (Some(l), 0) => f64::from(l.angle),
             (Some(l), 1) => {

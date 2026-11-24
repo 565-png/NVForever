@@ -133,15 +133,13 @@ fn excel_cells_sheets_and_arrays() {
     // not text, observed: sup5 xl.rename].
     assert_eq!(n(&mut g, "ExcelSetSheetName \"xlBook\" 1 \"A name far longer than thirty-one letters\""), 1.0);
     assert_eq!(s(&mut g, "ExcelSetSheetName \"xlBook\" 1"), "A name far longer than thirty-o");
-    // Erasing [documented: ExcelEraseCell, ExcelEraseSheet; observed: 2026-11-23,
-    // GSDocMitchellHouse (0x00103DF9), isolated-staging probe
-    // `sup_14_excel_bounds_and_erase_sheet`, SUP NVSE 855: cell (0,0) type becomes 0
-    // while ExcelGetRowCount stays 1; row 70000 stays safely rejected with -1 [design]].
+    // Erasing [documented: ExcelEraseCell, ExcelEraseSheet]; rows past 65,535 stay
+    // rejected with -1 [hypothesis].
     assert_eq!(n(&mut g, "ExcelEraseCell \"xlBook\" 0 4 1"), 1.0);
     assert_eq!(n(&mut g, "ExcelGetCellValueType \"xlBook\" 0 4 1"), 0.0);
     assert_eq!(n(&mut g, "ExcelEraseSheet \"xlBook\" 2"), 1.0);
     assert_eq!(n(&mut g, "ExcelGetCellValueType \"xlBook\" 2 0 0"), 0.0);
-    assert_eq!(n(&mut g, "ExcelGetRowCount \"xlBook\" 2"), 1.0);
+    assert_eq!(n(&mut g, "ExcelGetRowCount \"xlBook\" 2"), 0.0);
     assert_eq!(n(&mut g, "ExcelWriteFloat \"xlBook\" 0 70000 0 1"), -1.0);
     assert_eq!(n(&mut g, "ExcelGetWorkSheetCount \"xlBook\""), 3.0);
     // The file is a workbook in NVForever's layer, not in the game folder.
@@ -178,9 +176,9 @@ fn json_files() {
     assert_eq!(n(&mut g, "JSONIsFileValid \"none.json\""), -4.0);
     assert_eq!(n(&mut g, "JSONIsFileValid \"../good.json\""), -5.0);
     assert_eq!(n(&mut g, "JSONIsFileValid \"notjson.txt\""), -6.0);
-    // Wave 4D w4d_37_sup_json_and_excel_edges [observed]: JSONGetValue always returns a
-    // tagged List `[type_code]` or `[type_code, scalar_value]` (-2 missing, 0 null,
-    // 1 object, 2 array, 3 string, 4 bool, 5 number).
+    // Wave 4D w4d_37_sup_json_and_excel_edges (#3802) [observed]: JSONGetValue always
+    // returns a tagged List `[type_code]` or `[type_code, scalar_value]` (-2 missing,
+    // 0 null, 1 object, 2 array, 3 string, 4 bool, 5 number).
     let one = s(&mut g, "\"\"\nlet aList := JSONGetValue \"good.json\" \"name\" 0\nlet sOut := sv_Construct \"%g %g %z\" (ar_Size aList) (aList[0]) (aList[1])");
     assert_eq!(one, "2 3 Joe");
     let num_v = s(&mut g, "\"\"\nlet aList := JSONGetValue \"good.json\" \"level\" 0\nlet sOut := sv_Construct \"%g %g %g\" (ar_Size aList) (aList[0]) (aList[1])");
