@@ -6706,6 +6706,11 @@ impl<'a> Game<'a> {
         // What "the used item's level" counts is not documented; 0 keeps the only
         // conditions on it (the ground pick-up idles, `== 0`) passing, as they did before
         // the index was named [hypothesis: a level of 0 is the ground, the idles' case].
+        // IsHorseStolen: New Vegas has no horses, so none is stolen [hypothesis: a check
+        // left from the engine's earlier game; the name is xEdit's, #3617].
+        if c.function == cond::IS_HORSE_STOLEN {
+            return 0.0;
+        }
         if c.function == cond::GET_USED_ITEM_LEVEL {
             return 0.0;
         }
