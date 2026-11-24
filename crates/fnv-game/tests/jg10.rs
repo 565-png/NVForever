@@ -21,9 +21,44 @@ const FLST: u32 = 0x912;
 const HAIR_A: u32 = 0x913;
 const HAIR_B: u32 = 0x914;
 const ALCH: u32 = 0x915;
+const ALCH_STIM: u32 = 0x916;
+const MISC_CAP: u32 = 0x917;
+const MGEF_POISON: u32 = 0x918;
+const MGEF_HEAL: u32 = 0x919;
 
 fn edid(sig: &[u8; 4], fid: u32, name: &str) -> Vec<u8> {
     record(sig, 0, fid, &[sub(b"EDID", z(name))])
+}
+
+fn mgef(fid: u32, name: &str, flags: u32) -> Vec<u8> {
+    let data = [
+        flags.to_le_bytes().to_vec(),
+        0.0f32.to_le_bytes().to_vec(),
+        0u32.to_le_bytes().to_vec(),
+        vec![0xFF; 8],
+        vec![0; 8],
+        1.0f32.to_le_bytes().to_vec(),
+        vec![0; 32],
+        0u32.to_le_bytes().to_vec(),
+        16i32.to_le_bytes().to_vec(),
+    ]
+    .concat();
+    record(b"MGEF", 0, fid, &[sub(b"EDID", z(name)), sub(b"DATA", data)])
+}
+
+fn alch_with_effect(fid: u32, name: &str, mgef_id: u32) -> Vec<u8> {
+    let efit = [10u32, 0, 5, 0, 16].into_iter().flat_map(u32::to_le_bytes).collect();
+    record(
+        b"ALCH",
+        0,
+        fid,
+        &[
+            sub(b"EDID", z(name)),
+            sub(b"ENIT", vec![0; 20]),
+            sub(b"EFID", mgef_id.to_le_bytes().to_vec()),
+            sub(b"EFIT", efit),
+        ],
+    )
 }
 
 fn plugin_bytes() -> Vec<u8> {
@@ -31,13 +66,22 @@ fn plugin_bytes() -> Vec<u8> {
     let npc = record(b"NPC_", 0, NPC, &[sub(b"EDID", z("TestFace")), sub(b"FGGS", fggs)]);
     let weap = record(b"WEAP", 0, WEAP, &[sub(b"EDID", z("TestScoped")), sub(b"MOD3", z("interface\\hud\\testscope.nif"))]);
     let flst = record(b"FLST", 0, FLST, &[sub(b"EDID", z("TestHairList")), sub(b"LNAM", HAIR_A.to_le_bytes().to_vec())]);
+    // MGEF flags: 1 Hostile | 4 Detrimental -> poison; 0 -> non-poison aid (Stimpak).
+    let mgefs = [mgef(MGEF_POISON, "TestVenomMgef", 1 | 4), mgef(MGEF_HEAL, "TestHealMgef", 0)].concat();
+    let alchs = [
+        alch_with_effect(ALCH, "TestPoison", MGEF_POISON),
+        alch_with_effect(ALCH_STIM, "TestStimpak", MGEF_HEAL),
+    ]
+    .concat();
     [
         tes4(),
+        top(b"MGEF", &mgefs),
         top(b"NPC_", &[edid(b"NPC_", 0x7, "Player"), npc].concat()),
         top(b"WEAP", &weap),
         top(b"FLST", &flst),
         top(b"HAIR", &[edid(b"HAIR", HAIR_A, "TestHairA"), edid(b"HAIR", HAIR_B, "TestHairB")].concat()),
-        top(b"ALCH", &edid(b"ALCH", ALCH, "TestPoison")),
+        top(b"ALCH", &alchs),
+        top(b"MISC", &edid(b"MISC", MISC_CAP, "TestCap")),
     ]
     .concat()
 }
@@ -147,9 +191,22 @@ fn weapons_and_scopes() {
     // [documented: RemoveScopeModelPath, "isSuccess"].
     assert_eq!(n(&mut g, "RemoveScopeModelPath TestScoped"), 1.0);
     assert_eq!(n(&mut g, "RemoveScopeModelPath TestScoped"), 0.0, "nothing left to remove");
-    // A poison only on a weapon (the player has none equipped here).
+    // A poison only on an equipped weapon (the player has none equipped yet).
     q(&mut g, "PlayerREF.ApplyWeaponPoison TestPoison");
     assert_eq!(g.weapon_poison(FormId::PLAYER_REF), None);
+    // With a weapon equipped: accepts poison ALCH, rejects non-ALCH (preserving poison),
+    // clears on omitted arg, and rejects non-poison ALCH [observed: jg_34_apply_weapon_poison_non_alch].
+    q(&mut g, "PlayerREF.AddItem TestScoped 1 1\nPlayerREF.EquipItem TestScoped 0 1");
+    q(&mut g, "PlayerREF.ApplyWeaponPoison TestPoison");
+    assert_eq!(n(&mut g, "PlayerREF.GetEquippedWeaponPoison"), f64::from(ALCH));
+    q(&mut g, "PlayerREF.ApplyWeaponPoison TestCap");
+    assert_eq!(n(&mut g, "PlayerREF.GetEquippedWeaponPoison"), f64::from(ALCH), "non-ALCH preserves poison");
+    q(&mut g, "PlayerREF.ApplyWeaponPoison TestStimpak");
+    assert_eq!(n(&mut g, "PlayerREF.GetEquippedWeaponPoison"), f64::from(ALCH), "non-poison ALCH preserves poison");
+    q(&mut g, "PlayerREF.ApplyWeaponPoison");
+    assert_eq!(n(&mut g, "PlayerREF.GetEquippedWeaponPoison"), 0.0, "omitted arg clears poison");
+    q(&mut g, "PlayerREF.ApplyWeaponPoison TestStimpak");
+    assert_eq!(n(&mut g, "PlayerREF.GetEquippedWeaponPoison"), 0.0, "non-poison ALCH rejected when unpoisoned");
     q(&mut g, "PlayerREF.EjectCasing \"ShellNode\"");
     let c = g.take_casing_requests();
     assert_eq!(c.len(), 1);

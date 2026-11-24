@@ -286,8 +286,11 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         }
         // ---- weapons ----
         // `[poison]` on an actor's equipped weapon or a weapon's inventory reference; none
-        // or a null form takes it off [documented]. A poison is an ALCH with the Poison
-        // flag [hypothesis: the page's Bleak Venom is one]; anything else is not put on.
+        // or a null form takes it off [documented]. Requires an ALCH poison (`Game::is_poison`:
+        // Hostile + Detrimental effects); non-poison ALCH (e.g. Stimpak) and non-ALCH forms
+        // are rejected leaving any existing poison unchanged [observed: Fallout: New Vegas
+        // 1.4.0.525 + xNVSE 6.4.9 + JohnnyGuitarNVSE 528, `jg_34_apply_weapon_poison_non_alch`:
+        // BleakVenom accepted, Caps preserves poison, omitted clears, Stimpak rejected].
         "applyweaponpoison" => {
             let Some(r) = subject else { return Some(Ok(zero)) };
             let key = match g.temp_item(r) {
@@ -302,7 +305,7 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
                 return Some(Ok(zero));
             }
             match form(args, 0) {
-                Some(p) if sig(g, p) == Some(*b"ALCH") => {
+                Some(p) if g.is_poison(p) => {
                     g.other.jg10.poisons.insert(key, p);
                 }
                 Some(_) => {}

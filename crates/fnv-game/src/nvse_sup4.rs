@@ -32,8 +32,27 @@ fn list(g: &mut Game, items: Vec<XVal>) -> XVal {
     XVal::Array(g.ext.new_array(ArrayKind::List, entries))
 }
 
-/// A save file as GetSaveName and the size getters give it: its name without the
-/// extension and its size in bytes.
+/// Format a save name as SUP's `GetSaveName` returns it: with the `.fos` extension
+/// [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855,
+/// `p2_sup_save_meta`: `GetSaveName 0/1` returns `<save>.fos` rather than stripping
+/// `.fos`; design: NVForever stores bare save stems in `SaveFile::name` (from `.nvfsave`
+/// paths), so append `.fos` unless `.fos` is already present].
+fn format_save_name(name: &str) -> String {
+    if name.is_empty() {
+        return String::new();
+    }
+    let lower = name.to_ascii_lowercase();
+    if lower.ends_with(".fos") {
+        name.to_string()
+    } else if lower.ends_with(".nvfsave") {
+        format!("{}.fos", &name[..name.len() - ".nvfsave".len()])
+    } else {
+        format!("{name}.fos")
+    }
+}
+
+/// A save file as GetSaveName and the size getters give it: its name (formatted with
+/// `.fos` by `GetSaveName`) and its size in bytes.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SaveFile {
     pub name: String,
@@ -234,11 +253,11 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 (Some(_), _) => zero,
             }
         }
-        // `type`: 0 the last save's name, 1 the last load's, without the extension; ""
-        // before any [documented].
+        // `type`: 0 the last save's name, 1 the last load's, including `.fos`; "" before
+        // any [documented: GetSaveName; observed: `p2_sup_save_meta`, includes `.fos`].
         "getsavename" => {
             let f = if num(args, 0, 0.0) as i64 == 1 { &g.save_files.loaded } else { &g.save_files.saved };
-            XVal::Str(f.as_ref().map(|f| f.name.clone()).unwrap_or_default())
+            XVal::Str(f.as_ref().map(|f| format_save_name(&f.name)).unwrap_or_default())
         }
         // `depth`: the cells near the player [documented: "references of near cells"].
         "getnearcells" => {

@@ -70,9 +70,13 @@ Individual item figures show one item's weight and value for a stack.
 
 [design] After the engine hands its authoritative settings to the game,
 `StewieGetValue` and `StewVal` return the existing choices below as numeric 0 or 1.
-Both functions use the same read-only path; names ignore ASCII case and surrounding
-whitespace. The original INI never supplies NVForever defaults. No new settings are
-added. [hypothesis] The original plugin matches names the same way; not observed.
+Both functions use the same read-only path; names take `Key:Section` and ignore
+ASCII case, and do NOT trim surrounding whitespace [observed: Fallout: New Vegas
+1.4.0.525 + xNVSE 6.4.9 + lStewieAl's Tweaks 1005 with the 10 official base masters,
+`stew_01_stewie_get_value_case_and_ammo` (#3678 / PR #3679): `"bNoCasinoBans:Tweaks"` -> 1,
+`"bnocasinobans:tweaks"` -> 1, `" bNoCasinoBans : Tweaks "` -> 0,
+`"Tweaks:bNoCasinoBans"` -> 0; no DLL or source consulted]. The original INI never
+supplies NVForever defaults. No new settings are added.
 
 | Query | Existing choice and consumer |
 |---|---|

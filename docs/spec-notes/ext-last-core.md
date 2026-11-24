@@ -51,6 +51,12 @@ the HUD captures in hud.md §14 [observed]. Changes last for the session unless 
   line of its own, up to 15; DebugPrintVar only with the calling mod's debug mode on
   [documented: PrintVar, "fMyVariable: 2.5" and "aMyVariable: [2, 4]"; DebugPrintVar]. A
   map shows `key: value` pairs in the brackets [hypothesis].
+- ToString `value`: converts a number, string, or form to text [documented: ToString],
+  and returns `"NULL"` for arrays and stringmaps [observed: Fallout: New Vegas 1.4.0.525 +
+  xNVSE 6.4.9 with the 10 official base masters, `b3_core_05_tostring_array_map`
+  (`tools/capture/nvse/catalogs/wave4b_extenders.json`, #3678 / PR #3679):
+  `L=[NULL]|M=[NULL]|N=[42]` on `ar_List 1 2`, `ar_Map "k"::5`, and `42`; no DLL or
+  source consulted].
 - PrintF, PrintDebugF, Ar_DumpF, DecompileScript, DumpDocs and DumpCommandWikiDoc write
   files (the Fallout folder, DecompiledScripts, nvse.log) [documented]; NVForever writes
   none of them and they do nothing else [decision: NVForever writes nothing beside the

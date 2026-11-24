@@ -85,20 +85,27 @@ fn name_of(g: &Game, f: FormId) -> String {
     g.name_overrides.get(&b).or_else(|| g.data.full_names.get(&g.unclone(b))).cloned().unwrap_or_default()
 }
 
-/// A cell's text as ExcelArrayFromFile gives it: `*Plugin.esm:hex` is that plugin's form
+/// A cell's text as ExcelArrayFromFile gives it: `*Plugin.esm:hex` is parsed as a form
 /// [documented: ExcelArrayFromFile, "All to-build references must be prefixed with '*'"];
-/// anything else stays text [hypothesis: an unknown plugin or form too].
+/// an unknown plugin or form with `*Plugin:hex` syntax yields a null `Form` (`Ref(0)`)
+/// rather than staying text [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP
+/// NVSE 855, `b3_sup5_02_excel_cross_type_and_array`: `"*NoMod.esm:1"` produced type
+/// `Form` (null Form)].
 fn form_text(g: &Game, s: &str) -> XVal {
-    let parsed = s.strip_prefix('*').and_then(|r| r.rsplit_once(':')).and_then(|(plugin, hex)| {
-        let i = g.data.load_order.iter().position(|p| p.eq_ignore_ascii_case(plugin.trim()))?;
-        let local = u32::from_str_radix(hex.trim(), 16).ok()? & 0x00FF_FFFF;
-        let id = ((i as u32) << 24) | local;
+    let Some(rest) = s.strip_prefix('*') else {
+        return XVal::Str(s.to_string());
+    };
+    let Some((plugin, hex)) = rest.rsplit_once(':') else {
+        return XVal::Str(s.to_string());
+    };
+    let Ok(local) = u32::from_str_radix(hex.trim(), 16) else {
+        return XVal::Str(s.to_string());
+    };
+    let resolved = g.data.load_order.iter().position(|p| p.eq_ignore_ascii_case(plugin.trim())).and_then(|i| {
+        let id = ((i as u32) << 24) | (local & 0x00FF_FFFF);
         (g.data.sig(FormId(id)).is_some() || id == FormId::PLAYER_REF.0).then_some(id)
     });
-    match parsed {
-        Some(id) => XVal::Ref(id),
-        None => XVal::Str(s.to_string()),
-    }
+    XVal::Ref(resolved.unwrap_or(0))
 }
 
 /// A JSON value as a script value: numbers, text, true/false as 1/0, null as 0, arrays as
@@ -198,10 +205,13 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             Ok(b) => XVal::Num(b.sheets.len() as f64),
             Err(()) => minus,
         },
+        // Empty existing sheets return 1 row and 1 col, while missing files/sheets return
+        // -1 [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855,
+        // `b3_sup_ex_02_excel_empty_sheet_counts`: missF=-1/-1/-1, empS1=1/1, missS=-1].
         "excelgetrowcount" | "excelgetcolcount" => {
             let book = xls_path(args).ok_or(()).and_then(|p| load_book(g, &p));
             match book.ok().as_ref().and_then(|b| b.sheets.get(index(args, 1)?)) {
-                Some(s) => XVal::Num(f64::from(if name == "excelgetrowcount" { s.rows() } else { s.cols() })),
+                Some(s) => XVal::Num(f64::from((if name == "excelgetrowcount" { s.rows() } else { s.cols() }).max(1))),
                 None => minus,
             }
         }
@@ -339,14 +349,18 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             XVal::Str(t.map(|t| t.strftime(fmt).to_string()).unwrap_or_default())
         }
         // The load order into SUPNVSE.log in the game's folder [documented: DumpLoadOrder]
-        // (NVForever's copy of it, appended to this session's lines): one line a plugin,
-        // its index in hex and its name [hypothesis: the page shows no line].
+        // (NVForever's copy of it, appended to this session's lines): exact framing
+        // `---Load order---` / `00 (0):FalloutNV.esm` / `---Load order end---`
+        // [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855,
+        // `b3_sup5_03_dump_load_order`].
         "dumploadorder" => {
             let old = g.mod_files.read_root_text("SUPNVSE.log").unwrap_or_default();
             let mut out = old;
+            out += "---Load order---\r\n";
             for (i, p) in g.data.load_order.iter().enumerate() {
-                out += &format!("{i:02X} {p}\r\n");
+                out += &format!("{i:02X} ({i}):{p}\r\n");
             }
+            out += "---Load order end---\r\n";
             g.mod_files.write_root_text("SUPNVSE.log", out);
             zero
         }
