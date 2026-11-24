@@ -22,9 +22,6 @@ pub const ON_DISPLAY_OBJECTIVE: &str = "showoff:ondisplayobjective";
 pub const ON_WEAPON_UNHOLSTER: &str = "showoff:onweaponunholster";
 pub const ON_FIRE_WEAPON: &str = "showoff:onfireweapon";
 
-/// The Fists weapon base form [observed: FalloutNV.esm WEAP 000001F4, EDID Fists].
-const FISTS: FormId = FormId(0x1F4);
-
 /// Safety cap on unconsumed `ForceWeaponJamAnim` requests in headless runs where no engine
 /// drains `ShowOffState::force_jam_requests` [design].
 pub const MAX_FORCE_JAM_REQUESTS: usize = 64;
