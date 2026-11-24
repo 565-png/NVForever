@@ -164,15 +164,10 @@ impl YuiConfig {
 
     /// Load `NVSE\Plugins\yUI.ini` and `menus\ySI\ySI.ini` (when present) using a VFS
     /// reader. Returns `None` when neither file is present so vanilla sessions stay
-    /// untouched [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, 10
-    /// official base masters, isolated clean-room staging, yUI 140 + `yUI.ini` +
-    /// `ySI.ini` + `ySI.xml` + `ySI.json`, GSDocMitchellHouse (`0x00103DF9`), Wave 4E
-    /// black-box probe `w4e_05_ysi_ini_precedence_and_gating`: `yUI=0 + no ySI.ini`
-    /// disables UI injection (`_ySI=-999`) while keeping `ySIGetTrait` JSON queries
-    /// active, whereas BOTH `yUI=0 + ySI=1` and `yUI=1 + ySI=0` activate ySI UI
-    /// injection (`_ySI=1`) — i.e., effective `bSortingIcons` combines both INIs with
-    /// logical OR (`yUI.bSortingIcons || ySI.bSortingIcons`); zero DLL/PDB/source
-    /// consulted; design: absent-INI vanilla gate].
+    /// untouched [design: absent-INI vanilla gate; hypothesis: effective `bSortingIcons`
+    /// combines both INIs with logical OR (`yUI.bSortingIcons || ySI.bSortingIcons`) and
+    /// `ySIGetTrait` JSON queries remain active when UI injection is disabled; see
+    /// `docs/spec-notes/yui-ini.md`].
     pub fn load_with(mut read: impl FnMut(&str) -> Option<Vec<u8>>) -> Option<Self> {
         let yui = read(YUI_INI_PATH);
         let ysi = read(YSI_INI_PATH);
@@ -187,8 +182,8 @@ impl YuiConfig {
         if let Some(bytes) = ysi {
             cfg.apply_overlay(&bytes);
         }
-        // [observed: w4e_05_ysi_ini_precedence_and_gating] ySI.ini bSortingIcons=0 does
-        // not turn off an explicit yUI.ini bSortingIcons=1 (and vice versa).
+        // [hypothesis] ySI.ini bSortingIcons=0 does not turn off an explicit yUI.ini
+        // bSortingIcons=1 (and vice versa).
         cfg.sorting_icons = yui_sorting_icons || cfg.sorting_icons;
         Some(cfg)
     }
@@ -331,7 +326,7 @@ mod tests {
             .expect("config present")
         };
 
-        // w4e_05 e1b: yUI.ini bSortingIcons=1 + ySI.ini bSortingIcons=0 stays enabled.
+        // yUI.ini bSortingIcons=1 + ySI.ini bSortingIcons=0 stays enabled [hypothesis].
         let yui1_ysi0 = load(
             Some(b"[General]\nbSortingIcons = 1\n"),
             Some(b"[General]\nbSortingIcons = 0\n"),
@@ -340,14 +335,14 @@ mod tests {
         assert!(yui1_ysi0.effective_sort_inventory());
         assert!(yui1_ysi0.effective_add_inventory_icons());
 
-        // w4e_05 f1: yUI.ini bSortingIcons=0 + ySI.ini bSortingIcons=1 is enabled.
+        // yUI.ini bSortingIcons=0 + ySI.ini bSortingIcons=1 is enabled [hypothesis].
         let yui0_ysi1 = load(
             Some(b"[General]\nbSortingIcons = 0\n"),
             Some(b"[General]\nbSortingIcons = 1\n"),
         );
         assert!(yui0_ysi1.sorting_icons);
 
-        // w4e_05 e1c: yUI.ini bSortingIcons=0 + no ySI.ini disables UI gating.
+        // yUI.ini bSortingIcons=0 + no ySI.ini disables UI gating.
         let yui0_none = load(Some(b"[General]\nbSortingIcons = 0\n"), None);
         assert!(!yui0_none.sorting_icons);
 
