@@ -18,12 +18,19 @@ opened, disassembled, or consulted.
 
 - NVForever reads `NVSE\Plugins\yUI.ini` case-insensitively through `mod_files` / VFS
   [documented: yUI - User Ynterface v1.4d (`https://www.nexusmods.com/newvegas/mods/74357`),
-  shipped `Data\NVSE\Plugins\yUI.ini` install path] and overlays `menus\ySI\ySI.ini` when
+  shipped `Data\NVSE\Plugins\yUI.ini` install path] and `menus\ySI\ySI.ini` when
   present [documented: ySI - Sorting Ycons 1.4b
   (`https://www.nexusmods.com/newvegas/mods/74358`), shipped `Data\menus\ySI\ySI.ini`
-  containing `[General] bSortingIcons = 1`; hypothesis: overlay order deduced from yUI
-  1.4d shipping `bSortingIcons = 0` alongside ySI 1.4b shipping `menus\ySI\ySI.ini` with
-  `bSortingIcons = 1`].
+  containing `[General] bSortingIcons = 1`]. Effective `[General] bSortingIcons`
+  combines both files with logical OR (`yUI.bSortingIcons || ySI.bSortingIcons`) so
+  `ySI.ini bSortingIcons = 0` does not turn off an explicit `yUI.ini bSortingIcons = 1`,
+  and `yUI.ini bSortingIcons = 0` with no `ySI.ini` disables UI injection while leaving
+  `ySIGetTrait` JSON queries active [observed: Fallout: New Vegas 1.4.0.525 + xNVSE
+  6.4.9, 2026-11-24, 10 official base masters, isolated clean-room staging, yUI 140 +
+  `yUI.ini` + `ySI.ini` + `ySI.xml` + `ySI.json`, GSDocMitchellHouse (`0x00103DF9`),
+  Wave 4E black-box probe `w4e_05_ysi_ini_precedence_and_gating`:
+  `yUI0+none(trait=(fba1),ui=-999)|yUI0+ySI1(ui=1)|yUI1+ySI0(trait=(fba1),ui=1)`; zero
+  DLL/PDB/source consulted].
 - When neither INI file is present, `YuiConfig::load_with` returns `None`: unmodded
   vanilla menus, item ordering, hotkey icons, and amber cursor tint remain completely
   unchanged, while standalone `menus\ySI\ySI.xml` / `menus\ySI\ySI.json` / `ySISetTrait`
@@ -41,10 +48,12 @@ Every stored field in `YuiConfig` has a live engine consumer:
 - `[General] bSortingIcons` (default `0` in `yUI.ini`; `1` in `menus\ySI\ySI.ini`):
   master gate controlling `[Sorting and Icons]` and ySI UI XML injection [documented:
   yUI v1.4d `Data\NVSE\Plugins\yUI.ini` (`; enable Sorting and Icons section which
-  controls ySI`)]. When `yUI.ini` is present and effective `bSortingIcons = 0`,
-  `ui_loading` skips `menus\ySI\ySI.xml` injection and `Game::ysi_active()` returns
-  `false`, disabling ySI inventory sorting, row icons, and hotkey icon replacement while
-  leaving script `ySIGetTrait`/`ySISetTrait` queries intact [design].
+  controls ySI`)]. When `yUI.ini` is present and effective `bSortingIcons = 0` (neither
+  `yUI.ini` nor `ySI.ini` sets it to `1`), `ui_loading` skips `menus\ySI\ySI.xml`
+  injection and `Game::ysi_active()` returns `false`, disabling ySI inventory sorting,
+  row icons, and hotkey icon replacement while keeping `ySIGetTrait`/`ySISetTrait` JSON
+  queries active [observed: Wave 4E `w4e_05_ysi_ini_precedence_and_gating` above;
+  design: `Game::ysi_active()` menu gate].
 - `[General] bMatchingCursor` (default `0` in `yUI.ini`): tints the game mouse pointer
   (`textures\interface\icons\misc\cursor.dds`) to the active HUD colour
   (`nvf_play::interface::hud_rgb()`) instead of fixed `AMBER` and re-tints live if the
