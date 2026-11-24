@@ -141,15 +141,22 @@ codes [documented: GetActiveMenuMode]. Other numbers stay as before [hypothesis]
   hud_hardcore2 hc2-hc5; hud.md §14.8];
 - every other constant reads 0 as a number [hypothesis].
 
-Scripts can also write standalone entity tokens into a trait via `SetUIString` /
-`SetUIStringAlt` with or without a trailing semicolon (e.g. `"&false"`, `"&true"`,
-`"&center"`) [hypothesis: JIP UI scripts hide vanilla tiles by writing `"&false"` to
-`.../visible`, relying on the trait parser recognising `&name` constants the same as XML
-entities; observer check]. NVForever keeps the written `Value::Str` text verbatim for
-`GetUIString`, while evaluating standalone `&name` / `&name;` ASCII identifier strings
-(excluding `&-sName;` game-string placeholders and mixed prose) identically to
-`Value::Sym` for `truthy()`, `num()`, `eq`, `justify`, and suffix-`<copy>` lookup
-[design: `fnv_ui::value`].
+Scripts writing entity-shaped strings via `SetUIString` (e.g. `"&false"`, `"&true"`,
+`"&center"`) store the string verbatim without resolving it to a numeric entity constant:
+`GetUIFloat` reads `0` for all three (`&false`, `&true`, and `&center`, overwriting the
+prior numeric value) while `GetUIString` reads `"&false"` verbatim [observed: Fallout:
+New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24, `GSDocMitchellHouse`
+(`0x00103DF9`), 10 official base masters, `w4d_43_nif_selector_and_ui_entities`
+(`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679):
+`HUDMainMenu/ReticleCenter/visible` `ret=64` -> `SetUIString "&false"` => `f=0 [&false]`,
+`SetUIString "&true"` => `t=0`, `SetUIString "&center"` => `c=0`; no DLL or source
+consulted]. Accordingly, `Value::Str` parses only numeric text in `Value::num()` (so
+`GetUIFloat` / `GetUIFloatAlt` return `0.0` for `"&true"` as well as `"&false"` and
+`"&center"`), while static XML entities parsed as `Value::Sym` keep their numeric values
+(`&true;` -> `1`, menu classes -> their IDs). NVForever still matches standalone `&name` /
+`&name;` ASCII identifier strings (excluding `&-sName;` game-string placeholders and mixed
+prose) against `Value::Sym` for `truthy()`, `eq`, `justify`, and suffix-`<copy>` lookup
+while keeping the written `Value::Str` verbatim for `GetUIString` [design: `fnv_ui::value`].
 
 ### 2.4 Game setting strings
 
