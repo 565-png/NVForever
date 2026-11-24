@@ -34,8 +34,14 @@ original-game parity remain unverified.
   XP unchanged. As in `chargen::SpecialSheet::apply`, attribute changes shift the
   base using `actor::shift_base`,
   retaining permanent, temporary and damage pools, carry synchronization and
-  actor-value event delivery. [hypothesis] The original's exact attribute pool and
-  its XP behavior after manual advancement still need captures.
+  actor-value event delivery. [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9,
+  2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters,
+  `w4d_41_vanilla_player_and_lists` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+  #3679): `ModPCAttribute Strength 2` shifted `Player.GetBaseActorValue Strength` from
+  `5` to `7` (`modAttr(5->7)`); `RewardXP 25` raised `Player.GetActorValue XP` from `0`
+  to `25` (`xp(0->25)`); no DLL or source consulted]. [hypothesis] The original's exact
+  temporary/damage pool interaction and XP behavior after manual `AdvancePCLevel` still
+  need captures.
 - The source call follows `revision::keeps`, retaining player attribute allocations
   as `functions::actor::set_actor_value` does. Arguments are read and SPECIAL
   admission is checked before mutation.
@@ -53,7 +59,12 @@ original-game parity remain unverified.
   `SetPCExpelled` also sets the player's rank to `-1` and invalidates the
   faction/relation caches so `GetInFaction` and `GetFactionRank` reflect the
   expulsion; `iFlag == 0` clears the expelled flag without re-adding faction
-  membership. [hypothesis] Automatic interior eviction through the nearest door
+  membership. [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24,
+  `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters,
+  `w4d_42_vanilla_faction_class_kill_drop` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+  #3679): `GetPCExpelled 0x00104C6E` transitioned `0 -> 1 -> 0` across `SetPCExpelled ... 1`
+  and `SetPCExpelled ... 0` (`exp(0->1->0)`); no DLL or source consulted]. [hypothesis]
+  Automatic interior eviction through the nearest door
   when the player stands inside a faction-owned interior cell, native
   `SetPCExpelled` bytecode argument encoding, and original-game non-faction /
   receiver edge cases remain uncaptured and are not implemented here.
