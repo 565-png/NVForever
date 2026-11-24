@@ -82,6 +82,7 @@ pub mod connections;
 pub mod crafting;
 pub mod crime;
 pub mod data;
+pub mod yui_ini;
 mod ysi_filename;
 mod ysi_predicates;
 pub mod source_compile;
