@@ -141,3 +141,73 @@ Compiler, runtime, strict-lint and hosted checks on the corrected integration re
 UNRUN. The historical six ordinary and three opt-in results do not qualify this
 candidate. Identical-fixture baselines, original-game and installed-workload
 comparisons, native profile semantics and full Stewie compatibility remain open.
+
+## 4. Sky plugin INI configs (`MoonlightNVSE.ini` and `CloudUpgrade.ini`)
+
+Built in `engine/nvforever/src/sky_ini.rs` and wired into `engine/nvforever/src/sky.rs`,
+`worldspace.rs`, `cloud_shadows.rs`, and `main.rs`.
+
+**Provenance.** Neither plugin's DLL nor source code was ever consulted or disassembled.
+Section/key names, install paths, and default values come strictly from the public Nexus
+Mods pages and shipped INI files of:
+- **MoonlightNVSE v2.00** (by WallSoGB): `https://www.nexusmods.com/newvegas/mods/77683`,
+  shipped `Data\nvse\plugins\MoonlightNVSE.ini`;
+- **Cloud Upgrade NVSE v1.0** (by doodlum): `https://www.nexusmods.com/newvegas/mods/79612`,
+  shipped `Data\NVSE\Plugins\CloudUpgrade.ini`.
+
+Exact third-party runtime internals are unknown: the 8-phase moon mapping remains
+`[hypothesis]`, and NVForever's VFS loading, clamping, omitted-key fallback, and
+**CloudUpgrade cloud speed modulation formula/mapping are NVForever's own `[design]`,
+not the Cloud Upgrade NVSE plugin's implementation**.
+
+- **Vanilla invariance `[design]`:** Both INI files are discovered case-insensitively
+  through the engine VFS at startup (`Data\NVSE\Plugins\MoonlightNVSE.ini` [documented:
+  MoonlightNVSE v2.00 shipped `nvse\plugins\MoonlightNVSE.ini`] and
+  `Data\NVSE\Plugins\CloudUpgrade.ini` [documented: Cloud Upgrade NVSE v1.0 shipped
+  `NVSE\Plugins\CloudUpgrade.ini`]) and carried across worldspace/climate sky rebuilds
+  (`worldspace::carry_sky`). When either file is absent or unreadable, the corresponding
+  option stays `None` and vanilla sky lighting and cloud animation remain bit-for-bit
+  unchanged. Neither plugin is added to `IsPluginInstalled` / `GetPluginVersion`
+  reporting (`ext-version.md`).
+- **Shared INI parsing `[design]`:** Lossy UTF-8 decoding with optional leading UTF-8 BOM
+  stripped; `;` and `#` comments ignored (full-line and inline); section and key names
+  matched ASCII case-insensitively; unknown sections/keys and non-finite or malformed
+  values ignored without aborting loading; duplicate keys take the last valid value.
+- **`MoonlightNVSE.ini`:**
+  - `[documented: MoonlightNVSE v2.00 (https://www.nexusmods.com/newvegas/mods/77683),
+    public Nexus page and shipped Data\nvse\plugins\MoonlightNVSE.ini]` `[Main]` contains
+    `bMoonPhaseBrightness=1` (toggle enabling dynamic nighttime brightness by moon phase)
+    and `fMoonMult0=0`, `fMoonMult1=0.33`, `fMoonMult2=0.5`, `fMoonMult3=0.9`,
+    `fMoonMult4=1` (multipliers from new moon = `0` to full moon = `4`).
+  - `[design]` When `MoonlightNVSE.ini` is present and an individual key is omitted or
+    invalid, NVForever falls back to those exact shipped v2.00 INI defaults
+    (`bMoonPhaseBrightness=1`, `fMoonMult0..=fMoonMult4 = [0.0, 0.33, 0.5, 0.9, 1.0]`).
+  - `[hypothesis]` The 8-phase lunar cycle (`fnv_world::sky::MOON_PHASES`: `full`,
+    `three_wan`, `half_wan`, `one_wan`, `new`, `one_wax`, `half_wax`, `three_wax`) maps
+    symmetrically onto `fMoonMult4` (full), `fMoonMult3` (gibbous), `fMoonMult2` (half),
+    `fMoonMult1` (crescent), and `fMoonMult0` (new).
+  - `[design]` Multipliers are clamped to `0.0..=10.0` (so negative presets produce pitch
+    dark directional moonlight without negative PBR illuminance). Scaling multiplies
+    `MOON_SHARE` inside `sky::aim_sun` only outdoors when the sun is below the horizon and
+    the active climate displays a moon (`Climate::has_moon()`); daytime directional light,
+    interiors, and `bMoonPhaseBrightness=0` stay bit-for-bit equal to vanilla.
+- **`CloudUpgrade.ini`:**
+  - `[documented: Cloud Upgrade NVSE v1.0 (https://www.nexusmods.com/newvegas/mods/79612),
+    public Nexus page and shipped Data\NVSE\Plugins\CloudUpgrade.ini]` `[Global]` defines
+    `Speed = 100.0`, `MaxSpeed = 5.0`, and `Volatility = 5.0`; `[Layer 1]`..`[Layer 4]`
+    define per-layer `SubSpeed` (`0.2`, `1.0`, `0.7`, `0.3`) and `SubVolatility` (`0.2`,
+    `0.3`, `0.4`, `0.5`) for the four WTHR cloud layers (`0..4`).
+  - `[design]` When `CloudUpgrade.ini` is present and an individual key is omitted or
+    invalid, NVForever falls back to those exact shipped v1.0 INI defaults.
+  - `[design: NVForever's own cloud speed modulation formula and mapping, not the Cloud
+    Upgrade NVSE plugin's]` Parsed values are clamped (`Speed` `0..=10000`, `MaxSpeed`
+    `0..=50`, `SubSpeed` `0..=50`, `Volatility`/`SubVolatility` `0..=100`). Effective
+    layer scroll scale is `(Speed / 100.0) * SubSpeed` capped at `MaxSpeed`. Because
+    vanilla WTHR horizon layers commonly store `ONAM` speed `0`, active
+    `CloudUpgrade.ini` uses a fallback base rate of `32 * CLOUD_SCROLL_PER_UNIT` for
+    `ONAM == 0` layers (while `Speed == 0`, `MaxSpeed == 0`, or `SubSpeed == 0` stops the
+    layer). Non-zero `Volatility * SubVolatility` applies NVForever's own smooth, bounded
+    cosine speed modulation (`amplitude = 0.5 * vol / (vol + 5.0)`, distinct per-layer
+    periods `[180, 145, 115, 90]` s, peak rate capped at `base * MaxSpeed`) integrated
+    analytically in `f64` so UV scroll offsets remain monotonic, stateless, deterministic,
+    and synced with `cloud_shadows`.
