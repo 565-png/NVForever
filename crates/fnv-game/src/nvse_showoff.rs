@@ -82,8 +82,10 @@ pub struct ShowOffState {
     pub in_pre_activate_item: bool,
     /// `(frame, [(actor, weapon)])` already dispatched to `ShowOff:OnFireWeapon` this
     /// frame, deduplicating `weapon_fired` -> `projectile_fired` and multi-pellet bursts
-    /// [observed: Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9, ShowOffNVSE Plugin 184
-    /// (clean-room harness #3678 / PR #3679): 7-pellet Caravan Shotgun fires once].
+    /// [observed: Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9, ShowOffNVSE Plugin 184,
+    /// 2026-11-23, GSDocMitchellHouse (0x00103DF9), 10 official base masters, probe
+    /// `w1_3632_onfireweapon_and_forcejam` in #3679 (`Player.FireWeapon` on 7-pellet
+    /// Caravan Shotgun `0x000CD53A` invokes callback once)].
     pub fired_this_frame: (u64, Vec<(FormId, FormId)>),
     /// Actors asked by `ForceWeaponJamAnim` / `ForceJamAnim` to play their weapon's jam
     /// animation (`Game::take_force_jam_requests`, consumed by `nvf_play::combat::fire`).
@@ -329,11 +331,14 @@ impl Game<'_> {
     /// reference (`0::`) is `actor`; first argument (`1::` / `"first"::`) is `weapon`
     /// base form, firing once per shot even on multi-pellet weapons [documented: GECK
     /// wiki Category:Event Handlers (ShowOff NVSE), SetEventHandlerAlt; observed:
-    /// Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9, ShowOffNVSE Plugin 184 (clean-room
-    /// harness #3678 / PR #3679): Player 0x14 and NPC ref calling ref, WEAP base form
-    /// arg 0, 7-pellet Caravan Shotgun fires once; hypothesis: non-actor and melee
-    /// animation types 0..=2 exclusion, god-mode firing]. Free when no handler is
-    /// registered.
+    /// Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9, ShowOffNVSE Plugin 184, 2026-11-23,
+    /// GSDocMitchellHouse (0x00103DF9), 10 official base masters, probe
+    /// `w1_3632_onfireweapon_and_forcejam` in #3679 (`SetEventHandlerAlt
+    /// "ShowOff:OnFireWeapon"` with `begin Function { ref rWeap }`, `Player.FireWeapon`
+    /// with `Weap10mmPistol` `0x0000434F` and 7-pellet Caravan Shotgun `0x000CD53A` ->
+    /// `self=0x14`, `weap=WEAP base`, 7-pellet shotgun fires once); hypothesis: NPC-actor
+    /// dispatch, non-actor and melee animation types 0..=2 exclusion, and god-mode
+    /// firing]. Free when no handler is registered.
     pub(crate) fn showoff_on_fire_weapon(&mut self, actor: FormId, weapon: FormId, dedup_same_frame: bool) -> usize {
         if !self.handled(ON_FIRE_WEAPON) || weapon.0 == 0 {
             return 0;
@@ -418,16 +423,20 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         }
         // 1 when the actor is alive, has a weapon out, and the weapon has a jam animation
         // (including when already jamming); 0 otherwise [documented: GECK wiki
-        // ForceWeaponJamAnim (.357 revolver has no jam animation and returns 0) and
-        // GetWeaponAnimJamTime; observed: showoff1, 10mm pistol away = 0 and drawn = 1;
-        // observed: FalloutNV.esm WEAP DNAM Weap10mmPistol jam_time = 1.4 vs
-        // WeapNV357Revolver jam_time = 0.0; observed: Fallout: New Vegas 1.4.0.525,
-        // xNVSE 6.4.9, ShowOffNVSE Plugin 184 (clean-room harness #3678 / PR #3679):
-        // drawn 10mm = 1, re-calling while jamming = 1, GetAnimAction = 9 and
-        // IsAnimPlayingEx 4 = 0 during jam, drawn .357 Magnum Revolver = 0, holstered
-        // 10mm = 0, Baseball Bat = 0, Fists = 0; hypothesis: animation_type 3..=9 +
-        // DNAM/jam_time > 0 as the rules-side jam-animation check]. Queues the actor for
-        // `nvf_play::combat::fire` to trigger `Cycle::jam` and `WeaponAnim::jams`.
+        // ForceWeaponJamAnim (alias ForceJamAnim; .357 revolver has no jam animation and
+        // returns 0) and GetWeaponAnimJamTime; observed: showoff1, 10mm pistol away = 0
+        // and drawn = 1; observed: FalloutNV.esm WEAP DNAM Weap10mmPistol jam_time = 1.4
+        // vs WeapNV357Revolver jam_time = 0.0; observed: Fallout: New Vegas 1.4.0.525,
+        // xNVSE 6.4.9, ShowOffNVSE Plugin 184, 2026-11-23, GSDocMitchellHouse
+        // (0x00103DF9), 10 official base masters, probes `w1_3632_onfireweapon_and_forcejam`
+        // (`Player.ForceWeaponJamAnim` on Player 0x14: holstered 10mm `0x0000434F` = 0,
+        // drawn 10mm = 1 with `GetAnimAction = 9`, `IsAnimPlayingEx 4 = 0`, repeat call
+        // while jamming = 1, drawn Baseball Bat `0x0000421C` = 0, drawn Fists = 0) and
+        // `so_34_force_weapon_jam_revolver` (`AddItem`/`EquipItem` + draw `.357`
+        // `0x0008F216` -> 0 vs 10mm `0x0000434F` -> 1) in #3679; hypothesis:
+        // animation_type 3..=9 + DNAM/jam_time > 0 as the rules-side jam-animation check].
+        // Queues the actor for `nvf_play::combat::fire` to trigger `Cycle::jam` and
+        // `WeaponAnim::jams`.
         "forceweaponjamanim" | "forcejamanim" => {
             let a = subject.unwrap_or(FormId::PLAYER_REF);
             let ok = !g.is_dead(a)

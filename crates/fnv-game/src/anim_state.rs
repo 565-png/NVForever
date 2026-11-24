@@ -68,8 +68,11 @@ pub enum AnimAction {
     Reload,
     /// 9: weapon jam (`GetAnimAction == 9` while `IsAnimPlayingEx 4 == 0` and without
     /// firing `SetOnReloadWeaponEventHandler`) [observed: Fallout: New Vegas 1.4.0.525,
-    /// xNVSE 6.4.9, ShowOffNVSE Plugin 184 (clean-room harness #3678 / PR #3679),
-    /// `ForceWeaponJamAnim` on drawn 10mm pistol].
+    /// xNVSE 6.4.9, ShowOffNVSE Plugin 184, 2026-11-23, GSDocMitchellHouse (0x00103DF9),
+    /// 10 official base masters, probe `w1_3632_onfireweapon_and_forcejam` in #3679
+    /// (`Player.ForceWeaponJamAnim` on drawn `Weap10mmPistol` `0x0000434F` ->
+    /// `GetAnimAction == 9`, `IsAnimPlayingEx 4 == 0`); hypothesis: natural vanilla
+    /// weapon-condition jams (`Phase::Jammed`) likewise report `9` instead of `13`].
     Jam,
     /// 12: ANIM_ACTION_WAIT_FOR_SPECIAL_IDLE [documented: the name]. No NPC of the
     /// campaign `anim_actions` read 10–12 [observed]. The player read 12
