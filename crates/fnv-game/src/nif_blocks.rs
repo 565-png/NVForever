@@ -197,9 +197,12 @@ enum RuntimeNodeState {
 }
 
 impl SceneMirror {
-    /// Publish separate player models while preserving the previous third-person
-    /// default. Legacy `set_tree` hosts can continue using their one reference tree.
+    /// Publish separate player models while keeping legacy `set_tree` hosts on their
+    /// single reference tree.
     pub fn use_separate_player_models(&mut self) { self.player_view = ModelView::ThirdPerson; }
+
+    /// Whether the host publishes separate first-person and third-person player rigs.
+    pub fn uses_separate_player_models(&self) -> bool { self.player_view != ModelView::Reference }
 
     pub fn resolve_view(&self, r: FormId, view: ModelView) -> ModelView {
         if r != FormId::PLAYER_REF { ModelView::Reference }
@@ -750,6 +753,22 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
     let view = match num(args, selector, 0.0) {
         1.0 => ModelView::ThirdPerson,
         2.0 => ModelView::FirstPerson,
+        // Omitted/0 `pcModel` on the player follows the active 1st/3rd-person camera
+        // when separate player models are published [observed: Fallout: New Vegas
+        // 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24, `GSDocMitchellHouse`
+        // (`0x00103DF9`), 10 official base masters, isolated clean-room staging copy
+        // (read-only `PrintToConsole` probe; zero writes to game install or Saves),
+        // `w4d_43_nif_selector_and_ui_entities`
+        // (`tools/capture/nvse/catalogs/wave4d_extenders.json`, PR #3803 / #3802):
+        // `PROBE|w4d_43_nif_selector_and_ui_entities|p1(1p=1,cb=-1/12/-1/-1)|p3(1p=0,cb=12/12/-1/-1)|ui(ret=64,f=0[&false],t=0,c=0)|idle(1,0,1)`;
+        // zero DLL, PDB, or third-party source consulted — in 1st person (`1p=1`),
+        // omitted `pcModel` returned `-1` (matching `pcModel=2` `-1` rather than
+        // `pcModel=1` `12`), and in 3rd person (`1p=0`), omitted `pcModel` returned
+        // `12` (matching `pcModel=1` `12`)]. Legacy single-tree hosts and non-`pcModel`
+        // functions stay on `ModelView::Reference`.
+        _ if selector != usize::MAX && r == FormId::PLAYER_REF && g.scene.uses_separate_player_models() => {
+            if g.senses.first_person { ModelView::FirstPerson } else { ModelView::ThirdPerson }
+        }
         _ => ModelView::Reference,
     };
     let v = match name {
