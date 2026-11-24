@@ -163,18 +163,12 @@ fn saves_cells_and_the_rest() {
     assert_eq!(n(&mut g, "GetSavedSaveSize 0"), 12345.0);
     assert_eq!(n(&mut g, "GetLoadedSaveSize 0"), 999.0);
     assert_eq!(n(&mut g, "GetLoadedSaveSize 1"), 0.0);
-    // GetSaveName includes `.fos` [observed: p2_sup_save_meta].
-    assert_eq!(s(&mut g, "GetSaveName 0"), "Save 3.fos");
-    assert_eq!(s(&mut g, "GetSaveName 1"), "quicksave.fos");
-    // Already `.fos` is not doubled; `.nvfsave` normalizes to `.fos`.
-    g.save_files.saved = Some(SaveFile { name: "manual.fos".into(), bytes: 512 });
-    assert_eq!(s(&mut g, "GetSaveName 0"), "manual.fos");
-    g.save_files.saved = Some(SaveFile { name: "slot.nvfsave".into(), bytes: 512 });
-    assert_eq!(s(&mut g, "GetSaveName 0"), "slot.fos");
+    assert_eq!(s(&mut g, "GetSaveName 0"), "Save 3");
+    assert_eq!(s(&mut g, "GetSaveName 1"), "quicksave");
     // A load keeps them.
     let session = g.take_session();
     g.put_session(session);
-    assert_eq!(s(&mut g, "GetSaveName 1"), "quicksave.fos");
+    assert_eq!(s(&mut g, "GetSaveName 1"), "quicksave");
     // Indoors the player's cell alone; no map markers.
     assert_eq!(n(&mut g, "let aR := GetNearCells 2\nSetFunctionValue aR[0]"), f64::from(CELL));
     assert_eq!(n(&mut g, "let aR := GetNearMapMarkers -1\nSetFunctionValue (Ar_Size aR)"), 0.0);

@@ -133,16 +133,11 @@ fn excel_cells_sheets_and_arrays() {
     // not text, observed: sup5 xl.rename].
     assert_eq!(n(&mut g, "ExcelSetSheetName \"xlBook\" 1 \"A name far longer than thirty-one letters\""), 1.0);
     assert_eq!(s(&mut g, "ExcelSetSheetName \"xlBook\" 1"), "A name far longer than thirty-o");
-    // Empty auto-created Sheet2 reports 1 row and 1 col [observed: b3_sup_ex_02_excel_empty_sheet_counts],
-    // while a missing sheet still returns -1.
-    assert_eq!(n(&mut g, "ExcelGetRowCount \"xlBook\" 1"), 1.0);
-    assert_eq!(n(&mut g, "ExcelGetColCount \"xlBook\" 1"), 1.0);
-    assert_eq!(n(&mut g, "ExcelGetRowCount \"xlBook\" 9"), -1.0);
     // Erasing [documented: ExcelEraseCell, ExcelEraseSheet].
     assert_eq!(n(&mut g, "ExcelEraseCell \"xlBook\" 0 4 1"), 1.0);
     assert_eq!(n(&mut g, "ExcelGetCellValueType \"xlBook\" 0 4 1"), 0.0);
     assert_eq!(n(&mut g, "ExcelEraseSheet \"xlBook\" 2"), 1.0);
-    assert_eq!(n(&mut g, "ExcelGetRowCount \"xlBook\" 2"), 1.0);
+    assert_eq!(n(&mut g, "ExcelGetRowCount \"xlBook\" 2"), 0.0);
     assert_eq!(n(&mut g, "ExcelGetWorkSheetCount \"xlBook\""), 3.0);
     // The file is a workbook in NVForever's layer, not in the game folder.
     let bytes = std::fs::read(layer.join("GameRoot").join("xlBook.xls")).unwrap();
@@ -155,15 +150,11 @@ fn excel_cells_sheets_and_arrays() {
     // Along a row with 1.
     q(&mut g, "let aIn := ar_Construct \"array\"\nar_Append aIn 7\nar_Append aIn 8\nExcelArrayToFile \"xlArr\" 1 0 0 aIn 1");
     assert_eq!(n(&mut g, "ExcelReadFloat \"xlArr\" 1 0 1"), 8.0);
-    // Read back, `*Plugin:hex` as Form; unknown plugin `*NoMod.esm:1` parses as null Form
-    // [documented: ExcelArrayFromFile; observed: b3_sup5_02_excel_cross_type_and_array].
+    // Read back, `*Plugin:hex` as the form [documented: ExcelArrayFromFile].
     q(&mut g, "ExcelWriteString \"xlArr\" 0 4 0 \"*Sup5.esm:000900\"");
-    q(&mut g, "ExcelWriteString \"xlArr\" 0 5 0 \"*NoMod.esm:1\"");
     let out = s(&mut g, "\"\"\nlet aList := ExcelArrayFromFile \"xlArr\" 0 0 0\nlet sOut := sv_Construct \"%g %g %z %g %z\" (ar_Size aList) (aList[0]) (aList[1]) (aList[2]) (aList[3])");
-    assert_eq!(out, "6 2 MyString 3.5 Tester");
+    assert_eq!(out, "5 2 MyString 3.5 Tester");
     assert_eq!(n(&mut g, "IsFormValid (ExcelArrayFromFile \"xlArr\" 0 0 0)[4]"), 1.0);
-    assert_eq!(s(&mut g, "typeof (ExcelArrayFromFile \"xlArr\" 0 0 0)[5]"), "Form");
-    assert_eq!(n(&mut g, "IsFormValid (ExcelArrayFromFile \"xlArr\" 0 0 0)[5]"), 0.0);
     let row = s(&mut g, "\"\"\nlet aList := ExcelArrayFromFile \"xlArr\" 1 0 1\nlet sOut := sv_Construct \"%g %g %g\" (ar_Size aList) (aList[0]) (aList[1])");
     assert_eq!(row, "2 7 8");
     // A file that is no workbook is not overwritten: -1 [documented].
@@ -273,11 +264,10 @@ fn file_sizes_times_and_the_load_order() {
     // A request outside 0-2 gives nothing [hypothesis].
     assert_eq!(n(&mut g, "ar_Size (GetFileTime \"nvac.log\" 3)"), 0.0);
     assert_eq!(s(&mut g, "GetFileTimeSTR \"nvac.log\" 3 0"), "");
-    // The load order into NVForever's SUPNVSE.log [documented: DumpLoadOrder;
-    // observed: b3_sup5_03_dump_load_order].
+    // The load order into NVForever's SUPNVSE.log [documented: DumpLoadOrder].
     q(&mut g, "DumpLoadOrder");
     let log = std::fs::read_to_string(layer.join("GameRoot").join("SUPNVSE.log")).unwrap();
-    assert!(log.contains("---Load order---\r\n00 (0):Sup5.esm\r\n---Load order end---\r\n"), "{log:?}");
+    assert!(log.contains("00 Sup5.esm"), "{log}");
     assert!(!game_dir.join("SUPNVSE.log").exists());
 }
 

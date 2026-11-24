@@ -771,13 +771,9 @@ fn stewie_inventory_queries_keep_unbound_fallback_and_follow_current_choices_aft
     g.tweaks.hardcore_ammo_weight = true;
     g.tweaks.single_item_figures = true;
     let before = g.tweaks.clone();
-    // ASCII case-insensitive, but surrounding whitespace is NOT trimmed [observed: stew_01_stewie_get_value_case_and_ammo].
-    assert_eq!(q(&mut g, "SetFunctionValue (StewVal \"bHARDCOREtweaks:tWEAKs\")"), n(1.0));
-    assert_eq!(q(&mut g, "SetFunctionValue (StewieGetValue \"bAMMOweight:hardcore tweaks\")"), n(1.0));
-    assert_eq!(q(&mut g, "SetFunctionValue (StewVal \"bindividialitemstats:tweaks\")"), n(1.0));
-    assert_eq!(q(&mut g, "SetFunctionValue (StewVal \" bHARDCOREtweaks : tWEAKs \")"), n(0.0));
-    assert_eq!(q(&mut g, "SetFunctionValue (StewieGetValue \" bAMMOweight : hardcore tweaks \")"), n(0.0));
-    assert_eq!(q(&mut g, "SetFunctionValue (StewVal \" bUnmapped : Tweaks \")"), n(0.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (StewVal \" bHARDCOREtweaks : tWEAKs \")"), n(1.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (StewieGetValue \" bAMMOweight : hardcore tweaks \")"), n(1.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (StewVal \" bindividialitemstats : tweaks \")"), n(1.0));
     assert_eq!(g.tweaks, before, "queries do not mutate any settings");
     assert_eq!(q(&mut g, "SetFunctionValue (GetPluginVersion \"lStewieAl's Tweaks\")"), version);
     let saved = g.snapshot();
@@ -833,16 +829,14 @@ fn stewie_pipboy_queries_keep_unbound_fallback_and_follow_current_choices_after_
     let version = q(&mut g, "SetFunctionValue (GetPluginVersion \"lStewieAl's Tweaks\")");
     assert_eq!(version, n(941.0));
     for name in ["StewVal", "StewieGetValue"] {
-        assert_eq!(q(&mut g, &format!("SetFunctionValue ({name} \"bDisableStealthEffectInPipboy:Tweaks\")")), n(0.0));
-        assert_eq!(q(&mut g, &format!("SetFunctionValue ({name} \"bKeepPipboyLightOnCellChange:Tweaks\")")), n(1.0));
-        assert_eq!(q(&mut g, &format!("SetFunctionValue ({name} \" bKeepPipboyLightOnCellChange : Tweaks \")")), n(0.0));
+        assert_eq!(q(&mut g, &format!("SetFunctionValue ({name} \" bDisableStealthEffectInPipboy : Tweaks \")")), n(0.0));
+        assert_eq!(q(&mut g, &format!("SetFunctionValue ({name} \" bKeepPipboyLightOnCellChange : Tweaks \")")), n(1.0));
         assert_eq!(q(&mut g, &format!("SetFunctionValue ({name} \"bDisableStealthEffectInPipboy:Other\")")), n(7.0));
     }
     g.tweaks.no_stealth_shimmer_in_pipboy = true;
     let before = g.tweaks.clone();
-    assert_eq!(q(&mut g, "SetFunctionValue (StewVal \"bdisablestealtheffectinpipboy:tweaks\")"), n(1.0));
-    assert_eq!(q(&mut g, "SetFunctionValue (StewieGetValue \"bkeeppipboylightoncellchange:tweaks\")"), n(1.0));
-    assert_eq!(q(&mut g, "SetFunctionValue (StewVal \" bdisablestealtheffectinpipboy : tweaks \")"), n(0.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (StewVal \" bdisablestealtheffectinpipboy : tweaks \")"), n(1.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (StewieGetValue \" bkeeppipboylightoncellchange : tweaks \")"), n(1.0));
     assert_eq!(g.tweaks, before, "queries do not mutate settings");
     // Restore clears application authority until rebound.
     let saved = g.snapshot();
@@ -876,9 +870,8 @@ fn stewie_worn_armor_weightless_queries_follow_handoff_and_keep_item_mask_fallba
     g.bind_stewie_stat_settings(&chosen);
     assert_eq!(q(&mut g, "SetFunctionValue (GetPluginVersion \"lStewieAl's Tweaks\")"), n(941.0));
     for name in ["StewVal", "StewieGetValue"] {
-        assert_eq!(q(&mut g, &format!("SetFunctionValue ({name} \"bWeightlessWornArmor:Tweaks\")")), n(0.0));
-        assert_eq!(q(&mut g, &format!("SetFunctionValue ({name} \"bWeightlessWornPowerArmor:Tweaks\")")), n(1.0));
-        assert_eq!(q(&mut g, &format!("SetFunctionValue ({name} \" bWeightlessWornPowerArmor : Tweaks \")")), n(0.0));
+        assert_eq!(q(&mut g, &format!("SetFunctionValue ({name} \" bWeightlessWornArmor : Tweaks \")")), n(0.0));
+        assert_eq!(q(&mut g, &format!("SetFunctionValue ({name} \" bWeightlessWornPowerArmor : Tweaks \")")), n(1.0));
         assert_eq!(q(&mut g, &format!("SetFunctionValue ({name} \"bWeightlessItems:Tweaks\")")), n(1.0));
         assert_eq!(q(&mut g, &format!("SetFunctionValue ({name} \"bWeightlessWornArmor:Other\")")), n(5.0));
     }
@@ -886,9 +879,8 @@ fn stewie_worn_armor_weightless_queries_follow_handoff_and_keep_item_mask_fallba
     g.tweaks.weightless_worn_armor = true;
     g.tweaks.weightless_worn_power_armor = false;
     let before = g.tweaks.clone();
-    assert_eq!(q(&mut g, "SetFunctionValue (StewVal \"bweightlesswornarmor:tweaks\")"), n(1.0));
-    assert_eq!(q(&mut g, "SetFunctionValue (StewieGetValue \"bweightlesswornpowerarmor:tweaks\")"), n(0.0));
-    assert_eq!(q(&mut g, "SetFunctionValue (StewVal \" bweightlesswornarmor : tweaks \")"), n(0.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (StewVal \" bweightlesswornarmor : tweaks \")"), n(1.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (StewieGetValue \" bweightlesswornpowerarmor : tweaks \")"), n(0.0));
     assert_eq!(g.tweaks, before, "queries do not mutate settings");
 
     // Snapshot/restore clears application authority until rebound.

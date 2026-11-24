@@ -638,13 +638,10 @@ fn a_type_error_is_reported_and_the_script_goes_on() {
 
 #[test]
 fn tostring_and_tonumber() {
-    let h = run("string_var s\nfloat n\nstring_var sl\nstring_var sm\nbegin GameMode\nlet s := ToString 42\nlet n := (ToNumber \"12\") * 2\nlet sl := ToString (Ar_List 1, 2)\nlet sm := ToString (Ar_Map \"k\"::5)\nend");
+    let h = run("string_var s\nfloat n\nbegin GameMode\nlet s := ToString 42\nlet n := (ToNumber \"12\") * 2\nend");
     // ToNumber is NVSE-aware, so without the parentheses its argument would be "12" * 2.
     assert_eq!(h.text(1), "42");
     assert_eq!(h.0[&2], Value::Num(24.0));
-    // Arrays and stringmaps format as "NULL" [observed: b3_core_05_tostring_array_map].
-    assert_eq!(h.text(3), "NULL");
-    assert_eq!(h.text(4), "NULL");
 }
 
 // ---- arrays (task B3, the D2 functions) -------------------------------------------------

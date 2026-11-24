@@ -192,20 +192,22 @@ fn weapons_and_scopes() {
     assert_eq!(n(&mut g, "RemoveScopeModelPath TestScoped"), 1.0);
     assert_eq!(n(&mut g, "RemoveScopeModelPath TestScoped"), 0.0, "nothing left to remove");
     // A poison only on an equipped weapon (the player has none equipped yet).
-    q(&mut g, "PlayerREF.ApplyWeaponPoison TestPoison");
+    assert_eq!(n(&mut g, "PlayerREF.ApplyWeaponPoison TestPoison"), 0.0);
     assert_eq!(g.weapon_poison(FormId::PLAYER_REF), None);
-    // With a weapon equipped: accepts poison ALCH, rejects non-ALCH (preserving poison),
-    // clears on omitted arg, and rejects non-poison ALCH [observed: jg_34_apply_weapon_poison_non_alch].
+    // With a weapon equipped: accepts poison ALCH (returns 1), clears on omitted arg
+    // (returns 1), and rejects non-poison ALCH (returns 0) [observed:
+    // w4h_09_apply_weapon_poison_stimpak]; non-ALCH and preserving an existing poison on
+    // rejection [hypothesis].
     q(&mut g, "PlayerREF.AddItem TestScoped 1 1\nPlayerREF.EquipItem TestScoped 0 1");
-    q(&mut g, "PlayerREF.ApplyWeaponPoison TestPoison");
+    assert_eq!(n(&mut g, "PlayerREF.ApplyWeaponPoison TestPoison"), 1.0);
     assert_eq!(n(&mut g, "PlayerREF.GetEquippedWeaponPoison"), f64::from(ALCH));
-    q(&mut g, "PlayerREF.ApplyWeaponPoison TestCap");
+    assert_eq!(n(&mut g, "PlayerREF.ApplyWeaponPoison TestCap"), 0.0);
     assert_eq!(n(&mut g, "PlayerREF.GetEquippedWeaponPoison"), f64::from(ALCH), "non-ALCH preserves poison");
-    q(&mut g, "PlayerREF.ApplyWeaponPoison TestStimpak");
+    assert_eq!(n(&mut g, "PlayerREF.ApplyWeaponPoison TestStimpak"), 0.0);
     assert_eq!(n(&mut g, "PlayerREF.GetEquippedWeaponPoison"), f64::from(ALCH), "non-poison ALCH preserves poison");
-    q(&mut g, "PlayerREF.ApplyWeaponPoison");
+    assert_eq!(n(&mut g, "PlayerREF.ApplyWeaponPoison"), 1.0);
     assert_eq!(n(&mut g, "PlayerREF.GetEquippedWeaponPoison"), 0.0, "omitted arg clears poison");
-    q(&mut g, "PlayerREF.ApplyWeaponPoison TestStimpak");
+    assert_eq!(n(&mut g, "PlayerREF.ApplyWeaponPoison TestStimpak"), 0.0);
     assert_eq!(n(&mut g, "PlayerREF.GetEquippedWeaponPoison"), 0.0, "non-poison ALCH rejected when unpoisoned");
     q(&mut g, "PlayerREF.EjectCasing \"ShellNode\"");
     let c = g.take_casing_requests();

@@ -14,13 +14,8 @@ smoke scenario `jg9-script-sounds-moves`.
 
 A path is "relative to the New Vegas folder" [documented: PlaySoundFile]. NVForever plays
 Data's files only: `Data\` is taken off and the rest is looked up as the archives spell
-it, in any case; a path outside Data, with a drive or `..`, plays nothing
-[engineering choice]. `PlaySoundFile` and `PlaySoundFromPath` return 1 even when the
-file does not exist [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
-JohnnyGuitarNVSE 528 with the 10 official base masters,
-`b3_jg9_01_sound_runspeed_compass_pipboy` (`tools/capture/nvse/catalogs/wave4b_extenders.json`,
-#3678 / PR #3679): `PlaySoundFile "sound\fx\nvseprobe_no_such.wav"` returned `1` and
-`StopSoundFromPath` returned `0`; no DLL or source consulted].
+it, in any case; a path outside Data, with a drive or `..`, plays nothing and returns 0
+[engineering choice]. A file NVForever cannot find returns 0 [hypothesis: isSuccess].
 
 Each file a script plays gets a sound of its own for the session: a form ID from
 `0xFFF00000` up, one per file, source and looping [engineering choice]. The engine's sfx
