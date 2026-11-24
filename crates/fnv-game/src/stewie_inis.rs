@@ -406,6 +406,7 @@ pub fn apply_modular_tweaks_to_game(overrides: &StewieIniMap, tweaks: &mut Tweak
     bool_tweak!("Tweaks", "bWeaponModdingSkillRequirement", modding_needs_skill);
     bool_tweak!("Tweaks", "bPlantingLiveGrenadesRequiresWeaponSkill", planting_needs_skill);
     bool_tweak!("Tweaks", "bFastTravelCostsSpecialNukaBottles", travel_costs_bottle);
+    bool_tweak!("Tweaks", "bAllowUnsafeFastTravel", unsafe_fast_travel);
     bool_tweak!("Tweaks", "bArmorCausesSinking", armor_sinks);
     bool_tweak!("Tweaks", "bRememberBobbyPinHealth", remember_pin_health);
     bool_tweak!("Tweaks", "bForceLockpickNoBreakLock", force_spares_lock);
@@ -439,6 +440,7 @@ pub fn apply_modular_tweaks_to_game(overrides: &StewieIniMap, tweaks: &mut Tweak
     bool_tweak!("Tweaks", "bNoPlaceMarkerPopup", no_marker_popup);
     bool_tweak!("Tweaks", "bReloadingWithNoAmmoSwapsAmmoTypes", empty_reload_swaps_ammo);
     bool_tweak!("Tweaks", "bMenuSearch", menu_search);
+    bool_tweak!("Tweaks", "bArmorConditionLabel", armor_condition);
 
     // Numeric [Tweaks] settings with documented domains.
     if let Some(n) = overrides.get_i32("Tweaks", "iPerksPerLevel").filter(|&n| n >= 1) {

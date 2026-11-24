@@ -38,12 +38,14 @@ engineering choices (`[design]`) or unobserved assumptions about the original pl
   override earlier files at key granularity, and later lines within a file override
   earlier lines. (The original plugin's exact OS-enumeration tie-breaking order has not
   been observed.)
-- **Tweak INI precedence (`Tweaks\INIs\*.ini`) [design]:**
-  - In `nvf-play`, `TweaksPlugin` applies recognized modular `Tweaks\INIs\*.ini`
-    overrides to `TweakSettings` (both `TweakSettings::game` and engine-side fields) in
-    `PostStartup` before `crate::settings::apply_stored` reads `NVForever.ini`. Explicit
-    player choices saved in `NVForever.ini` therefore always win over mod-shipped
-    modular INI defaults, while unmentioned tweaks take the modular INI values.
+- **Tweak INI precedence (`Tweaks\INIs\*.ini`) [design: maintainer decision 2026-11-24, #3535]:**
+  - By maintainer decision (2026-11-24), mod-shipped `Data\NVSE\Plugins\Tweaks\INIs\*.ini`
+    files may override NVForever-owned tweak settings at startup. In `nvf-play`,
+    `TweaksPlugin` applies recognized modular `Tweaks\INIs\*.ini` overrides to
+    `TweakSettings` (both `TweakSettings::game` and engine-side fields) in `PostStartup`
+    before `crate::settings::apply_stored` reads `NVForever.ini`. Explicit player choices
+    saved in `NVForever.ini` therefore always win over mod-shipped modular INI defaults,
+    while unmentioned tweaks take the modular INI values.
   - In headless `fnv-game` (`Game::new`), modular `Tweaks\INIs\*.ini` overrides apply
     onto `Game::tweaks`.
   - For `StewieGetValue` / `StewVal` (unmapped keys and unbound games) and unbound
