@@ -1,6 +1,6 @@
 # Typed held UI projection requests
 
-[observed: private installed loose caller] ProjectUITile is called on a reference with two strings and four rectangle numbers. Process evidence: historical public-command metadata labels it JIP/reference-only with numeric return and opcode 0x2925; this is not a new native measurement. The installed caller uses an exact 1x1 rectangle to withdraw. No installed source or game text is transcribed into these authored fixtures.
+[hypothesis] ProjectUITile is called on a reference with two strings and four rectangle numbers, and an exact 1x1 rectangle withdraws an active projection. Process evidence: historical public-command metadata labels it JIP/reference-only with numeric return and opcode 0x2925; this is not a new native measurement. No installed source or game text is transcribed into these authored fixtures.
 
 [hypothesis] Correct the existing unnumbered source-command catalogue row in place and ordinary ExtCall routing. The existing `schemas/script/command_opcodes.json` mapping already names ProjectUITile as 10533 (`0x2925`); this contribution leaves that entire map unchanged. A precompiled call decoded through that mapping may reach the typed handler, but the native parameter-frame adapter and its compatibility remain unqualified. No opcode or native parameter descriptor is added. The run-on reference is required at runtime. Accepted/withdrawn calls return the engine's neutral numeric zero; native return parity is unmeasured.
 
