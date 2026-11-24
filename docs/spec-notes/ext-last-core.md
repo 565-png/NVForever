@@ -172,10 +172,14 @@ a combat-disabled actor never enters combat with other actors (though others may
 still attack it, and `UseWeapon` / `Use Weapon` packages are unaffected), and the
 state resets on every saved-game load (kept out of both `GameSnapshot` and
 `Game::Session`). `SetCombatDisabled` returns 0 [observed: gaps2] and
-`GetCombatDisabled` reads the flag [observed: gaps3]. [hypothesis] Enabling
-`SetCombatDisabled 1` on an actor already in combat immediately stops its active
-combat (`Game::stop_combat`) and suppresses ally/provocation alarms (`awareness.rs`,
-`combat_group.rs`, `provocation.rs`).
+`GetCombatDisabled` reads the flag [observed: gaps3]. Enabling `SetCombatDisabled 1` on an
+actor already in combat leaves active combat running (`IsInCombat == 1`) rather than
+immediately terminating it [observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`),
+Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters, clean-room
+script probe `core_20_set_combat_disabled_stops_combat` (`StartCombat` -> `IsInCombat 1`
+-> `SetCombatDisabled 1` -> `GetCombatDisabled 1`, `IsInCombat 1`: `1,1,1`); no DLL or
+source consulted]. [hypothesis] While enabled it suppresses new combat entry and
+ally/provocation alarms (`awareness.rs`, `combat_group.rs`, `provocation.rs`).
 
 ## 10. Live `SetActorBaseFlagsLow` / `SetActorBaseFlagsHigh` consumers (`actor_values.rs`)
 
