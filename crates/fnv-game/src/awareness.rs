@@ -1020,13 +1020,17 @@ impl Game<'_> {
     /// Neutral (no grudge, no forced fight, not the player), it has an aggro radius
     /// that its package allows, and `at` (where it measured the target) is outside that
     /// radius, and it is not already fighting `target`: it leaves the target alone for
-    /// now [hypothesis, #2547: HELIOS One's guard dogs (CrDogNCRAggressive, Very
-    /// Aggressive, aggro radius 2,000 on) went for the NCR troopers 2,800 units off,
-    /// which the owner never saw in the original; the radius is the one distance the
-    /// records give such an actor; observer checks 144 and 163]. A fight with a third
-    /// party (such as the player) does not drop the bound for unrelated Neutral
-    /// bystanders [design, #3459]. The player is left to the aggro radius rules
-    /// ([`Game::aggro_tick`]) and the on-sight rule as before.
+    /// now [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, 10 official
+    /// base masters, isolated clean-room staging, HELIOS One exterior (`0x000CDEFD`),
+    /// Wave 4E black-box probe `w4e_c08_helios_dogs_peaceful_at_rest`: with neutral NCR
+    /// reputation, all 3 `CrDogNCRAggressive` guard dogs (`0x000A695F`, `0x000A695E`,
+    /// `0x000A6944`) and all 6 loaded NCR Troopers remain peaceful (`IsInCombat=0`) —
+    /// dogs do not attack neutral NCR troopers across the yard; zero DLL/PDB/source
+    /// consulted; #2547; design: using the actor's aggro radius 2,000 as the distance
+    /// cutoff; observer checks 144 and 163]. A fight with a third party (such as the
+    /// player) does not drop the bound for unrelated Neutral bystanders [design, #3459].
+    /// The player is left to the aggro radius rules ([`Game::aggro_tick`]) and the
+    /// on-sight rule as before.
     pub(crate) fn neutral_out_of_reach(&mut self, detector: FormId, target: FormId, at: [f32; 3]) -> bool {
         // A fight once begun with `target` goes on wherever `target` runs [design].
         if target == FormId::PLAYER_REF
