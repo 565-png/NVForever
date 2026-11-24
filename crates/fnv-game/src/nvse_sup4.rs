@@ -166,11 +166,13 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         "allocateplayer" => zero,
         // A random key of the array: a number for Ar_GetRandomKey, a string for the map
         // form (a numeric key formatted with 6 decimal places, e.g. `"7.000000"`)
-        // [documented; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE
-        // 855, clean-room script probe sup_26_ar_getrandomkey_num_map (`Ar_Map 7::100`
-        // -> `"7.000000"`); `Ar_List` numeric indices follow the same numeric-key
-        // formatting; no DLL or source consulted]; an empty array returns 0 for
-        // Ar_GetRandomKey [observed: sup4 randomkey; sup_08_ar_getrandomkey_empty].
+        // [documented; observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout:
+        // New Vegas 1.4.0.525, xNVSE 6.4.9, SUP NVSE 855 with the 10 official base
+        // masters, clean-room script probe `sup_26_ar_getrandomkey_num_map`
+        // (`Ar_Map 7::100` -> `"7.000000"`); `Ar_List` numeric indices follow the same
+        // numeric-key formatting [hypothesis]; no DLL or source consulted]; an empty
+        // array returns 0 for Ar_GetRandomKey [observed: sup4 randomkey; 2026-11-23,
+        // GSDocMitchellHouse (0x00103DF9), `sup_08_ar_getrandomkey_empty`].
         // The original's map key was neither of the two keys of `Ar_Map "LALALA"::1,
         // "TROLOLO"::2` by `==` [observed: sup4 randomkey; open: what it gives is not
         // known], and `sup_08_ar_getrandomkey_empty` observed `"0.000000"` on `{"a": 1,

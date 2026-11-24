@@ -70,9 +70,11 @@ pub struct Sheet {
     pub cells: BTreeMap<(u32, u32), Cell>,
     /// Minimum row/column extent carried across BIFF `DIMENSIONS` (`0x0200`) when
     /// `ExcelEraseSheet` clears cells without shrinking the sheet's reported row count
-    /// [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855, probe
-    /// sup_14_excel_bounds_and_erase_sheet: cell type 0 while row count stays 1;
-    /// no DLL or source consulted].
+    /// [observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas
+    /// 1.4.0.525, xNVSE 6.4.9, SUP NVSE 855 with the 10 official base masters,
+    /// isolated-staging probe `sup_14_excel_bounds_and_erase_sheet` (excluded from
+    /// #3679's read-only catalog under tools/capture/README.md §10): cell type 0 while
+    /// row count stays 1; no DLL or source consulted].
     pub min_rows: u32,
     pub min_cols: u32,
 }

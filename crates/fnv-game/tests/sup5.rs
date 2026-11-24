@@ -133,9 +133,10 @@ fn excel_cells_sheets_and_arrays() {
     // not text, observed: sup5 xl.rename].
     assert_eq!(n(&mut g, "ExcelSetSheetName \"xlBook\" 1 \"A name far longer than thirty-one letters\""), 1.0);
     assert_eq!(s(&mut g, "ExcelSetSheetName \"xlBook\" 1"), "A name far longer than thirty-o");
-    // Erasing [documented: ExcelEraseCell, ExcelEraseSheet; observed: Wave 4
-    // sup_14_excel_bounds_and_erase_sheet, SUP NVSE 855: cell (0,0) type becomes 0 while
-    // ExcelGetRowCount stays 1; row 70000 stays safely rejected with -1 [design]].
+    // Erasing [documented: ExcelEraseCell, ExcelEraseSheet; observed: 2026-11-23,
+    // GSDocMitchellHouse (0x00103DF9), isolated-staging probe
+    // `sup_14_excel_bounds_and_erase_sheet`, SUP NVSE 855: cell (0,0) type becomes 0
+    // while ExcelGetRowCount stays 1; row 70000 stays safely rejected with -1 [design]].
     assert_eq!(n(&mut g, "ExcelEraseCell \"xlBook\" 0 4 1"), 1.0);
     assert_eq!(n(&mut g, "ExcelGetCellValueType \"xlBook\" 0 4 1"), 0.0);
     assert_eq!(n(&mut g, "ExcelEraseSheet \"xlBook\" 2"), 1.0);
@@ -245,32 +246,43 @@ fn file_sizes_times_and_the_load_order() {
     // [documented: GetFileSize, in bytes from the game folder]; missing -1 [hypothesis].
     assert_eq!(n(&mut g, "GetFileSize \"nvac.log\""), 10.0);
     assert_eq!(n(&mut g, "GetFileSize \"none.log\""), -1.0);
-    // "DD/MM/YYYY  HH:MM" / "MM/DD/YYYY  HH:MM" [observed: Wave 4
-    // sup_33_file_time_str_formats, SUP NVSE 855].
+    // "DD/MM/YYYY  HH:MM" / "MM/DD/YYYY  HH:MM" [observed: 2026-11-23,
+    // GSDocMitchellHouse (0x00103DF9), `sup_33_file_time_str_formats` and
+    // `sup_19_getfiletime_keys`, SUP NVSE 855].
     let t = s(&mut g, "GetFileTimeSTR \"nvac.log\" 2 0");
     assert_eq!(t.len(), 17, "{t}");
     assert_eq!((&t[2..3], &t[5..6], &t[10..12], &t[14..15]), ("/", "/", "  ", ":"));
     assert_eq!(s(&mut g, "GetFileTimeSTR \"none.log\" 2 0"), "");
-    // 5-element StringMap on existing file, empty StringMap (size 0) on missing file
-    // [observed: Wave 4 sup_19_file_size_and_time_missing, SUP NVSE 855].
+    // 5-element StringMap with zero-padded String values on existing file, empty
+    // StringMap (size 0) on missing file [observed: 2026-11-23, GSDocMitchellHouse
+    // (0x00103DF9), `sup_19_getfiletime_keys`, SUP NVSE 855].
     assert_eq!(n(&mut g, "ar_Size (GetFileTime \"nvac.log\" 2)"), 5.0);
     assert_eq!(n(&mut g, "ar_Size (GetFileTime \"none.log\" 2)"), 0.0);
-    assert!(n(&mut g, "(GetFileTime \"nvac.log\" 2)[\"Year\"]") >= 2026.0);
+    assert_eq!(s(&mut g, "typeof (GetFileTime \"nvac.log\" 2)"), "StringMap");
+    assert_eq!(s(&mut g, "typeof ((GetFileTime \"nvac.log\" 2)[\"Year\"])"), "String");
+    assert!(s(&mut g, "(GetFileTime \"nvac.log\" 2)[\"Year\"]").parse::<i32>().unwrap() >= 2026);
     // The values, in the computer's time zone: the file is given a written time of
-    // 2026-07-15 12:00:30 UTC. In mid-month the month reads 07 in every time zone, so
+    // 2026-07-15 12:00:30 UTC. In mid-month the month reads "07" in every time zone, so
     // the two orders tell apart whatever the zone.
     let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_784_116_830);
     std::fs::File::options().write(true).open(game_dir.join("nvac.log")).unwrap().set_modified(at).unwrap();
     let local = jiff::Timestamp::try_from(at).unwrap().to_zoned_datetime(jiff::tz::TimeZone::system());
-    let keys = ["Year", "Month", "Day", "Hour", "Minute"];
-    let fields: Vec<f64> = keys.iter().map(|k| n(&mut g, &format!("(GetFileTime \"nvac.log\" 2)[\"{k}\"]"))).collect();
-    let want = [local.year(), i16::from(local.month()), i16::from(local.day()), i16::from(local.hour()), i16::from(local.minute())];
-    assert_eq!(fields, want.map(f64::from).to_vec());
+    let keys = ["Day", "Hour", "Minute", "Month", "Year"];
+    let fields: Vec<String> = keys.iter().map(|k| s(&mut g, &format!("(GetFileTime \"nvac.log\" 2)[\"{k}\"]"))).collect();
+    let want = vec![
+        format!("{:02}", local.day()),
+        format!("{:02}", local.hour()),
+        format!("{:02}", local.minute()),
+        format!("{:02}", local.month()),
+        format!("{:04}", local.year()),
+    ];
+    assert_eq!(fields, want);
+    assert_eq!(s(&mut g, "(GetFileTime \"nvac.log\" 2)[\"Month\"]"), "07");
     let (dmy, mdy) = (s(&mut g, "GetFileTimeSTR \"nvac.log\" 2 0"), s(&mut g, "GetFileTimeSTR \"nvac.log\" 2 1"));
     assert_eq!(dmy, local.strftime("%d/%m/%Y  %H:%M").to_string());
     assert_eq!(mdy, local.strftime("%m/%d/%Y  %H:%M").to_string());
     assert_eq!((&dmy[3..5], &mdy[0..2], &dmy[6..10]), ("07", "07", "2026"), "{dmy} {mdy}");
-    // A request outside 0-2 gives nothing [hypothesis].
+    // A request outside 0-2 gives nothing [design].
     assert_eq!(n(&mut g, "ar_Size (GetFileTime \"nvac.log\" 3)"), 0.0);
     assert_eq!(s(&mut g, "GetFileTimeSTR \"nvac.log\" 3 0"), "");
     // The load order into NVForever's SUPNVSE.log [documented: DumpLoadOrder].
@@ -401,9 +413,9 @@ fn failed_zone_discovery_uses_utc_and_warns_once() {
         let t = Time::strptime("%H-%M-%S", &stamp).unwrap();
         let seconds = i64::from(t.hour()) * 3600 + i64::from(t.minute()) * 60 + i64::from(t.second());
         assert!(in_window(before, seconds, after, 86_400), "{stamp}: UTC stamp outside sampled interval {before}..={after}");
-        let keys = ["Year", "Month", "Day", "Hour", "Minute"];
-        let fields: Vec<_> = keys.iter().map(|k| n(&mut g, &format!("(GetFileTime \"failed-zone-time.log\" 2)[\"{k}\"]"))).collect();
-        assert_eq!(fields, [2024.0, 3.0, 10.0, 7.0, 0.0]);
+        let keys = ["Day", "Hour", "Minute", "Month", "Year"];
+        let fields: Vec<_> = keys.iter().map(|k| s(&mut g, &format!("(GetFileTime \"failed-zone-time.log\" 2)[\"{k}\"]"))).collect();
+        assert_eq!(fields, ["10", "07", "00", "03", "2024"]);
         assert_eq!(s(&mut g, "GetFileTimeSTR \"failed-zone-time.log\" 2"), "10/03/2024  07:00");
     }
     assert_eq!(COUNT.load(Ordering::Relaxed), 1, "one warning per process, not per call or Game");

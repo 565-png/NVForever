@@ -207,10 +207,13 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         }
         // `file sheet row col` / `file sheet`: the cell emptied, the sheet's cells all
         // emptied (the sheet and its row/column extent kept) [documented: ExcelEraseCell;
-        // ExcelEraseSheet, "Will erase all cells in Sheet"; observed: Fallout: New Vegas
-        // 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855, probe sup_14_excel_bounds_and_erase_sheet:
-        // cell (0,0) type becomes 0 while ExcelGetRowCount stays 1; no DLL or source
-        // consulted]; 1 done, -1 for a missing file [documented] or sheet [observed: sup_14].
+        // ExcelEraseSheet, "Will erase all cells in Sheet"; observed: 2026-11-23,
+        // GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9,
+        // SUP NVSE 855 with the 10 official base masters, isolated-staging probe
+        // `sup_14_excel_bounds_and_erase_sheet` (excluded from #3679's read-only catalog
+        // under tools/capture/README.md §10): cell (0,0) type becomes 0 while
+        // ExcelGetRowCount stays 1; no DLL or source consulted]; 1 done, -1 for a
+        // missing file [documented] or sheet [observed: sup_14].
         "excelerasecell" | "excelerasesheet" => {
             let Some(path) = xls_path(args) else { return Some(Ok(minus)) };
             let Ok(mut b) = load_book(g, &path) else { return Some(Ok(minus)) };
@@ -327,32 +330,38 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // [documented: GetFileSize, "relative to Fallout root folder", in bytes]; a
         // missing file -1 [hypothesis].
         "getfilesize" => XVal::Num(safe_path(&text(args, 0).unwrap_or_default()).and_then(|p| g.mod_files.root_file(&p)).map_or(-1.0, |(n, _)| n as f64)),
-        // `file request`: 5-element StringMap in local time on existing files and an empty
-        // StringMap (`ar_Size == 0`) on missing files or requests outside 0-2 [documented:
-        // GetFileTime; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855,
-        // probe sup_19_file_size_and_time_missing: StringMap of size 5 on existing file,
-        // size 0 on missing file; no DLL or source consulted; hypothesis: key names Year,
-        // Month, Day, Hour, Minute matching GetFileTimeSTR's 5 fields].
+        // `file request`: 5-element StringMap in local time on existing files (game-root-
+        // relative) with keys `"Day"`, `"Hour"`, `"Minute"`, `"Month"`, `"Year"` and
+        // zero-padded String values (e.g. `"28"`, `"21"`, `"12"`, `"09"`, `"2026"`), and
+        // an empty StringMap (`ar_Size == 0`) on missing files [documented: GetFileTime;
+        // observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas
+        // 1.4.0.525, xNVSE 6.4.9, SUP NVSE 855 with the 10 official base masters,
+        // read-only clean-room script probe `sup_19_getfiletime_keys` against
+        // `Fallout_default.ini`, `Data\FalloutNV.esm`, and a missing path; no DLL or
+        // source consulted]; requests outside 0-2 return an empty StringMap [design:
+        // `sup_19_getfiletime_keys` observed request 99 falling back to a 5-entry map].
         "getfiletime" => {
             let t = file_time(g, &text(args, 0).unwrap_or_default(), num(args, 1, 0.0));
             let entries = t
                 .map(|t| {
                     vec![
-                        (XKey::Str("Year".into()), XVal::Num(f64::from(t.year()))),
-                        (XKey::Str("Month".into()), XVal::Num(f64::from(t.month()))),
-                        (XKey::Str("Day".into()), XVal::Num(f64::from(t.day()))),
-                        (XKey::Str("Hour".into()), XVal::Num(f64::from(t.hour()))),
-                        (XKey::Str("Minute".into()), XVal::Num(f64::from(t.minute()))),
+                        (XKey::Str("Day".into()), XVal::Str(format!("{:02}", t.day()))),
+                        (XKey::Str("Hour".into()), XVal::Str(format!("{:02}", t.hour()))),
+                        (XKey::Str("Minute".into()), XVal::Str(format!("{:02}", t.minute()))),
+                        (XKey::Str("Month".into()), XVal::Str(format!("{:02}", t.month()))),
+                        (XKey::Str("Year".into()), XVal::Str(format!("{:04}", t.year()))),
                     ]
                 })
                 .unwrap_or_default();
             XVal::Array(g.ext.new_array(ArrayKind::StringMap, entries))
         }
         // `file request type`: "DD/MM/YYYY  HH:MM", or "MM/DD/YYYY  HH:MM" with type 1
-        // [documented: GetFileTimeSTR; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9
-        // + SUP NVSE 855, probe sup_33_file_time_str_formats: `28/09/2026  21:12` /
-        // `09/28/2026  21:12`; no DLL or source consulted]; "" when there is no time
-        // [observed: sup_19].
+        // [documented: GetFileTimeSTR; observed: 2026-11-23, GSDocMitchellHouse
+        // (0x00103DF9), Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9, SUP NVSE 855 with the
+        // 10 official base masters, read-only clean-room script probes
+        // `sup_33_file_time_str_formats` and `sup_19_getfiletime_keys`:
+        // `28/09/2026  21:12` / `09/28/2026  21:12`; no DLL or source consulted]; "" when
+        // there is no time [observed: `sup_19_getfiletime_keys`].
         "getfiletimestr" => {
             let t = file_time(g, &text(args, 0).unwrap_or_default(), num(args, 1, 0.0));
             let fmt = if num(args, 2, 0.0) as i32 == 1 { "%m/%d/%Y  %H:%M" } else { "%d/%m/%Y  %H:%M" };
