@@ -96,20 +96,19 @@ fn yes(b: bool) -> XVal {
 }
 
 impl Game<'_> {
-    /// Whether the player is currently in character generation: `SetInCharGen 1` is active
-    /// (`PlayerState::in_chargen`) or a character-creation menu is open (`ShowRaceMenu`
-    /// creator, `SetTagSkills`, `ShowLoveTesterMenuParams`, `ShowTraitMenu`, or
-    /// `GetPlayerName` — excluding `ShowBarberMenu`, `ShowPlasticSurgeonMenu`, and
-    /// `ShowTextInputMenu`) [documented: GECK wiki IsInCharGen, SetInCharGen; hypothesis:
-    /// open character-creation menus also count when invoked outside SetInCharGen].
+    /// Whether JIP LN's `IsInCharGen` reports the player as in character generation:
+    /// `CharGenMenu` / TagSkills (`1048`), `LoveTesterMenu` (`1074`), or `TraitMenu` (`1084`)
+    /// is open — NOT bare `SetInCharGen 1`, `ShowNameMenu` (`1051`), or
+    /// `ShowRaceMenu`/`ShowBarberMenu`/`ShowPlasticSurgeonMenu` (`1036`)
+    /// [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30,
+    /// 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters, probes
+    /// `w4c_a02_set_in_chargen_menus`, `w4c_a02_chargen_all_menus`, `w4c_a02b_set_in_chargen_xp`
+    /// (`wave4c_extenders.json`), and `w4d_01_tagskills_chargen` (`wave4d_extenders.json`)].
     pub fn is_in_chargen(&self) -> bool {
-        use crate::game::{menus, RaceMenu};
-        self.player.in_chargen
-            || (self.menu_open(menus::RACE) && self.race_menu == RaceMenu::Creator)
-            || self.menu_open(menus::TAG_SKILLS)
+        use crate::game::menus;
+        self.menu_open(menus::TAG_SKILLS)
             || self.menu_open(menus::LOVE_TESTER)
             || self.menu_open(menus::TRAITS)
-            || (self.menu_open(menus::NAME) && self.other.jip12.text_input.is_none())
     }
 
     /// Whether `form` (its base form, or `TempCloneForm` origin) carries JIP keyword
@@ -259,8 +258,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // Live kill-camera state reported each frame by the engine (`KillCam::kill_playing`)
         // [documented: GECK wiki IsInKillCam; design: classic VATS attack cameras are excluded].
         "isinkillcam" => yes(g.jip2.told.kill_cam),
-        // Character-generation state (`SetInCharGen` or open chargen menu)
-        // [documented: GECK wiki IsInCharGen; hypothesis: open chargen menus also count].
+        // Character-generation state
+        // [observed: JIP LN 57.30 `w4c_a02_chargen_all_menus` + `w4d_01_tagskills_chargen`:
+        // CharGenMenu/TagSkills (1048), LoveTesterMenu (1074), and TraitMenu (1084) return 1].
         "isincharGen" | "isinchargen" => yes(g.is_in_chargen()),
         // In water: the physics' swimming state [hypothesis: wading is not told];
         // immersion 1 when swimming, else 0 [hypothesis].
