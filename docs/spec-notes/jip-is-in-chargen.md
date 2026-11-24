@@ -23,10 +23,11 @@
     checked across ticks before and after `SetInCharGen 0`):
     `lvl0=1,cg0=0,cg1=0|whileSet1(mm=0,cg=0)|afterSet0(mm=0,cg=0)` — `IsInCharGen`
     remained `0` throughout.
+  - `w4d_01_tagskills_chargen` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+    #3679; open TagSkills via `SetTagSkills 3` with `*np_keepmenu 1`, read
+    `GetActiveMenuMode` and `IsInCharGen`): `mm=1048,cg=1` — `SetTagSkills 3`
+    opens `CharGenMenu` / TagSkills mode (`1048`), and `IsInCharGen` returns `1`.
 - [design] `Game::is_in_chargen` (`crates/fnv-game/src/nvse_jip2.rs`) returns
-  `true` when `menus::LOVE_TESTER` (`1074`) or `menus::TRAITS` (`1084`) is open,
-  and leaves vanilla `SetInCharGen` (`PlayerState::in_chargen`) untouched for
-  vanilla XP/level-up suppression.
-- [hypothesis] `TagSkillsMenu` (`1078`) was not included in the Wave 4C probe
-  set and currently returns `0` in `Game::is_in_chargen` pending original-game
-  capture.
+  `true` when `menus::TAG_SKILLS` (`1048`), `menus::LOVE_TESTER` (`1074`), or
+  `menus::TRAITS` (`1084`) is open, and leaves vanilla `SetInCharGen`
+  (`PlayerState::in_chargen`) untouched for vanilla XP/level-up suppression.

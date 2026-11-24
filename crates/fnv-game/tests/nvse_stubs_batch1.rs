@@ -85,17 +85,23 @@ fn is_in_chargen_tracks_set_in_chargen_and_chargen_menus() {
     assert!(!g.is_in_chargen());
     assert_eq!(n(&mut g, "IsInCharGen"), 0.0);
 
-    // Only LoveTesterMenu (1074) and TraitMenu (1084) report IsInCharGen = 1
-    // [observed: w4c_a02_chargen_all_menus].
-    for code in [menus::LOVE_TESTER, menus::TRAITS] {
+    // CharGenMenu / TagSkills (1048), LoveTesterMenu (1074), and TraitMenu (1084) report
+    // IsInCharGen = 1 [observed: w4c_a02_chargen_all_menus, w4d_01_tagskills_chargen].
+    for code in [menus::TAG_SKILLS, menus::LOVE_TESTER, menus::TRAITS] {
         g.menu = Some(code);
         assert!(g.is_in_chargen(), "menu {code} should report is_in_chargen() == true");
         assert_eq!(n(&mut g, "IsInCharGen"), 1.0, "menu {code} should report IsInCharGen = 1");
     }
+    g.menu = None;
+    q(&mut g, "SetTagSkills 3");
+    assert_eq!(g.menu, Some(menus::TAG_SKILLS));
+    assert!(g.is_in_chargen());
+    assert_eq!(n(&mut g, "IsInCharGen"), 1.0);
+    g.menu = None;
 
-    // Name (1051), Race (1036 across Creator/Barber/Surgeon), TagSkills (1078, unprobed),
-    // and ordinary menus such as Barter (1053) report IsInCharGen = 0.
-    for code in [menus::NAME, menus::TAG_SKILLS, menus::BARTER] {
+    // Name (1051), Race (1036 across Creator/Barber/Surgeon), and ordinary menus such as
+    // Barter (1053) report IsInCharGen = 0.
+    for code in [menus::NAME, menus::BARTER] {
         g.menu = Some(code);
         assert!(!g.is_in_chargen(), "menu {code} should report is_in_chargen() == false");
         assert_eq!(n(&mut g, "IsInCharGen"), 0.0, "menu {code} should report IsInCharGen = 0");
