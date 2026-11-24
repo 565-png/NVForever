@@ -336,9 +336,15 @@ fn set_persistent_toggles_flag_and_reaches_all_consumers() {
     );
     assert_eq!(num(&mut g, "Ar_Size (GetFormRefs TestCrate)"), 2.0, "PersistCrateRef + persistent runtime ref");
 
-    // PlayerRef remains persistent even after SetPersistent 0.
-    q(&mut g, "player.SetPersistent 0");
+    // Wave 4D w4d_06_player_setpersistent_0 [observed]: Player.IsPersistent starts at 1,
+    // Player.SetPersistent 0 clears it to 0, and Player.SetPersistent 1 restores 1.
     assert_eq!(num(&mut g, "player.IsPersistent"), 1.0);
+    q(&mut g, "player.SetPersistent 0");
+    assert_eq!(num(&mut g, "player.IsPersistent"), 0.0);
+    assert_eq!(num(&mut g, "player.GetReferenceFlag 1024"), 0.0);
+    q(&mut g, "player.SetPersistent 1");
+    assert_eq!(num(&mut g, "player.IsPersistent"), 1.0);
+    assert_eq!(num(&mut g, "player.GetReferenceFlag 1024"), 1.0);
 }
 
 #[test]
@@ -372,6 +378,51 @@ fn set_persistent_ignores_unrelated_flag_writes_on_persistent_group_ref() {
     assert_eq!(num(&mut g, "PersistGroupOnlyRef.IsPersistent"), 1.0);
     assert_eq!(num(&mut g, "PersistGroupOnlyRef.GetReferenceFlag 1024"), 1.0);
     assert_eq!(num(&mut g, "PersistGroupOnlyRef.GetReferenceFlag 64"), 1.0);
+}
+
+#[test]
+fn player_set_persistent_zero_preserves_all_consumers() {
+    use fnv_game::functions::console::{persistent_ref_count, ConsoleCtx};
+
+    let f = fixture();
+    let mut g = game(&f);
+
+    // Baseline: player is persistent by default.
+    assert_eq!(num(&mut g, "player.IsPersistent"), 1.0);
+    assert_eq!(num(&mut g, "player.GetPermanent"), 1.0);
+    assert_eq!(num(&mut g, "GetPermanent player"), 1.0);
+    let prc_before = persistent_ref_count(&mut g, &ConsoleCtx::default(), &[]).unwrap();
+    let walk_before = num(&mut g, "GetNumRefsInCell TestCell 200");
+    let form_refs_before = num(&mut g, "Ar_Size (GetFormRefs TestCrate)");
+
+    // Clear player persistence via SetPersistent 0 [observed: w4d_06_player_setpersistent_0]:
+    // verify all Game::persistent consumers stay healthy and consistent.
+    assert_eq!(num(&mut g, "player.SetPersistent 0"), 0.0);
+    assert_eq!(num(&mut g, "player.IsPersistent"), 0.0);
+    assert_eq!(num(&mut g, "player.GetReferenceFlag 1024"), 0.0);
+    assert_eq!(num(&mut g, "player.GetPermanent"), 0.0);
+    assert_eq!(num(&mut g, "GetPermanent player"), 0.0);
+    assert_eq!(num(&mut g, "GetNumRefsInCell TestCell 200"), walk_before, "ref walk already excludes player");
+    assert_eq!(num(&mut g, "Ar_Size (GetFormRefs TestCrate)"), form_refs_before, "GetFormRefs unaffected");
+    let prc_after = persistent_ref_count(&mut g, &ConsoleCtx::default(), &[]).unwrap();
+    assert_eq!(prc_after, prc_before, "PersistentRefCount stays valid");
+
+    // Snapshot + restore resets session-only SetPersistent override back to default 1 [hypothesis].
+    let snap = g.snapshot();
+    let mut restored = Game::restore(
+        &f.data,
+        World::restore(&f.forms, &f.refs, &snap.sim).unwrap(),
+        GameConfig::default(),
+        &snap,
+    )
+    .unwrap();
+    assert_eq!(num(&mut restored, "player.IsPersistent"), 1.0, "session-only override resets on load");
+
+    // Restore player persistence in the live session.
+    assert_eq!(num(&mut g, "player.SetPersistent 1"), 0.0);
+    assert_eq!(num(&mut g, "player.IsPersistent"), 1.0);
+    assert_eq!(num(&mut g, "player.GetReferenceFlag 1024"), 1.0);
+    assert_eq!(num(&mut g, "player.GetPermanent"), 1.0);
 }
 
 #[test]

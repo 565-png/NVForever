@@ -13,9 +13,9 @@ Part of #2272. Core-only implementations in `crates/fnv-game` replacing four
 - [design] `SetPersistent` records an explicit per-reference boolean in
   `OtherState::persistent_overrides` and keeps bit `0x400` in
   `OtherState::flags` synchronized (starting from the reference's current
-  record flags and persistent-group status, while keeping `FormId::PLAYER_REF`
-  always persistent). `Game::persistent` checks
-  `OtherState::persistent_overrides` first and otherwise falls back to static
+  record flags and persistent-group status, including `FormId::PLAYER_REF`).
+  `Game::persistent` checks `OtherState::persistent_overrides` first and
+  otherwise falls back to `FormId::PLAYER_REF` (persistent by default) or static
   placed flags (`0x400`) or `in_persistent_group`, so unrelated writes to
   `OtherState::flags` via `SetReferenceFlag` or `SetFlagsLow` on a
   persistent-group reference whose static record lacks bit `0x400` cannot
@@ -24,9 +24,14 @@ Part of #2272. Core-only implementations in `crates/fnv-game` replacing four
   (`GetFirstRefInCell`/`GetNumRefsInCell`/`GetRefsInCell`), `GetFormRefs`, and
   `PersistentRefCount` all stay synchronized with explicit `SetPersistent`
   calls.
+- [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24,
+  `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters,
+  `w4d_06_player_setpersistent_0` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+  #3679): `PROBE|w4d_06_player_setpersistent_0|p0=1,after0=0,after1=1`; no DLL or source
+  consulted] `Player.IsPersistent` starts at `1`, `Player.SetPersistent 0` clears it to
+  `0`, and `Player.SetPersistent 1` restores `1`.
 - [hypothesis] Persistence changes made by `SetPersistent` are session-only and
-  do not persist across save/load; `FormId::PLAYER_REF` ignores attempts to
-  clear its persistent flag.
+  do not persist across save/load.
 
 ## 2. `GetFallTimeRemaining` (`crates/fnv-game/src/nvse_jip11.rs`)
 
