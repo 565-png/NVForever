@@ -10,7 +10,12 @@ expressions, not a script command with a similar name.
 and resolves literal, nested and referenced arguments in `Ui::eval_reading`.
 Traits use `f64` numbers. Unknown tags produce a warning and are ignored.
 
-[hypothesis: engine policy] Admit `bt` case insensitively through the existing
+[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, 10 official base masters, isolated clean-room staging, UI Organizer 230, GSDocMitchellHouse (0x00103DF9), Wave 4E black-box probe `w4e_c11_uio_neg_bt_sincos_pow`: `bt(0=1,1=0,2=1,neg=0)`; zero DLL/PDB/source consulted]
+`<bt>`/`<BT>` is case-insensitive, tests the selected bit index of the current
+accumulator (for accumulator `5`: bit `0` returns `1`, bit `1` returns `0`, bit `2`
+returns `1`), and returns `0` for negative bit index `-1`.
+
+[design] Admit `bt` case insensitively through the existing
 parser and evaluate it after its argument has been resolved. Support nonnegative
 whole-number accumulators through 2^53 inclusive, where consecutive integers are
 exactly represented by the trait number type, and nonnegative whole-number bit

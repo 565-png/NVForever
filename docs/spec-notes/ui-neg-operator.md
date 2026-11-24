@@ -15,7 +15,9 @@ loading warns and ignores unknown operator tags.
 verification expressions use the documented operator. Their source is not copied
 into this contribution.
 
-[hypothesis: engine policy] Admit the generic case-insensitive operator through the existing XML
+[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, 10 official base masters, isolated clean-room staging, UI Organizer 230, GSDocMitchellHouse (0x00103DF9), Wave 4E black-box probe `w4e_c11_uio_neg_bt_sincos_pow`: `neg(-5,3,-5)`; zero DLL/PDB/source consulted] `<neg>`/`<NEG>` is case-insensitive and replaces the current accumulator with `-arg`.
+
+[design] Admit the generic case-insensitive operator through the existing XML
 parser. Evaluate the already-resolved argument with existing numeric coercion,
 then apply unary arithmetic negation. Preserve the accumulator and argument
 policies of all other operators. Live references and nested argument sequences
