@@ -22,8 +22,8 @@ Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters, clean-room blac
 script probe `core_08_call_explicit_null_receiver` (reproducible via `#3678` / PR `#3679`,
 `tools/capture/nvse/catalogs/wave4a_extenders.json`: `ref rNull = 0; int r1 = rNull.Call rFn`);
 no DLL or source consulted] `rNull.Call rFn` with an explicit empty receiver (`ref rNull = 0`)
-logs a runtime error, skips execution (`hit=0`), and returns `0` rather than running on
-the caller (`r1=0,hit=0`).
+logs a runtime error, skips execution, and returns `0` rather than running on
+the caller (`PROBE|core_08_call_explicit_null_receiver|0,0`).
 
 [engine design choice] Newly allocated lambda and text-compiled-function handles skip loaded
 forms, live travel-package overrides and owned callables, and stay within their
