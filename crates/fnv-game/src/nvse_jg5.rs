@@ -597,9 +597,15 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             })
         }
         // `r g b`: the colour packed as R × 65536 + G × 256 + B [documented: GetRGBColor;
-        // observed: jg5, 255 128 1 reads 16744449, 1 0 0 65536, 0 0 1 1]; channels are
-        // taken whole, as given [hypothesis: the probes stayed in 0-255].
-        "getrgbcolor" => XVal::Num(num(args, 0, 0.0).trunc() * 65536.0 + num(args, 1, 0.0).trunc() * 256.0 + num(args, 2, 0.0).trunc()),
+        // observed: jg5, 255 128 1 reads 16744449, 1 0 0 65536, 0 0 1 1]; any channel
+        // outside 0..=255 returns 0 [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9
+        // + JohnnyGuitarNVSE 528, clean-room script probe jg_16_rgb_color_out_of_range:
+        // (256,0,0), (0,256,0), (-1,0,0) -> 0,0,0; no DLL or source consulted].
+        "getrgbcolor" => {
+            let (r, g, b) = (num(args, 0, 0.0).trunc(), num(args, 1, 0.0).trunc(), num(args, 2, 0.0).trunc());
+            let ok = |c: f64| c.is_finite() && (0.0..=255.0).contains(&c);
+            XVal::Num(if ok(r) && ok(g) && ok(b) { r * 65536.0 + g * 256.0 + b } else { 0.0 })
+        }
         _ => return None,
     };
     let _ = ctx;
