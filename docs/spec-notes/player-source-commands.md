@@ -78,12 +78,21 @@ original-game parity remain unverified.
   GECK bytecode argument encoding, whether `ShowNameMenu` suppresses or closes
   an active `ShowTextInputMenu`, and original-game invalid-killer / receiver
   edge cases remain uncaptured.
-- [hypothesis: selected portable source convention] These global player commands
-  ignore a valid explicit receiver and never redirect the mutation to that receiver.
-  An explicit empty/invalid receiver fails before dispatch, rather than being
-  reinterpreted as an omitted receiver. Omitted calls work without script self.
-  Nonfinite amounts and arguments of the wrong type fail without mutation; integer
-  amounts use the established `Args::int` conversion.
+- [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, `GSDocMitchellHouse`
+  (`0x00103DF9`), 10 official base masters, isolated staging copy, read-only,
+  `w4g_06_player_cmds_explicit_receiver` (`tools/capture/nvse/catalogs/wave4g_f2_extenders.json`,
+  companion catalog PR #3803): printed
+  `str(p0=5,d0=4|afterDoc:ok=1,p=6,d=4|afterDoor:ok=1,p=7|afterNull:ok=1,p=8)`; no DLL or
+  source consulted] `ModPCAttribute` ignores both valid explicit receivers (an NPC or a
+  non-actor door) and an explicit null receiver (`rNull = 0`), continues script execution
+  (`ok=1`), and mutates the player rather than the explicit receiver. [hypothesis] NVForever
+  applies the same explicit-null-receiver dispatch to the sibling player-source commands in
+  `functions::player_source` (`AdvancePCLevel`, `AdvLevel`, `RemoveReputationExact`,
+  `SetPCExpelled`, `ShowNameMenu`, `KillAllActors`, `KillAll`) while continuing to reject
+  unknown non-zero reference IDs without mutation; non-player extender commands continue to
+  abort on explicit null receivers (`VmError::NoReference`). Omitted calls work without
+  script self. Nonfinite amounts and arguments of the wrong type fail without mutation;
+  integer amounts use the established `Args::int` conversion.
 - The existing `schemas/script/command_opcodes.json` records 4309, 4368 and 4668
   respectively, with provenance identifying prior original-game command queries.
   They establish command identity, not parameter encoding. This contribution does
