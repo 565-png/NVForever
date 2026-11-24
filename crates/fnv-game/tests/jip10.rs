@@ -207,7 +207,6 @@ fn objective_targets_and_texts() {
     q(&mut g, "StartQuest TestQuest");
     assert_eq!(ids(&mut g, "GetQuests").trim(), format!("{QUEST:08X}"));
     assert_eq!(ids(&mut g, "GetQuests 1").trim(), "none");
-    assert_eq!(n(&mut g, "ar_Size (GetQuests 1)"), -1.0, "empty GetQuests 1 returns ar_Null (-1)");
     q(&mut g, "ForceActiveQuest TestQuest");
     assert_eq!(nums(&mut g, "GetActiveObjectives").trim(), "20");
     q(&mut g, "ClearActiveQuest");

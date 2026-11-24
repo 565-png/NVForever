@@ -1544,14 +1544,25 @@
           "claim": "SetLoadScreenTypeTextRGB clamps out-of-range floats (>255 or <0) to 0..255.",
           "expected": "Setting 59.3, 181, 300 reads back r=59.3, g=181, b=255 (or unclamped 300)",
           "script_lines": [
-            "ref rLs = GetFormFromMod \"FalloutNV.esm\" \"1065EA\"",
+            "ref rLs = GetFormFromMod \"FalloutNV.esm\" \"166D58\"",
             "array_var a0 = GetLoadScreenTypeTextRGB rLs",
+            "int n0 = ar_Size a0",
+            "float r0 = -1",
+            "float g0 = -1",
+            "float b0 = -1",
+            "if n0 >= 3",
+            "  let r0 := a0[\"r\"]",
+            "  let g0 := a0[\"g\"]",
+            "  let b0 := a0[\"b\"]",
+            "endif",
             "SetLoadScreenTypeTextRGB rLs 59.3 181 300",
             "array_var a1 = GetLoadScreenTypeTextRGB rLs",
-            "if (ar_Size a0) >= 3",
-            "SetLoadScreenTypeTextRGB rLs (a0[\"r\"]) (a0[\"g\"]) (a0[\"b\"])",
+            "SetLoadScreenTypeTextRGB rLs -10 100 50",
+            "array_var a2 = GetLoadScreenTypeTextRGB rLs",
+            "if n0 >= 3",
+            "  SetLoadScreenTypeTextRGB rLs r0 g0 b0",
             "endif",
-            "PrintToConsole \"PROBE|jip_09_lsct_text_rgb_clamp|%g,%.2f,%.2f,%.2f\" (ar_Size a1) (a1[\"r\"]) (a1[\"g\"]) (a1[\"b\"])"
+            "PrintToConsole \"PROBE|jip_09_lsct_text_rgb_clamp|n0=%g,init=(%.1f,%.1f,%.1f),over=(%.1f,%.1f,%.1f),neg=(%.1f,%.1f,%.1f)\" n0 r0 g0 b0 (a1[\"r\"]) (a1[\"g\"]) (a1[\"b\"]) (a2[\"r\"]) (a2[\"g\"]) (a2[\"b\"])"
           ]
         },
         {

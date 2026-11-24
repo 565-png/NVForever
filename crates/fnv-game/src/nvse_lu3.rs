@@ -180,10 +180,14 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         }
         // Raw floats stored verbatim as f32 (no 0..255 clamping, and NaN stored verbatim)
         // [documented: the schema's LSCT; observed: Fallout: New Vegas 1.4.0.525 +
-        // xNVSE 6.4.9 + JIP LN 57.30, 2026-11-23/24, `GSDocMitchellHouse` (`0x00103DF9`),
-        // 10 official base masters, `jip_09_lsct_text_rgb_clamp` (stores 300.0 and -10.0
-        // verbatim) and `w4d_25_lsct_rgb_nan_and_password_key` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
-        // #3679): `lsct(0=255.0,180.0,53.0|nan=-nan(ind),123.5,45.0)`; no DLL or source consulted].
+        // xNVSE 6.4.9 + JIP LN 57.30, 2026-11-23/24, GSDocMitchellHouse (0x00103DF9),
+        // 10 official base masters, `jip_09_lsct_text_rgb_clamp`
+        // (`tools/capture/nvse/catalogs/wave4a_extenders.json`):
+        // `PROBE|jip_09_lsct_text_rgb_clamp|n0=3,init=(255.0,180.0,53.0),over=(59.3,181.0,300.0),neg=(-10.0,100.0,50.0)`
+        // and `w4d_25_lsct_rgb_nan_and_password_key`
+        // (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679 / #3803):
+        // `PROBE|w4d_25_lsct_rgb_nan_and_password_key|lsct(0=255.0,180.0,53.0|nan=-nan(ind),123.5,45.0)|door(0->1)|termRef(0->1)`;
+        // no DLL or source consulted].
         "setloadscreentypetextrgb" => {
             if let Some(t) = form(args, 0).filter(|&t| of_sig(g, t, &[b"LSCT"])) {
                 for (k, p) in ["font_1_red", "font_1_green", "font_1_blue"].iter().enumerate() {
@@ -344,16 +348,26 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             }
             if a != FormId::PLAYER_REF {
                 let held = &mut g.extra.entry(a).or_default().perks;
-                held.insert(p, rank);
+                if rank == 0 {
+                    held.remove(&p);
+                } else {
+                    held.insert(p, rank);
+                }
                 g.sync_perk_abilities_of(a);
             } else if num(args, 2, 0.0) != 0.0 {
-                g.player.teammate_perks.insert(p);
+                if rank == 0 {
+                    g.player.teammate_perks.remove(&p);
+                } else {
+                    g.player.teammate_perks.insert(p);
+                }
             } else {
                 let before = g.player.perks.get(&p).copied().unwrap_or(0);
                 if rank > before {
                     while g.player.perks.get(&p).copied().unwrap_or(0) < rank {
                         crate::perks::gain_rank(g, p);
                     }
+                } else if rank == 0 {
+                    g.player.perks.remove(&p);
                 } else if rank < before {
                     g.player.perks.insert(p, rank);
                 }

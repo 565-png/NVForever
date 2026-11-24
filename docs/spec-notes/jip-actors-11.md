@@ -12,12 +12,8 @@ function's page [documented: the page named]. The probe set `jip11`
 
 40 functions; JIP 142 → 102 [observed: the extender_census test, 2026-11-09].
 
-List getters with nothing to give return no array (`ar_Null`, `ar_Size == -1`), not an
-empty one [observed: the jip10 probes, 2026-11-08, for JIP's list getters; Fallout: New
-Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters,
-`b3_jip11_01_actor_combat_detect_light` (`tools/capture/nvse/catalogs/wave4b_extenders.json`,
-#3678 / PR #3679): `GetCombatAllies` and `GetDetectedActors` both returned `ar_Size == -1`
-when empty; no DLL or source consulted].
+List getters with nothing to give return no array, not an empty one [observed: the jip10
+probes, 2026-11-08, for JIP's list getters; hypothesis: the same here].
 
 ## 1. Combat, detection and packages
 

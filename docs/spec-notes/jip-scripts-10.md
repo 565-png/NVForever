@@ -16,11 +16,11 @@ original what the [hypothesis] values below leave open.
 |---|---|
 | AddObjectiveTarget, RemoveObjectiveTarget `quest index ref` | the objective's target list, an objective already displayed only [documented: "these Objectives must be already Displayed"]; added at the end, once |
 | SetObjectiveNthTarget `quest index n ref` | the n-th target (from 0) becomes the reference; past the end nothing [hypothesis] |
-| GetObjectiveTargets, GetObjectiveHasTarget `quest index [ref]` | the list: the scripts' changes, else the record's QSTA targets in record order, for an objective shown and not done; otherwise no array (`ar_Null`, `ar_Size == -1`) [observed: VMS01's done objective 10 gave none; Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, `b3_jip10_01_objectives_and_quests` (`tools/capture/nvse/catalogs/wave4b_extenders.json`, #3678 / PR #3679): `undisp=-1,disp=1,hasP=0,act=1`; no DLL or source consulted] |
+| GetObjectiveTargets, GetObjectiveHasTarget `quest index [ref]` | the list: the scripts' changes, else the record's QSTA targets in record order, for an objective shown and not done; otherwise no array [observed: VMS01's done objective 10 gave none; hypothesis: the rule] |
 | SetObjectiveText `quest index "text" vars…` | the formatted text [documented: the example's `%g`, `%n`]; the Pip-Boy, the corner messages and GetObjectiveText read it (`Game::objective_text`) |
 | GetActiveObjectives | the active quest's objectives shown and not done, by index [hypothesis: the page says only "active quest objectives"; indices, as objectives are no forms] |
 | GetQuestObjectives `quest [completed]` | the objectives shown and not done, or (completed) the done ones, by index [documented: the examples; hypothesis: indices] |
-| GetQuests `[completed]` | the quests in the Pip-Boy's list running and not done, or the done ones; returns `ar_Null` (`ar_Size == -1`) when empty [documented; observed: `b3_jip10_01_objectives_and_quests` (`wave4b_extenders.json`, #3678 / PR #3679): `q0=1,q1=-1`; no DLL or source consulted; hypothesis: the list is the Pip-Boy's, a named quest with an objective shown or done] |
+| GetQuests `[completed]` | the quests in the Pip-Boy's list running and not done, or the done ones [documented; hypothesis: the list is the Pip-Boy's, a named quest with an objective shown or done] |
 | ClearActiveQuest | no active quest; its targets leave the map and compass [documented] |
 | SetStageAlt `quest stage` | SetStage, then GetStage is that stage even when a higher one was done: the stages above it are no longer done [documented: the summary; hypothesis: GetStageDone of the higher ones reads 0] |
 

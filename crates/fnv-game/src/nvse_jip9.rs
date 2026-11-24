@@ -349,15 +349,12 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             XVal::Num(f64::from(g.other.jip9.volumes[t]))
         }
         // `type [level]`: a level past 100 changes nothing [observed: jip9 volume.set,
-        // 30 then 150 reads 30]; a negative level or omitted level resets to the default
-        // [observed: jip9 volume.set, music back to 60; Fallout: New Vegas 1.4.0.525 +
-        // xNVSE 6.4.9 + JIP LN 57.30, `b3_jip9_02_game_volume_neg_and_default`: -10 resets
-        // master from 30 back to 100, and subsequent 150 leaves it at 100].
+        // 30 then 150 reads 30], nor one below 0 [hypothesis: likewise]; left out, the
+        // default [observed: music back to 60].
         "setgamevolume" => {
             if let Some(t) = num(args, 0).map(|t| t as i64).and_then(|t| usize::try_from(t).ok()).filter(|&t| t < 6) {
                 let v = match num(args, 1) {
                     None => Some(DEFAULT_VOLUMES[t]),
-                    Some(v) if v < 0.0 => Some(DEFAULT_VOLUMES[t]),
                     Some(v) => (0.0..=100.0).contains(&v).then_some(v as f32),
                 };
                 if let Some(v) = v {

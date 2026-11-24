@@ -78,23 +78,11 @@ session reader `Game::explosion_traits` and `Game::explosion_flag` [design]:
   `TempCloneForm` clone of one) so unrelated records are not mutated; `SetExplosionFlag`
   accepts flag IDs `1..32` (matching `GetExplosionFlag`, leaving bit 0 `Radius in BS
   Units` unreachable) [design].
-- For non-null replacement forms, `SetExplosionTraitForm` checks the target record
+- For non-null replacement forms, `SetExplosionTraitForm` validates the target record
   type on typed slots (`0` `LIGH`, `1`/`2` `SOUN`, `3` `IPDS`, `5` `ENCH`, `6` `IMAD`,
-  following `TempCloneForm` originals) and clears the slot to `0` when passed a
-  wrong-type form or `0`/omitted [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9
-  + JIP LN 57.30, 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base
-  masters, `jip_24_expl_trait_form_type_check` (#3678 / PR #3679): slot `0` (`LIGH`)
-  cleared `0x00014BFF` to `00000000` on Stimpak, while slot `4` (`INAM`) accepted
-  Stimpak `0x00015169`; no DLL or source consulted; hypothesis: slots `1`, `2`, `3`,
-  `5`, `6` follow the same clear-on-mismatch rule]. Slot `4` (`INAM`) accepts any
-  form without type checking (including `STAT`, `MISC`, `ALCH`, and non-placeable
-  `FACT`), and passing `0`/null or omitting arg `2` preserves its existing value
-  instead of clearing it [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
-  JIP LN 57.30, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base
-  masters, `w4d_27_expl_inam_placeable` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
-  #3679): `f0=00000000|stat=0000003B|misc=0000000F|alch=00015169|fac=0001B2A4|clr=0001B2A4`;
-  no DLL or source consulted; earlier `gaps7` observed clearing/setting on slot `4`
-  only in the original synthetic probe].
+  following `TempCloneForm` originals), while `0`/omitted clears any slot `0..=6` and
+  slot `4` (`INAM`) accepts any placeable form [hypothesis; `4` clear/set observed in
+  `gaps7`].
 - `TempCloneForm` snapshots all effective `EXPL` fields (`DATA` numeric/form/flag slots,
   `INAM`, `EITM`, `MNAM`, `MODL`) onto the new clone (`Game::snapshot_explosion_traits`),
   so pre-clone edits carry over while post-clone edits on the original or parent clone

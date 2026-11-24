@@ -1431,19 +1431,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             zero
         }
         // The explosion's form traits, 0 light … 6 image-space modifier as GetExplosion-
-        // TraitForm reads them; no form clears typed slots [observed: gaps7]. Only EXPL
-        // forms (and their TempCloneForm clones) are accepted [design]; on typed slots,
-        // a wrong-type form clears the slot to 0 [observed: Fallout: New Vegas 1.4.0.525
-        // + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-23, GSDocMitchellHouse (0x00103DF9),
-        // 10 official base masters, `jip_24_expl_trait_form_type_check`: slot 0 clears
-        // 00014BFF -> 00000000 on Stimpak; hypothesis: same clear rule on slots 1, 2, 3,
-        // 5, 6]. Slot 4 (INAM) accepts any form without type check (including non-placeable
-        // forms such as FACT), and passing null/0 or omitting arg 2 preserves its existing
-        // value instead of clearing it [observed: Fallout: New Vegas 1.4.0.525 + xNVSE
-        // 6.4.9 + JIP LN 57.30, 2026-11-24, GSDocMitchellHouse (0x00103DF9), 10 official
-        // base masters, `w4d_27_expl_inam_placeable` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
-        // #3679): `f0=00000000|stat=0000003B|misc=0000000F|alch=00015169|fac=0001B2A4|clr=0001B2A4`;
-        // no DLL or source consulted].
+        // TraitForm reads them; no form clears it [observed: gaps7]. Only EXPL forms (and
+        // their TempCloneForm clones) are accepted; typed slots reject wrong-type forms
+        // while keeping null/omitted clears [hypothesis].
         "setexplosiontraitform" => {
             let Some(f) = form(args, 0).filter(|&f| g.data.sig(g.unclone(f)) == Some(*b"EXPL")) else {
                 return Some(Ok(zero));
@@ -1458,9 +1448,11 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 6 => ("MNAM/", Some(b"IMAD")),
                 _ => return Some(Ok(zero)),
             };
-            let target = form(args, 2).filter(|&e| want.is_none_or(|sig| g.data.sig(g.unclone(e)) == Some(*sig)));
-            if want.is_none() && target.is_none() {
-                return Some(Ok(zero));
+            let target = form(args, 2);
+            if let (Some(e), Some(sig)) = (target, want) {
+                if g.data.sig(g.unclone(e)) != Some(*sig) {
+                    return Some(Ok(zero));
+                }
             }
             g.field_overrides.insert((f, key.into()), XVal::Ref(target.map_or(0, |e| e.0)));
             zero

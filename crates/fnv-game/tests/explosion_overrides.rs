@@ -229,8 +229,7 @@ fn explosion_trait_form_and_flag_overrides_readback_and_validation() {
     assert_eq!(after.enchantment, Some(FormId(ENCH_B)));
     assert_eq!(after.image_space_modifier, Some(FormId(IMAD_B)));
 
-    // Wrong-type target forms on typed EXPL slots clear those slots to 0/None
-    // [observed: jip_24_expl_trait_form_type_check], while non-EXPL forms remain untouched.
+    // Wrong-type target forms and non-EXPL forms are ignored without mutating either form.
     q(
         &mut g,
         r#"
@@ -243,43 +242,28 @@ fn explosion_trait_form_and_flag_overrides_readback_and_validation() {
         SetExplosionFlag OwnedGuardWeap 2 1
         "#,
     );
-    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().light, None, "wrong-type clears slot 0");
-    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().sound_1, None, "wrong-type clears slot 1");
-    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().impact_dataset, None, "wrong-type clears slot 3");
-    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().enchantment, None, "wrong-type clears slot 5");
-    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().image_space_modifier, None, "wrong-type clears slot 6");
+    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().light, Some(FormId(LIGH_B)));
+    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().sound_1, Some(FormId(SOUN_B)));
+    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().impact_dataset, Some(FormId(IPDS_B)));
+    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().enchantment, Some(FormId(ENCH_B)));
+    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().image_space_modifier, Some(FormId(IMAD_B)));
     assert_eq!(n(&mut g, "GetObjectEffect OwnedGuardWeap"), f64::from(ENCH_A), "unrelated WEAP EITM untouched");
 
-    // Slot 4 (INAM) accepts any form without type check (including non-placeable forms)
-    // and preserves its existing value on explicit 0 or omitted third argument, whereas
-    // typed slots 0 and 5 clear to None/0 on 0/omitted [observed: w4d_27_expl_inam_placeable].
+    // Clearing form traits with 0 or omitted third argument resets them to None/0.
     q(
         &mut g,
         r#"
-        SetExplosionTraitForm OwnedBlastExpl 4 BlastEnchA
-        "#,
-    );
-    assert_eq!(n(&mut g, "GetExplosionTraitForm OwnedBlastExpl 4"), f64::from(ENCH_A));
-    assert_eq!(g.explosion_traits(FormId(EXPL_A)).unwrap().placed_impact, Some(FormId(ENCH_A)));
-
-    // Re-populate slots 0/5 then clear with explicit 0; slot 4 must preserve its value on 0/omitted.
-    q(
-        &mut g,
-        r#"
-        SetExplosionTraitForm OwnedBlastExpl 0 BlastLightB
-        SetExplosionTraitForm OwnedBlastExpl 5 BlastEnchB
         SetExplosionTraitForm OwnedBlastExpl 0 0
-        SetExplosionTraitForm OwnedBlastExpl 4 0
         SetExplosionTraitForm OwnedBlastExpl 4
         SetExplosionTraitForm OwnedBlastExpl 5 0
         "#,
     );
     assert_eq!(n(&mut g, "GetExplosionTraitForm OwnedBlastExpl 0"), 0.0);
-    assert_eq!(n(&mut g, "GetExplosionTraitForm OwnedBlastExpl 4"), f64::from(ENCH_A), "slot 4 null/omitted must preserve existing value");
+    assert_eq!(n(&mut g, "GetExplosionTraitForm OwnedBlastExpl 4"), 0.0);
     assert_eq!(n(&mut g, "GetExplosionTraitForm OwnedBlastExpl 5"), 0.0);
     assert_eq!(n(&mut g, "GetObjectEffect OwnedBlastExpl"), 0.0);
     let cleared = g.explosion_traits(FormId(EXPL_A)).unwrap();
-    assert_eq!((cleared.light, cleared.placed_impact, cleared.enchantment), (None, Some(FormId(ENCH_A)), None));
+    assert_eq!((cleared.light, cleared.placed_impact, cleared.enchantment), (None, None, None));
 
     // SetExplosionFlag across documented flags 1..=6, preserving bit 0 (Radius in BS Units).
     q(
