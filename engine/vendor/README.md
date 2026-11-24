@@ -927,7 +927,8 @@ made). When the surface is made with HDR asked for (`NVF_HDR_SURFACE` or `NVF_HD
 it offers `Rgba16Float`, that format is chosen; `SurfaceColorSpace::Auto` makes it scRGB.
 Upstream prefers an sRGB format. `SurfaceData` keeps the SDR format and whether fp16 is
 offered; `nvf_hdr_changed` compares the asked-for output with the configured format each
-frame, and a change reconfigures the surface at once (no restart).
+frame, and a change reconfigures the surface at once (no restart). Test aid
+`NVF_PLAY_TEST_SDR_SURFACE=1`: the surface counts as offering no `Rgba16Float`.
 
 ## bevy_shader 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 

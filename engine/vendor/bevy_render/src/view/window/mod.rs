@@ -666,7 +666,9 @@ pub fn create_surfaces(
             };
             let caps = surface.get_capabilities(&render_adapter);
             let present_mode = present_mode(&window, &caps);
-            let nvf_fp16 = caps.formats.contains(&TextureFormat::Rgba16Float);
+            // Test aid `NVF_PLAY_TEST_SDR_SURFACE=1`: the surface counts as offering no fp16,
+            // so HDR asked for stays SDR on any machine (smoke `hdr-sdr-fallback`).
+            let nvf_fp16 = caps.formats.contains(&TextureFormat::Rgba16Float) && !std::env::var("NVF_PLAY_TEST_SDR_SURFACE").is_ok_and(|v| v.trim() == "1");
             let nvf_hdr = NVF_HDR_SURFACE.load(core::sync::atomic::Ordering::Relaxed) || std::env::var("NVF_HDR").is_ok_and(|v| v.trim() == "1");
             if nvf_hdr {
                 info!("hdr: surface offers {:?}", caps.format_capabilities);

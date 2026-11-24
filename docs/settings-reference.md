@@ -333,15 +333,6 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
 - Command-line switches: `--size`
 - Registered in `engine/nvforever/src/settings.rs`
 
-### `borderless`: Full screen
-
-- On the page: On: the game fills its monitor without a frame, at the full screen resolution
-  above. Off: a window of the window resolution.
-- In full: On: the game fills the monitor it is on, without a frame, at the resolution
-  chosen above for full screen. Off: a window of the resolution chosen for a window.
-- Command-line switches: `--window`
-- Registered in `engine/nvforever/src/settings.rs`
-
 ### `hdr-output`: HDR output
 
 - On the page: On: the game is drawn for an HDR screen (Windows HDR on). Takes effect at once.
@@ -351,6 +342,15 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
   Calibrate... opens the calibration pictures for the screen's peak and the brightness.
 - More: docs/design/hdr-output.md
 - Registered in `engine/nvforever/src/hdr.rs`
+
+### `borderless`: Full screen
+
+- On the page: On: the game fills its monitor without a frame, at the full screen resolution
+  above. Off: a window of the window resolution.
+- In full: On: the game fills the monitor it is on, without a frame, at the resolution
+  chosen above for full screen. Off: a window of the resolution chosen for a window.
+- Command-line switches: `--window`
+- Registered in `engine/nvforever/src/settings.rs`
 
 ## Display › Frame Rate
 

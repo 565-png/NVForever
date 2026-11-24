@@ -8,6 +8,10 @@ brighter than paper white, up to the screen's peak, and never cut.
 
 ## Requirements
 
+Test aid `NVF_PLAY_TEST_SDR_SURFACE=1`: the window's surface counts as offering no
+`Rgba16Float`, so a run with HDR asked for stays SDR on any machine (smoke scenario
+`hdr-sdr-fallback`).
+
 - Windows HDR on for the screen (Settings, Display, Use HDR).
 - A Vulkan surface that offers `Rgba16Float` with the extended linear sRGB colour space
   [observed 2026-11-21: an NVIDIA laptop offers it only in its discrete GPU mode; in hybrid
@@ -54,7 +58,7 @@ an SDR screen shows (world.md §8). The path, in order:
       original's frames). The same idea as RenoDX's hue correction [documented:
       clshortfuse/renodx wiki, "Hue Correction"].
 5. **Window blit** (vendored bevy_core_pipeline `blit.wesl`): the 0..1 range is decoded
-   with gamma 2.2 (setting **HDR gamma 2.2**, on by default), then everything is scaled so
+   with gamma 2.2 (always: no row sets it), then everything is scaled so
    the HUD's white is the HUD brightness in nits. The HUD is drawn in the same pass at the
    same scale.
 
@@ -72,10 +76,9 @@ keeps the row as `On;peak=1000;paper=200` (`peak=0`: the screen's own).
 | --- | --- | --- | --- |
 | Peak brightness | Auto, 400 to 4000 nits | Auto | calibration step 1 |
 | Brightness (paper white, the HUD with it) | 80 to 400 nits | 200 | calibration step 2 |
-| Gamma 2.2 | on | on | fixed |
-| Highlight colour | 100 % | 100 % | fixed |
-| Highlight expansion | 50 % | 50 % | fixed |
-| Light source brightness | x6 | x6 | fixed |
+
+No row sets the rest, which keep these values: the 0..1 range decoded with gamma 2.2,
+highlight colour 100 %, highlight expansion 50 %, light source brightness x6.
 
 ## Calibration
 
