@@ -80,8 +80,8 @@ engineering choices (`[design]`) or unobserved assumptions about the original pl
 
 ## 3. Limits
 
-- Provider version reporting (`GetPluginVersion "lStewieAl's Tweaks"`) remains pinned at
-  `941.0` (`ext-version.md`).
+- Provider version reporting (`GetPluginVersion "lStewieAl's Tweaks"`) remains unchanged
+  at `945.0` (`ext-version.md`).
 - Only `[Tweaks]` switches/integers already mapped on `fnv_game::tweaks::Tweaks` and
   `nvf_play::tweaks::TweakSettings` plus the documented `[Critical Hits]`
   (`fCriticalDamageMult`) and `[Hardcore Tweaks]` (`bAmmoWeight`,
