@@ -131,7 +131,7 @@ script probes `core_16_set_weapon_crit_damage_edge`
 DLL or source consulted]. [design] `SetWeaponCritDamage` stores finite numeric inputs
 truncated toward zero and wrapped into `u16` (`0..=65535`, non-finite as `0`) so both
 script readback and combat consume the same unsigned 16-bit value. [hypothesis]
-Non-numeric conversion and whether the original saves the change remain uncaptured. The
+Non-numeric conversion remains uncaptured. The
 accepted generic setter's explicit invalid weapon-argument fallback remains unchanged
 pending behavioral evidence.
 
@@ -140,13 +140,23 @@ function documentation or accepted catalogue. Keep its registration open pending
 an original-game command-identity capture; identity alone will not establish wire
 encoding. This note does not import FOSE opcode numbers into New Vegas.
 
-[design] Overrides retain this module's existing session lifetime: save/load
-resets them, and a weapon clone without its own override reads its source
-weapon's, matching the observed `TempCloneForm` inheritance (`77.0`) [observed:
-2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`), `core_16_set_weapon_crit_damage_edge`].
-[hypothesis] Whether the original saves the change needs a separate capture. Core source
-execution, engine hit calculation, native captures and real installed-mod acceptance are
-separate validation states.
+`SetWeaponCritDamage` edits are session-only (not saved in `.fos` or `.nvse` cosaves),
+persist across same-process save loads (including reloading an earlier baseline save),
+revert to the ESM value on a fresh process restart, and are snapshotted onto a
+`TempCloneForm` clone at clone creation time so later edits to the source weapon leave
+the clone isolated [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24,
+10 official base masters, `GSDocMitchellHouse` (`0x00103DF9`), isolated clean-room
+save/reload probe `w4f_02_set_weapon_crit_damage` (`SetWeaponCritDamage 77` on
+`Weap10mmPistol` `0x0000434F`): baseline `22`, mutated `77`, `TempCloneForm` clone `77`
+then source `SetWeaponCritDamage 88` -> `src=88`, `clone=77`, same-process baseline
+reload `77`, same-process mutated reload `77`, fresh-process with `.nvse` `22`,
+fresh-process `.fos`-only `22`; zero DLL/PDB/source consulted]. [design] Loaded
+base-form `CRDT/critical_damage` overrides carry across same-run loads via
+`Game::take_session` / `Game::put_session` (excluded from `GameSnapshot` and excluding
+transient `TempCloneForm` clones), and `TempCloneForm` snapshots the source weapon's
+effective `CRDT/critical_damage` onto the clone (`Game::snapshot_weapon_crit_damage`)
+for bi-directional isolation. Core source execution, engine hit calculation, native
+captures and real installed-mod acceptance are separate validation states.
 
 ## 8. Player swimming and Hardcore achievement eligibility
 

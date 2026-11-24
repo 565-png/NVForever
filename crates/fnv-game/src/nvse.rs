@@ -167,6 +167,22 @@ impl Game<'_> {
         }
     }
 
+    /// Snapshot `source`'s effective `WEAP CRDT critical_damage` onto its `TempCloneForm`
+    /// `clone` at clone creation time so later edits to `source` do not leak into `clone`,
+    /// and edits to `clone` do not affect `source` [observed: Fallout: New Vegas
+    /// 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, 10 official base masters,
+    /// `GSDocMitchellHouse` (`0x00103DF9`), `w4f_02_set_weapon_crit_damage`: after
+    /// `SetWeaponCritDamage 77` on `Weap10mmPistol` (`0x0000434F`), `TempCloneForm` read
+    /// `77`, and a later `SetWeaponCritDamage 88` on the source left the clone at `77`;
+    /// zero DLL/PDB/source consulted].
+    pub(crate) fn snapshot_weapon_crit_damage(&mut self, source: FormId, clone: FormId) {
+        if self.data.sig(self.unclone(source)) != Some(*b"WEAP") {
+            return;
+        }
+        let value = field(self, source, "CRDT", "critical_damage").unwrap_or(XVal::Num(0.0));
+        self.field_overrides.insert((clone, "CRDT/critical_damage".into()), value);
+    }
+
     /// Session `DNAM/flags1` override for a `WEAP` (clone-first, original fallback),
     /// from `SetWeaponFlag`, `SetWeaponFlags1`, `SetWeaponIsAutomatic`, or
     /// `LNSetIsPlayable`. Returns `None` for non-weapons, absent edits, or non-finite

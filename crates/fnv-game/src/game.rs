@@ -2500,6 +2500,8 @@ pub struct Session {
     zone_changes: std::collections::HashMap<FormId, crate::nvse_anh::ZoneChange>,
     /// Session `SetObjectEffect` (`EITM/`) overrides on loaded base forms (0 = cleared).
     object_effect_overrides: std::collections::HashMap<FormId, FormId>,
+    /// Session `SetWeaponCritDamage` (`CRDT/critical_damage`) overrides on loaded base forms.
+    weapon_crit_damage_overrides: std::collections::HashMap<FormId, fnv_script::vm::XVal>,
 }
 
 /// An event handler: the event (lower case), the function or lambda, the filters by
@@ -4159,7 +4161,17 @@ impl<'a> Game<'a> {
                 None
             })
             .collect();
-        Session { handlers, main_loop, main_loop_registrars, jip_seq, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits), owner_ranks: std::mem::take(&mut self.other.owner_ranks), destruction: std::mem::take(&mut self.other.jip6.destruction), perk_edits: std::mem::take(&mut self.lu3.perk_edits), ref_radius: std::mem::take(&mut self.other.lutana.ref_radius), radiation: std::mem::take(&mut self.showoff.radiation), terminal_password_notes: std::mem::take(&mut self.terminals.password_notes), package_overrides, zone_changes: std::mem::take(&mut self.other.zone_changes), object_effect_overrides }
+        let weapon_crit_damage_overrides = self
+            .field_overrides
+            .iter()
+            .filter_map(|((form, key), val)| {
+                if key == "CRDT/critical_damage" && self.data.sigs.contains_key(form) {
+                    return Some((*form, val.clone()));
+                }
+                None
+            })
+            .collect();
+        Session { handlers, main_loop, main_loop_registrars, jip_seq, restarted_seen: std::mem::take(&mut self.restarted_seen), handler_seq: self.handler_seq, pp, itr_kept: std::mem::take(&mut self.other.itr.kept), sr_registered, jip_kept: std::mem::take(&mut self.jip.kept), dialogue_edits: self.dialogue_edits.for_session(), save_files: std::mem::take(&mut self.save_files), kept_calls: self.take_kept_calls(), list_edits: std::mem::take(&mut self.list_edits), owner_ranks: std::mem::take(&mut self.other.owner_ranks), destruction: std::mem::take(&mut self.other.jip6.destruction), perk_edits: std::mem::take(&mut self.lu3.perk_edits), ref_radius: std::mem::take(&mut self.other.lutana.ref_radius), radiation: std::mem::take(&mut self.showoff.radiation), terminal_password_notes: std::mem::take(&mut self.terminals.password_notes), package_overrides, zone_changes: std::mem::take(&mut self.other.zone_changes), object_effect_overrides, weapon_crit_damage_overrides }
     }
 
     /// Take over what lasts for the session ([`Game::take_session`]).
@@ -4192,6 +4204,9 @@ impl<'a> Game<'a> {
         self.other.zone_changes = s.zone_changes;
         for (form, ench) in s.object_effect_overrides {
             self.field_overrides.insert((form, "EITM/".into()), fnv_script::vm::XVal::Ref(ench.0));
+        }
+        for (form, val) in s.weapon_crit_damage_overrides {
+            self.field_overrides.insert((form, "CRDT/critical_damage".into()), val);
         }
     }
 
