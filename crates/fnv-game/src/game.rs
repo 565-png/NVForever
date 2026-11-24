@@ -613,8 +613,8 @@ pub struct FormChanges {
     /// SetActorFullName: base → the message whose title is the new name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub names: BTreeMap<FormId, FormId>,
-    /// Savebaked base-form string name overrides (`SetFullNameAlt`, `.fos` `NPC_` bit 5 /
-    /// `TACT` bit 2), separate from session-only `SetName`/`LNSetName` (`Game::name_overrides`).
+    /// Savebaked base-form string name overrides (`.fos` `NPC_` bit 5 / `TACT` bit 2),
+    /// separate from session-only `SetName`/`SetFullNameAlt`/`LNSetName` (`Game::name_overrides`).
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
     pub saved_names: BTreeMap<FormId, String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]

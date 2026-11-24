@@ -3843,38 +3843,41 @@ fn v5_saved_names_cross_writer_priority_with_set_actor_full_name_set_cell_full_n
     assert_eq!(g.script_name(FormId(NPC_BASE)), Some("Fos Scout"));
     assert_eq!(run_s(&mut g, "GetName OwnNpcBase"), "Fos Scout");
 
-    // 2. SetActorFullName (0x111C) must clear saved_names so it is NOT shadowed!
-    let ctx_actor = Ctx { unit: "test".into(), opcode: 0x111C, on: Some(FormId(NPC_REF)), self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
-    g.call_function(&ctx_actor, &[ArgValue::Value(Value::Ref(MESG_RENAME_ID))]);
-    assert!(!g.forms.saved_names.contains_key(&FormId(NPC_BASE)));
-    assert_eq!(g.script_name(FormId(NPC_BASE)), Some("Message Name"));
-
-    // 3. Subsequent SetFullNameAlt must clear forms.names and take precedence cleanly across save/load!
-    run_q(&mut g, "SetFullNameAlt \"Alt Scout\" OwnNpcBase");
-    assert!(!g.forms.names.contains_key(&FormId(NPC_BASE)));
-    assert_eq!(g.script_name(FormId(NPC_BASE)), Some("Alt Scout"));
-    assert_eq!(run_s(&mut g, "GetName OwnNpcBase"), "Alt Scout");
-
-    // 4. Session-only SetName overrides GetName (name_overrides > saved_names), and SetFullNameAlt clears name_overrides!
+    // 2. Session-only SetName / SetFullNameAlt override GetName (`name_overrides > saved_names`)
+    // without mutating `FormChanges::saved_names` (SetFullNameAlt save persistence is left to its own issue).
     run_q(&mut g, "SetName \"Session Scout\" OwnNpcBase");
     assert_eq!(run_s(&mut g, "GetName OwnNpcBase"), "Session Scout");
-    run_q(&mut g, "SetFullNameAlt \"Final Scout\" OwnNpcBase");
-    assert_eq!(run_s(&mut g, "GetName OwnNpcBase"), "Final Scout");
-    assert_eq!(g.script_name(FormId(NPC_BASE)), Some("Final Scout"));
+    assert_eq!(g.script_name(FormId(NPC_BASE)), Some("Fos Scout"));
+    run_q(&mut g, "SetFullNameAlt \"Alt Scout\" OwnNpcBase");
+    assert_eq!(run_s(&mut g, "GetName OwnNpcBase"), "Alt Scout");
+    assert_eq!(g.script_name(FormId(NPC_BASE)), Some("Fos Scout"));
+
+    // 3. Snapshot/restore keeps converted `saved_names` while dropping session-only `name_overrides`.
+    let snap0 = g.checked_snapshot().unwrap();
+    let w0 = World::restore(&f.forms, &f.refs, &snap0.sim).unwrap();
+    let mut g0 = Game::restore(&f.data, w0, GameConfig::default(), &snap0).unwrap();
+    assert_eq!(g0.script_name(FormId(NPC_BASE)), Some("Fos Scout"));
+    assert_eq!(run_s(&mut g0, "GetName OwnNpcBase"), "Fos Scout");
+
+    // 4. SetActorFullName (0x111C) must clear saved_names so it is NOT shadowed!
+    let ctx_actor = Ctx { unit: "test".into(), opcode: 0x111C, on: Some(FormId(NPC_REF)), self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
+    g0.call_function(&ctx_actor, &[ArgValue::Value(Value::Ref(MESG_RENAME_ID))]);
+    assert!(!g0.forms.saved_names.contains_key(&FormId(NPC_BASE)));
+    assert_eq!(g0.script_name(FormId(NPC_BASE)), Some("Message Name"));
 
     // 5. SetCellFullName (0x111B) must clear saved_names on an interior cell so it is NOT shadowed!
-    g.forms.saved_names.insert(FormId(ROOM_ID), "Saved Room".into());
-    assert_eq!(g.script_name(FormId(ROOM_ID)), Some("Saved Room"));
+    g0.forms.saved_names.insert(FormId(ROOM_ID), "Saved Room".into());
+    assert_eq!(g0.script_name(FormId(ROOM_ID)), Some("Saved Room"));
     let ctx_cell = Ctx { unit: "test".into(), opcode: 0x111B, on: None, self_ref: None, action_ref: None, quest: None, inst: None, in_condition: false };
-    g.call_function(&ctx_cell, &[ArgValue::Value(Value::Ref(ROOM_ID)), ArgValue::Value(Value::Ref(MESG_RENAME_ID))]);
-    assert!(!g.forms.saved_names.contains_key(&FormId(ROOM_ID)));
-    assert_eq!(g.script_name(FormId(ROOM_ID)), Some("Message Name"));
+    g0.call_function(&ctx_cell, &[ArgValue::Value(Value::Ref(ROOM_ID)), ArgValue::Value(Value::Ref(MESG_RENAME_ID))]);
+    assert!(!g0.forms.saved_names.contains_key(&FormId(ROOM_ID)));
+    assert_eq!(g0.script_name(FormId(ROOM_ID)), Some("Message Name"));
 
-    // 6. Verify final saved_names + names survive snapshot/restore round-trip cleanly.
-    let snap = g.checked_snapshot().unwrap();
+    // 6. Verify final `names` survive snapshot/restore round-trip cleanly.
+    let snap = g0.checked_snapshot().unwrap();
     let w2 = World::restore(&f.forms, &f.refs, &snap.sim).unwrap();
     let g2 = Game::restore(&f.data, w2, GameConfig::default(), &snap).unwrap();
-    assert_eq!(g2.script_name(FormId(NPC_BASE)), Some("Final Scout"));
+    assert_eq!(g2.script_name(FormId(NPC_BASE)), Some("Message Name"));
     assert_eq!(g2.script_name(FormId(ROOM_ID)), Some("Message Name"));
 }
 

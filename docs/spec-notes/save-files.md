@@ -44,11 +44,11 @@ rare-subfield A/B probe saves):
 
 | Field | Details |
 |---|---|
-| Install, owner, and date | Contributor's own clean English Steam/GOG `Fallout: New Vegas` `1.4.0.525` install; 261 A/B probe saves captured `2026-11-23` plus 57 rare-subfield A/B probe saves captured `2026-11-23`/`2026-11-24` (318 total, starting in `GSDocMitchellHouse`) |
+| Install, owner, and date | Contributor's own clean English **Steam** `Fallout: New Vegas` `1.4.0.525` install; 261 A/B probe saves captured `2026-11-23` plus 57 rare-subfield A/B probe saves (`t09a_00`..`t09h_04`) captured `2026-11-23`/`2026-11-24` (318 total, starting in `GSDocMitchellHouse`) |
 | Load order | Only the 10 official base masters (`FalloutNV.esm`, `DeadMoney.esm`, `HonestHearts.esm`, `OldWorldBlues.esm`, `LonesomeRoad.esm`, `GunRunnersArsenal.esm`, `CaravanPack.esm`, `ClassicPack.esm`, `MercenaryPack.esm`, `TribalPack.esm`); zero gameplay, UI, or tweak mods |
 | Script runner and versions | `xNVSE 6.4.9` + `JIP LN NVSE 57.30`, used solely as an in-process script runner to dispatch single-variable vanilla console/script commands and `con_Save` immediately before and after each change (pure black-box observation; no binary or DLL inspection) |
-| Temporary clean-room synthetic test plugin | A temporary `.esp` constructed strictly from public TES4/FNV binary record format specifications to test form shapes absent from `FalloutNV.esm` (`XGLB` ownership global `0x22`, carryable `LIGH` `0x26`, charged `WEAP` `0x28`, dual-slot `ARMO` `0x17`, and persistent/scaled `REFR` `0x1C`/`0x30`), loaded only for those isolated probes and removed immediately after capture |
-| Tools that read the saves | `fnvtool save inspect-fos` and an offline Python standard-library `.fos` parser and byte-diff verifier |
+| Temporary clean-room synthetic test plugin | A temporary `.esp` constructed strictly from public **UESP Mod File Format** (`https://en.uesp.net/wiki/Tes5Mod:Mod_File_Format`) and **FNVEdit / xEdit public record definitions** (no Bethesda/proprietary tools or DLLs consulted) to test form shapes absent from `FalloutNV.esm` (`XGLB` ownership global `0x22`, carryable `LIGH` `0x26`, charged `WEAP` `0x28`, dual-slot `ARMO` `0x17`, and persistent/scaled `REFR` `0x1C`/`0x30`), loaded only for those isolated probes and removed immediately after capture |
+| Tools that read the saves | `fnvtool save inspect-fos` and Python `tools/capture/fos/parser.py` / `verify.py` (clean-room standard-library `.fos` parser and byte-diff verifier in `#3667`) |
 
 ## 2. Top-level layout
 
@@ -158,7 +158,7 @@ documented layout].
 | 7 | 2 | one byte (0) |
 | 8 | 71 | **Sky and weather**: ref current weather, ref second weather (NVWastelandGS and NVWastelandClear in C; WastelandClear twice in B), then f32 values; two of them equal GameHour exactly (9.4697 in C) [observed: matches the GameHour global; also observed: vanilla 1.4.0.525 A/B save pairs: `ForceWeather 0x000FFC88` changes the first ref from null to `0x000FFC88`]; the rest unknown |
 | 9 | 7 | u32 0 and a byte |
-| 10 | 96 (C), 80 (B) | a vsval-counted list of refs (18 in C, 14 in B) [observed]; Pip-Boy radio and world-radio playback state: opening `u32, \|, u8, \|, string song_path, \|` (remains zeroed across all 318 saves; non-zero opening-header fallback `[hypothesis]`), List 1 world-radio speakers in the current cell `vsval n1, \|, n1 × (ref3 speaker, \|, u8, \|, u8, \|, u8, \|, u8, \|)`, and List 2 active broadcast stations `vsval n2, \|, n2 × (ref3 station, \|, u32 playback_ms, \|, u32, \|, u8, \|, u8, \|, u32, \|, vsval n_listeners, \|, n_listeners × (ref3, \|), u8 has_conv, \|, [optional conversation block when has_conv != 0])`, followed by `ref3, \|, ref3, \|, vsval n3, \|, n3 × (ref3, \|)` [observed: vanilla 1.4.0.525 A/B save pairs across all 318 saves: `PipBoyRadio On 0x0014DF03` adds a List 2 entry with `n_listeners = 0, has_conv = 0` and `playback_ms` advancing `9740 -> 29077`; `GSProspectorSaloonInterior` world radio `0x00107D73` writes 1 List 1 speaker entry and a List 2 entry for `0x0016B74C` (`vCountryRadio`) with `n_listeners = 1` (`0x00107D73`) and `has_conv = 1` voice path, while turning on `PipBoyRadio On 0x0014DF03` in the saloon produces `n2 = 2` with Pip-Boy `n_listeners = 0` alongside the world station `n_listeners = 1`; Gomorrah writes `n1 = 6` speakers and `n_listeners = 6`] |
+| 10 | 96 (C), 80 (B) | a vsval-counted list of refs (18 in C, 14 in B) [observed]; Pip-Boy radio and world-radio playback state: opening `u32, \|, u8, \|, string song_path, \|` (remains zeroed across all 318 saves; non-zero opening-header fallback `[hypothesis]`), List 1 world-radio speakers in the current cell `vsval n1, \|, n1 × (ref3 speaker, \|, u8, \|, u8, \|, u8, \|, u8, \|)`, and List 2 active broadcast stations `vsval n2, \|, n2 × (ref3 station, \|, u32 playback_ms, \|, u32, \|, u8, \|, u8, \|, u32, \|, vsval n_listeners, \|, n_listeners × (ref3, \|), u8 has_conv, \|, [optional conversation block when has_conv != 0])`, followed by `ref3, \|, ref3, \|, vsval n3, \|, n3 × (ref3, \|)` [observed: vanilla 1.4.0.525 A/B save pairs: `PipBoyRadio On 0x0014DF03` adds a List 2 entry with `n_listeners = 0, has_conv = 0` and `playback_ms` advancing `9740 -> 29077`; `t09c_00 -> t09c_03` (`CenterOnCell GSProspectorSaloonInterior`, world radio `0x00107D73` playing `0x0016B74C vCountryRadio`) writes 1 List 1 speaker entry (`00 1b 3d \| 01 \| 00 \| 06 \| 00 \|`) and a List 2 entry with `n_listeners = 1` (`0x00107D73`) and `has_conv = 1` voice path; `t09c_03 -> t09c_04` (`PipBoyRadio On 0x0014DF03` in the saloon) produces `n2 = 2` with Pip-Boy `n_listeners = 0` alongside world station `n_listeners = 1`, and `t09c_04 -> t09c_05` (`PipBoyRadio Off`) removes the Pip-Boy entry; Gomorrah writes `n1 = 6` speakers and `n_listeners = 6`] |
 | 11 | 4 | one ref (resolves to a SOUN record in C) [hypothesis: unknown; the resolution may be meaningless] |
 
 ### 5.2 Global data table 2
@@ -250,8 +250,9 @@ to 55 done and 60 not done]:
 - bit 31: **stages**: vsval count, then per stage: u8 stage index, `|`, u8 done, `|`, vsval
   log-entry count, then per entry: u8 entry index, `|`, u8 done, `|`, and when done 4
   bytes `u16 day_of_year + u16 year` (e.g., `23 01 E9 08` = day-of-year `291`, year `2281`;
-  `67 01 EA 08` = day-of-year `359`, year `2282`) [observed: vanilla 1.4.0.525 A/B save pairs:
-  completing `VCG02` `0x0010A214` stages on `(day=18, month=9, year=2281)` and `(day=25,
+  `67 01 EA 08` = day-of-year `359`, year `2282`) [observed: vanilla 1.4.0.525 A/B save pair
+  `t09b_10 -> t09b_11`: setting `GameDay`/`GameMonth`/`GameYear` and completing `VCG02`
+  `0x0010A214` stage 10 on `(day=18, month=9, year=2281)` and stage 20 on `(day=25,
   month=11, year=2282)` writes `23 01 E9 08` (`273 + 18 = 291`, `2281`) and `67 01 EA 08`
   (`334 + 25 = 359`, `2282`)].
 - bit 30 (465 of 466 quests): **script variables** (vsval count, then per variable: u32
@@ -284,9 +285,11 @@ unknown].
   (`orig_cell_ref3`, `i16 grid_x`, `i16 grid_y`) immediately precedes the `|`; when bit 2 is
   set, `vsval havok_len, |` followed by `havok_len` Havok/ragdoll bytes immediately follows
   the placement `|` [observed: vanilla 1.4.0.525 A/B save pairs for bit-2 Havok on doors,
-  created items, and killed actors, and for bit-3 7-byte cell-change suffix on non-persistent
-  `REFR 0x001059AE`/`0x00105C3F`, `ACHR 0x001531F6`/`0x001531F7`, `ACRE 0x000EB159`/`0x000EB158`,
-  and `PGRE 0x000EA807`/`0x000EA808` moved via `MoveTo` across interior/exterior cells].
+  created items, and killed actors, and for bit-3 7-byte cell-change suffix across
+  `t09a_00 -> t09a_01` (`MoveTo` on non-persistent `REFR 0x001059AE`/`0x00105C3F`),
+  `t09c_06 -> t09c_07` (`MoveTo` on non-persistent `ACHR 0x001531F6`/`0x001531F7`),
+  `t09c_08 -> t09c_09` (`MoveTo` on non-persistent `ACRE 0x000EB159`/`0x000EB158`), and
+  `t09a_11 -> t09a_12` (`MoveTo` on `PGRE 0x000EA807`/`0x000EA808`)].
 - bit 4: one f32 (`1.0` seen; `SetScale 1.5` writes `00 00 c0 3f 7c`) [observed: vanilla
   1.4.0.525 A/B save pairs: reference scale (`SetScale`)].
 - bit 5 and bit 27: **item lists**: reuses the bar-delimited inventory framing of
@@ -294,9 +297,10 @@ unknown].
   list `vsval extras, |`, per extra `type, |, payload, |`) [observed: vanilla 1.4.0.525 A/B
   save pairs: container inventory deltas against the base `CONT` stock on unlocked, owned
   (bit 6), picked-up (bit 10), and locked (bit 12) containers; observed item extras include
-  `0x0D` (`0x0013B1A8` `Timer=2.0, Active=1.0`), `0x1C`, `0x21`, `0x22`, `0x23`, `0x24`,
-  `0x25`, `0x2F` (`u32, |, u8, |`), `0x30`, `0x3E`, and `0x8D`; `0x26`/`0x28` are defensive
-  `[design]` pass-throughs]. Vendor containers and Doc Mitchell's dresser have them.
+  `0x0D` (`t09b_00`/`t09b_01` player item `0x0013B1A8` `Timer=2.0, Active=1.0`), `0x1C`,
+  `0x21`, `0x22`, `0x23`, `0x24`, `0x25`, `0x2F` (`u32, |, u8, |`), `0x30`, `0x3E`, and
+  `0x8D`; `0x26`/`0x28` are defensive `[design]` pass-throughs]. Vendor containers and Doc
+  Mitchell's dresser have them.
 - bit 6 (`0x40`), bit 10 (`0x400`), bit 12 (`0x1000`), bit 29, and bit 31: `vsval`-counted extra-data list:
   - bit 6 (`0x40`): `0x21` owner (`ref, |`), emitted by `SetOwnership` even without bits
     12/29/31 (e.g. `flags = 0x18000050`, bits 4 + 6 + 27 + 28, where `0x21` precedes the
@@ -317,30 +321,35 @@ unknown].
   - on other bit-6/10/12/29/31 references: `0x50` terminal state (`u8 flags, |, u8 lock_level,
     |`; bit 0 `0x01` = locked out, `0xFE` = script-unlocked, `0x02..=0x04` = lock levels,
     `0x05` = Requires Key / Inaccessible [observed: vanilla 1.4.0.525 A/B save pairs on
-    `0x0011A30A`: `SetLockedOut 1` writes `04 7c 50 7c 01 7c 01 7c`, `Unlock` writes `04 7c
-    50 7c 00 7c fe 7c`, `Lock 2/3/4` write `0x02`/`0x03`/`0x04`, `Lock 75`/`255` write `0x05`,
-    and password-note opening on `0x000E887A` omits `0x50`]; bit 7 `0x80` hacked remains
-    `[hypothesis]`), `0x56` remaining destructible HP (`f32, |`) and `0x5B` destructible object
-    state (`ref3 base_form, |, u32 dstd_stage_index, |` together with `form_flags` bit 23
-    `0x0080_0000` once a `DSTD` destruction stage is reached; 0-based `dstd_stage_index`:
-    1-stage `FireExtinguisher 0x00020D70` writes `stage = 0` and `0x56 = 0.0f` when destroyed,
-    while 4-stage `ElectricBox01 0x0014DB1C`/`0x0014DB28` writes `0x56` alone (`45.0f`/`34.34f`)
-    with no `0x5B` or `FORM_DESTROYED` on intermediate non-destroy stages 0/1 and writes
-    `FORM_DESTROYED` + `0x56 = 16.31f` + `0x5B` `stage = 2` on reaching Destroyed stage 2
-    [observed: vanilla 1.4.0.525 A/B save pairs]), `0x0D` script variables (`ref script, |,
-    vsval nv, |, nv × (u32 index, |, ref if index & 0x80000000 else f64, |), vsval 0, |, u8
-    init_flag, |` where `init_flag` is `0` or `1` [observed: vanilla 1.4.0.525 A/B save pairs
-    on non-created `REFR 0x00105232` (`Button=-1.0`), `REFR 0x00107D73` (`f64=1.0` + `ref3` var
-    `0x80000003=0x00107D73`), `ACHR 0x00104C0F` (`PlayerLeft=1.0`), and player item
-    `0x0013B1A8`]), `0x21` owner (`ref, |` [observed]), `0x2A` lock (above), `0x1C`
-    original/holder ref (`ref, |`), `0x22` ownership global (`ref, |`), `0x23` owner rank
-    (`i32, |`), `0x24` stack count (`i16, |`), `0x25` condition (`f32, |`), `0x30` item scale
-    (`f32, |`), `0x39` dropped-from actor (`ref, |`), and `0x6E` loaded weapon magazine
-    (`ref ammo, |, u32 rounds, |`) [observed: vanilla 1.4.0.525 A/B save pairs], plus
-    auxiliary reference extras skipped while walking the list (`0x18`, `0x2C`, `0x2E`, `0x2F`,
-    `0x49`, `0x74`, `0x7C`, `0x8B` [observed: vanilla 1.4.0.525 A/B save pairs]; `0x1B`,
-    `0x46`, `0x60`, `0x6C`, `0x73`, `0x75`, `0x92` remain `[hypothesis]`; `0x26`/`0x28`
-    defensive `[design]` pass-throughs).
+    GSSchoolHouse terminal `0x0011A30A`: `SetLockedOut 1` writes `04 7c 50 7c 01 7c 01 7c`;
+    `t09a_04 -> t09a_05` (`0x0011A30A.Unlock`) writes `04 7c 50 7c 00 7c fe 7c`;
+    `t09c_14`/`t09c_15`/`t09c_16`/`t09h_03` (`Lock 0`/`2`/`4`/`3`) write `0x02`/`0x03`/`0x04`;
+    `t09a_06`/`t09a_07` (`Lock 75`/`255`) write `0x05`; and `t09d_06` (Vault11c terminal
+    `0x000E887A` opened via password note `0x000E88A2`) omits `0x50`]; bit 7 `0x80` hacked
+    remains `[hypothesis]`), `0x56` remaining destructible HP (`f32, |`) and `0x5B`
+    destructible object state (`ref3 base_form, |, u32 dstd_stage_index, |` together with
+    `form_flags` bit 23 `0x0080_0000` once a `DSTD` destruction stage is reached; 0-based
+    `dstd_stage_index`: 1-stage `FireExtinguisher 0x00020D70` writes `stage = 0` and
+    `0x56 = 0.0f` when destroyed, while 4-stage `ElectricBox01 0x0014DB1C`/`0x0014DB28` in
+    `t09a_08 -> t09a_09 -> t09a_10` (`DamageObject 5` / `DamageObject 12` -> intermediate
+    stages 0/1; `DamageObject 30` -> destroy stage 2) writes `0x56` alone (`45.0f`/`34.34f`)
+    with no `0x5B` or `FORM_DESTROYED` on stages 0/1 and writes `FORM_DESTROYED` +
+    `0x56 = 16.31f` + `0x5B` `stage = 2` on stage 2 [observed: vanilla 1.4.0.525 A/B save
+    pairs]), `0x0D` script variables (`ref script, |, vsval nv, |, nv × (u32 index, |, ref if
+    index & 0x80000000 else f64, |), vsval 0, |, u8 init_flag, |` where `init_flag` is `0` or
+    `1` [observed: vanilla 1.4.0.525 A/B save pairs `t09b_00`/`t09b_01` (`REFR 0x00105232`
+    `Button=-1.0`, player item `0x0013B1A8` `Timer=2.0, Active=1.0`), `t09b_02`
+    (`CenterOnCell GSProspectorSaloonInterior`, `REFR 0x00107D73` `f64=1.0` + `ref3` var
+    `0x80000003=0x00107D73`), and `t09a_01` (`ACHR 0x00104C0F` `PlayerLeft=1.0`)]), `0x21`
+    owner (`ref, |` [observed]), `0x2A` lock (above), `0x1C` original/holder ref (`ref, |`),
+    `0x22` ownership global (`ref, |`), `0x23` owner rank (`i32, |`), `0x24` stack count
+    (`i16, |`), `0x25` condition (`f32, |`), `0x30` item scale (`f32, |`), `0x39` dropped-from
+    actor (`ref, |`), and `0x6E` loaded weapon magazine (`ref ammo, |, u32 rounds, |`)
+    [observed: vanilla 1.4.0.525 A/B save pairs], plus auxiliary reference extras skipped while
+    walking the list (`0x18`, `0x2C`, `0x2E`, `0x2F`, `0x49` in `r21_03` `0x0A000813`, `0x74`,
+    `0x7C`, `0x8B` across `t09a`–`t09h` & `r8`/`r21` [observed: vanilla 1.4.0.525 A/B save
+    pairs]; `0x1B`, `0x46`, `0x60`, `0x6C`, `0x73`, `0x75`, `0x92` remain `[hypothesis]`;
+    `0x26`/`0x28` defensive `[design]` pass-throughs).
 - bit 23 and bit 28: animation state (`vsval block_len, |, u16 str_len, |, anim_name, |`,
   where `anim_name` includes `"Open"`, `"Close"`, `"Forward"`, `"Backward"`, `"Left"`,
   `"Right"`, `"FastLeft"`) [observed: vanilla 1.4.0.525 A/B save pairs: `"Close"` on
@@ -360,11 +369,13 @@ dismembered limbs `u16 mask | u32 | u32 | u8 | ref | vsval n | n × (u8 body_par
 exploded | u8 | u8 | vsval k | k × (ref |))` [observed: vanilla 1.4.0.525 A/B save pairs:
 `KillActor Player 1` writes `mask=2`, `(body_part=1, exploded=true)`], `0x89` attached
 ash/goo pile `ref |` [observed: vanilla 1.4.0.525 A/B save pairs: `AttachAshPile 1`], `0x0D`
-actor script variables [observed: vanilla 1.4.0.525 A/B save pairs on `ACHR 0x00104C0F`],
-`0x2E` leveled-actor template `ref | ref | u32 flags |` with two spell lists when `flags &
-0x10 != 0` [observed: vanilla 1.4.0.525 A/B save pairs], plus auxiliary actor extras (`0x18`,
-`0x19`, `0x1D`, `0x21`, `0x35`, `0x56`, `0x74`, `0x7C`, `0x8B` [observed: vanilla 1.4.0.525
-A/B save pairs]; `0x04`, `0x1B`, `0x1F`, `0x46`, `0x60`, `0x73`, `0x75` remain `[hypothesis]`),
+actor script variables [observed: vanilla 1.4.0.525 A/B save pair `t09a_01` on `ACHR 0x00104C0F`
+(`PlayerLeft=1.0`)], `0x2E` leveled-actor template `ref | ref | u32 flags |` with two spell
+lists when `flags & 0x10 != 0` [observed: vanilla 1.4.0.525 A/B save pairs `t09a`–`t09h`], plus
+auxiliary actor extras (`0x18`, `0x19` in `r8_01` `0x00172D3F` & `t09b_03` `0x0010588E`, `0x1D`,
+`0x21`, `0x35` in `t09b_11` `0x00104C6D`, `0x56`, `0x74`, `0x7C`, `0x8B` across `t09a`–`t09h`
+[observed: vanilla 1.4.0.525 A/B save pairs]; `0x04`, `0x1B`, `0x1F`, `0x46`, `0x60`, `0x73`,
+`0x75` remain `[hypothesis]`),
 optional inventory item list (bits 5/27, with `0x0D`, `0x16`, `0x1C`, `0x21`, `0x22`, `0x23`,
 `0x24`, `0x25`, `0x2F`, `0x30`, `0x3E`, `0x8D` [observed]; `0x17`/`0x26`/`0x28` defensive
 `[design]` pass-throughs), and the post-inventory actor process block starting at byte `0`
@@ -375,35 +386,45 @@ counting 0-based across `0x7C` `|`-terminated fields): an 18-token bar-delimited
 `+53` / `0x35`, `ref3 current_package |`) [observed: vanilla 1.4.0.525 A/B save pairs],
 followed (when `process_level <= 3`) by **`tok[18]`** at byte offset `+57` / `0x39`
 (`u8 |`). When `current_package` is null, `tok[18]` is an actor-state flag byte (`0x00`
-observed across 658 actors) with no package sub-block before the 15-token middle block; when
-`current_package` is non-null, `tok[18]` tags an optional package-state sub-block
-(`0x00`/`0x10`/`0xFF`: 0 bytes; `0x0E`: `3 × (u32 |) + ref3 |`; `0x0D`: `3 × (u32 |) + 2 ×
-(u8 |) + u32 | + ref3 | + vsval n | + n × (ref3 |)` with `n <= 256` `[design]`; `0x0C`: `8 ×
-(u32 |) + 4 × (u8 |) + u32 | + u8 | + u32 | + 4 × (u32 |) + 6B | + 3 × (ref3 |) + vsval n | +
-n × (3 × (u32 |) + ref3 |)` with `n <= 256` `[design]`; any other tag fails closed `[design]`)
-followed by the 5-token active-package block (`3 × (f32 |) + ref3 | + u8 |`, 21 bytes). Next
-sits the 15-token middle block (`f32 | + ref3 | + 3 × (f32 |) + u8 | + u16 | + 2 × (f32 |) +
-5 × (ref3 |) + u8 |`, 61 bytes), followed by up to two sparse actor-value lists gated by
-change flag bits 21 and 20: `bit 21` damage deltas (`vsval n1 | n1 × (u8 av_code | f32 val |)`)
-and `bit 20` active-effect / ability / worn-gear AV1 modifiers (`u32 | vsval n2 | n2 × (u8
-av_code | f32 val |)`, e.g., untouched `DocMitchellREF 0x00104C0F` carries `TrainingMedicine`
-`SPLO` `+25 Medicine` and `CheyenneREF` carries `AV 76 +2.0` — parsed for framing but NOT
-merged into `av_permanent` so NPC abilities and worn gear are not double-counted; bounded to
-`n <= 77` and `av_code < 77` `[design]`) [observed: vanilla 1.4.0.525 A/B save pairs across
-`process_level 0..=3` and 9,400+ actors including `tok[18]` `0x00`/`0x10`/`0xFF`/`0x0C`/`0x0D`/`0x0E`
-and `DocMitchellREF` transitioning `pl=0 -> pl=1` on `CenterOnCell`], plus **bit 23
-(`0x0080_0000`)** `ModAV`/`ForceAV` permanent modifiers (`vsval n | n × (u8 av_code | f32 val
-|)`) and **bit 22 (`0x0040_0000`)** `SetAV` base actor-value overrides (`vsval n | n × (u8
-av_code | f32 val |)`) serialized immediately after bit 23 and immediately before `FF FF | FF
-FF | 00 | 01 01 00 00 |` [observed: vanilla 1.4.0.525 A/B save pairs: `DocMitchellREF.ModAV
-Strength 4` writes bit 23; `TrudyRef 0x00104C6D` `flags = 0x08C00020` and `CheyenneREF
-0x0010588E` `flags = 0x90F00802` with both `ModAV` and `SetAV` serialize bit 23 first and
-bit 22 immediately before the sentinel].
+observed across 658 actors in `e00_base`/`r8_02`/`r10_12`/`r27_03`/`t09b_00`..`t09b_04`) with
+no package sub-block before the 15-token middle block; when `current_package` is non-null,
+`tok[18]` tags an optional package-state sub-block (`0x00`/`0x10`/`0xFF`: 0 bytes, with `0x10`
+observed on 27 Low-Process actors including `ACHR 0x0014DE09` in `e00_base`; `0x0E`: `3 ×
+(u32 |) + ref3 |`; `0x0D`: `3 × (u32 |) + 2 × (u8 |) + u32 | + ref3 | + vsval n | + n × (ref3
+|)` with `n <= 256` `[design]`; `0x0C`: `8 × (u32 |) + 4 × (u8 |) + u32 | + u8 | + u32 | + 4 ×
+(u32 |) + 6B | + 3 × (ref3 |) + vsval n | + n × (3 × (u32 |) + ref3 |)` with `n <= 256`
+`[design]`; any other tag fails closed `[design]`) followed by the 5-token active-package block
+(`3 × (f32 |) + ref3 | + u8 |`, 21 bytes). Next sits the 15-token middle block (`f32 | +
+ref3 | + 3 × (f32 |) + u8 | + u16 | + 2 × (f32 |) + 5 × (ref3 |) + u8 |`, 61 bytes), followed
+by up to two sparse actor-value lists gated by change flag bits 21 and 20: `bit 21` damage
+deltas (`vsval n1 | n1 × (u8 av_code | f32 val |)`) and `bit 20` active-effect / ability /
+worn-gear AV1 modifiers (`u32 | vsval n2 | n2 × (u8 av_code | f32 val |)`, e.g., untouched
+`DocMitchellREF 0x00104C0F` in `t09b_00` carries `TrainingMedicine` `SPLO` `+25 Medicine` and
+`CheyenneREF 0x0010588E` carries `AV 76 +2.0` — parsed for framing but NOT merged into
+`av_permanent` so NPC abilities and worn gear are not double-counted; bounded to `n <= 77` and
+`av_code < 77` `[design]`) [observed: vanilla 1.4.0.525 A/B save pairs `t09b_00 -> t09b_01`
+(`DocMitchellREF` `DamageAV Health 15`, `DamageAV LeftAttackCondition 25`, `ModAV Strength 4`,
+`ForceAV Endurance 8` at `pl=0`: bit 20 unchanged `[(37, 25.0)]`, bit 23 receives `Strength +4`
+and `Endurance +4`) `-> t09b_02`/`t09b_04` (`CenterOnCell GSProspectorSaloonInterior` drops
+`DocMitchellREF` `pl=0 -> pl=1` with identical framing), plus 9,400+ `process_level 1..=3`
+actors across `e00_base`/`r8_02`/`r10_12`/`r27_03` covering `tok[18]`
+`0x00`/`0x10`/`0xFF`/`0x0C`/`0x0D`/`0x0E`], plus **bit 23 (`0x0080_0000`)** `ModAV`/`ForceAV`
+permanent modifiers (`vsval n | n × (u8 av_code | f32 val |)`) and **bit 22 (`0x0040_0000`)**
+`SetAV` base actor-value overrides (`vsval n | n × (u8 av_code | f32 val |)`) serialized
+immediately after bit 23 and immediately before `FF FF | FF FF | 00 | 01 01 00 00 |` [observed:
+vanilla 1.4.0.525 A/B save pairs `t09b_01` (`DocMitchellREF.ModAV Strength 4`, `ForceAV
+Endurance 8`), `t09b_02` (`TrudyRef 0x00104C6D` `ModAV Charisma 3`, `ForceAV Luck 9` ->
+`flags = 0x08800020`, bit 23 only), and `t09b_02 -> t09b_03` (+ `SetAV Aggression 2, Confidence
+4, Assistance 2, Mood 3, Barter 75, Medicine 80` on `TrudyRef 0x00104C6D` `flags = 0x08C00020`
+and `CheyenneREF 0x0010588E` `flags = 0x90F00802`: bit 23 first, bit 22 immediately before
+sentinel)].
 Created `0xFF` `ACHR`/`ACRE` records begin with the same 32-byte creation header as created
 `0xFF` `REFR`s (§6.3) followed by optional bit-2 Havok bytes and the standard actor body
-(interleaved `PlaceAtMe` allocates `REFR`/`ACHR`/`ACRE` from a single monotonic `0xFF` counter
-[observed: vanilla 1.4.0.525 A/B save pairs]; remapping `created_refs` before `created_actors`
-through `created_map` in `fos_convert.rs` is an internal NVForever `[design]` choice). Non-created
+(interleaved `PlaceAtMe` in `t09a_02` — Pencil `REFR 0xFF001319`, PowderGanger `ACHR
+0xFF00131A`, Plunger `REFR 0xFF00131B`, Cheyenne `ACRE 0xFF00131C` — allocates
+`REFR`/`ACHR`/`ACRE` from a single monotonic `0xFF` counter [observed: vanilla 1.4.0.525 A/B
+save pair `t09a_02`]; remapping `created_refs` before `created_actors` through `created_map` in
+`fos_convert.rs` is an internal NVForever `[design]` choice). Non-created
 `PGRE` (placed grenades/mines, kind 4) share the unified bits 1–3 placement/Havok prefix
 (`SetPos Z + 25` on loaded mine `0x000EA807` writes `flags = 0x6`, cell `0x000E6A6E`, 6 `f32`,
 `|`, Havok block) and write `u8, |, u32 form_flags, |` when bit 0 is set (`Disable` on loaded
@@ -417,10 +438,10 @@ for the decoded player layout.
 [observed: vanilla 1.4.0.525 A/B save pairs: `NPC_ 0x00104C0C` `flags 0x22` emits 24B ACBS `|`
 then name `|`; `NPC_ 0x7` `flags 0x01000034` emits bit 4 spells, bit 2 SPECIAL, bit 5 name `|`,
 and trailing bit 24 `01 |`; bits 3 and 9 remain `[hypothesis]`]:
-- bit 1: 24-byte base stats (ACBS) block `|` [observed: vanilla 1.4.0.525 A/B save pairs:
-  24-byte ACBS block; `u32` flags at offset 0 bit 0 `0x01` = Female (`SetEssential 1` on
-  female `GSTrudy 0x00104C6C` and `GSSunnySmiles 0x00104E84` writes flags `0x03` and `0x13`),
-  bit 1 `0x02` = Essential],
+- bit 1: 24-byte base stats (ACBS) block `|` [observed: vanilla 1.4.0.525 A/B save pair
+  `t09b_00 -> t09b_02`: 24-byte ACBS block; `u32` flags at offset 0 bit 0 `0x01` = Female
+  (`SetEssential 1` on female `GSTrudy 0x00104C6C` and `GSSunnySmiles 0x00104E84` writes
+  flags `0x03` and `0x13`), bit 1 `0x02` = Essential],
 - bit 4: two `vsval`-counted spell/ability ref lists (`vsval n, |, n × (ref, |)`)
   [observed: vanilla 1.4.0.525 A/B save pairs: `Player.AddSpell 0x1768BC` writes
   `flags = 0x10`, `04 7c <ref3> 7c 00 7c`],
@@ -443,14 +464,14 @@ and trailing bit 24 `01 |`; bits 3 and 9 remain `[hypothesis]`]:
   parsing cleanly to EOF with eyes `0x00004253` and head part `0x000B5BEA` matching
   `NPC_ 0x00104C0C` `ENAM`/`PNAM` in `FalloutNV.esm`],
 - bit 24 (`0x0100_0000`): `u8 female, |` [observed: vanilla 1.4.0.525 A/B save pairs:
-  `Player.SexChange` writes `NPC_ 0x7` with `flags = 0x01000000`, `01 7c`, and
-  `DocMitchellREF.SexChange` writes non-player `NPC_ 0x00104C0C` with `flags = 0x01000000`,
-  `01 7c`].
+  `Player.SexChange` writes `NPC_ 0x7` with `flags = 0x01000000`, `01 7c`, and `t09b_00 ->
+  t09b_02` (`DocMitchellREF.SexChange`) writes non-player `NPC_ 0x00104C0C` with
+  `flags = 0x01000000`, `01 7c`].
 
 **CELL**: fields follow in fixed change-flag order [observed: vanilla 1.4.0.525 A/B save
 pairs for bits 1, 3, 29, 30, 31]: bit 29 (4-byte non-bar-delimited exterior cell grid header,
-e.g., `01 00 ee ff` for grid `(-18, -1)` across 100 exterior cells after visiting and leaving
-Goodsprings), bit 30 (`u32, |` detach hours, e.g. `0x129` = 297 [observed: 297 = GameDaysPassed
+e.g., `01 00 ee ff` for grid `(-18, -1)` on `CELL 0x000E1AA7` across 100 exterior cells in
+`t09b_05 -> t09b_06` after `CenterOnCell Goodsprings` and `CenterOnCell` back indoors), bit 30 (`u32, |` detach hours, e.g. `0x129` = 297 [observed: 297 = GameDaysPassed
 (12.39) × 24; also observed: vanilla 1.4.0.525 A/B save pairs: leaving `0x103DF9` via
 `CenterOnCell` turns on bit 30 and prepends `u32 132 |`], converted to days as `hours / 24.0`),
 bit 1 (`u8, |` cell flags; bit 5 `0x20` = public area [observed: vanilla 1.4.0.525 A/B save
@@ -471,9 +492,10 @@ reaction, `|` [observed: vanilla 1.4.0.525 A/B save pairs: `SetEnemy` -> reactio
 `SetAlly` -> reaction `2`, `SetFactionReaction 42` -> `modifier = 42` with uninitialized
 reaction bits above `3`; read by the lab, §6.5]; optional bit 1: `u32 flags, |` [observed:
 vanilla 1.4.0.525 A/B save pairs: `0x00000111` on `0x00104C7E`]; optional bit 31: `u32, |,
-u32, |` crime counters [observed: vanilla 1.4.0.525 A/B save pairs: killing hostile Powder
-Ganger `0x0015F312` emits `FACT 0x00104C7E` and `0x00134B6D` with `flags = 0x80000000`
-(`00 00 00 00 7c 01 00 00 00 7c`) and `flags = 0x80000002` (bit 1 before bit 31)].
+u32, |` crime counters [observed: vanilla 1.4.0.525 A/B save pairs `r27_03`/`r27_04`,
+`t09e_02`, `t09f_02`/`t09f_04`: killing hostile Powder Ganger `0x0015F312` in combat emits
+`FACT 0x00104C7E` and `0x00134B6D` with `flags = 0x80000000` (`00 00 00 00 7c 01 00 00 00 7c`)
+and `flags = 0x80000002` (bit 1 before bit 31)].
 
 **FLST** bit 31: `u32` count, `|`, then `count × (ref, |)` [observed: vanilla 1.4.0.525 A/B
 save pairs: `AddFormToFormList` writes `01 00 00 00 7c <ref3> 7c` (9B) and 15-entry lists
@@ -514,10 +536,10 @@ plugin's position in the save's list.
   1.4.0.525 A/B save pairs, §6.2]), 13 TACT (talking activators, 21: bit 0 `u32 form_flags |`
   where `0x400` = Quest Item, bit 2 `u16 len, |, string, |` display name, and bit 23 `ref3 |`
   talking actor serialized in exact order `bit 0 -> bit 2 -> bit 23` [observed: vanilla
-  1.4.0.525 A/B save pairs: `SetQuestObject 1` on `0x0014DF02` writes `flags = 0x1`
-  (`09 04 02 40 7c`), and combined with `SetActorFullName` + `SetTalkingActivatorActor` on
-  `0x000E88AD` writes `flags = 0x00800005` (`09 04 00 00 7c`, `u16(12)|"Orris's Thug"|`,
-  `ref3|`)]), 22 MISC (miscellaneous items: non-created bit 0 `u32 form_flags |` where
+  1.4.0.525 A/B save pair `t09a_00 -> t09a_03`: `SetQuestObject 0x0014DF02 1` writes
+  `flags = 0x1` (`09 04 02 40 7c`), and `SetQuestObject 0x000E88AD 1` + `SetActorFullName` +
+  `SetTalkingActivatorActor` on `0x000E88AD` writes `flags = 0x00800005` (`09 04 00 00 7c`,
+  `u16(12)|"Orris's Thug"|`, `ref3|`)]), 22 MISC (miscellaneous items: non-created bit 0 `u32 form_flags |` where
   `0x400` = Quest Item [observed: vanilla 1.4.0.525 A/B save pairs: `SetQuestObject Pencil01 1`
   writes `09 04 00 00 7c`], bit 1 `i32 cap_value |` [observed: vanilla 1.4.0.525 A/B save pairs:
   `AddItem 0x0007C128` writes `flags 0x2`, `00 00 00 00 7c` (`0`); `SetItemValue 777` on Plunger
@@ -533,12 +555,13 @@ plugin's position in the save's list.
   0.0) [observed: vanilla 1.4.0.525 A/B save pairs: `AddReputationExact 1 15` / `0 7` writes
   `f32 15.0 | f32 7.0 |` (fame and infamy)], and many more NPC_ / CREA (573, bits 1, 2, 3,
   4, 5, 9, 24: bit 1 24-byte ACBS block with bit 0 `0x01` = Female and bit 1 `0x02` =
-  Essential [observed: vanilla 1.4.0.525 A/B save pairs: `SetEssential` on female `GSTrudy`
-  / `GSSunnySmiles` and `DocMitchell`], bit 5 `u16 len, |, string, |` display name [observed:
-  vanilla 1.4.0.525 A/B save pairs: `SetActorFullName` on `NPC_` and `CREA`, §6.2], bit 24
-  `u8 female |` `SexChange` [observed: vanilla 1.4.0.525 A/B save pairs: `DocMitchellREF.SexChange`
-  writes `NPC_ 0x00104C0C` `flags = 0x01000000`, `01 7c`], spell lists, seven SPECIAL-like
-  bytes, AI block, 28-byte skills block [bits 3 and 9 remain `[hypothesis]`]).
+  Essential [observed: vanilla 1.4.0.525 A/B save pair `t09b_00 -> t09b_02`: `SetEssential 1`
+  on female `GSTrudy 0x00104C6C` / `GSSunnySmiles 0x00104E84` and `DocMitchell`], bit 5
+  `u16 len, |, string, |` display name [observed: vanilla 1.4.0.525 A/B save pairs:
+  `SetActorFullName` on `NPC_` and `CREA`, §6.2], bit 24 `u8 female |` `SexChange` [observed:
+  vanilla 1.4.0.525 A/B save pair `t09b_00 -> t09b_02`: `DocMitchellREF.SexChange` writes
+  `NPC_ 0x00104C0C` `flags = 0x01000000`, `01 7c`], spell lists, seven SPECIAL-like bytes, AI
+  block, 28-byte skills block [bits 3 and 9 remain `[hypothesis]`]).
 - **Counts and sizes** (data bytes, min / median / max): REFR 26,683 (0 / 19 / 4,856);
   ACHR 3,560 (285 / 528 / 2,675); ACRE 2,861 (281 / 954 / 3,693); CELL 4,208
   (2 / 42 / 858); INFO 3,332 (all 0); QUST 483 (2 / 20 / 695); CHAL 130; FACT 46
@@ -556,7 +579,7 @@ Read in the 19 `nvf*.fos` saves of the owner's `Saves` folder (2026-11-01; flags
 | Part | Encoding | Notes |
 |---|---|---|
 | place | ref, six f32, `\|` | the worldspace outdoors (WastelandNV, TheStripWorldNew) or the interior cell (GSDocMitchellHouse), position, rotation in radians (nvfairport: z 1.309 = 75°) |
-| actor values | 232 × (f32, `\|`) | three arrays of 77 (the actor value count) and one more entry (`index 231`). First array (`0..77`): 2.0 at codes 38 (Melee Weapons) and 43 (Speech) in 17 saves, 2.0 at code 5 (Strength) in the two level-50 saves (nvfLanius, nvfSlides). Second array (`77..154`): code 24 holds 10 in nvfairport, 143 to 3,419 in mid-game saves and 186,200 in the level-50 ones, code 23 holds 50 to 1,000 [observed: vanilla 1.4.0.525 A/B save pairs: permanent `ModAV` modifiers (Strength 5, Speech 43), Experience (24), Karma (23), and `ModAV`-applied radiation (54) / hardcore needs (73–75)]. The first is not skill points spent, as read on 2026-11-01: nvfairport's +2 Melee Weapons and +2 Speech are exactly the enchantment of the Vault 21 Jumpsuit it wears (VaultSuit21's EITM EnchClothingVaultSuitNormal, Speech 2 and Melee Weapons 2) [observed, 2026-11-11; also observed: vanilla 1.4.0.525 A/B save pairs: Buffout/Rad-X and SleepDeprivation Stage 1 `-1` AGI write to AV1]: giving them as skill points and putting the suit on counted them twice (Melee 36 against the probe's 34). Active effects' modifiers; not applied as base points to avoid double-counting worn gear. nvfairport's Melee is 34 = 2 + 2 × 5 + ⌈10 × 0.5⌉ + 15 tag + 2 (the suit), which matches its probe. Third array (`154..231`): current damage deltas — negative deltas on AP (code 12) and limb conditions (codes 25–31) and natural positive growing meters on RadiationRads (code 54) and Hardcore needs (code 73 Dehydration) [observed: vanilla 1.4.0.525 A/B save pairs: `DamageAV ActionPoints 15`, `PerceptionCondition 40`, `LeftAttackCondition 30`; ingesting 5× `WaterUnpurified 0x000151A4` writes `+25.0` at index 208 (code 54), and ingesting `ScotchGood 0x001673D6` + `Moonshine 0x0016163D` under `SetHardcore 1` writes `+100.0` at index 227 (code 73) while alcohol stat buffs write to AV1]. Entry `231` (the 232nd float): current health damage delta, negative when injured [observed: vanilla 1.4.0.525 A/B save pairs: `DamageAV Health 40` -> `-40.0`] |
+| actor values | 232 × (f32, `\|`) | three arrays of 77 (the actor value count) and one more entry (`index 231`). First array (`0..77`): 2.0 at codes 38 (Melee Weapons) and 43 (Speech) in 17 saves, 2.0 at code 5 (Strength) in the two level-50 saves (nvfLanius, nvfSlides). Second array (`77..154`): code 24 holds 10 in nvfairport, 143 to 3,419 in mid-game saves and 186,200 in the level-50 ones, code 23 holds 50 to 1,000 [observed: vanilla 1.4.0.525 A/B save pairs: permanent `ModAV` modifiers (Strength 5, Speech 43), Experience (24), Karma (23), and `ModAV`-applied radiation (54) / hardcore needs (73–75)]. The first is not skill points spent, as read on 2026-11-01: nvfairport's +2 Melee Weapons and +2 Speech are exactly the enchantment of the Vault 21 Jumpsuit it wears (VaultSuit21's EITM EnchClothingVaultSuitNormal, Speech 2 and Melee Weapons 2) [observed, 2026-11-11; also observed: vanilla 1.4.0.525 A/B save pairs: Buffout/Rad-X and SleepDeprivation Stage 1 `-1` AGI write to AV1]: giving them as skill points and putting the suit on counted them twice (Melee 36 against the probe's 34). Active effects' modifiers; not applied as base points to avoid double-counting worn gear. nvfairport's Melee is 34 = 2 + 2 × 5 + ⌈10 × 0.5⌉ + 15 tag + 2 (the suit), which matches its probe. Third array (`154..231`): current damage deltas — negative deltas on AP (code 12) and limb conditions (codes 25–31) and natural positive growing meters on RadiationRads (code 54) and Hardcore needs (code 73 Dehydration) [observed: vanilla 1.4.0.525 A/B save pairs: `DamageAV ActionPoints 15`, `PerceptionCondition 40`, `LeftAttackCondition 30`; `t09d_00 -> t09d_01` (ingesting 5× `WaterUnpurified 0x000151A4`) writes `+25.0` at index 208 (code 54), and `t09h_00 -> t09h_01` (`SetHardcore 1` + ingesting `ScotchGood 0x001673D6` + `Moonshine 0x0016163D`) writes `+100.0` at index 227 (code 73) while alcohol stat buffs write to AV1]. Entry `231` (the 232nd float): current health damage delta, negative when injured [observed: vanilla 1.4.0.525 A/B save pairs: `DamageAV Health 40` -> `-40.0`] |
 | post-AV float | u8 (0x00), `\|`, optional f32, `\|` | `u8 process_level (0x00), \|`, followed by `f32 scale, \|` **only when change flag bit 4 (`0x10`) is set** (`1.0` in the `nvf*.fos` saves [observed: `nvf*.fos`]; absent when bit 4 is `0`, `1.25` when `Player.SetScale 1.25` flips bit 4 [observed: vanilla 1.4.0.525 A/B save pairs]) |
 | actor extra-data list | vsval count, `\|`, then `count` entries: type byte, `\|`, payload, `\|` | Present when actor-extra or inventory change flags are set (omitted on `0x10000002` saves without those flags [observed: vanilla 1.4.0.525 A/B save pairs]). Actor extra-data types: `0x5E` (`vsval n, \|, n × (ref, \|, i8 rank, \|)` [observed: vanilla 1.4.0.525 A/B save pairs: `Player.SetFactionRank`]), `0x1D` (`vsval n, \|, n × (ref, \|)` gated on `ACHR 0x14` bit 11 `0x800` [observed: vanilla 1.4.0.525 A/B save pairs: recruiting Boone via `VNPCFollowers.bBooneHired = 1` + `SetPlayerTeammate 1` + `EvaluatePackage` flips bit 11 and emits `0x1D` with `[0x00096BCE]`]), `0x18` (`ref, \|, 12 bytes, \|, f32, \|`, seen in early `nvf*.fos` saves), and `0x74` (`ref, \|`, seen with change flag 29) [observed: `nvf*.fos`]; `0x60` (`u32, \|`), `0x75` (`ref, \|, ref, \|, u8, \|`), and 5-entry lists with `0x18` absent [hypothesis]. An unknown type stops inventory parsing rather than guessing |
 | inventory | vsval count, `\|`, then per item: ref, `\|`, i32 count, `\|`, vsval lists, `\|`, per list: vsval extras, `\|`, per extra: type byte, `\|`, payload, `\|` | nvfairport: 27 items, the same 27 kinds its probes counted [observed: nvfairport] |
@@ -564,7 +587,7 @@ Read in the 19 `nvf*.fos` saves of the owner's `Saves` folder (2026-11-01; flags
 
 Seventeen item extra-data types are handled in inventory item lists (tags per type below):
 
-- `0x0D` (`ref, \|, vsval nv, \|, nv × (u32 idx, \|, ref if idx & 0x80000000 else f64, \|), vsval 0, \|, u8 init_flag, \|`): same script-variable framing as `QUST` bit 30 [observed: vanilla 1.4.0.525 A/B save pairs on player inventory item `0x0013B1A8` (`Timer=2.0, Active=1.0`), `REFR 0x00105232`, `REFR 0x00107D73`, and `ACHR 0x00104C0F`]; non-empty trailing lists fail soft.
+- `0x0D` (`ref, \|, vsval nv, \|, nv × (u32 idx, \|, ref if idx & 0x80000000 else f64, \|), vsval 0, \|, u8 init_flag, \|`): same script-variable framing as `QUST` bit 30 [observed: vanilla 1.4.0.525 A/B save pairs `t09b_00`/`t09b_01` (player inventory item `0x0013B1A8` `Timer=2.0, Active=1.0`, `REFR 0x00105232`), `t09b_02` (`REFR 0x00107D73`), and `t09a_01` (`ACHR 0x00104C0F`)]; non-empty trailing lists fail soft.
 - `0x16` (0 payload bytes): worn armour, Pip-Boy, glove, and equipped weapons [observed: `nvf*.fos` and vanilla 1.4.0.525 A/B save pairs: tracks weapon & armor equip swaps].
 - `0x17` (0 payload bytes): defensive pass-through guard `[design]` — not emitted by `FalloutNV.exe 1.4.0.525` even under direct clean-room test-plugin stimulation (dual-slot ring `BMDT=0x180`, left/right ring & hand slots, equipped individually, simultaneously, twice, and locked with `noUnequip=1` on Player and NPCs all emit `0x16` only) `[observed negative proof]`.
 - `0x1C` (`ref, \|`): original world `REFR` on picked-up inventory items (and current holder `REFR` on the picked-up world `REFR` itself, gated by `REFR` change flag bit 10 `0x400`) [observed: vanilla 1.4.0.525 + clean-room test-plugin A/B save pairs: picking up placed `REFR`s writes `0x1C ref3` in player & container inventories and `flags 0x403` + `04 7c 1c 7c ref3(holder) 7c` on the world `REFR`].

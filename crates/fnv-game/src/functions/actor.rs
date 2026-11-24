@@ -916,10 +916,10 @@ pub fn set_actor_full_name(g: &mut Game, ctx: &Ctx, a: &Args) -> Result<Value, S
 }
 
 impl<'a> Game<'a> {
-    /// The name SetActorFullName, SetFullNameAlt, or a converted save gave a base form
+    /// The name `SetActorFullName` or a converted `.fos` save gave a base form
     /// (`FormChanges::saved_names`, else the title (FULL) of the message in
-    /// `FormChanges::names`) [documented: GECK wiki SetActorFullName summary;
-    /// `docs/spec-notes/jip-strings.md`]. `None` when no saved rename exists.
+    /// `FormChanges::names`) [documented: GECK wiki SetActorFullName summary].
+    /// `None` when no saved rename exists.
     pub fn script_name(&self, base: FormId) -> Option<&str> {
         let data: &'a crate::data::GameData = self.data;
         self.forms
