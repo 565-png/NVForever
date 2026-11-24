@@ -491,9 +491,14 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             XVal::Num(a + (b - a) * t)
         }
         // The Pip-Boy's mode: 0 closed, 1/2 opening, 3 opened, 4/5 closing [documented:
-        // GECK wiki GetPipBoyMode]. NVForever reports 3 whenever any Pip-Boy page is open
-        // (`Game::menu_open(menus::PIPBOY)`, including underneath a tutorial overlay) and
-        // 0 otherwise [hypothesis: opening/closing animation modes 1/2/4/5 are not emitted].
+        // GECK wiki GetPipBoyMode; observed: 2026-11-24, `GSDocMitchellHouse`
+        // (`0x00103DF9`), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JohnnyGuitarNVSE
+        // 528 + JIP LN 57.30 with the 10 official base masters, clean-room script probe
+        // `w4c_b3_06_toggle_pipboy_tab` (`tools/capture/nvse/catalogs/wave4c_extenders.json`,
+        // #3678 / PR #3679): `init(pb=0)|open1003(mm=1003,pb=2)|close(mm=1003,pb=3)|reopenNoArg(mm=0,pb=0)`;
+        // no DLL or source consulted]. NVForever reports 3 whenever any Pip-Boy page is
+        // open (`Game::menu_open(menus::PIPBOY)`, including underneath a tutorial overlay)
+        // and 0 otherwise [not built: opening/closing animation transition modes 1/2/4/5].
         "getpipboymode" => XVal::Num(if g.menu_open(crate::game::menus::PIPBOY) { 3.0 } else { 0.0 }),
         // [observed: an unknown stat is -1, and ModExtraMiscStat did not create one]
         "getextramiscstat" => XVal::Num(g.jip2.misc_stats.get(&text(args, 0).to_ascii_lowercase()).copied().unwrap_or(-1.0)),
