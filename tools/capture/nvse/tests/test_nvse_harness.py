@@ -167,14 +167,15 @@ class TestCatalogValidation(unittest.TestCase):
                 "wave1_parity_probes.json",
                 "wave4a_extenders.json",
                 "wave4b_extenders.json",
+                "wave4c_extenders.json",
             ],
         )
         self.assertFalse((nvse_harness.DEFAULT_CATALOG_DIR / "persistence_matrix.json").exists())
         errors, counts = nvse_harness.validate_catalogs(paths)
         self.assertEqual(errors, [], f"Catalog validation errors: {errors[:5]}")
-        self.assertEqual(counts["catalogs"], 3)
-        self.assertEqual(counts["probe_batches"], 12)
-        self.assertEqual(counts["probes"], 354)
+        self.assertEqual(counts["catalogs"], 4)
+        self.assertEqual(counts["probe_batches"], 17)
+        self.assertEqual(counts["probes"], 454)
         self.assertEqual(counts["persistence_items"], 0)
 
         # Verify Wave 1 parity probe IDs and corrected Wave 4A + T35 targeted probes are present verbatim.
@@ -356,6 +357,7 @@ class TestCatalogValidation(unittest.TestCase):
         self.assertIn("wave1_parity_probes", out)
         self.assertIn("wave4a_extenders", out)
         self.assertIn("wave4b_extenders", out)
+        self.assertIn("wave4c_extenders", out)
         self.assertNotIn("persistence_matrix", out)
 
 

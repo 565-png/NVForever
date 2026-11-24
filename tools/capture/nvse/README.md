@@ -55,8 +55,8 @@ Probes in `catalogs/` target:
   `ClassicPack.esm`, `MercenaryPack.esm`, `TribalPack.esm`.
 - **Public script extenders:** `xNVSE 6.4.9`, `JIP LN NVSE 57.30` (`5730`),
   `ShowOffNVSE Plugin 184`, `JohnnyGuitarNVSE 528`, `kNVSE 37`,
-  `SUP NVSE Plugin 855`, `yUI 140` (v1.4d), `AnhNVSE 131`, and
-  `lStewieAl's Tweaks 1005`.
+  `SUP NVSE Plugin 855`, `yUI 140` (v1.4d), `UI Organizer Plugin 230`,
+  `hNVSE 120`, `AnhNVSE 131`, and `lStewieAl's Tweaks 1005`.
 - **No bare EditorIDs:** Every vanilla form in runtime-compiled probe scripts is
   resolved by plugin + local FormID (`GetFormFromMod "FalloutNV.esm" "<hex>"`),
   enforced automatically by `harness.py validate`.
@@ -78,8 +78,8 @@ Probes in `catalogs/` target:
     write JSON and Markdown scoreboards.
   - `cite` — format copy-paste-ready clean-room `[observed: ...]` citations with
     the automated privacy gate.
-- `catalogs/` — sanitized declarative console-only JSON catalogs (all
-  file-writing and `con_Save` probes excluded):
+- `catalogs/` — 4 sanitized declarative console-only JSON catalogs (17 batches,
+  454 read-only probes total; all file-writing and `con_Save` probes excluded):
   - `wave1_parity_probes.json` — Wave 1/2 parity probes covering xNVSE compound
     assignments & `dATan2`, JIP hit 3D direction/base damage/reticle limbs,
     ShowOff `OnFireWeapon` & `ForceWeaponJamAnim`, ShowOff objective/unholster
@@ -90,6 +90,10 @@ Probes in `catalogs/` target:
   - `wave4b_extenders.json` — Wave 4B remaining read-only Bucket A & B extender
     catalog across JIP/Lutana, ShowOff/Core/kNVSE/AnhNVSE/Stewie, JohnnyGuitar,
     and SUP.
+  - `wave4c_extenders.json` — Wave 4C read-only console-only discrepancy
+    follow-ups and remaining Bucket A & B extender sweep (5 batches, 100
+    probes: `w4c_phase_a`, `w4c_b_jip_lutana`, `w4c_b_showoff_core`,
+    `w4c_b_jg`, `w4c_b_sup_knvse_opt`).
 - `tests/test_nvse_harness.py` — offline stdlib `unittest` suite (no game
   install or captured logs required).
 
