@@ -105,6 +105,9 @@ pub struct SmallState {
     /// INI settings that last a session [observed: TaleOfTwoWastelands.esm
     /// TTWGenericHandlerScript, `TTW_EnableRadioFix 1` next to SetNumericINISetting].
     pub ttw_radio_fix: bool,
+    /// `ManOnFireNVSE.ini` cached configuration and per-actor exposure accumulator
+    /// (`crate::man_on_fire`).
+    pub man_on_fire: crate::man_on_fire::ManOnFireState,
 }
 
 /// CRC-32 (the IEEE polynomial, reflected, as zip and PNG use) [decision: the page's

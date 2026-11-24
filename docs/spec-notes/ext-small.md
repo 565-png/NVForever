@@ -211,3 +211,72 @@ not the Cloud Upgrade NVSE plugin's implementation**.
     periods `[180, 145, 115, 90]` s, peak rate capped at `base * MaxSpeed`) integrated
     analytically in `f64` so UV scroll offsets remain monotonic, stateless, deterministic,
     and synced with `cloud_shadows`.
+
+## 5. ManOnFireNVSE INI fire spread
+
+Built in `crates/fnv-game/src/man_on_fire.rs`, ticked from `Game::tick` during unpaused,
+non-frozen game mode (`!in_menu && !time_frozen`). Clean-room implementation from the
+public Nexus Mods page and shipped INI file comments only: **Man On Fire NVSE v1.0.1**
+(`https://www.nexusmods.com/newvegas/mods/94962`, shipped `Config\ManOnFireNVSE.ini`
+installed to `Data\Config\ManOnFireNVSE.ini`). The plugin's DLL and source code were
+never consulted.
+
+### Configuration lookup and schema
+
+- **Paths:** `Data\Config\ManOnFireNVSE.ini` primary [documented: Man On Fire NVSE
+  v1.0.1 (`https://www.nexusmods.com/newvegas/mods/94962`), archive install path
+  `Data\Config\ManOnFireNVSE.ini`], falling back to
+  `Data\NVSE\Plugins\ManOnFireNVSE.ini` [design: NVForever fallback lookup path, not
+  stated in the shipped v1.0.1 release]. When neither file is present, no fire-spread
+  logic runs and unmodded vanilla combat is unchanged [design].
+- **Parser:** BOM-safe (UTF-8 `\u{feff}` and Latin-1-decoded UTF-8 BOM), case-insensitive
+  `[Settings]` section and key names, `;` and `#` comments stripped, invalid or
+  non-finite numeric values keep defaults, negative numeric values clamp to `0.0`, and
+  `fMaxRange <= 0` disables spread [design].
+- **`[Settings]` keys and defaults** [documented: Man On Fire NVSE v1.0.1
+  (`https://www.nexusmods.com/newvegas/mods/94962`), shipped
+  `Data\Config\ManOnFireNVSE.ini` and its inline `;` comments; only the public mod page
+  and shipped INI were consulted, never the DLL or source]:
+
+| Key | Default (v1.0.1 INI) | Role (from v1.0.1 shipped INI comments) |
+|---|---|---|
+| `fIgnitionThreshold` | `1.0` | Seconds of exposure to fire before catching fire ("Higher = slower spread") [documented: v1.0.1 INI] |
+| `fDecayRate` | `0.3` | Exposure decay per second when moving away from fire [documented: v1.0.1 INI] |
+| `fMaxRange` | `100.0` | Maximum 3D distance in game units for fire spread ("Closer = faster accumulation") [documented: v1.0.1 INI] |
+| `bUseFireResist` | `1` | Factor in Fire Resistance actor value (code 52, [documented: GECK wiki Actor Value list]) [documented: v1.0.1 INI] |
+| `bPlayerImmune` | `0` | Player immune to fire spread [documented: v1.0.1 INI] |
+| `bCompanionsImmune` | `0` | Companions (`Game::is_teammate` [design]) immune to fire spread [documented: v1.0.1 INI] |
+
+### Spread, decay, and ignition rules
+
+- **Burning source detection:** a loaded actor with an active, non-permanent, non-worn
+  effect whose base effect (`MGEF`) is harmful (`Hostile` or `Detrimental`) and resisted
+  by Fire Resistance (`combat_lines::FIRE_RESISTANCE`, code 52; same test as
+  `hit-effects.md` §3 and `grass-fire.md` §1) [hypothesis]. Multiple fire effects on the
+  same burning actor collapse to one source (highest magnitude) so an item with two
+  fire MGEFs does not double-count [design]. Burning corpses whose burn outlasts death
+  (`No Death Dispel`) remain valid sources while the burn lasts [design].
+- **Proximity accumulation:** for each loaded, living, non-immune, non-burning actor in
+  the same cell/worldspace within `fMaxRange`, each burning source contributes linear
+  distance falloff `clamp(1.0 - dist / fMaxRange, 0.0, 1.0)` per second, summed across
+  nearby burning sources [hypothesis].
+- **Fire Resistance:** when `bUseFireResist` is true, accumulation scales by
+  `clamp(1.0 - FireResist / 100.0, 0.0, 1.0)` (`100%` blocks spread) and ignition
+  applies through the hit-effect resistance path (`Mods::hit = true`) [hypothesis]. When
+  `bUseFireResist` is false, accumulation ignores Fire Resistance and ignition applies
+  with `Mods::hit = false` so resistance does not suppress spread ignition [design].
+- **Decay and bounds:** actors not receiving positive exposure decay by
+  `fDecayRate * dt` per frame and are removed once at `0.0`. Already-burning actors clear
+  spread exposure so two burning actors do not infinitely re-ignite each other [design].
+  Concurrent tracked exposure entries are capped at `MAX_TRACKED_EXPOSURE` (`1024`)
+  [design].
+- **Immunity:** dead, `Game::is_immune` (child, invulnerable, ghost), god-mode player,
+  player when `bPlayerImmune` is true, and hired teammates (`Game::is_teammate`) when
+  `bCompanionsImmune` is true never accumulate exposure or ignite from spread [design].
+- **Ignition:** when exposure reaches `fIgnitionThreshold`, the closest burning source's
+  active fire magic item (all effects when all are fire-resisted, else only its
+  fire-resisted effect indices) is applied to the victim with the source's caster
+  (falling back to the burning actor) and triggers `OnFire` combat lines [hypothesis;
+  design].
+- **Scope note:** verified with synthetic unit and integration controls in `fnv-game`;
+  original-game comparison with the installed plugin remains separate acceptance work.
