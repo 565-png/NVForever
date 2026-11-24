@@ -178,13 +178,21 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 .collect();
             XVal::Array(g.ext.new_array(ArrayKind::StringMap, entries))
         }
-        // The colours are floats of 0 to 255 [documented: the schema's LSCT; the page's
-        // example sets 59.3]; a value that is no number sets nothing.
+        // Raw floats stored verbatim as f32 (no 0..255 clamping, and NaN stored verbatim)
+        // [documented: the schema's LSCT; observed: Fallout: New Vegas 1.4.0.525 +
+        // xNVSE 6.4.9 + JIP LN 57.30, 2026-11-23/24, GSDocMitchellHouse (0x00103DF9),
+        // 10 official base masters, `jip_09_lsct_text_rgb_clamp`
+        // (`tools/capture/nvse/catalogs/wave4a_extenders.json`):
+        // `PROBE|jip_09_lsct_text_rgb_clamp|n0=3,init=(255.0,180.0,53.0),over=(59.3,181.0,300.0),neg=(-10.0,100.0,50.0)`
+        // and `w4d_25_lsct_rgb_nan_and_password_key`
+        // (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679 / #3803):
+        // `PROBE|w4d_25_lsct_rgb_nan_and_password_key|lsct(0=255.0,180.0,53.0|nan=-nan(ind),123.5,45.0)|door(0->1)|termRef(0->1)`;
+        // no DLL or source consulted].
         "setloadscreentypetextrgb" => {
             if let Some(t) = form(args, 0).filter(|&t| of_sig(g, t, &[b"LSCT"])) {
                 for (k, p) in ["font_1_red", "font_1_green", "font_1_blue"].iter().enumerate() {
-                    if let Some(v) = crate::nvse::field_number(num(args, k + 1, f64::NAN), 0.0, 255.0) {
-                        g.field_overrides.insert((t, format!("DATA/{p}")), XVal::Num(v));
+                    if let Some(XVal::Num(v)) = args.get(k + 1) {
+                        g.field_overrides.insert((t, format!("DATA/{p}")), XVal::Num(f64::from(*v as f32)));
                     }
                 }
             }
