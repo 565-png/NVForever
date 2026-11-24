@@ -68,12 +68,7 @@ generic.5.ref.0 and generic.5.base.0 both give Doc Mitchell's first package].
 - Add puts the form in at the index; -2 adds at the end [documented]. The page gives no
   result, but the game gives the index it went in at, and for -2 the index of the last
   entry before it (Doc's 9 packages: index 0 gave 0, -2 gave 8, then 10 packages)
-  [observed: nvse-eighth]. Calling with a target record type that does not match the list
-  code returns `-1` and does not modify the target [observed: Fallout: New Vegas 1.4.0.525
-  + xNVSE 6.4.9 with the 10 official base masters, clean-room script probe
-  `core_13_generic_add_form_past_end`: `GenericAddForm 1 <NPC_> <PACK> 999` returned `-1`;
-  no DLL or source consulted]. Whether an index past the end on a matching target type
-  appends at the end or returns `-1` stays [hypothesis] (NVForever appends as `-2`).
+  [observed: nvse-eighth]. Another index past the end adds at the end [hypothesis].
 - Delete takes out the form at the index and gives it [documented]; past the end, 0.
 - Replace puts the new form at the index and gives the old one [documented]
   [observed: generic.10.replace and its restore].

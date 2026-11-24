@@ -1500,12 +1500,16 @@ impl Vm<'_, '_> {
 
     /// Evaluate an extended expression together with its truthiness.
     ///
-    /// [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base
-    /// masters, clean-room script probes `core_05_eval_empty_array_and_string_truth`
-    /// (`1,0,1,1`) and `core_24_string_var_destruct_zero` (`eval=1->0,len=5->-1`); no DLL
-    /// or source consulted]: both an initialised empty array and an initialised empty
-    /// `string_var` (`""`) evaluate truthy (`1`); only `ar_Null` and an uninitialised or
-    /// `sv_Destruct`-ed `string_var` evaluate `0`.
+    /// [observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas
+    /// 1.4.0.525, xNVSE 6.4.9 with the 10 official base masters, clean-room script
+    /// probes `core_05_eval_empty_array_and_string_truth` (`1,0,1,1`) and
+    /// `core_24_eval_string_var` / `#3679` `core_24_string_var_destruct_zero`
+    /// (`eval s`: `1 -> 0` across `sv_Destruct`, `eval sEmp == 1`, `eval (!sEmp) == 0`,
+    /// `eval (sEmp && 5) == 1`, `eval a1 == 1`, `eval a2 == 1`, `eval ar_Null == 0`,
+    /// `eval (!a1) == 0`, `eval (!aNull) == 1`); no DLL or source consulted]: both an
+    /// initialised empty array and an initialised empty `string_var` (`""`) evaluate
+    /// truthy (`1`); only `ar_Null` and an uninitialised or `sv_Destruct`-ed
+    /// `string_var` evaluate `0`.
     fn xeval_truthy(&mut self, e: &XExpr) -> Result<(XVal, bool), VmError> {
         if let XExpr::Var { var, .. } = e {
             if self.host.var_kind(var) == VarKind::String {
@@ -3163,13 +3167,17 @@ impl Vm<'_, '_> {
         };
         match name.to_ascii_lowercase().as_str() {
             // `(eval Expression)` inside an expression: coerces string and array results
-            // to `1.0`/`0.0` via `xeval_truthy` [observed: core_24_string_var_destruct_zero
-            // (`int b1 = eval s` -> 1 before / 0 after `sv_Destruct`),
-            // core_05_eval_empty_array_and_string_truth; hypothesis for standalone
-            // `(eval <array_var>)` and `(eval <string_literal>)`], while passing numeric
-            // and ref values through unchanged [design: preserves `#2275`, where Blue
-            // Moon's Script Runner files write `AuxVarSetFlt "*x" (eval
-            // GetINIFloat_Cached "s:k" "f.ini" 1) 5`].
+            // to `1.0`/`0.0` via `xeval_truthy` [observed: 2026-11-23, GSDocMitchellHouse
+            // (0x00103DF9), Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9 with the 10 official
+            // base masters, probes `core_24_eval_string_var` / `#3679`
+            // `core_24_string_var_destruct_zero` (`eval s`: `1 -> 0` across `sv_Destruct`,
+            // `eval sEmp == 1`, `eval a1 == 1`, `eval a2 == 1`, `eval ar_Null == 0`) and
+            // `core_05_eval_empty_array_and_string_truth`; hypothesis for bare `""` string
+            // literals/temporaries]. Numeric and ref values pass through unchanged [design:
+            // preserves `#2275`, where Blue Moon's Script Runner files write
+            // `AuxVarSetFlt "*x" (eval GetINIFloat_Cached "s:k" "f.ini" 1) 5`; note
+            // `core_24_eval_string_var` observed standalone `eval 5 == 1`, `eval -3 == 1`,
+            // `eval 0 == 0` in xNVSE 6.4.9].
             "eval" => {
                 let Some(a) = c.args.first() else {
                     return Err(VmError::Expression(format!("{name} without its argument")));

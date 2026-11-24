@@ -47,23 +47,7 @@ impl Game<'_> {
     /// A generic form list: 0 race hairs (HNAM), 1 race eyes (ENAM), 5 actor base
     /// packages, 6 actor base spells, 7 leveled spells (none read), 10 NPC head parts,
     /// 13 a form list [documented: GenericGetForm's list codes]; a script's change first.
-    /// Returns `None` when `code` is unknown or `target`'s record type does not match the
-    /// list code [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, clean-room probe
-    /// core_13_generic_add_form_past_end: `GenericAddForm 1 <NPC_> <PACK> 999` returned -1].
     pub fn generic_list(&self, code: i64, target: FormId) -> Option<Vec<FormId>> {
-        let sig = self.data.sig(self.unclone(target)).or_else(|| {
-            (target == FormId::PLAYER_BASE || target == FormId::PLAYER_REF).then_some(*b"NPC_")
-        })?;
-        let valid_target = match code {
-            0 | 1 => sig == *b"RACE",
-            5..=7 => matches!(&sig, b"NPC_" | b"CREA"),
-            10 => sig == *b"NPC_",
-            13 => sig == *b"FLST",
-            _ => false,
-        };
-        if !valid_target {
-            return None;
-        }
         if let Some(v) = self.other.generic.get(&(code, target)) {
             return Some(v.clone());
         }
@@ -158,9 +142,7 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
             let code = num(args, 0, -1.0) as i64;
             let Some(t) = form(args, 1) else { return Some(Ok(XVal::Ref(0))) };
             let t = if matches!(code, 0 | 1 | 13) { t } else { base(g, t) };
-            let Some(mut list) = g.generic_list(code, t) else {
-                return Some(Ok(if name == "genericaddform" { XVal::Num(-1.0) } else { XVal::Ref(0) }));
-            };
+            let Some(mut list) = g.generic_list(code, t) else { return Some(Ok(XVal::Ref(0))) };
             let idx_at = if matches!(name, "genericaddform" | "genericreplaceform") { 3 } else { 2 };
             let i = num(args, idx_at, -1.0) as i64;
             let at = usize::try_from(i).ok().filter(|&i| i < list.len());

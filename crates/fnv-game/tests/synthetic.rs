@@ -4478,8 +4478,6 @@ fn generic_form_lists_and_animation_lists_change_for_the_session() {
     assert_eq!(q(&mut g, "SetFunctionValue (GenericDeleteForm 7, PlayerREF, 1)"), glob);
     assert_eq!(q(&mut g, "SetFunctionValue (ar_Size (GetBaseSpellListLevSpells PlayerREF))"), XVal::Num(1.0), "the getter sees it");
     assert_eq!(q(&mut g, "SetFunctionValue (GenericGetForm 99, PlayerREF, 0)"), XVal::Ref(0), "no such list");
-    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 1, PlayerREF, TestAdd, 999)"), XVal::Num(-1.0), "mismatched target record type returns -1");
-    assert_eq!(q(&mut g, "SetFunctionValue (GenericAddForm 99, PlayerREF, TestAdd, 0)"), XVal::Num(-1.0), "unknown list code returns -1");
 
     q(&mut g, "AddAnimation \"a.kf\" PlayerREF\nAddAnimation \"B.kf\" PlayerREF\nAddAnimation \"A.KF\" PlayerREF");
     let nth = |g: &mut fnv_game::Game, i: u32| g.run_query(&format!("Begin Function {{ }}\nSetFunctionValue (PlayerREF.GetNthAnimation {i})\nEnd\n"), ctx()).unwrap();

@@ -639,21 +639,8 @@ pub fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, args: &[
             g2 => weapon_field(g2),
         };
         if let (Some((sub, path)), Some(v)) = (target, value) {
-            // `WEAP CRDT critical_damage` is an unsigned 16-bit integer: negative values
-            // wrap mod 65536 [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9,
-            // clean-room script probe core_16_set_weapon_crit_damage_edge:
-            // SetWeaponCritDamage -5 -> 65531.0].
-            let stored = if name == "setweaponcritdamage" {
-                match v {
-                    XVal::Num(n) if n.is_finite() => XVal::Num(f64::from(n.trunc() as i64 as u16)),
-                    XVal::Num(_) => XVal::Num(0.0),
-                    other => other.clone(),
-                }
-            } else {
-                v.clone()
-            };
-            g.field_overrides.insert((f, format!("{sub}/{path}")), stored.clone());
-            g.sync_item_field_override(f, sub, path, &stored);
+            g.field_overrides.insert((f, format!("{sub}/{path}")), v.clone());
+            g.sync_item_field_override(f, sub, path, v);
             return Some(Ok(XVal::Num(0.0)));
         }
         // The flag setters: one bit of DNAM's flags.

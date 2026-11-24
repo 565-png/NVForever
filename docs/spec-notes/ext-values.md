@@ -77,20 +77,25 @@ of an array; `#` of an empty string.
 - **Forms**: an unset ref (0) is false, a set one true; `if r` is the documented test
   [documented: Ref Variable].
 - **Strings, arrays, user-function results** must be tested with `if eval`, not plain
-  `if`, which misreads them [documented: Eval]. Under `if eval`, both an initialised
-  empty array (`ar_Construct "array"`) and an initialised empty `string_var` (`""`)
-  evaluate truthy (`1`), while `ar_Null` and an uninitialised or `sv_Destruct`-ed
-  `string_var` evaluate `0`, and `int b = eval s` returns `1` before / `0` after
-  `sv_Destruct` [documented: Array Variable; observed: Fallout: New Vegas 1.4.0.525 +
-  xNVSE 6.4.9 with the 10 official base masters, clean-room script probes
-  `core_05_eval_empty_array_and_string_truth` (`1,0,1,1`) and
-  `core_24_string_var_destruct_zero` (`eval=1->0,len=5->-1`); no DLL or source consulted].
-  NVForever extends this initialised-empty-array / initialised-empty-string truthiness
-  rule to `while`, `!`, `&&`, `||`, bare `""` string literals/temporaries, and standalone
-  `(eval <array_var>)` / `(eval <string_literal>)` -> `1`/`0` [hypothesis], while passing
-  numeric and ref results of standalone `(eval <expr>)` through unchanged [design:
-  preserves `#2275` `AuxVarSetFlt "*x" (eval GetINIFloat_Cached ...) 5`]. The `&&`/`||`
-  rule above shows each kind reduces to 1 or 0 [documented: NVSE Expressions].
+  `if`, which misreads them [documented: Eval]. Under `if eval`, standalone `eval`, `!`,
+  and `&&`, both an initialised empty array (`ar_Construct "array"`) and an initialised
+  empty `string_var` (`""`) evaluate truthy (`1`), while `ar_Null` and a `sv_Destruct`-ed
+  `string_var` evaluate `0`, and `eval s` returns `1` before / `0` after `sv_Destruct`
+  (`eval sEmp == 1`, `eval (!sEmp) == 0`, `eval (sEmp && 5) == 1`, `eval a1 == 1`,
+  `eval a2 == 1`, `eval ar_Null == 0`, `eval (!a1) == 0`, `eval (!aNull) == 1`)
+  [documented: Array Variable; observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`),
+  Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters,
+  clean-room script probes `core_05_eval_empty_array_and_string_truth` (`1,0,1,1`) and
+  `core_24_eval_string_var` / `#3679` `core_24_string_var_destruct_zero`
+  (`eval=1->0,len=5->-1`, `sEmp`: `b3=1,not=0,and5=1`, `a1=1,a2=1,null=0`; no DLL or
+  source consulted)]. NVForever extends this initialised-empty-array /
+  initialised-empty-string truthiness rule to `while`, `||`, uninitialised `string_var`,
+  and bare `""` string literals/temporaries [hypothesis]. For numeric inputs,
+  `core_24_eval_string_var` observed standalone `eval 5 == 1`, `eval -3 == 1`,
+  `eval 0 == 0` in xNVSE 6.4.9, while NVForever passes numeric and ref results of
+  `(eval <expr>)` through unchanged [design: preserves `#2275`
+  `AuxVarSetFlt "*x" (eval GetINIFloat_Cached ...) 5`]. The `&&`/`||` rule above shows
+  each kind reduces to 1 or 0 [documented: NVSE Expressions].
 - **A failed expression** inside `if eval` reports an extender error instead of silently
   failing [documented: Eval]; TestExpr turns failure into 0 without a message
   [documented: TestExpr].
