@@ -173,24 +173,29 @@ still attack it, and `UseWeapon` / `Use Weapon` packages are unaffected), and th
 state resets on every saved-game load (kept out of both `GameSnapshot` and
 `Game::Session`). `SetCombatDisabled` returns 0 [observed: gaps2] and
 `GetCombatDisabled` reads the flag [observed: gaps3]. Enabling `SetCombatDisabled 1` on an
-actor already in combat does not immediately clear `IsInCombat` in the same frame
-(`IsInCombat == 1`) [observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`),
-Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters, clean-room
-script probe `core_20_set_combat_disabled_stops_combat`
-(`tools/capture/nvse/catalogs/wave4a_extenders.json`, #3679: `StartCombat` -> `IsInCombat 1`
--> `SetCombatDisabled 1` -> `GetCombatDisabled 1`, `IsInCombat 1`: `1,1,1`); no DLL or
-source consulted]. [hypothesis] Whether an already-in-combat actor stays in combat after
-that frame (on subsequent ticks) rather than dropping out of combat later is uncaptured
-because `core_20_set_combat_disabled_stops_combat` reads `IsInCombat` in the same frame;
-NVForever keeps active combat running until it ends normally. Calling `SetCombatDisabled 1`
+actor already in combat leaves `IsInCombat == 1` in the same frame (`t0`) and ends active
+combat on subsequent AI ticks (`IsInCombat == 0` by `t2` and `t5`) [observed: Fallout: New
+Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-23 & 2026-11-24, `GSDocMitchellHouse`
+(`0x00103DF9`), 10 official base masters, isolated clean-room staging copy (read-only
+`PrintToConsole` probes; zero writes to game install or Saves),
+`core_20_set_combat_disabled_stops_combat` (`tools/capture/nvse/catalogs/wave4a_extenders.json`,
+#3679: `StartCombat` -> `IsInCombat 1` -> `SetCombatDisabled 1` -> `GetCombatDisabled 1`,
+`IsInCombat 1`: `1,1,1`) and `w4h_05_set_combat_disabled_multitick`
+(`tools/capture/nvse/catalogs/wave4h_reconcile.json`, PR #3803 / #3802):
+`PROBE|w4h_05_set_combat_disabled_multitick|pre=1|t0(cd=1,inCmb=1)|t2(cd=1,inCmb=0)|t5(cd=1,inCmb=0)`;
+zero DLL, PDB, or third-party source consulted]. NVForever matches this by setting
+`combat_disabled` without calling `Game::stop_combat` immediately (preserving same-frame
+`IsInCombat == 1`) and clearing active combat to `State::Normal` on the next AI awareness
+tick in `Game::settle_awareness` (`awareness.rs`). Calling `SetCombatDisabled 1`
 on a non-combat actor suppresses new combat entry via `StartCombat` (`IsInCombat` remains
 `0` same-tick and on subsequent ticks) [observed: Fallout: New Vegas 1.4.0.525 + xNVSE
 6.4.9 + JIP LN 57.30, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base
 masters, `w4d_07_setcombatdisabled_new_combat`
 (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679):
 `c0=0,cd(0->1->1),sameTick=0,nextTick=0`; no DLL or source consulted].
-[hypothesis] While enabled it also suppresses ally/provocation alarms (`awareness.rs`,
-`combat_group.rs`, `provocation.rs`).
+[hypothesis] Exact tick latency (`t1` vs `t2`) and whether `SetCombatDisabled 1` also
+suppresses ally/provocation alarms (`awareness.rs`, `combat_group.rs`, `provocation.rs`)
+remain uncaptured.
 
 ## 10. Live `SetActorBaseFlagsLow` / `SetActorBaseFlagsHigh` consumers (`actor_values.rs`)
 

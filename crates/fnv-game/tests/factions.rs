@@ -2162,22 +2162,35 @@ fn set_combat_disabled_blocks_combat_entry_allows_being_attacked_and_resets_on_l
     g.start_combat(bandit, player);
     assert_eq!(g.awareness.state(bandit), State::Combat);
 
-    // SetCombatDisabled 1 does NOT immediately terminate active combat in the same frame
-    // [observed: 2026-11-23, GSDocMitchellHouse (0x00103DF9),
-    // `core_20_set_combat_disabled_stops_combat`; hypothesis: stays in combat after that
-    // frame], and once combat ends it blocks all combat re-entry.
+    // SetCombatDisabled 1 leaves IsInCombat == 1 on the same frame (t0) and ends active
+    // combat on the next AI awareness tick (`Game::settle_awareness`), then blocks new
+    // combat entry via StartCombat [observed: `core_20_set_combat_disabled_stops_combat`,
+    // `w4d_07_setcombatdisabled_new_combat`, and `w4h_05_set_combat_disabled_multitick`
+    // (PR #3803 / #3802)].
+    g.awareness.changes.clear();
     run_on(&mut g, bandit, "SetCombatDisabled 1");
     assert_eq!(eval_on(&mut g, bandit, "GetCombatDisabled"), 1.0);
     assert_eq!(g.awareness.state(bandit), State::Combat);
-    g.stop_combat(bandit);
-    assert_eq!(g.awareness.state(bandit), State::Normal);
+    assert_eq!(eval_on(&mut g, bandit, "IsInCombat"), 1.0, "same-frame t0 keeps IsInCombat == 1");
+    assert!(g.present(bandit), "bandit must be present so settle_awareness exits via combat_disabled");
+    g.settle_awareness();
+    assert_eq!(g.awareness.state(bandit), State::Normal, "AI awareness tick ends active combat");
+    assert_eq!(eval_on(&mut g, bandit, "IsInCombat"), 0.0);
+    assert_eq!(eval_on(&mut g, bandit, "GetCombatDisabled"), 1.0);
+    assert!(
+        g.awareness.changes.iter().any(|c| c.actor == bandit && c.from == State::Combat && c.to == State::Normal),
+        "combat_disabled tick must emit Combat -> Normal transition: {:?}",
+        g.awareness.changes
+    );
     assert!(!g.would_attack(bandit, player));
     assert!(!g.hurt_by(bandit, player, [0.0; 3]));
     g.start_combat(bandit, player);
     assert_eq!(g.awareness.state(bandit), State::Normal);
+    assert_eq!(eval_on(&mut g, bandit, "IsInCombat"), 0.0);
     g.observe_threat(bandit, player, &Detection { value: 100.0, band: Band::Detected, ..Default::default() }, [0.0; 3]);
     g.settle_awareness();
     assert_eq!(g.awareness.state(bandit), State::Normal);
+    assert_eq!(eval_on(&mut g, bandit, "IsInCombat"), 0.0);
 
     // Other actors can still attack a combat-disabled actor (documented: "though they can still be attacked").
     g.start_combat(own, bandit);

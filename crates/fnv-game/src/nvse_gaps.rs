@@ -1110,11 +1110,16 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // packages still work); reset on every save load [documented: GECK wiki
         // SetCombatDisabled]. Returns 0 either way [observed: gaps2]; GetCombatDisabled
         // reads it [observed: gaps3]. Enabling SetCombatDisabled 1 on an actor already
-        // in combat does not immediately stop active combat in the same frame [observed:
-        // 2026-11-23, GSDocMitchellHouse (0x00103DF9), Fallout: New Vegas 1.4.0.525,
-        // xNVSE 6.4.9 with the 10 official base masters, clean-room script probe
-        // `core_20_set_combat_disabled_stops_combat` (#3679): `1,1,1`; no DLL or source
-        // consulted; hypothesis: stays in combat on subsequent frames after that frame].
+        // in combat leaves IsInCombat == 1 in the same frame and ends active combat on
+        // subsequent AI ticks (`Game::settle_awareness` in `awareness.rs`) [observed:
+        // Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24,
+        // `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters, isolated
+        // clean-room staging copy (read-only `PrintToConsole` probe; zero writes to game
+        // install or Saves), `core_20_set_combat_disabled_stops_combat`
+        // (`wave4a_extenders.json`, #3679): `1,1,1` and
+        // `w4h_05_set_combat_disabled_multitick` (`wave4h_reconcile.json`, PR #3803 /
+        // #3802): `PROBE|w4h_05_set_combat_disabled_multitick|pre=1|t0(cd=1,inCmb=1)|t2(cd=1,inCmb=0)|t5(cd=1,inCmb=0)`;
+        // zero DLL, PDB, or third-party source consulted].
         "setcombatdisabled" => {
             if let Some(r) = subject {
                 if num(args, 0, 0.0) != 0.0 {
