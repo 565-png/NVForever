@@ -51,6 +51,17 @@ the HUD captures in hud.md §14 [observed]. Changes last for the session unless 
   line of its own, up to 15; DebugPrintVar only with the calling mod's debug mode on
   [documented: PrintVar, "fMyVariable: 2.5" and "aMyVariable: [2, 4]"; DebugPrintVar]. A
   map shows `key: value` pairs in the brackets [hypothesis].
+- ToString `value`: converts a number, string, or form to text [documented: ToString],
+  and returns `"NULL"` for list arrays (`ar_List 1 2`) and stringmaps (`ar_Map "k"::5`)
+  while keeping `ToString 42` as `"42"` [observed: Fallout: New Vegas 1.4.0.525 +
+  xNVSE 6.4.9, 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters,
+  read-only `PrintToConsole` probe (zero writes to game install or Saves),
+  `b3_core_05_tostring_array_map` (`tools/capture/nvse/catalogs/wave4b_extenders.json`,
+  #3679): `PROBE|b3_core_05_tostring_array_map|L=[NULL]|M=[NULL]|N=[42]`; zero DLL, PDB,
+  or third-party source consulted]. Returning `"NULL"` for other `XVal::Array(_)` variants
+  (such as numeric maps or unset array ID `0`) in `ToString` while leaving unary `$expr`,
+  `PrintVar`, `ArrayToString`, `Ar_Dump`, and `Sv_Join` on `Vm::text_of` stays
+  [hypothesis].
 - PrintF, PrintDebugF, Ar_DumpF, DecompileScript, DumpDocs and DumpCommandWikiDoc write
   files (the Fallout folder, DecompiledScripts, nvse.log) [documented]; NVForever writes
   none of them and they do nothing else [decision: NVForever writes nothing beside the
