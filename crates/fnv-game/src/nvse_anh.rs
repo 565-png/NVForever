@@ -82,7 +82,8 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // base masters, probes `anh_07_zone_level_min_owner` (0,6,12),
         // `anh_11_zone_owner_readback` (Vault11Zone 000E9081: 00000000 -> 000A46E7 ->
         // 00104C6E -> 00104C6E; null owner argument leaves the existing owner unchanged),
-        // and `w4d_29_anh_scancode_table_and_zone` (`zone(lvl:0->0,docZ=00000000)`:
+        // and `w4d_29_anh_scancode_table_and_zone` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+        // #3802: `zone(0->0,docZ=00000000)`:
         // `GetZoneLevel` on unentered `0xE9081` stays 0 after `SetZoneMinLevel 15`); no
         // DLL or source consulted]; session-only lifetime and keeping an already-entered
         // zone's level remain [hypothesis].

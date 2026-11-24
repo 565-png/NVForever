@@ -28,23 +28,29 @@ fn unit<const N: usize>(v: [f64; N]) -> [f64; N] {
     if n == 0.0 { v } else { v.map(|c| c / n) }
 }
 
-/// DirectInput keyboard scan code to key name for `ScancodeToChar`: uppercase letters
-/// and full key names (`1 => "Escape"`, `2 => "1"`, `14 => "Backspace"`, `15 => "Tab"`,
-/// `18 => "E"`, `28 => "Enter"`, `30 => "A"`, `57 => "Spacebar"`, `59 => "F1"`,
-/// `87 => "F11"`, `88 => "F12"`, `200 => "Up Arrow"`), while unmapped codes (`0`, `220`,
-/// `221`, `255`, `-1`) return 1-byte `"\x1d"` (`0x1D` ASCII GS) [observed: 2026-11-23 &
-/// 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), Fallout: New Vegas 1.4.0.525, xNVSE
-/// 6.4.9, AnhNVSE 131 with the 10 official base masters, `anh_03_scancode_to_char_layout`
-/// and `w4d_29_anh_scancode_table_and_zone` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
-/// #3679): `unmap(0:len=1/ord=-1,220:len=1/ord=-1,255:len=1/ord=-1)|map(2=1,14=Backspace,15=Tab,28=Enter,57=Spacebar,87=F11,88=F12,200=Up Arrow) | raw_unmap_byte=0x1D(GS)`;
-/// no DLL or source consulted; other unprobed keyboard scan codes reuse `KEY_NAMES`
-/// [hypothesis]].
+/// DirectInput keyboard/mouse scan code to key name for `ScancodeToChar`: uppercase
+/// letters and full key names (`1 => "Escape"`, `2 => "1"`, `14 => "Backspace"`,
+/// `15 => "Tab"`, `18 => "E"`, `28 => "Enter"`, `30 => "A"`, `57 => "Spacebar"`,
+/// `59 => "F1"`, `87 => "F11"`, `88 => "F12"`, `200 => "Up Arrow"`,
+/// `256 => "Left Mouse Button"`), while unmapped codes (`0`, `220`, `221`, `255`, `999`,
+/// `-1`) return a 1-byte non-printable string (`sv_Length=1`, `CharToAscii=-1`)
+/// [observed: 2026-11-23 & 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), Fallout: New
+/// Vegas 1.4.0.525 + xNVSE 6.4.9 + AnhNVSE 131 with the 10 official base masters,
+/// isolated clean-room staging copy (read-only `PrintToConsole` probe; zero writes to
+/// game install or Saves), `anh_03_scancode_to_char_layout` and
+/// `w4d_29_anh_scancode_table_and_zone` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+/// #3802): `PROBE|w4d_29_anh_scancode_table_and_zone|unmap(gsLen=1,0=1/x1D:0/o=-1,220=1/x1D:0/o=-1,221=1/x1D:0,255=1/x1D:0/o=-1,256=17[Left Mouse Button],999=1/x1D:0,-1=1/x1D:0)|map(2=1,14=Backspace,15=Tab,28=Enter,57=Spacebar,87=F11,88=F12,200=Up Arrow)|zone(0->0,docZ=00000000)`;
+/// zero DLL, PDB, or third-party source consulted].
+/// The exact `0x1D` (`"\x1d"`) raw byte value for unmapped codes (NVSE `AsciiToChar 29`
+/// and `CharToAscii` only cover printable ASCII `32..126`) and unprobed scan codes
+/// (reusing `KEY_NAMES` for `2..=219` and unmapped for `257+`) remain [hypothesis].
 fn scancode_name(code: i64) -> &'static str {
     match code {
         1 => return "Escape",
         57 => return "Spacebar",
         200 => return "Up Arrow",
         220 => return "\x1d",
+        256 => return "Left Mouse Button",
         _ => {}
     }
     let Ok(c) = u16::try_from(code) else { return "\x1d" };
