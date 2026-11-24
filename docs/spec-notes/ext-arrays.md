@@ -187,9 +187,16 @@ fresh game, Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10 official base
 clean-room black-box script probe `core_02_ar_deepcopy_shared_and_self` (`Ar_DeepCopy`,
 `#3678` / PR `#3679`, `tools/capture/nvse/catalogs/wave4a_extenders.json`): `aOrig = ar_List
 aSub aSub; aCopy = Ar_DeepCopy aOrig; let aCopy[0][0] := 99` left `aOrig[0][0] == 10` and
-`aCopy[1][0] == 10` (`10,99,10`); no DLL or source consulted]. [hypothesis: not probed in
-the original] An array that holds itself is copied with the same shape, the entry leading
-back standing for the copy (#1089).
+`aCopy[1][0] == 10` (`10,99,10`); no DLL or source consulted]. On a self-referential cycle
+(`a[0] = a`), original xNVSE 6.4.9 has no cycle detection and crashes `FalloutNV.exe`
+with `STATUS_STACK_OVERFLOW` (`0xC00000FD`) [observed: 2026-11-24, `GSDocMitchellHouse`
+(`0x00103DF9`), fresh game, Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 with the 10
+official base masters, clean-room black-box script probe `w4d_10_ar_deepcopy_cycle`
+(`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679):
+`W4D10_PRE_DEEPCOPY|sz=1 -> FalloutNV.exe crashed with exit_rc=3221225725 (0xC00000FD STATUS_STACK_OVERFLOW)`;
+no DLL or source consulted]. [design] In NVForever, an array that holds itself is copied
+with the same shape, the entry leading back standing for the copy (#1089), avoiding the
+stack-overflow crash.
 
 **Ar_DeepEquals** (alias **Ar_DeepCompare**) `Ar_DeepEquals a, b` (xNVSE 6.2.1 and
 later): 1 when both hold the same key–element pairs in the same order, nested arrays
